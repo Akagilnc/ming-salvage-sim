@@ -153,7 +153,7 @@ describe("#598 withMechanicalRetry", () => {
     };
     await expect(
       withMechanicalRetry(coderSpec(), {}, dispatch, {
-        callerOwns: (o) => o.kind === "thrown",
+        callerOwns: (o) => "kind" in o && o.kind === "thrown",
       }),
     ).rejects.toThrow("reviewer structured output error");
     // Deferred to the caller on the FIRST attempt — never retried here.

@@ -37,12 +37,21 @@ import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
   PersistentLedgerEntry,
+  PrMergedEvent,
   ResumeState,
   StepOutput,
   StepSpec,
   WorkerResult,
   WorkerSpec,
 } from "../src/types.js";
+
+type PrMergedLedgerFixture = PersistentLedgerEntry & PrMergedEvent;
+
+function isPrMergedLedgerFixture(
+  entry: PersistentLedgerEntry,
+): entry is PrMergedLedgerFixture {
+  return entry.event === "pr_merged";
+}
 
 const REPO = "Akagilnc/ming-salvage-sim";
 const PR_URL = "https://github.com/Akagilnc/ming-salvage-sim/pull/602";
@@ -1253,7 +1262,11 @@ describe("#602 sliceDocReleaseCommitOid", () => {
   it("reads branchHEAD from the last successful S12 ledger row, not worktree HEAD", () => {
     expect(
       sliceDocReleaseCommitOid([
-        { step: "S11", branchHEAD: "abc1111", output: { kind: "cleanup", ok: true } },
+        {
+          step: "S11",
+          branchHEAD: "abc1111",
+          output: { kind: "cleanup", ok: true, terminal: true },
+        },
         {
           step: "S12",
           branchHEAD: "abc1234567890def1234567890abcd1234567890ab",
@@ -1363,6 +1376,7 @@ describe("#602 docRelease non-interactive dispatch env", () => {
       remote: "https://github.com/Akagilnc/ming-salvage-sim.git",
       runKey: 602,
       repo: REPO,
+      imageName: "test-image-602",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       // #748: construction resolves paths under home; keep off real $HOME.
@@ -1531,7 +1545,7 @@ describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
     expect(
       backend.ledgerWrites.some(
         (e) =>
-          e.event === "pr_merged" &&
+          isPrMergedLedgerFixture(e) &&
           e.prNumber === 1 &&
           e.remoteBranchName === "offline-branch" &&
           e.mergedHeadOid === CONVERGED_HEAD,
@@ -1576,8 +1590,8 @@ describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
     const s12Persisted = backend.ledgerWrites.find(
       (e) => e.step === "S12" && e.output?.kind === "docRelease",
     );
-    expect(typeof s12Memory?.branchHEAD).toBe("string");
-    expect(s12Memory?.branchHEAD).toBe(s12Persisted?.branchHEAD);
+    expect(s12Memory).toMatchObject({ branchHEAD: expect.any(String) });
+    expect(s12Memory).toMatchObject({ branchHEAD: s12Persisted?.branchHEAD });
   });
 
   it("writeLedger failure on pr_merged marker returns structured escalate (R1-C2)", async () => {

@@ -47,7 +47,7 @@ class HappyPathBackend implements Backend {
   };
 
   // #255: fresh-run defaults (this suite is the happy-path regression).
-  async findResumeState(): Promise<undefined> {
+  async findResumeState(): Promise<ResumeState | undefined> {
     return undefined;
   }
   async cleanResidue(): Promise<void> {
@@ -135,18 +135,18 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       [
         "[orchestrator] model route lineup",
         "route=normal",
-        "coder=sonnet",
-        "reviewer=gpt-5.5",
-        "coderFix=sonnet",
+        "coder=gpt-5.6-terra",
+        "reviewer=gpt-5.6-sol",
+        "coderFix=gpt-5.6-terra",
         "ship=sonnet",
         "merger=sonnet",
-        "cmrCompleteness=opus",
-        "cmrCorrectness=opus",
-        "verify=opus",
+        "cmrCompleteness=gpt-5.6-terra",
+        "cmrCorrectness=gpt-5.6-terra",
+        "verify=gpt-5.6-terra",
         "fixer=sonnet",
         "cleanup=sonnet",
         "docRelease=sonnet",
-        "cmrReview=[codex:gpt-5.5,claude:opus,agy:agy]",
+        "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
       ].join("\n"),
     );
     expect(info.mock.invocationCallOrder[0]).toBeLessThan(
@@ -262,7 +262,8 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       reopenAttempts: 0,
     };
     class ResumeAfterS4Backend extends HappyPathBackend {
-      override async findResumeState(): Promise<ResumeState> {
+      // This fixture deliberately resumes after S4; keep the inherited broad return type.
+      async findResumeState(): Promise<ResumeState | undefined> {
         return {
           worktree: this.worktree,
           stateDir: "/resident/worktrees/.ledger-247",

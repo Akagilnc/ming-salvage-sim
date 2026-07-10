@@ -73,7 +73,7 @@ class ShipLedgerBackend implements Backend {
     throw new Error("resumeSession should not be called in this test");
   }
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
-    return { number: issueNumber, isReadyForAgent: true, hasSubIssues: false, openBlockedBy: [] };
+    return { number: issueNumber, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
   }
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
     return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief\ndo it" };

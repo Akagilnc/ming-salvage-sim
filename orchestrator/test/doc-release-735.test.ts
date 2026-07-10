@@ -218,15 +218,10 @@ describe("#735 ADR 0123 auto-merge: no path-allowlist veto", () => {
           threads: [
             {
               id: "T1",
+              threadNodeId: "PRRT_docrelease_open",
               isResolved: false,
-              comments: [
-                {
-                  id: "c1",
-                  author: "coderabbitai",
-                  body: "still open",
-                  createdAt: "2026-07-09T00:00:00.000Z",
-                },
-              ],
+              authorLogin: "coderabbitai",
+              body: "still open",
             },
           ],
           totalFindingCount: 1,
@@ -256,7 +251,8 @@ describe("#735 docRelease dispatch: live not unconditional stub; offline hatch",
     });
     const backend = {
       async runStep(...args: unknown[]): Promise<StepOutput> {
-        return runStep(...args);
+        void args;
+        return runStep();
       },
       async resumeSession(): Promise<StepOutput> {
         throw new Error("resumeSession unexpected");
@@ -317,6 +313,9 @@ describe("#735 docRelease dispatch: live not unconditional stub; offline hatch",
   it("when backend implements dispatchWorker, live docRelease is not short-circuited to stub by free function", async () => {
     const observed: WorkerSpec[] = [];
     const backend: Backend = {
+      async smokeModelRoute(route) {
+        return route;
+      },
       async findResumeState() {
         return undefined;
       },
@@ -344,14 +343,12 @@ describe("#735 docRelease dispatch: live not unconditional stub; offline hatch",
       async prepareWorktree() {
         return worktree;
       },
+      async writeSnapshot() {},
       async runStep(): Promise<StepOutput> {
         throw new Error("runStep should not be called when dispatchWorker handles docRelease");
       },
       async push() {},
       async writeLedger() {},
-      async hashPrompt() {
-        return "hash";
-      },
       async dispatchWorker(
         spec: WorkerSpec,
         _ctx: DispatchContext,

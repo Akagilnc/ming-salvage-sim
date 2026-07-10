@@ -85,6 +85,25 @@ class ChildBackend implements Backend {
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
 
+/** Models an old persisted ledger row whose invalid stop reason bypassed today's schema. */
+function readMalformedPersistedCmrAbort(): FamilyLedgerEntry {
+  return JSON.parse(
+    JSON.stringify({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      cmrPass: "correctness",
+      familyHeadAfter: "head-after-coder-fix",
+      blockingFindingIdentityKeys: [],
+      reason: "integrated cmr correctness did not converge",
+      stopSummary: {
+        reason: "not_converged",
+        summary: "integrated CMR correctness did not converge after coder-fix",
+      },
+    }),
+  );
+}
+
 class FakeFamilyBackend implements FamilyBackend {
   readonly merges: MergeRequest[] = [];
   readonly ledger: FamilyLedgerEntry[] = [];
@@ -107,7 +126,7 @@ function epicWith(...issues: number[]): FamilyEpic {
   return { issue: 293, children: issues.map((issue) => ({ issue, blockedBy: [] })) };
 }
 
-const COMPLETE_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+const COMPLETE_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
 
 describe("family spine verify-cmr wiring (#293 seam 4)", () => {
   it("calls the verify hook at the wave barrier AND end-of-run, each with phase + context", async () => {
@@ -715,7 +734,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       boundedReopen,
     };
     const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
-      if (input.phase === "final") {
+      if (input.phase === "final" && input.moduleContext) {
         classified.push(
           deriveCmrEnvelope({
             familyIssue: 287,
@@ -1404,7 +1423,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
   // prior-disposition source) — NOT the fat `cmrFindingClassification` structure
   // (Finding full text / results[] audit / dispositions[] merged into one blob).
   describe("thin CMR envelope on the ledger (#604 slice 3 / ADR 0062)", () => {
-    const CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+    const CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
 
     /** Drive the real final CMR gate; no coder-fix worker so a blocker aborts. */
     class ScriptedCmrBackend extends FakeFamilyBackend {
@@ -1491,7 +1510,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-before-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
             cmrDispositions: [],
-          } as FamilyLedgerEntry,
+          } satisfies FamilyLedgerEntry,
           {
             status: "aborted",
             event: "aborted",
@@ -1505,7 +1524,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
               summary: "integrated CMR correctness coder-fix failed",
               repairHint: "repair the family CMR coder-fix worker contract",
             },
-          } as FamilyLedgerEntry,
+          } satisfies FamilyLedgerEntry,
         ],
         "head-after-bad-coder-fix",
       );
@@ -1529,7 +1548,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-before-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
             cmrDispositions: [],
-          } as FamilyLedgerEntry,
+          } satisfies FamilyLedgerEntry,
           {
             status: "cmr_fix_committed",
             event: "cmr_fix_committed",
@@ -1538,21 +1557,9 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadBefore: "head-before-coder-fix",
             familyHeadAfter: "head-after-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
-          } as FamilyLedgerEntry,
-          {
-            // not_converged sentinel: a CLASSIFIED abort carrying an EMPTY envelope.
-            status: "aborted",
-            event: "aborted",
-            phase: "final",
-            cmrPass: "correctness",
-            familyHeadAfter: "head-after-coder-fix",
-            blockingFindingIdentityKeys: [],
-            reason: "integrated cmr correctness did not converge",
-            stopSummary: {
-              reason: "not_converged",
-              summary: "integrated CMR correctness did not converge after coder-fix",
-            },
-          } as FamilyLedgerEntry,
+          } satisfies FamilyLedgerEntry,
+          // not_converged sentinel: a CLASSIFIED abort carrying an EMPTY envelope.
+          readMalformedPersistedCmrAbort(),
         ],
         "head-after-coder-fix",
       );

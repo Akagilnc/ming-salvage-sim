@@ -4,7 +4,7 @@
  * Two independent findings from the R1 cross-model bots, each pinned by a test:
  *
  *  - Codex P2 (runner.ts finalizeDecisionPark): a wave-loop decision park must
- *    report a child that was MERGED IN A PRIOR INVOCATION as "merged", not
+ *    report a child that was MERGED IN A PRIOR INVOCATION as "already_done", not
  *    "skipped". The sibling early-exit park path (runner.ts ~900) and finalize()
  *    both consult the merged ledger before defaulting to "skipped"; the
  *    mid-wave `finalizeDecisionPark` path did not, so the returned children list
@@ -133,8 +133,8 @@ class FakeFamilyBackend implements FamilyBackend {
 
 // ─── Codex P2: finalizeDecisionPark is ledger-merged aware ──────────────────────
 
-describe("PR#643 R1 (Codex P2) — a wave-loop decision park reports prior-merged children as merged", () => {
-  it("prior-merged child (absent from this run) is 'merged', not 'skipped', when a sibling parks", async () => {
+describe("PR#643 R1 (Codex P2) — a wave-loop decision park reports prior-merged children as already_done", () => {
+  it("prior-merged child (absent from this run) is 'already_done', not 'skipped', when a sibling parks", async () => {
     // #10 was MERGED in a prior invocation (a durable merged ledger row exists →
     // selectWave skips it this run, so it is NOT in this run's childResults).
     // #11 decision-escalates in the wave → the mid-wave `finalizeDecisionPark`
@@ -143,7 +143,6 @@ describe("PR#643 R1 (Codex P2) — a wave-loop decision park reports prior-merge
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push({
       status: "merged",
-      event: "merged",
       childIssue: 10,
     } as FamilyLedgerEntry);
 
@@ -165,8 +164,9 @@ describe("PR#643 R1 (Codex P2) — a wave-loop decision park reports prior-merge
     expect(result.status).toBe("escalated");
     expect(result.children.find((c) => c.issue === 11)?.status).toBe("escalated");
     // #10 must reflect the DURABLE merge ledger (merged in a prior invocation),
-    // NOT be mislabeled "skipped".
-    expect(result.children.find((c) => c.issue === 10)?.status).toBe("merged");
+    // but is not merged by THIS invocation, so it is not mislabeled "skipped"
+    // or "merged".
+    expect(result.children.find((c) => c.issue === 10)?.status).toBe("already_done");
     // The child was NOT re-run this invocation (selectWave skipped it).
     expect(
       singleSliceBackend.runStepCalls.some((c) => c.issue === 10),

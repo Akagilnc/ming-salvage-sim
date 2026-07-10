@@ -9,6 +9,9 @@ import {
 } from "./coderRoster.js";
 import {
   modelFamilyForCmrReviewLeg,
+  CODER_CODEX_SLUG,
+  REVIEWER_CODEX_SLUG,
+  VERIFY_CODEX_SLUG,
   modelFamilyForSlug,
   resolveModelSlug,
   type ModelFamily,
@@ -118,14 +121,14 @@ interface ModelRoutePreset {
 }
 
 const NORMAL_SLOTS: ModelSlotMap = {
-  coder: "sonnet",
-  reviewer: "gpt-5.5",
-  coderFix: "sonnet",
+  coder: CODER_CODEX_SLUG,
+  reviewer: REVIEWER_CODEX_SLUG,
+  coderFix: CODER_CODEX_SLUG,
   ship: "sonnet",
   merger: "sonnet",
-  cmrCompleteness: "opus",
-  cmrCorrectness: "opus",
-  verify: "opus",
+  cmrCompleteness: VERIFY_CODEX_SLUG,
+  cmrCorrectness: VERIFY_CODEX_SLUG,
+  verify: VERIFY_CODEX_SLUG,
   fixer: "sonnet",
   cleanup: "sonnet",
   docRelease: "sonnet",
@@ -133,7 +136,7 @@ const NORMAL_SLOTS: ModelSlotMap = {
 
 const NORMAL_LEG_COLLECTIONS: ModelRouteLegCollectionMap = {
   cmrReview: [
-    { family: "codex", slug: "gpt-5.5" },
+    { family: "codex", slug: REVIEWER_CODEX_SLUG },
     { family: "claude", slug: "opus" },
     { family: "agy", slug: "agy" },
   ],
@@ -143,14 +146,14 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
   normal: { slots: NORMAL_SLOTS, legCollections: NORMAL_LEG_COLLECTIONS },
   "codex-cheap": {
     slots: {
-      coder: "sonnet",
-      reviewer: "opus",
-      coderFix: "sonnet",
+      coder: CODER_CODEX_SLUG,
+      reviewer: REVIEWER_CODEX_SLUG,
+      coderFix: CODER_CODEX_SLUG,
       ship: "sonnet",
       merger: "sonnet",
-      cmrCompleteness: "opus",
-      cmrCorrectness: "opus",
-      verify: "opus",
+      cmrCompleteness: VERIFY_CODEX_SLUG,
+      cmrCorrectness: VERIFY_CODEX_SLUG,
+      verify: VERIFY_CODEX_SLUG,
       fixer: "sonnet",
       cleanup: "sonnet",
       docRelease: "sonnet",
@@ -159,7 +162,7 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
       cmrReview: [
         { family: "claude", slug: "opus" },
         { family: "agy", slug: "agy" },
-        { family: "codex", slug: "gpt-5.5" },
+        { family: "codex", slug: REVIEWER_CODEX_SLUG },
       ],
     },
   },
@@ -187,21 +190,21 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
   },
   "claude-cheap": {
     slots: {
-      coder: "gpt-5.5",
-      reviewer: "gpt-5.5",
-      coderFix: "gpt-5.5",
-      ship: "gpt-5.5",
-      merger: "gpt-5.5",
-      cmrCompleteness: "gpt-5.5",
-      cmrCorrectness: "gpt-5.5",
-      verify: "gpt-5.5",
-      fixer: "gpt-5.5",
-      cleanup: "gpt-5.5",
-      docRelease: "gpt-5.5",
+      coder: CODER_CODEX_SLUG,
+      reviewer: REVIEWER_CODEX_SLUG,
+      coderFix: CODER_CODEX_SLUG,
+      ship: CODER_CODEX_SLUG,
+      merger: CODER_CODEX_SLUG,
+      cmrCompleteness: VERIFY_CODEX_SLUG,
+      cmrCorrectness: VERIFY_CODEX_SLUG,
+      verify: VERIFY_CODEX_SLUG,
+      fixer: CODER_CODEX_SLUG,
+      cleanup: CODER_CODEX_SLUG,
+      docRelease: CODER_CODEX_SLUG,
     },
     legCollections: {
       cmrReview: [
-        { family: "codex", slug: "gpt-5.5" },
+        { family: "codex", slug: REVIEWER_CODEX_SLUG },
         { family: "agy", slug: "agy" },
         { family: "claude", slug: "opus" },
       ],
@@ -210,21 +213,21 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
   "claude-tight": {
     tightFamilies: ["claude"],
     slots: {
-      coder: "gpt-5.5",
-      reviewer: "gpt-5.5",
-      coderFix: "gpt-5.5",
-      ship: "gpt-5.5",
-      merger: "gpt-5.5",
-      cmrCompleteness: "gpt-5.5",
-      cmrCorrectness: "gpt-5.5",
-      verify: "gpt-5.5",
-      fixer: "gpt-5.5",
-      cleanup: "gpt-5.5",
-      docRelease: "gpt-5.5",
+      coder: CODER_CODEX_SLUG,
+      reviewer: REVIEWER_CODEX_SLUG,
+      coderFix: CODER_CODEX_SLUG,
+      ship: CODER_CODEX_SLUG,
+      merger: CODER_CODEX_SLUG,
+      cmrCompleteness: VERIFY_CODEX_SLUG,
+      cmrCorrectness: VERIFY_CODEX_SLUG,
+      verify: VERIFY_CODEX_SLUG,
+      fixer: CODER_CODEX_SLUG,
+      cleanup: CODER_CODEX_SLUG,
+      docRelease: CODER_CODEX_SLUG,
     },
     legCollections: {
       cmrReview: [
-        { family: "codex", slug: "gpt-5.5" },
+        { family: "codex", slug: REVIEWER_CODEX_SLUG },
         { family: "agy", slug: "agy" },
       ],
     },
@@ -270,7 +273,17 @@ function assertKnownWorkerSlug(slug: string): void {
 
 function legForSlug(slug: string): ModelRouteLeg {
   const trimmed = slug.trim();
-  return { slug: trimmed, family: modelFamilyForCmrReviewLeg(trimmed) };
+  // Route declarations are executable live configuration. Historical CMR
+  // labels remain parseable through modelFamilyForCmrReviewLeg, but can never
+  // be selected as a current review worker.
+  try {
+    return { slug: trimmed, family: modelFamilyForSlug(trimmed) };
+  } catch {
+    throw new Error(
+      `unknown cmr review leg slug "${trimmed}". Register a live worker in ` +
+        "MODEL_SLUG_REGISTRY before selecting it in a route.",
+    );
+  }
 }
 
 function resolveLegCollection(slugs: ReadonlyArray<string>): ReadonlyArray<ModelRouteLeg> {
@@ -342,7 +355,7 @@ export function resolveRouteModels(
   for (const slot of MODEL_ROUTE_SLOTS) assertKnownWorkerSlug(slots[slot]);
   for (const collection of MODEL_ROUTE_LEG_COLLECTIONS) {
     legCollections[collection] = legCollections[collection].map((leg) => {
-      const family = modelFamilyForCmrReviewLeg(leg.slug);
+      const family = modelFamilyForSlug(leg.slug);
       if (family !== leg.family) {
         throw new Error(
           `cmr review leg "${leg.slug}" declares family "${leg.family}" but registry says "${family}"`,
@@ -554,7 +567,7 @@ export function routeLegCollectionOverridesFromEnv(
       if (value.startsWith("[") || value.startsWith("{")) {
         throw new Error(
           `${ENV_BY_LEG_COLLECTION[collection]} must be comma-separated CMR leg slugs, not JSON; ` +
-            "repair_hint: rewrite the route env as CSV, for example gpt-5.5,agy",
+            "repair_hint: rewrite the route env as CSV, for example gpt-5.6-sol,agy",
         );
       }
       overrides[collection] = value
@@ -768,15 +781,19 @@ export function cmrLegAccountingFailure(
     : isResolvedModelRoute(routeOrEnv)
       ? routeOrEnv.legCollections.cmrReview.map((leg) => leg.slug)
       : cmrReviewLegs(routeOrEnv ?? process.env).map((leg) => leg.slug);
+  // This is live route accounting. A recorded historical 5.5 leg is evidence
+  // of that past run, never a synonym for the current Sol officer.
+  const successfulLegs = input.successfulLegs;
+  const skippedLegs = input.skippedLegs ?? [];
   const declared = new Set(declaredLegs);
-  const undeclaredSuccessful = input.successfulLegs.filter((slug) => !declared.has(slug));
+  const undeclaredSuccessful = successfulLegs.filter((slug) => !declared.has(slug));
   if (undeclaredSuccessful.length > 0) {
     return (
       "cmr worker reported successful legs that were not declared by the active route: " +
       undeclaredSuccessful.join(", ")
     );
   }
-  const undeclaredSkipped = (input.skippedLegs ?? [])
+  const undeclaredSkipped = skippedLegs
     .map((leg) => leg.slug)
     .filter((slug) => !declared.has(slug));
   if (undeclaredSkipped.length > 0) {
@@ -785,7 +802,7 @@ export function cmrLegAccountingFailure(
       undeclaredSkipped.join(", ")
     );
   }
-  const duplicateSuccessful = input.successfulLegs.filter(
+  const duplicateSuccessful = successfulLegs.filter(
     (slug, index, legs) => legs.indexOf(slug) !== index,
   );
   if (duplicateSuccessful.length > 0) {
@@ -794,7 +811,7 @@ export function cmrLegAccountingFailure(
       [...new Set(duplicateSuccessful)].join(", ")
     );
   }
-  const skippedSlugs = (input.skippedLegs ?? []).map((leg) => leg.slug);
+  const skippedSlugs = skippedLegs.map((leg) => leg.slug);
   const duplicateSkipped = skippedSlugs.filter(
     (slug, index, legs) => legs.indexOf(slug) !== index,
   );
@@ -804,7 +821,7 @@ export function cmrLegAccountingFailure(
       [...new Set(duplicateSkipped)].join(", ")
     );
   }
-  const successful = new Set(input.successfulLegs);
+  const successful = new Set(successfulLegs);
   const skipped = new Set(skippedSlugs);
   const missing = declaredLegs.filter((slug) => !successful.has(slug) && !skipped.has(slug));
   if (missing.length > 0) {

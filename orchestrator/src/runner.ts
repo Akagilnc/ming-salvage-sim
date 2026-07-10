@@ -37,6 +37,10 @@
 import { execFileSync } from "node:child_process";
 
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
+import {
+  reviewFixAssertionSignal,
+  reviewFixDecisionGate,
+} from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
 import {
   adjudicatePriorClaimedFixedFindings,
@@ -77,6 +81,11 @@ import {
 } from "./botPolling.js";
 import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
 import {
+  isQuotaWaitForResetError,
+  QuotaWaitForResetError,
+  type QuotaWaitForResetLedgerEvent,
+} from "./quotaProbe.js";
+import {
   docReleasePathsFromCommit,
   isPrMergedMarker,
   offlineAutoMergeAllowUnverifiedDocPaths,
@@ -100,9 +109,11 @@ import {
   onlineReviewResumeHeadKeyFromLedger,
   onlineReviewRoundFromLedger,
   onlineReviewRoundTriggerFromLedger,
+  recheckConvergenceConfirmsFixMarkedKeys,
   resolveOnlineReviewRoundTrigger,
   realBotPollClock,
   reconstructOnlineReviewLandingForResume,
+  fixMarkedFindingAuthorizationForResume,
   ensureOnlineReviewRetriggerAfterFixGap,
   retriggerBotsAndPoll,
   shipLedgerTriggeredAtFromSliceLedger,
@@ -128,6 +139,7 @@ import {
 } from "./evidenceAdmissibility.js";
 import {
   applyVerifySideEffects,
+  fixMarkedFindingThreadsFromVerify,
   fixMarkedKeysFromVerify,
 } from "./onlineReviewSideEffects.js";
 import {
@@ -444,6 +456,130 @@ function answerPayload(
 
 function isBookkeepingEntry(entry: LedgerEntry): boolean {
   return entry.event != null;
+}
+
+/**
+ * #683 — latest durable marker is a quota wait park. Resume re-enters the
+ * parked step (not S8(error)). Same family as `online_review_ci_pending` parks.
+ */
+function sliceQuotaWaitPending(
+  ledger: ReadonlyArray<{
+    readonly step?: string;
+    readonly event?: string;
+  }>,
+): StepId | undefined {
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (entry.event === "quota_wait_for_reset") {
+      const step = entry.step;
+      if (
+        step === "S2" ||
+        step === "S3" ||
+        step === "S5" ||
+        step === "S6" ||
+        step === "S7" ||
+        step === "S9" ||
+        step === "S10" ||
+        step === "S11" ||
+        step === "S12"
+      ) {
+        return step;
+      }
+      return "S2";
+    }
+    // Any newer executable agent/ship progress clears the park.
+    if (
+      entry.event === undefined &&
+      (entry.step === "S2" ||
+        entry.step === "S3" ||
+        entry.step === "S5" ||
+        entry.step === "S6" ||
+        entry.step === "S7" ||
+        entry.step === "S9" ||
+        entry.step === "S10" ||
+        entry.step === "S11" ||
+        entry.step === "S12")
+    ) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * #683 park: 429/quota wall → status escalate (resumable), not S8(error).
+ * Mirror CI-pending park: ledger marker + stopSummary, no sticky failure.
+ */
+async function parkQuotaWaitForReset(opts: {
+  readonly step: StepId;
+  readonly err: QuotaWaitForResetError;
+  readonly ledger: LedgerEntry[];
+  readonly stateDir: string | undefined;
+  readonly sessionId: string;
+  readonly backend: Backend;
+  readonly deferredFindings: ReadonlyArray<Finding>;
+  readonly resolveBranchHEAD: () => Promise<string>;
+  readonly hashPrompt: (
+    promptFile: string | undefined,
+    step: StepId,
+  ) => Promise<string>;
+}): Promise<RunResult> {
+  const { err, step, ledger, stateDir, sessionId, backend, deferredFindings } =
+    opts;
+  const ledgerEntry: QuotaWaitForResetLedgerEvent =
+    err.applied.ledgerEntry ?? {
+      event: "quota_wait_for_reset",
+      pool: err.pool,
+      reason: err.disposition.reason,
+      step,
+      ts: new Date().toISOString(),
+      ...(err.disposition.resetAt !== undefined
+        ? { resetAt: err.disposition.resetAt.toISOString() }
+        : {}),
+    };
+  const marker: LedgerEntry = {
+    step: ledgerEntry.step ?? step,
+    event: "quota_wait_for_reset",
+    pool: ledgerEntry.pool,
+    reason: ledgerEntry.reason,
+    ts: ledgerEntry.ts,
+    ...(ledgerEntry.resetAt !== undefined ? { resetAt: ledgerEntry.resetAt } : {}),
+    ...(ledgerEntry.workerPid !== undefined
+      ? { workerPid: ledgerEntry.workerPid }
+      : {}),
+  };
+  ledger.push(marker);
+  if (stateDir !== undefined) {
+    try {
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await opts.hashPrompt(undefined, step),
+          branchHEAD: await opts.resolveBranchHEAD(),
+          ts: ledgerEntry.ts,
+        },
+        stateDir,
+      );
+    } catch {
+      // Best-effort durable park marker — in-memory ledger still holds it.
+    }
+  }
+  const resetHint =
+    ledgerEntry.resetAt !== undefined
+      ? ` (resetAt ${ledgerEntry.resetAt})`
+      : "";
+  return {
+    status: "escalate",
+    stepLedger: ledger,
+    stopSummary: {
+      reason: "provider_degraded",
+      summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
+      repairHint:
+        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
+    },
+    deferredFindings,
+  };
 }
 
 function executableLedgerEntries(
@@ -857,6 +993,101 @@ function latestCoderRepair(ledger: ReadonlyArray<LedgerEntry>): LatestCoderRepai
     }
   }
   return { repairMovementPaths: [] };
+}
+
+/**
+ * #677: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
+ *
+ * `preexistingAssertionTouchedForReverify` and
+ * `refusedFindingIdentityKeysForReverify` are process-local; a crash between
+ * S5 completing and S6 running would otherwise drop both. Prefer rebuild over
+ * new durable fields: refuse keys already live on the S5 coder output, and the
+ * assertion signal is recomputed from ledger branchHEADs + worktree git
+ * (same shape as #743 authorization rebuild / S4 adjudication replay).
+ */
+interface S5ReverifySignals {
+  readonly preexistingAssertionTouched: boolean;
+  readonly refusedFindingIdentityKeys: readonly string[];
+}
+
+function ledgerEntryBranchHead(entry: LedgerEntry): string | undefined {
+  const head = (entry as PersistentLedgerEntry).branchHEAD;
+  return isLikelyGitSha(head) ? head : undefined;
+}
+
+function refusedKeysFromCoderOutput(
+  output: Extract<StepOutput, { kind: "coder" }>,
+): readonly string[] {
+  const records = output.refuseRecords ?? [];
+  if (records.length > 0) {
+    return reviewFixDecisionGate({ records })?.refusedFindingIdentityKeys ?? [];
+  }
+  return output.refusedFindingIdentityKeys ?? [];
+}
+
+export function rebuildS5ReverifySignalsFromLedger(
+  ledger: ReadonlyArray<LedgerEntry>,
+  worktree: WorktreeHandle | undefined,
+): S5ReverifySignals {
+  let s5Index = -1;
+  for (let i = ledger.length - 1; i >= 0; i--) {
+    const entry = ledger[i]!;
+    if (isBookkeepingEntry(entry)) continue;
+    if (entry.step === "S5" && entry.output?.kind === "coder") {
+      s5Index = i;
+      break;
+    }
+  }
+  if (s5Index < 0) {
+    return {
+      preexistingAssertionTouched: false,
+      refusedFindingIdentityKeys: [],
+    };
+  }
+
+  const s5 = ledger[s5Index]!;
+  const output = s5.output as Extract<StepOutput, { kind: "coder" }>;
+  const refusedFindingIdentityKeys = refusedKeysFromCoderOutput(output);
+
+  let preexistingAssertionTouched = false;
+  if (worktree !== undefined) {
+    const afterFix = ledgerEntryBranchHead(s5);
+    let beforeFix: string | undefined;
+    for (let j = s5Index - 1; j >= 0; j--) {
+      const prev = ledger[j]!;
+      if (isBookkeepingEntry(prev)) continue;
+      const head = ledgerEntryBranchHead(prev);
+      if (head !== undefined) {
+        beforeFix = head;
+        break;
+      }
+    }
+    if (
+      afterFix !== undefined &&
+      beforeFix !== undefined &&
+      beforeFix !== afterFix
+    ) {
+      try {
+        preexistingAssertionTouched = reviewFixAssertionSignal({
+          worktreePath: worktree.path,
+          sliceBase: worktree.base,
+          beforeFix,
+          afterFix,
+        });
+      } catch {
+        // Live S5 remains fail-closed. Resume rebuild must not abort an
+        // otherwise-recoverable plan when HEADs are not locally resolvable
+        // (protocol-failure recovery fixtures / missing worktree). Refuse
+        // keys still restore from the S5 coder output below.
+        preexistingAssertionTouched = false;
+      }
+    }
+  }
+
+  return {
+    preexistingAssertionTouched,
+    refusedFindingIdentityKeys,
+  };
 }
 
 interface ContinueFixingRepair {
@@ -1718,6 +1949,15 @@ function planResume(
       priorLedger: priorForResume,
     };
   }
+  // #683: quota wait park → re-enter the parked step (not S8(error)).
+  const quotaWaitStep = sliceQuotaWaitPending(ledger);
+  if (quotaWaitStep !== undefined) {
+    return {
+      resumeStep: quotaWaitStep,
+      lastOutput: undefined,
+      priorLedger: priorForResume,
+    };
+  }
   // R20 Codex P2: last executable S9 converged:true routes to S12 and would skip
   // the live CI recheck on the S9 entry path. Force resume at S9 so check-runs
   // are re-polled before doc-release / post-merge cleanup.
@@ -1865,7 +2105,7 @@ export function stepSpecsForRoute(
       role: "coder",
       promptFile: "coder_implement.md",
       // The whole-slice build worker's model is env-switchable (default Codex
-      // gpt-5.5; was Sonnet 4.6). The slug is resolved to the baked CLI by
+      // gpt-5.6-terra; was Sonnet 4.6). The slug is resolved to the baked CLI by
       // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
       // alone — no image rebuild, no StepSpec shape change.
       model: route.slots.coder,
@@ -2195,6 +2435,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastReviewerStepId: StepId | undefined;
   let lastCoderRepairEvidence: RepairEvidence | undefined;
   let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
+  let preexistingAssertionTouchedForReverify = false;
+  let refusedFindingIdentityKeysForReverify: readonly string[] = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
   let onlineReviewRound = 1;
@@ -3226,8 +3468,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     lastCoderRepairEvidence = latestRepair.repairEvidence;
     lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
 
+    // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
+    // the assertion-touch signal live only in process memory during a live run;
+    // resume recomputes them from the persisted S5 coder row + ledger HEADs.
+    const rebuilt = rebuildS5ReverifySignalsFromLedger(
+      plan.priorLedger,
+      worktree,
+    );
+    preexistingAssertionTouchedForReverify =
+      rebuilt.preexistingAssertionTouched;
+    refusedFindingIdentityKeysForReverify =
+      rebuilt.refusedFindingIdentityKeys;
+
     if (
-      plan.resumeStep === "S10" &&
+      (plan.resumeStep === "S9" || plan.resumeStep === "S10") &&
       lastShipOutput !== undefined &&
       onlineReviewLanding === undefined
     ) {
@@ -3639,12 +3893,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       blockingFindingIdentityKeys:
                         pendingBlockingFindingIdentityKeys,
                       blockingFindingCount: pendingBlockingFindings.length,
+                      ...(step === "S6" && preexistingAssertionTouchedForReverify
+                        ? { preexistingAssertionTouched: true }
+                        : {}),
+                      ...(step === "S6" &&
+                      refusedFindingIdentityKeysForReverify.length > 0
+                        ? {
+                            refusedFindingIdentityKeys:
+                              refusedFindingIdentityKeysForReverify,
+                          }
+                        : {}),
                     }
                   : {}),
               };
               const landingPayload =
                 step === "S5" || step === "S6"
-                  ? { blockingFindings: pendingBlockingFindings }
+                  ? {
+                      blockingFindings: pendingBlockingFindings,
+                      ...(step === "S6" && preexistingAssertionTouchedForReverify
+                        ? { preexistingAssertionTouched: true }
+                        : {}),
+                      ...(step === "S6" &&
+                      refusedFindingIdentityKeysForReverify.length > 0
+                        ? {
+                            refusedFindingIdentityKeys:
+                              refusedFindingIdentityKeysForReverify,
+                          }
+                        : {}),
+                    }
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (failed/malformed/outcome_protocol_failure/throw) with a fresh
@@ -3818,6 +4094,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             break;
           }
         } catch (err) {
+          // #683: 429 quota wall → park step (existing park family), not S8(error).
+          if (isQuotaWaitForResetError(err)) {
+            return await parkQuotaWaitForReset({
+              step,
+              err,
+              ledger,
+              stateDir,
+              sessionId,
+              backend,
+              deferredFindings,
+              resolveBranchHEAD,
+              hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
+            });
+          }
           return await errorTermination(step, err);
         }
 
@@ -3844,6 +4134,37 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             worktree,
             coderHeadBeforeStep,
           );
+          if (step === "S5" && coderHeadBeforeStep !== undefined) {
+            try {
+              const afterFix = gitHead(worktree);
+              if (afterFix === undefined) {
+                throw new Error(
+                  "reviewFixAssertionSignal: unable to read HEAD after S5 (fail-closed)",
+                );
+              }
+              preexistingAssertionTouchedForReverify = reviewFixAssertionSignal({
+                worktreePath: worktree.path,
+                sliceBase: worktree.base,
+                beforeFix: coderHeadBeforeStep,
+                afterFix,
+              });
+            } catch (err) {
+              return await errorTermination(step, err);
+            }
+          }
+          // #677: legal refuse — wire decision gate on the real S5 path.
+          // Refused keys stay in the fix→fresh-re-review loop (never escalate/park).
+          if (step === "S5") {
+            const records = output.refuseRecords ?? [];
+            if (records.length > 0) {
+              const legal = reviewFixDecisionGate({ records });
+              refusedFindingIdentityKeysForReverify =
+                legal?.refusedFindingIdentityKeys ?? [];
+            } else {
+              refusedFindingIdentityKeysForReverify =
+                output.refusedFindingIdentityKeys ?? [];
+            }
+          }
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
         break;
@@ -4044,6 +4365,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           lastShipOutput = shipWithHead;
           stepSessionId = shipResult.sessionId;
         } catch (err) {
+          // #683: ship idle 429 → park (same family as agent-step park).
+          if (isQuotaWaitForResetError(err)) {
+            return await parkQuotaWaitForReset({
+              step: "S7",
+              err,
+              ledger,
+              stateDir,
+              sessionId,
+              backend,
+              deferredFindings,
+              resolveBranchHEAD,
+              hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
+            });
+          }
           // Push failure → S8(error) with branch head so dev can diagnose
           // without losing the commits already on the resident branch (#252).
           // errorTermination records + persists both the S7 and S8 entries (#3).
@@ -4131,6 +4466,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         promptFile = reviewLoopSpec.promptFile;
         try {
           if (reviewStep === "S9") {
+            let recheckFixMarkedFindingIdentityKeys =
+              onlineReviewLanding?.fixMarkedFindingIdentityKeys;
+            let recheckFixMarkedFindingThreads =
+              onlineReviewLanding?.fixMarkedFindingThreads;
+            // Resume without a snapshot still owes the recheck its durable
+            // authorization — rebuild from fix_committed / last S9 (#743 R6).
+            if (
+              onlineReviewRound > 1 &&
+              (recheckFixMarkedFindingIdentityKeys === undefined ||
+                recheckFixMarkedFindingIdentityKeys.length === 0)
+            ) {
+              const auth = fixMarkedFindingAuthorizationForResume(
+                mergeResumeLedgerHistory(resumeHistoryLedger, ledger),
+              );
+              recheckFixMarkedFindingIdentityKeys =
+                auth.fixMarkedFindingIdentityKeys;
+              recheckFixMarkedFindingThreads = auth.fixMarkedFindingThreads;
+            }
             const snapshot = await pollOnlineReviewForShip(
               lastShipOutput,
               onlineReviewRound,
@@ -4150,6 +4503,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
               ...(priorRoundFindings.length > 0
                 ? { priorRoundFindings }
+                : {}),
+              ...(onlineReviewRound > 1
+                ? {
+                    fixMarkedFindingIdentityKeys:
+                      recheckFixMarkedFindingIdentityKeys ?? [],
+                    fixMarkedFindingThreads:
+                      recheckFixMarkedFindingThreads ?? [],
+                  }
                 : {}),
             };
           }
@@ -4232,6 +4593,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ...onlineReviewLanding,
                   fixMarkedFindingIdentityKeys:
                     onlineReviewLanding.fixMarkedFindingIdentityKeys ?? [],
+                  fixMarkedFindingThreads:
+                    onlineReviewLanding.fixMarkedFindingThreads ?? [],
                   ...(onlineReviewLanding.findingFamilies !== undefined
                     ? { findingFamilies: onlineReviewLanding.findingFamilies }
                     : {}),
@@ -4541,6 +4904,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
             }
             verifyOutput = recheckOutcome;
+            if (
+              onlineReviewRound > 1 &&
+              onlineReviewLanding !== undefined &&
+              !recheckConvergenceConfirmsFixMarkedKeys(
+                verifyOutput,
+                onlineReviewLanding,
+              )
+            ) {
+              return await errorTermination(
+                reviewStep,
+                new Error(
+                  "post-fixer verify converged without confirming every fix-marked finding identity key",
+                ),
+                {
+                  output: verifyOutput,
+                  stopSummary: contractDriftStopSummary({
+                    summary:
+                      "post-fixer verify converged without confirming every fix-marked finding identity key",
+                    repairHint:
+                      "echo the landing fixMarkedFindingIdentityKeys exactly on a converged post-fixer recheck, or report unresolved findings",
+                  }),
+                },
+              );
+            }
             // Pending CI only: re-poll S9 — do not fixer, do not merge, do not
             // apply "all clear" side effects (online R2 Codex P2).
             // Bound re-entry: bots may already be quiescent so poll returns
@@ -4672,6 +5059,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                           : undefined,
                       landingThreads:
                         onlineReviewLanding?.onlineReviewSnapshot?.threads,
+                      approvedFixMarkedFindingThreads:
+                        onlineReviewLanding?.fixMarkedFindingThreads,
                     })
                   : {
                       deferredIssueUrls: [],
@@ -4691,10 +5080,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 : {}),
             };
             const fixKeys = fixMarkedKeysFromVerify(verifyOutput);
+            const fixMarkedFindingThreads =
+              fixMarkedFindingThreadsFromVerify(verifyOutput);
             if (onlineReviewLanding !== undefined) {
               onlineReviewLanding = {
                 ...onlineReviewLanding,
                 fixMarkedFindingIdentityKeys: fixKeys,
+                fixMarkedFindingThreads,
                 ...(verifyOutput.findingFamilies !== undefined
                   ? { findingFamilies: verifyOutput.findingFamilies }
                   : {}),
@@ -4832,11 +5224,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
             ) {
               const nextRound = onlineReviewRound + 1;
+              const fixAuthKeys = (
+                onlineReviewLanding?.fixMarkedFindingIdentityKeys ?? []
+              ).filter((key) => typeof key === "string" && key.trim().length > 0);
+              const fixAuthThreads = (
+                onlineReviewLanding?.fixMarkedFindingThreads ?? []
+              ).flatMap((binding) =>
+                typeof binding.identityKey === "string" &&
+                binding.identityKey.trim().length > 0 &&
+                typeof binding.threadId === "string" &&
+                binding.threadId.trim().length > 0
+                  ? [
+                      {
+                        identityKey: binding.identityKey,
+                        threadId: binding.threadId,
+                      },
+                    ]
+                  : [],
+              );
               const fixCommittedMarker = {
                 step: "S10" as const,
                 event: "online_review_fix_committed" as const,
                 fixCommitSha: lastOnlineReviewFixCommitSha!,
                 onlineReviewRound,
+                ...(fixAuthKeys.length > 0
+                  ? { fixMarkedFindingIdentityKeys: fixAuthKeys }
+                  : {}),
+                ...(fixAuthThreads.length > 0
+                  ? { fixMarkedFindingThreads: fixAuthThreads }
+                  : {}),
               };
               ledger.push(fixCommittedMarker);
               if (stateDir !== undefined) {
@@ -4993,6 +5409,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           stepSessionId = result.sessionId;
           lastOutput = output;
         } catch (err) {
+          // #683: S9–S12 online-review legs hit the same 429 park family as
+          // S2/S7 — do NOT fall into errorTermination (would sticky-fail a
+          // quota wall and break sliceQuotaWaitPending resume).
+          if (isQuotaWaitForResetError(err)) {
+            return await parkQuotaWaitForReset({
+              step: reviewStep,
+              err,
+              ledger,
+              stateDir,
+              sessionId,
+              backend,
+              deferredFindings,
+              resolveBranchHEAD,
+              hashPrompt: (pf, s) => hashPrompt(pf, s, backend),
+            });
+          }
           return await errorTermination(step, err);
         }
         break;

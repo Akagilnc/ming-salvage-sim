@@ -29,10 +29,15 @@ when `$ORCHESTRATOR_FIX_FINDINGS_PATH` is set (S6 re-review after coder-fix).
   calls replaced by mocks. Any such weakened or altered test check is guilty until its justification traces
   to the issue/spec; otherwise report it as a blocking finding. Run this pass on
   every review and especially on S6 re-review after coder-fix.
+- **Ratified-assertion hunt.** Inspect modified or deleted test assertions. When
+  `preexistingAssertionTouched: true` is present in the findings landing file,
+  trace each touched assertion to an issue AC, ADR, or prior CMR ruling. A
+  conflicting change is a blocking `fix_now` finding, never a silent close.
 - Then translate any blocking findings into the structured `<review>` JSON
   contract required by the runner.
-- If `code-review` reports no blocking findings on either axis and the
-  weakened-checks hunt finds none, emit `<review>{"findings":[]}</review>`.
+- If `code-review` reports no blocking findings on either axis, the
+  weakened-checks hunt finds none, and the ratified-assertion hunt finds none,
+  emit `<review>{"findings":[]}</review>`.
 
 Before emitting your terminal verdict, read
 `/home/agent/.orchestrator/souls/output_protocol.md` and follow it exactly.
