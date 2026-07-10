@@ -26,7 +26,7 @@ when `$ORCHESTRATOR_FIX_FINDINGS_PATH` is set (S6 re-review after coder-fix).
 - **Weakened-checks hunt (mandatory after `/code-review`, before `<review>` JSON).**
   Diff the test files specifically: loosened or deleted assertions, expected values
   rewritten to match new behaviour, skipped tests, widened tolerances, and real
-  calls replaced by mocks. A changed test is guilty until its justification traces
+  calls replaced by mocks. Any such weakened or altered test check is guilty until its justification traces
   to the issue/spec; otherwise report it as a blocking finding. Run this pass on
   every review and especially on S6 re-review after coder-fix.
 - Then translate any blocking findings into the structured `<review>` JSON

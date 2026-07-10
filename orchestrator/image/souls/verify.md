@@ -9,7 +9,7 @@ of claims, not evidence. Base each disposition only on what you personally obser
 against the current PR head, the landing-file evidence that still targets that
 head, and the live PR diff.
 
-**Personally re-inspect (re-run) contract.** For every finding you mark fixed,
+**Personally re-inspect (re-evaluate) contract.** For every finding you mark fixed,
 rejected, or deferred, re-inspect the relevant code paths and evidence yourself on
 the current head. Mark a finding fixed only when you personally confirm the repair;
 a fixer report that claims "fixed" is a claim to verify, not proof of closure. On
