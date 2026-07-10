@@ -18,6 +18,19 @@ describe("stripOrganicMarkdown", () => {
     expect(stripOrganicMarkdown("1. 第一项\n- 第二项\n2) 第三项\n* 第四项")).toBe("第一项\n第二项\n第三项\n第四项");
   });
 
+  it("removes headings, blockquotes, links, and inline-code markers", () => {
+    expect(stripOrganicMarkdown("# 标题\n> 引文\n[正文](https://example.com)\n`代码`"))
+      .toBe("标题\n引文\n正文\n代码");
+  });
+
+  it("does not strip underscores inside words or multiplication asterisks", () => {
+    expect(stripOrganicMarkdown("snake_case_value\n2 * 3 * 4")).toBe("snake_case_value\n2 * 3 * 4");
+  });
+
+  it("does not consume blank lines before list markers", () => {
+    expect(stripOrganicMarkdown("前段。\n\n1. 第一项")).toBe("前段。\n\n第一项");
+  });
+
   it("does not mutate the source string", () => {
     const source = "**原文**\n- 条目";
     stripOrganicMarkdown(source);

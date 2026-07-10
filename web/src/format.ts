@@ -324,7 +324,11 @@ export function labelClass(key: string): string {
 }
 export const stripOrganicMarkdown = (text: string): string => {
   return text
-    .replace(/^\s*(?:[-+*]|\d+[.)])\s+/gm, "")
-    .replace(/(\*\*|__)(.*?)\1/g, "$2")
-    .replace(/(\*|_)(.*?)\1/g, "$2");
+    .replace(/`([^`\n]*)`/g, "$1")
+    .replace(/\[([^\]\n]+)\]\([^)]+\)/g, "$1")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]{0,3}>[ \t]?/gm, "")
+    .replace(/^[ \t]*(?:[-+*]|\d+[.)])[ \t]+/gm, "")
+    .replace(/(?<!\w)(\*\*|__)(?=\S)([^\n]*?\S)\1(?!\w)/g, "$2")
+    .replace(/(?<!\w)(\*|_)(?=\S)([^\n]*?\S)\1(?!\w)/g, "$2");
 };
