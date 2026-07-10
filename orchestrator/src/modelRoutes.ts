@@ -266,7 +266,17 @@ function assertKnownWorkerSlug(slug: string): void {
 
 function legForSlug(slug: string): ModelRouteLeg {
   const trimmed = slug.trim();
-  return { slug: trimmed, family: modelFamilyForCmrReviewLeg(trimmed) };
+  // Route declarations are executable live configuration. Historical CMR
+  // labels remain parseable through modelFamilyForCmrReviewLeg, but can never
+  // be selected as a current review worker.
+  try {
+    return { slug: trimmed, family: modelFamilyForSlug(trimmed) };
+  } catch {
+    throw new Error(
+      `unknown cmr review leg slug "${trimmed}". Register a live worker in ` +
+        "MODEL_SLUG_REGISTRY before selecting it in a route.",
+    );
+  }
 }
 
 function resolveLegCollection(slugs: ReadonlyArray<string>): ReadonlyArray<ModelRouteLeg> {
@@ -338,7 +348,7 @@ export function resolveRouteModels(
   for (const slot of MODEL_ROUTE_SLOTS) assertKnownWorkerSlug(slots[slot]);
   for (const collection of MODEL_ROUTE_LEG_COLLECTIONS) {
     legCollections[collection] = legCollections[collection].map((leg) => {
-      const family = modelFamilyForCmrReviewLeg(leg.slug);
+      const family = modelFamilyForSlug(leg.slug);
       if (family !== leg.family) {
         throw new Error(
           `cmr review leg "${leg.slug}" declares family "${leg.family}" but registry says "${family}"`,
@@ -650,18 +660,10 @@ export function cmrLegAccountingFailure(
     : isResolvedModelRoute(routeOrEnv)
       ? routeOrEnv.legCollections.cmrReview.map((leg) => leg.slug)
       : cmrReviewLegs(routeOrEnv ?? process.env).map((leg) => leg.slug);
-  // Historical replay and durable-ledger fixtures retain their original 5.5
-  // evidence. Treat that retired leg name as the current Sol review officer for
-  // accounting only; live routes and emitted route artifacts remain 5.6-only.
-  const normalizeHistoricalLeg = (slug: string) =>
-    slug === "gpt-5.5" && declaredLegs.includes(REVIEWER_CODEX_SLUG)
-      ? REVIEWER_CODEX_SLUG
-      : slug;
-  const successfulLegs = input.successfulLegs.map(normalizeHistoricalLeg);
-  const skippedLegs = (input.skippedLegs ?? []).map((leg) => ({
-    ...leg,
-    slug: normalizeHistoricalLeg(leg.slug),
-  }));
+  // This is live route accounting. A recorded historical 5.5 leg is evidence
+  // of that past run, never a synonym for the current Sol officer.
+  const successfulLegs = input.successfulLegs;
+  const skippedLegs = input.skippedLegs ?? [];
   const declared = new Set(declaredLegs);
   const undeclaredSuccessful = successfulLegs.filter((slug) => !declared.has(slug));
   if (undeclaredSuccessful.length > 0) {

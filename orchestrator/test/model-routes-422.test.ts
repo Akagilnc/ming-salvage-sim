@@ -75,12 +75,27 @@ describe("#422 model route presets", () => {
   it("single-slot overrides win over the selected base route", () => {
     const resolved = resolveRouteModels("normal", {
       reviewer: "opus",
-      ship: "gpt-5.5",
+      ship: "gpt-5.6-terra",
     });
 
     expect(resolved.slots.reviewer).toBe("opus");
-    expect(resolved.slots.ship).toBe("gpt-5.5");
+    expect(resolved.slots.ship).toBe("gpt-5.6-terra");
     expect(resolved.slots.coder).toBe("gpt-5.6-terra");
+  });
+
+  it("rejects retired 5.5 from every live route surface", () => {
+    expect(() => resolveRouteModels("normal", { ship: "gpt-5.5" })).toThrow(
+      /unknown model slug/i,
+    );
+    expect(() =>
+      resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.5", "agy"] }),
+    ).toThrow(/unknown cmr review leg slug/i);
+    expect(() =>
+      activeModelRoute({
+        ORCHESTRATOR_ROUTE: "normal",
+        ORCHESTRATOR_REVIEWER_MODEL: "gpt-5.5",
+      }),
+    ).toThrow(/unknown model slug/i);
   });
 
   it("cheap routes keep only the pressured family's CMR strong leg", () => {
@@ -117,7 +132,7 @@ describe("#422 model route presets", () => {
   it("fails closed for unknown routes, slots, and slugs", () => {
     expect(() => resolveRouteModels("missing", {})).toThrow(/unknown route/i);
     expect(() =>
-      resolveRouteModels("normal", { nope: "gpt-5.5" }),
+      resolveRouteModels("normal", { nope: "gpt-5.6-sol" }),
     ).toThrow(/unknown model slot/i);
     expect(() =>
       resolveRouteModels("normal", { coder: "does-not-exist" }),
@@ -151,11 +166,7 @@ describe("#422 model route presets", () => {
       { slot: "merger", slug: "opus", family: "claude" },
     ]);
 
-    const badLeg = resolveRouteModels(
-      "claude-tight",
-      {},
-      { cmrReview: ["gpt-5.5", "opus"] },
-    );
+    const badLeg = resolveRouteModels("claude-tight", {}, { cmrReview: ["gpt-5.6-sol", "opus"] });
 
     expect(badLeg.tightFamilyViolations).toEqual([
       { slot: "cmrReview", slug: "opus", family: "claude" },
@@ -179,14 +190,14 @@ describe("#422 model route presets", () => {
     expect(
       modelForSlot("ship", {
         ORCHESTRATOR_ROUTE: "normal",
-        ORCHESTRATOR_SHIP_MODEL: "gpt-5.5",
+        ORCHESTRATOR_SHIP_MODEL: "gpt-5.6-terra",
       }),
-    ).toBe("gpt-5.5");
+    ).toBe("gpt-5.6-terra");
 
     expect(() =>
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "claude-tight",
-        ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.5,opus",
+        ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.6-sol,opus",
       }),
     ).toThrow(/tight route violation/i);
   });
@@ -206,11 +217,11 @@ describe("#422 model route presets", () => {
 
     const overridden = activeModelRoute({
       ORCHESTRATOR_ROUTE: "normal",
-      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '"gpt-5.5", \'opus\'',
+      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '"gpt-5.6-sol", \'opus\'',
     });
 
     expect(overridden.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
-      "gpt-5.5",
+      "gpt-5.6-sol",
       "opus",
     ]);
   });
@@ -221,12 +232,23 @@ describe("#422 model route presets", () => {
     ).toThrow(/unknown cmr review leg slug/i);
 
     expect(
-      resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.5", "agy"] })
+      resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.6-sol", "agy"] })
         .legCollections.cmrReview,
     ).toEqual([
-      { family: "codex", slug: "gpt-5.5" },
+      { family: "codex", slug: "gpt-5.6-sol" },
       { family: "agy", slug: "agy" },
     ]);
+  });
+
+  it("does not rewrite a historical 5.5 result as the live Sol leg", () => {
+    const liveRoute = resolveRouteModels("normal", {});
+
+    expect(
+      cmrLegAccountingFailure(
+        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
+        liveRoute,
+      ),
+    ).toMatch(/successful legs that were not declared.*gpt-5\.5/i);
   });
 
   it("rejects duplicate CMR leg accounting entries before set-based reconciliation", () => {
@@ -251,7 +273,7 @@ describe("#422 model route presets", () => {
   it("does not treat shallow route-shaped objects as resolved routes", () => {
     const malformedRoute = {
       slots: {},
-      legCollections: { cmrReview: "gpt-5.5,opus,agy" },
+      legCollections: { cmrReview: "gpt-5.6-sol,opus,agy" },
       tightFamilyViolations: "none",
     };
 

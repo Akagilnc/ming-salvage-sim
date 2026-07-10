@@ -717,7 +717,7 @@ describe("#378 family mountShipAuth — writes a minimal danger-full-access conf
     writeFileSync(
       join(codexDir, "config.toml"),
       [
-        'model = "gpt-5.5"',
+        'model = "gpt-5.6-sol"',
         'sandbox_mode = "workspace-write"',
         'notify = ["/Users/host/notify.app"]',
         '[plugins."github@openai-curated"]',

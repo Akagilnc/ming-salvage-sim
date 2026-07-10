@@ -109,7 +109,7 @@ const BASE_FINDING: Finding = {
 
 // Replay fixtures preserve their recorded 5.5 CMR leg; modelRoutes normalizes
 // it only when comparing the fixture against a current live route.
-const DEFAULT_SUCCESSFUL_CMR_LEGS = ["opus", "gpt-5.5", "agy"] as const;
+const DEFAULT_SUCCESSFUL_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
 
 function scenario(input: {
   readonly id: string;
@@ -2088,7 +2088,7 @@ async function routeEnvMismatchReplay(): Promise<SeamReplay> {
   const result = await withRouteEnv(
     {
       ORCHESTRATOR_ROUTE: "claude-tight",
-      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '["gpt-5.5","agy"]',
+      ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: '["gpt-5.6-sol","agy"]',
     },
     () =>
       runVerifyCmr({
@@ -2204,7 +2204,7 @@ async function providerStrongLegPassReplay(input: {
       output: {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -2216,7 +2216,7 @@ async function providerStrongLegPassReplay(input: {
       output: {
         kind: "cmr",
         converged: true,
-        successfulLegs: ["gpt-5.5"],
+        successfulLegs: ["gpt-5.6-sol"],
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -2261,7 +2261,7 @@ async function providerStrongLegPassReplay(input: {
       status: "success",
       routeName: "claude-tight",
       dispatches: backend.dispatches,
-      successfulLegs: ["gpt-5.5"],
+      successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: ["agy"],
       providerDegraded,
     },
