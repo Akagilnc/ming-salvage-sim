@@ -19,7 +19,12 @@ from ming_sim.content import GameContent
 from ming_sim.context import character_context_with_db, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.llm_model import create_chat_model
-from ming_sim.qualitative import building_output_effect, building_qualitative_fields, power_band
+from ming_sim.qualitative import (
+    building_output_effect,
+    building_qualitative_fields,
+    power_band,
+    safe_historical_text,
+)
 from ming_sim.token_stats import tlog
 from ming_sim.tools import _duty_location, build_minister_tools
 
@@ -183,7 +188,8 @@ def build_last_gazette_brief(context: CourtContext) -> str:
     report = context.db.get_turn_report(prev_turn)
     if not report or not report.strip():
         return ""
-    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + report.strip()
+    safe_report = safe_historical_text(report, "上回合邸报")
+    return "【上回合邸报全文（上月朝局实录，作答涉及上月动静以此为准；更早月份调 read_past_report 查）】\n" + safe_report
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
@@ -198,7 +204,7 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
         return ""
     lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]
     for c in chapters:
-        body = (c.get("body") or c.get("title") or "").strip()
+        body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
         if body:
             lines.append(f"- {c['year']}年{c['period']}月：{body}")
     if len(lines) == 1:
