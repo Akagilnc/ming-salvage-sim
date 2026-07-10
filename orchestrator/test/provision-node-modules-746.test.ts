@@ -3,7 +3,7 @@
  *
  * Prefer cloning a lockfile-matching template node_modules (`cp -cR`) over a full
  * `npm ci`. Mismatched / missing template → real npm. Pure helper + installDeps /
- * prepareWorktree wiring.
+ * prepareWorktree wiring (including RealBackend.prepareWorktreeLocked paths).
  */
 
 import { execFileSync } from "node:child_process";
@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import type * as sc from "@ai-hero/sandcastle";
 
 import {
   canClonefileNodeModules,
@@ -31,6 +32,12 @@ import {
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../src/family/realFamilyBackend.js";
+import {
+  clonePathFor,
+  RealBackend,
+  type RealBackendOptions,
+  repoSlug,
+} from "../src/realBackend.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "prompts");
@@ -331,5 +338,173 @@ describe("RealFamilyBackend.installDeps uses clonefile when depsTemplateRoot mat
     ).runVerifyForTest();
 
     expect(calls[0]).toEqual({ file: "npm", args: ["ci"], cwd: verifyCwd });
+  });
+});
+
+/**
+ * #746 R1 P2 — regression through the real prepareWorktreeLocked dispatch paths.
+ * Helper-level tests alone miss a broken clonefile/fallback wire in
+ * RealBackend.prepareWorktree (NEW cut vs resident existing.path reuse).
+ */
+describe("RealBackend.prepareWorktreeLocked provisions node_modules (#746)", () => {
+  const ISSUE = 746;
+  const BRANCH = `feat/issue-${ISSUE}`;
+  const REMOTE = "https://github.com/owner/name.git";
+
+  type Call = { file: string; args: string[]; cwd?: string };
+
+  function backendOpts(
+    sourceRepo: string,
+    home: string,
+  ): RealBackendOptions {
+    return {
+      sourceRepo,
+      remote: REMOTE,
+      runKey: ISSUE,
+      repo: "owner/name",
+      imageName: "img",
+      skillsMount: "/tmp/skills",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      home,
+    };
+  }
+
+  it("NEW worktree path: after createResidentWorktree, clonefiles from sourceRepo", async () => {
+    const source = mkDir("rb-new-src-");
+    const home = mkDir("rb-new-home-");
+    writeProject(source, {
+      lock: LOCK_A,
+      withModules: true,
+      modulesMarker: "new-path-src",
+    });
+
+    const clone = clonePathFor(home, repoSlug(source, REMOTE), ISSUE);
+    const wtPath = join(clone, ".sandcastle", "worktrees", `issue-${ISSUE}`);
+    const calls: Call[] = [];
+
+    class NewPathBackend extends RealBackend {
+      protected override cloneDirExists(): boolean {
+        return true;
+      }
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+          return `${clone}/.git`;
+        }
+        if (file === "cp") {
+          execFileSync(file, args, { encoding: "utf8" });
+          return "";
+        }
+        // worktree list empty → FRESH cut; fetch/other git → success
+        return "";
+      }
+      protected override async createResidentWorktree(
+        branch: string,
+      ): Promise<sc.Worktree> {
+        writeProject(wtPath, { lock: LOCK_A });
+        return {
+          branch,
+          worktreePath: wtPath,
+          run: async () => ({}),
+          interactive: async () => ({}),
+          createSandbox: async () => ({}),
+          close: async () => ({}),
+          [Symbol.asyncDispose]: async () => {},
+        } as unknown as sc.Worktree;
+      }
+    }
+
+    const wt = await new NewPathBackend(backendOpts(source, home)).prepareWorktree(
+      ISSUE,
+      "main",
+    );
+
+    expect(wt.path).toBe(wtPath);
+    expect(wt.branch).toBe(BRANCH);
+    expect(calls.some((c) => c.file === "cp" && /^-cR$|^-Rc$/.test(c.args[0] ?? ""))).toBe(
+      true,
+    );
+    expect(
+      calls.some((c) => c.file === "npm" && (c.args[0] === "ci" || c.args[0] === "install")),
+    ).toBe(false);
+    expect(readFileSync(join(wtPath, "node_modules", ".marker"), "utf8")).toBe("new-path-src");
+  });
+
+  it("resident-reuse path (existing.path): after residue clean, clonefiles from sourceRepo", async () => {
+    const source = mkDir("rb-reuse-src-");
+    const home = mkDir("rb-reuse-home-");
+    writeProject(source, {
+      lock: LOCK_A,
+      withModules: true,
+      modulesMarker: "reuse-path-src",
+    });
+
+    const clone = clonePathFor(home, repoSlug(source, REMOTE), ISSUE);
+    const existingPath = join(clone, ".sandcastle", "worktrees", `issue-${ISSUE}`);
+    // Resident tree already on disk (resume / prior cut) — deps not yet present.
+    writeProject(existingPath, { lock: LOCK_A });
+
+    const calls: Call[] = [];
+
+    class ReusePathBackend extends RealBackend {
+      protected override cloneDirExists(): boolean {
+        return true;
+      }
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+          return `${clone}/.git`;
+        }
+        if (
+          file === "git" &&
+          args[0] === "worktree" &&
+          args[1] === "list" &&
+          args[2] === "--porcelain"
+        ) {
+          return [
+            `worktree ${existingPath}`,
+            "HEAD " + "b".repeat(40),
+            `branch refs/heads/${BRANCH}`,
+          ].join("\n");
+        }
+        if (file === "cp") {
+          execFileSync(file, args, { encoding: "utf8" });
+          return "";
+        }
+        // reset --hard / clean -fd stubbed (must not touch real FS)
+        return "";
+      }
+      protected override async createResidentWorktree(): Promise<sc.Worktree> {
+        throw new Error("reuse path must not cut a new worktree");
+      }
+    }
+
+    const wt = await new ReusePathBackend(backendOpts(source, home)).prepareWorktree(
+      ISSUE,
+      "main",
+    );
+
+    expect(wt.path).toBe(existingPath);
+    expect(wt.branch).toBe(BRANCH);
+
+    const ran = calls.map((c) => `${c.file} ${c.args.join(" ")}`);
+    // Fail-closed residue clean still precedes provision (ADR 0024 / 0017).
+    const resetIdx = ran.findIndex((r) => r === "git reset --hard HEAD");
+    const cleanIdx = ran.findIndex((r) => r === "git clean -fd");
+    const cpIdx = ran.findIndex((r) => r.startsWith("cp "));
+    expect(resetIdx).toBeGreaterThanOrEqual(0);
+    expect(cleanIdx).toBeGreaterThanOrEqual(0);
+    expect(cpIdx).toBeGreaterThan(Math.max(resetIdx, cleanIdx));
+
+    expect(calls.some((c) => c.file === "cp" && /^-cR$|^-Rc$/.test(c.args[0] ?? ""))).toBe(
+      true,
+    );
+    expect(
+      calls.some((c) => c.file === "npm" && (c.args[0] === "ci" || c.args[0] === "install")),
+    ).toBe(false);
+    expect(readFileSync(join(existingPath, "node_modules", ".marker"), "utf8")).toBe(
+      "reuse-path-src",
+    );
   });
 });

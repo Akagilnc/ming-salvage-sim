@@ -1,12 +1,51 @@
 /**
  * provisionNodeModules.ts — #746 host-side Node deps provisioning.
  *
- * Replace full `npm ci` with an APFS clonefile (`cp -cR`) of a lockfile-matching
- * template `node_modules` when possible. Lockfile hash mismatch / missing
- * template / clonefile failure → real `npm ci` (or `npm install` without a lock).
+ * ## Why shared-template clonefile (not a worktree pool)
  *
- * Scope (issue #746 MVP): one clonefile swap for the ~90s provisioning tax.
- * No pool daemon, no config surface, no warm-up scheduler.
+ * Issue #746 floated a warm worktree pool (N pre-provisioned trees, claim/return).
+ * This MVP deliberately does **not** pool worktrees. Instead it clonefiles
+ * (`cp -cR` / APFS clonefile(2)) a lockfile-matching `node_modules` from the
+ * already-warm monorepo at `sourceRepo` (or family `depsTemplateRoot`) into the
+ * slice worktree after the git cut.
+ *
+ * Reasons:
+ * - The ~90s tax is almost entirely `npm ci`, not `git worktree add`. Swapping
+ *   only the deps step removes that tax without a pool size policy, warm-up
+ *   scheduler, claim/return protocol, or inventory GC.
+ * - ADR 0024 keeps **one resident worktree per slice** as commit + crash-resume
+ *   truth (ADR 0017). A pool of disposable/reusable trees would invent a second
+ *   lifecycle next to that resident model (who owns dirty trees? when reclaim?).
+ * - The host monorepo already has warm `node_modules`; clonefile is CoW-cheap on
+ *   APFS and needs no long-lived pool state.
+ *
+ * Out of scope for this module: pool daemon, config surface, warm-up scheduler.
+ *
+ * ## Dirty-cache / staleness criterion
+ *
+ * Sole freshness signal = **SHA-256 of `package-lock.json` file bytes** on target
+ * vs template (`lockfileFingerprint`). Match **and** template `node_modules`
+ * present as a directory ⇒ clonefile allowed. Boundaries:
+ * - No lock on either side → not clonefile (target uses `npm install`).
+ * - Lock present but hashes differ → `npm ci` (wave mutated the lock; template
+ *   tree is wrong deps).
+ * - Template lacks `node_modules` / not a dir → `npm ci`/`install`.
+ * - Clonefile command throws (non-APFS, no `cp -c`, I/O) → fall through to npm.
+ * - **Never** mtime, presence-of-`node_modules` alone, or package.json hash.
+ *
+ * ## Relation to ADR 0024 resident worktree reap / clean
+ *
+ * This is host-side **deps only**. It does not create, dispose, pool, or prune
+ * worktrees. Lifecycle stays ADR 0024 / 0017:
+ * - Prepare still: find existing → fail-closed residue clean (`reset --hard` +
+ *   `clean -fd`, **no** repo-level `worktree prune`) → return path; else cut
+ *   resident worktree and **do not** `.close()` it.
+ * - Reap only on terminal-success GC, never via normal-path disposal.
+ * - Provision runs on **both** fresh cut and resident-reuse (after residue clean)
+ *   so a reused tree whose modules were wiped by `clean -fd` (or never installed)
+ *   is re-ensured without a full `npm ci` when the lock still matches source.
+ * - Sandcastle prune stays Sandcastle's job inside the dedicated clone; the
+ *   template root is the driver's `sourceRepo`, not a pooled worktree.
  */
 
 import { createHash } from "node:crypto";
