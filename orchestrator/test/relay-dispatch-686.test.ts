@@ -9,8 +9,9 @@
  *   5. closing baton → normal review gate (no relay exemption)
  *   6. route pool table + three-tier park/relay at #683 disposition point
  *   7. next baton = #767 roster + pool-orthogonal lookup (换马甲 then 顺位)
+ *   8. R1: REAL runner park sites (S9/S2) wire the fork — not a parallel dead seam
  */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -40,7 +41,20 @@ import {
   resumeRelayFromLedger,
   type RelayHandoffLedgerEvent,
 } from "../src/relayDispatch.js";
-import { decideIdleAfterProbe } from "../src/quotaProbe.js";
+import { decideIdleAfterProbe, QuotaWaitForResetError } from "../src/quotaProbe.js";
+import { runOrchestrator } from "../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
+import type {
+  Backend,
+  IssueMeta,
+  IssueSnapshot,
+  PersistentLedgerEntry,
+  ResumeState,
+  StepOutput,
+  WorkerResult,
+  WorkerSpec,
+  WorktreeHandle,
+} from "../src/types.js";
 
 describe("#686 relay tag contract (fail-closed)", () => {
   it("accepts phase_complete build|clear with state_summary + remaining", () => {
@@ -155,6 +169,26 @@ describe("#686 route pool table + three-tier park/relay (ADR 0124/0125)", () => 
     expect(
       decideParkOrRelay({
         now,
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        hasLiveBaton: false,
+      }),
+    ).toBe("park_fallback");
+  });
+
+  it("already-elapsed resetAt is beyond T (never clamped into park)", () => {
+    const resetAt = new Date(now.getTime() - 60_000); // 1 min ago
+    expect(
+      decideParkOrRelay({
+        now,
+        resetAt,
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        hasLiveBaton: true,
+      }),
+    ).toBe("relay");
+    expect(
+      decideParkOrRelay({
+        now,
+        resetAt,
         parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
         hasLiveBaton: false,
       }),
@@ -301,7 +335,6 @@ describe("#686 three handoff triggers", () => {
 
   it("probe 429 → preserve worktree, record interrupt (no kill, no reset)", async () => {
     const killPidTree = vi.fn();
-    const resetBeforeRetry = vi.fn();
     const result = await decideRelayAfterIdle({
       probeKind: "quota_limited",
       resetAt: new Date(now.getTime() + 45 * 60 * 1000),
@@ -329,7 +362,6 @@ describe("#686 three handoff triggers", () => {
       ],
       workerPid: 4242,
       killPidTree,
-      resetBeforeRetry,
     });
     expect(result.kind).toBe("relay");
     if (result.kind !== "relay") return;
@@ -339,12 +371,10 @@ describe("#686 three handoff triggers", () => {
       pool: "cursor",
     });
     expect(killPidTree).not.toHaveBeenCalled();
-    expect(resetBeforeRetry).not.toHaveBeenCalled();
   });
 
   it("hang-with-live-pool → kill pid tree then relay (not same-role retry)", async () => {
     const killPidTree = vi.fn();
-    const resetBeforeRetry = vi.fn();
     const result = await decideRelayAfterIdle({
       probeKind: "ok",
       now,
@@ -370,14 +400,12 @@ describe("#686 three handoff triggers", () => {
       ],
       workerPid: 99,
       killPidTree,
-      resetBeforeRetry,
     });
     expect(result.kind).toBe("relay");
     if (result.kind !== "relay") return;
     expect(result.preserveWorktree).toBe(true);
     expect(result.trigger).toBe("hang_with_live_pool");
     expect(killPidTree).toHaveBeenCalledWith(99);
-    expect(resetBeforeRetry).not.toHaveBeenCalled();
     expect(result.nextBaton?.modelId).toBe("terra@med");
   });
 
@@ -641,5 +669,467 @@ describe("#686 relay chain ends at normal review gate", () => {
         lastRelayPhase: "clear",
       }),
     ).toBe(false);
+  });
+});
+
+/**
+ * #686 R1 — behavior through the REAL runner park sites (not a parallel seam).
+ * Seams: parkOrRelayQuotaWall at S9 (and S2/S7 siblings) + mechanical-retry
+ * exhaustion → same relay decision.
+ */
+describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
+  const NOW = new Date("2026-07-10T12:00:00.000Z");
+  const PR_URL = "pr://slice/relay-686";
+
+  function livePools(
+    limited: BillingPoolId,
+    resetAt: Date,
+  ): BillingPoolEntry[] {
+    return [
+      {
+        id: limited,
+        status: "limited",
+        resetAt,
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        models: ["grok-4.5"],
+      },
+      {
+        id: "cursor",
+        status: "live",
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        models: ["grok-4.5"],
+      },
+      {
+        id: "codex-5h",
+        status: "live",
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        models: ["terra@med", "luna@med"],
+      },
+    ];
+  }
+
+  function noLivePools(
+    limited: BillingPoolId,
+    resetAt: Date,
+  ): BillingPoolEntry[] {
+    return [
+      {
+        id: limited,
+        status: "limited",
+        resetAt,
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        models: ["grok-4.5"],
+      },
+    ];
+  }
+
+  function priorThroughShip(worktree: WorktreeHandle): PersistentLedgerEntry[] {
+    const ts = "2026-07-10T00:00:00.000Z";
+    const base = (step: PersistentLedgerEntry["step"], output?: StepOutput) => ({
+      step,
+      sessionId: "session-prior",
+      prompt_hash: `hash-${step}`,
+      branchHEAD: "deadbeefcommitsha",
+      ts,
+      ...(output !== undefined ? { output } : {}),
+    });
+    return [
+      base("S0"),
+      base("S1"),
+      base("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      base("S3", { kind: "reviewer", findings: [] }),
+      base("S4"),
+      base("S7", {
+        kind: "ship",
+        branch: worktree.branch,
+        status: "pr_opened",
+        pr: PR_URL,
+        prHead: "deadbeefcommitsha",
+      }),
+    ];
+  }
+
+  function quotaWaitError(
+    step: "S9" | "S2",
+    resetAt: Date,
+    pool = "grok",
+  ): QuotaWaitForResetError {
+    return new QuotaWaitForResetError({
+      disposition: {
+        kind: "wait_for_reset",
+        pool: pool as "grok" | "zai",
+        resetAt,
+        reason: "quota limited (429); wait for reset",
+      },
+      applied: {
+        killed: false,
+        ledgerEntry: {
+          event: "quota_wait_for_reset",
+          pool: pool as "grok" | "zai",
+          resetAt: resetAt.toISOString(),
+          reason: "quota limited (429); wait for reset",
+          step,
+          workerPid: 9001,
+          ts: NOW.toISOString(),
+        },
+      },
+      pool: pool as "grok" | "zai",
+      probe: { kind: "quota_limited", resetAt, detail: "429" },
+    });
+  }
+
+  class S9RelayBackend implements Backend {
+    public ledgerWrites: PersistentLedgerEntry[] = [];
+    public verifyDispatches = 0;
+    public verifyModels: string[] = [];
+    public throwQuotaOnFirstVerify = true;
+    private readonly resumeState: ResumeState;
+    private readonly worktree: WorktreeHandle;
+
+    constructor(worktree: WorktreeHandle, ledger: PersistentLedgerEntry[]) {
+      this.worktree = worktree;
+      this.resumeState = {
+        worktree,
+        stateDir: join(worktree.path, "..", ".ledger-686"),
+        ledger,
+      };
+    }
+
+    async smokeModelRoute(route: any): Promise<any> {
+      const { smokeRouteModels } = await import("../src/modelRoutes.js");
+      return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+    }
+    async findResumeState(): Promise<ResumeState> {
+      return this.resumeState;
+    }
+    async cleanResidue(): Promise<void> {}
+    async resumeSession(): Promise<StepOutput> {
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    }
+    async fetchIssueMeta(n: number): Promise<IssueMeta> {
+      return {
+        number: n,
+        isReadyForAgent: true,
+        hasSubIssues: false,
+        isClosed: false,
+        openBlockedBy: [],
+        body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+      };
+    }
+    async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+      return {
+        number: n,
+        body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+        comments: [],
+        agentBrief: "",
+      };
+    }
+    async prepareWorktree(): Promise<WorktreeHandle> {
+      return this.worktree;
+    }
+    async writeSnapshot(): Promise<void> {}
+    async runStep(): Promise<StepOutput> {
+      return { kind: "coder", committed: true, commitsAdded: 1 };
+    }
+    async push(): Promise<void> {}
+    async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+      this.ledgerWrites.push(entry);
+    }
+    async pollOnlineReviewState(input: {
+      repo: string;
+      prUrl: string;
+      pollCount: number;
+    }) {
+      void input;
+      return {
+        prUrl: PR_URL,
+        headOid: "deadbeefcommitsha",
+        totalFindingCount: 0,
+        quiescent: true,
+        bots: {
+          coderabbit: { state: "complete", findingCount: 0 },
+          sourcery: { state: "complete", findingCount: 0 },
+          codex: { state: "complete", findingCount: 0 },
+          gemini: { state: "complete", findingCount: 0 },
+        },
+        droppedBots: [],
+        threads: [],
+        checkRuns: [],
+      };
+    }
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "verify") {
+        this.verifyDispatches += 1;
+        this.verifyModels.push(spec.model);
+        if (this.throwQuotaOnFirstVerify) {
+          this.throwQuotaOnFirstVerify = false;
+          throw quotaWaitError("S9", new Date(NOW.getTime() + 45 * 60 * 1000));
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "verify",
+            converged: true,
+            findings: [],
+            isRecheck: false,
+          } as StepOutput,
+        };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      if (skeleton !== undefined) return skeleton;
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      };
+    }
+  }
+
+  let tmp: string | undefined;
+  afterEach(() => {
+    if (tmp !== undefined) {
+      rmSync(tmp, { recursive: true, force: true });
+      tmp = undefined;
+    }
+  });
+
+  it("S9 429 beyond T + live baton → handoff event + focus file + next baton dispatched", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-s9-"));
+    const worktree: WorktreeHandle = {
+      branch: "feat/686-relay-s9",
+      base: "main",
+      path: tmp,
+    };
+    const resetAt = new Date(NOW.getTime() + 45 * 60 * 1000);
+    const backend = new S9RelayBackend(worktree, priorThroughShip(worktree));
+    const prevCoder = process.env.ORCHESTRATOR_CODER_MODEL;
+    process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+    let result;
+    try {
+      result = await runOrchestrator({
+        issueNumber: 686,
+        backend,
+        relayPools: livePools("grok-build", resetAt),
+        now: () => NOW,
+      });
+    } finally {
+      if (prevCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
+      else process.env.ORCHESTRATOR_CODER_MODEL = prevCoder;
+    }
+
+    const handoff = result.stepLedger.find(
+      (e) => e.event === "relay_baton_handoff",
+    );
+    expect(handoff).toMatchObject({
+      event: "relay_baton_handoff",
+      trigger: "quota_wall",
+      fromModelId: "grok-4.5",
+      toModelId: "grok-4.5",
+      toPool: "cursor",
+      step: "S9",
+    });
+    const focusPath = join(tmp, RELAY_FOCUS_FILENAME);
+    expect(existsSync(focusPath)).toBe(true);
+    expect(readFileSync(focusPath, "utf8")).toContain("cursor");
+    // Next baton re-dispatched S9 verify (in-process continue after relay).
+    expect(backend.verifyDispatches).toBeGreaterThanOrEqual(2);
+    expect(result.stepLedger.some((e) => e.event === "quota_wait_for_reset")).toBe(
+      false,
+    );
+  });
+
+  it("S9 429 with no live baton → parks as before (quota_wait_for_reset)", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-park-"));
+    const worktree: WorktreeHandle = {
+      branch: "feat/686-relay-park",
+      base: "main",
+      path: tmp,
+    };
+    const resetAt = new Date(NOW.getTime() + 45 * 60 * 1000);
+    const backend = new S9RelayBackend(worktree, priorThroughShip(worktree));
+    const result = await runOrchestrator({
+      issueNumber: 686,
+      backend,
+      relayPools: noLivePools("grok-build", resetAt),
+      now: () => NOW,
+    });
+
+    expect(result.status).toBe("escalate");
+    expect(
+      result.stepLedger.find((e) => e.event === "quota_wait_for_reset"),
+    ).toMatchObject({ event: "quota_wait_for_reset", step: "S9" });
+    expect(
+      result.stepLedger.some((e) => e.event === "relay_baton_handoff"),
+    ).toBe(false);
+    expect(backend.verifyDispatches).toBe(1);
+  });
+
+  it("S9 429 within T → parks even when a live baton exists", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-within-t-"));
+    const worktree: WorktreeHandle = {
+      branch: "feat/686-relay-within-t",
+      base: "main",
+      path: tmp,
+    };
+    const resetAt = new Date(NOW.getTime() + 10 * 60 * 1000); // 10 min < T
+    class WithinTBackend extends S9RelayBackend {
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "verify") {
+          this.verifyDispatches += 1;
+          this.verifyModels.push(spec.model);
+          throw quotaWaitError("S9", resetAt);
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+    }
+    const backend = new WithinTBackend(worktree, priorThroughShip(worktree));
+    const result = await runOrchestrator({
+      issueNumber: 686,
+      backend,
+      relayPools: livePools("grok-build", resetAt),
+      now: () => NOW,
+    });
+
+    expect(result.status).toBe("escalate");
+    expect(
+      result.stepLedger.find((e) => e.event === "quota_wait_for_reset"),
+    ).toBeDefined();
+    expect(
+      result.stepLedger.some((e) => e.event === "relay_baton_handoff"),
+    ).toBe(false);
+    expect(backend.verifyDispatches).toBe(1);
+  });
+
+  it("mechanical-retry exhaustion with live baton → relay (not durable abort)", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-exhaust-"));
+    const worktree: WorktreeHandle = {
+      branch: "feat/686-relay-exhaust",
+      base: "main",
+      path: tmp,
+    };
+    let coderFails = 0;
+    let coderModels: string[] = [];
+    class ExhaustBackend implements Backend {
+      public ledgerWrites: PersistentLedgerEntry[] = [];
+      async smokeModelRoute(route: any): Promise<any> {
+        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async cleanResidue(): Promise<void> {}
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+        };
+      }
+      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+        return {
+          number: n,
+          body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+          comments: [],
+          agentBrief: "",
+        };
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      }
+      async writeSnapshot(): Promise<void> {}
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async push(): Promise<void> {}
+      async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        this.ledgerWrites.push(entry);
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "coder" && spec.id === "S2") {
+          coderModels.push(spec.model);
+          coderFails += 1;
+          // Wall-hit baton keeps failing; relayed baton succeeds.
+          if (spec.model === "grok-4.5") {
+            return { kind: "failed", reason: "process crashed mid-build" };
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [] },
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: worktree.branch,
+              status: "pushed",
+            },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+    }
+    const backend = new ExhaustBackend();
+    const result = await runOrchestrator({
+      issueNumber: 686,
+      backend,
+      relayPools: [
+        {
+          id: "grok-build",
+          status: "dead",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["grok-4.5"],
+        },
+        {
+          id: "cursor",
+          status: "dead",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["grok-4.5"],
+        },
+        {
+          id: "codex-5h",
+          status: "live",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["terra@med", "luna@med"],
+        },
+      ],
+      now: () => NOW,
+    });
+
+    const handoff = result.stepLedger.find(
+      (e) => e.event === "relay_baton_handoff",
+    );
+    expect(handoff).toMatchObject({
+      event: "relay_baton_handoff",
+      trigger: "mechanical_retry_exhausted",
+      toModelId: "terra@med",
+    });
+    expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
+    // Relayed baton was actually dispatched (terra slug).
+    expect(coderModels).toContain("gpt-5.6-terra");
+    expect(result.status).not.toBe("error");
   });
 });

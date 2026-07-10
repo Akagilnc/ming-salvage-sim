@@ -1771,6 +1771,24 @@ export interface RunInput {
    * run (the v0.1 behaviour — base=main, S7 pushes).
    */
   readonly family?: FamilyContext;
+  /**
+   * #686 — optional route pool table override for park-vs-relay at the #683
+   * disposition point. When absent, the runner builds a default table (wall-hit
+   * pool limited; other billing pools live). Tests that need #683 park-only
+   * behaviour pass a table with no live alternate baton.
+   */
+  readonly relayPools?: ReadonlyArray<{
+    readonly id: string;
+    readonly status: "live" | "limited" | "dead";
+    readonly resetAt?: Date;
+    readonly parkThresholdMs: number;
+    readonly models: ReadonlyArray<string>;
+  }>;
+  /**
+   * #686 — optional clock for park-vs-relay threshold tests (within T / beyond T).
+   * Production leaves this unset (wall clock).
+   */
+  readonly now?: () => Date;
 }
 
 /**

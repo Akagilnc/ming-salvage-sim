@@ -230,6 +230,9 @@ export { applyCoderRecToRoute, withCoderSlot } from "./modelRoutes.js";
 // ── relay dispatch (#686 / ADR 0124–0126) ───────────────────────────────────
 export {
   DEFAULT_PARK_THRESHOLD_MS,
+  DEFAULT_POOL_MODELS,
+  billingPoolFromQuotaPool,
+  buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
   selectNextRelayBaton,
@@ -251,6 +254,7 @@ export {
   classifyFailureForRetryOrRelay,
   decideRelayAfterIdle,
   forkQuotaWallAt683Point,
+  isRelayCandidateExhaustion,
   isRelayChainReadyForReviewGate,
   parseRelayTag,
   resumeRelayFromLedger,

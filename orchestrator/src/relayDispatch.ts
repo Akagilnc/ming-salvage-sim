@@ -150,7 +150,8 @@ export type RelayHandoffTrigger =
   | "hang_with_live_pool"
   | "self_reported_blocked"
   | "phase_complete"
-  | "pool_dead";
+  | "pool_dead"
+  | "mechanical_retry_exhausted";
 
 /**
  * Append-only ledger row when a baton hands off (#686).
@@ -282,135 +283,16 @@ export interface DecideRelayAfterIdleInput {
   readonly reviewerSlugs?: ReadonlyArray<string>;
   readonly workerPid: number;
   readonly killPidTree: (pid: number) => void | Promise<void>;
-  /**
-   * Mechanical-retry reset seam (#598/#661). Resource-failure paths MUST NOT
-   * call this — negative tests assert that.
-   */
-  readonly resetBeforeRetry?: () => void | Promise<void>;
   readonly state_summary?: string;
   readonly remaining?: string;
   readonly step?: StepId;
 }
 
 /**
- * Fork at the #683 idle/quota disposition point into park / relay /
- * hang-with-relay. Resource paths never call `resetBeforeRetry`.
- */
-export async function decideRelayAfterIdle(
-  input: DecideRelayAfterIdleInput,
-): Promise<RelayDispositionResult> {
-  const batonInput = {
-    currentModelId: input.currentModelId,
-    currentPool: input.currentPool,
-    rosterOrder: input.rosterOrder,
-    pools: input.pools,
-    reviewerSlugs: input.reviewerSlugs,
-  };
-
-  if (input.probeKind === "quota_limited") {
-    const live = hasLiveRelayBaton(batonInput);
-    const tier = decideParkOrRelay({
-      now: input.now,
-      resetAt: input.resetAt,
-      parkThresholdMs: input.parkThresholdMs,
-      hasLiveBaton: live,
-    });
-    if (tier === "park") {
-      return {
-        kind: "park",
-        preserveWorktree: true,
-        reason: "same-pool reset within T; park original baton",
-        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
-      };
-    }
-    if (tier === "park_fallback") {
-      return {
-        kind: "park_fallback",
-        preserveWorktree: true,
-        reason: "no live baton; park fallback",
-        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
-      };
-    }
-    // relay — do NOT kill (429 path preserves the parked process semantics of
-    // #683: sandbox may already be released; worktree drift stays).
-    const next = selectNextRelayBaton(batonInput);
-    if (next === undefined) {
-      return {
-        kind: "park_fallback",
-        preserveWorktree: true,
-        reason: "relay selected but no baton resolved; park fallback",
-        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
-      };
-    }
-    const ledgerEntry = buildRelayHandoffLedgerEntry({
-      trigger: "quota_wall",
-      state_summary:
-        input.state_summary ?? "quota wall interrupt; uncommitted drift preserved",
-      remaining: input.remaining,
-      fromModelId: input.currentModelId,
-      fromPool: input.currentPool,
-      toModelId: next.modelId,
-      toPool: next.pool,
-      step: input.step,
-      now: input.now,
-    });
-    return {
-      kind: "relay",
-      preserveWorktree: true,
-      trigger: "quota_wall",
-      nextBaton: next,
-      reason: "quota wall beyond T with live baton; relay",
-      ledgerEntry,
-    };
-  }
-
-  if (input.probeKind === "ok") {
-    // Hang with live pool → kill THIS pid tree, then relay (not same-role retry).
-    await input.killPidTree(input.workerPid);
-    const next = selectNextRelayBaton(batonInput);
-    if (next === undefined) {
-      return {
-        kind: "hang",
-        preserveWorktree: false,
-        reason: "hang; no live baton to relay to",
-      };
-    }
-    const ledgerEntry = buildRelayHandoffLedgerEntry({
-      trigger: "hang_with_live_pool",
-      state_summary:
-        input.state_summary ??
-        "worker hang with live pool; pid tree killed; drift preserved",
-      remaining: input.remaining,
-      fromModelId: input.currentModelId,
-      fromPool: input.currentPool,
-      toModelId: next.modelId,
-      toPool: next.pool,
-      step: input.step,
-      now: input.now,
-    });
-    return {
-      kind: "relay",
-      preserveWorktree: true,
-      trigger: "hang_with_live_pool",
-      nextBaton: next,
-      reason: "hang with live pool; killed pid tree and relay",
-      ledgerEntry,
-    };
-  }
-
-  // probe error → fail-safe hang (same as #683); no relay guess on unknown pool.
-  await input.killPidTree(input.workerPid);
-  return {
-    kind: "hang",
-    preserveWorktree: false,
-    reason: "idle probe error; fail-safe hang",
-  };
-}
-
-/**
- * Pure fork at the #683 `wait_for_reset` disposition point (ADR 0125).
- * Callers that already ran {@link import("./quotaProbe.js").decideIdleAfterProbe}
- * feed the wait_for_reset disposition here to choose park vs relay vs park_fallback.
+ * Pure integration entry at the #683 `wait_for_reset` disposition point
+ * (ADR 0125). This is the runner seam — {@link parkOrRelayQuotaWall} / hang
+ * helpers compose on top. Returns park / park_fallback / relay (+ baton +
+ * ledger row when relaying).
  */
 export function forkQuotaWallAt683Point(input: {
   readonly disposition: Extract<IdleDisposition, { kind: "wait_for_reset" }>;
@@ -467,6 +349,120 @@ export function forkQuotaWallAt683Point(input: {
       now: input.now,
     }),
   };
+}
+
+/**
+ * Idle-probe composition over {@link forkQuotaWallAt683Point} (quota path) plus
+ * hang-with-live-pool / probe-error kill paths. Thin delegate for non-runner
+ * callers; the runner wires {@link forkQuotaWallAt683Point} directly at the
+ * #683 park sites.
+ */
+export async function decideRelayAfterIdle(
+  input: DecideRelayAfterIdleInput,
+): Promise<RelayDispositionResult> {
+  const batonInput = {
+    currentModelId: input.currentModelId,
+    currentPool: input.currentPool,
+    rosterOrder: input.rosterOrder,
+    pools: input.pools,
+    reviewerSlugs: input.reviewerSlugs,
+  };
+
+  if (input.probeKind === "quota_limited") {
+    // Disposition pool is the #683 probe id; fork only reads resetAt here.
+    const forked = forkQuotaWallAt683Point({
+      disposition: {
+        kind: "wait_for_reset",
+        pool: "unknown",
+        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
+        reason: "quota limited",
+      },
+      now: input.now,
+      parkThresholdMs: input.parkThresholdMs,
+      currentModelId: input.currentModelId,
+      currentPool: input.currentPool,
+      rosterOrder: input.rosterOrder,
+      pools: input.pools,
+      reviewerSlugs: input.reviewerSlugs,
+      state_summary: input.state_summary,
+      remaining: input.remaining,
+      step: input.step,
+    });
+    if (forked.tier === "park") {
+      return {
+        kind: "park",
+        preserveWorktree: true,
+        reason: "same-pool reset within T; park original baton",
+        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
+      };
+    }
+    if (forked.tier === "park_fallback") {
+      return {
+        kind: "park_fallback",
+        preserveWorktree: true,
+        reason: "no live baton; park fallback",
+        ...(input.resetAt !== undefined ? { resetAt: input.resetAt } : {}),
+      };
+    }
+    // relay — do NOT kill (429 path preserves #683 park semantics).
+    return {
+      kind: "relay",
+      preserveWorktree: true,
+      trigger: "quota_wall",
+      nextBaton: forked.nextBaton!,
+      reason: "quota wall beyond T with live baton; relay",
+      ledgerEntry: forked.ledgerEntry,
+    };
+  }
+
+  if (input.probeKind === "ok") {
+    // Hang with live pool → kill THIS pid tree, then relay (not same-role retry).
+    await input.killPidTree(input.workerPid);
+    const next = selectNextRelayBaton(batonInput);
+    if (next === undefined) {
+      return {
+        kind: "hang",
+        preserveWorktree: false,
+        reason: "hang; no live baton to relay to",
+      };
+    }
+    const ledgerEntry = buildRelayHandoffLedgerEntry({
+      trigger: "hang_with_live_pool",
+      state_summary:
+        input.state_summary ??
+        "worker hang with live pool; pid tree killed; drift preserved",
+      remaining: input.remaining,
+      fromModelId: input.currentModelId,
+      fromPool: input.currentPool,
+      toModelId: next.modelId,
+      toPool: next.pool,
+      step: input.step,
+      now: input.now,
+    });
+    return {
+      kind: "relay",
+      preserveWorktree: true,
+      trigger: "hang_with_live_pool",
+      nextBaton: next,
+      reason: "hang with live pool; killed pid tree and relay",
+      ledgerEntry,
+    };
+  }
+
+  // probe error → fail-safe hang (same as #683); no relay guess on unknown pool.
+  await input.killPidTree(input.workerPid);
+  return {
+    kind: "hang",
+    preserveWorktree: false,
+    reason: "idle probe error; fail-safe hang",
+  };
+}
+
+/** True when a mechanical-retry exhaustion reason is a relay candidate (#686). */
+export function isRelayCandidateExhaustion(
+  reason: string | undefined,
+): boolean {
+  return typeof reason === "string" && /relay candidate/i.test(reason);
 }
 
 export interface ApplyResourceFailureHandoffInput {
