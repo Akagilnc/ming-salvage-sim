@@ -467,13 +467,22 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(c.completed_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     // tokens used line must be captured before any GC
     expect(c.tokens?.total).toBe(1234);
-    // #786 core dimension: first-byte latency must not be null on quick-exit
-    // when the worker already wrote log bytes (baseline-before-poll bug).
+    // #786 core dimension: first-observed output (poll granularity — not true
+    // TTFB) must not be null on quick-exit when the worker already wrote log
+    // bytes (baseline-before-poll bug).
     expect(c.first_output_at).not.toBeNull();
     expect(c.first_output_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(Date.parse(c.first_output_at!)).toBeGreaterThanOrEqual(
       Date.parse(d.dispatched_at) - 5_000,
     );
+    // Monotonic order: dispatched_at ≤ first_output_at ≤ completed_at
+    // (first_output_at is poll-observed / post-exit reconcile, not true TTFB).
+    const firstOutMs = Date.parse(c.first_output_at!);
+    const dispatchedMs = Date.parse(d.dispatched_at);
+    const completedMs = Date.parse(c.completed_at);
+    expect(firstOutMs).toBeGreaterThanOrEqual(dispatchedMs);
+    expect(firstOutMs).toBeLessThanOrEqual(completedMs);
+    expect(dispatchedMs).toBeLessThanOrEqual(completedMs);
 
     const e = env as TelemetryEnvironmentRecord;
     expect(e.routeName).toBe("normal");
@@ -482,7 +491,8 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
 
   it("quick-exit with log output stamps non-null first_output_at (no poll growth)", async () => {
     // Child writes and exits in the same tick — exit can win the race before the
-    // idle poll loop observes size growth. first_output_at must still be set.
+    // idle poll loop observes size growth. first_output_at must still be set
+    // (post-exit reconcile ≈ process exit time; poll-granularity semantics).
     const dir = tempDir("orch-786-quick-first-out-");
     const ledgerDir = join(dir, ".ledger-786");
     const payload =
@@ -505,12 +515,24 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     );
 
     expect(outcome.result.kind).toBe("completed");
-    const collect = readTelemetryRecords(ledgerDir).find(
-      (r) => r.phase === "collect",
-    ) as TelemetryCollectRecord | undefined;
+    const records = readTelemetryRecords(ledgerDir);
+    const dispatch = records.find((r) => r.phase === "dispatch") as
+      | TelemetryDispatchRecord
+      | undefined;
+    const collect = records.find((r) => r.phase === "collect") as
+      | TelemetryCollectRecord
+      | undefined;
     expect(collect).toBeDefined();
     expect(collect?.first_output_at).not.toBeNull();
     expect(collect?.tokens?.total).toBe(99);
+    // Monotonic: dispatched_at ≤ first_output_at ≤ completed_at
+    expect(dispatch).toBeDefined();
+    const firstOutMs = Date.parse(collect!.first_output_at!);
+    const dispatchedMs = Date.parse(dispatch!.dispatched_at);
+    const completedMs = Date.parse(collect!.completed_at);
+    expect(firstOutMs).toBeGreaterThanOrEqual(dispatchedMs);
+    expect(firstOutMs).toBeLessThanOrEqual(completedMs);
+    expect(dispatchedMs).toBeLessThanOrEqual(completedMs);
   });
 
   it("collect stamps hang-idle category when idle monitor kills the worker", async () => {

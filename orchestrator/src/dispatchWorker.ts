@@ -925,10 +925,14 @@ export async function dispatchWorkerWithMonitor(
   };
 
   /**
-   * #786 first_output_at: first log growth past the post-spawn orchestrator
-   * marker (not subsequent poll-only growth). Covers (a) worker output already
-   * present when the first activity snapshot is taken and (b) quick-exit before
-   * the idle poll loop observes growth.
+   * #786 first_output_at — first *observed* log growth past the post-spawn
+   * orchestrator marker (not subsequent poll-only growth; not true TTFB).
+   *
+   * Semantics = poll granularity: stamp is wall-clock of this call, so error
+   * upper bound ≈ pollIntervalMs under the idle loop. Covers (a) worker
+   * output already present on the first activity snapshot and (b) quick-exit
+   * reconcile (stamp ≈ process exit time) when the poll loop never saw growth.
+   * See TelemetryCollectRecord.first_output_at + orchestrator/README.md.
    */
   const noteFirstOutputIfPastBaseline = (
     sizeBytes: number,
@@ -1097,7 +1101,8 @@ export async function dispatchWorkerWithMonitor(
         );
       }
       // Quick-exit / race-won-by-exit: poll loop may never have observed growth.
-      // Re-read the log once so first_output_at is not left null when bytes exist.
+      // One-shot re-read so first_output_at is not left null when bytes exist.
+      // Stamp time ≈ process exit (poll-granularity semantics, not true TTFB).
       reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
       // Signal-killed legs must land a `killed` collect row — do not silently
       // feed null exitCode into awaitMonitoredCliWorker and drop the terminal.
