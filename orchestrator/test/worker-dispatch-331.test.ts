@@ -5,10 +5,17 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import {
+  cleanupWorkerSpec,
   dispatchWorker,
+  docReleaseWorkerSpec,
+  fixerWorkerSpec,
   legacyDispatchWorker,
+  shipWorkerSpec,
   stepSpecToWorkerSpec,
+  verifyWorkerSpec,
 } from "../src/dispatchWorker.js";
+import { CODER_ROSTER } from "../src/coderRoster.js";
+import { QuotaWaitForResetError } from "../src/quotaProbe.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
 import type {
@@ -486,6 +493,178 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
     expect(w.session).toBe("fresh");
     expect(w.contextRetention).toBe("clean");
     expect(w.skill).toBe("/code-review");
+  });
+});
+
+describe("#796 Coder-Rec host dispatch", () => {
+  class CoderRecDispatchBackend extends DispatchBackend {
+    constructor(private readonly coderRecBody: string) {
+      super();
+    }
+
+    override async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+      return {
+        ...(await super.fetchIssueMeta(issueNumber)),
+        body: this.coderRecBody,
+      };
+    }
+
+    override async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+      return {
+        ...(await super.fetchIssueSnapshot(issueNumber)),
+        body: this.coderRecBody,
+      };
+    }
+  }
+
+  it("dispatches every Coder-Rec token with the host required by its registered provider", async () => {
+    for (const entry of CODER_ROSTER) {
+      const backend = new CoderRecDispatchBackend(`Coder-Rec: ${entry.id}`);
+      const result = await runOrchestrator({ issueNumber: 796, backend });
+      const coder = backend.specs.find((spec) => spec.id === "S2");
+
+      expect(result.status).toBe("success");
+      expect(coder).toMatchObject({
+        model: entry.slug,
+        host:
+          entry.slug === "grok-4.5"
+            ? "cursor"
+            : entry.pool === "claude"
+              ? "claude"
+              : "codex",
+      });
+    }
+  });
+
+  it.each([
+    ["gpt-5.6-terra", undefined, "codex"],
+    ["sonnet", undefined, "claude"],
+    ["grok-4.5", undefined, "cursor"],
+    ["opencode-grok", undefined, "opencode"],
+    ["grok-4.5", "grok-build", "pi"],
+    ["grok-4.5", "codex-5h", "codex"],
+  ] as const)(
+    "derives host %s/%s from the registered provider",
+    (model, billingPool, host) => {
+      const worker = stepSpecToWorkerSpec(
+        {
+          id: "S2",
+          role: "coder",
+          promptFile: "coder_implement.md",
+          model,
+          completionSignal: "CODER_STEP_COMPLETE",
+          maxIter: 5,
+          soul: "coder",
+          toolchain: [],
+        },
+        "fresh",
+        billingPool,
+      );
+
+      expect(worker.host).toBe(host);
+    },
+  );
+
+  it("derives every route-backed worker factory host from its selected slot", () => {
+    const route = {
+      ...SMOKED_ROUTE,
+      slots: {
+        ...SMOKED_ROUTE.slots,
+        ship: "opencode-grok",
+        verify: "gpt-5.6-terra",
+        fixer: "sonnet",
+        cleanup: "grok-4.5",
+        docRelease: "opencode-grok",
+      },
+    };
+
+    expect(shipWorkerSpec(route).host).toBe("opencode");
+    expect(verifyWorkerSpec(route).host).toBe("codex");
+    expect(fixerWorkerSpec(route).host).toBe("claude");
+    expect(cleanupWorkerSpec(route).host).toBe("cursor");
+    expect(docReleaseWorkerSpec(route).host).toBe("opencode");
+  });
+
+  it("rebuilds the dispatched S2 spec after a real quota relay", async () => {
+    const relayWorktree = mkdtempSync(join(tmpdir(), "host-relay-796-"));
+    class QuotaRelayBackend extends CoderRecDispatchBackend {
+      private quotaThrown = false;
+
+      override async prepareWorktree(): Promise<WorktreeHandle> {
+        return { ...this.worktree, path: relayWorktree };
+      }
+
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.id === "S2" && !this.quotaThrown) {
+          this.quotaThrown = true;
+          this.dispatched.push(
+            `${spec.id}:${spec.kind}:${spec.role}:${spec.session}:${spec.contextRetention}:${spec.skill ?? "—"}`,
+          );
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          throw new QuotaWaitForResetError({
+            disposition: {
+              kind: "wait_for_reset",
+              pool: "grok",
+              resetAt: new Date("2026-07-10T13:00:00.000Z"),
+              reason: "quota limited (429); wait for reset",
+            },
+            applied: {
+              killed: false,
+              ledgerEntry: {
+                event: "quota_wait_for_reset",
+                pool: "grok",
+                resetAt: "2026-07-10T13:00:00.000Z",
+                reason: "quota limited (429); wait for reset",
+                step: "S2",
+                workerPid: 1,
+                ts: "2026-07-10T12:00:00.000Z",
+              },
+            },
+            pool: "grok",
+            probe: { kind: "quota_limited" },
+          });
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    try {
+      const backend = new QuotaRelayBackend("Coder-Rec: grok-4.5");
+      const result = await runOrchestrator({
+        issueNumber: 796,
+        backend,
+        now: () => new Date("2026-07-10T12:00:00.000Z"),
+        relayPools: [
+          {
+            id: "grok-build",
+            status: "limited",
+            resetAt: new Date("2026-07-10T13:00:00.000Z"),
+            parkThresholdMs: 1,
+            models: ["grok-4.5"],
+          },
+          {
+            id: "codex-5h",
+            status: "live",
+            parkThresholdMs: 1,
+            models: ["grok-4.5"],
+          },
+        ],
+      });
+
+      const coderDispatches = backend.specs.filter((spec) => spec.id === "S2");
+      expect(result.status).toBe("success");
+      expect(coderDispatches).toHaveLength(2);
+      expect(coderDispatches.map((spec) => spec.host)).toEqual(["cursor", "codex"]);
+      expect(backend.ctxs.filter((ctx) => ctx.billingPool !== undefined)[0]?.billingPool).toBe(
+        "codex-5h",
+      );
+    } finally {
+      rmSync(relayWorktree, { recursive: true, force: true });
+    }
   });
 });
 

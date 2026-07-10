@@ -25,6 +25,7 @@
 
 import type { ChildProcess } from "node:child_process";
 
+import { workerHostForModel } from "../dispatchWorker.js";
 import {
   dispatchMonitoredCliWorker,
   killWorkerTree,
@@ -80,13 +81,14 @@ export function cmrWorkerSpec(
   pass: IntegratedCmrPass = "correctness",
   route?: ResolvedModelRoute,
 ): WorkerSpec {
+  const model =
+    route?.slots[pass === "completeness" ? "cmrCompleteness" : "cmrCorrectness"] ??
+    modelForSlot(pass === "completeness" ? "cmrCompleteness" : "cmrCorrectness");
   return {
     id: "S3",
     kind: "cmr",
     role: "reviewer",
-    // The cmr skill fans out a Claude Agent leg + CLI legs → host pinned Claude
-    // top-level (PRD #330 [J]).
-    host: "claude",
+    host: workerHostForModel(model),
     session,
     contextRetention: "clean",
     skill: "ak-cross-m-review",
@@ -96,9 +98,7 @@ export function cmrWorkerSpec(
         : "integrated_cmr_correctness.md",
     completionSignal: "CMR_STEP_COMPLETE",
     maxIter: 1,
-    model:
-      route?.slots[pass === "completeness" ? "cmrCompleteness" : "cmrCorrectness"] ??
-      modelForSlot(pass === "completeness" ? "cmrCompleteness" : "cmrCorrectness"),
+    model,
     cmrReviewLegs: route?.legCollections.cmrReview ?? activeCmrReviewLegs(),
     soul: "cmr",
     toolchain: [],
@@ -107,18 +107,19 @@ export function cmrWorkerSpec(
 
 /** Family-level coder-fix worker for blocking CMR findings (#550). */
 export function familyCoderFixWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+  const model = route?.slots.coderFix ?? modelForSlot("coderFix");
   return {
     id: "S5",
     kind: "coder",
     role: "coder",
-    host: "claude",
+    host: workerHostForModel(model),
     session: "fresh",
     contextRetention: "retain",
     skill: "/tdd",
     promptFile: "coder_fix.md",
     completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 5,
-    model: route?.slots.coderFix ?? modelForSlot("coderFix"),
+    model,
     soul: "coder",
     toolchain: IMAGE_TOOLCHAIN,
   };
@@ -126,11 +127,12 @@ export function familyCoderFixWorkerSpec(route?: ResolvedModelRoute): WorkerSpec
 
 /** The family-base ship/PR worker spec (止于 PR; invoke `gstack-ship`). */
 export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
+  const model = route?.slots.ship ?? modelForSlot("ship");
   return {
     id: "S7",
     kind: "ship",
     role: "coder",
-    host: "claude",
+    host: workerHostForModel(model),
     session: "fresh",
     contextRetention: "clean",
     skill: "gstack-ship",
@@ -140,7 +142,7 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     // (family_ship.md: "rerun it yourself") → an iterative budget like coder/fix
     // (runner worker specs use 5), NOT the cmr reviewer's single-pass 1 (#336 cmr r6).
     maxIter: 5,
-    model: route?.slots.ship ?? modelForSlot("ship"),
+    model,
     // The family ship worker runs under the dedicated "ship" soul (delivery
     // discipline: gstack-ship, stop-at-PR, defer→tracker not PR body), matching
     // the runtime SHIP_SOUL injected by realFamilyBackend.shipSandboxConfig — the
