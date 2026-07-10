@@ -205,6 +205,7 @@ import {
   isValidFixerResult,
   isValidVerifyResult,
 } from "./reviewLoopOutcome.js";
+import { configureTelemetryFromWorkerImage } from "./telemetry.js";
 import type {
   CleanupResult,
   DocReleaseResult,
@@ -2215,6 +2216,20 @@ export class RealBackend implements Backend {
     this.validateSoulsDir();
     this.workingRepo = this.buildOrReuseClone();
     this.assertIndependentClone();
+  }
+
+  /**
+   * #786: install this backend's fingerprints immediately before an absent
+   * environment stamp is written. Deliberately not called from the constructor:
+   * image inspection and directory hashing must never block backend creation.
+   */
+  async installTelemetryRunEnvironment(): Promise<void> {
+    await configureTelemetryFromWorkerImage({
+      imageName: this.opts.imageName,
+      codexFast: this.opts.codexFast,
+      soulsDir: this.opts.soulsDir,
+      promptsDir: this.opts.promptsDir,
+    });
   }
 
   /**

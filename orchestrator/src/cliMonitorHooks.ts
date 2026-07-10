@@ -44,6 +44,13 @@ const MONITORED_KINDS: ReadonlySet<WorkerKind> = new Set([
   "docRelease",
 ]);
 
+/** Internal provenance marker for a result synthesized because no sidecar existed. */
+const MISSING_MONITOR_SIDECAR_RESULT = Symbol("missingMonitorSidecarResult");
+
+function markMissingMonitorSidecarResult(result: WorkerResult): WorkerResult {
+  return Object.assign(result, { [MISSING_MONITOR_SIDECAR_RESULT]: true });
+}
+
 export type CliMonitorBackendKind = "real" | "realFamily";
 
 export interface CliMonitorJobFile {
@@ -199,17 +206,32 @@ export function workerResultFromMonitorSidecar(
   }
 
   if (exitCode === 0) {
-    return {
+    return markMissingMonitorSidecarResult({
       kind: "malformed",
       reason:
         `monitored CLI worker ${handle.stepId} exited 0 but wrote no usable ` +
         `WorkerResult sidecar at ${expectedPath}`,
-    };
+    });
   }
-  return {
+  return markMissingMonitorSidecarResult({
     kind: "failed",
     reason:
       `monitored CLI worker ${handle.stepId} exited ${exitCode ?? "null"} ` +
       `without a WorkerResult sidecar (pool=${handle.poolId})`,
-  };
+  });
+}
+
+/**
+ * True only for the structured fallback produced by
+ * {@link workerResultFromMonitorSidecar} when no usable result sidecar exists.
+ * Used by the signal-kill path: honor a real sidecar outcome even after
+ * SIGTERM; only synthesize `killed by signal` when the mapper found nothing
+ * durable.
+ */
+export function isMissingMonitorSidecarResult(result: WorkerResult): boolean {
+  return (
+    result as WorkerResult & {
+      readonly [MISSING_MONITOR_SIDECAR_RESULT]?: boolean;
+    }
+  )[MISSING_MONITOR_SIDECAR_RESULT] === true;
 }

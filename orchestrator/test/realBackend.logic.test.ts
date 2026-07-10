@@ -25,7 +25,8 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import * as telemetry from "../src/telemetry.js";
 import {
   agentForSlug,
   assertCompletionSignal,
@@ -1175,6 +1176,17 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     expect(
       () => new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir }),
     ).not.toThrow();
+  });
+
+  it("does not calculate telemetry fingerprints during construction", () => {
+    const configure = vi.spyOn(
+      telemetry,
+      "configureTelemetryFromWorkerImage",
+    );
+
+    new StubCloneBackend({ ...baseOpts, promptsDir: realPromptsDir });
+
+    expect(configure).not.toHaveBeenCalled();
   });
 
   it("throws on a relative promptsDir", () => {

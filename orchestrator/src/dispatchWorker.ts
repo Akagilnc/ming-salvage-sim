@@ -52,6 +52,18 @@ import {
 } from "./relayDispatch.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import {
+  buildCollectStamp,
+  buildDispatchStamp,
+  classifyWorkerTerminal,
+  ensureEnvironmentStamp,
+  extractTokensFromLog,
+  hasEnvironmentStamp,
+  newLegId,
+  readDispatchLogSlice,
+  tryAppendTelemetryRecord,
+} from "./telemetry.js";
+import { isMissingMonitorSidecarResult } from "./cliMonitorHooks.js";
+import {
   dispatchMonitoredCliWorker,
   isWorkerIdle,
   killWorkerTree,
@@ -77,6 +89,43 @@ import type {
 } from "./types.js";
 
 const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
+
+const pendingTelemetryEnvironmentStamps = new Set<string>();
+
+function scheduleTelemetryEnvironmentStamp(
+  ledgerDir: string | undefined,
+  ctx: DispatchContext,
+  backend: Pick<Backend, "installTelemetryRunEnvironment">,
+): void {
+  if (
+    ledgerDir === undefined ||
+    ledgerDir.length === 0 ||
+    hasEnvironmentStamp(ledgerDir) ||
+    pendingTelemetryEnvironmentStamps.has(ledgerDir)
+  ) {
+    return;
+  }
+  pendingTelemetryEnvironmentStamps.add(ledgerDir);
+  queueMicrotask(async () => {
+    try {
+      if (!hasEnvironmentStamp(ledgerDir)) {
+        // Invoke through the backend receiver. Production implementations are
+        // class methods that read `this.opts`; extracting and bare-calling the
+        // method loses that receiver and skips the environment stamp entirely.
+        await backend.installTelemetryRunEnvironment?.();
+        ensureEnvironmentStamp(ledgerDir, ctx);
+      }
+    } catch (err) {
+      console.warn(
+        `[orchestrator] telemetry environment stamp failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    } finally {
+      pendingTelemetryEnvironmentStamps.delete(ledgerDir);
+    }
+  });
+}
 const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
 
@@ -742,20 +791,36 @@ export interface DispatchWorkerWithMonitorOptions {
   readonly monitorDeps?: WorkerMonitorDeps;
 }
 
-type MonitorRace =
+type ChildExit =
   | { readonly kind: "exit"; readonly exitCode: number | null }
-  | { readonly kind: "killed" };
+  | { readonly kind: "killed"; readonly signal: NodeJS.Signals };
+
+type MonitorRace = ChildExit;
 
 const DEFAULT_MONITOR_IDLE_THRESHOLD_MS = 10 * 60 * 1000;
 const DEFAULT_MONITOR_POLL_INTERVAL_MS = 250;
 
-function waitForChildExit(child: ChildProcess): Promise<number | null> {
+/**
+ * Wait for a monitored child to leave the process table.
+ * Signal-killed children resolve as `{ kind: "killed" }` so telemetry can stamp
+ * a `killed` collect row instead of treating `exitCode === null` as a quiet exit.
+ */
+function waitForChildExit(child: ChildProcess): Promise<ChildExit> {
+  const toExit = (
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): ChildExit => {
+    if (signal !== null) {
+      return { kind: "killed", signal };
+    }
+    return { kind: "exit", exitCode: code };
+  };
   if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve(child.exitCode);
+    return Promise.resolve(toExit(child.exitCode, child.signalCode));
   }
   return new Promise((resolve, reject) => {
     child.once("error", reject);
-    child.once("exit", (code) => resolve(code));
+    child.once("exit", (code, signal) => resolve(toExit(code, signal)));
   });
 }
 
@@ -787,160 +852,392 @@ export async function dispatchWorkerWithMonitor(
   landing?: WorkerLandingPayload,
   opts?: DispatchWorkerWithMonitorOptions,
 ): Promise<DispatchWorkerWithMonitorOutcome> {
-  const cliSpec = backend.resolveCliMonitorDispatch?.(spec, ctx, landing);
-  if (cliSpec !== undefined) {
-    const input: MonitoredCliDispatchInput = {
-      command: cliSpec.command,
-      args: cliSpec.args,
-      logDir: cliSpec.logDir,
-      poolId: cliSpec.poolId,
-      completionSignal: cliSpec.completionSignal,
-      stepId: cliSpec.stepId,
-      ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
-      ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
-      ...(cliSpec.logBasename !== undefined
-        ? { logBasename: cliSpec.logBasename }
-        : {}),
-      ...(cliSpec.readInstanceId !== undefined
-        ? { readInstanceId: cliSpec.readInstanceId }
-        : {}),
-      ...(cliSpec.resultPath !== undefined
-        ? { resultPath: cliSpec.resultPath }
-        : {}),
-    };
-    const { handle, child } = await dispatchMonitoredCliWorker(input);
-    const exitPromise = waitForChildExit(child);
-    // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
-    // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
-    if (opts?.onMonitorHandleSpawned !== undefined) {
-      try {
-        await opts.onMonitorHandleSpawned(handle);
-      } catch (error) {
-        await killWorkerTree(handle);
-        try {
-          await exitPromise;
-        } catch {
-          // Preserve the original spawn-persist error if child cleanup fails.
-        }
-        throw error;
-      }
-    }
-    const monitorDeps = opts?.monitorDeps;
-    const idleThresholdMs =
-      opts?.idleThresholdMs ?? DEFAULT_MONITOR_IDLE_THRESHOLD_MS;
-    const pollIntervalMs =
-      opts?.pollIntervalMs ?? DEFAULT_MONITOR_POLL_INTERVAL_MS;
-    const initialActivity = readLogActivity(handle, monitorDeps);
-    // Cancellation seam: when exit wins the race, stop further idle polls /
-    // handleMonitoredWorkerIdle calls. A throw already in-flight is observed
-    // below so it cannot become an unhandledRejection.
-    let monitorCancelled = false;
-    const monitorPromise: Promise<MonitorRace> = (async () => {
-      if (initialActivity === undefined) {
-        return await exitPromise.then((exitCode) => ({ kind: "exit", exitCode }));
-      }
-      let previous = initialActivity;
-      while (
-        !monitorCancelled &&
-        child.exitCode === null &&
-        child.signalCode === null
-      ) {
-        await (monitorDeps?.sleepMs ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(
-          pollIntervalMs,
-        );
-        if (monitorCancelled) break;
-        if (child.exitCode !== null || child.signalCode !== null) break;
-        if (!isWorkerIdle(handle, idleThresholdMs, previous, monitorDeps)) {
-          const current = readLogActivity(handle, monitorDeps);
-          if (current !== undefined) previous = current;
-          continue;
-        }
-        if (monitorCancelled) break;
-        const disposition: MonitoredWorkerIdleDisposition =
-          backend.handleMonitoredWorkerIdle !== undefined
-            ? await backend.handleMonitoredWorkerIdle(handle, spec, ctx)
-            : "hang";
-        if (disposition === "wait_for_reset") {
-          // Backends normally throw QuotaWaitForResetError here so runner park
-          // machinery receives the reset timestamp and ledger event.
-          throw new Error(
-            "monitored worker idle disposition returned wait_for_reset without " +
-              "raising the backend's quota park error",
-          );
-        }
-        // Only a positive probe result may classify this as a live-pool hang.
-        // Unknown/error/no-probe cases retain the ordinary fail-safe hang path.
-        await killWorkerTree(handle, monitorDeps);
-        if (disposition === "hang_with_live_pool") {
-          throw new HangWithLivePoolError({
-            workerPid: handle.pid,
-            poolId: handle.poolId,
-            step: spec.id,
-          });
-        }
-        throw new Error(`monitored worker idle hang: ${spec.id}`);
-      }
-      return await exitPromise.then((exitCode) => ({ kind: "exit", exitCode }));
-    })();
-    const race = await Promise.race([
-      exitPromise.then((exitCode): MonitorRace => ({ kind: "exit", exitCode })),
-      monitorPromise,
-    ]);
-    // Observe the race loser. If exit won while handleMonitoredWorkerIdle was
-    // still in flight, a late QuotaWaitForResetError (or other throw) must be
-    // swallowed-with-log — never an unhandledRejection that can crash Node.
-    if (race.kind === "exit") {
-      monitorCancelled = true;
-      void monitorPromise.then(
-        () => undefined,
-        (err: unknown) => {
-          console.warn(
-            `[orchestrator] monitored idle handler settled after child exit: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        },
-      );
-    }
-    const exitCode =
-      race.kind === "exit" ? race.exitCode : await exitPromise;
-    if (backend.awaitMonitoredCliWorker === undefined) {
-      return {
-        result: {
-          kind: "failed",
-          reason:
-            `CLI worker ${spec.id} finished (exit ${exitCode}) but backend has ` +
-            `no awaitMonitoredCliWorker to map the process into a WorkerResult`,
-        },
-        monitorHandle: handle,
-      };
-    }
-    const result = await backend.awaitMonitoredCliWorker(
-      handle,
-      exitCode,
+  // #786 — per-leg telemetry sidecar (dispatch + collect half-rows).
+  // Best-effort only: never changes worker semantics or resume contracts.
+  // Fail-open: telemetry init (legId / model stamp) lives in a guarded block so
+  // crypto.randomUUID (or pure stamp builders) cannot abort dispatch before the
+  // backend is invoked.
+  const ledgerDir = ctx.stateDir;
+  let legId: string | null = null;
+  let modelFamily: string | null = null;
+  let firstOutputAt: string | null = null;
+  let logPath: string | null = null;
+  let logStartOffset: number | undefined;
+  let collectStamped = false;
+  // Collect half-row only pairs with a successfully stamped dispatch half-row
+  // (no orphan collect on resolve/spawn failure).
+  let dispatchStamped = false;
+
+  try {
+    legId = newLegId();
+    // model family for token extract — pure stamp, not the durable dispatch row.
+    // Durable dispatched_at comes from handle.dispatchedAt after real spawn.
+    modelFamily = buildDispatchStamp({
+      legId,
       spec,
       ctx,
-      landing,
+      dispatchedAt: new Date().toISOString(),
+    }).model.family;
+  } catch (err) {
+    console.warn(
+      `[orchestrator] telemetry init failed (fail-open): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
     );
-    // #686: self-reported blocked / phase_complete in the worker log → resource
-    // relay (preserve drift). Malformed/absent tags are ignored here.
+    legId = null;
+    modelFamily = null;
+  }
+
+  const stampCollect = (
+    outcome:
+      | { readonly kind: "result"; readonly result: WorkerResult }
+      | { readonly kind: "thrown"; readonly error: unknown },
+  ): void => {
+    if (collectStamped || legId === null || !dispatchStamped) return;
+    collectStamped = true;
     try {
-      if (existsSync(handle.logPath)) {
-        const log = readFileSync(handle.logPath)
-          .subarray(handle.logStartOffset ?? 0)
-          .toString("utf8");
-        const tag = tryParseActionableRelayTag(log);
-        if (tag !== undefined) {
-          throw new SelfReportedRelayError(tag, spec.id);
+      const logText = readDispatchLogSlice(
+        logPath ?? undefined,
+        logStartOffset,
+      );
+      const classified = classifyWorkerTerminal(outcome);
+      tryAppendTelemetryRecord(
+        ledgerDir,
+        buildCollectStamp({
+          legId,
+          completedAt: new Date().toISOString(),
+          terminal: classified.terminal,
+          errorCategory: classified.errorCategory,
+          errorMessage: classified.errorMessage,
+          tokens:
+            logText !== null
+              ? extractTokensFromLog(logText, modelFamily)
+              : null,
+          sessionId: classified.sessionId,
+          logPath,
+          firstOutputAt,
+        }),
+      );
+    } catch (err) {
+      console.warn(
+        `[orchestrator] telemetry collect stamp failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+
+  const stampDispatch = (
+    dispatchedAt: string,
+    poolId: string | undefined,
+  ): void => {
+    if (legId === null) return;
+    try {
+      // Only mark stamped when the half-row actually landed. A failed append
+      // must leave dispatchStamped=false so stampCollect cannot write an
+      // unjoinable orphan collect if the ledger becomes writable later.
+      dispatchStamped = tryAppendTelemetryRecord(
+        ledgerDir,
+        buildDispatchStamp({
+          legId,
+          spec,
+          ctx,
+          dispatchedAt,
+          poolId,
+        }),
+      );
+    } catch (err) {
+      dispatchStamped = false;
+      console.warn(
+        `[orchestrator] telemetry dispatch stamp failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+
+  /**
+   * #786 first_output_at — first *observed* log growth past the post-spawn
+   * orchestrator marker (not subsequent poll-only growth; not true TTFB).
+   *
+   * Semantics = poll granularity: stamp is wall-clock of this call, so error
+   * upper bound ≈ pollIntervalMs under the idle loop. Covers (a) worker
+   * output already present on the first activity snapshot and (b) quick-exit
+   * reconcile (stamp ≈ process exit time) when the poll loop never saw growth.
+   * See TelemetryCollectRecord.first_output_at + orchestrator/README.md.
+   */
+  const noteFirstOutputIfPastBaseline = (
+    sizeBytes: number,
+    baselineBytes: number,
+  ): void => {
+    if (firstOutputAt === null && sizeBytes > baselineBytes) {
+      firstOutputAt = new Date().toISOString();
+    }
+  };
+
+  const reconcileFirstOutputAt = (
+    handle: WorkerMonitorHandle,
+    baselineBytes: number,
+    monitorDeps: WorkerMonitorDeps | undefined,
+  ): void => {
+    if (firstOutputAt !== null) return;
+    const activity = readLogActivity(handle, monitorDeps);
+    if (activity !== undefined) {
+      noteFirstOutputIfPastBaseline(activity.sizeBytes, baselineBytes);
+    }
+  };
+
+  try {
+    const cliSpec = backend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+
+    if (cliSpec !== undefined) {
+      const input: MonitoredCliDispatchInput = {
+        command: cliSpec.command,
+        args: cliSpec.args,
+        logDir: cliSpec.logDir,
+        poolId: cliSpec.poolId,
+        completionSignal: cliSpec.completionSignal,
+        stepId: cliSpec.stepId,
+        ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
+        ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
+        ...(cliSpec.logBasename !== undefined
+          ? { logBasename: cliSpec.logBasename }
+          : {}),
+        ...(cliSpec.readInstanceId !== undefined
+          ? { readInstanceId: cliSpec.readInstanceId }
+          : {}),
+        ...(cliSpec.resultPath !== undefined
+          ? { resultPath: cliSpec.resultPath }
+          : {}),
+      };
+      const { handle, child } = await dispatchMonitoredCliWorker(input);
+      logPath = handle.logPath;
+      logStartOffset = handle.logStartOffset;
+      // Dispatch half-row AFTER spawn: use the monitor handle's exact stamp
+      // (same clock as the log line / instance identity), not a pre-parse guess.
+      stampDispatch(handle.dispatchedAt, cliSpec.poolId);
+      const exitPromise = waitForChildExit(child);
+      // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
+      // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
+      if (opts?.onMonitorHandleSpawned !== undefined) {
+        try {
+          await opts.onMonitorHandleSpawned(handle);
+        } catch (error) {
+          await killWorkerTree(handle);
+          try {
+            await exitPromise;
+          } catch {
+            // Preserve the original spawn-persist error if child cleanup fails.
+          }
+          throw error;
         }
       }
-    } catch (err) {
-      if (err instanceof SelfReportedRelayError) throw err;
-      // Log read failures are non-fatal — fall through with the worker result.
+      // The first environment fingerprint can synchronously inspect Docker and
+      // hash prompt trees. Queue it only after the CLI monitor handle has been
+      // persisted, so quick-exit first-output observation cannot be delayed by
+      // that first calculation.
+      scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, backend);
+      const monitorDeps = opts?.monitorDeps;
+      const idleThresholdMs =
+        opts?.idleThresholdMs ?? DEFAULT_MONITOR_IDLE_THRESHOLD_MS;
+      const pollIntervalMs =
+        opts?.pollIntervalMs ?? DEFAULT_MONITOR_POLL_INTERVAL_MS;
+      // Baseline = pre-dispatch size + orchestrator marker line. Growth past this
+      // is worker (or tool) output — not the dispatch marker itself.
+      const firstOutputBaseline = firstOutputBaselineBytes(handle);
+      const initialActivity = readLogActivity(handle, monitorDeps);
+      if (initialActivity !== undefined) {
+        noteFirstOutputIfPastBaseline(
+          initialActivity.sizeBytes,
+          firstOutputBaseline,
+        );
+      }
+      // Cancellation seam: when exit wins the race, stop further idle polls /
+      // handleMonitoredWorkerIdle calls. A throw already in-flight is observed
+      // below so it cannot become an unhandledRejection.
+      let monitorCancelled = false;
+      const monitorPromise: Promise<MonitorRace> = (async () => {
+        if (initialActivity === undefined) {
+          return await exitPromise;
+        }
+        let previous = initialActivity;
+        while (
+          !monitorCancelled &&
+          child.exitCode === null &&
+          child.signalCode === null
+        ) {
+          await (monitorDeps?.sleepMs ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(
+            pollIntervalMs,
+          );
+          if (monitorCancelled) break;
+          if (child.exitCode !== null || child.signalCode !== null) break;
+          if (!isWorkerIdle(handle, idleThresholdMs, previous, monitorDeps)) {
+            const current = readLogActivity(handle, monitorDeps);
+            if (current !== undefined) {
+              // First growth past post-marker baseline (not merely vs previous).
+              noteFirstOutputIfPastBaseline(
+                current.sizeBytes,
+                firstOutputBaseline,
+              );
+              previous = current;
+            }
+            continue;
+          }
+          if (monitorCancelled) break;
+          const disposition: MonitoredWorkerIdleDisposition =
+            backend.handleMonitoredWorkerIdle !== undefined
+              ? await backend.handleMonitoredWorkerIdle(handle, spec, ctx)
+              : "hang";
+          if (disposition === "wait_for_reset") {
+            // Backends normally throw QuotaWaitForResetError here so runner park
+            // machinery receives the reset timestamp and ledger event.
+            throw new Error(
+              "monitored worker idle disposition returned wait_for_reset without " +
+                "raising the backend's quota park error",
+            );
+          }
+          // Only a positive probe result may classify this as a live-pool hang.
+          // Unknown/error/no-probe cases retain the ordinary fail-safe hang path.
+          //
+          // Reject the race with the hang error FIRST, then kill the tree. If we
+          // kill-then-throw, the child signal-exit can settle before the throw and
+          // win Promise.race as `killed`, swallowing HangWithLivePoolError (relay
+          // would never see the hang). Kill is best-effort after the reject.
+          const hangError =
+            disposition === "hang_with_live_pool"
+              ? new HangWithLivePoolError({
+                  workerPid: handle.pid,
+                  poolId: handle.poolId,
+                  step: spec.id,
+                })
+              : new Error(`monitored worker idle hang: ${spec.id}`);
+          const killPromise = killWorkerTree(handle, monitorDeps);
+          try {
+            throw hangError;
+          } finally {
+            await killPromise.catch(() => undefined);
+          }
+        }
+        return await exitPromise;
+      })();
+      const race = await Promise.race([exitPromise, monitorPromise]);
+      // Observe the race loser. If exit/kill won while handleMonitoredWorkerIdle
+      // was still in flight, a late QuotaWaitForResetError (or other throw) must
+      // be swallowed-with-log — never an unhandledRejection that can crash Node.
+      if (race.kind === "exit" || race.kind === "killed") {
+        monitorCancelled = true;
+        void monitorPromise.then(
+          () => undefined,
+          (err: unknown) => {
+            console.warn(
+              `[orchestrator] monitored idle handler settled after child exit: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          },
+        );
+      }
+      // Quick-exit / race-won-by-exit: poll loop may never have observed growth.
+      // One-shot re-read so first_output_at is not left null when bytes exist.
+      // Stamp time ≈ process exit (poll-granularity semantics, not true TTFB).
+      reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
+      // Always consult the result-sidecar mapper — even on signal exit. A worker
+      // may have written a valid completed sidecar in the narrow window before
+      // SIGTERM; skipping the mapper would fabricate failed and change dispatch
+      // semantics (telemetry must not). Hang dispositions reject monitorPromise
+      // (above) before kill settles, so they never reach this branch. Late
+      // post-exit handler throws stay swallowed.
+      const exitCode = race.kind === "exit" ? race.exitCode : null;
+      const killSignal = race.kind === "killed" ? race.signal : null;
+      if (backend.awaitMonitoredCliWorker === undefined) {
+        const result: WorkerResult =
+          killSignal !== null
+            ? {
+                kind: "failed",
+                reason: `CLI worker ${spec.id} killed by signal ${killSignal}`,
+              }
+            : {
+                kind: "failed",
+                reason:
+                  `CLI worker ${spec.id} finished (exit ${exitCode}) but backend has ` +
+                  `no awaitMonitoredCliWorker to map the process into a WorkerResult`,
+              };
+        stampCollect({ kind: "result", result });
+        return { result, monitorHandle: handle };
+      }
+      let result = await backend.awaitMonitoredCliWorker(
+        handle,
+        exitCode,
+        spec,
+        ctx,
+        landing,
+      );
+      // No usable sidecar after a signal kill → stamp killed (telemetry cluster);
+      // a real sidecar outcome (completed / escalated / structured failed) wins.
+      if (
+        killSignal !== null &&
+        isMissingMonitorSidecarResult(result)
+      ) {
+        result = {
+          kind: "failed",
+          reason: `CLI worker ${spec.id} killed by signal ${killSignal}`,
+        };
+      }
+      // #686: self-reported blocked / phase_complete in the worker log → resource
+      // relay (preserve drift). Malformed/absent tags are ignored here.
+      // #786: token extract uses the same log slice (GC happens later at terminal).
+      try {
+        const logText = readDispatchLogSlice(
+          handle.logPath,
+          handle.logStartOffset,
+        );
+        if (logText !== null) {
+          const tag = tryParseActionableRelayTag(logText);
+          if (tag !== undefined) {
+            throw new SelfReportedRelayError(tag, spec.id);
+          }
+        }
+      } catch (err) {
+        if (err instanceof SelfReportedRelayError) throw err;
+        // Log read failures are non-fatal — fall through with the worker result.
+      }
+      // Final reconcile in case await path delayed past more log growth.
+      reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
+      stampCollect({ kind: "result", result });
+      return { result, monitorHandle: handle };
     }
-    return { result, monitorHandle: handle };
+    // Container / legacy path: stamp dispatch at the moment we hand off to the
+    // backend (no monitor handle.dispatchedAt available).
+    stampDispatch(
+      new Date().toISOString(),
+      ctx.billingPool !== undefined ? ctx.billingPool : undefined,
+    );
+    scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, backend);
+    const result = await dispatchWorker(backend, spec, ctx, landing);
+    stampCollect({ kind: "result", result });
+    return { result };
+  } catch (err) {
+    stampCollect({ kind: "thrown", error: err });
+    throw err;
   }
-  return { result: await dispatchWorker(backend, spec, ctx, landing) };
+}
+
+/**
+ * Byte offset after the pre-dispatch log prefix + the orchestrator spawn marker
+ * written by {@link dispatchMonitoredCliWorker}. Worker first-output is any
+ * further growth past this baseline (marker alone does not count).
+ */
+function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
+  const offset =
+    typeof handle.logStartOffset === "number" &&
+    Number.isFinite(handle.logStartOffset) &&
+    handle.logStartOffset >= 0
+      ? handle.logStartOffset
+      : 0;
+  const marker =
+    `[orchestrator] dispatched ${handle.stepId} pid=${handle.pid} ` +
+    `pool=${handle.poolId} instance=${handle.instanceId} at ${handle.dispatchedAt}\n`;
+  return offset + Buffer.byteLength(marker, "utf8");
 }
 
 /**

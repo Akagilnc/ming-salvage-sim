@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { dispatchWorkerWithMonitor } from "../src/dispatchWorker.js";
+import { workerResultFromMonitorSidecar } from "../src/cliMonitorHooks.js";
 import {
   handleIdleThreshold,
   QuotaWaitForResetError,
@@ -269,10 +270,12 @@ describe("#683 integration at the real monitored dispatch path", () => {
           probe: { kind: "quota_limited", resetAt: new Date("2026-07-10T02:00:00.000Z"), detail: "429" },
         });
       },
-      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
-        kind: "completed",
-        output: { kind: "coder", committed: true, commitsAdded: 1 },
-      }),
+      // No usable sidecar after mid-flight SIGTERM → empty-fallback, rewritten
+      // to killed-by-signal. (A real completed sidecar would still win.)
+      awaitMonitoredCliWorker: async (
+        handle: WorkerMonitorHandle,
+        exitCode: number | null,
+      ): Promise<WorkerResult> => workerResultFromMonitorSidecar(handle, exitCode),
     } as unknown as Backend;
 
     try {
@@ -292,7 +295,13 @@ describe("#683 integration at the real monitored dispatch path", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
-      expect(outcome.result.kind).toBe("completed");
+      // Child was SIGTERM'd inside the idle handler with no sidecar → killed.
+      // Late QuotaWaitForResetError must still be observed (warn) without
+      // becoming an unhandledRejection.
+      expect(outcome.result.kind).toBe("failed");
+      if (outcome.result.kind === "failed") {
+        expect(outcome.result.reason).toMatch(/killed by signal/i);
+      }
       expect(unhandled).toEqual([]);
       expect(warnings.some((w) => w.includes("monitored idle handler settled after child exit"))).toBe(true);
     } finally {
