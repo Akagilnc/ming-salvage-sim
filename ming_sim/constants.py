@@ -203,7 +203,7 @@ ARMY_FIELD_ALIASES = {
     "补给": "supply",
     "粮饷": "supply",
     "士气": "morale",
-    "军心": "morale",
+    "军心": "loyalty",  # ADR 0025 D1 / #313: 军心=loyalty（哗变轴），非 morale（士气/战斗轴）
     "训练": "training",
     "操练": "training",
     "装备": "equipment",

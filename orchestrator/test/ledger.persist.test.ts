@@ -42,6 +42,10 @@ const WORKTREE: WorktreeHandle = {
 // ─── full-featured fake Backend (#249) ───────────────────────────────────────
 
 class LedgerBackend implements Backend {
+  async smokeModelRoute(route: any) {
+    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+  }
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
   pushCount = 0;
@@ -281,6 +285,10 @@ describe("persisted step ledger (#249)", () => {
      */
     let writeAttempts = 0;
     const failFirstWriteBackend: Backend = {
+      async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      },
       async findResumeState() { return undefined; },
       async cleanResidue() { /* no-op */ },
       async resumeSession() {
@@ -346,6 +354,10 @@ describe("persisted step ledger (#249)", () => {
 
     const capturedStateDirs: string[] = [];
     const trailingSlashBackend: Backend = {
+      async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      },
       async findResumeState() { return undefined; },
       async cleanResidue() { /* no-op */ },
       async resumeSession() {
