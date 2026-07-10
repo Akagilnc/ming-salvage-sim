@@ -34,6 +34,32 @@ import type {
 } from "../src/types.js";
 import type { PrReviewSnapshot } from "../src/botPolling.js";
 
+type OnlineLedgerFixture = {
+  readonly step?: string;
+  readonly event?: string;
+  readonly ts?: string;
+  readonly branchHEAD?: string;
+  readonly prHead?: string;
+  readonly roundTriggerHeadOid?: string;
+  readonly roundTriggerAt?: string;
+  readonly onlineReviewRound?: number;
+  readonly fixCommitSha?: string;
+  readonly output?: {
+    readonly kind?: string;
+    readonly status?: string;
+    readonly converged?: boolean;
+    readonly committed?: boolean;
+    readonly alreadySatisfied?: boolean;
+    readonly fixCommitSha?: string;
+    readonly fixMarkedFindingIdentityKeys?: readonly string[];
+    readonly dispositions?: readonly { readonly action?: string }[];
+  };
+};
+
+function onlineLedger(entries: readonly OnlineLedgerFixture[]): readonly OnlineLedgerFixture[] {
+  return entries;
+}
+
 const FIXER_ENVELOPE_SHA = "fixsha1111111111111111111111111111111111";
 const fixerCommitted = (fixCommitSha = FIXER_ENVELOPE_SHA): FixerResult => ({
   kind: "fixer",
@@ -3128,7 +3154,7 @@ describe("#600 converged marker resume skip (#600 AC8)", () => {
     ];
     const reviewHead = onlineReviewResumeHeadKeyFromLedger(ledger);
     expect(reviewHead).toBe(shipHead);
-    expect(onlineReviewConvergedForHead(ledger as never, reviewHead)).toBe(false);
+    expect(onlineReviewConvergedForHead(onlineLedger(ledger), reviewHead)).toBe(false);
   });
 
   it("pin r26: OnlineReviewConvergedEvent decodes persisted onlineReviewRound field", () => {
@@ -4328,13 +4354,13 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
 
   it("pin r25: resume mid-round-2 restores persisted retrigger anchor (pre-fix evidence stale)", () => {
     const betweenShipAndRetrigger = "2026-07-08T11:30:00.000Z";
-    const resumedTrigger = onlineReviewRoundTriggerFromLedger([{
+    const resumedTrigger = onlineReviewRoundTriggerFromLedger(onlineLedger([{
         step: "S10",
         event: "online_review_round_retrigger",
         roundTriggerHeadOid: "fixsha1111111111111111111111111111111111",
         roundTriggerAt: RETRIGGER_TS,
         onlineReviewRound: 2,
-      }] as never);
+      }]));
     expect(resumedTrigger).toEqual(
       buildRoundTrigger(
         "fixsha1111111111111111111111111111111111",
@@ -4545,7 +4571,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     expect(slicePostFixVerifyPendingFromMarkerGap(ledger)).toBe(true);
     expect(onlineReviewRoundFromLedger(ledger)).toBe(2);
     expect(lastOnlineReviewFixCommitShaFromLedger(ledger)).toBeUndefined();
-    expect(onlineReviewRoundTriggerFromLedger(ledger as never)).toEqual(
+    expect(onlineReviewRoundTriggerFromLedger(onlineLedger(ledger))).toEqual(
       buildRoundTrigger(fixSha, RETRIGGER_TS),
     );
 
@@ -4603,7 +4629,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     expect(sliceOnlineReviewCiFailedPending([s9Red, ciFailed])).toBe(true);
     // Later green S9 clears the park.
     expect(
-      sliceOnlineReviewCiFailedPending([
+      sliceOnlineReviewCiFailedPending(onlineLedger([
         s9Red,
         ciFailed,
         {
@@ -4611,11 +4637,11 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
           output: { kind: "verify", converged: true },
           ts: "2026-07-09T13:00:00.000Z",
         },
-      ] as never),
+      ])),
     ).toBe(false);
     // Stray S10 after CI park also clears (progressed past park).
     expect(
-      sliceOnlineReviewCiFailedPending([
+      sliceOnlineReviewCiFailedPending(onlineLedger([
         s9Red,
         ciFailed,
         {
@@ -4626,11 +4652,11 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
             alreadySatisfied: true,
           },
         },
-      ] as never),
+      ])),
     ).toBe(false);
     // R19: later S9 with fix marks must clear park so resume routes to S10.
     expect(
-      sliceOnlineReviewCiFailedPending([
+      sliceOnlineReviewCiFailedPending(onlineLedger([
         s9Red,
         ciFailed,
         {
@@ -4641,11 +4667,11 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
             fixMarkedFindingIdentityKeys: ["t:1"],
           },
         },
-      ] as never),
+      ])),
     ).toBe(false);
     // R20: pending-CI park uses same resume-to-S9 predicate.
     expect(
-      sliceOnlineReviewCiFailedPending([
+      sliceOnlineReviewCiFailedPending(onlineLedger([
         {
           step: "S9",
           output: { kind: "verify", converged: true },
@@ -4655,7 +4681,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
           event: "online_review_ci_pending",
           prHead: "headsha1",
         },
-      ] as never),
+      ])),
     ).toBe(true);
   });
 
@@ -4816,13 +4842,13 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
 
     // crash after retrigger network, before retrigger marker → same gap recovery ACTION
     expect(slicePostFixVerifyPendingFromMarkerGap(afterFixCommitted)).toBe(true);
-    expect(onlineReviewRoundTriggerFromLedger(afterFixCommitted as never)).toBeUndefined();
+    expect(onlineReviewRoundTriggerFromLedger(onlineLedger(afterFixCommitted))).toBeUndefined();
 
     // happy path: both markers persisted
     const happy = [s9False, fixCommittedOnly, retrigger, s10Row];
     expect(slicePostFixVerifyPendingFromMarkerGap(happy)).toBe(false);
     expect(onlineReviewRoundFromLedger(happy)).toBe(2);
-    expect(onlineReviewRoundTriggerFromLedger(happy as never)).toEqual(
+    expect(onlineReviewRoundTriggerFromLedger(onlineLedger(happy))).toEqual(
       buildRoundTrigger(fixSha, retriggerTs),
     );
 
@@ -4831,7 +4857,7 @@ describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
     expect(slicePostFixVerifyPendingFromMarkerGap(retriggerOnly)).toBe(true);
     expect(onlineReviewRoundFromLedger(retriggerOnly)).toBe(2);
     expect(lastOnlineReviewFixCommitShaFromLedger(retriggerOnly)).toBeUndefined();
-    expect(onlineReviewRoundTriggerFromLedger(retriggerOnly as never)).toEqual(
+    expect(onlineReviewRoundTriggerFromLedger(onlineLedger(retriggerOnly))).toEqual(
       buildRoundTrigger(fixSha, retriggerTs),
     );
   });
