@@ -1696,6 +1696,12 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     ): void {
       this.writeCmrRouteFile(pass, spec.cmrReviewLegs!);
     }
+    public onlineLanding(
+      ctx: DispatchContext,
+      landing: NonNullable<Parameters<FocusBackend["writeFamilyOnlineReviewLandingFile"]>[1]>,
+    ): string {
+      return this.writeFamilyOnlineReviewLandingFile(ctx, landing).path;
+    }
   }
 
   function realRepo(): string {
@@ -1727,6 +1733,40 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     // It is git-ignored (info/exclude), so the review never accidentally commits it.
     const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
     expect(exclude.split("\n")).toContain(CMR_FOCUS_FILENAME);
+  });
+
+  it("serializes an answered gate into the real online-review landing", () => {
+    const repo = realRepo();
+    const be = new FocusBackend({
+      workingRepo: repo,
+      familyBase: "feat/330-pure-scheduler",
+      ledgerDir: mkDir("cmr-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+    const path = be.onlineLanding(
+      {
+        familyBase: "feat/330-pure-scheduler",
+        escalationAnswer: {
+          event: "escalation_answered",
+          answer: "defer this finding",
+          source: "human",
+        },
+      },
+      {
+        onlineReviewSnapshot: { kind: "offline", findings: [] } as never,
+      },
+    );
+    const payload = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    expect(payload.escalationAnswer).toEqual({
+      event: "escalation_answered",
+      answer: "defer this finding",
+      source: "human",
+    });
   });
 
   it("writes the route file pass from dispatch context, not the prompt filename", () => {

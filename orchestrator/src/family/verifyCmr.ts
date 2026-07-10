@@ -113,6 +113,7 @@ import {
   familyCoderFixWorkerSpec,
   cmrWorkerSpec,
   dispatchFamilyWorker,
+  dispatchFamilyWorkerWithMonitor,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import {
@@ -138,6 +139,7 @@ import type {
   ShipResult,
   VerifyResult,
   WorkerLandingPayload,
+  WorkerMonitorHandle,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -1557,6 +1559,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   readonly familyBase: string;
   readonly ship: ShipResult;
   readonly resolvedRoute?: ResolvedModelRoute;
+  readonly escalationAnswer?: EscalationAnswerPayload;
 }): Promise<OnlineReviewLoopStageResult> {
   const repo =
     process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
@@ -1595,6 +1598,9 @@ export async function runFamilyOnlineReviewLoop(input: {
     repo,
     prUrl,
     prHead: input.ship.prHead,
+    ...(input.escalationAnswer !== undefined
+      ? { escalationAnswer: input.escalationAnswer }
+      : {}),
   };
 
   const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
@@ -1756,15 +1762,24 @@ export async function runFamilyOnlineReviewLoop(input: {
       // Cursor R11 medium + self-check: escalated must park with decision_gate_park
       // + escalate payload text — not a bare decision_gate_raised that drops reason.
       if (result.kind === "escalated") {
+        const escalationSummary = `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
+        const stopSummary =
+          result.escalation.synthesizedFailure === true
+            ? infraFailureStopSummary({
+                summary: escalationSummary,
+                repairHint:
+                  "repair the family verify worker startup/authentication failure, then re-feed the family online review loop",
+              })
+            : decisionGateParkStopSummary({
+                summary: escalationSummary,
+                repairHint:
+                  "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
+              });
         throw new OnlineReviewLoopTerminal({
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: decisionGateParkStopSummary({
-            summary: `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`,
-            repairHint:
-              "answer the decision gate / unstick the verify worker, then re-feed the family online review loop",
-          }),
+          stopSummary,
         });
       }
       if (result.kind !== "completed" || !isValidVerifyResult(result.output)) {
@@ -1797,15 +1812,23 @@ export async function runFamilyOnlineReviewLoop(input: {
         landing,
       );
       if (result.kind === "escalated") {
+        const escalationSummary = `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
         throw new OnlineReviewLoopTerminal({
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: decisionGateParkStopSummary({
-            summary: `family fixer worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`,
-            repairHint:
-              "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
-          }),
+          stopSummary:
+            result.escalation.synthesizedFailure === true
+              ? infraFailureStopSummary({
+                  summary: escalationSummary,
+                  repairHint:
+                    "repair the family fixer worker startup/authentication failure, then re-feed the family online review loop",
+                })
+              : decisionGateParkStopSummary({
+                  summary: escalationSummary,
+                  repairHint:
+                    "answer the decision gate / unstick the fixer worker, then re-feed the family online review loop",
+                }),
         });
       }
       if (result.kind !== "completed" || !isValidFixerResult(result.output)) {
@@ -1955,12 +1978,29 @@ async function dispatchOrAbort(
         let dispatchError: unknown | undefined;
         let workerResult: Awaited<ReturnType<typeof dispatchFamilyWorker>>;
         try {
-          workerResult = await dispatchFamilyWorker(
+          const monitored = await dispatchFamilyWorkerWithMonitor(
             familyBackend,
             s,
             c,
             landing,
+            {
+              onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
+                // Persist before waiting for the child: a hung family worker
+                // must be resumable/judgable from the durable family ledger.
+                try {
+                  await familyBackend.appendFamilyLedger({
+                    status: "worker_dispatched",
+                    event: "worker_dispatched",
+                    monitorHandle: handle,
+                  });
+                } catch {
+                  // Best-effort, matching the single-slice path. The spawned
+                  // worker remains governed by its verified monitor handle.
+                }
+              },
+            },
           );
+          workerResult = monitored.result;
         } catch (err) {
           dispatchError = err;
         }

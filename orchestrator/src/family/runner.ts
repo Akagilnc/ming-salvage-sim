@@ -1907,6 +1907,7 @@ export async function runFamily(
     const reviewLoop = await runFamilyOnlineReviewLoop({
       familyBackend,
       familyBase,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
       ship: {
         kind: "ship",
         branch: familyBase,
@@ -1934,31 +1935,43 @@ export async function runFamily(
           : reviewLoop.terminalState === "contract_drift"
             ? "family online review verify worker moved HEAD during resume"
             : "family online review loop did not converge during resume");
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "failure",
-        phase: "final",
-        reason: escalationReason,
-        familyHeadAfter: escalationFamilyHead,
-      });
+      // #744: a true human park is answerable + re-feedable (escalationKind
+      // "decision"); hard-writing "failure" made re-feed impossible.
+      // R1: terminalState "decision_gate_raised" is overloaded — onlineReviewLoop
+      // returns it for both B-class parks (stopSummary.reason decision_gate_park)
+      // and A-class infra failures (stopSummary.reason infra_failure). Key
+      // escalationKind off verifiable park semantics (StopSummary reason), not
+      // terminalState alone. decision_gate_raised + infra_failure stays failure.
+      const isDecisionGatePark =
+        reviewLoop.stopSummary?.reason === "decision_gate_park";
       const ledgerMerged = await currentMerged(familyBackend);
       const children: FamilyChildResult[] = epic.children.map((c) =>
         ledgerMerged.has(c.issue)
           ? { issue: c.issue, status: "already_done" as const }
           : { issue: c.issue, status: "skipped" as const },
       );
+      const stopSummary =
+        reviewLoop.stopSummary ??
+        familyStopSummary({
+          status: "escalated",
+          familyBase,
+          familyHead: escalationFamilyHead ?? preFinalFamilyHead,
+          children,
+          escalationReason,
+          decisionGatePark: isDecisionGatePark,
+        });
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind: isDecisionGatePark ? "decision" : "failure",
+        phase: "final",
+        reason: escalationReason,
+        familyHeadAfter: escalationFamilyHead,
+        stopSummary,
+      });
       return {
         status: "escalated",
         familyBase,
         familyHead: escalationFamilyHead ?? preFinalFamilyHead,
-        stopSummary:
-          reviewLoop.stopSummary ??
-          familyStopSummary({
-            status: "escalated",
-            familyBase,
-            familyHead: escalationFamilyHead ?? preFinalFamilyHead,
-            children,
-            escalationReason,
-          }),
+        stopSummary,
         children,
       };
     }

@@ -1,9 +1,9 @@
 /**
  * #602 — host-side auto-merge after online review + doc-release converges.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { Sh } from "../src/familyDriver.js";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +46,18 @@ import type {
 
 const REPO = "Akagilnc/ming-salvage-sim";
 const PR_URL = "https://github.com/Akagilnc/ming-salvage-sim/pull/602";
+
+const tempHomes: string[] = [];
+
+function cleanupTempHomes(): void {
+  while (tempHomes.length > 0) {
+    const home = tempHomes.pop();
+    if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  }
+}
+
+afterEach(cleanupTempHomes);
+afterAll(cleanupTempHomes);
 
 function readySnapshot(overrides?: Partial<PrReviewSnapshot>): PrReviewSnapshot {
   return {
@@ -1344,6 +1356,8 @@ describe("#602 docRelease non-interactive dispatch env", () => {
         return this.boxConfig({ authDir: "/tmp/auth-602" }, spec, 602).env;
       }
     }
+    const home = mkdtempSync(join(tmpdir(), "rb-home-602-"));
+    tempHomes.push(home);
     const env = new StubBackend({
       sourceRepo: "/tmp/source",
       remote: "https://github.com/Akagilnc/ming-salvage-sim.git",
@@ -1351,6 +1365,8 @@ describe("#602 docRelease non-interactive dispatch env", () => {
       repo: REPO,
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
+      // #748: construction resolves paths under home; keep off real $HOME.
+      home,
     }).workerEnv();
     expect(env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });

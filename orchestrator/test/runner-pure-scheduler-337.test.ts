@@ -72,10 +72,12 @@ describe("#337 runner is a pure scheduler — no inline productive work (STATIC)
   });
 
   it("dispatches every productive step through dispatchWorker (the single seam)", () => {
-    // The seam is imported and called; the only productive-work path the runner
-    // has is dispatchWorker (the static no-legacy-call guards above prove there
-    // is no other).
-    expect(code).toMatch(/dispatchWorker\s*\(/);
+    // #684: production path is dispatchWorkerWithMonitor, which wraps the
+    // unified dispatchWorker seam (CLI → atomic monitor handle; container →
+    // fall-through). The static no-legacy-call guards above prove there is no
+    // other productive-work path.
+    expect(code).toMatch(/dispatchWorkerWithMonitor\s*\(/);
+    expect(code).not.toMatch(/\bdispatchWorker\s*\(/);
   });
 });
 
