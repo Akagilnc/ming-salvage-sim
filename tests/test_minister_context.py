@@ -581,6 +581,8 @@ def test_north_star_sample_is_reviewable():
     assert "同一问题" in sample
     assert "改前" in sample and "改后" in sample
     assert "对照结论" in sample
+    assert all(name in sample for name in ("毕自严", "杨嗣昌", "王绍徽"))
+    assert sample.count("辽饷又缺两月") >= 4
 
 
 def test_court_brief_keeps_countable_money_but_hides_abstract_scores(game):

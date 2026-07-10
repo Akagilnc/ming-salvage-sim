@@ -64,3 +64,35 @@ def test_north_star_ministers_have_distinct_featured_voices(game):
     assert "财政" in rendered["毕自严"]
     assert "边务" in rendered["杨嗣昌"]
     assert "党" in rendered["王绍徽"]
+
+
+def test_minister_agent_injects_faction_dossier_once(game):
+    """人物档料与派系档料各有一个装配入口，不重复占用 prompt。"""
+    from unittest.mock import MagicMock, patch
+
+    from ming_sim.models import CourtContext, LLMConfig
+    from ming_sim.registry import create_minister_agent
+
+    db, state, content = game
+    minister = content.characters["毕自严"]
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    config = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry._ctx", return_value=content), \
+         patch("ming_sim.registry._skills_for", return_value=None), \
+         patch("ming_sim.registry.build_minister_tools", return_value=[]):
+        create_minister_agent(
+            minister,
+            config,
+            CourtContext(state=state, db=db, previous_summary=""),
+            db,
+        )
+
+    rendered = "\n".join(captured["instructions"])
+    assert rendered.count("【派系档料】") == 1
