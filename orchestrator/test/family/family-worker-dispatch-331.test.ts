@@ -4,6 +4,7 @@ import {
   cmrWorkerSpec,
   dispatchFamilyWorker,
   dispatchFamilyWorkerWithMonitor,
+  familyCoderFixWorkerSpec,
   familyShipWorkerSpec,
   legacyDispatchFamilyWorker,
 } from "../../src/family/dispatchFamilyWorker.js";
@@ -75,6 +76,25 @@ class CapableFamilyBackend implements FamilyBackend {
 }
 
 describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", () => {
+  it("derives every family worker host from its route-selected model", () => {
+    const baseRoute = resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" });
+    const route = {
+      ...baseRoute,
+      slots: {
+        ...baseRoute.slots,
+        cmrCompleteness: "opencode-grok",
+        cmrCorrectness: "grok-4.5",
+        coderFix: "sonnet",
+        ship: "gpt-5.6-terra",
+      },
+    };
+
+    expect(cmrWorkerSpec("fresh", "completeness", route).host).toBe("opencode");
+    expect(cmrWorkerSpec("fresh", "correctness", route).host).toBe("cursor");
+    expect(familyCoderFixWorkerSpec(route).host).toBe("claude");
+    expect(familyShipWorkerSpec(route).host).toBe("codex");
+  });
+
   it("family monitored dispatch produces and persists its handle before awaiting the child", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-684-family-monitor-"));
     try {

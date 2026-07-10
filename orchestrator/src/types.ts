@@ -14,6 +14,7 @@
  */
 
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
+import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 
@@ -586,7 +587,7 @@ export type WorkerKind =
   | "docRelease";
 
 /** Which container host runs the worker (decides skill-invocation mechanism). */
-export type WorkerHost = "claude" | "codex";
+export type WorkerHost = "claude" | Exclude<ModelProviderFactory, "claudeCode">;
 
 /**
  * The DISPATCH MODE for this worker invocation:

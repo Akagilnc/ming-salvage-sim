@@ -4239,9 +4239,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ReturnType<typeof dispatchWorkerWithMonitor>
             >["result"];
             try {
+              const billingPool = relayBillingPoolForDispatch(step);
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
                 typeof resumeSessionId === "string" ? "resume" : "fresh",
+                billingPool,
               );
               const focusPath = relayFocusForDispatch(step);
               const dispatchCtx = {
@@ -4252,8 +4254,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ...(escalationAnswerForStep != null
                   ? { escalationAnswer: escalationAnswerForStep }
                   : {}),
-                ...(relayBillingPoolForDispatch(step) !== undefined
-                  ? { billingPool: relayBillingPoolForDispatch(step) }
+                ...(billingPool !== undefined
+                  ? { billingPool }
                   : {}),
                 ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
                 // 信封宪法 (ADR 0062): the dispatch structure carries only the
@@ -4790,7 +4792,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // contract, types.ts:"promptFile CONTENT is hashed into the ledger") — NOT
           // the degraded step-name hash (`name:<sha("S7")>`) the missing assignment
           // produced. The escalateTermination path below ALSO uses it (resume truth).
-          const shipSpec = shipWorkerSpec(modelRoute);
+          const billingPool = relayBillingPoolForDispatch("S7");
+          const shipSpec = shipWorkerSpec(modelRoute, billingPool);
           promptFile = shipSpec.promptFile;
           const escalationAnswerForStep =
             resumedEscalationAnswer?.forStep === "S7"
@@ -4803,8 +4806,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             worktree,
             stateDir,
             modelRoute,
-            ...(relayBillingPoolForDispatch("S7") !== undefined
-              ? { billingPool: relayBillingPoolForDispatch("S7") }
+            ...(billingPool !== undefined
+              ? { billingPool }
               : {}),
             ...(relayFocusForDispatch("S7") !== undefined
               ? { relayFocusPath: relayFocusForDispatch("S7") }
@@ -5135,14 +5138,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             reviewStep = "S12";
           }
         }
+        const billingPool = relayBillingPoolForDispatch(reviewStep);
         const reviewLoopSpec =
           reviewStep === "S9"
-            ? verifyWorkerSpec(modelRoute)
+            ? verifyWorkerSpec(modelRoute, billingPool)
             : reviewStep === "S10"
-              ? fixerWorkerSpec(modelRoute)
+              ? fixerWorkerSpec(modelRoute, billingPool)
               : reviewStep === "S11"
-                ? cleanupWorkerSpec(modelRoute)
-                : docReleaseWorkerSpec(modelRoute);
+                ? cleanupWorkerSpec(modelRoute, billingPool)
+                : docReleaseWorkerSpec(modelRoute, billingPool);
         promptFile = reviewLoopSpec.promptFile;
         try {
           if (reviewStep === "S9") {
@@ -5203,8 +5207,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             prHead:
               onlineReviewLanding?.shipDelivery?.prHead ?? lastShipOutput.prHead,
             onlineReviewRound,
-            ...(relayBillingPoolForDispatch(reviewStep) !== undefined
-              ? { billingPool: relayBillingPoolForDispatch(reviewStep) }
+            ...(billingPool !== undefined
+              ? { billingPool }
               : {}),
             ...(relayFocusForDispatch(reviewStep) !== undefined
               ? { relayFocusPath: relayFocusForDispatch(reviewStep) }
