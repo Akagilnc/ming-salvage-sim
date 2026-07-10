@@ -12,6 +12,7 @@ import { MenuPage } from "./components/menuPage";
 import { ChatModal, ClosedIssuesModal, EdictModal, EndingModal, HistoryModal, ReportModal, SecretOrdersModal, StateModal, filterConsorts, filterMinisters } from "./components/modals";
 import { SituationPanel } from "./components/situation";
 import { DecisionModal } from "./components/decisionModal";
+import { DecisionRecoveryPanel } from "./components/decisionRecovery";
 import { pendingDecisionsFrom } from "./decisionRouting";
 import { getMapIntelStyle, refreshLabelMaps, scoreTone } from "./format";
 import { shouldAutoOpenClosedIssuesAfterSettlement, shouldAutoOpenSecretOrdersAfterSettlement } from "./settlementPresentation";
@@ -88,6 +89,7 @@ function App() {
   // HITL 决策点：颁诏推演若出重大抉择，暂停弹窗逐个亲裁，裁完续跑结算。
   const [pendingDecisions, setPendingDecisions] = React.useState<PendingDecision[]>([]);
   const [decisionFailures, setDecisionFailures] = React.useState<PendingActionFailure[]>([]);
+  const [pausedDecisionError, setPausedDecisionError] = React.useState("");
   const [failureRecoveryMode, setFailureRecoveryMode] = React.useState(false);
 
   // Tracks the current selected minister across async boundaries.
@@ -104,6 +106,7 @@ function App() {
     setSelectedNodeId((current) => current || data.map_nodes[0]?.id || "");
     setDecree(data.last_decree || "");
     setReport(data.last_report || "");
+    return data;
   }, [selectedMinister]);
 
   const loadMinisterChat = React.useCallback(async (ministerName: string, options?: { mergeFailures?: boolean }) => {
@@ -217,7 +220,12 @@ function App() {
     if (!state) return;
     if (state.turn.phase !== "awaiting_decision") return;
     const decisions = pendingDecisionsFrom(state.pending_decisions || []);
-    if (decisions.length === 0) return;
+    if (decisions.length === 0) {
+      setPendingDecisions([]);
+      setPausedDecisionError("本回合仍在等待批红，但待批决策无法校验。请重新拉取后重试。");
+      return;
+    }
+    setPausedDecisionError("");
     setPendingDecisions((prev) => (prev.length ? prev : decisions));
   }, [state]);
 
@@ -848,8 +856,16 @@ function App() {
       if (outcome.kind === "decisions") {
         // 出重大抉择：暂停弹窗逐个亲裁，裁完调 submitDecisions 续跑结算。
         const failures = outcome.data?.pending_action_failures || [];
+        const decisions = pendingDecisionsFrom(outcome.data.decisions || []);
         setDecisionFailures(failures);
-        setPendingDecisions(pendingDecisionsFrom(outcome.data.decisions || []));
+        if (decisions.length === 0) {
+          setPendingDecisions([]);
+          setPausedDecisionError("本回合仍在等待批红，但待批决策无法校验。请重新拉取后重试。");
+          setBusy("");
+          return;
+        }
+        setPausedDecisionError("");
+        setPendingDecisions(decisions);
         setBusy("");
         return;
       }
@@ -862,6 +878,26 @@ function App() {
       return;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setBusy("");
+    }
+  };
+
+  const retryPendingDecisions = async () => {
+    setBusy("重新拉取批红");
+    setPausedDecisionError("");
+    try {
+      const freshState = await loadState();
+      const decisions = pendingDecisionsFrom(freshState.pending_decisions || []);
+      if (freshState.turn.phase !== "awaiting_decision" || decisions.length === 0) {
+        setPendingDecisions([]);
+        setPausedDecisionError("本回合仍未恢复批红。请再次重新拉取待批决策。");
+        return;
+      }
+      setPendingDecisions(decisions);
+      setPausedDecisionError("");
+    } catch (err) {
+      setPausedDecisionError(`重新拉取待批决策失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
       setBusy("");
     }
   };
@@ -1247,6 +1283,14 @@ function App() {
             续跑结算
           </button>
         </div>
+      ) : null}
+
+      {!settling && pausedDecisionError ? (
+        <DecisionRecoveryPanel
+          message={pausedDecisionError}
+          busy={busy}
+          onRetry={retryPendingDecisions}
+        />
       ) : null}
 
       {cheatOpen ? (

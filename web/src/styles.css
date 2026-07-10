@@ -6904,3 +6904,8 @@ button:disabled {
   border-radius: 8px;
   font-size: 14px;
 }
+
+.decision-recovery-banner {
+  border-color: #9b2c2c;
+  background: rgba(155, 44, 44, 0.12);
+}
