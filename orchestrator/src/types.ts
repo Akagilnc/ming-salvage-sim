@@ -415,6 +415,13 @@ export interface OnlineReviewFixCommittedEvent {
   readonly event: "online_review_fix_committed";
   readonly fixCommitSha: string;
   readonly onlineReviewRound: number;
+  /** Fix-marked identity keys from the verify that drove this fix (#743). */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /** Original thread binding for each fix-marked identity (#743 resume authority). */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
 }
 
 /**
@@ -440,6 +447,24 @@ export interface OnlineReviewCiPendingEvent {
 }
 
 /**
+ * #683 — idle-threshold quota probe hit a 429/limit wall. Step is parked for
+ * quota reset (runner status escalate, not S8(error)); auto re-dispatch after
+ * reset is #686 (out of scope). Same park family as `online_review_ci_pending`.
+ * Shape mirrors {@link import("./quotaProbe.js").QuotaWaitForResetLedgerEvent}.
+ */
+export interface QuotaWaitForResetEvent {
+  readonly event: "quota_wait_for_reset";
+  /** Provider pool that returned 429 (`zai` / `opencode-go` / `grok` / `unknown`). */
+  readonly pool: string;
+  /** ISO-8601 reset instant when the 429 body carried one. */
+  readonly resetAt?: string;
+  readonly reason: string;
+  readonly step?: StepId;
+  readonly workerPid?: number;
+  readonly ts: string;
+}
+
+/**
  * #684 R2: spawn-time monitor handle bookkeeping — persisted AT SPAWN so hang
  * judge/kill/resume can rebuild the handle before the step completes.
  */
@@ -456,6 +481,7 @@ export type LedgerBookkeepingEvent =
   | OnlineReviewFixCommittedEvent
   | OnlineReviewCiFailedEvent
   | OnlineReviewCiPendingEvent
+  | QuotaWaitForResetEvent
   | WorkerMonitorSpawnedEvent;
 
 /**
@@ -754,6 +780,15 @@ export interface WorkerLandingPayload {
   readonly onlineReviewRound?: number;
   /** S10 fixer only: fix-marked finding identity keys from verify worker. */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * S9/S10: the original review thread bound to each fixer-approved identity.
+   * A key alone is not authority to close another thread that happens to claim
+   * the same identity.
+   */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
   /** S9 verify: prior online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
   /** S10 fixer / S5 coder-fix: pattern briefs from prior judge worker (#711). */
@@ -994,7 +1029,11 @@ export interface VerifyResult {
   readonly converged: boolean;
   /** Per-finding dispositions judged by the verify worker. */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
-  /** Identity keys the fixer may act on (fix-marked only). */
+  /**
+   * Identity keys the fixer may act on (fix-marked only). On a post-fixer
+   * recheck, this is the verifier's explicit confirmation set and must echo the
+   * keys supplied by the runner before convergence is accepted (#743).
+   */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */
   readonly threadReplies?: ReadonlyArray<OnlineReviewThreadReply>;
@@ -1218,8 +1257,18 @@ export interface LedgerEntry {
    * provider actually surfaced one.
    */
   readonly sessionId?: string;
-  /** Append-only event marker for non-step ledger facts (#439 / #446). */
+  /** Append-only event marker for non-step ledger facts (#439 / #446 / #683). */
   readonly event?: LedgerBookkeepingEvent["event"];
+  /**
+   * #683 — quota pool id on `quota_wait_for_reset` rows (ledger-visible).
+   * Typed as string so JSONL round-trips stay schema-light; see
+   * {@link QuotaWaitForResetEvent.pool}.
+   */
+  readonly pool?: string;
+  /** #683 — ISO reset instant on `quota_wait_for_reset` when known. */
+  readonly resetAt?: string;
+  /** #683 — worker pid preserved while waiting for quota reset. */
+  readonly workerPid?: number;
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */
   readonly forStep?: StepId;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
@@ -1265,6 +1314,21 @@ export interface LedgerEntry {
   readonly roundTriggerHeadOid?: string;
   /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
   readonly roundTriggerAt?: string;
+  /** Online review fix_committed marker (#600 r27): fixing commit SHA. */
+  readonly fixCommitSha?: string;
+  /**
+   * Online review fix_committed marker (#743): fix-marked identity keys from the
+   * verify that drove this fix — durable resume authority (family-parity).
+   */
+  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * Online review fix_committed marker (#743): original thread binding for each
+   * fix-marked identity — resume must not depend on last-S9 shape alone.
+   */
+  readonly fixMarkedFindingThreads?: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly threadId: string;
+  }>;
   /**
    * Monitor handle for an in-flight external CLI worker (#684). Persisted so a
    * resumed run can rebuild alive/idle/kill judgment without global pgrep.
@@ -1315,6 +1379,9 @@ export interface CliMonitorSpawnSpec {
   /** Injectable process identity reader for restricted/test environments. */
   readonly readInstanceId?: (pid: number) => string | undefined;
 }
+
+/** #683: the monitor asks the backend to probe before it owns hang-kill. */
+export type MonitoredWorkerIdleDisposition = "hang" | "wait_for_reset";
 
 /**
  * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
@@ -1574,6 +1641,16 @@ export interface Backend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
+  /**
+   * #683: called while the monitored worker is still alive at the idle threshold.
+   * A backend may throw its quota-park error; returning `hang` leaves verified
+   * pid-tree kill exclusively to the monitor.
+   */
+  handleMonitoredWorkerIdle?(
+    handle: WorkerMonitorHandle,
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<MonitoredWorkerIdleDisposition>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
   /**
