@@ -3835,10 +3835,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             }
           };
           // S9: read-only contract drift is caller-owned (no cleanResidue on
-          // retry — verify must not rewrite the tree). S12 文档发布 is a write
-          // worker (#735 Codex P2): uncommitted residue from a crashed skill
-          // attempt must be reset before mechanical retry, same as coder/ship.
-          // (Committed partial HEAD stays — cleanResidue contract / ADR 0024.)
+          // retry — verify must not rewrite the tree). S12 与全角色一致：crash
+          // 重试 continue-on-current-worktree AS-IS（user override 2026-07-10，
+          // 同 21906adf / #600）；已提交 HEAD 与未提交残渣均保留，soul 的
+          // residual-HEAD-push 契约负责收尾。勿再单侧加 reset（#740）。
           const reviewResetOpt: MechanicalRetryOptions =
             reviewStep === "S9"
               ? {
@@ -3849,11 +3849,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       o.error instanceof VerifyWorkerWorktreeDirtyError),
                   rethrowOnExhaustion: true,
                 }
-              : reviewStep === "S12" && worktree !== undefined
-                ? {
-                    resetBeforeRetry: () => backend.cleanResidue(worktree!),
-                  }
-                : {};
+              : {};
           if (
             reviewStep === "S10" &&
             (onlineReviewLanding === undefined ||

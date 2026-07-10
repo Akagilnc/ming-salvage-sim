@@ -1785,6 +1785,9 @@ export async function runFamilyOnlineReviewLoop(input: {
       }
       return result.output;
     },
+    // #740: family + single-slice S12 crash-retry both continue-as-is (no
+    // scoped cleanResidue / resetBeforeRetry). Do not reintroduce a one-sided
+    // reset on either path — same user override as #600 / 21906adf.
     dispatchDocRelease: async (landing: WorkerLandingPayload) => {
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
