@@ -119,6 +119,7 @@ import {
   cmrLegAccountingFailure,
   modelRouteFingerprint,
   resolveActiveModelRoute,
+  smokeRouteModels,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import { hasAcceptedSuppressionAuthority } from "../acceptedSuppression.js";
@@ -195,6 +196,8 @@ export interface VerifyCmrInput {
    * `recordAborted` / `escalateFamily`.
    */
   readonly familyBackend: FamilyBackend;
+  /** The family-startup-smoked route carried into every family worker dispatch. */
+  readonly modelRoute?: ResolvedModelRoute;
   /**
    * The child issue numbers whose merge into the family base was LLM-resolved
    * (#295), derived by the spine from the durable family ledger (#291 缺口 1). The
@@ -1088,6 +1091,7 @@ async function runCmrCoderFix(input: {
       familyCoderFixWorkerSpec(resolvedRoute),
       {
         familyBase,
+        modelRoute: resolvedRoute,
         // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
         // rich finding content travels in the separate landing payload below.
         blockingFindingIdentityKeys,
@@ -1555,8 +1559,29 @@ export async function runFamilyOnlineReviewLoop(input: {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
+  let modelRoute: ResolvedModelRoute;
+  try {
+    modelRoute =
+      input.resolvedRoute ??
+      (await smokeRouteModels(
+        resolveActiveModelRoute(),
+        async () => ({ cliVersion: "standalone-online-review-test" }),
+      ));
+  } catch (err) {
+    return {
+      ok: false,
+      terminalState: "decision_gate_raised",
+      round: 1,
+      stopSummary: {
+        reason: "infra_failure",
+        summary: `family online-review route smoke failed: ${err instanceof Error ? err.message : String(err)}`,
+        repairHint: "provide the family startup-smoked model route before dispatching online review workers",
+      },
+    };
+  }
   const baseCtx: DispatchContext = {
     familyBase: input.familyBase,
+    modelRoute,
     repo,
     prUrl,
     prHead: input.ship.prHead,
@@ -2033,6 +2058,7 @@ async function runIntegratedCmrPass(input: {
   const spec = cmrWorkerSpec("fresh", pass, resolvedRoute);
   const dispatchCtx: DispatchContext = {
     familyBase,
+    modelRoute: resolvedRoute,
     cmrPass: pass,
     ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
       ? { llmResolvedChildren }
@@ -2574,6 +2600,7 @@ export async function runVerifyCmr(
     moduleContext,
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
+    modelRoute,
   } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
@@ -2615,7 +2642,17 @@ export async function runVerifyCmr(
   }
   let resolvedRoute: ResolvedModelRoute;
   try {
-    resolvedRoute = resolveActiveModelRoute();
+    resolvedRoute = modelRoute ?? resolveActiveModelRoute();
+    // Direct verify-hook unit tests predate the family startup envelope and call
+    // this hook without a runner-owned route. Keep those standalone tests on a
+    // smoked route; production family runs always pass the real startup-smoked
+    // route from runFamily above.
+    if (modelRoute === undefined) {
+      resolvedRoute = await smokeRouteModels(
+        resolvedRoute,
+        async () => ({ cliVersion: "standalone-verify-test" }),
+      );
+    }
   } catch (err) {
     const reason =
       err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
@@ -2676,6 +2713,7 @@ export async function runVerifyCmr(
       phase: "final",
       familyBackend,
       familyBase,
+      modelRoute,
       llmResolvedChildren,
       escalationAnswer,
       familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
@@ -2784,6 +2822,7 @@ export async function runVerifyCmr(
     familyShipWorkerSpec(resolvedRoute),
     {
       familyBase,
+      modelRoute: resolvedRoute,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
     undefined,
@@ -3238,6 +3277,7 @@ export async function ensureFamilyPostMergeCleanup(input: {
     cleanupWorkerSpec(resolvedRoute),
     {
       familyBase,
+      modelRoute: resolvedRoute,
       repo: familyRepo,
       prUrl,
     },
