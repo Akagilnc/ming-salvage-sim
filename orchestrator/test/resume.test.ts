@@ -1634,6 +1634,56 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(backend.verifyDispatchCount).toBeGreaterThanOrEqual(1);
   });
 
+  it("#743 R5: single-slice legacy key-only recheck resume fails closed before merge", async () => {
+    const fixSha = "fixsha1111111111111111111111111111111111";
+    const stateDir = mkdtempSync(join(tmpdir(), "resume-r5-key-only-"));
+    writeResumeOnlineReviewSnapshot(stateDir);
+    const prior = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", { kind: "reviewer", findings: [] }),
+      entry("S4"),
+      entry("S7", {
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+      entry("S9", {
+        kind: "verify",
+        converged: false,
+        // Old #743 ledger shape carried the authorized key but no pair binding.
+        // Resume must fail closed rather than treating this stale row as mergeable.
+        isRecheck: true,
+        fixMarkedFindingIdentityKeys: ["f:1"],
+      }),
+      {
+        step: "S10" as const,
+        event: "online_review_fix_committed" as const,
+        fixCommitSha: fixSha,
+        onlineReviewRound: 1,
+        sessionId: "session-prior",
+        prompt_hash: "hash-S10",
+        branchHEAD: fixSha,
+        ts: "2026-07-08T12:30:00.000Z",
+      },
+    ];
+    const backend = new ReviewLoopResumeBackend({
+      worktree: WORKTREE,
+      stateDir,
+      ledger: prior,
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary).toEqual(
+      expect.objectContaining({ reason: "contract_drift" }),
+    );
+    expect(backend.dispatchSpecs.filter((s) => s.id === "S11")).toHaveLength(0);
+  });
+
   it("pin online R3 Codex P1: retrigger fail after fix_committed parks escalate (not S8 error)", async () => {
     const livePr = "https://github.com/o/r/pull/255";
     const stateDir = mkdtempSync(join(tmpdir(), "resume-retrigger-fail-"));
