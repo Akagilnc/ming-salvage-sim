@@ -95,6 +95,11 @@ def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]
     return {"world": dict(knowledge.get("world") or {}), "heard": heard[-20:]}
 
 
+def _safe_reply_text(minister_reply: object) -> str:
+    """Keep the explicit reply seam inside the P4 presentation boundary."""
+    return safe_historical_text(minister_reply, "大臣回话")
+
+
 def _infer_subtext(
     minister_reply: str,
     *,
@@ -173,7 +178,7 @@ def build_mindreading_payload(
         raise ValueError("读心 payload 只能由御前近臣位生成")
     if not str(minister_reply or "").strip():
         raise ValueError("读心 payload 需要显式的大臣回话正文")
-    safe_reply = safe_historical_text(minister_reply, "大臣回话")
+    safe_reply = _safe_reply_text(minister_reply)
 
     identity = int(getattr(target, "identity", 50) or 0)
     loyalty = int(getattr(target, "loyalty", 50) or 0)
@@ -203,5 +208,8 @@ def build_mindreading_payload(
                 reader_context=reader_context,
             ),
         },
-        "reply_text": safe_reply,
+        # Keep this boundary local to the returned payload: callers may retain
+        # the raw streamed reply separately, but this player-facing object may
+        # only contain the sanitized form.
+        "reply_text": _safe_reply_text(safe_reply),
     }

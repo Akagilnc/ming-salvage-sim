@@ -160,3 +160,17 @@ def test_mindreading_payload_is_p4_safe_for_parenthesized_person_scores(game):
     assert "忠诚（98）" not in str(payload)
     assert "能力（12）" not in str(payload)
     assert "已略去" in payload["reply_text"]
+
+
+def test_mindreading_payload_keeps_reply_boundary_safe_for_ascii_axes(game):
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    reply = "臣自陈 loyalty=98、ability=12，愿为君分忧。"
+
+    payload = build_mindreading_payload(
+        db, state, reader, content.characters["温体仁"], reply
+    )
+
+    assert "loyalty=98" not in str(payload)
+    assert "ability=12" not in str(payload)
+    assert "已略去" in payload["reply_text"]
