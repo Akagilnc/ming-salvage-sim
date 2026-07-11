@@ -44,6 +44,7 @@ import {
   hashDirectoryContents,
   newLegId,
   readTelemetryRecords,
+  scheduleCommitTelemetry,
   TELEMETRY_FILENAME,
   tryAppendTelemetryRecord,
   type TelemetryCollectRecord,
@@ -288,6 +289,50 @@ describe("#786 telemetry pure helpers", () => {
     expect(record.escapeHatches?.added.asAny).toBe(1);
     expect(record.escapeHatches?.added.tsIgnore).toBe(0);
     expect(record.assertions?.added).toBe(0);
+  });
+
+  it("counts an as-any escape hatch in a .ts generic arrow body", () => {
+    const repo = tempDir("orch-786-ts-generic-arrow-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "generic.ts");
+    writeFileSync(fixture, "export const f = <T>(x: T) => x;\n");
+    execFileSync("git", ["add", "generic.ts"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    writeFileSync(fixture, "export const f = <T>(x: T) => x as any;\n");
+    execFileSync("git", ["commit", "-am", "add escape hatch", "-q"], { cwd: repo });
+
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    const audit = collectCommitDiffAudit(repo, commit);
+
+    expect(buildCommitStamp({ commit, ...audit! }).escapeHatches?.added.asAny).toBe(1);
+  });
+
+  it("returns before a gated commit collection begins or completes", async () => {
+    let beginCollection!: () => void;
+    const collectionBegun = new Promise<void>((resolve) => { beginCollection = resolve; });
+    let releaseCollection!: () => void;
+    const release = new Promise<void>((resolve) => { releaseCollection = resolve; });
+    let completed = false;
+
+    const pending = scheduleCommitTelemetry(
+      { ledgerDir: undefined, repoPath: "/unused", before: "before", after: "after" },
+      async () => {
+        beginCollection();
+        await release;
+        completed = true;
+      },
+    );
+
+    // The caller can continue routing before even the first git read starts.
+    expect(completed).toBe(false);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await collectionBegun;
+    expect(completed).toBe(false);
+    releaseCollection();
+    await pending;
+    expect(completed).toBe(true);
   });
 
   it("excludes an escape hatch changed inside an existing post-image block comment", () => {
@@ -1507,6 +1552,9 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     );
 
     expect(outcome.result.kind).toBe("completed");
+    await vi.waitFor(() => {
+      expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
+    });
     const records = readTelemetryRecords(ledgerDir);
     const dispatch = records.find((r) => r.phase === "dispatch") as
       | TelemetryDispatchRecord
@@ -1826,6 +1874,9 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     );
 
     expect(outcome.result.kind).toBe("completed");
+    await vi.waitFor(() => {
+      expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
+    });
     const records = readTelemetryRecords(ledgerDir);
     expect(records.some((r) => r.phase === "environment")).toBe(true);
     expect(records.some((r) => r.phase === "dispatch")).toBe(true);

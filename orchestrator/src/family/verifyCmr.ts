@@ -146,12 +146,9 @@ import type {
 } from "../types.js";
 import { findingIdentityKey } from "../findings.js";
 import {
-  buildCommitStamp,
   buildReviewRoundStamp,
-  collectCommitDiffAudit,
-  collectCommitMetrics,
-  commitsBetween,
   readTelemetryRecords,
+  scheduleCommitTelemetry,
   tryAppendTelemetryRecord,
   type TelemetryReviewRoundRecord,
 } from "../telemetry.js";
@@ -2227,23 +2224,16 @@ function stampCmrCoderFixCommits(input: {
     };
     const ledgerDir = input.familyBackend.resolveTelemetryDir?.(ctx);
     if (ledgerDir === undefined || ledgerDir.length === 0) return;
-    // The post-fix HEAD is known even if `rev-list` fails; preserve that raw
-    // observation with null dimensions rather than dropping the telemetry row.
-    const commits = commitsBetween(repoPath, input.before, input.after) ?? [input.after];
-    for (const commit of commits) {
-      const metrics = collectCommitMetrics(repoPath, commit);
-      const diffAudit = collectCommitDiffAudit(repoPath, commit);
-      tryAppendTelemetryRecord(
-        ledgerDir,
-        buildCommitStamp({
-          runId: input.runId,
-          issue: input.familyIssue ?? null,
-          commit,
-          ...(metrics !== undefined ? { metrics } : {}),
-          ...(diffAudit !== undefined ? diffAudit : {}),
-        }),
-      );
-    }
+    // Commit observation is strictly sidecar-only. Its git reads, full-file
+    // scans, and JSONL append run after routing yields, through async I/O.
+    void scheduleCommitTelemetry({
+      ledgerDir,
+      repoPath,
+      runId: input.runId,
+      issue: input.familyIssue ?? null,
+      before: input.before,
+      after: input.after,
+    });
   } catch (err) {
     console.warn(
       `[orchestrator] commit telemetry failed (fail-open): ${

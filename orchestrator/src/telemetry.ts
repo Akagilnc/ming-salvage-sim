@@ -34,7 +34,7 @@ import {
   readFileSync,
   statSync,
 } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import ts from "typescript";
@@ -636,11 +636,7 @@ export function scheduleTelemetryEnvironmentStamp(
   // Joinable Promise: callers can await completion without blocking dispatch.
   const runId = runIdFromContext(ctx);
   const pendingKey = `${ledgerDir ?? ""}\0${runId ?? ""}`;
-  if (
-    ledgerDir === undefined ||
-    ledgerDir.length === 0 ||
-    hasEnvironmentStamp(ledgerDir, runId)
-  ) {
+  if (ledgerDir === undefined || ledgerDir.length === 0) {
     return Promise.resolve();
   }
   const pending = pendingTelemetryEnvironmentStamps.get(pendingKey);
@@ -654,9 +650,14 @@ export function scheduleTelemetryEnvironmentStamp(
   queueMicrotask(() => {
     void (async () => {
       try {
-        if (!hasEnvironmentStamp(ledgerDir, runId)) {
+        if (!(await hasEnvironmentStampAsync(ledgerDir, runId))) {
           await backend.installTelemetryRunEnvironment?.();
-          ensureEnvironmentStamp(ledgerDir, ctx);
+          if (!(await hasEnvironmentStampAsync(ledgerDir, runId))) {
+            await tryAppendTelemetryRecordAsync(
+              ledgerDir,
+              buildEnvironmentStamp({ ctx }),
+            );
+          }
         }
       } catch (err) {
         console.warn(
@@ -1308,7 +1309,17 @@ function triviaKindForToken(kind: ts.SyntaxKind): TriviaKind | undefined {
  * masked. This deliberately replaces the former hand-written quote/comment state
  * machine.
  */
-function triviaSpansByLine(source: string): ReadonlyMap<number, readonly TriviaSpan[]> {
+function scriptKindForPath(path: string | undefined): ts.ScriptKind {
+  // Diff fallbacks have no path; retain TSX there so hand-built JSX diff tests
+  // are still recognised. Real git image scans always provide a file path.
+  if (path === undefined) return ts.ScriptKind.TSX;
+  return /\.(?:tsx|jsx)$/i.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+}
+
+function triviaSpansByLine(
+  source: string,
+  path?: string,
+): ReadonlyMap<number, readonly TriviaSpan[]> {
   const result = new Map<number, TriviaSpan[]>();
   const lineStarts = [0];
   for (let index = 0; index < source.length; index += 1) {
@@ -1361,9 +1372,17 @@ function triviaSpansByLine(source: string): ReadonlyMap<number, readonly TriviaS
     }
   }
   // The scanner's normal token stream intentionally does not enter JSX-text
-  // mode. Parse once as TSX to obtain those spans; TypeScript source offsets
-  // remain UTF-16 code-unit offsets just like the scanner offsets above.
-  const sourceFile = ts.createSourceFile("telemetry.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  // mode. Parse only JSX-bearing files as TSX to obtain those spans; parsing a
+  // .ts generic arrow as TSX can otherwise turn its body into JsxText and hide
+  // a real escape hatch. TypeScript source offsets remain UTF-16 code-unit
+  // offsets just like the scanner offsets above.
+  const sourceFile = ts.createSourceFile(
+    path ?? "telemetry.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindForPath(path),
+  );
   const visit = (node: ts.Node): void => {
     if (node.kind === ts.SyntaxKind.JsxText) {
       addTriviaSpan(node.getStart(sourceFile), node.getEnd(), "string");
@@ -1590,7 +1609,7 @@ export function collectCommitDiffAudit(
             encoding: "utf8",
             stdio: ["ignore", "pipe", "ignore"],
           });
-          spansByLine = triviaSpansByLine(postImage);
+          spansByLine = triviaSpansByLine(postImage, postPath);
           postImageTriviaByPath.set(postPath, spansByLine);
         }
         triviaByDiffIndex.set(index, spansByLine.get(postImageLine) ?? []);
@@ -1604,7 +1623,7 @@ export function collectCommitDiffAudit(
             encoding: "utf8",
             stdio: ["ignore", "pipe", "ignore"],
           });
-          spansByLine = triviaSpansByLine(preImage);
+          spansByLine = triviaSpansByLine(preImage, prePath);
           preImageTriviaByPath.set(prePath, spansByLine);
         }
         triviaByDiffIndex.set(index, spansByLine.get(preImageLine) ?? []);
@@ -1618,6 +1637,104 @@ export function collectCommitDiffAudit(
   } catch {
     return undefined;
   }
+}
+
+async function gitOutput(
+  repoPath: string,
+  args: readonly string[],
+): Promise<string | undefined> {
+  return await new Promise((resolve) => {
+    execFile("git", [...args], { cwd: repoPath, encoding: "utf8" }, (err, stdout) => {
+      resolve(err === null ? String(stdout) : undefined);
+    });
+  });
+}
+
+async function collectCommitMetricsAsync(
+  repoPath: string,
+  commit: string,
+): Promise<TelemetryCommitMetrics | undefined> {
+  const output = await gitOutput(repoPath, ["show", "--format=", "--numstat", commit]);
+  if (output === undefined) return undefined;
+  return parseCommitMetrics(output);
+}
+
+function parseCommitMetrics(output: string): TelemetryCommitMetrics | undefined {
+  let files = 0;
+  let insertions = 0;
+  let deletions = 0;
+  let source = emptyCommitDistribution();
+  let test = emptyCommitDistribution();
+  for (const line of output.split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    const [addedRaw, deletedRaw, path] = line.split("\t", 3);
+    const added = Number(addedRaw);
+    const deleted = Number(deletedRaw);
+    if (path === undefined || !Number.isInteger(added) || !Number.isInteger(deleted)) return undefined;
+    files += 1;
+    insertions += added;
+    deletions += deleted;
+    if (isTestPath(path)) test = addCommitDistribution(test, added, deleted);
+    else if (isSourcePath(path)) source = addCommitDistribution(source, added, deleted);
+  }
+  return {
+    files, insertions, deletions, source, test,
+    escapeHatches: { added: { ...EMPTY_ESCAPE_HATCH_COUNTS }, deleted: { ...EMPTY_ESCAPE_HATCH_COUNTS } },
+    assertions: { added: 0, deleted: 0 },
+  };
+}
+
+async function collectCommitDiffAuditAsync(
+  repoPath: string,
+  commit: string,
+): Promise<CommitDiffAudit | undefined> {
+  const diff = await gitOutput(repoPath, ["show", "--format=", "--unified=0", commit]);
+  if (diff === undefined) return undefined;
+  const diffLines = diff.split(/\r?\n/);
+  try {
+    const postImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
+    const preImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
+    const triviaByDiffIndex = new Map<number, readonly TriviaSpan[]>();
+    let prePath: string | undefined;
+    let postPath: string | undefined;
+    let preImageLine: number | undefined;
+    let postImageLine: number | undefined;
+    for (const [index, line] of diffLines.entries()) {
+      if (line.startsWith("--- ")) { const raw = line.slice(4); prePath = raw.startsWith("a/") ? raw.slice(2) : undefined; continue; }
+      if (line.startsWith("+++ ")) { const raw = line.slice(4); postPath = raw.startsWith("b/") ? raw.slice(2) : undefined; continue; }
+      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (hunk !== null) { preImageLine = Number(hunk[1]); postImageLine = Number(hunk[2]); continue; }
+      if (line.startsWith("+") && !line.startsWith("+++")) {
+        if (postPath === undefined || postImageLine === undefined) return undefined;
+        let spans = postImageTriviaByPath.get(postPath);
+        if (spans === undefined) {
+          const image = await gitOutput(repoPath, ["show", `${commit}:${postPath}`]);
+          if (image === undefined) return undefined;
+          spans = triviaSpansByLine(image, postPath);
+          postImageTriviaByPath.set(postPath, spans);
+        }
+        triviaByDiffIndex.set(index, spans.get(postImageLine) ?? []);
+        postImageLine += 1;
+      } else if (line.startsWith("-") && !line.startsWith("---")) {
+        if (prePath === undefined || preImageLine === undefined) return undefined;
+        let spans = preImageTriviaByPath.get(prePath);
+        if (spans === undefined) {
+          const image = await gitOutput(repoPath, ["show", `${commit}^:${prePath}`]);
+          if (image === undefined) return undefined;
+          spans = triviaSpansByLine(image, prePath);
+          preImageTriviaByPath.set(prePath, spans);
+        }
+        triviaByDiffIndex.set(index, spans.get(preImageLine) ?? []);
+        preImageLine += 1;
+      } else { preImageLine = preImageLine === undefined ? undefined : preImageLine + 1; postImageLine = postImageLine === undefined ? undefined : postImageLine + 1; }
+    }
+    return { diffLines, triviaByDiffIndex };
+  } catch { return undefined; }
+}
+
+async function commitsBetweenAsync(repoPath: string, before: string, after: string): Promise<readonly string[] | undefined> {
+  const output = await gitOutput(repoPath, ["rev-list", "--reverse", `${before}..${after}`]);
+  return output?.split(/\r?\n/).map((value) => value.trim()).filter((value) => value.length > 0);
 }
 
 /** Best-effort ordered host-git commit list for an already-known HEAD movement. */
@@ -1966,6 +2083,79 @@ export function tryAppendTelemetryRecord(
   }
 }
 
+async function tryAppendTelemetryRecordAsync(
+  ledgerDir: string | undefined,
+  record: TelemetryRecord,
+): Promise<void> {
+  if (ledgerDir === undefined || ledgerDir.length === 0) return;
+  try {
+    try {
+      await stat(ledgerDir);
+    } catch {
+      const parent = dirname(ledgerDir);
+      if (parent === ledgerDir || parent.length === 0) return;
+      try {
+        await stat(parent);
+      } catch {
+        return;
+      }
+      await mkdir(ledgerDir, { recursive: true });
+    }
+    await appendFile(telemetryPath(ledgerDir), `${JSON.stringify(record)}\n`, {
+      encoding: "utf8",
+      flag: "a",
+    });
+  } catch (err) {
+    console.warn(`[orchestrator] telemetry append failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+export interface CommitTelemetryScheduleInput {
+  readonly ledgerDir: string | undefined;
+  readonly repoPath: string;
+  readonly runId?: string;
+  readonly issue?: number | null;
+  readonly before: string;
+  readonly after: string;
+}
+
+/**
+ * Defer best-effort commit observation until after the caller has yielded its
+ * routing decision. Collection uses only async subprocess and file I/O.
+ */
+export function scheduleCommitTelemetry(
+  input: CommitTelemetryScheduleInput,
+  collect: (input: CommitTelemetryScheduleInput) => Promise<void> = collectCommitTelemetry,
+): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(() => {
+      void collect(input)
+        .catch((err: unknown) => {
+          console.warn(`[orchestrator] commit telemetry failed (fail-open): ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .finally(resolve);
+    });
+  });
+}
+
+async function collectCommitTelemetry(input: CommitTelemetryScheduleInput): Promise<void> {
+  if (input.before === input.after) return;
+  const commits = await commitsBetweenAsync(input.repoPath, input.before, input.after) ?? [input.after];
+  for (const commit of commits) {
+    const [metrics, diffAudit] = await Promise.all([
+      collectCommitMetricsAsync(input.repoPath, commit),
+      collectCommitDiffAuditAsync(input.repoPath, commit),
+    ]);
+    await tryAppendTelemetryRecordAsync(input.ledgerDir, buildCommitStamp({
+      runId: input.runId,
+      issue: input.issue ?? null,
+      commit,
+      ...(metrics !== undefined ? { metrics } : {}),
+      ...(diffAudit !== undefined ? diffAudit : {}),
+    }));
+  }
+}
+
 /**
  * Ensure a single environment stamp exists for this ledgerDir and run.
  * Idempotent: skips when an environment phase line for the current run is
@@ -2032,6 +2222,27 @@ export function hasEnvironmentStamp(
           return false;
         }
       });
+  } catch {
+    return false;
+  }
+}
+
+async function hasEnvironmentStampAsync(
+  ledgerDir: string | undefined,
+  runId: string | null = null,
+): Promise<boolean> {
+  if (ledgerDir === undefined || ledgerDir.length === 0) return false;
+  try {
+    const content = await readFile(telemetryPath(ledgerDir), "utf8");
+    return content.split("\n").some((line) => {
+      if (line.trim().length === 0) return false;
+      try {
+        const record = JSON.parse(line) as TelemetryRecord;
+        return record.phase === "environment" && record.runId === runId;
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return false;
   }
