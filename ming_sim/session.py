@@ -954,10 +954,13 @@ class GameSession:
                         self.state.turn, character.name,
                         payload={"text": draft_text, "actor": character.name},
                     )
-            elif tool_name == "propose_appointment" or tool_result.startswith("__pending_appointment__"):
+            elif (tool_name == "propose_appointment"
+                  or tool_result.startswith("__pending_appointment__")
+                  or tool_result.startswith("__pending_recommendation__")):
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                     continue
-                payload = tool_result.removeprefix("__pending_appointment__").strip()
+                payload = tool_result.removeprefix("__pending_recommendation__")
+                payload = payload.removeprefix("__pending_appointment__").strip()
                 result.pending_action_id = self._stage_appointment_candidate(payload, character)
             elif tool_name == "register_unlisted_person" or tool_result.startswith("__pending_unlisted_person__"):
                 if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
@@ -1688,6 +1691,9 @@ class GameSession:
             value = str(data.get(key) or data.get(metadata_aliases[key]) or "").strip()
             if value:
                 staged_payload[key] = value
+        recommendation = data.get("recommendation")
+        if isinstance(recommendation, dict):
+            staged_payload["recommendation"] = recommendation
         return self.db.stage_pending_action(
             self.state.turn,
             kind="office",
