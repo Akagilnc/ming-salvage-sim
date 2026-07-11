@@ -24,6 +24,7 @@ Phases (one JSON object per line):
 | `environment` | once per run | image / route lineup / CLI versions |
 | `dispatch` | at spawn | identity / model / pool / `dispatched_at` |
 | `collect` | at finish | terminal / tokens / session / log / `first_output_at` / `completed_at` |
+| `review_round` | each integrated CMR verdict | pass / verdict / severity counts / identity-key recurrence / prior-finding dispositions |
 
 Join key: `legId` on a dispatch+collect pair. Unobtainable fields are `null`;
 telemetry I/O is fail-open and must never block the worker path.
@@ -45,6 +46,23 @@ Consumers computing “time-to-first-output” as
 not sub-poll TTFB. When non-null the monotonic order holds:
 
 `dispatched_at ≤ first_output_at ≤ completed_at`.
+
+### `review_round` semantics
+
+`review_round` is an append-only observation after the integrated-CMR runner has
+finished its terminal gates. `finalDisposition` says whether that runner accepted
+the review result; rejected rows are telemetry only and never alter routing.
+`findingsBySeverity`, identity-key lists, and closure dispositions are `null` when
+the worker did not produce a parseable CMR payload. `identityMatch` is always
+`exact_identity_match`: keys already present in earlier rows of the same pass are
+`recurringExactIdentityMatchKeys`; the remainder are
+`newExactIdentityMatchKeys`. This is exact matching on category, location, and
+normalized `claim_quote`, not semantic deduplication: wording or line-number
+drift can make a recurring finding appear new. Fresh re-review dispositions map
+to `fixed`
+(`verified-closed`), `refuted` (`accepted_suppressed`), or `deferred`
+(`still-active` / `unable-to-assess`). These rows are telemetry only: they have no
+review, fix-loop, or ADR 0062 routing authority.
 
 Field-level JSDoc lives on `TelemetryCollectRecord.first_output_at` in
 `src/telemetry.ts`; the stamp site is `noteFirstOutputIfPastBaseline` /

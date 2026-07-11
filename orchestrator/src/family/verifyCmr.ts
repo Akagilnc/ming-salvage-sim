@@ -146,6 +146,12 @@ import type {
 } from "../types.js";
 import { findingIdentityKey } from "../findings.js";
 import {
+  buildReviewRoundStamp,
+  readTelemetryRecords,
+  tryAppendTelemetryRecord,
+  type TelemetryReviewRoundRecord,
+} from "../telemetry.js";
+import {
   cmrPassAlreadyPassed,
   recordAborted as recordDurableAbort,
   recordCmrFixCommitted,
@@ -1996,6 +2002,70 @@ async function rewriteOutcomeProtocolFailure(input: {
   };
 }
 
+/**
+ * #786 review-round dimension: observation only. Call this only from a terminal
+ * runner classification branch, after its durable accept/reject outcome is known.
+ * It intentionally has no return value, so telemetry I/O cannot change ADR 0062
+ * gate decisions.
+ */
+function stampCmrReviewRound(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly ctx: DispatchContext;
+  readonly pass: IntegratedCmrPass;
+  readonly familyIssue?: number;
+  readonly result: WorkerResult;
+  readonly finalDisposition: "accepted" | "rejected" | "unknown";
+}): void {
+  try {
+    const ledgerDir = input.familyBackend.resolveTelemetryDir?.(input.ctx);
+    if (ledgerDir === undefined || ledgerDir.length === 0) return;
+    const priorReviewRecords = readTelemetryRecords(ledgerDir).filter(
+      (record): record is TelemetryReviewRoundRecord =>
+        record.phase === "review_round" && record.cmrPass === input.pass,
+    );
+    const output =
+      input.result.kind === "completed" && input.result.output.kind === "cmr"
+        ? input.result.output
+        : undefined;
+    const workerVerdict =
+      input.result.kind === "escalated"
+        ? "escalated"
+        : input.result.kind === "failed"
+          ? "failed"
+          : input.result.kind === "malformed"
+            ? "malformed"
+            : input.result.kind === "outcome_protocol_failure"
+              ? "protocol_failure"
+              : output?.converged === true
+                ? "converged"
+                : (output?.findings?.length ?? 0) > 0
+                  ? "blocking"
+                  : "not_converged";
+    tryAppendTelemetryRecord(
+      ledgerDir,
+      buildReviewRoundStamp({
+        runId: input.ctx.runId,
+        issue: input.familyIssue ?? null,
+        cmrPass: input.pass,
+        reviewRound: priorReviewRecords.length + 1,
+        verdict: workerVerdict,
+        finalDisposition: input.finalDisposition,
+        ...(output?.findings !== undefined ? { findings: output.findings } : {}),
+        priorReviewRecords,
+        ...(output?.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: output.priorFindingDispositions }
+          : {}),
+      }),
+    );
+  } catch (err) {
+    console.warn(
+      `[orchestrator] review-round telemetry failed (fail-open): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
 async function runIntegratedCmrPass(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
@@ -2064,6 +2134,33 @@ async function runIntegratedCmrPass(input: {
       : {}),
     ...(priorRoundFindings.length > 0 ? { priorRoundFindings } : {}),
   };
+  const stampReviewRound = (
+    result: WorkerResult,
+    finalDisposition: "accepted" | "rejected" | "unknown",
+  ): void => {
+    stampCmrReviewRound({
+      familyBackend,
+      ctx: dispatchCtx,
+      pass,
+      familyIssue,
+      result,
+      finalDisposition,
+    });
+  };
+  let reviewRoundResult: WorkerResult = {
+    kind: "failed",
+    reason: "integrated CMR review round exited before producing a worker result",
+  };
+  let finalReviewRoundDisposition: "accepted" | "rejected" | "unknown" =
+    "unknown";
+  const persistFinalReviewRound = async (
+    disposition: "accepted" | "rejected",
+    record: () => Promise<void>,
+  ): Promise<void> => {
+    await record();
+    finalReviewRoundDisposition = disposition;
+  };
+  try {
   // #598: one "logical cmr attempt" = a fresh dispatch + the same-worker
   // `rewriteOutcomeProtocolFailure` counter (OUTCOME_REWRITE_RETRY_CAP). When that
   // counter exhausts into `outcome_protocol_failure`, the GENERIC mechanical layer
@@ -2076,6 +2173,7 @@ async function runIntegratedCmrPass(input: {
   let cmrResult: WorkerResult;
   for (let cmrAttempt = 1; ; cmrAttempt++) {
     rawCmrResult = await dispatchOrAbort(familyBackend, spec, dispatchCtx);
+    reviewRoundResult = rawCmrResult;
     if (rawCmrResult.kind === "malformed") {
       const postReviewFamilyHead = await readPostCmrFamilyHead(
         familyBackend,
@@ -2089,7 +2187,10 @@ async function runIntegratedCmrPass(input: {
         expectedFamilyHead: resolvedFamilyHeadAfter,
         familyHeadAfter: postReviewFamilyHead,
       });
-      if (postReviewGitAbort !== undefined) return postReviewGitAbort;
+      if (postReviewGitAbort !== undefined) {
+        finalReviewRoundDisposition = "rejected";
+        return postReviewGitAbort;
+      }
     }
     cmrResult = await rewriteOutcomeProtocolFailure({
       familyBackend,
@@ -2097,6 +2198,7 @@ async function runIntegratedCmrPass(input: {
       ctx: dispatchCtx,
       result: rawCmrResult,
     });
+    reviewRoundResult = cmrResult;
     if (
       cmrResult.kind === "outcome_protocol_failure" &&
       cmrAttempt < MAX_DISPATCH_ATTEMPTS
@@ -2118,7 +2220,10 @@ async function runIntegratedCmrPass(input: {
         expectedFamilyHead: resolvedFamilyHeadAfter,
         familyHeadAfter: reDispatchFamilyHead,
       });
-      if (reDispatchGitAbort !== undefined) return reDispatchGitAbort;
+      if (reDispatchGitAbort !== undefined) {
+        finalReviewRoundDisposition = "rejected";
+        return reDispatchGitAbort;
+      }
       continue;
     }
     break;
@@ -2144,21 +2249,26 @@ async function runIntegratedCmrPass(input: {
     expectedFamilyHead: resolvedFamilyHeadAfter,
     familyHeadAfter: postWorkerFamilyHead,
   });
-  if (postWorkerGitAbort !== undefined) return postWorkerGitAbort;
+  if (postWorkerGitAbort !== undefined) {
+    finalReviewRoundDisposition = "rejected";
+    return postWorkerGitAbort;
+  }
   if (cmrResult.kind === "escalated") {
     const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
     const stopSummary = cmrEscalationStopSummary(reason);
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary,
-    });
-    await familyBackend.escalateFamily?.({
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary,
+    await persistFinalReviewRound("accepted", async () => {
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        stopSummary,
+      });
+      await familyBackend.escalateFamily?.({
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        stopSummary,
+      });
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
@@ -2194,19 +2304,21 @@ async function runIntegratedCmrPass(input: {
             skippedLegs: cmrResult.cmrLegAccountingPayload.skippedLegs,
           })
         : undefined;
-    await familyBackend.recordAborted?.({
-      phase: "final",
-      cmrPass: pass,
-      familyBase,
-      errorPackage: { reason },
-      familyHeadAfter: postWorkerFamilyHead,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      ...(stopSummary !== undefined ? { stopSummary } : {}),
+    await persistFinalReviewRound("rejected", async () => {
+      await familyBackend.recordAborted?.({
+        phase: "final",
+        cmrPass: pass,
+        familyBase,
+        errorPackage: { reason },
+        familyHeadAfter: postWorkerFamilyHead,
+      });
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        ...(stopSummary !== undefined ? { stopSummary } : {}),
+      });
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
@@ -2244,7 +2356,7 @@ async function runIntegratedCmrPass(input: {
         allowStillActive: true,
       });
       if (notConvergedClosureFailure !== undefined) {
-        await recordDurableAbort(familyBackend, {
+        await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
           phase: "final",
           cmrPass: pass,
           reason: notConvergedClosureFailure,
@@ -2254,7 +2366,7 @@ async function runIntegratedCmrPass(input: {
             repairHint:
               "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
           }),
-        });
+        }));
         return {
           result: { ok: false, ran: true },
           familyHeadAfter: postWorkerFamilyHead,
@@ -2275,14 +2387,14 @@ async function runIntegratedCmrPass(input: {
     // not_converged abort produced no new governance dispositions, so it leaves
     // the field UNDEFINED (omitted via `compact`), carrying the prior round's
     // dispositions forward.
-    await recordDurableAbort(familyBackend, {
+    await persistFinalReviewRound("accepted", () => recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
       blockingFindingIdentityKeys: [],
       stopSummary: notConvergedStopSummary(reason),
-    });
+    }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const legAccountingFailure = cmrLegAccountingFailure(
@@ -2294,7 +2406,9 @@ async function runIntegratedCmrPass(input: {
   );
   if (legAccountingFailure !== undefined) {
     const reason = `integrated cmr ${pass} leg accounting failed: ${legAccountingFailure}`;
-    await recordDurableAbort(familyBackend, {
+    const successfulLegs = cmrResult.output.successfulLegs ?? [];
+    const skippedLegs = cmrResult.output.skippedLegs;
+    await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
@@ -2303,10 +2417,10 @@ async function runIntegratedCmrPass(input: {
         reason,
         resolvedRoute,
         routeFingerprint,
-        successfulLegs: cmrResult.output.successfulLegs ?? [],
-        skippedLegs: cmrResult.output.skippedLegs,
+        successfulLegs,
+        skippedLegs,
       }),
-    });
+    }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const floorFailure = cmrFloorFailureReason({
@@ -2315,16 +2429,17 @@ async function runIntegratedCmrPass(input: {
     skippedLegs: cmrResult.output.skippedLegs,
   });
   if (floorFailure !== undefined) {
-    await recordDurableAbort(familyBackend, {
+    const skippedLegs = cmrResult.output.skippedLegs;
+    await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason: floorFailure,
       familyHeadAfter: postWorkerFamilyHead,
       stopSummary: providerDegradedFloorStopSummary({
         reason: floorFailure,
-        skippedLegs: cmrResult.output.skippedLegs,
+        skippedLegs,
       }),
-    });
+    }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   // #604 correctness r2 (C2): on a RESTART barrier the runner carries protected
@@ -2377,7 +2492,7 @@ async function runIntegratedCmrPass(input: {
       allowStillActive: true,
     });
     if (earlyClosureFailure !== undefined) {
-      await recordDurableAbort(familyBackend, {
+      await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
         phase: "final",
         cmrPass: pass,
         reason: earlyClosureFailure,
@@ -2387,7 +2502,7 @@ async function runIntegratedCmrPass(input: {
           repairHint:
             "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
         }),
-      });
+      }));
       return {
         result: { ok: false, ran: true },
         familyHeadAfter: postWorkerFamilyHead,
@@ -2408,10 +2523,11 @@ async function runIntegratedCmrPass(input: {
       moduleContext: moduleContext ?? { currentModules: [], childModules: [] },
       ...(priorDispositions !== undefined ? { priorDispositions } : {}),
     });
-    if (cmrFindingClassification.blocking.length > 0) {
+    const classification = cmrFindingClassification;
+    if (classification.blocking.length > 0) {
       const reason =
         `integrated cmr ${pass} found blocking family-scope findings: ` +
-        cmrFindingClassification.results
+        classification.results
           .filter(
             // #604 slice 4 (ADR 0062): only accepted-suppression is non-blocking;
             // the routing classifications (incl. cross_module_defer) are gone.
@@ -2420,7 +2536,7 @@ async function runIntegratedCmrPass(input: {
           .map((result) => `${result.classification}:${result.identityKey}`)
           .join(", ");
       const stopSummary = familyCmrBlockingStopSummary(
-        cmrFindingClassification,
+        classification,
         reason,
       );
       // #604 slice 2 / ADR 0062: the runner is a PURE SCHEDULER — it counts
@@ -2451,26 +2567,28 @@ async function runIntegratedCmrPass(input: {
       // or worker/infra errors bubbling up) — those are error paths, not the
       // removed budget cap.
       const blockingFindingIdentityKeys = [
-        ...new Set(cmrFindingClassification.blocking.map(findingIdentityKey)),
+        ...new Set(classification.blocking.map(findingIdentityKey)),
       ];
       if (allowCoderFix) {
         // #604 slice 3 / ADR 0062: persist ONLY the thin envelope the runner reads
         // (blocking identity keys) + the gate's governance data (dispositions).
         // The fat `cmrFindingClassification` blob no longer lands on the ledger.
-        await recordCmrReviewed(familyBackend, {
-          cmrPass: pass,
-          reason,
-          familyHeadAfter: postWorkerFamilyHead,
-          blockingFindingIdentityKeys,
-          cmrDispositions: cmrFindingClassification.dispositions,
-          stopSummary,
-        });
+        await persistFinalReviewRound("accepted", () =>
+          recordCmrReviewed(familyBackend, {
+            cmrPass: pass,
+            reason,
+            familyHeadAfter: postWorkerFamilyHead,
+            blockingFindingIdentityKeys,
+            cmrDispositions: classification.dispositions,
+            stopSummary,
+          }),
+        );
         const fixRound = await runCmrCoderFix({
           pass,
           familyBackend,
           familyBase,
           ...(runId !== undefined ? { runId } : {}),
-          classification: cmrFindingClassification,
+          classification,
           blockingFindingIdentityKeys,
           ...(cmrResult.output.findingFamilies !== undefined
             ? { findingFamilies: cmrResult.output.findingFamilies }
@@ -2496,15 +2614,17 @@ async function runIntegratedCmrPass(input: {
           },
         };
       }
-      await recordDurableAbort(familyBackend, {
-        phase: "final",
-        cmrPass: pass,
-        reason,
-        familyHeadAfter: postWorkerFamilyHead,
-        blockingFindingIdentityKeys,
-        cmrDispositions: cmrFindingClassification.dispositions,
-        stopSummary,
-      });
+      await persistFinalReviewRound("accepted", () =>
+        recordDurableAbort(familyBackend, {
+          phase: "final",
+          cmrPass: pass,
+          reason,
+          familyHeadAfter: postWorkerFamilyHead,
+          blockingFindingIdentityKeys,
+          cmrDispositions: classification.dispositions,
+          stopSummary,
+        }),
+      );
       return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
     }
   }
@@ -2524,14 +2644,14 @@ async function runIntegratedCmrPass(input: {
     // not_converged branch above. An empty tombstone masks the prior round's real
     // accepted-suppression dispositions and resets the reopen/dispute budget. The
     // field is left UNDEFINED so the prior dispositions carry forward.
-    await recordDurableAbort(familyBackend, {
+    await persistFinalReviewRound("accepted", () => recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason,
       familyHeadAfter: postWorkerFamilyHead,
       blockingFindingIdentityKeys: [],
       stopSummary: notConvergedStopSummary(reason),
-    });
+    }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   const closureFailure = cmrClosureFailureReason({
@@ -2543,7 +2663,7 @@ async function runIntegratedCmrPass(input: {
     priorFindingDispositions: cmrResult.output.priorFindingDispositions,
   });
   if (closureFailure !== undefined) {
-    await recordDurableAbort(familyBackend, {
+    await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
       reason: closureFailure,
@@ -2553,10 +2673,11 @@ async function runIntegratedCmrPass(input: {
         repairHint:
           "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
       }),
-    });
+    }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  await recordCmrPassed(familyBackend, {
+  const skippedLegs = cmrResult.output.skippedLegs;
+  await persistFinalReviewRound("accepted", () => recordCmrPassed(familyBackend, {
     cmrPass: pass,
     familyHeadAfter: postWorkerFamilyHead,
     routeFingerprint,
@@ -2568,10 +2689,13 @@ async function runIntegratedCmrPass(input: {
     stopSummary: familyCmrPassStopSummary({
       classification: cmrFindingClassification,
       familyHeadAfter: postWorkerFamilyHead,
-      skippedLegs: cmrResult.output.skippedLegs,
+      skippedLegs,
     }),
-  });
+  }));
   return { result: { ok: true, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  } finally {
+    stampReviewRound(reviewRoundResult, finalReviewRoundDisposition);
+  }
 }
 
 /**
