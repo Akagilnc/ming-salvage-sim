@@ -3,6 +3,9 @@
  * route-smoke bash evidence (streaming-json omits tool_call events).
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -18,7 +21,7 @@ import {
 } from "../src/modelRegistry.js";
 import {
   routeSmokeBashEvidenceSatisfied,
-  routeSmokeGrokTextEvidence,
+  routeSmokeNonceFileEvidence,
   routeSmokeToolCallIsEchoOk,
 } from "../src/realBackend.js";
 import { routeSmokeEntries, resolveRouteModels } from "../src/modelRoutes.js";
@@ -77,15 +80,6 @@ describe("#807 modelRegistry grok-build wiring", () => {
     expect(resolveModelSlug("grok-4.5").provider).toBe("cursor");
   });
 
-  it("registers an explicit grok-4.5-build slug on the grok provider", () => {
-    expect(resolveModelSlug("grok-4.5-build")).toEqual({
-      provider: "grok",
-      model: "grok-4.5",
-    });
-    const agent = agentForSlug("grok-4.5-build");
-    expect(agent.name).toBe("grok");
-  });
-
   it("agentForSlug(pool=grok-build) yields the grok CLI provider", () => {
     const agent = agentForSlug("grok-4.5", undefined, "grok-build");
     expect(agent.name).toBe("grok");
@@ -93,7 +87,7 @@ describe("#807 modelRegistry grok-build wiring", () => {
 });
 
 describe("#807 route smoke bash evidence for grok", () => {
-  it("accepts standard toolCall(bash, echo OK) for any provider", () => {
+  it("keeps a tool-call echo separate from the required nonce side effect", () => {
     expect(
       routeSmokeToolCallIsEchoOk({
         type: "toolCall",
@@ -105,44 +99,47 @@ describe("#807 route smoke bash evidence for grok", () => {
       routeSmokeBashEvidenceSatisfied({
         provider: "codex",
         sawToolCallEchoOk: true,
-        sawGrokOkText: false,
+        sawNonceFile: true,
       }),
     ).toBe(true);
   });
 
-  it("accepts grok text OK when tool_call events are absent", () => {
-    expect(routeSmokeGrokTextEvidence({ type: "text", message: "OK" })).toBe(
-      true,
-    );
-    expect(
-      routeSmokeGrokTextEvidence({ type: "text", message: "```\nOK\n```" }),
-    ).toBe(true);
+  it("accepts only a nonce written by the bash side effect for grok", () => {
+    expect(routeSmokeNonceFileEvidence("nonce-807\n", "nonce-807")).toBe(true);
+    expect(routeSmokeNonceFileEvidence("nonce-807", "nonce-807")).toBe(true);
+    expect(routeSmokeNonceFileEvidence("OK", "nonce-807")).toBe(false);
     expect(
       routeSmokeBashEvidenceSatisfied({
         provider: "grok",
         sawToolCallEchoOk: false,
-        sawGrokOkText: true,
+        sawNonceFile: true,
       }),
     ).toBe(true);
   });
 
-  it("does not let non-grok providers pass on text-only OK", () => {
+  it("does not let text-only output pass for any provider", () => {
     expect(
       routeSmokeBashEvidenceSatisfied({
         provider: "codex",
         sawToolCallEchoOk: false,
-        sawGrokOkText: true,
+        sawNonceFile: false,
       }),
     ).toBe(false);
   });
 
-  it("routeSmokeEntries covers a route that pins the grok-4.5-build slug", () => {
-    // Force coder slot onto the explicit SuperGrok slug so smoke keys include it.
-    const route = resolveRouteModels("normal", {
-      coder: "grok-4.5-build",
-    });
+  it("keeps the model slug independent from its billing pool", () => {
+    const route = resolveRouteModels("normal", { coder: "grok-4.5" });
     const keys = routeSmokeEntries(route).map((e) => e.key);
-    expect(keys.some((k) => k.includes("grok-4.5-build"))).toBe(true);
-    expect(resolveModelSlug("grok-4.5-build").provider).toBe("grok");
+    expect(keys.some((k) => k.includes("grok-4.5"))).toBe(true);
+    expect(() => resolveModelSlug("grok-4.5-build")).toThrow(/unknown model slug/i);
+  });
+
+  it("pins the official Grok CLI package to an exact version", () => {
+    const containerfile = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "image", "Containerfile"),
+      "utf8",
+    );
+    expect(containerfile).toMatch(/npm install -g @xai-official\/grok@0\.2\.93/);
+    expect(containerfile).toMatch(/grok --version \| grep -F "0\.2\.93"/);
   });
 });

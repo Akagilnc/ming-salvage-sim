@@ -112,8 +112,8 @@ afterEach(() => {
 
 describe("RealFamilyBackend live officer effort", () => {
   class Probe extends RealFamilyBackend {
-    public agentForLiveSpec(spec: WorkerSpec): sc.AgentProvider {
-      return this.agentForSpec(spec);
+    public agentForLiveSpec(spec: WorkerSpec, billingPool?: string): sc.AgentProvider {
+      return this.agentForSpec(spec, { billingPool });
     }
   }
 
@@ -144,6 +144,14 @@ describe("RealFamilyBackend live officer effort", () => {
     expect(
       commandFor(liveSpec({ id: "S5", kind: "verify", role: "verify", soul: "READ-ONLY" })),
     ).toContain('model_reasoning_effort="xhigh"');
+  });
+
+  it("applies the ADR 0124 billing-pool provider binding to family workers", () => {
+    const backend = new Probe(opts(trackRepo()));
+    const command = backend
+      .agentForLiveSpec(liveSpec({ model: "grok-4.5" }), "grok-build")
+      .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
+    expect(command).toContain("grok --prompt-file /dev/stdin");
   });
 });
 

@@ -3717,7 +3717,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       currentCliVersions = backend.currentCliVersions
         ? await backend.currentCliVersions(modelRoute)
         : {};
-      modelRoute = await backend.smokeModelRoute(modelRoute, currentCliVersions);
+      modelRoute = await backend.smokeModelRoute(
+        modelRoute,
+        currentCliVersions,
+        activeRelayStep === undefined ? undefined : currentBillingPool,
+      );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       return {

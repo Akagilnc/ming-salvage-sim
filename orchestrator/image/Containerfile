@@ -112,18 +112,18 @@ RUN set -eux; \
 
 # grok (SuperGrok CLI, Linux; #807). Installer writes under the invoking user's
 # ~/.grok/{bin,downloads}/ — run as `agent`, then symlink onto PATH for all users.
-# Official installer needs no host auth for the public stable channel; presence
-# (`grok --version`) is the bake gate (unlike agy, version works offline).
+# Official npm package is pinned exactly; npm verifies its registry integrity
+# metadata and the version check below fails the build on drift.
 USER agent
 RUN set -eux; \
-    curl -fsSL https://x.ai/cli/install.sh | bash; \
-    test -x "$HOME/.grok/bin/grok"
+    npm install -g @xai-official/grok@0.2.93; \
+    test -x "$HOME/.npm-global/bin/grok" || command -v grok
 USER root
 RUN set -eux; \
     # Real copy (not symlink into ~/.grok/bin): runtime mounts a per-issue
     # auth dir over /home/agent/.grok (codex-style), which would break a
     # PATH symlink whose target lives under that tree (#807 mountAuth).
-    cp -L /home/agent/.grok/bin/grok /usr/local/bin/grok; \
+    cp -L "$(su - agent -c 'command -v grok')" /usr/local/bin/grok; \
     chmod 755 /usr/local/bin/grok; \
     # Placeholder so a file bind-mount of auth.json is never mistaken for a dir.
     # (agent's primary group is not named "agent" on this base image — chown
@@ -132,7 +132,7 @@ RUN set -eux; \
     touch /home/agent/.grok/auth.json; \
     chown agent /home/agent/.grok /home/agent/.grok/auth.json; \
     chmod 600 /home/agent/.grok/auth.json; \
-    grok --version
+    grok --version | grep -F "0.2.93"
 # ── codex sandbox / userns note (spike constraint #3) ────────────────────────
 # codex ships its own bwrap sandbox. In a NON-privileged container bwrap cannot
 # create a user namespace ("No permissions to create a new namespace ... the

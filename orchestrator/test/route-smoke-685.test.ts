@@ -365,4 +365,19 @@ describe("#685 route tool smoke", () => {
       }
     }
   });
+
+  it("smokes a pooled Grok route through the pool-selected Grok provider", async () => {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-pool-"));
+    runSpy.mockImplementation(async () => ({ completionSignal: "ROUTE_SMOKE_COMPLETE" }) as Awaited<ReturnType<typeof sc.run>>);
+    try {
+      const backend = productionSmokeBackend(home);
+      const route = resolveRouteModels("normal", { coder: "grok-4.5" });
+      await backend.smokeModelRoute(route, {}, "grok-build");
+      const grokRun = runSpy.mock.calls.find(([options]) => options.agent.name === "grok");
+      expect(grokRun).toBeDefined();
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

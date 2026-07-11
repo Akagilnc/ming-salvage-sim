@@ -1569,6 +1569,7 @@ export interface Backend {
   smokeModelRoute(
     route: ResolvedModelRoute,
     currentCliVersions?: Readonly<Record<string, string | undefined>>,
+    billingPool?: string,
   ): Promise<ResolvedModelRoute>;
   currentCliVersions?(route: ResolvedModelRoute): Promise<Readonly<Record<string, string | undefined>>>;
   /**
