@@ -69,14 +69,18 @@ function repositoryOwner(repo: string): string {
   return repo.split("/")[0] ?? "";
 }
 
+function githubFieldEquals(actual: string | undefined, expected: string): boolean {
+  return actual?.trim().toLowerCase() === expected.trim().toLowerCase();
+}
+
 function isOwnOpenBranchPr(
   live: PrMergeLiveState,
   repo: string,
   branch: string,
 ): boolean {
-  return live.state === "OPEN" &&
+  return githubFieldEquals(live.state, "OPEN") &&
     live.headRefName === branch &&
-    live.headRepositoryOwnerLogin === repositoryOwner(repo);
+    githubFieldEquals(live.headRepositoryOwnerLogin, repositoryOwner(repo));
 }
 
 /**
@@ -116,7 +120,10 @@ export function resolveHostTruthPr(
     const login = owner !== null && typeof owner === "object"
       ? (owner as Record<string, unknown>).login
       : undefined;
-    if (login !== repositoryOwner(repo)) continue;
+    if (
+      typeof login !== "string" ||
+      !githubFieldEquals(login, repositoryOwner(repo))
+    ) continue;
     const live = parsePrMergeLivePayload(JSON.stringify(candidate), `branch ${branch}`);
     if (isOwnOpenBranchPr(live, repo, branch)) return live;
   }
@@ -295,10 +302,13 @@ export function assessMergeReadiness(
   snapshot: PrReviewSnapshot,
 ): MergeReadinessResult {
   const blockers: MergeReadinessBlocker[] = [];
-  if (live.state !== "OPEN" && live.state !== "MERGED") {
+  if (!githubFieldEquals(live.state, "OPEN") && !githubFieldEquals(live.state, "MERGED")) {
     blockers.push("not_open");
   }
-  if (live.state === "OPEN" && live.mergeStateStatus !== "CLEAN") {
+  if (
+    githubFieldEquals(live.state, "OPEN") &&
+    !githubFieldEquals(live.mergeStateStatus, "CLEAN")
+  ) {
     blockers.push("ruleset_blocked");
   }
   const unresolvedThreads = unresolvedThreadCount(snapshot);
@@ -312,7 +322,7 @@ export function assessMergeReadiness(
   if (ciGate === "pending") blockers.push("ci_pending");
   if (ciGate === "failed") blockers.push("ci_failed");
   return {
-    ready: blockers.length === 0 && live.state === "OPEN",
+    ready: blockers.length === 0 && githubFieldEquals(live.state, "OPEN"),
     blockers,
     live,
     snapshot,
@@ -362,7 +372,7 @@ export function confirmPrMergedLive(
   expectedHeadOid: string,
 ): PrMergedTerminalRecord | undefined {
   const live = fetchPrMergeLiveState(sh, repo, prUrl);
-  if (live.state !== "MERGED") return undefined;
+  if (!githubFieldEquals(live.state, "MERGED")) return undefined;
   if (live.headOid !== expectedHeadOid) return undefined;
   return {
     prUrl: live.prUrl,
@@ -378,7 +388,7 @@ export function prMergedRecordFromLive(
   convergedHeadOid: string,
   expectedMergeHeadOid?: string,
 ): PrMergedTerminalRecord | undefined {
-  if (live.state !== "MERGED") return undefined;
+  if (!githubFieldEquals(live.state, "MERGED")) return undefined;
   if (live.headOid.length === 0) return undefined;
   const hasExpected =
     expectedMergeHeadOid !== undefined && expectedMergeHeadOid.trim().length > 0;
@@ -593,7 +603,7 @@ export async function tryResumePrMergedBackfill(
   }
   const live =
     liveState ?? fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
-  if (live.state !== "MERGED") return undefined;
+  if (!githubFieldEquals(live.state, "MERGED")) return undefined;
   if (!input.priorConvergenceRecorded) {
     return {
       ok: false,
@@ -651,7 +661,7 @@ export async function runAutoMergeStage(
     return backfill;
   }
 
-  if (live.state === "MERGED") {
+  if (githubFieldEquals(live.state, "MERGED")) {
     if (!input.priorConvergenceRecorded) {
       return {
         ok: false,

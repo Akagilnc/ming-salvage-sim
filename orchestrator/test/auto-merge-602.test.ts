@@ -197,6 +197,29 @@ describe("#824 reported PR identity", () => {
     expect(resolved.prNumber).toBe(2);
   });
 
+  it("treats GitHub state and owner login casing as host-formatting, not identity", () => {
+    const resolved = resolveHostTruthPr(
+      fakeSh({
+        "gh pr list": () => JSON.stringify([
+          {
+            number: 2,
+            url: `${REPO}/pull/2`,
+            state: "open",
+            headRefName: "fix/824-radius",
+            headRefOid: "own",
+            headRepositoryOwner: { login: "akagilnc" },
+            mergeStateStatus: "clean",
+          },
+        ]),
+      }),
+      REPO,
+      "fix/824-radius",
+    );
+
+    expect(resolved.prNumber).toBe(2);
+    expect(assessMergeReadiness(resolved, readySnapshot()).ready).toBe(true);
+  });
+
   it("fails only after host truth contains no own-repository PR", () => {
     expect(() => resolveHostTruthPr(
       fakeSh({ "gh pr list": () => JSON.stringify([
@@ -490,6 +513,22 @@ describe("#602 fetchPrMergeLiveState + assessMergeReadiness", () => {
     );
     expect(readiness.ready).toBe(true);
     expect(readiness.blockers).toEqual([]);
+  });
+
+  it("accepts lowercase live state and merge status", () => {
+    const readiness = assessMergeReadiness(
+      {
+        prNumber: 602,
+        prUrl: PR_URL,
+        state: "open",
+        headOid: "head-ready",
+        headRefName: "feat/x",
+        mergeStateStatus: "clean",
+      },
+      readySnapshot(),
+    );
+
+    expect(readiness.ready).toBe(true);
   });
 
   it("unresolved threads block merge without pretending merged", () => {

@@ -4681,7 +4681,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   if (dispatched.kind !== "completed") return dispatched;
                   const dispatchedEscalation = escalateOf(dispatched.output);
                   if (
-                    dispatchedEscalation != null &&
+                    dispatchedEscalation !== undefined &&
                     isValidEscalation(dispatchedEscalation)
                   ) {
                     return dispatched;
