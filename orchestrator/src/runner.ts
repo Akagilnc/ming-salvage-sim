@@ -64,11 +64,7 @@ import {
 } from "./dispatchWorker.js";
 import { monitorHandleFromLedger } from "./workerMonitor.js";
 import {
-  buildCommitStamp,
-  collectCommitDiffAudit,
-  collectCommitMetrics,
-  commitsBetween,
-  tryAppendTelemetryRecord,
+  scheduleCommitTelemetry,
 } from "./telemetry.js";
 import { routeSmokeFailure } from "./modelRoutes.js";
 import {
@@ -4812,32 +4808,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Trigger this from the expected worker role before any output contract
         // gate: a worker may have committed before reporting malformed output.
         if (expectedKind === "coder" && coderHeadBeforeStep !== undefined && worktree !== undefined) {
-          // Host-git reads and full-file scans are telemetry only: queue them
-          // behind the route decision, and never let a failure reject this run.
-          const telemetryWorktree = worktree;
-          void Promise.resolve()
-            .then(() => {
-              const afterCommit = gitHead(telemetryWorktree);
-              const telemetryDir = backend.resolveTelemetryDir?.({ runId, worktree: telemetryWorktree, stateDir });
-              if (
-                afterCommit === undefined ||
-                afterCommit === coderHeadBeforeStep ||
-                telemetryDir === undefined
-              ) return;
-              const commits = commitsBetween(telemetryWorktree.path, coderHeadBeforeStep, afterCommit) ?? [afterCommit];
-              for (const commit of commits) {
-                const metrics = collectCommitMetrics(telemetryWorktree.path, commit);
-                const diffAudit = collectCommitDiffAudit(telemetryWorktree.path, commit);
-                tryAppendTelemetryRecord(telemetryDir, buildCommitStamp({
-                  runId, issue: issueNumber, commit,
-                  ...(metrics !== undefined ? { metrics } : {}),
-                  ...(diffAudit !== undefined ? diffAudit : {}),
-                }));
-              }
-            })
-            .catch((err: unknown) => {
-              console.warn(`[orchestrator] commit telemetry failed (fail-open): ${err instanceof Error ? err.message : String(err)}`);
+          // The HEAD was observed before routing. Every remaining host-git
+          // read, full-file scan, and append runs after a setImmediate using
+          // async I/O, so even a large diff cannot occupy this route turn.
+          const afterCommit = gitHead(worktree);
+          const telemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
+          if (afterCommit !== undefined && afterCommit !== coderHeadBeforeStep && telemetryDir !== undefined) {
+            void scheduleCommitTelemetry({
+              ledgerDir: telemetryDir,
+              repoPath: worktree.path,
+              runId,
+              issue: issueNumber,
+              before: coderHeadBeforeStep,
+              after: afterCommit,
             });
+          }
         }
 
         const stepEscalate = escalateOf(output);
