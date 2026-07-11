@@ -117,7 +117,7 @@ async function waitForEnvironment(ledgerDir: string): Promise<TelemetryEnvironme
 }
 
 /** Strong-leg set so production final CMR floor admits the green verdict. */
-const COMPLETE_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
+const COMPLETE_CMR_LEGS = ["opus", "gpt-5.6-sol"] as const;
 const FAMILY_HEAD = "head-809-sidecar";
 
 /**
