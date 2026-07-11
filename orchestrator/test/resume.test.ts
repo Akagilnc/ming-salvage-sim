@@ -36,6 +36,26 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+
+const childProcessFault = vi.hoisted(() => ({ ghUnavailable: false }));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFileSync: vi.fn((file: string, args: string[], options?: object) => {
+      if (file === "gh" && childProcessFault.ghUnavailable) {
+        throw new Error("gh temporarily unavailable");
+      }
+      return actual.execFileSync(
+        file,
+        args as Parameters<typeof actual.execFileSync>[1],
+        options as Parameters<typeof actual.execFileSync>[2],
+      );
+    }),
+  };
+});
+
 import { runOrchestrator } from "../src/runner.js";
 import { buildRoundTrigger } from "../src/evidenceAdmissibility.js";
 import {
@@ -3315,6 +3335,50 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
 });
 
 // ─── AC4: recovery decides next step from ledger, not memory ──────────────────
+
+describe("S7 ship observation during resume setup (#824 r10)", () => {
+  it("turns transient gh failure into resumable S8(error) instead of rejecting runOrchestrator", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    childProcessFault.ghUnavailable = true;
+    const backend = new ResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S7", {
+          kind: "ship",
+          branch: WORKTREE.branch,
+          status: "pushed",
+        }),
+      ],
+    });
+
+    try {
+      const result = await runOrchestrator({ issueNumber: 824, backend });
+
+      expect(result.status).toBe("error");
+      expect(result.stepLedger.at(-1)).toEqual(
+        expect.objectContaining({
+          step: "S8",
+          stopSummary: expect.objectContaining({
+            summary: "gh temporarily unavailable",
+          }),
+        }),
+      );
+      expect(backend.ledgerWrites.at(-1)).toEqual(
+        expect.objectContaining({ step: "S8", handoffStatus: "error" }),
+      );
+    } finally {
+      childProcessFault.ghUnavailable = false;
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", () => {
   it("ledger stopping at a committed S2 resumes at the route successor S3, not S0", async () => {
