@@ -92,6 +92,25 @@ def test_identity_loyalty_are_two_readable_axes(game):
     assert second["truths"]["关系判断"] == "党而不忠"
 
 
+def test_mindreading_reads_current_target_ledger_after_persisted_changes(game):
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    target = content.characters["温体仁"]
+
+    db.conn.execute(
+        "UPDATE characters SET identity=?, loyalty=?, seed_guilt=? WHERE name=?",
+        (92, 15, '{"crime":"合谋","severity":"重"}', target.name),
+    )
+    db.conn.commit()
+
+    payload = build_mindreading_payload(db, state, reader, target, "臣愿担责。")
+
+    assert payload["truths"]["关系判断"] == "党而不忠"
+    assert "党色极深" in payload["truths"]["党账"]
+    assert "合谋" in payload["truths"]["党账"]
+    assert "未见深交" in payload["truths"]["君臣账"]
+
+
 def test_reply_is_an_explicit_pipeline_input():
     signature = inspect.signature(build_mindreading_payload)
     assert "minister_reply" in signature.parameters

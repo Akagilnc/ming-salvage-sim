@@ -68,8 +68,8 @@ def intelligence_precision(target_factor: float = 1.0, channel_factor: float = 1
     return "模糊"
 
 
-def _seed_guilt_text(character: Character) -> str:
-    raw = getattr(character, "seed_guilt", "") or ""
+def _seed_guilt_text(character: object) -> str:
+    raw = _character_field(character, "seed_guilt") or ""
     try:
         guilt = json.loads(raw) if isinstance(raw, str) else raw
     except (TypeError, ValueError):
@@ -180,8 +180,17 @@ def build_mindreading_payload(
         raise ValueError("读心 payload 需要显式的大臣回话正文")
     safe_reply = _safe_reply_text(minister_reply)
 
-    identity = int(getattr(target, "identity", 50) or 0)
-    loyalty = int(getattr(target, "loyalty", 50) or 0)
+    current_target: object = target
+    if hasattr(db, "conn"):
+        row = db.conn.execute(
+            "SELECT identity, loyalty, seed_guilt FROM characters WHERE name=?",
+            (target.name,),
+        ).fetchone()
+        if row is not None:
+            current_target = row
+
+    identity = int(_character_field(current_target, "identity") or 0)
+    loyalty = int(_character_field(current_target, "loyalty") or 0)
     if identity < 40 and loyalty >= 60:
         relation = "忠而不党"
     elif identity >= 60 and loyalty < 40:
@@ -197,14 +206,14 @@ def build_mindreading_payload(
         "precision": intelligence_precision(target_factor, channel_factor),
         "reader_context": reader_context,
         "truths": {
-            "党账": f"对本党的认同：{_band(identity, _IDENTITY_BANDS)}；{_seed_guilt_text(target)}",
+            "党账": f"对本党的认同：{_band(identity, _IDENTITY_BANDS)}；{_seed_guilt_text(current_target)}",
             "君臣账": f"对君的真心：{_band(loyalty, _LOYALTY_BANDS)}。",
             "关系判断": relation,
             "潜台词": _infer_subtext(
                 safe_reply,
                 identity=identity,
                 loyalty=loyalty,
-                seed_guilt=str(getattr(target, "seed_guilt", "") or ""),
+                seed_guilt=str(_character_field(current_target, "seed_guilt") or ""),
                 reader_context=reader_context,
             ),
         },
