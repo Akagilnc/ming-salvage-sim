@@ -82,6 +82,7 @@ import {
   realCommitCount,
   reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GROK_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
@@ -1573,7 +1574,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -1660,7 +1661,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -1734,7 +1735,7 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -1858,6 +1859,9 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
@@ -1971,7 +1975,7 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -2078,6 +2082,9 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
@@ -2399,6 +2406,22 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(tempCodexDir, { recursive: true, force: true });
       }
     }
+    // grok auth.json → a per-run dir mounted at the Grok CLI's fixed home path.
+    // Like codex/agy, an absent source degrades just this reviewer leg; unique
+    // mkdtemp dirs prevent concurrent family CMR workers from sharing credentials.
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, "cmr-grok-auth-"));
+      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
 
     // agy OAuth token → a per-run WRITABLE dir mounted at the antigravity config
     // path (the agy CLI writes cache/log under its config dir, so it must NOT be
@@ -2439,7 +2462,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // the ship worker's readGhToken extraction (host OS keyring, not a portable
     // hosts.yml) — but NOT preflighted: a missing token degrades the gate's authority,
     // it does not block the cmr worker (the cmr worker has no `gh pr create` to fail).
-    return { codexAuthDir, agyDir, claudeToken, ghToken: this.readGhToken() };
+    return { codexAuthDir, agyDir, grokAuthDir, claudeToken, ghToken: this.readGhToken() };
   }
 
   /**
@@ -2526,6 +2549,9 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (auth.agyDir !== undefined) {
       mounts.push({ hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     if (outcomeLanding !== undefined) {
       mounts.push({
@@ -2704,7 +2730,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -2856,6 +2882,19 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(tempCodexDir, { recursive: true, force: true });
       }
     }
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, "ship-grok-auth-"));
+      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
     let claudeToken: string | undefined;
     try {
       const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
@@ -2867,7 +2906,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
       // route slots simply run without this env var.
     }
-    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
+    return { codexAuthDir, grokAuthDir, claudeToken, ghToken: this.readGhToken() };
   }
 
   /**
@@ -2924,6 +2963,9 @@ export class RealFamilyBackend implements FamilyBackend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     if (outcomeLanding !== undefined) {
       mounts.push({
@@ -3182,6 +3224,8 @@ export interface CmrAuth {
   readonly codexAuthDir?: string;
   /** Per-run agy token dir (host-mirrored antigravity config), or undefined. */
   readonly agyDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3205,6 +3249,8 @@ export interface CmrAuth {
 export interface ShipAuth {
   /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
   readonly codexAuthDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**

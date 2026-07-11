@@ -56,6 +56,7 @@ import {
 import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
@@ -1429,6 +1430,14 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
+  it("mounts isolated grok auth when the CMR route can dispatch grok", () => {
+    const cfg = cfgBackend().config({ ...auth, grokAuthDir: "/tmp/cmr-grok-auth" });
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/tmp/cmr-grok-auth",
+      sandboxPath: SANDBOX_GROK_DIR,
+    });
+  });
+
   it("exports the gh token as GH_TOKEN so the in-container completeness gate can `gh issue view` the live issue body as authority (mirrors the ship worker)", () => {
     // The completeness gate grounds against the live issue body via `gh issue view`;
     // without GH_TOKEN that fails and the audit degrades to commit-titles/test-files.
@@ -2223,12 +2232,14 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     }
   }
 
-  it("the early no-claude-auth escalate still removes the codex + agy temp dirs", async () => {
+  it("the early no-claude-auth escalate removes codex, agy, and grok temp dirs", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const codexDir = mkDir("reclaim-codex-");
     const agyDir = mkDir("reclaim-agy-");
+    const grokDir = mkDir("reclaim-grok-");
     expect(existsSync(codexDir)).toBe(true);
     expect(existsSync(agyDir)).toBe(true);
+    expect(existsSync(grokDir)).toBe(true);
 
     const be = new ReclaimBackend(
       {
@@ -2242,7 +2253,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         imageName: "img",
         familyBaseStartHead: "abc123",
       },
-      { codexAuthDir: codexDir, agyDir }, // no claudeToken ⇒ early escalate
+      { codexAuthDir: codexDir, agyDir, grokAuthDir: grokDir }, // no claudeToken ⇒ early escalate
     );
 
     const outcome = await be.run(legacyClaudeCmrSpec(), { familyBase: "fb" });
@@ -2250,6 +2261,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     // The finally reclaimed BOTH per-run dirs even though sc.run never ran.
     expect(existsSync(codexDir)).toBe(false);
     expect(existsSync(agyDir)).toBe(false);
+    expect(existsSync(grokDir)).toBe(false);
   });
 
   it("the successful container path removes the temporary outcome sidecar directory", async () => {

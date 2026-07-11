@@ -266,6 +266,18 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
+  it("mounts the isolated grok auth dir when the selected dispatch can use grok", () => {
+    const c = cfg().config({
+      codexAuthDir: "/tmp/codex",
+      grokAuthDir: "/tmp/grok",
+      claudeToken: "tok",
+    });
+    expect(c.mounts).toContainEqual({
+      hostPath: "/tmp/grok",
+      sandboxPath: SANDBOX_GROK_DIR,
+    });
+  });
+
   it("shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
     const c = cfg().config({ codexAuthDir: "/tmp/codex", claudeToken: "tok" });
     const expected = soulsMount(realSoulsDir);
@@ -384,6 +396,30 @@ describe("#336 single-slice runShipWorker — fail-closed when the top-level Cla
     if (res.kind === "escalated") {
       expect(res.escalation.reason).toMatch(/claude|token|auth/i);
     }
+  });
+
+  it("reclaims the isolated grok auth dir on the early no-Claude-auth exit", async () => {
+    const codexDir = mkDir("ship-reclaim-codex-");
+    const grokDir = mkDir("ship-reclaim-grok-");
+    class ReclaimBackend extends NoClaudeAuthBackend {
+      protected override mountShipAuth(): ShipAuth {
+        return { codexAuthDir: codexDir, grokAuthDir: grokDir };
+      }
+    }
+    const be = new ReclaimBackend({
+      sourceRepo: mkDir("ship-reclaim-src-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: 336,
+      home: mkDir("ship-reclaim-home-"),
+    });
+
+    const outcome = await be.run(shipWorkerSpec(), { worktree });
+    expect(outcome.kind).toBe("escalate");
+    expect(existsSync(codexDir)).toBe(false);
+    expect(existsSync(grokDir)).toBe(false);
   });
 });
 

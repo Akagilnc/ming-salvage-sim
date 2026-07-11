@@ -36,6 +36,7 @@ import {
   modelIdForSlug,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   soulsMount,
@@ -291,6 +292,18 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
     expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("mounts isolated grok auth when the family ship route selects grok", () => {
+    const c = cfg().config({
+      codexAuthDir: "/tmp/codex",
+      grokAuthDir: "/tmp/family-grok-auth",
+      claudeToken: "tok",
+    });
+    expect(c.mounts).toContainEqual({
+      hostPath: "/tmp/family-grok-auth",
+      sandboxPath: SANDBOX_GROK_DIR,
+    });
   });
 
   it("family shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
