@@ -118,6 +118,11 @@ interface ModelRoutePreset {
   readonly slots: ModelSlotMap;
   readonly legCollections: ModelRouteLegCollectionMap;
   readonly tightFamilies?: ReadonlyArray<ModelFamily>;
+  /**
+   * Family-level CMR is a cross-family gate, so an otherwise tight family can
+   * retain an explicitly ratified review leg without reopening worker slots.
+   */
+  readonly allowedTightCmrLegSlugs?: ReadonlyArray<string>;
 }
 
 const NORMAL_SLOTS: ModelSlotMap = {
@@ -138,7 +143,6 @@ const NORMAL_LEG_COLLECTIONS: ModelRouteLegCollectionMap = {
   cmrReview: [
     { family: "codex", slug: REVIEWER_CODEX_SLUG },
     { family: "claude", slug: "opus" },
-    { family: "agy", slug: "agy" },
   ],
 };
 
@@ -160,9 +164,8 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
     },
     legCollections: {
       cmrReview: [
-        { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy" },
         { family: "codex", slug: REVIEWER_CODEX_SLUG },
+        { family: "claude", slug: "opus" },
       ],
     },
   },
@@ -205,13 +208,13 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
     legCollections: {
       cmrReview: [
         { family: "codex", slug: REVIEWER_CODEX_SLUG },
-        { family: "agy", slug: "agy" },
         { family: "claude", slug: "opus" },
       ],
     },
   },
   "claude-tight": {
     tightFamilies: ["claude"],
+    allowedTightCmrLegSlugs: ["opus"],
     slots: {
       coder: CODER_CODEX_SLUG,
       reviewer: REVIEWER_CODEX_SLUG,
@@ -228,7 +231,7 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
     legCollections: {
       cmrReview: [
         { family: "codex", slug: REVIEWER_CODEX_SLUG },
-        { family: "agy", slug: "agy" },
+        { family: "claude", slug: "opus" },
       ],
     },
   },
@@ -297,8 +300,10 @@ function tightFamilyViolations(
   slots: ModelSlotMap,
   legCollections: ModelRouteLegCollectionMap,
   tightFamilies: ReadonlyArray<ModelFamily>,
+  allowedTightCmrLegSlugs: ReadonlyArray<string> = [],
 ): TightFamilyViolation[] {
   const tight = new Set(tightFamilies);
+  const allowedCmrLegSlugs = new Set(allowedTightCmrLegSlugs);
   const violations: TightFamilyViolation[] = [];
   for (const slot of MODEL_ROUTE_SLOTS) {
     const slug = slots[slot];
@@ -307,7 +312,7 @@ function tightFamilyViolations(
   }
   for (const collection of MODEL_ROUTE_LEG_COLLECTIONS) {
     for (const leg of legCollections[collection]) {
-      if (tight.has(leg.family)) {
+      if (tight.has(leg.family) && !allowedCmrLegSlugs.has(leg.slug)) {
         violations.push({
           slot: collection,
           slug: leg.slug,
@@ -381,6 +386,7 @@ export function resolveRouteModels(
       slots,
       legCollections,
       preset.tightFamilies ?? [],
+      preset.allowedTightCmrLegSlugs ?? [],
     ),
     smoke,
   };
@@ -464,6 +470,7 @@ export function withCoderSlot(
       slots,
       legCollections,
       ROUTE_PRESETS[route.routeName]?.tightFamilies ?? [],
+      ROUTE_PRESETS[route.routeName]?.allowedTightCmrLegSlugs ?? [],
     ),
     smoke,
   };

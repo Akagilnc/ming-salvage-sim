@@ -115,7 +115,7 @@ class AbortingFamilyBackend implements FamilyBackend {
     return this.script.verify?.(req) ?? { ok: true };
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
-    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
+    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     return { url: `pr://${req.familyBase}`, prHead: this.currentFamilyHead };
@@ -215,7 +215,7 @@ describe("Wiring 2 — a red wave verify writes a PHASE-LEVEL durable aborted en
   it("a clean all-green run writes NO aborted entry", async () => {
     const backend = new AbortingFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     await runFamily({
       epic: epicWith(294),

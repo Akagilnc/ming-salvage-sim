@@ -67,7 +67,7 @@ describe("#422 model route presets", () => {
         "fixer=sonnet",
         "cleanup=sonnet",
         "docRelease=sonnet",
-        "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
+        "cmrReview=[codex:gpt-5.6-sol,claude:opus]",
       ].join("\n"),
     );
   });
@@ -98,7 +98,7 @@ describe("#422 model route presets", () => {
     ).toThrow(/unknown model slug/i);
   });
 
-  it("cheap routes keep only the pressured family's CMR strong leg", () => {
+  it("codex-side presets default family CMR to Sol plus Opus", () => {
     const claudeCheap = resolveRouteModels("claude-cheap", {});
     const claudeTight = resolveRouteModels("claude-tight", {});
     const codexCheap = resolveRouteModels("codex-cheap", {});
@@ -107,21 +107,19 @@ describe("#422 model route presets", () => {
     expect(claudeCheap.slots).toEqual(claudeTight.slots);
     expect(claudeCheap.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "gpt-5.6-sol",
-      "agy",
       "opus",
     ]);
     expect(claudeTight.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "gpt-5.6-sol",
-      "agy",
+      "opus",
     ]);
 
     expect(codexCheap.slots.coder).toBe("gpt-5.6-terra");
     expect(codexCheap.slots.reviewer).toBe("gpt-5.6-sol");
     expect(codexCheap.slots.verify).toBe("gpt-5.6-sol");
     expect(codexCheap.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
-      "opus",
-      "agy",
       "gpt-5.6-sol",
+      "opus",
     ]);
     expect(codexTight.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "opus",
@@ -171,14 +169,15 @@ describe("#422 model route presets", () => {
     // bad explicit still caught above; the targeted proves verify slot participates in fail-closed
   });
 
-  it("claude-tight has no Claude-family slots across every slot", () => {
+  it("claude-tight keeps Claude out of worker slots while retaining its Opus CMR leg", () => {
     const resolved = resolveRouteModels("claude-tight", {});
 
     expect(resolved.tightFamilyViolations).toEqual([]);
     expect(new Set(Object.values(resolved.slots))).toEqual(new Set(["gpt-5.6-terra", "gpt-5.6-sol"]));
-    expect(resolved.legCollections.cmrReview.map((leg) => leg.family)).not.toContain(
-      "claude",
-    );
+    expect(resolved.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
+      "gpt-5.6-sol",
+      "opus",
+    ]);
   });
 
   it("flags an override or review leg that breaks a tight route invariant", () => {
@@ -188,10 +187,10 @@ describe("#422 model route presets", () => {
       { slot: "merger", slug: "opus", family: "claude" },
     ]);
 
-    const badLeg = resolveRouteModels("claude-tight", {}, { cmrReview: ["gpt-5.6-sol", "opus"] });
+    const badLeg = resolveRouteModels("claude-tight", {}, { cmrReview: ["gpt-5.6-sol", "sonnet"] });
 
     expect(badLeg.tightFamilyViolations).toEqual([
-      { slot: "cmrReview", slug: "opus", family: "claude" },
+      { slot: "cmrReview", slug: "sonnet", family: "claude" },
     ]);
   });
 
@@ -219,7 +218,7 @@ describe("#422 model route presets", () => {
     expect(() =>
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "claude-tight",
-        ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.6-sol,opus",
+        ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS: "gpt-5.6-sol,sonnet",
       }),
     ).toThrow(/tight route violation/i);
   });
@@ -234,7 +233,7 @@ describe("#422 model route presets", () => {
 
     expect(route.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "gpt-5.6-sol",
-      "agy",
+      "opus",
     ]);
 
     const overridden = activeModelRoute({
@@ -277,7 +276,7 @@ describe("#422 model route presets", () => {
     expect(
       cmrLegAccountingFailure({
         successfulLegs: ["gpt-5.6-sol", "gpt-5.6-sol", "opus"],
-        skippedLegs: [{ slug: "agy", reason: "quota" }],
+        skippedLegs: [{ slug: "opus", reason: "quota" }],
       }),
     ).toMatch(/duplicate successful legs.*gpt-5\.6-sol/i);
 
@@ -285,23 +284,23 @@ describe("#422 model route presets", () => {
       cmrLegAccountingFailure({
         successfulLegs: ["gpt-5.6-sol", "opus"],
         skippedLegs: [
-          { slug: "agy", reason: "quota" },
-          { slug: "agy", reason: "quota again" },
+          { slug: "opus", reason: "quota" },
+          { slug: "opus", reason: "quota again" },
         ],
       }),
-    ).toMatch(/duplicate skipped legs.*agy/i);
+    ).toMatch(/duplicate skipped legs.*opus/i);
   });
 
   it("does not treat shallow route-shaped objects as resolved routes", () => {
     const malformedRoute = {
       slots: {},
-      legCollections: { cmrReview: "gpt-5.6-sol,opus,agy" },
+      legCollections: { cmrReview: "gpt-5.6-sol,opus" },
       tightFamilyViolations: "none",
     };
 
     expect(
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus"] },
         malformedRoute as never,
       ),
     ).toBeUndefined();
@@ -316,13 +315,13 @@ describe("#422 model route presets", () => {
 
     expect(() =>
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus"] },
         malformedRoute as never,
       ),
     ).not.toThrow();
     expect(
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus"] },
         malformedRoute as never,
       ),
     ).toBeUndefined();
@@ -333,13 +332,13 @@ describe("#422 model route presets", () => {
 
     expect(() =>
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus"] },
         null as never,
       ),
     ).not.toThrow();
     expect(
       cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
+        { successfulLegs: ["gpt-5.6-sol", "opus"] },
         null as never,
       ),
     ).toBeUndefined();

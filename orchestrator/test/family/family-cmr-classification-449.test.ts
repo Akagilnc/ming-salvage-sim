@@ -1275,7 +1275,7 @@ describe("#449 CMR worker output parsing", () => {
       `<cmr>${JSON.stringify({
         converged: false,
         reason: "same-family gap remains",
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
@@ -1300,7 +1300,7 @@ describe("#449 CMR worker output parsing", () => {
     const parsed = parseCmrOutcome(
       `<cmr>${JSON.stringify({
         converged: true,
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [
           {
@@ -1462,7 +1462,7 @@ describe("#449 verifyCmr family gate classification", () => {
         kind: "cmr",
         converged: false,
         reason: "reviewers tried to defer without module context",
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
@@ -1509,7 +1509,7 @@ describe("#449 verifyCmr family gate classification", () => {
         kind: "cmr",
         converged: false,
         reason: "undeclared target should block",
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
@@ -1579,7 +1579,7 @@ module_scope:
         kind: "cmr",
         converged: false,
         reason: "only parsed cross-module follow-up findings remain",
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
@@ -1668,7 +1668,7 @@ module_scope:
   it("records a provider/auth CMR worker failure as provider_degraded, not infra_failure", async () => {
     const backend = new CmrFindingBackend({
       kind: "failed",
-      reason: "provider authentication failed for agy reviewer",
+      reason: "provider authentication failed for opus reviewer",
     });
 
     const result = await runVerifyCmr({
@@ -1692,11 +1692,11 @@ module_scope:
         metadata: {
           providerDegraded: [
             expect.objectContaining({
-              provider: "agy",
-              leg: "agy",
+              provider: "claude",
+              leg: "opus",
               reason: expect.stringContaining("provider authentication failed"),
               blocking: true,
-              repairHint: expect.stringContaining("agy"),
+              repairHint: expect.stringContaining("opus"),
             }),
           ],
         },
@@ -1764,7 +1764,7 @@ module_scope:
         kind: "cmr",
         converged: false,
         reason: "only accepted suppressions remain",
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
@@ -1860,7 +1860,7 @@ module_scope:
         kind: "cmr",
         converged: false,
         reason: "only nonblocking family CMR findings remain",
-        successfulLegs: ["opus", "agy"],
+        successfulLegs: ["opus"],
         skippedLegs: [{ slug: "gpt-5.6-sol", reason: "codex quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -1946,7 +1946,7 @@ module_scope:
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           ...CMR_EVIDENCE,
@@ -1957,7 +1957,7 @@ module_scope:
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          successfulLegs: ["opus", "gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           ...CMR_EVIDENCE,

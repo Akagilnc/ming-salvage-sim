@@ -109,7 +109,7 @@ const BASE_FINDING: Finding = {
 
 // Replay fixtures preserve their recorded 5.5 CMR leg; modelRoutes normalizes
 // it only when comparing the fixture against a current live route.
-const DEFAULT_SUCCESSFUL_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
+const DEFAULT_SUCCESSFUL_CMR_LEGS = ["opus", "gpt-5.6-sol"] as const;
 
 function scenario(input: {
   readonly id: string;
@@ -1686,7 +1686,7 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
   const env = { ORCHESTRATOR_ROUTE: "claude-tight" };
   const route = resolveRouteModels("claude-tight", {});
   const declaredLegs = route.legCollections.cmrReview.map((leg) => leg.slug);
-  const rejectedDefaultLeg = "opus";
+  const rejectedDefaultLeg = "agy";
   const failure = cmrLegAccountingFailure(
     { successfulLegs: [...declaredLegs, rejectedDefaultLeg] },
     env,
@@ -2174,7 +2174,7 @@ async function providerBlockingReplay(): Promise<SeamReplay> {
   const backend = new DogfoodCmrFamilyBackend("provider-blocking-head", [], [
     {
       kind: "failed",
-      reason: "provider authentication failed for agy reviewer",
+      reason: "provider authentication failed for opus reviewer",
     },
   ]);
   const result = await runVerifyCmr({
@@ -2192,8 +2192,8 @@ async function providerBlockingReplay(): Promise<SeamReplay> {
       seam: "family_verify_cmr_provider_worker_failure",
       status: "aborted",
       dispatches: backend.dispatches,
-      failedLeg: "agy",
-      failureReason: "provider authentication failed for agy reviewer",
+      failedLeg: "opus",
+      failureReason: "provider authentication failed for opus reviewer",
       providerDegraded: abort.stopSummary.metadata?.providerDegraded,
     },
   };
@@ -2209,7 +2209,7 @@ async function providerStrongLegPassReplay(input: {
         kind: "cmr",
         converged: true,
         successfulLegs: ["gpt-5.6-sol"],
-        skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
+        skippedLegs: [{ slug: "opus", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
@@ -2221,7 +2221,7 @@ async function providerStrongLegPassReplay(input: {
         kind: "cmr",
         converged: true,
         successfulLegs: ["gpt-5.6-sol"],
-        skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
+        skippedLegs: [{ slug: "opus", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
@@ -2266,7 +2266,7 @@ async function providerStrongLegPassReplay(input: {
       routeName: "claude-tight",
       dispatches: backend.dispatches,
       successfulLegs: ["gpt-5.6-sol"],
-      skippedLegs: ["agy"],
+      skippedLegs: ["opus"],
       providerDegraded,
     },
   };

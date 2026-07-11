@@ -152,7 +152,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
         "fixer=sonnet",
         "cleanup=sonnet",
         "docRelease=sonnet",
-        "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
+        "cmrReview=[codex:gpt-5.6-sol,claude:opus]",
       ].join("\n"),
     );
     expect(info.mock.invocationCallOrder[0]).toBeLessThan(

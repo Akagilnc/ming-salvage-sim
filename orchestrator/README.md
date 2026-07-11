@@ -164,9 +164,9 @@ ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS="gpt-5.6-sol,opus" \
 ```
 
 `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` here is an OVERRIDE example, not
-mandatory: the `normal` preset's own legs are codex sol + claude opus + agy;
-the override above drops the agy leg (use it when agy quota is dead). Omit
-the variable to take the preset's legs. Add further route/slot env overrides
+mandatory: the `normal` preset's own legs are codex sol + claude opus. Add
+`agy` through this override when its quota is available. Omit the variable to
+take the preset's legs. Add further route/slot env overrides
 from the table below as needed.
 
 Rules of engagement:
@@ -241,11 +241,11 @@ Presets (`src/modelRoutes.ts` `ROUTE_PRESETS`):
 
 | preset | coder/coderFix | reviewer | verify + cmr gates | ship/merger/fixer/cleanup/docRelease | cmrReview legs |
 | --- | --- | --- | --- | --- | --- |
-| `normal` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | sonnet | codex sol + claude opus (+agy) |
-| `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | sonnet | opus + agy + codex sol |
+| `normal` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | sonnet | codex sol + claude opus |
+| `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | sonnet | codex sol + claude opus |
 | `codex-tight` | sonnet | opus | opus | sonnet | opus + agy (codex family excluded) |
-| `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-terra | codex-side legs |
-| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-terra | codex sol + agy (claude family excluded) |
+| `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-terra | codex sol + claude opus |
+| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-terra | codex sol + claude opus (Claude worker slots excluded) |
 
 `*-tight` presets declare `tightFamilies` — the family whose quota is scarce is
 kept off every slot and leg. Pick the preset whose scarce pool matches

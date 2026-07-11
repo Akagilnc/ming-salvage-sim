@@ -151,7 +151,7 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
+    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
@@ -301,7 +301,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: (req) => ({
         converged: true,
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         ...(req.priorCmrFindingIdentityKeys !== undefined
           ? {
               claimedFixedFindingIdentityKeys: [priorKey],
@@ -370,7 +370,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: (req) => ({
         converged: true,
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         ...(req.priorCmrFindingIdentityKeys !== undefined
           ? {
               claimedFixedFindingIdentityKeys: [firstKey, secondKey],
@@ -473,7 +473,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: (req) => ({
         converged: true,
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
         ...(req.priorCmrFindingIdentityKeys !== undefined
           ? {
               claimedFixedFindingIdentityKeys: [priorKey],
@@ -544,7 +544,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: () => ({
         converged: true,
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
       }),
     });
     backend.liveHead = "head-after-cmr-fix";
@@ -607,7 +607,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: () => ({
         converged: true,
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
       }),
     });
     backend.liveHead = "head-after-bad-coder-fix";
@@ -689,7 +689,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
               converged: false,
               reason: "same-class findings need a human continue decision",
             }
-          : { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
+          : { converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] };
       },
     });
     const input = {
@@ -768,7 +768,7 @@ describe("#296 spine integration — acceptance 3: all green → open PR, stop, 
   it("green verify + converged cmr ⇒ the family PR is opened and the run is success (止于 PR)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     const result = await runFamily({
       epic: epicWith(294, 295, 298),
@@ -811,7 +811,7 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
   it("a child that fails its single-slice run ⇒ NO final verify / cmr / PR, status incomplete", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     const result = await runFamily({
       epic: epicWith(294, 295),
@@ -835,7 +835,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a head-bound `shipped` ledger marker for the current head ⇒ skip the final barrier", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     // Resume truth: both children already merged AND the terminal 止于-PR ship already
     // ran (a `shipped` marker on the durable ledger). The family PR is open and the
@@ -901,7 +901,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a current-head shipped marker whose PR no longer verifies fails closed", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     backend.shippedPrOk = false;
     backend.shippedPrFailureReason = "PR is CLOSED but must be OPEN";
@@ -950,7 +950,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a current-head shipped marker fails closed when the backend cannot re-verify the PR", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     Reflect.set(backend, "verifyFamilyShippedPr", undefined);
     backend.ledger.push(
@@ -991,7 +991,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a legacy headless shipped marker fails closed instead of re-shipping", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     backend.ledger.push(
       { childIssue: 294, status: "merged" },
@@ -1027,7 +1027,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a legacy headless shipped marker also fails closed when no reconcile seam is active", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     backend.ledger.push(
       { childIssue: 294, status: "merged" },
@@ -1064,7 +1064,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a current-head shipped marker skips the final barrier even without reconcileGit", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     backend.liveHead = "ship-head";
     backend.ledger.push(
@@ -1100,7 +1100,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a bound shipped marker fails closed when the current family HEAD cannot be resolved", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     backend.ledger.push(
       { childIssue: 294, status: "merged" },
@@ -1138,7 +1138,7 @@ describe("#330 spine — an already-shipped family is NOT re-shipped on resume (
   it("a shipped marker for an older family HEAD does NOT skip the final barrier", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }),
     });
     backend.liveHead = "new-head";
     backend.ledger.push(
