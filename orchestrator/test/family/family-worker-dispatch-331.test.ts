@@ -73,6 +73,9 @@ class CapableFamilyBackend implements FamilyBackend {
     this.prCalls.push(req);
     return { url: `pr://${req.familyBase}`, prHead: "head-1" };
   }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
 }
 
 describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", () => {
@@ -220,6 +223,9 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       return "head-1";
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async verifyFamilyShippedPr(): Promise<{ ok: true }> {
       return { ok: true };
     }
     async dispatchWorker(
@@ -381,6 +387,9 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
       return "head-1";
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async verifyFamilyShippedPr(): Promise<{ ok: true }> {
       return { ok: true };
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
@@ -615,6 +624,9 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     async readFamilyHead(): Promise<string> {
       return "head-1";
     }
+    async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+      return { ok: true };
+    }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
@@ -660,6 +672,9 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     }
     async readFamilyHead(): Promise<string> {
       return this.shipDispatched ? "post-ship-head" : "cmr-head";
+    }
+    async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+      return { ok: true };
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };

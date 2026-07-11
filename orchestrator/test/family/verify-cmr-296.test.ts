@@ -60,6 +60,7 @@ class CapableFamilyBackend implements FamilyBackend {
   readonly aborted: FamilyAbortedEvent[] = [];
   readonly escalations: FamilyEscalation[] = [];
   readonly prCalls: OpenFamilyPrRequest[] = [];
+  readonly verifyShippedPrCalls: Parameters<NonNullable<FamilyBackend["verifyFamilyShippedPr"]>>[0][] = [];
   readonly readFamilyHeadCalls: string[] = [];
   currentFamilyHead = "head-1";
 
@@ -68,6 +69,9 @@ class CapableFamilyBackend implements FamilyBackend {
       verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
       cmr?: (req: IntegratedCmrRequest) => IntegratedCmrResult;
       pr?: (req: OpenFamilyPrRequest) => OpenFamilyPrResult;
+      verifyShippedPr?: (
+        req: Parameters<NonNullable<FamilyBackend["verifyFamilyShippedPr"]>>[0],
+      ) => Awaited<ReturnType<NonNullable<FamilyBackend["verifyFamilyShippedPr"]>>>;
       worker?: (spec: WorkerSpec, ctx: DispatchContext) => WorkerResult | Promise<WorkerResult>;
     } = {},
   ) {
@@ -108,6 +112,12 @@ class CapableFamilyBackend implements FamilyBackend {
       url: `pr://${req.familyBase}`,
       prHead: this.currentFamilyHead,
     };
+  }
+  async verifyFamilyShippedPr(
+    req: Parameters<NonNullable<FamilyBackend["verifyFamilyShippedPr"]>>[0],
+  ): Promise<Awaited<ReturnType<NonNullable<FamilyBackend["verifyFamilyShippedPr"]>>>> {
+    this.verifyShippedPrCalls.push(req);
+    return this.script.verifyShippedPr?.(req) ?? { ok: true };
   }
 
   // ── #298-owned abort/escalate seam (minimal shapes #296 only CALLS) ──
@@ -587,6 +597,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     ]);
     // 止于 PR: the PR is opened (decision 4) — but NOT merged (no merge call here).
     expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.verifyShippedPrCalls).toEqual([{
+      pr: "pr://family/291-base",
+      familyBase: "family/291-base",
+      expectedHead: "head-1",
+    }]);
     expect(backend.escalations).toEqual([]);
     // online review r2 (codex P1): a durable `shipped` terminal marker is persisted
     // carrying the family PR URL, so a resume sees the family is already delivered
@@ -629,6 +644,60 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         },
       }),
     }));
+  });
+
+  it("re-dispatches a fake PR locator to the bound, escalates, and never persists shipped", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      pr: () => ({ url: "pr://fake-locator", prHead: "head-1" }),
+      verifyShippedPr: () => ({ ok: false, reason: "gh pr view: PR not found" }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.prCalls).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    expect(backend.verifyShippedPrCalls).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    expect(backend.ledger.some((entry) => entry.status === "shipped")).toBe(false);
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]?.reason).toContain("gh pr view: PR not found");
+  });
+
+  it("re-dispatches after one host-verification miss and ships only after host truth succeeds", async () => {
+    let verificationAttempt = 0;
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      verifyShippedPr: () => {
+        verificationAttempt += 1;
+        return verificationAttempt === 1
+          ? { ok: false, reason: "gh pr view: eventual consistency" }
+          : { ok: true };
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.prCalls).toHaveLength(2);
+    expect(backend.verifyShippedPrCalls).toHaveLength(2);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "shipped",
+      pr: "pr://family/291-base",
+      familyHeadAfter: "head-1",
+    }));
+    expect(backend.escalations).toEqual([]);
   });
 
   it("rejects converged CMR when runner-protected prior findings are not explicitly claimed fixed", async () => {
