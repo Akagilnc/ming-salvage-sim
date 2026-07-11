@@ -323,6 +323,8 @@ export type EscalationKind = "decision" | "failure";
 export interface EscalationAnswerPayload {
   readonly event: "escalation_answered";
   readonly forStep?: StepId;
+  /** Original parked worker session, when the answer reopens a decision gate. */
+  readonly sessionId?: string;
   readonly answer: string;
   readonly note?: string;
   /** Source of the answer row when known; omitted on legacy rows. */

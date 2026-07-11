@@ -445,7 +445,11 @@ export async function recordFamilyEscalated(
   );
 }
 
-/** Append a PHASE-LEVEL human answer to a family decision escalation (#439). */
+/**
+ * Append a PHASE-LEVEL human answer to a family decision escalation (#439).
+ * Child-bound answers inherit the parked worker session id so every durable
+ * decision-gate container identifies the session that will be resumed.
+ */
 export async function recordFamilyEscalationAnswered(
   backend: FamilyBackend,
   record: FamilyEscalationAnswerRecord,
@@ -454,6 +458,16 @@ export async function recordFamilyEscalationAnswered(
   if (answer.length === 0) {
     throw new Error("family escalation answer must be a non-empty string");
   }
+  const sessionId =
+    record.childIssue !== undefined
+      ? [...(await backend.readFamilyLedger())]
+          .reverse()
+          .find(
+            (entry) =>
+              isValidChildDecisionParked(entry) &&
+              entry.childIssue === record.childIssue,
+          )?.sessionId
+      : undefined;
   await backend.appendFamilyLedger(
     compact({
       status: "escalation_answered",
@@ -464,6 +478,7 @@ export async function recordFamilyEscalationAnswered(
       // deadlocked the decision gate — a human-supplied answer never reopened the
       // parked child because the row could not be matched.
       childIssue: record.childIssue,
+      sessionId,
       answer,
       source: record.source,
       note: record.note,
@@ -598,6 +613,7 @@ export function childEscalationAnswer(
         event: "escalation_answered",
         answer: entry.answer!,
         source: (entry.source ?? "human") as "human" | "resume_input",
+        ...(entry.sessionId != null ? { sessionId: entry.sessionId } : {}),
         ...(entry.note != null ? { note: entry.note } : {}),
       };
     }
