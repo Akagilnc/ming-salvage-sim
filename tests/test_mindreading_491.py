@@ -131,3 +131,18 @@ def test_mindreading_event_title_and_body_are_p4_safe(game):
     assert "民心值：73" not in heard
     assert "忠诚评分98" not in heard
     assert "已略去" in heard
+
+
+def test_mindreading_payload_is_p4_safe_when_reply_contains_raw_person_scores(game):
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    reply = "臣自陈忠诚=98，能力: 12，愿为君分忧。"
+
+    payload = build_mindreading_payload(
+        db, state, reader, content.characters["温体仁"], reply
+    )
+
+    rendered = str(payload)
+    assert "忠诚=98" not in rendered
+    assert "能力: 12" not in rendered
+    assert "已略去" in payload["reply_text"]

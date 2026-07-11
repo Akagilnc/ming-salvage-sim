@@ -202,5 +202,5 @@ def build_mindreading_payload(
                 reader_context=reader_context,
             ),
         },
-        "reply_text": str(minister_reply).strip(),
+        "reply_text": safe_historical_text(minister_reply, "大臣回话"),
     }
