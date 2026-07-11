@@ -1453,12 +1453,6 @@ export async function runFamily(
           // wave on an unresolved MERGE_HEAD/conflict state.
           familyHead = mergeResult.familyHead;
           childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
-          await recordFamilyEscalated(familyBackend, {
-            escalationKind: "failure",
-            phase: "wave",
-            reason: `merger step for child #${r.issue} exhausted bounded still-conflicted retries`,
-            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
-          });
           const ledgerMerged = await currentMerged(familyBackend);
           const children = epic.children.map((child) => {
             const recorded = childResults.find((entry) => entry.issue === child.issue);
@@ -1480,6 +1474,8 @@ export async function runFamily(
             reason: escalationReason,
             ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
             stopSummary,
+            escalationKind: "failure",
+            phase: "wave",
           });
           return {
             status: "escalated" as const,

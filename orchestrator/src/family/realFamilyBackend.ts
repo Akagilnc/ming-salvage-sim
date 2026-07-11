@@ -3079,8 +3079,8 @@ export class RealFamilyBackend implements FamilyBackend {
     // This is the resume truth the family runner reads: no later
     // `escalation_answered` row keeps the run paused; a later answer reopens it.
     await recordFamilyEscalated(this, {
-      escalationKind: "decision",
-      phase: "final",
+      escalationKind: escalation.escalationKind ?? "decision",
+      phase: escalation.phase ?? "final",
       reason: escalation.reason,
       familyHeadAfter: escalation.familyHeadAfter,
       stopSummary: escalation.stopSummary,
