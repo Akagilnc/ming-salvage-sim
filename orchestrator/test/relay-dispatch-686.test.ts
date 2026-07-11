@@ -2449,10 +2449,10 @@ describe("#686 R2 production seams", () => {
       resolveModelSlugForPool,
       POOL_DISPATCH_BINDINGS,
     } = await import("../src/modelRegistry.js");
-    expect(POOL_DISPATCH_BINDINGS["grok-build"]).toBe("pi");
+    expect(POOL_DISPATCH_BINDINGS["grok-build"]).toBe("grok");
     expect(POOL_DISPATCH_BINDINGS.cursor).toBe("cursor");
     expect(resolveModelSlugForPool("grok-4.5", "grok-build").provider).toBe(
-      "pi",
+      "grok",
     );
     expect(resolveModelSlugForPool("grok-4.5", "cursor").provider).toBe(
       "cursor",

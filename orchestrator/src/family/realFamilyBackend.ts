@@ -71,7 +71,13 @@ import {
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
-import { effortForLiveOfficer } from "../modelRegistry.js";
+import {
+  effortForLiveOfficer,
+  isBillingPoolDispatchId,
+  resolveModelSlugForPool,
+  unavailableProviderAuth,
+  type ProviderAuthAvailability,
+} from "../modelRegistry.js";
 import {
   agentForSlug,
   assertCompletionSignal,
@@ -81,6 +87,7 @@ import {
   parseCoderSelfReport,
   reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GROK_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
@@ -566,8 +573,28 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` + pure (no container/I/O) so a unit test asserts the resolved model
    * without spinning a real `sc.run`.
    */
-  protected agentForSpec(spec: WorkerSpec): sc.AgentProvider {
-    return agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec));
+  protected agentForSpec(spec: WorkerSpec, ctx?: Pick<DispatchContext, "billingPool">): sc.AgentProvider {
+    return agentForSlug(
+      spec.model,
+      effortForLiveOfficer(spec.model, spec),
+      isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
+    );
+  }
+
+  /** Typed provider gate shared by every family `sc.run` dispatch. */
+  protected unavailableWorkerProviderAuth(
+    spec: Pick<WorkerSpec, "model">,
+    auth: Pick<CmrAuth | ShipAuth, "claudeToken" | "grokAuthDir" | "providerAuth">,
+    ctx?: Pick<DispatchContext, "billingPool">,
+  ): "claude" | "grok" | undefined {
+    const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
+    return unavailableProviderAuth(
+      resolveModelSlugForPool(spec.model, pool).provider,
+      auth.providerAuth ?? {
+        claude: auth.claudeToken !== undefined,
+        grok: auth.grokAuthDir !== undefined,
+      },
+    );
   }
 
   // ─────────────────────────── family ledger ───────────────────────────
@@ -1507,6 +1534,14 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountCmrAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalate",
+          reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
+          diagnosis: "typed provider availability preflight rejected the cmr launch before sc.run",
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
@@ -1544,7 +1579,7 @@ export class RealFamilyBackend implements FamilyBackend {
           // symmetry): resolve the worker's slug through the same registry as the
           // single-slice + family ship paths — no constant that could silently drift
           // from the spec the runner declares.
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
           // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
           // sequencing and accounting.
@@ -1568,7 +1603,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -1604,6 +1639,14 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountCmrAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "malformed",
+          reason: `cmr outcome rewrite cannot resume without ${missingProvider} auth`,
+          sessionId: protocolFailure.sessionId,
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "malformed",
@@ -1621,7 +1664,7 @@ export class RealFamilyBackend implements FamilyBackend {
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: this.opts.workingRepo,
           sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           maxIterations: 1,
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
@@ -1655,7 +1698,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -1687,6 +1730,16 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountShipAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalated",
+          escalation: {
+            reason: `no ${missingProvider} auth — the family coder-fix provider cannot start`,
+            diagnosis: "typed provider availability preflight rejected the coder-fix launch before sc.run",
+          },
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
@@ -1723,7 +1776,7 @@ export class RealFamilyBackend implements FamilyBackend {
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
             sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding, fixFocusLanding),
-            agent: this.agentForSpec(spec),
+            agent: this.agentForSpec(spec, ctx),
             maxIterations: spec.maxIter,
             completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
@@ -1740,7 +1793,7 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -1864,6 +1917,9 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
@@ -1957,6 +2013,17 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountShipAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalated",
+          escalation: {
+            reason: `no ${missingProvider} auth — the family ${spec.kind} provider cannot start`,
+            diagnosis: "typed provider availability preflight rejected the review-loop launch before sc.run",
+            synthesizedFailure: true,
+          },
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
@@ -1992,7 +2059,7 @@ export class RealFamilyBackend implements FamilyBackend {
             onlineReviewLanding,
             fixFocusLanding,
           ),
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           maxIterations: spec.maxIter,
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
@@ -2008,7 +2075,7 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -2115,6 +2182,9 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
@@ -2436,6 +2506,22 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(tempCodexDir, { recursive: true, force: true });
       }
     }
+    // grok auth.json → a per-run dir mounted at the Grok CLI's fixed home path.
+    // Like codex/agy, an absent source degrades just this reviewer leg; unique
+    // mkdtemp dirs prevent concurrent family CMR workers from sharing credentials.
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, "cmr-grok-auth-"));
+      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
 
     // agy OAuth token → a per-run WRITABLE dir mounted at the antigravity config
     // path (the agy CLI writes cache/log under its config dir, so it must NOT be
@@ -2476,7 +2562,14 @@ export class RealFamilyBackend implements FamilyBackend {
     // the ship worker's readGhToken extraction (host OS keyring, not a portable
     // hosts.yml) — but NOT preflighted: a missing token degrades the gate's authority,
     // it does not block the cmr worker (the cmr worker has no `gh pr create` to fail).
-    return { codexAuthDir, agyDir, claudeToken, ghToken: this.readGhToken() };
+    return {
+      codexAuthDir,
+      agyDir,
+      grokAuthDir,
+      claudeToken,
+      ghToken: this.readGhToken(),
+      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+    };
   }
 
   /**
@@ -2563,6 +2656,9 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (auth.agyDir !== undefined) {
       mounts.push({ hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     if (outcomeLanding !== undefined) {
       mounts.push({
@@ -2694,6 +2790,15 @@ export class RealFamilyBackend implements FamilyBackend {
     // returns (online review r1 — 3 bots: leaked temp dirs).
     const auth = this.mountShipAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalate",
+          reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
+          diagnosis:
+            "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; typed provider availability preflight rejected the ship launch before sc.run",
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
@@ -2732,7 +2837,7 @@ export class RealFamilyBackend implements FamilyBackend {
       this.writeShipFocusFile(ctx);
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
       try {
-        const result = await this.shipContainerRun(spec, auth, outcomeLanding);
+        const result = await this.shipContainerRun(spec, auth, outcomeLanding, ctx);
         return shipOutcomeFromResult({
           ...result,
           outcomePath: outcomeLanding.path,
@@ -2741,7 +2846,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -2755,6 +2860,7 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return sc.run({
       name: "family-ship",
@@ -2766,7 +2872,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
       // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
       // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
-      agent: this.agentForSpec(spec),
+      agent: this.agentForSpec(spec, ctx),
       maxIterations: spec.maxIter,
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
@@ -2893,6 +2999,19 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(tempCodexDir, { recursive: true, force: true });
       }
     }
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, "ship-grok-auth-"));
+      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
     let claudeToken: string | undefined;
     try {
       const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
@@ -2904,7 +3023,13 @@ export class RealFamilyBackend implements FamilyBackend {
       // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
       // route slots simply run without this env var.
     }
-    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
+    return {
+      codexAuthDir,
+      grokAuthDir,
+      claudeToken,
+      ghToken: this.readGhToken(),
+      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+    };
   }
 
   /**
@@ -2961,6 +3086,9 @@ export class RealFamilyBackend implements FamilyBackend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     if (outcomeLanding !== undefined) {
       mounts.push({
@@ -3219,6 +3347,8 @@ export interface CmrAuth {
   readonly codexAuthDir?: string;
   /** Per-run agy token dir (host-mirrored antigravity config), or undefined. */
   readonly agyDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3229,6 +3359,8 @@ export interface CmrAuth {
    * (it falls back to commit-titles/test-files) — it never blocks the cmr worker.
    */
   readonly ghToken?: string;
+  /** Typed provider availability used before the top-level worker launches. */
+  readonly providerAuth?: ProviderAuthAvailability;
 }
 
 /**
@@ -3242,6 +3374,8 @@ export interface CmrAuth {
 export interface ShipAuth {
   /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
   readonly codexAuthDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3250,6 +3384,8 @@ export interface ShipAuth {
    * (`gh pr create`), so `runShipWorker` preflights it and escalates when absent.
    */
   readonly ghToken?: string;
+  /** Typed provider availability used before the top-level worker launches. */
+  readonly providerAuth?: ProviderAuthAvailability;
 }
 
 /**

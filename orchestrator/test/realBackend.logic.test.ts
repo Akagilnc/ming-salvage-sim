@@ -70,6 +70,7 @@ import {
   routeSmokeCacheKey,
   routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GROK_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
@@ -143,6 +144,14 @@ describe("#685 route smoke hardening", () => {
     );
   });
 
+  it("separates a relay pool from the default provider cache", () => {
+    const route = resolveRouteModels("normal", { coder: "grok-4.5" });
+
+    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
+      routeSmokeCacheKey(route, "image-a", "grok-build"),
+    );
+  });
+
   it("turns a missing host CLI into an unknown version instead of throwing", () => {
     const backend = {
       sh: () => {
@@ -156,6 +165,24 @@ describe("#685 route smoke hardening", () => {
     ).cliVersionForSlug;
 
     expect(cliVersionForSlug.call(backend, "sonnet")).toBe("unknown");
+  });
+
+  it("looks up the CLI for the relay pool's final provider", () => {
+    const calls: string[] = [];
+    const backend = {
+      sh: (file: string) => {
+        calls.push(file);
+        return "test-version";
+      },
+    };
+    const cliVersionForSlug = (
+      RealBackend.prototype as unknown as {
+        cliVersionForSlug(this: typeof backend, slug: string, billingPool?: string): string;
+      }
+    ).cliVersionForSlug;
+
+    expect(cliVersionForSlug.call(backend, "grok-4.5", "grok-build")).toBe("test-version");
+    expect(calls).toEqual(["grok"]);
   });
 });
 
@@ -627,18 +654,25 @@ describe("realBackend auth mount paths", () => {
     expect(p.hostCodexAuthDir).toBe("/home/dev/.sc-orchestrator/auth-256");
     expect(p.srcCodexAuth).toBe("/home/dev/.codex/auth.json");
     expect(p.srcCodexConfig).toBe("/home/dev/.codex/config.toml");
+    expect(p.hostGrokAuthDir).toBe("/home/dev/.sc-orchestrator/grok-auth-256");
+    expect(p.srcGrokAuth).toBe("/home/dev/.grok/auth.json");
     expect(p.claudeTokenFile).toBe("/home/dev/.sc-claude-token");
   });
 
   it("the sandbox mount targets match the spike contract", () => {
-    // codex auth → /home/agent/.codex ; dev skills → /home/agent/.claude/skills
+    // codex auth → /home/agent/.codex ; grok auth → /home/agent/.grok ;
+    // dev skills → /home/agent/.claude/skills
     expect(SANDBOX_CODEX_DIR).toBe("/home/agent/.codex");
+    expect(SANDBOX_GROK_DIR).toBe("/home/agent/.grok");
     expect(SANDBOX_SKILLS_DIR).toBe("/home/agent/.claude/skills");
   });
 
   it("per-issue dirs are distinct so concurrent issues never collide", () => {
     expect(buildAuthPaths(256, "/h").hostCodexAuthDir).not.toBe(
       buildAuthPaths(257, "/h").hostCodexAuthDir,
+    );
+    expect(buildAuthPaths(256, "/h").hostGrokAuthDir).not.toBe(
+      buildAuthPaths(257, "/h").hostGrokAuthDir,
     );
   });
 
@@ -738,7 +772,7 @@ describe("realBackend resolveModelSlug", () => {
     });
   });
 
-  it("declares the six Sandcastle-native provider factories the registry can target", () => {
+  it("declares the provider factories the registry can target (incl. #807 grok)", () => {
     expect(SUPPORTED_MODEL_PROVIDER_FACTORIES).toEqual([
       "claudeCode",
       "codex",
@@ -746,6 +780,7 @@ describe("realBackend resolveModelSlug", () => {
       "copilot",
       "cursor",
       "pi",
+      "grok",
     ]);
   });
 
@@ -1715,7 +1750,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     }
   }
 
-  function makeBackend(): PreflightBackend {
+  function makeBackend(home = tempHome("rb-home-286-")): PreflightBackend {
     return new PreflightBackend({
       sourceRepo: "/tmp/source",
       remote: "https://github.com/owner/name.git",
@@ -1725,7 +1760,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       // #748: runStep → box → mountAuth must not touch real ~/.sc-orchestrator.
-      home: tempHome("rb-home-286-"),
+      home,
     });
   }
 
@@ -1763,6 +1798,31 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "sess-286",
     });
+  });
+
+  it("reclaims the temporary Grok OAuth copy after a worker container exits", async () => {
+    const home = tempHome("rb-home-grok-auth-");
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
+    const backend = makeBackend(home);
+    backend.agentResult = agentRunResult({
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
+      commits: [],
+      sessionId: "sess-grok-auth-cleanup",
+    });
+
+    await backend.runStep(coderSpec, {
+      branch: "feat/issue-286",
+      base: "main",
+      path: "/tmp/worktree/issue-286",
+    });
+
+    expect(
+      readdirSync(join(home, ".sc-orchestrator")).filter((name) =>
+        name.startsWith("grok-auth-286-"),
+      ),
+    ).toEqual([]);
   });
 
   it("prefers a runner-owned outcome sidecar over malformed coder stdout", async () => {
