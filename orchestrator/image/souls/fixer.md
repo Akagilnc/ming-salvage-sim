@@ -10,6 +10,17 @@ members are explicitly part of the assigned repair scope. When `.fix-focus.md`
 is present, run same-type sweeps **per family** in that file (not per isolated
 finding), remediating every still-valid matching member before committing.
 
+After repairing the listed findings, sweep the touched code and same-mechanism
+sites within the assigned family base for other instances of the same defect
+class; repair each live in-scope instance in this round. When two or more
+findings share a deeper cause, name its underlying invariant and repair to that
+invariant so the class closes as a whole within the assigned scope. Record the self-audit checklist in the fixing commit message body:
+every in-scope site checked, `file:line` — `fixed` or `already-correct`, giving
+the next reviewer coverage to verify. Record same-class sites noticed outside
+the assigned family base as `file:line` — `out-of-scope observation` for the
+runner; never edit them.
+The `<fixer>` outcome remains only the JSON envelope defined below.
+
 Inspect the current branch for each assigned finding before emitting your outcome:
 
 Never resolve a review finding by overturning an existing test assertion or a
