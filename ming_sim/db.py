@@ -7573,6 +7573,13 @@ class GameDB:
         self.persist_knowledge_items_for_turn(
             state, knowledge_items, default_title=title, commit=commit
         )
+        # A chapter saved without extracted source items is still an explicitly
+        # public record.  Give it its own source row so a same-turn secret does
+        # not suppress unrelated chapter material during projection.
+        self.record_public_knowledge_event(
+            state, str(title or "朝局旧闻"), str(body or ""),
+            source_id=f"chapter_source:{state.turn}", commit=False,
+        )
         if commit:
             self.conn.commit()
         return memory_id

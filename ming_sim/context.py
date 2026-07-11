@@ -257,6 +257,7 @@ def character_context(character: Character) -> str:
 def character_context_with_db(character: Character, db: GameDB) -> str:
     return (
         character_context(character)
+        + "【通用特征】人物档料不足处，以其现职、经历与当下处境推知。"
         + faction_context_with_db(character, db)
         + f"当前可用技能：{available_skill_names(character, db)}"
     )

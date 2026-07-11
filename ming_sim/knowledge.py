@@ -12,6 +12,8 @@ import json
 import re
 from typing import Any, Dict
 
+from ming_sim.qualitative import qualitative_band
+
 
 def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
     """Return the validated content setting for this office's current-state rail."""
@@ -76,7 +78,24 @@ def _qualitative(text: object) -> str:
     replacing every number here made the audience unable to reason about the
     state it is entitled to see.
     """
-    return str(text or "")
+    rendered = str(text or "")
+    labels = {
+        "火器": ("匮乏", "短缺", "尚可", "精良", "充足"),
+        "民心": ("堪忧", "堪忧", "尚可", "稳固", "拥戴"),
+        "动乱": ("低", "渐起", "中等", "高", "已炽"),
+        "士绅阻力": ("低", "偏低", "中等", "偏高", "很高"),
+        "军事压力": ("低", "偏低", "中等", "偏高", "很高"),
+        "进度": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
+        "风险": ("低", "中", "偏高", "极高", "极高"),
+        "完好": ("残损", "失修", "尚可", "完好", "坚固"),
+        "等级": ("初设", "成形", "完备", "宏整", "巨构"),
+    }
+    pattern = re.compile(r"(" + "|".join(labels) + r")\s*[:：]?\s*(-?\d+)(?:\s*/\s*100|%)?")
+    def replace(match: re.Match[str]) -> str:
+        label, raw = match.groups()
+        return label + qualitative_band(raw, labels[label])
+    rendered = pattern.sub(replace, rendered)
+    return rendered.replace("民心低迷", "民心堪忧").replace("动乱升高", "动乱已炽")
 
 
 def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:
@@ -352,7 +371,8 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     public_bodies = [
         _qualitative(item.get("body") or item.get("title") or "")
         for item in visible_public
-        if item.get("body") or item.get("title")
+        if (item.get("body") or item.get("title"))
+        and not str(item.get("source_id") or "").startswith("opening:")
     ]
     world["public"] = "\n".join(public_bodies) or world["public"]
     known_source_ids = {
