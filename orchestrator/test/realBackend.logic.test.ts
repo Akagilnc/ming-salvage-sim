@@ -1470,6 +1470,16 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     soul: "READ-ONLY",
     toolchain: ["node"],
   };
+  const coderSpec: StepSpec = {
+    id: "S2",
+    role: "coder",
+    promptFile: "dummy.md",
+    model: "gpt-5.6-sol",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 1,
+    soul: "coder",
+    toolchain: ["node"],
+  };
 
   it("decodeOutput on RAW valid verify produces correct VerifyResult (not fake construction)", () => {
     const backend = makeBackend();
@@ -1509,14 +1519,20 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     ).toThrow();
   });
 
-  it("never fabricates review-loop verdicts when every outcome channel is absent", () => {
+  it("never fabricates a worker verdict when every outcome channel is absent", () => {
     const backend = makeBackend();
     const decodeOutput = (backend as unknown as {
       decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
     }).decodeOutput.bind(backend);
 
-    for (const spec of [verifySpec, fixerSpec, cleanupSpec, docReleaseSpec]) {
-      expect(() => decodeOutput(spec, undefined, undefined)).toThrow(
+    for (const [spec, gitCommitCount] of [
+      [coderSpec, 1],
+      [verifySpec, undefined],
+      [fixerSpec, undefined],
+      [cleanupSpec, undefined],
+      [docReleaseSpec, undefined],
+    ] as const) {
+      expect(() => decodeOutput(spec, undefined, gitCommitCount)).toThrow(
         /without a machine outcome/,
       );
     }
@@ -1732,26 +1748,24 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("continues with commit observation and telemetry when a worker exits without signal or tag", async () => {
+  it("treats a coder with no sidecar, typed output, or stdout tag as malformed even when git observed commits", async () => {
     const backend = makeBackend();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     backend.agentResult = agentRunResult({
       stdout: "worker completed its changes",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-advisory-exit",
     });
 
-    const result = await backend.runStep(coderSpec, {
-      branch: "feat/issue-286",
-      base: "main",
-      path: "/tmp/worktree/issue-286",
+    await expect(
+      backend.runStep(coderSpec, {
+        branch: "feat/issue-286",
+        base: "main",
+        path: "/tmp/worktree/issue-286",
+      }),
+    ).rejects.toMatchObject({
+      name: "StructuredOutputError",
+      message: expect.stringContaining("no worker outcome"),
     });
-
-    expect(result).toEqual({
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
-      sessionId: "sess-advisory-exit",
-    });
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("telemetry:"));
   });
 
   it("treats a reviewer with no sidecar, typed output, or stdout tag as malformed instead of a clean review", async () => {
