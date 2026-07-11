@@ -864,6 +864,8 @@ export interface AuthPaths {
 export interface ShipAuth {
   /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
   readonly codexAuthDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -4120,15 +4122,9 @@ export class RealBackend implements Backend {
         }
       }
     } finally {
-      // Reclaim the per-call temp codex auth dir (online review r1, 3 bots):
-      // best-effort — a failed cleanup must never mask the worker's outcome.
-      if (auth.codexAuthDir !== undefined) {
-        try {
-          rmSync(auth.codexAuthDir, { recursive: true, force: true });
-        } catch {
-          // best-effort: the run already returned/threw.
-        }
-      }
+      // Reclaim every per-call auth copy. Best-effort cleanup must never mask the
+      // worker's outcome.
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -4236,10 +4232,10 @@ export class RealBackend implements Backend {
   protected mountShipAuth(issueNumber: number): ShipAuth {
     // #748: same injectable-home seam as mountAuth (opts.home ?? os.homedir()).
     const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
+    const root = join(paths.hostCodexAuthDir, "..");
     let codexAuthDir: string | undefined;
     let tempCodexDir: string | undefined;
     try {
-      const root = join(paths.hostCodexAuthDir, "..");
       mkdirSync(root, { recursive: true, mode: 0o700 });
       tempCodexDir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
       copyFileSync(paths.srcCodexAuth, join(tempCodexDir, "auth.json"));
@@ -4259,6 +4255,21 @@ export class RealBackend implements Backend {
         rmSync(tempCodexDir, { recursive: true, force: true });
       }
     }
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, `ship-grok-auth-${issueNumber}-`));
+      copyFileSync(paths.srcGrokAuth, join(tempGrokDir, "auth.json"));
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      // grok auth is an optional dispatch leg; omit its mount when absent and
+      // reclaim a partially-created per-invocation dir.
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
     let claudeToken: string | undefined;
     try {
       const tok = readFileSync(paths.claudeTokenFile, "utf8").trim();
@@ -4270,7 +4281,7 @@ export class RealBackend implements Backend {
       // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
       // route slots simply run without this env var.
     }
-    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
+    return { codexAuthDir, grokAuthDir, claudeToken, ghToken: this.readGhToken() };
   }
 
   /**
@@ -4333,6 +4344,9 @@ export class RealBackend implements Backend {
     // #334: codex auth ONLY — baked skills win (no host skills mount).
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     // #372: souls mount for ship worker too (live source, shadows baked if any).
     // Shared helper forces readonly:true at all sites.
