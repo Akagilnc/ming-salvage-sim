@@ -6303,7 +6303,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       return worktree;
     }
     async writeSnapshot(): Promise<void> {}
-    async writeLedger(): Promise<void> {}
+    async writeLedger(_entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {}
     async runStep(): Promise<StepOutput> {
       throw new Error("runStep should not be called");
     }
@@ -6451,6 +6451,58 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       } else {
         process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
       }
+    }
+  });
+
+  it("#824 pending-CI verify re-polls reset the durable S9 dispatch budget", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      class SlowCiBackend extends HookPollBackend {
+        readonly ledgerWrites: PersistentLedgerEntry[] = [];
+        verifyDispatches = 0;
+
+        override async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
+          this.ledgerWrites.push(entry);
+        }
+
+        override async pollOnlineReviewState(): Promise<OnlineReviewLandingSnapshot> {
+          return {
+            ...greenHookSnapshot(),
+            prUrl: offlinePr,
+            checkRuns: this.verifyDispatches < 4
+              ? [{ id: 1, name: "ci", headSha: "head-1", status: "in_progress" }]
+              : [],
+          };
+        }
+
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (spec.kind === "ship") {
+            return {
+              kind: "completed",
+              output: { kind: "ship", branch: worktree.branch, status: "pr_opened", pr: offlinePr },
+            };
+          }
+          if (spec.kind === "verify") this.verifyDispatches += 1;
+          return super.dispatchWorker(spec, ctx, landing);
+        }
+      }
+
+      const backend = new SlowCiBackend();
+      const result = await runOrchestrator({ issueNumber: 824, backend });
+
+      expect(result.status).toBe("success");
+      expect(backend.verifyDispatches).toBe(5);
+      expect(
+        backend.ledgerWrites.filter((entry) => entry.step === "S9" && entry.event === undefined),
+      ).toHaveLength(5);
+    } finally {
+      if (prev === undefined) delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      else process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
     }
   });
 
