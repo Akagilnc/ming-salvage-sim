@@ -140,6 +140,21 @@ branch: never delete it without checking `git -C <iso> log
 origin/main..HEAD` first (uncommitted/unpushed worker output is
 non-recoverable — adopt it or set it aside, don't wipe).
 
+### 3.5 Pre-ignition lineup audit (mandatory)
+
+Before igniting, read the FINAL lineup (preset + your overrides) against the
+pairing rules — the code does not yet enforce them (#843):
+
+- `reviewer` checkpoint must differ from `coder`.
+- `cmrCompleteness` / `cmrCorrectness` / `verify` checkpoints must differ from
+  `coderFix` — otherwise the integrated-CMR fix loop is one checkpoint
+  reviewing its own fixes (weak gate; caught live on run-485 launch 17.3).
+- If the strongest codex checkpoint (sol) holds a fixing seat, the floor
+  reviewer for its output must be cross-family (opus).
+
+The lineup echoes at the top of `run.log` on every launch — audit it there,
+don't trust the preset name.
+
 ### 4. Ignite
 
 ```bash
