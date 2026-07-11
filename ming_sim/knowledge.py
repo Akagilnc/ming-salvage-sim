@@ -85,6 +85,56 @@ def _role_roster(db: Any, office_type: str) -> str:
     return f"{office_type}本职在册：{roster}。"
 
 
+def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[Dict[str, object]]:
+    """Project durable source rows into this character's archive boundary.
+
+    ``character_knowledge_sources`` is the write-side source of truth for
+    restricted matters.  It must participate in archive projection even when
+    no public-event mirror exists; otherwise a mixed aggregate has no exact
+    source fragment to redact.
+    """
+    if not hasattr(db, "conn"):
+        return []
+    rows = db.conn.execute(
+        "SELECT turn, year, period, kind, title, body, source_id, "
+        "participant_roster, excluded_names FROM character_knowledge_sources "
+        "WHERE turn <= ? ORDER BY turn, id",
+        (int(upto_turn),),
+    ).fetchall()
+    projected: list[Dict[str, object]] = []
+    for row in rows:
+        try:
+            roster = json.loads(row["participant_roster"] or "[]")
+        except (TypeError, ValueError):
+            roster = []
+        participants = {
+            str(item.get("character_id") or item.get("name"))
+            for item in roster
+            if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
+        }
+        try:
+            excluded = json.loads(row["excluded_names"] or "[]")
+        except (TypeError, ValueError):
+            excluded = []
+        if not isinstance(excluded, list):
+            excluded = []
+        # A participant-rostered source is private to its participants unless
+        # an explicit exclusion says otherwise.  Empty rosters are not added
+        # here: public events already have their own projection path.
+        if not participants:
+            continue
+        if character_name not in participants:
+            excluded.append(character_name)
+        projected.append({
+            "turn": int(row["turn"]), "year": int(row["year"]),
+            "period": int(row["period"]), "kind": row["kind"],
+            "title": row["title"], "body": row["body"],
+            "source_id": row["source_id"],
+            "excluded_names": json.dumps(list(dict.fromkeys(excluded)), ensure_ascii=False),
+        })
+    return projected
+
+
 def _world(
     db: Any, state: Any, office_type: str,
 ) -> Dict[str, str]:
@@ -146,6 +196,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     world = _world(db, state, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
+    public_events.extend(_source_archive_rows(db, character_name, int(state.turn)))
     # Issued directives are public by their nature.  Read them here so old
     # saves and the normal decree path need no second write hook.
     for directive in db.list_issued_directives():
