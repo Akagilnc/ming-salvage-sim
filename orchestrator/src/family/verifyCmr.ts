@@ -1938,6 +1938,43 @@ async function dispatchOrAbort(
   }
 }
 
+/**
+ * Ship mutates remote state, so it deliberately bypasses `withMechanicalRetry`.
+ * The caller writes its durable attempt marker first and observes host truth after
+ * any thrown return path before deciding whether a replacement is safe.
+ */
+async function dispatchShipOnce(
+  familyBackend: FamilyBackend,
+  spec: Parameters<typeof dispatchFamilyWorker>[1],
+  ctx: Parameters<typeof dispatchFamilyWorker>[2],
+): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>> | undefined> {
+  try {
+    const monitored = await dispatchFamilyWorkerWithMonitor(
+      familyBackend,
+      spec,
+      ctx,
+      undefined,
+      {
+        onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
+          try {
+            await familyBackend.appendFamilyLedger({
+              status: "worker_dispatched",
+              event: "worker_dispatched",
+              monitorHandle: handle,
+            });
+          } catch {
+            // Best effort, matching the generic family dispatch path.
+          }
+        },
+      },
+    );
+    await monitored.telemetryEnvironmentStamp;
+    return monitored.result;
+  } catch {
+    return undefined;
+  }
+}
+
 async function rewriteOutcomeProtocolFailure(input: {
   readonly familyBackend: FamilyBackend;
   readonly spec: WorkerSpec;
@@ -2868,12 +2905,45 @@ async function runVerifyCmrWithShipTruthAttempt(
     // this streak's budget when the final barrier resume-skips CMR and re-enters.
     await recordShipDispatchAttempt(familyBackend, { phase: "final" });
     usedShipAttempts += 1;
-    const candidate = await dispatchOrAbort(
+    let candidate = await dispatchShipOnce(
       familyBackend,
       shipSpec,
       shipContext,
-      undefined,
     );
+    if (candidate === undefined) {
+      const expectedHead = await readRequiredFamilyHead(familyBackend, familyBase);
+      const observed =
+        expectedHead === undefined || familyBackend.findFamilyShippedPr === undefined
+          ? {
+              ok: false as const,
+              kind: "observation_failed" as const,
+              reason:
+                expectedHead === undefined
+                  ? "ship dispatch threw and current family HEAD could not be observed"
+                  : "ship dispatch threw and backend has no host PR discovery capability",
+            }
+          : await familyBackend.findFamilyShippedPr({ familyBase, expectedHead });
+      if (observed.ok) {
+        candidate = {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: familyBase,
+            status: "pr_opened",
+            pr: observed.pr,
+          },
+        };
+      } else if (observed.kind === "pr_missing") {
+        // Host truth proved nothing landed: the next iteration writes a new durable
+        // marker before it performs the replacement physical dispatch.
+        continue;
+      } else {
+        candidate = {
+          kind: "failed",
+          reason: `family ship dispatch threw; host observation ${observed.kind}: ${observed.reason}`,
+        };
+      }
+    }
     const malformedReason =
       candidate.kind === "malformed"
         ? candidate.reason

@@ -659,6 +659,11 @@ export interface FamilyBackend {
   verifyFamilyShippedPr?(
     request: VerifyFamilyShippedPrRequest,
   ): Promise<VerifyFamilyShippedPrResult>;
+  /** Discover host truth after a ship dispatch throws, before any replacement dispatch. */
+  findFamilyShippedPr?(request: {
+    readonly familyBase: string;
+    readonly expectedHead: string;
+  }): Promise<FindFamilyShippedPrResult>;
   /**
    * Absolute git working directory for the family base clone. Optional — used to
    * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
@@ -796,6 +801,16 @@ export type VerifyFamilyShippedPrResult =
   | {
       readonly ok: false;
       /** Host truth, not an error-string inference at the caller. */
+      readonly kind: "pr_missing" | "observation_failed" | "mismatch";
+      readonly reason: string;
+    };
+
+/** Host discovery used after a mutating ship dispatch loses its return path. */
+export type FindFamilyShippedPrResult =
+  | { readonly ok: true; readonly pr: string }
+  | {
+      readonly ok: false;
+      /** `pr_missing` is the only result that permits another mutating dispatch. */
       readonly kind: "pr_missing" | "observation_failed" | "mismatch";
       readonly reason: string;
     };

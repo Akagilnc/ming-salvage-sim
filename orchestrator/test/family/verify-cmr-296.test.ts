@@ -1647,10 +1647,9 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }));
   });
 
-  it("#598: a persistent family worker crash retries on current state up to MAX_DISPATCH_ATTEMPTS (every role)", async () => {
-    // A backend that throws PERSISTENTLY on the given kind and counts dispatches of
-    // it. Every role — read-only cmr and write-capable ship alike — re-dispatches a
-    // fresh session on the CURRENT worktree as-is, up to MAX_DISPATCH_ATTEMPTS.
+  it("#598: read-only worker crashes retry, while ship crashes stop for host observation", async () => {
+    // Read-only CMR can mechanically retry. A mutating ship dispatch must not:
+    // without host discovery capability it stops after the one physical launch.
     class CountingThrowBackend extends BareFamilyBackend {
       readonly aborted: FamilyAbortedEvent[] = [];
       currentFamilyHead = "head-before-worker";
@@ -1691,8 +1690,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBackend: shipBackend,
     });
     expect(shipResult).toEqual({ ok: false, ran: true });
-    expect(shipBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
-    expect(shipBackend.aborted[0]?.errorPackage.reason).toMatch(/ship worker threw on startup/i);
+    expect(shipBackend.throwKindDispatches).toBe(1);
+    expect(shipBackend.aborted[0]?.errorPackage.reason).toMatch(/host observation/i);
 
     const cmrBackend = new CountingThrowBackend("cmr");
     const cmrResult = await runVerifyCmr({
@@ -1818,7 +1817,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     });
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.aborted).toHaveLength(1);
-    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/ship worker threw on startup/i);
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/host observation/i);
   });
 
   it("a ship worker failed result for push/auth infra is recorded as infra_failure", async () => {
@@ -1957,12 +1956,79 @@ describe("#823 family ship malformed-output recovery", () => {
     });
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.shipDispatches).toBe(3);
+    expect(backend.ledger.filter((entry) => entry.status === "ship_dispatch_attempt"))
+      .toHaveLength(backend.shipDispatches);
     expect(backend.aborted).toEqual([]);
     expect(backend.escalations).toEqual([]);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "shipped",
       pr: "pr://family/823",
     }));
+  });
+
+  it("observes host truth after a ship dispatch throws instead of blindly re-dispatching", async () => {
+    class ThrowsAfterMutatingShipBackend extends BareFamilyBackend {
+      shipDispatches = 0;
+      hostObservations = 0;
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-after-ship";
+      }
+      async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+        return { ok: true };
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              ...CMR_EVIDENCE,
+            },
+          };
+        }
+        if (spec.kind === "docRelease") {
+          return { kind: "completed", output: { kind: "docRelease", released: true } };
+        }
+        if (spec.kind === "cleanup") {
+          return {
+            kind: "completed",
+            output: { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" },
+          };
+        }
+        if (spec.kind !== "ship") throw new Error(`unexpected ${spec.kind} dispatch`);
+        this.shipDispatches += 1;
+        throw new Error("ship side effects completed before return chain broke");
+      }
+      async findFamilyShippedPr(): Promise<{
+        ok: true;
+        pr: string;
+      }> {
+        this.hostObservations += 1;
+        return { ok: true, pr: "pr://family/823-after-throw" };
+      }
+    }
+
+    const backend = new ThrowsAfterMutatingShipBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-cmr",
+    });
+
+    expect(backend.shipDispatches).toBe(1);
+    expect(backend.hostObservations).toBe(1);
+    expect(backend.ledger.filter((entry) => entry.status === "ship_dispatch_attempt"))
+      .toHaveLength(backend.shipDispatches);
+    // This minimal backend does not implement the post-ship online-review path;
+    // the regression seam is the pre-review dispatch/observation decision above.
+    expect(result).toEqual({ ok: false, ran: true });
   });
 
   it("escalates only after the bounded malformed-output redispatch budget exhausts", async () => {
