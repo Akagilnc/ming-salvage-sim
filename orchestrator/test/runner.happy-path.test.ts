@@ -130,6 +130,26 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     vi.restoreAllMocks();
   });
 
+  it("durably records an optional CMR leg dropped by single-slice route smoke", async () => {
+    class DegradedRouteBackend extends HappyPathBackend {
+      override async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        return smokeRouteModels(route, async ({ slug }) => {
+          if (slug === "agy") throw new Error("opencode unavailable");
+          return { cliVersion: "test" };
+        });
+      }
+    }
+    const backend = new DegradedRouteBackend();
+    await runOrchestrator({ issueNumber: 247, backend });
+    expect(backend.ledgerWrites).toContainEqual(expect.objectContaining({
+      step: "S0",
+      event: "route_degraded",
+      droppedLeg: "agy",
+      reason: "opencode unavailable",
+    }));
+  });
+
   it("prints the resolved model route lineup before the first worker dispatch", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const backend = new HappyPathBackend();
