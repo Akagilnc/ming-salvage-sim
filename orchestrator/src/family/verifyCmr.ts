@@ -3071,6 +3071,8 @@ export async function runVerifyCmr(
       familyBase,
       familyBackend,
       familyHeadAfter: correctness.restartFinalBarrier.familyHeadAfter,
+      runId,
+      familyIssue,
     });
     if (verifyAfterFixFailed !== undefined) return verifyAfterFixFailed;
     correctnessFamilyHeadAfter = correctness.restartFinalBarrier.familyHeadAfter;

@@ -1707,18 +1707,26 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
 // ═══════════════════════════ 5. runFamilyVerify ═════════════════════════════
 
 describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
-  it("appends structured typecheck and wave-unit observations without parsing command prose", async () => {
+  it("appends structured typecheck and wave-unit observations from production command output", async () => {
     const commands: Array<{ file: string; args: string[] }> = [];
     class ObservedVerifyBackend extends RealFamilyBackend {
       protected override sh(file: string, args: string[], _cwd?: string): string {
         commands.push({ file, args });
-        return "human-readable output that telemetry must not parse";
+        if (args.includes("test")) {
+          return JSON.stringify({ numTotalTests: 507 });
+        }
+        return "";
       }
       protected override async installDeps(_cwd: string): Promise<void> {}
       protected override isNodeProject(_cwd: string): boolean { return true; }
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["typecheck", "test"];
       }
+      protected override packageScriptUses(
+        _cwd: string,
+        _script: string,
+        _harness: string,
+      ): boolean { return true; }
     }
     const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
     const backend = new ObservedVerifyBackend(options);
@@ -1735,12 +1743,59 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
         record.phase === "verification",
     );
     expect(rows).toMatchObject([
-      { runId: "run-786", issue: 786, verification: "typecheck", passed: true, count: null },
-      { runId: "run-786", issue: 786, verification: "unit", passed: true, count: null },
+      { runId: "run-786", issue: 786, verification: "typecheck", passed: true, count: 0 },
+      { runId: "run-786", issue: 786, verification: "unit", passed: true, count: 507 },
     ]);
     expect(rows.every((row) => typeof row.duration_ms === "number")).toBe(true);
-    expect(commands).toContainEqual({ file: "npm", args: ["run", "typecheck"] });
-    expect(commands).toContainEqual({ file: "npm", args: ["test"] });
+    expect(commands).toContainEqual({
+      file: "npm",
+      args: ["run", "typecheck", "--", "--pretty", "false"],
+    });
+    expect(commands).toContainEqual({ file: "npm", args: ["test", "--", "--reporter=json"] });
+  });
+
+  it("counts failed typecheck diagnostics from its non-pretty diagnostic stream", async () => {
+    class FailedTypecheckBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], _cwd?: string): string {
+        if (file === "npm" && args.includes("typecheck")) {
+          const error = new Error("Command failed: npm run typecheck") as Error & {
+            stderr?: string;
+          };
+          error.stderr = [
+            "src/one.ts(1,1): error TS2322: first",
+            "src/two.ts(2,2): error TS2345: second",
+          ].join("\n");
+          throw error;
+        }
+        return "";
+      }
+      protected override async installDeps(_cwd: string): Promise<void> {}
+      protected override isNodeProject(_cwd: string): boolean { return true; }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      protected override packageScriptUses(
+        _cwd: string,
+        _script: string,
+        _harness: string,
+      ): boolean { return true; }
+    }
+    const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
+    const backend = new FailedTypecheckBackend(options);
+
+    await expect(backend.runFamilyVerify({
+      phase: "wave",
+      familyBase: "family/293-base",
+      runId: "run-786",
+      issue: 786,
+    })).resolves.toMatchObject({ ok: false });
+
+    expect(telemetry.readTelemetryRecords(options.ledgerDir)).toContainEqual(expect.objectContaining({
+      phase: "verification",
+      verification: "typecheck",
+      passed: false,
+      count: 2,
+    }));
   });
 
   it("records a failed final observation and preserves the verification verdict", async () => {
