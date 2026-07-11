@@ -10,7 +10,7 @@
  * active reviewer leg (same slug). Prefer the next roster-valid entry instead.
  */
 
-export type CoderPoolId = "supergrok" | "codex" | "claude";
+export type CoderPoolId = "supergrok" | "grok-build" | "codex" | "claude";
 
 export interface CoderRosterEntry {
   /** Designer-facing id used in `Coder-Rec:` lines. */
@@ -24,7 +24,7 @@ export interface CoderRosterEntry {
 }
 
 /** Roster table version — bump when #424 bench updates the eligible set. */
-export const CODER_ROSTER_VERSION = "2026-07-11";
+export const CODER_ROSTER_VERSION = "2026-07-11-pi";
 
 /**
  * Eligible coder models (model × pool × aliases). Keep in sync with
@@ -39,6 +39,11 @@ export const CODER_ROSTER: ReadonlyArray<CoderRosterEntry> = [
     id: "grok-4.5",
     slug: "grok-4.5",
     pool: "supergrok",
+  },
+  {
+    id: "grok-4.5-build",
+    slug: "grok-4.5-build",
+    pool: "grok-build",
   },
   {
     id: "terra@med",

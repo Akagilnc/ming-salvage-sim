@@ -1,6 +1,6 @@
 # Coder 花名册（Coder-Rec roster）
 
-Version: **2026-07-11**（随 [#424](https://github.com/Akagilnc/ming-salvage-sim/issues/424) bench / [#789](https://github.com/Akagilnc/ming-salvage-sim/issues/789) Claude 备选扩展）
+Version: **2026-07-11-pi**（随 [#424](https://github.com/Akagilnc/ming-salvage-sim/issues/424) bench / [#789](https://github.com/Akagilnc/ming-salvage-sim/issues/789) Claude 备选 / [#807](https://github.com/Akagilnc/ming-salvage-sim/issues/807) Pi 通道扩展）
 
 设计时标注推荐 coder + 补位顺序；编排器只读查表（[#767](https://github.com/Akagilnc/ming-salvage-sim/issues/767)）。运行时无自适应升档状态机。
 
@@ -9,6 +9,7 @@ Version: **2026-07-11**（随 [#424](https://github.com/Akagilnc/ming-salvage-si
 | coder id（Coder-Rec 用） | 池 | runnable slug | 擅长 | 备注 |
 |---|---|---|---|---|
 | `grok-4.5` | SuperGrok 周池 | `grok-4.5` | 首发收敛率全场最佳、速度并列最快 | 主力（池子在时） |
+| `grok-4.5-build` | Grok Build 周池（Pi） | `grok-4.5-build` | Grok Build CLI 直连 | Pi 通道；与 Cursor 的 `grok-4.5` 分开标注 |
 | `terra@med` | codex 5h/周 | `gpt-5.6-terra` | 完整面 / 常规 fix | 5.6 选官；别名 `terra@med+fast` |
 | `luna@med` | codex 5h/周 | `gpt-5.6-luna` | fix 轮迭代收敛、交互单修 | fix 主力；别名 `luna@med+fast` |
 | `sonnet-5` | Claude 池 | `sonnet` | 完整面 / 大活 | grok 枯竭后备选（[#789](https://github.com/Akagilnc/ming-salvage-sim/issues/789)；与 cmr 腿 `opus` 不同 slug，不撞池分离） |
@@ -31,6 +32,7 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
 | 场景 | 模板 |
 |---|---|
 | 默认推荐（池异源） | `Coder-Rec: grok-4.5 → terra@med → luna@med` |
+| 指定 Pi/Grok Build 首发 | `Coder-Rec: grok-4.5-build → terra@med → luna@med` |
 | 只要两档 | `Coder-Rec: grok-4.5 → terra@med` |
 | grok 枯竭后大活 Claude | `Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5` |
 | grok 枯竭后小修 Claude | `Coder-Rec: grok-4.5 → haiku-4.5 → sonnet-5` |

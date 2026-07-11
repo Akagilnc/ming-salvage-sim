@@ -94,6 +94,7 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
     expect(CODER_ROSTER.map((e) => e.id)).toEqual(
       expect.arrayContaining([
         "grok-4.5",
+        "grok-4.5-build",
         "terra@med",
         "luna@med",
         "sonnet-5",
@@ -104,6 +105,7 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
     expect(lookupCoderRosterEntry("Sonnet 5")?.slug).toBe("sonnet");
     expect(lookupCoderRosterEntry("Haiku 4.5")?.slug).toBe("haiku");
     expect(lookupCoderRosterEntry("haiku")?.id).toBe("haiku-4.5");
+    expect(lookupCoderRosterEntry("grok-4.5-build")?.pool).toBe("grok-build");
   });
 
   it("keeps only roster-valid entries from a Coder-Rec line", () => {

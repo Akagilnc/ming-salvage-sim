@@ -118,7 +118,7 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
 export const DEFAULT_POOL_MODELS: Readonly<
   Record<BillingPoolId, ReadonlyArray<string>>
 > = {
-  "grok-build": ["grok-4.5"],
+  "grok-build": ["grok-4.5", "grok-4.5-build"],
   cursor: ["grok-4.5"],
   zai: ["grok-4.5"],
   "codex-5h": ["terra@med", "luna@med", "gpt-5.6-terra", "gpt-5.6-luna"],

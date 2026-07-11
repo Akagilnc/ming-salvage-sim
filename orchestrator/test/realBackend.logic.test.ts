@@ -71,6 +71,7 @@ import {
   routeSmokeCacheKey,
   routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
+  SANDBOX_PI_AGENT_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
@@ -623,17 +624,20 @@ describe("realBackend candidateBranches (ordered candidate branch names)", () =>
 // ─── auth-mount path construction (spike contract) ───────────────────────────
 
 describe("realBackend auth mount paths", () => {
-  it("builds per-issue codex auth + claude token paths under $HOME", () => {
+  it("builds per-issue codex/pi auth + claude token paths under $HOME", () => {
     const p = buildAuthPaths(256, "/home/dev");
     expect(p.hostCodexAuthDir).toBe("/home/dev/.sc-orchestrator/auth-256");
     expect(p.srcCodexAuth).toBe("/home/dev/.codex/auth.json");
     expect(p.srcCodexConfig).toBe("/home/dev/.codex/config.toml");
+    expect(p.hostPiAuthDir).toBe("/home/dev/.sc-orchestrator/pi-auth-256");
+    expect(p.srcPiAuth).toBe("/home/dev/.pi/agent/auth.json");
     expect(p.claudeTokenFile).toBe("/home/dev/.sc-claude-token");
   });
 
   it("the sandbox mount targets match the spike contract", () => {
     // codex auth → /home/agent/.codex ; dev skills → /home/agent/.claude/skills
     expect(SANDBOX_CODEX_DIR).toBe("/home/agent/.codex");
+    expect(SANDBOX_PI_AGENT_DIR).toBe("/home/agent/.pi/agent");
     expect(SANDBOX_SKILLS_DIR).toBe("/home/agent/.claude/skills");
   });
 
@@ -671,6 +675,14 @@ describe("#748 RealBackend home injection (auth mount stays off real $HOME)", ()
     public mount(issueNumber: number): { authDir: string; claudeToken?: string } {
       return this.mountAuth(issueNumber);
     }
+
+    public sandboxConfigFor(issueNumber: number) {
+      return this.boxConfig(
+        this.mountAuth(issueNumber),
+        { role: "coder", soul: "coder" },
+        issueNumber,
+      );
+    }
   }
 
   it("mountAuth with opts.home writes only under the injected home, never real ~/.sc-orchestrator", () => {
@@ -694,6 +706,33 @@ describe("#748 RealBackend home injection (auth mount stays off real $HOME)", ()
     // The only filesystem path asserted by this isolation test is the injected
     // sentinel home; it never probes the real user's auth root.
   });
+
+  it("copies Pi login state into an issue-private mount at the Pi agent path", () => {
+    const injected = tempHome("rb-home-807-pi-");
+    const issue = 807;
+    mkdirSync(join(injected, ".pi", "agent"), { recursive: true });
+    writeFileSync(join(injected, ".pi", "agent", "auth.json"), '{"xai":{"type":"api_key"}}\n');
+
+    const backend = new MountProbeBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: issue,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
+      home: injected,
+    });
+
+    const cfg = backend.sandboxConfigFor(issue);
+    expect(cfg.mounts).toContainEqual({
+      hostPath: join(injected, ".sc-orchestrator", `pi-auth-${issue}`),
+      sandboxPath: SANDBOX_PI_AGENT_DIR,
+    });
+    expect(
+      readFileSync(join(injected, ".sc-orchestrator", `pi-auth-${issue}`, "auth.json"), "utf8"),
+    ).toBe('{"xai":{"type":"api_key"}}\n');
+  });
 });
 
 // ─── model slug → CLI (role decides soul/model) ──────────────────────────────
@@ -716,6 +755,7 @@ describe("realBackend modelIdForSlug", () => {
   it("maps supported slugs to baked CLI model ids through the registry", () => {
     expect(modelIdForSlug("gpt-5.6-terra")).toBe("gpt-5.6-terra");
     expect(modelIdForSlug("gpt-5.6-sol")).toBe("gpt-5.6-sol");
+    expect(modelIdForSlug("grok-4.5-build")).toBe("grok-4.5-build");
     expect(modelIdForSlug("sonnet")).toBe("claude-sonnet-5");
     expect(modelIdForSlug("opus")).toBe("claude-opus-4-8");
   });
@@ -758,9 +798,14 @@ describe("realBackend resolveModelSlug", () => {
       provider: "claudeCode",
       model: "claude-opus-4-8",
     });
+    expect(resolveModelSlug("grok-4.5-build")).toEqual({
+      provider: "pi",
+      model: "grok-4.5-build",
+    });
     expect(modelFamilyForSlug("gpt-5.6-terra")).toBe("codex");
     expect(modelFamilyForSlug("sonnet")).toBe("claude");
     expect(modelFamilyForSlug("opus")).toBe("claude");
+    expect(modelFamilyForSlug("grok-4.5-build")).toBe("grok-build");
     expect(modelIsStrongLeg("gpt-5.6-terra")).toBe(true);
     expect(modelIsStrongLeg("gpt-5.6-sol")).toBe(true);
     expect(modelIsStrongLeg("sonnet")).toBe(false);
@@ -786,6 +831,9 @@ describe("realBackend agentForSlug", () => {
     // on Claude — agentForSlug returns the claudeCode provider (`.name === "claude-code"`).
     expect(agentForSlug("opus").name).toBe("claude-code");
     expect(agentForSlug("sonnet").name).toBe("claude-code");
+  });
+  it("resolves the dedicated Grok Build slug through the Pi provider", () => {
+    expect(agentForSlug("grok-4.5-build").name).toBe("pi");
   });
   it("throws on an unknown slug (misconfigured StepSpec)", () => {
     expect(() => agentForSlug("gpt")).toThrow(/unknown model slug/);

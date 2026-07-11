@@ -15,6 +15,7 @@ import {
   verifyWorkerSpec,
 } from "../src/dispatchWorker.js";
 import { CODER_ROSTER } from "../src/coderRoster.js";
+import { resolveModelSlug } from "../src/modelRegistry.js";
 import { QuotaWaitForResetError } from "../src/quotaProbe.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
@@ -526,12 +527,14 @@ describe("#796 Coder-Rec host dispatch", () => {
       expect(result.status).toBe("success");
       expect(coder).toMatchObject({
         model: entry.slug,
-        host:
-          entry.slug === "grok-4.5"
-            ? "cursor"
-            : entry.pool === "claude"
-              ? "claude"
-              : "codex",
+        host: {
+          claudeCode: "claude",
+          codex: "codex",
+          opencode: "opencode",
+          copilot: "copilot",
+          cursor: "cursor",
+          pi: "pi",
+        }[resolveModelSlug(entry.slug).provider],
       });
     }
   });
@@ -540,6 +543,7 @@ describe("#796 Coder-Rec host dispatch", () => {
     ["gpt-5.6-terra", undefined, "codex"],
     ["sonnet", undefined, "claude"],
     ["grok-4.5", undefined, "cursor"],
+    ["grok-4.5-build", undefined, "pi"],
     ["opencode-grok", undefined, "opencode"],
     ["grok-4.5", "grok-build", "pi"],
     ["grok-4.5", "codex-5h", "codex"],
