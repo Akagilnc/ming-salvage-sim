@@ -1340,7 +1340,10 @@ def test_legacy_registered_secret_order_marker_is_restaged(game):
     """#413 review fix：旧 __secret_order_registered__ 直写结果也要转回 pending，不能绕过确认闸门。"""
     db, state, _ = game
     minister = "魏忠贤"
-    oid = db.create_secret_order(state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3)
+    oid = db.create_secret_order(
+        state, minister, "暗查辽饷", "暗查辽饷侵冒。", ["辽饷"], deadline_months=3,
+        excluded_names=["毕自严"], excluded_offices=["户部"],
+    )
     s = _session(db, state)
 
     pid = GameSession._stage_legacy_registered_secret_order(s, oid, minister)
@@ -1356,6 +1359,8 @@ def test_legacy_registered_secret_order_marker_is_restaged(game):
     assert payload["assignee"] == minister
     assert payload["tags"] == ["辽饷"]
     assert payload["deadline_months"] == 3
+    assert "毕自严" in payload["excluded_names"]
+    assert payload["excluded_offices"] == ["户部"]
 
 
 def test_legacy_registered_secret_order_restaging_rolls_back_pending_if_delete_fails(game, monkeypatch):
