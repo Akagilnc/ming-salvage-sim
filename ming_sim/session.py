@@ -875,7 +875,7 @@ class GameSession:
             return {"kind": "confirmation", "confirmation": confirm}
         return intent
 
-    def chat(self, minister_name: str, message: str) -> ChatTurnResult:
+    def chat(self, minister_name: str, message: str, *, chat_turn_id: int = 0) -> ChatTurnResult:
         """与大臣对话一轮，统一处理 court tool 截获。
         大臣 propose_directive 产生的草案先进 pending_actions 闸门，
         作为 pending_action_id 返回，确认/驳回由对话或颁诏 checkpoint 处理。"""
@@ -897,10 +897,13 @@ class GameSession:
             )
         except (TypeError, ValueError):
             accepts_character = True
-        augmented = (
-            audience_prompt(message, character)
-            if accepts_character else audience_prompt(message)
-        )
+        if accepts_character:
+            try:
+                augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
+            except TypeError:
+                augmented = audience_prompt(message, character)
+        else:
+            augmented = audience_prompt(message)
         action_intent_future = self._start_cli_action_intent(character, message)
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
@@ -1041,7 +1044,7 @@ class GameSession:
         )
         return result
 
-    def _audience_prompt_for_message(self, message: str, character: Character) -> str:
+    def _audience_prompt_for_message(self, message: str, character: Character, *, chat_turn_id: int = 0) -> str:
         # Chapter summaries are a global narrative cache and may contain secret
         # or off-stage facts.  Character knowledge is the only audience input
         # allowed to cross this boundary; public reports are projected there
@@ -1058,7 +1061,10 @@ class GameSession:
                 # prevents a keyword hit from injecting a global snapshot into
                 # every minister's prompt and leaves restore with the same
                 # source/audience boundary.
-                self.db.persist_return_report(self.state, character.name, message)
+                self.db.persist_return_report(
+                    self.state, character.name, message,
+                    chat_turn_id=chat_turn_id,
+                )
                 knowledge = self.db.get_character_knowledge(self.state, character.name)
             brief = render_character_knowledge(knowledge, character.name)
             if brief:

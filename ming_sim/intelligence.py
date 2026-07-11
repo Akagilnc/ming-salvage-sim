@@ -177,7 +177,7 @@ def build_return_report(
 
 
 def persist_return_report(
-    db: Any, state: Any, character_name: str, query: str,
+    db: Any, state: Any, character_name: str, query: str, *, chat_turn_id: int = 0,
 ) -> Dict[str, str]:
     """Persist one scoped near-minister report and return its canonical payload.
 
@@ -207,17 +207,26 @@ def persist_return_report(
     if source_kind == "firsthand":
         source_ref = _canonical_source_ref(source_kind, None, domain_ref)
     digest = hashlib.sha256(f"{state.turn}|{character_name}|{query}".encode()).hexdigest()[:16]
-    source_id = f"near_minister:{state.turn}:{digest}"
+    stable_source_id = f"near_minister:{state.turn}:{digest}"
+    source_id = stable_source_id
+    exists = None
+    if chat_turn_id:
+        exists = db.conn.execute(
+            "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (stable_source_id,)
+        ).fetchone()
+        if exists is None:
+            source_id = f"{stable_source_id}:chat_turn:{int(chat_turn_id)}"
     report = {
         "source_kind": source_kind,
         "source_ref": source_ref,
         "subject": "查访" if source_kind == "inquiry" else "见闻",
         "statement": statement,
     }
-    db.register_character_knowledge_source(
-        state, [{"character_id": character_name}], "return_report",
-        f"近臣{report['subject']}（{source_ref}）", statement, source_id=source_id,
-    )
+    if not chat_turn_id or source_id != stable_source_id or exists is None:
+        db.register_character_knowledge_source(
+            state, [{"character_id": character_name}], "return_report",
+            f"近臣{report['subject']}（{source_ref}）", statement, source_id=source_id,
+        )
     return report
 
 

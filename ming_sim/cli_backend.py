@@ -1841,6 +1841,9 @@ def _extract_secret_order(
     recovered_names = _secret_excluded_people_from_command(player_command)
     if recovered_names:
         excluded_names = list(dict.fromkeys([*excluded_names, *recovered_names]))
+    recovered_offices = _secret_excluded_offices_from_command(player_command)
+    if recovered_offices:
+        excluded_offices = list(dict.fromkeys([*excluded_offices, *recovered_offices]))
     fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
     if not tags:
         tags = fallback_tags
@@ -1863,6 +1866,16 @@ def _normalize_secret_exclusions(value: object, *, legacy: object = None) -> Tup
         [str(item).strip() for item in people if str(item).strip()] if isinstance(people, list) else [],
         [str(item).strip() for item in offices if str(item).strip()] if isinstance(offices, list) else [],
     )
+
+
+def _secret_excluded_offices_from_command(text: str) -> List[str]:
+    """Recover explicit institutional secrecy clauses the extractor may omit."""
+    offices: List[str] = []
+    for match in re.finditer(r"(?:不走|不经|勿走|勿经)\s*([^，。；;、\s]{2,12})", text or ""):
+        office = match.group(1).strip("：:，,。；;、")
+        if office and office not in offices:
+            offices.append(office)
+    return offices
 
 
 def _secret_excluded_people_from_command(command: str) -> List[str]:

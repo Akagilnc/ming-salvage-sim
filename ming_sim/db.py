@@ -1377,6 +1377,7 @@ class GameDB:
         self.ensure_column("characters", "identity", "INTEGER NOT NULL DEFAULT 50")
         self.ensure_column("characters", "seed_guilt", "TEXT NOT NULL DEFAULT ''")
         self._backfill_person_core_character_static_fields()
+        self._migrate_character_identity_seed()
         self._backfill_bandit_power_split()
         self.ensure_column("event_triggers", "terminal_state", "TEXT NOT NULL DEFAULT 'triggered'")
         self.ensure_column("event_triggers", "terminal_reason", "TEXT NOT NULL DEFAULT ''")
@@ -2441,12 +2442,12 @@ class GameDB:
         )
 
     def persist_return_report(
-        self, state: GameState, character_name: str, query: str,
+        self, state: GameState, character_name: str, query: str, *, chat_turn_id: int = 0,
     ) -> Dict[str, str]:
         """Persist a role-scoped near-minister report (#492)."""
         from ming_sim.intelligence import persist_return_report
 
-        return persist_return_report(self, state, character_name, query)
+        return persist_return_report(self, state, character_name, query, chat_turn_id=chat_turn_id)
 
     def is_army_pay_source_cutover_enabled(self) -> bool:
         row = self.conn.execute(
@@ -3491,6 +3492,35 @@ class GameDB:
                 """,
                 (ch.debut_year, ch.debut_month, name),
             )
+        self.conn.commit()
+
+    def _migrate_character_identity_seed(self) -> None:
+        """Bring pre-identity saves onto the approved roster without rewriting play."""
+        if not self.table_has_rows("characters"):
+            return
+        for character in self.content.characters.values():
+            office = normalize_office(character.office)
+            office_type = infer_office_type_from_office(office, character.office_type, self.llm_config, use_llm=False)
+            self.conn.execute(
+                """INSERT OR IGNORE INTO characters
+                   (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
+                    birth_year, historical_death_year, historical_death_month, debut_year, debut_month, status, status_reason, status_changed_turn,
+                    portrait_id, power_id, location, transit_to, summary)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?)""",
+                (character.name, office, office_type, character.faction,
+                 json.dumps(character.aliases, ensure_ascii=False), json.dumps(character.personal_skills, ensure_ascii=False),
+                 character.loyalty, character.ability, character.integrity, character.courage, character.style,
+                 character.identity, character.seed_guilt, character.birth_year, character.historical_death_year,
+                 character.historical_death_month, character.debut_year, character.debut_month, character.status,
+                 character.portrait_id, character.power_id, character.location, character.transit_to, character.summary),
+            )
+        if not self._has_meta_flag("__identity_seed_v1"):
+            for character in self.content.characters.values():
+                self.conn.execute(
+                    "UPDATE characters SET identity=?, seed_guilt=? WHERE name=? AND identity=50 AND COALESCE(seed_guilt, '')=''",
+                    (character.identity, character.seed_guilt, character.name),
+                )
+            self._set_meta_flag("__identity_seed_v1")
         self.conn.commit()
 
     def _backfill_bandit_power_split(self) -> None:
@@ -6670,6 +6700,12 @@ class GameDB:
         "factions": "name",
     }
 
+    def _delete_turn_scoped_knowledge_sources_in_tx(self, chat_turn_id: int) -> None:
+        self.conn.execute(
+            "DELETE FROM character_knowledge_sources WHERE source_id LIKE ?",
+            (f"%:chat_turn:{int(chat_turn_id)}",),
+        )
+
     def _row_dict(self, row: sqlite3.Row) -> Dict[str, Any]:
         return {key: row[key] for key in row.keys()}
 
@@ -6785,6 +6821,7 @@ class GameDB:
             if mid
         ]
         with self.conn:
+            self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
             for item in items:
                 table = str(item["target_table"])
                 strategy = str(item["rollback_strategy"])
@@ -7062,6 +7099,7 @@ class GameDB:
                     seen_draft_ids.add(did)
                     draft_ids_to_delete.append(did)
         with self.conn:
+            self._delete_turn_scoped_knowledge_sources_in_tx(chat_turn_id)
             for item in items:
                 table = str(item["target_table"])
                 strategy = str(item["rollback_strategy"])
@@ -8389,6 +8427,7 @@ class GameDB:
                     str(payload.get("new_title") or ""),
                     str(payload.get("new_content") or ""),
                     tags=None, deadline_months=deadline,
+                    registry=registry,
                 )
             if pa["action"] == "催办":
                 deadline = _coerce_deadline_months(payload.get("deadline_months", 1), default=1)
@@ -10043,6 +10082,7 @@ class GameDB:
         content: str,
         tags: Optional[List[str]] = None,
         deadline_months: int = 0,
+        registry=None,
     ) -> bool:
         """按**精确 id** 更新 active 密令要旨（title/content/tags/限期），记一条「奉旨更新」进展。
         返回是否更新（id 存在且状态为 active）。
@@ -10051,27 +10091,39 @@ class GameDB:
         确切 target id 时必须走本方法，否则大臣有多条 active 密令会改错条（CMR F1）。
         tags=None 保留原标签（会话更新不带 tags 时不清空）；传 list 则覆盖。"""
         row = self.conn.execute(
-            "SELECT status, tags FROM secret_orders WHERE id=?", (int(order_id),)
+            "SELECT status, tags, minister_name, excluded_names, excluded_targets FROM secret_orders WHERE id=?", (int(order_id),)
         ).fetchone()
         if row is None or row["status"] != "active":
             return False
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
-        if deadline:
-            self.conn.execute(
-                "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, "
-                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (title[:20], content, tags_json, int(state.turn) + deadline, int(order_id)),
+        with atomic(self):
+            if deadline:
+                self.conn.execute(
+                    "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, "
+                    "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (title[:20], content, tags_json, int(state.turn) + deadline, int(order_id)),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE secret_orders SET title=?, content=?, tags=?, "
+                    "updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (title[:20], content, tags_json, int(order_id)),
+                )
+            try:
+                excluded_names = json.loads(row["excluded_names"] or "[]")
+                excluded_targets = json.loads(row["excluded_targets"] or "{}")
+            except (TypeError, ValueError):
+                excluded_names, excluded_targets = [], {}
+            self.register_character_knowledge_source(
+                state, [{"character_id": row["minister_name"], "tier": "主办"}], "secret_order",
+                title, content, f"secret_order:{int(order_id)}", excluded_names=excluded_names,
+                excluded_targets=excluded_targets if isinstance(excluded_targets, dict) else {}, commit=False,
             )
-        else:
-            self.conn.execute(
-                "UPDATE secret_orders SET title=?, content=?, tags=?, "
-                "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (title[:20], content, tags_json, int(order_id)),
-            )
-        self.conn.commit()
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content[:60]}", state.year, state.period)
+        if registry is not None:
+            registry.refresh(str(row["minister_name"]))
         return True
 
     def list_secret_orders(
