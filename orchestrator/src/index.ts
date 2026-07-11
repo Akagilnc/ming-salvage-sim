@@ -51,6 +51,7 @@ export {
   categoryFromReason,
   classifyWorkerTerminal,
   clearTelemetryRunEnvironment,
+  collectCommitDiffAudit,
   collectCommitDiffLines,
   collectCommitMetrics,
   commitsBetween,

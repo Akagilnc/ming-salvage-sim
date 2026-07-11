@@ -1247,6 +1247,12 @@ export interface BuildCommitStampInput {
   readonly metrics?: TelemetryCommitMetrics;
   /** Changed lines from host `git show --unified=0`, for #782 / assertion auditing. */
   readonly diffLines?: readonly string[];
+  /**
+   * Diff-line indexes whose added line starts inside a block comment in the
+   * commit post-image. This avoids reconstructing comment state from a
+   * zero-context patch.
+   */
+  readonly addedBlockCommentDiffIndexes?: ReadonlySet<number>;
 }
 
 const EMPTY_ESCAPE_HATCH_COUNTS: TelemetryEscapeHatchCounts = {
@@ -1355,11 +1361,17 @@ export function buildCommitStamp(input: BuildCommitStampInput): TelemetryCommitR
     let deletedAssertions = 0;
     const addedCommentState: CommentScanState = { inBlockComment: false };
     const deletedCommentState: CommentScanState = { inBlockComment: false };
-    for (const line of input.diffLines) {
+    for (const [index, line] of input.diffLines.entries()) {
       const kind = changedLineKind(line);
+      const commentState =
+        kind === "added" && input.addedBlockCommentDiffIndexes !== undefined
+          ? { inBlockComment: input.addedBlockCommentDiffIndexes.has(index) }
+          : kind === "added"
+            ? addedCommentState
+            : deletedCommentState;
       const content = auditableLine(
         line,
-        kind === "added" ? addedCommentState : deletedCommentState,
+        commentState,
       );
       if (kind === undefined || content === undefined) continue;
       const counts = kind === "added" ? added : deleted;
@@ -1474,6 +1486,98 @@ export function collectCommitDiffLines(
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).split(/\r?\n/);
+  } catch {
+    return undefined;
+  }
+}
+
+export interface CommitDiffAudit {
+  readonly diffLines: readonly string[];
+  readonly addedBlockCommentDiffIndexes: ReadonlySet<number>;
+}
+
+function blockCommentStartsByLine(content: string): ReadonlySet<number> {
+  const starts = new Set<number>();
+  let inBlockComment = false;
+  let inLineComment = false;
+  let quote: "'" | '"' | "`" | undefined;
+  let line = 1;
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index]!;
+    const next = content[index + 1];
+    if (inBlockComment) starts.add(line);
+    if (inBlockComment) {
+      if (char === "*" && next === "/") {
+        inBlockComment = false;
+        index += 1;
+      }
+    } else if (inLineComment) {
+      // Nothing can open a block comment until this line ends.
+    } else if (quote !== undefined) {
+      if (char === "\\") index += 1;
+      else if (char === quote) quote = undefined;
+    } else if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+    } else if (char === "/" && next === "*") {
+      inBlockComment = true;
+      index += 1;
+    } else if (char === "/" && next === "/") {
+      inLineComment = true;
+    }
+    if (char === "\n") {
+      line += 1;
+      inLineComment = false;
+    }
+  }
+  return starts;
+}
+
+/**
+ * Collect the zero-context patch plus block-comment state derived from each
+ * changed post-image file. The patch only maps its added lines to post-image
+ * line numbers; it never establishes comment state itself.
+ */
+export function collectCommitDiffAudit(
+  repoPath: string,
+  commit: string,
+): CommitDiffAudit | undefined {
+  const diffLines = collectCommitDiffLines(repoPath, commit);
+  if (diffLines === undefined) return undefined;
+  try {
+    const startsByPath = new Map<string, ReadonlySet<number>>();
+    const addedBlockCommentDiffIndexes = new Set<number>();
+    let path: string | undefined;
+    let postImageLine: number | undefined;
+    for (const [index, line] of diffLines.entries()) {
+      if (line.startsWith("+++ ")) {
+        const rawPath = line.slice(4);
+        path = rawPath.startsWith("b/") ? rawPath.slice(2) : undefined;
+        continue;
+      }
+      const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (hunk !== null) {
+        postImageLine = Number(hunk[1]);
+        continue;
+      }
+      if (line.startsWith("+") && !line.startsWith("+++")) {
+        if (path === undefined || postImageLine === undefined) return undefined;
+        let starts = startsByPath.get(path);
+        if (starts === undefined) {
+          const postImage = execFileSync("git", ["show", `${commit}:${path}`], {
+            cwd: repoPath,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+          starts = blockCommentStartsByLine(postImage);
+          startsByPath.set(path, starts);
+        }
+        if (starts.has(postImageLine)) addedBlockCommentDiffIndexes.add(index);
+        postImageLine += 1;
+      } else if (!line.startsWith("-")) {
+        postImageLine = postImageLine === undefined ? undefined : postImageLine + 1;
+      }
+    }
+    return { diffLines, addedBlockCommentDiffIndexes };
   } catch {
     return undefined;
   }

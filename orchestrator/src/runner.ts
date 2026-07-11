@@ -65,7 +65,7 @@ import {
 import { monitorHandleFromLedger } from "./workerMonitor.js";
 import {
   buildCommitStamp,
-  collectCommitDiffLines,
+  collectCommitDiffAudit,
   collectCommitMetrics,
   commitsBetween,
   tryAppendTelemetryRecord,
@@ -4823,11 +4823,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const commits = commitsBetween(worktree.path, coderHeadBeforeStep, afterCommit) ?? [afterCommit];
               for (const commit of commits) {
                 const metrics = collectCommitMetrics(worktree.path, commit);
-                const diffLines = collectCommitDiffLines(worktree.path, commit);
+                const diffAudit = collectCommitDiffAudit(worktree.path, commit);
                 tryAppendTelemetryRecord(telemetryDir, buildCommitStamp({
                   runId, issue: issueNumber, commit,
                   ...(metrics !== undefined ? { metrics } : {}),
-                  ...(diffLines !== undefined ? { diffLines } : {}),
+                  ...(diffAudit !== undefined ? diffAudit : {}),
                 }));
               }
             }
