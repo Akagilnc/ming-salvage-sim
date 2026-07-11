@@ -1,12 +1,18 @@
 /** #786 — family worker dispatch must produce the same telemetry sidecar as slices. */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
+import * as sc from "@ai-hero/sandcastle";
 
 import { dispatchFamilyWorkerWithMonitor } from "../../src/family/dispatchFamilyWorker.js";
+import {
+  RealFamilyBackend,
+  type MergerAuth,
+} from "../../src/family/realFamilyBackend.js";
 import { resolveRouteModels, routeSmokeEntries } from "../../src/modelRoutes.js";
 import {
   clearTelemetryRunEnvironment,
@@ -19,6 +25,9 @@ import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.
 import type { FamilyBackend } from "../../src/family/types.js";
 
 const tempDirs: string[] = [];
+const here = dirname(fileURLToPath(import.meta.url));
+const realPromptsDir = join(here, "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "image", "souls");
 
 afterEach(() => {
   clearTelemetryRunEnvironment();
@@ -92,7 +101,6 @@ async function waitForEnvironment(ledgerDir: string): Promise<TelemetryEnvironme
 
 describe("#786 family dispatch telemetry", () => {
   it.each([
-    ["merger", "merge", "completed", null],
     ["family CMR", "cmr", "failed", "429-quota"],
     ["family verify", "verify", "thrown", "stream-disconnect"],
   ] as const)(
@@ -133,6 +141,62 @@ describe("#786 family dispatch telemetry", () => {
       });
     },
   );
+
+  it("writes telemetry when the real merger-agent sandbox path runs", async () => {
+    const ledgerDir = join(tempDir("orch-786-real-merger-"), ".ledger");
+    let outcomePath: string | undefined;
+
+    class TelemetryMergerBackend extends RealFamilyBackend {
+      public runMergerAgentForTest() {
+        return this.runMergerAgent({ childIssue: 786, childBranch: "feat/child-786" });
+      }
+
+      protected override mountMergerAuth(): MergerAuth {
+        return { claudeToken: "test-token" };
+      }
+
+      protected override prepareMergerOutcomeLanding(): { path: string; sandboxPath: string } {
+        const landing = super.prepareMergerOutcomeLanding();
+        outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomePath === undefined) throw new Error("missing merger outcome landing");
+        writeFileSync(outcomePath, JSON.stringify({ resolved: true }), "utf8");
+        return {
+          completionSignal: "MERGER_STEP_COMPLETE",
+          stdout: "<merger>{}</merger>",
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const backend = new TelemetryMergerBackend({
+      workingRepo: tempDir("orch-786-real-merger-repo-"),
+      familyBase: "family/786",
+      ledgerDir,
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "test-image",
+    });
+
+    await expect(backend.runMergerAgentForTest()).resolves.toEqual({ resolved: true });
+
+    expect(await waitForEnvironment(ledgerDir)).toBeDefined();
+    const records = readTelemetryRecords(ledgerDir);
+    const dispatch = records.find(
+      (record): record is TelemetryDispatchRecord => record.phase === "dispatch",
+    );
+    const collect = records.find(
+      (record): record is TelemetryCollectRecord => record.phase === "collect",
+    );
+    expect(dispatch).toMatchObject({ kind: "merge", issue: 786 });
+    expect(collect).toMatchObject({ legId: dispatch?.legId, terminal: "completed" });
+  });
 
   it("schedules the lazy environment stamp even when the spawn callback throws", async () => {
     const ledgerDir = join(tempDir("orch-786-family-callback-"), ".ledger");
