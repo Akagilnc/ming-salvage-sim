@@ -1061,6 +1061,17 @@ class GameSession:
         # allowed to cross this boundary; public reports are projected there
         # with their source-level exclusions applied.
         augmented = message
+        # #492：涉及回奏/军情的召对先把确定性盘面事实接入 prompt；该读取
+        # 不依赖大臣回话，调用方可与回话生成并行，LLM 只负责叙事呈现。
+        if any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情")):
+            try:
+                report = self.db.build_return_report(
+                    message, source_kind="firsthand", source_ref=None
+                )
+                augmented = f"【据盘面可回奏】{report['statement']}\n\n" + augmented
+            except Exception:
+                # A malformed legacy save must not prevent ordinary audience chat.
+                pass
         try:
             knowledge = self.db.get_character_knowledge(self.state, character.name)
             world = knowledge.get("world") or {}
