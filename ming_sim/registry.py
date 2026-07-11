@@ -596,7 +596,11 @@ class MinisterRegistry:
         self.agno_db = agno_db
         self.context = context
         self.agents: Dict[str, Agent] = {}
-        characters = c.characters
+        # The CourtContext owns the live content/state pair.  Do not depend on
+        # a module-global binding here: fresh sessions and registry refreshes
+        # must build from the same restored content that supplied the context.
+        self.content = context.db.content or _ctx()
+        characters = self.content.characters
         self.session_ids: Dict[str, str] = {
             name: f"minister-{name}-turn-{context.state.turn}"
             for name in characters
@@ -632,7 +636,7 @@ class MinisterRegistry:
         return agent
 
     def refresh(self, character_name: str) -> None:
-        character = c.characters.get(character_name)
+        character = self.content.characters.get(character_name)
         if character is None:
             return
         self.agents[character.name] = self._create(character)
