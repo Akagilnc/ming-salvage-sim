@@ -229,7 +229,10 @@ def build_minister_tools(character: Character, context: CourtContext,
     def query_court_roster(names: List[str] = []) -> str:
         """查在朝人事名册。names 为空返回全部姓名+状态索引；传姓名列表返回指定人物详情（现职/官署/派系/状态）。"""
         rows = context.db.conn.execute(
-            "SELECT name, office, office_type, faction, status FROM characters WHERE power_id='ming' ORDER BY name"
+            """SELECT name, office, office_type, faction, status FROM characters
+               WHERE power_id='ming' AND status != 'offstage'
+                 AND office_type NOT IN ('后宫', '宗藩')
+               ORDER BY name"""
         ).fetchall()
         rendered = "\n".join(
             f"{row['name']}：{row['status']}，{row['office'] or row['office_type'] or '未任官'}，{row['faction'] or '无党籍'}"
