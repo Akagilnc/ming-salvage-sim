@@ -16,6 +16,7 @@ import {
   isDocOnlyFileList,
   isPrMergedMarker,
   mergeReadinessStopSummary,
+  observeOpenPrForBranch,
   runAutoMergeStage,
   tryResumePrMergedBackfill,
   prMergedRecordFromLive,
@@ -131,6 +132,30 @@ describe("#602 isDocOnlyFileList", () => {
     expect(isDocOnlyFileList(["CHANGELOG.md.evil"])).toBe(false);
     expect(isDocOnlyFileList(["docs/../orchestrator/src/runner.ts"])).toBe(false);
     expect(isDocOnlyFileList(["docs/"])).toBe(false);
+  });
+});
+
+describe("#824 reported PR identity", () => {
+  it("rejects a same-named open branch from another fork", () => {
+    const observation = observeOpenPrForBranch(
+      fakeSh({
+        "gh pr view": () => JSON.stringify({
+          number: 824,
+          url: "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
+          state: "OPEN",
+          headRefName: "fix/824-radius",
+          headRefOid: "fork-head",
+          headRepositoryOwner: { login: "other-fork" },
+          mergeStateStatus: "CLEAN",
+        }),
+        "gh pr list": () => "[]",
+      }),
+      REPO,
+      "fix/824-radius",
+      "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
+    );
+
+    expect(observation).toEqual({ present: false });
   });
 });
 
@@ -328,6 +353,7 @@ describe("#602 fetchPrMergeLiveState + assessMergeReadiness", () => {
           state: "OPEN",
           headRefName: "feat/issue-602-auto-merge",
           headRefOid: "abc123",
+          headRepositoryOwner: { login: "Akagilnc" },
           mergeStateStatus: "CLEAN",
           mergeable: "MERGEABLE",
         });
@@ -340,6 +366,7 @@ describe("#602 fetchPrMergeLiveState + assessMergeReadiness", () => {
       state: "OPEN",
       headOid: "abc123",
       headRefName: "feat/issue-602-auto-merge",
+      headRepositoryOwnerLogin: "Akagilnc",
       mergeStateStatus: "CLEAN",
       mergeable: "MERGEABLE",
     });

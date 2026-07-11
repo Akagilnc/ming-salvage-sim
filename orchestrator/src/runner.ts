@@ -209,6 +209,9 @@ import {
   type AcceptedSuppressionSummary,
   type StopSummary,
 } from "./stopSummary.js";
+import {
+  isStepId,
+} from "./types.js";
 import type {
   Backend,
   ContinueFixingEvent,
@@ -1465,7 +1468,8 @@ function lastAgentStep(
   ledger: ReadonlyArray<LedgerEntry>,
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    if (ledger[i]!.output != null) return ledger[i]!.step;
+    const entry = ledger[i]!;
+    if (entry.output != null && isStepId(entry.step)) return entry.step;
   }
   return undefined;
 }
@@ -1479,7 +1483,8 @@ function lastNonTerminalStep(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    if (ledger[i]!.step !== "S8") return ledger[i]!.step;
+    const entry = ledger[i]!;
+    if (entry.step !== "S8" && isStepId(entry.step)) return entry.step;
   }
   return undefined;
 }
@@ -1722,7 +1727,7 @@ function lastReviewerStep(
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.output?.kind === "reviewer") return entry.step;
+    if (entry.output?.kind === "reviewer" && isStepId(entry.step)) return entry.step;
   }
   return undefined;
 }
@@ -1757,6 +1762,7 @@ function replayS4AdjudicationState(
       lastCoderActualRepairPathsForS4 = entry.repairMovementPaths ?? [];
     }
     if (entry.output?.kind === "reviewer") {
+      if (!isStepId(entry.step)) continue;
       lastReviewerOutputForS4 = entry.output;
       lastReviewerStepForS4 = entry.step;
       continue;
@@ -2069,6 +2075,9 @@ function planResume(
     agentEscalate != null &&
     isValidEscalation(agentEscalate)
   ) {
+    if (!isStepId(agentEntry.step)) {
+      throw new Error("planResume: agent output cannot belong to bookkeeping ledger row");
+    }
     const escalatedLedgerIdx = ledger.lastIndexOf(agentEntry);
     const answerSearchIndex =
       lastEntry.step === "S8" ? lastEntryIndex : escalatedLedgerIdx;
@@ -2179,6 +2188,9 @@ function planResume(
     lastEntry.step === "S8"
       ? lastNonTerminalStep(executableLedger) ?? lastEntry.step
       : lastEntry.step;
+  if (!isStepId(routeFrom)) {
+    throw new Error("planResume: executable ledger row must use a canonical step id");
+  }
   const pendingBlockingFindings =
     routeFrom === "S4"
       ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
@@ -2780,22 +2792,43 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const canRelayInProcess = (): boolean =>
     canRelayHandoff(mergeResumeLedgerHistory(resumeHistoryLedger, ledger));
 
-  // Attempt markers belong to the durable audit ledger, not the public
-  // step-result ledger. Keep the live-process delta separately so successful
-  // retries do not add duplicate worker rows to `RunResult.stepLedger`.
+  // Attempt markers belong to a dedicated durable ledger namespace, not the
+  // canonical step-result ledger. Keep the live-process delta separately so
+  // successful retries do not add duplicate worker rows to `RunResult.stepLedger`.
   const mechanicalRedispatchAttempts = new Map<StepId, number>();
 
-  const mechanicalRedispatchAttemptsFor = (step: StepId): number =>
-    Math.max(
-      mechanicalRedispatchAttempts.get(step) ?? 0,
-      mergeResumeLedgerHistory(resumeHistoryLedger, ledger).reduce(
-        (count, entry) =>
-          entry.step === step && entry.event === "mechanical_redispatch_attempt"
-            ? Math.max(count, entry.mechanicalRedispatchAttempt ?? 0)
-            : count,
-        0,
-      ),
-    );
+  const mechanicalRedispatchAttemptsFor = (step: StepId): number => {
+    const history = mergeResumeLedgerHistory(resumeHistoryLedger, ledger);
+    let durableAttempts = 0;
+    // A canonical completed row starts a new logical invocation.  Markers
+    // before it have already been consumed by a successful invocation and must
+    // not turn repeated S9/S10 rounds (or CI re-polls) into a lifetime budget.
+    for (let index = history.length - 1; index >= 0; index--) {
+      const entry = history[index]!;
+      if (entry.step === step && entry.event === undefined) break;
+      // A relay baton re-enters the same step under a new worker/model scene.
+      // Its prior crash streak is audit history, not the next invocation's
+      // dispatch budget (the same rule that lets a completed S9/S10 round reset).
+      if (entry.step === step && entry.event === "relay_baton_handoff") break;
+      const isCurrentMarker =
+        entry.step === "mechanical_redispatch_attempt" && entry.forStep === step;
+      // Read r5 rows for crash-resume compatibility; new rows use the distinct
+      // marker namespace above.
+      const isLegacyMarker =
+        entry.step === step && entry.event === "mechanical_redispatch_attempt";
+      if (isCurrentMarker || isLegacyMarker) {
+        durableAttempts = Math.max(
+          durableAttempts,
+          entry.mechanicalRedispatchAttempt ?? 0,
+        );
+      }
+    }
+    return Math.max(mechanicalRedispatchAttempts.get(step) ?? 0, durableAttempts);
+  };
+
+  const completeMechanicalRetryInvocation = (step: StepId): void => {
+    mechanicalRedispatchAttempts.delete(step);
+  };
 
   const durableMechanicalRetryOptions = (
     step: StepId,
@@ -2806,8 +2839,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     onAttempt: async (attempt) => {
       await options.onAttempt?.(attempt);
       const marker: LedgerEntry = {
-        step,
+        step: "mechanical_redispatch_attempt",
         event: "mechanical_redispatch_attempt",
+        forStep: step,
         mechanicalRedispatchAttempt: attempt,
       };
       mechanicalRedispatchAttempts.set(step, attempt);
@@ -3472,10 +3506,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const buffered = pendingEntries[0]!;
       await backend.writeLedger(buffered, stateDir);
       pendingEntries.shift();
-      mirrorInMemoryLedgerPersistedFields(buffered.step, {
-        ts: buffered.ts,
-        branchHEAD: buffered.branchHEAD,
-      });
+      if (isStepId(buffered.step)) {
+        mirrorInMemoryLedgerPersistedFields(buffered.step, {
+          ts: buffered.ts,
+          branchHEAD: buffered.branchHEAD,
+        });
+      }
     }
     await backend.writeLedger(entry, stateDir);
     mirrorInMemoryLedgerPersistedFields(s, {
@@ -4195,12 +4231,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       );
     }
     const coderRecPolicy = await applyCoderRecSelection(
-      coderRecRoundsFromLedger(ledger),
+      coderRecRoundsFromLedger(ledger.filter((entry) => isStepId(entry.step))),
     );
     if (coderRecPolicy?.kind === "stop") {
       return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
-    const relayResume = resumeRelayFromLedger(resumeLedger, plan.resumeStep);
+    const relayResume = resumeRelayFromLedger(
+      resumeLedger.filter(
+        (entry): entry is PersistentLedgerEntry & { readonly step: StepId } =>
+          isStepId(entry.step),
+      ),
+      plan.resumeStep,
+    );
 
     // #686 — after #767 has rebuilt the base Coder-Rec route, resume from a
     // recorded baton before re-entering the interrupted step.
@@ -4625,6 +4667,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 },
                 durableRetryOpts,
               );
+              if (result.kind === "completed") completeMechanicalRetryInvocation(step);
             } catch (err) {
               if (
                 expectedKind === "reviewer" &&
@@ -4806,6 +4849,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   }
                   ledger.push(marker);
                   activeRelayFocusPath = staged.focus.path;
+                  completeMechanicalRetryInvocation(step);
                   applyRelayBaton(handoff.nextBaton, step);
                   continue orchestratorStepLoop;
                 }
@@ -4998,6 +5042,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               ledger.push(marker);
               activeRelayFocusPath = staged.focus.path;
+              completeMechanicalRetryInvocation(step);
               applyRelayBaton(handoff.nextBaton, step);
               continue orchestratorStepLoop;
             }
@@ -5182,6 +5227,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               callerOwns: (o) => "result" in o && o.result.kind === "failed",
             }),
           );
+          if (shipResult.kind === "completed") completeMechanicalRetryInvocation("S7");
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
           // S8(escalate) handoff, NOT an error — keep the escalate semantics so
           // the human-answer resume re-opens it (codex cmr R4 finding). #331's
@@ -5410,6 +5456,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               ledger.push(marker);
               activeRelayFocusPath = staged.focus.path;
+              completeMechanicalRetryInvocation("S7");
               applyRelayBaton(handoff.nextBaton, "S7");
               continue orchestratorStepLoop;
             }
@@ -5780,6 +5827,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               },
               durableMechanicalRetryOptions(reviewStep, reviewResetOpt),
             );
+            if (result.kind === "completed") completeMechanicalRetryInvocation(reviewStep);
           } catch (err) {
             if (err instanceof VerifyWorkerHeadMovedError) {
               const stopSummary = verifyReviewerHeadMovedStopSummary({
@@ -6633,6 +6681,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               ledger.push(marker);
               activeRelayFocusPath = staged.focus.path;
+              completeMechanicalRetryInvocation(reviewStep);
               applyRelayBaton(handoff.nextBaton, reviewStep);
               step = reviewStep;
               continue orchestratorStepLoop;
