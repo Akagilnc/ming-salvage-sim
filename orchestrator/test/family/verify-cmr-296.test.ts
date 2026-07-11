@@ -621,7 +621,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             actualFamilyHead: "head-1",
             verifiedCmrHead: "head-1",
             sources: {
-              reportedFamilyHead: "ship worker reported prHead",
+              reportedFamilyHead: "host-observed family HEAD used for PR truth",
               actualFamilyHead: "family head after ship worker",
               verifiedCmrHead: "latest cmr_passed ledger row",
             },
@@ -827,7 +827,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     }));
   });
 
-  it("does not persist a shipped marker when the opened PR head differs from the current family HEAD", async () => {
+  it("persists host family HEAD when the worker reports a stale PR head", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
@@ -842,26 +842,18 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "verified-cmr-head",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
+    expect(result).toEqual({ ok: true, ran: true });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
+      status: "shipped",
+      event: "shipped",
       phase: "final",
       familyHeadAfter: "current-family-head",
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
-        repairHint: expect.stringContaining("repair the family ship worker PR head"),
+        reason: "success",
         metadata: {
           heads: expect.objectContaining({
             actualFamilyHead: "current-family-head",
-            verifiedCmrHead: "current-family-head",
-          }),
-          ship: expect.objectContaining({
-            latestVerifiedCmrHead: "current-family-head",
-            currentFamilyHead: "current-family-head",
-            reportedFamilyHead: "stale-pr-head",
-            shipPrState: "pr-head-mismatch",
+            reportedFamilyHead: "current-family-head",
           }),
         },
       }),

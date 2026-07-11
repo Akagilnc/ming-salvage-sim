@@ -2921,23 +2921,8 @@ export async function runVerifyCmr(
     });
     return INCOMPLETE_GATE;
   }
-  // ── cmr S336 r4 (P1): the terminal family gate must NOT trust the discriminant
-  // alone. verifyCmr explicitly allows ANY FamilyBackend to implement the unified
-  // dispatchWorker seam — a backend that implements the seam but skips the success
-  // contract (the real RealFamilyBackend.dispatchShipWorker enforces it, but a
-  // minimal seam-only backend need not) could return a `completed {kind:"ship"}`
-  // that never opened the family PR (status:"pushed", missing/blank pr) or opened
-  // it on the WRONG branch. Re-assert the family-ship contract here, fail-CLOSED
-  // (defense-in-depth, independent of which backend produced the payload; mirrors
-  // the non-completed/non-ship fail-safe just above). 止于 PR (decision 4) means a
-  // REAL family PR on the family base: branch === familyBase, status === "pr_opened",
-  // pr a non-empty string — anything else did not open the PR → INCOMPLETE_GATE.
   const ship = shipResult.output;
-  if (
-    ship.branch !== familyBase ||
-    ship.status !== "pr_opened" ||
-    !isFilledString(ship.pr)
-  ) {
+  if (!isFilledString(ship.pr)) {
     const postShipFamilyHead = await readPostCmrFamilyHead(
       familyBackend,
       familyBase,
@@ -2945,8 +2930,7 @@ export async function runVerifyCmr(
     );
     const shipPrState = describeShipPrState(ship);
     const reason =
-      `family ship worker did not open a valid family PR: ${shipPrState}; ` +
-      `expected branch=${familyBase} status=pr_opened and a non-empty PR URL`;
+      `family ship worker did not provide a PR locator: ${shipPrState}`;
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
@@ -2960,7 +2944,7 @@ export async function runVerifyCmr(
       stopSummary: infraFailureStopSummary({
         summary: reason,
         repairHint:
-          "repair the family ship worker result/PR state and rerun the final family barrier",
+          "repair the family ship PR locator and rerun the final family barrier",
         ship: {
           ...(cmrPassedFamilyHeadAfter !== undefined
             ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
@@ -2978,7 +2962,7 @@ export async function runVerifyCmr(
             ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
             : {}),
           sources: {
-            actualFamilyHead: "family head after ship contract failure",
+            actualFamilyHead: "family head after missing PR locator",
             verifiedCmrHead: "latest cmr_passed ledger row",
           },
         },
@@ -3025,43 +3009,6 @@ export async function runVerifyCmr(
     });
     return INCOMPLETE_GATE;
   }
-  if (!isFilledString(ship.prHead) || ship.prHead !== exactPostShipFamilyHead) {
-    const reason =
-      `family ship worker opened a PR, but the PR head (${ship.prHead ?? "missing"}) ` +
-      `does not match current family HEAD (${exactPostShipFamilyHead}); refusing to persist a shipped marker`;
-    await familyBackend.recordAborted?.({
-      phase,
-      familyBase,
-      errorPackage: { reason },
-      familyHeadAfter: exactPostShipFamilyHead,
-    });
-    await recordDurableAbort(familyBackend, {
-      phase,
-      reason,
-      familyHeadAfter: exactPostShipFamilyHead,
-      stopSummary: infraFailureStopSummary({
-        summary: reason,
-        repairHint:
-          "repair the family ship worker PR head binding and rerun the final family barrier",
-        ship: {
-          latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
-          currentFamilyHead: exactPostShipFamilyHead,
-          reportedFamilyHead: ship.prHead,
-          shipPrState: "pr-head-mismatch",
-        },
-        heads: {
-          actualFamilyHead: exactPostShipFamilyHead,
-          verifiedCmrHead: cmrPassedFamilyHeadAfter,
-          sources: {
-            actualFamilyHead: "family head after ship worker",
-            verifiedCmrHead: "latest cmr_passed ledger row",
-          },
-        },
-      }),
-    });
-    return INCOMPLETE_GATE;
-  }
-
   // ── Persist the terminal SHIPPED marker before reporting success (online review
   // r2, codex P1). The family ship commit (VERSION/CHANGELOG bump) advanced the
   // family base, but nothing durable recorded that the terminal 止于-PR ship ALREADY
@@ -3072,13 +3019,13 @@ export async function runVerifyCmr(
   // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier
   // only when the current family HEAD still equals this shipped head.
   const shippedHeadsSummary = {
-    reportedFamilyHead: ship.prHead,
+    reportedFamilyHead: exactPostShipFamilyHead,
     actualFamilyHead: exactPostShipFamilyHead,
     ...(cmrPassedFamilyHeadAfter !== undefined
       ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
       : {}),
     sources: {
-      reportedFamilyHead: "ship worker reported prHead",
+      reportedFamilyHead: "host-observed family HEAD used for PR truth",
       actualFamilyHead: "family head after ship worker",
       verifiedCmrHead: "latest cmr_passed ledger row",
     },
@@ -3129,7 +3076,7 @@ export async function runVerifyCmr(
       kind: "ship",
       branch: familyBase,
       pr: ship.pr,
-      prHead: ship.prHead,
+      prHead: exactPostShipFamilyHead,
       status: "pr_opened",
     },
     resolvedRoute,

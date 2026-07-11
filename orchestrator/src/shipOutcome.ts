@@ -43,9 +43,6 @@ export type ShipWorkerOutcome =
   | { readonly kind: "failed"; readonly reason: string; readonly diagnosis: string }
   | { readonly kind: "malformed"; readonly reason: string };
 
-/** The ship worker's completion signal (matches prompts/ship.md + family_ship.md). */
-export const SHIP_COMPLETION_SIGNAL = "SHIP_STEP_COMPLETE";
-
 /**
  * A genuinely non-empty string (rejects `""` and whitespace-only). Mirrors
  * validate.ts `isFilledString` — the escalate/failed contract (both prompts) is
@@ -96,35 +93,16 @@ const failedSchema = z
   .strict();
 
 /**
- * Decide the ship worker outcome from a Sandcastle run result: gate on the
- * completion signal FIRST (mirrors the cmr / merger gate), then parse the `<ship>`
- * tag. Pure (a check on the run-result shape) so the gate is unit-tested without a
- * container. A complete-but-UNSIGNALED run (e.g. `maxIterations` hit mid-ship) is
- * ESCALATE (the safe direction — the worker did not declare it finished, so its
- * verdict is not trusted as a delivery success).
+ * Read the runner-owned machine sidecar for a process that already exited cleanly.
+ * `completionSignal` and `stdout` remain in the input shape as worker telemetry,
+ * but neither can decide the route (ADR 0062 / #820). Missing or malformed machine
+ * output is returned as `malformed` for the caller's single-step redispatch path.
  */
 export function shipOutcomeFromResult(result: {
   completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
 }): ShipWorkerOutcome {
-  const signal = result.completionSignal;
-  const signaled = Array.isArray(signal)
-    ? signal.includes(SHIP_COMPLETION_SIGNAL)
-    : signal === SHIP_COMPLETION_SIGNAL;
-  if (!signaled) {
-    const actual =
-      signal === undefined
-        ? "none (no signal fired before the iteration limit)"
-        : `"${String(signal)}"`;
-    return {
-      kind: "escalate",
-      reason: "ship worker did not fire its completion signal",
-      diagnosis:
-        `expected "${SHIP_COMPLETION_SIGNAL}", got ${actual} (a complete-but-unsignaled ` +
-        `ship run is not trusted as a delivery — escalate, never a fabricated PR)`,
-    };
-  }
   try {
     if (result.outcomePath !== undefined) {
       const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
@@ -138,12 +116,17 @@ export function shipOutcomeFromResult(result: {
         `${err instanceof Error ? err.message : String(err)}`,
     };
   }
-  return parseShipOutcome(result.stdout);
+  return {
+    kind: "malformed",
+    reason: "ship worker outcome sidecar path was not provided",
+  };
 }
 
 /**
- * Parse the ship worker's `<ship>{…}</ship>` outcome from its stdout (#336). Pure so
- * it is unit-tested without a container. The shape mirrors prompts/ship.md +
+ * Legacy telemetry parser for a ship worker's `<ship>{…}</ship>` stdout (#336).
+ * Production routing no longer calls this function: prose cannot decide control
+ * flow under ADR 0062 / #820. Kept pure for historical telemetry decoding. The
+ * shape mirrors prompts/ship.md +
  * family_ship.md (the union of the two contracts):
  *   - `{"status": "pushed",    "branch": string}`              → shipped (no pr);
  *   - `{"status": "pr_opened", "branch": string, "pr": string}`→ shipped (pr REQUIRED);
