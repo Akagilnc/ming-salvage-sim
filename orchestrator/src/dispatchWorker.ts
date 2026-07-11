@@ -1286,6 +1286,11 @@ export async function dispatchWorkerWithMonitor(
     return { result, telemetryEnvironmentStamp };
   } catch (err) {
     stampCollect({ kind: "thrown", error: err });
+    // Once first-run telemetry has started, an exceptional terminal path must
+    // not let callers advance (relay/retry/failure) before the environment row
+    // has had its fail-open completion opportunity. Successful dispatches keep
+    // the asynchronous hand-off above; only error propagation joins here.
+    await telemetryEnvironmentStamp;
     throw err;
   }
 }
