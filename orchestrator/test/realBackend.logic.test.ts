@@ -880,14 +880,14 @@ describe("#420 OpenCode runtime auth", () => {
     });
   });
 
-  it("passes GLM_KEY only to OpenCode-family dispatches", () => {
+  it("passes GLM_KEY only to zai-pool dispatches", () => {
     vi.stubEnv("GLM_KEY", "test-secret-never-logged");
     const opencodeEnv: Record<string, string> = {};
     const codexEnv: Record<string, string> = {};
     const claudeEnv: Record<string, string> = {};
-    appendGlmKeyEnv(opencodeEnv, "opencode");
-    appendGlmKeyEnv(codexEnv, "codex");
-    appendGlmKeyEnv(claudeEnv, "claudeCode");
+    appendGlmKeyEnv(opencodeEnv, "zai");
+    appendGlmKeyEnv(codexEnv, "codex-5h");
+    appendGlmKeyEnv(claudeEnv, "claude");
     expect(opencodeEnv.GLM_KEY).toBe("test-secret-never-logged");
     expect(codexEnv).not.toHaveProperty("GLM_KEY");
     expect(claudeEnv).not.toHaveProperty("GLM_KEY");
@@ -906,6 +906,20 @@ describe("#420 OpenCode runtime auth", () => {
     writeFileSync(authFile, JSON.stringify({ xai: { type: "oauth", refresh: "secret" } }));
     expect(() => assertOpenCodeReadonlyCredential(authFile, "xai/grok-4")).toThrow(
       /xai.*OAuth\/refresh-type.*writable per-container copy/i,
+    );
+  });
+
+  it.each([
+    ["unknown type", { type: "refresh", token: "secret" }],
+    ["null entry", null],
+    ["primitive entry", "secret"],
+    ["missing type", { key: "secret" }],
+  ])("rejects %s because only an API credential is read-only safe", (_label, credential) => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-invalid-auth-"));
+    const authFile = join(dir, "auth.json");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": credential }));
+    expect(() => assertOpenCodeReadonlyCredential(authFile, "opencode-go/glm-5.2")).toThrow(
+      /opencode-go.*type "api".*read-only/i,
     );
   });
 });
@@ -947,6 +961,13 @@ describe("dispatch OpenCode auth invariant", () => {
       expect(env).not.toHaveProperty("GLM_KEY");
       expect(mounts).not.toContainEqual(expect.objectContaining({ sandboxPath: SANDBOX_OPENCODE_AUTH_FILE }));
     }
+  });
+
+  it("requires a mounted credential for a non-zai OpenCode dispatch", () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    expect(() => applyDispatchOpenCodeAuth({
+      env: {}, mounts: [], models: ["glm-5.2"],
+    })).toThrow(/opencode-go\/glm-5\.2.*auth\.json.*required/i);
   });
 
 });

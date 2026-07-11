@@ -755,12 +755,19 @@ export function assertOpenCodeReadonlyCredential(authFile: string, model: string
         "model can be mapped to a credential entry present in the mounted auth file",
     );
   }
-  if (credential === null || typeof credential !== "object") return;
-  const type = (credential as { type?: unknown }).type;
+  const type = credential !== null && typeof credential === "object"
+    ? (credential as { type?: unknown }).type
+    : undefined;
   if (type === "oauth") {
     throw new Error(
       `OpenCode provider ${provider} uses an OAuth/refresh-type credential; ` +
         "the read-only auth.json mount is forbidden and requires a writable per-container copy",
+    );
+  }
+  if (type !== "api") {
+    throw new Error(
+      `OpenCode provider ${provider} credential must be an object with type "api" ` +
+        "to satisfy the read-only auth.json rule; every other shape or type fails closed",
     );
   }
 }
@@ -768,9 +775,9 @@ export function assertOpenCodeReadonlyCredential(authFile: string, model: string
 /** Pass the optional Z.ai credential through at dispatch time; never persist it. */
 export function appendGlmKeyEnv(
   env: Record<string, string>,
-  provider?: ModelProviderFactory,
+  billingPool?: BillingPoolDispatchId,
 ): void {
-  if (provider === "opencode" && process.env.GLM_KEY !== undefined) {
+  if (billingPool === "zai" && process.env.GLM_KEY !== undefined) {
     env.GLM_KEY = process.env.GLM_KEY;
   }
 }
@@ -797,7 +804,18 @@ export function applyDispatchOpenCodeAuth(input: {
       input.billingPool === "zai" ? `opencode-go/${model.model}` : model.model,
     );
   if (openCodeModels.length === 0) return;
-  appendGlmKeyEnv(input.env, "opencode");
+  appendGlmKeyEnv(input.env, input.billingPool);
+  const openCodeOnlyDispatch = openCodeModels.length === resolved.length;
+  if (
+    input.billingPool !== "zai" &&
+    openCodeOnlyDispatch &&
+    input.opencodeAuthFile === undefined
+  ) {
+    throw new Error(
+      `OpenCode dispatch for ${openCodeModels.join(", ")}: auth.json is required because ` +
+        "non-zai dispatches receive no GLM_KEY and must mount a usable API credential read-only",
+    );
+  }
   appendOpenCodeAuthMount(input.mounts, input.opencodeAuthFile, openCodeModels);
 }
 /** Where the baked dev skills are mounted inside the container. */

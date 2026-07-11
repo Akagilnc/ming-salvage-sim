@@ -1472,6 +1472,28 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     });
   });
 
+  it("non-zai OpenCode production dispatch omits GLM_KEY and requires a readonly API auth mount", async () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    const { backend, path } = await dispatch(undefined, {
+      "grok-4.5": { type: "api", key: "secret" },
+    });
+    expect(backend.config?.env.GLM_KEY).toBeUndefined();
+    expect(backend.config?.mounts).toContainEqual({
+      hostPath: path,
+      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+      readonly: true,
+    });
+  });
+
+  it.each([
+    ["unknown credential type", { type: "refresh", token: "secret" }],
+    ["malformed credential entry", null],
+  ])("production dispatch rejects %s", async (_label, credential) => {
+    await expect(dispatch("zai", {
+      "opencode-go": credential,
+    })).rejects.toThrow(/opencode-go.*type "api".*read-only/i);
+  });
+
   it("codex-pool production CMR dispatch carries none of the OpenCode auth trio", async () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
     const { backend } = await dispatch("codex-5h", {
