@@ -262,6 +262,34 @@ describe("#786 telemetry pure helpers", () => {
     expect(record.assertions).toEqual({ added: 0, deleted: 0 });
   });
 
+  it("keeps TypeScript UTF-16 trivia offsets aligned after an astral character", () => {
+    const record = buildCommitStamp({
+      commit: "abc123",
+      diffLines: [
+        '+const example = "😀 value as any; @ts-ignore; expect(";',
+        "+const real = value as any;",
+      ],
+    });
+
+    expect(record.escapeHatches?.added.asAny).toBe(1);
+    expect(record.escapeHatches?.added.tsIgnore).toBe(0);
+    expect(record.assertions?.added).toBe(0);
+  });
+
+  it("excludes escape-hatch examples in JSX text", () => {
+    const record = buildCommitStamp({
+      commit: "abc123",
+      diffLines: [
+        "+export const Example = () => <pre>value as any; @ts-ignore; expect(</pre>;",
+        "+const real = value as any;",
+      ],
+    });
+
+    expect(record.escapeHatches?.added.asAny).toBe(1);
+    expect(record.escapeHatches?.added.tsIgnore).toBe(0);
+    expect(record.assertions?.added).toBe(0);
+  });
+
   it("excludes an escape hatch changed inside an existing post-image block comment", () => {
     const record = buildCommitStamp({
       commit: "abc123",

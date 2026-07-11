@@ -4812,28 +4812,32 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Trigger this from the expected worker role before any output contract
         // gate: a worker may have committed before reporting malformed output.
         if (expectedKind === "coder" && coderHeadBeforeStep !== undefined && worktree !== undefined) {
-          try {
-            const afterCommit = gitHead(worktree);
-            const telemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
-            if (
-              afterCommit !== undefined &&
-              afterCommit !== coderHeadBeforeStep &&
-              telemetryDir !== undefined
-            ) {
-              const commits = commitsBetween(worktree.path, coderHeadBeforeStep, afterCommit) ?? [afterCommit];
+          // Host-git reads and full-file scans are telemetry only: queue them
+          // behind the route decision, and never let a failure reject this run.
+          const telemetryWorktree = worktree;
+          void Promise.resolve()
+            .then(() => {
+              const afterCommit = gitHead(telemetryWorktree);
+              const telemetryDir = backend.resolveTelemetryDir?.({ runId, worktree: telemetryWorktree, stateDir });
+              if (
+                afterCommit === undefined ||
+                afterCommit === coderHeadBeforeStep ||
+                telemetryDir === undefined
+              ) return;
+              const commits = commitsBetween(telemetryWorktree.path, coderHeadBeforeStep, afterCommit) ?? [afterCommit];
               for (const commit of commits) {
-                const metrics = collectCommitMetrics(worktree.path, commit);
-                const diffAudit = collectCommitDiffAudit(worktree.path, commit);
+                const metrics = collectCommitMetrics(telemetryWorktree.path, commit);
+                const diffAudit = collectCommitDiffAudit(telemetryWorktree.path, commit);
                 tryAppendTelemetryRecord(telemetryDir, buildCommitStamp({
                   runId, issue: issueNumber, commit,
                   ...(metrics !== undefined ? { metrics } : {}),
                   ...(diffAudit !== undefined ? diffAudit : {}),
                 }));
               }
-            }
-          } catch (err) {
-            console.warn(`[orchestrator] commit telemetry failed (fail-open): ${err instanceof Error ? err.message : String(err)}`);
-          }
+            })
+            .catch((err: unknown) => {
+              console.warn(`[orchestrator] commit telemetry failed (fail-open): ${err instanceof Error ? err.message : String(err)}`);
+            });
         }
 
         const stepEscalate = escalateOf(output);

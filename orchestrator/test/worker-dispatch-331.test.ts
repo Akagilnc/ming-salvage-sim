@@ -320,10 +320,13 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       const result = await runOrchestrator({ issueNumber: 786, backend });
 
       expect(result.status).toBe("error");
-      const commits = readTelemetryRecords(telemetryDir).filter(
-        (record): record is TelemetryCommitRecord => record.phase === "commit",
-      );
-      expect(commits).toHaveLength(1);
+      let commits: TelemetryCommitRecord[] = [];
+      await vi.waitFor(() => {
+        commits = readTelemetryRecords(telemetryDir).filter(
+          (record): record is TelemetryCommitRecord => record.phase === "commit",
+        );
+        expect(commits).toHaveLength(1);
+      });
       expect(commits[0]).toMatchObject({ issue: 786, runId: backend.ctxs[0]?.runId });
     } finally {
       rmSync(root, { recursive: true, force: true });

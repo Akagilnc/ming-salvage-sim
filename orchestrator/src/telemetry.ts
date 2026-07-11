@@ -1360,6 +1360,17 @@ function triviaSpansByLine(source: string): ReadonlyMap<number, readonly TriviaS
       }
     }
   }
+  // The scanner's normal token stream intentionally does not enter JSX-text
+  // mode. Parse once as TSX to obtain those spans; TypeScript source offsets
+  // remain UTF-16 code-unit offsets just like the scanner offsets above.
+  const sourceFile = ts.createSourceFile("telemetry.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const visit = (node: ts.Node): void => {
+    if (node.kind === ts.SyntaxKind.JsxText) {
+      addTriviaSpan(node.getStart(sourceFile), node.getEnd(), "string");
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
   return result;
 }
 
@@ -1383,7 +1394,10 @@ function auditableLine(line: string, spans: readonly TriviaSpan[]): string | und
     /^\s*(?:\/\/|\/\*|\*)\s*@ts-(?:ignore|expect-error)\b/.test(content.slice(span.start, span.end)),
   );
   if (directive !== undefined) return content.slice(directive.start, directive.end);
-  const characters = [...content];
+  // TypeScript scanner offsets index UTF-16 code units, so this must not use
+  // a code-point iterator (`[...content]`): astral characters occupy two
+  // scanner offsets but one code point.
+  const characters = content.split("");
   for (const span of spans) characters.fill(" ", span.start, span.end);
   const code = characters.join("").trim();
   return code === "" ? undefined : code;
