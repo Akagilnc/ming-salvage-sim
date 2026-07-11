@@ -848,8 +848,21 @@ export async function dispatchWorkerWithMonitor(
 ): Promise<DispatchWorkerWithMonitorOutcome> {
   // #786 — per-leg telemetry sidecar (dispatch + collect half-rows).
   // Best-effort only: never changes worker semantics or resume contracts.
-  const telemetryDir =
-    ctx.telemetryDir ?? backend.resolveTelemetryDir?.(ctx) ?? ctx.stateDir;
+  // Optional chaining only guards missing methods; a throwing implementation
+  // must not abort dispatch (CodeRabbit #815 / fail-open).
+  let telemetryDir = ctx.telemetryDir;
+  if (telemetryDir === undefined) {
+    try {
+      telemetryDir = backend.resolveTelemetryDir?.(ctx);
+    } catch (err) {
+      console.warn(
+        `[orchestrator] resolveTelemetryDir failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    telemetryDir = telemetryDir ?? ctx.stateDir;
+  }
   const telemetryCtx =
     telemetryDir === undefined ? ctx : { ...ctx, telemetryDir };
   let firstOutputAt: string | null = null;
