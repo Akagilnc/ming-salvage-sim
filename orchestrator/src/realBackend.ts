@@ -735,8 +735,10 @@ export function hostOpenCodeAuthFile(home: string): string | undefined {
 export function appendOpenCodeAuthMount(
   mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
   hostPath: string | undefined,
+  models: readonly string[],
 ): void {
   if (hostPath !== undefined) {
+    for (const model of models) assertOpenCodeReadonlyCredential(hostPath, model);
     mounts.push({ hostPath, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true });
   }
 }
@@ -3073,6 +3075,7 @@ export class RealBackend implements Backend {
           spec,
           issueNumber,
           options,
+          isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined,
         ),
       ),
       providerAuth: auth.providerAuth,
@@ -3180,9 +3183,6 @@ export class RealBackend implements Backend {
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     const resolved = spec.model === undefined ? undefined : resolveModelSlugForPool(spec.model, pool);
-    if (resolved?.provider === "opencode" && auth.opencodeAuthFile !== undefined) {
-      assertOpenCodeReadonlyCredential(auth.opencodeAuthFile, resolved.model);
-    }
     if (resolved !== undefined) appendGlmKeyEnv(env, resolved.provider);
     // Inject the Claude token only when present: a Codex coder (model gpt-5.6-terra)
     // needs no CLAUDE_CODE_OAUTH_TOKEN, and an empty/undefined value would defeat
@@ -3221,7 +3221,13 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
+    appendOpenCodeAuthMount(
+      mounts,
+      auth.opencodeAuthFile,
+      resolved?.provider === "opencode"
+        ? [pool === "zai" ? `opencode-go/${resolved.model}` : resolved.model]
+        : [],
+    );
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
@@ -4432,7 +4438,7 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, []);
     // #372: souls mount for ship worker too (live source, shadows baked if any).
     // Shared helper forces readonly:true at all sites.
     mounts.push(soulsMount(this.opts.soulsDir));

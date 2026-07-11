@@ -1116,7 +1116,8 @@ export class RealFamilyBackend implements FamilyBackend {
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
+    const resolved = resolveModelSlugForPool(mergerModel(), undefined);
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, resolved.provider === "opencode" ? [resolved.model] : []);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -2032,7 +2033,9 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
     };
-    appendGlmKeyEnv(env, resolveModelSlugForPool(modelForSlot("coderFix"), undefined).provider);
+    const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
+    const resolved = resolveModelSlugForPool(modelForSlot("coderFix"), pool);
+    appendGlmKeyEnv(env, resolved.provider);
     if (fixFocusLanding !== undefined) {
       env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
     }
@@ -2059,7 +2062,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, resolved.provider === "opencode" ? [pool === "zai" ? `opencode-go/${resolved.model}` : resolved.model] : []);
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
@@ -2297,7 +2300,9 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    appendGlmKeyEnv(env, resolveModelSlugForPool(spec.model, undefined).provider);
+    const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
+    const resolved = resolveModelSlugForPool(spec.model, pool);
+    appendGlmKeyEnv(env, resolved.provider);
     if (onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
     }
@@ -2341,7 +2346,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, resolved.provider === "opencode" ? [pool === "zai" ? `opencode-go/${resolved.model}` : resolved.model] : []);
     mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
@@ -2820,7 +2825,14 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
+    appendOpenCodeAuthMount(
+      mounts,
+      auth.opencodeAuthFile,
+      reviewLegs
+        .map((leg) => resolveModelSlugForPool(leg.slug, undefined))
+        .filter((resolved) => resolved.provider === "opencode")
+        .map((resolved) => resolved.model),
+    );
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3025,7 +3037,7 @@ export class RealFamilyBackend implements FamilyBackend {
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
-      sandbox: this.shipSandbox(auth, outcomeLanding),
+      sandbox: this.shipSandbox(auth, outcomeLanding, ctx),
       // Derive the model from the spec via the SAME validated mapping the
       // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
@@ -3120,8 +3132,9 @@ export class RealFamilyBackend implements FamilyBackend {
   protected shipSandbox(
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
   ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding));
+    return docker(this.shipSandboxConfig(auth, outcomeLanding, ctx));
   }
 
   /**
@@ -3221,6 +3234,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected shipSandboxConfig(
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -3235,7 +3249,9 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: SHIP_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    appendGlmKeyEnv(env, resolveModelSlugForPool(modelForSlot("ship"), undefined).provider);
+    const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
+    const resolved = resolveModelSlugForPool(modelForSlot("ship"), pool);
+    appendGlmKeyEnv(env, resolved.provider);
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
@@ -3251,7 +3267,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, resolved.provider === "opencode" ? [pool === "zai" ? `opencode-go/${resolved.model}` : resolved.model] : []);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
