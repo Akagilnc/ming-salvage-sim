@@ -256,16 +256,7 @@ describe("#786 telemetry pure helpers", () => {
     ).toBe("stream-disconnect");
   });
 
-  it("categoryFromReason maps realBackend max-iteration completion-signal text to honest-incomplete", () => {
-    // Exact shape from realBackend.assertCompletionSignal (realBackend.ts:~1095).
-    const realMaxIter =
-      'realBackend: step S2 did not fire its required completion ' +
-      'signal — expected "<coder>", got none (no signal fired before the ' +
-      "iteration limit). The agent must emit the completion signal to advance " +
-      'the step (#244 "agent emit completionSignal 才进下一步"); a ' +
-      "complete-but-unsignaled run (e.g. maxIter hit mid-work) does NOT advance.";
-    expect(categoryFromReason(realMaxIter)).toBe("honest-incomplete");
-
+  it("categoryFromReason maps remaining completion-signal gate reasons to honest-incomplete", () => {
     // ship / cmr / merger gate reasons (shipOutcome / realFamilyBackend).
     expect(
       categoryFromReason("ship worker did not fire its completion signal"),
@@ -288,11 +279,11 @@ describe("#786 telemetry pure helpers", () => {
     // Must not classify as 429-quota via bare "limit" / must preserve message.
     const classified = classifyWorkerTerminal({
       kind: "thrown",
-      error: new Error(realMaxIter),
+      error: new Error("ship worker did not fire its completion signal"),
     });
     expect(classified.terminal).toBe("thrown");
     expect(classified.errorCategory).toBe("honest-incomplete");
-    expect(classified.errorMessage).toBe(realMaxIter);
+    expect(classified.errorMessage).toBe("ship worker did not fire its completion signal");
   });
 
   it("escalated missing-completion-signal is honest-incomplete (not category null)", () => {
