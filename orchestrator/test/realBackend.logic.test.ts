@@ -29,7 +29,6 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as telemetry from "../src/telemetry.js";
 import {
   agentForSlug,
-  assertCompletionSignal,
   attributeFailure,
   branchForIssue,
   candidateBranches,
@@ -93,7 +92,7 @@ function agentRunResult({
   commits = [],
   sessionId,
 }: {
-  readonly completionSignal: string;
+  readonly completionSignal?: string;
   readonly stdout: string;
   readonly commits?: ReadonlyArray<{ sha: string }>;
   readonly sessionId: string;
@@ -124,6 +123,7 @@ function cleanupTempHomes(): void {
 }
 
 afterEach(cleanupTempHomes);
+afterEach(() => vi.restoreAllMocks());
 afterAll(cleanupTempHomes);
 
 describe("#685 route smoke hardening", () => {
@@ -886,50 +886,6 @@ describe("realBackend lastSessionId", () => {
   });
 });
 
-// ─── assertCompletionSignal (ship-pre 256 r1, completionSignal gate) ──────────
-
-describe("realBackend assertCompletionSignal", () => {
-  it("passes when the fired signal matches the spec's completionSignal", () => {
-    expect(() =>
-      assertCompletionSignal(
-        { completionSignal: "CODER_STEP_COMPLETE" },
-        "CODER_STEP_COMPLETE",
-        "S2-coder",
-      ),
-    ).not.toThrow();
-  });
-
-  it("throws when no signal fired before the iteration limit (undefined)", () => {
-    // RunResult.completionSignal is "undefined if no signal fired before the
-    // iteration limit" (sandcastle d.ts). An agent that emitted a complete,
-    // schema-valid tag but hit maxIter mid-work without firing the signal must
-    // NOT advance the step (#244 "agent emit completionSignal 才进下一步").
-    expect(() =>
-      assertCompletionSignal(
-        { completionSignal: undefined },
-        "CODER_STEP_COMPLETE",
-        "S2-coder",
-      ),
-    ).toThrow(/completion signal/i);
-  });
-
-  it("throws and names the expected + actual signal on a mismatch", () => {
-    expect(() =>
-      assertCompletionSignal(
-        { completionSignal: "REVIEWER_STEP_COMPLETE" },
-        "CODER_STEP_COMPLETE",
-        "S2-coder",
-      ),
-    ).toThrow(/CODER_STEP_COMPLETE/);
-  });
-
-  it("names the step in the thrown error (runner attributes the failure)", () => {
-    expect(() =>
-      assertCompletionSignal({ completionSignal: undefined }, "X", "S5-coder"),
-    ).toThrow(/S5-coder/);
-  });
-});
-
 describe("realBackend isLikelySha", () => {
   it("accepts 7–40 lower-hex, rejects branch names / upper / short", () => {
     expect(isLikelySha("abc1234")).toBe(true);
@@ -985,12 +941,7 @@ describe("realBackend classifyResumeError", () => {
     ).toEqual({ kind: "fresh-run" });
   });
 
-  it("propagates signal, auth, model, and generic errors", () => {
-    expect(
-      classifyResumeError(
-        new Error("step S2-coder-resume did not fire its required completion signal"),
-      ),
-    ).toEqual({ kind: "propagate" });
+  it("propagates auth, model, and generic errors", () => {
     expect(classifyResumeError(new Error("401 unauthorized"))).toEqual({
       kind: "propagate",
     });
@@ -1543,6 +1494,16 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     soul: "READ-ONLY",
     toolchain: ["node"],
   };
+  const coderSpec: StepSpec = {
+    id: "S2",
+    role: "coder",
+    promptFile: "dummy.md",
+    model: "gpt-5.6-sol",
+    completionSignal: "CODER_STEP_COMPLETE",
+    maxIter: 1,
+    soul: "coder",
+    toolchain: ["node"],
+  };
 
   it("decodeOutput on RAW valid verify produces correct VerifyResult (not fake construction)", () => {
     const backend = makeBackend();
@@ -1580,6 +1541,25 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
         }
       ).decodeOutput(verifySpec, extractVerifyTag('<verify>{"converged": "notbool"}</verify>'), undefined),
     ).toThrow();
+  });
+
+  it("never fabricates a worker verdict when every outcome channel is absent", () => {
+    const backend = makeBackend();
+    const decodeOutput = (backend as unknown as {
+      decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+    }).decodeOutput.bind(backend);
+
+    for (const [spec, gitCommitCount] of [
+      [coderSpec, 1],
+      [verifySpec, undefined],
+      [fixerSpec, undefined],
+      [cleanupSpec, undefined],
+      [docReleaseSpec, undefined],
+    ] as const) {
+      expect(() => decodeOutput(spec, undefined, gitCommitCount)).toThrow(
+        /without a machine outcome/,
+      );
+    }
   });
 
   it("decodeOutput on RAW valid fixer produces FixerResult via real seam", () => {
@@ -1798,6 +1778,141 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "sess-286",
     });
+  });
+
+  it("treats a coder with no sidecar, typed output, or stdout tag as malformed even when git observed commits", async () => {
+    const backend = makeBackend();
+    backend.agentResult = agentRunResult({
+      stdout: "worker completed its changes",
+      commits: [{ sha: "abc123" }],
+      sessionId: "sess-advisory-exit",
+    });
+
+    await expect(
+      backend.runStep(coderSpec, {
+        branch: "feat/issue-286",
+        base: "main",
+        path: "/tmp/worktree/issue-286",
+      }),
+    ).rejects.toMatchObject({
+      name: "StructuredOutputError",
+      message: expect.stringContaining("no worker outcome"),
+    });
+  });
+
+  it("treats a resumed coder with no sidecar, typed output, or stdout tag as malformed even when git observed commits", async () => {
+    const backend = makeBackend();
+    backend.agentResult = agentRunResult({
+      stdout: "resumed worker completed its changes",
+      commits: [{ sha: "abc123" }],
+      sessionId: "sess-resumed-advisory-exit",
+    });
+
+    await expect(
+      backend.resumeSession(
+        coderSpec,
+        {
+          branch: "feat/issue-286",
+          base: "main",
+          path: "/tmp/worktree/issue-286",
+        },
+        "prior-coder-session",
+      ),
+    ).rejects.toMatchObject({
+      name: "StructuredOutputError",
+      message: expect.stringContaining("no worker outcome"),
+    });
+    expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
+  });
+
+  it("treats a reviewer with no sidecar, typed output, or stdout tag as malformed instead of a clean review", async () => {
+    const backend = makeBackend();
+    backend.agentResult = agentRunResult({
+      stdout: "reviewer finished without a machine verdict",
+      commits: [],
+      sessionId: "sess-missing-review-outcome",
+    });
+
+    await expect(
+      backend.runStep(reviewerSpec, {
+        branch: "feat/issue-824",
+        base: "main",
+        path: "/tmp/worktree/issue-824",
+      }),
+    ).rejects.toMatchObject({
+      name: "StructuredOutputError",
+      message: expect.stringContaining("no worker outcome"),
+    });
+  });
+
+  it("accepts a reviewer verdict from any one supported outcome channel", () => {
+    const backend = makeBackend();
+    const rawOutputFor = (backend as unknown as {
+      rawOutputFor(
+        result: { output?: unknown; stdout: string },
+        spec: StepSpec,
+        typedOutputUsed: boolean,
+        options?: { outcomeLanding?: { path: string; sandboxPath: string } },
+      ): unknown;
+    }).rawOutputFor.bind(backend);
+    const payload = { findings: [] };
+
+    expect(rawOutputFor({ output: payload, stdout: "" }, reviewerSpec, true)).toEqual(payload);
+    expect(
+      rawOutputFor({ stdout: '<review>{"findings": []}</review>' }, reviewerSpec, false),
+    ).toEqual(payload);
+
+    const dir = mkdtempSync(join(tmpdir(), "worker-review-sidecar-channel-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, JSON.stringify(payload), "utf8");
+    expect(
+      rawOutputFor(
+        { stdout: "" },
+        reviewerSpec,
+        false,
+        { outcomeLanding: { path: outcomePath, sandboxPath: ".orchestrator-outcome.json" } },
+      ),
+    ).toEqual(payload);
+  });
+
+  it("does not label a multi-iteration coder stdout tag as a legacy fallback", () => {
+    const backend = makeBackend();
+    const rawOutputFor = (backend as unknown as {
+      rawOutputFor(
+        result: { output?: unknown; stdout: string },
+        spec: StepSpec,
+        typedOutputUsed: boolean,
+      ): unknown;
+    }).rawOutputFor.bind(backend);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(
+      rawOutputFor(
+        { stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>' },
+        coderSpec,
+        false,
+      ),
+    ).toEqual({ committed: false, commitsAdded: 0 });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("keeps the legacy advisory when stdout substitutes for missing typed output", () => {
+    const backend = makeBackend();
+    const rawOutputFor = (backend as unknown as {
+      rawOutputFor(
+        result: { output?: unknown; stdout: string },
+        spec: StepSpec,
+        typedOutputUsed: boolean,
+      ): unknown;
+    }).rawOutputFor.bind(backend);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(
+      rawOutputFor({ stdout: '<review>{"findings": []}</review>' }, reviewerSpec, true),
+    ).toEqual({ findings: [] });
+    expect(warn).toHaveBeenCalledWith(
+      "[orchestrator] telemetry: S3-reviewer used legacy stdout tag compatibility fallback",
+    );
   });
 
   it("reclaims the temporary Grok OAuth copy after a worker container exits", async () => {
@@ -2420,10 +2535,8 @@ describe("realBackend extractCoderTag", () => {
     });
   });
 
-  it("throws a clear error when no <coder> tag is present", () => {
-    expect(() => extractCoderTag("no tag here\nCODER_STEP_COMPLETE")).toThrow(
-      /<coder>/,
-    );
+  it("treats a missing coder tag as an advisory compatibility miss", () => {
+    expect(extractCoderTag("worker finished without a legacy tag")).toBeUndefined();
   });
 
   it("throws when the tag body is not valid JSON", () => {
