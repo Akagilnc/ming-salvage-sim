@@ -131,7 +131,7 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
   },
   "opencode-grok": {
     provider: "opencode",
-    model: "grok-4.3",
+    model: "grok-4.5",
     family: "opencode",
     strongLeg: true,
   },
@@ -140,7 +140,7 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
   // CMR-only label.
   agy: {
     provider: "opencode",
-    model: "grok-4.3",
+    model: "grok-4.5",
     family: "agy",
   },
 };
