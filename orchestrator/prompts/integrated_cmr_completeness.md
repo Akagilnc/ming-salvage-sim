@@ -116,6 +116,7 @@ Rules:
 - When `$ORCHESTRATOR_OUTCOME_PATH` is set, completion is judged by the validated
   sidecar JSON and typed CMR outcome; let `orchestrator-outcome-guard` emit the
   `<cmr>` tag and optional completion telemetry.
-- Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,
-  the LAST tag is the one that counts.
+- Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag as the last typed tag;
+  if you iterate, the last typed `<cmr>` tag is the one that counts. The optional
+  telemetry line below may follow it.
 - For optional telemetry, you may print CMR_STEP_COMPLETE on its own final line.
