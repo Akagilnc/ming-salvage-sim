@@ -502,8 +502,8 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.stopSummary.reason).toBe("contract_drift");
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("infra_failure");
   });
 });
 
@@ -3341,7 +3341,7 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(backend.resumeSessionCalls).toHaveLength(0);
   });
 
-  it("prior crash with last entry = coder committed:false (no S8 yet) → status error, NOT success", async () => {
+  it("prior crash with last entry = coder committed:false (no S8 yet) → redispatches instead of treating it as terminal", async () => {
     // The prior run crashed AFTER persisting the 0-commit coder entry but
     // BEFORE writing the S8 handoff. route(S2, committed:false) → error handoff.
     // Recovery must report error, not collapse it into success.
@@ -3358,10 +3358,8 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.branch).toBeUndefined();
-    expect(result.errorPackage).toBeDefined();
-    expect(backend.runStepIds).toEqual([]);
+    expect(result.status).toBe("success");
+    expect(backend.runStepIds).toContain("S2");
   });
 
   it("prior crash with an advisory S2 commit count resumes through review", async () => {

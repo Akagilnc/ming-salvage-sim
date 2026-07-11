@@ -1578,7 +1578,6 @@ const CODER_STDOUT_MISSING_TAG_RE =
   /\bcoder step stdout carried no <coder>[\s\S]*tag\b/i;
 const WORKER_STDOUT_MISSING_TAG_RE =
   /\b(?:coder step stdout carried no <coder>|reviewer step stdout carried no <review>)[\s\S]*tag\b/i;
-
 function isRecoverableCoderProtocolFailure(
   entry: PersistentLedgerEntry,
 ): boolean {
@@ -2528,16 +2527,15 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
         "move executable instructions into a repo-owner-authored Agent Brief, accepted issue body, ADR, or runner Agent Brief, then rerun",
     };
   }
+  // Pure reporting telemetry: this label does not choose retry, park, or
+  // termination. Those control decisions have already happened upstream.
   if (
     /contract|malformed|does not match|no valid result|off-contract|prior claimed-fixed finding|prior finding disposition/i.test(
       errorPackage.reason,
     ) ||
     WORKER_STDOUT_MISSING_TAG_RE.test(errorPackage.reason)
   ) {
-    return contractDriftStopSummary({
-      summary: errorPackage.reason,
-      repairHint,
-    });
+    return contractDriftStopSummary({ summary: errorPackage.reason, repairHint });
   }
   return infraFailureStopSummary({
     summary: errorPackage.reason,
@@ -4458,7 +4456,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ? {
                       callerOwns: (o) =>
                         "result" in o
-                          ? true
+                          ? false
                           : isReviewerStructuredOutputError(o.error),
                       rethrowOnExhaustion: true,
                     }
@@ -4496,7 +4494,48 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   // runner advances or returns to an external caller. This
                   // deliberately does not delay spawn / first output (#793).
                   await outcome.telemetryEnvironmentStamp;
-                  return outcome.result;
+                  const dispatched = outcome.result;
+                  if (dispatched.kind !== "completed") return dispatched;
+                  const dispatchedEscalation = escalateOf(dispatched.output);
+                  if (
+                    dispatchedEscalation != null &&
+                    isValidEscalation(dispatchedEscalation)
+                  ) {
+                    return dispatched;
+                  }
+
+                  // #824 / ADR 0062: a process may exit cleanly while its control
+                  // envelope is unusable.  Shape failures and coder
+                  // `committed:false` are therefore mechanical dispatch failures,
+                  // not first-sighting run terminals.  Re-express them at the
+                  // shared WorkerResult seam so withMechanicalRetry owns the one
+                  // bounded lifecycle (fresh redispatch, MAX_DISPATCH_ATTEMPTS).
+                  if (!isValidStepOutput(dispatched.output, expectedKind)) {
+                    return {
+                      kind: "malformed" as const,
+                      reason:
+                        `${step}: completed worker output does not match the ` +
+                        `${expectedKind} contract`,
+                      ...(dispatched.sessionId !== undefined
+                        ? { sessionId: dispatched.sessionId }
+                        : {}),
+                    };
+                  }
+                  if (
+                    expectedKind === "coder" &&
+                    dispatched.output.kind === "coder" &&
+                    !dispatched.output.committed &&
+                    dispatched.output.selfReportDiscrepancy === undefined
+                  ) {
+                    return {
+                      kind: "malformed" as const,
+                      reason: `${step}: coder worker produced no commits (committed:false)`,
+                      ...(dispatched.sessionId !== undefined
+                        ? { sessionId: dispatched.sessionId }
+                        : {}),
+                    };
+                  }
+                  return dispatched;
                 },
                 retryOpts,
               );
@@ -4545,6 +4584,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ));
 
             if (retryableReviewerFailure) {
+              if (isRelayCandidateExhaustion(reason)) {
+                output = {
+                  kind: "reviewer",
+                  findings: [],
+                  escalate: {
+                    reason: "reviewer mechanical redispatch exhausted",
+                    diagnosis: reason ?? "reviewer output remained malformed",
+                    synthesizedFailure: true,
+                  },
+                };
+                stepSessionId =
+                  result.kind === "malformed" || result.kind === "failed"
+                    ? result.sessionId
+                    : undefined;
+                break;
+              }
               if (attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS) {
                 resumeSessionId = undefined;
                 continue;
@@ -4669,11 +4724,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   continue orchestratorStepLoop;
                 }
               }
-              return await errorTermination(
+              const exhaustionReason =
+                reason ?? `worker ${step} returned ${result.kind} after bounded redispatch`;
+              return await escalateTermination(
                 step,
-                new Error(
-                  `worker ${step} returned ${result.kind}: ${reason ?? "no reason"}`,
-                ),
+                {
+                  reason: `${step} mechanical redispatch exhausted`,
+                  diagnosis: exhaustionReason,
+                  synthesizedFailure: true,
+                },
+                result.sessionId,
+                "failure",
+                undefined,
+                infraFailureStopSummary({
+                  summary: exhaustionReason,
+                  repairHint: `inspect ${step} worker protocol failure and rerun`,
+                }),
               );
             }
             const normalized =

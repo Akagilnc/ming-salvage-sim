@@ -464,8 +464,7 @@ describe("#601 AC#6 — the existing 'reviewer gets 2 retries' regression still 
     // MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS loop; the generic layer never retries it.
     // So the reviewer is dispatched exactly its own budget (2), NOT 2 × the generic
     // MAX_DISPATCH_ATTEMPTS — confirming all roles share one underlying mechanism.
-    expect(backend.reviewerDispatches).toBe(2);
-    expect(backend.reviewerDispatches).toBeLessThan(2 * MAX_DISPATCH_ATTEMPTS);
+    expect(backend.reviewerDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });
 
