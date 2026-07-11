@@ -36,19 +36,13 @@ def _character_field(character: object, field: str) -> object:
     return getattr(character, field, "")
 
 
-def _inner_role_text(character: object) -> str:
-    return " ".join(
-        str(_character_field(character, field) or "")
-        for field in ("office", "office_type")
-    )
-
-
 def is_inner_court_attendant(character: object) -> bool:
     """按御前近臣的职位识别读心者，不把王承恩姓名写死。"""
-    text = _inner_role_text(character)
-    # 内廷/司礼监是机构，不是御前唯一近臣位；只有随驾或明确的御前近臣
-    # 槽才能读取旁人的底账。名称可变，职位槽不可泛化。
-    return any(token in text for token in ("随驾", "御前近臣"))
+    office = str(_character_field(character, "office") or "").replace(" ", "")
+    # 内廷/司礼监是机构，不是御前唯一近臣位。读心权是由当前占据的
+    # 槽位授予，而非职位描述中碰巧出现的词；例如「御前近臣候补」不能
+    # 因包含槽名而取得旁人底账。名称可变，已登记的槽位标题不可泛化。
+    return office in {"信邸内官随驾", "御前近臣"}
 
 
 def intelligence_precision(target_factor: float = 1.0, channel_factor: float = 1.0) -> str:
