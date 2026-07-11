@@ -36,6 +36,7 @@ import {
   modelIdForSlug,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   soulsMount,
@@ -291,6 +292,18 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
     expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("mounts isolated grok auth when the family ship route selects grok", () => {
+    const c = cfg().config({
+      codexAuthDir: "/tmp/codex",
+      grokAuthDir: "/tmp/family-grok-auth",
+      claudeToken: "tok",
+    });
+    expect(c.mounts).toContainEqual({
+      hostPath: "/tmp/family-grok-auth",
+      sandboxPath: SANDBOX_GROK_DIR,
+    });
   });
 
   it("family shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
@@ -561,7 +574,13 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       // test isolates the focus-write ordering from the auth preflights, so provide
       // BOTH so runShipWorker proceeds past the preflights to the focus write + container.
       protected override mountShipAuth(): ShipAuth {
-        return { claudeToken: "tok", codexAuthDir: "/x/codex", ghToken: "gho_ok" };
+        return {
+          claudeToken: "tok",
+          codexAuthDir: "/x/codex",
+          grokAuthDir: "/x/grok",
+          ghToken: "gho_ok",
+          providerAuth: { claude: true, grok: true },
+        };
       }
       protected override async shipContainerRun(): Promise<never> {
         // Capture the focus-file state at the moment the container would launch.
@@ -590,6 +609,51 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     ).rejects.toThrow(/SENTINEL/);
     expect(focusBodyAtRun).toBeDefined();
     expect(focusBodyAtRun).toContain("integ/291-wave3");
+  });
+
+  it("family ship with billingPool=grok-build launches the grok provider", async () => {
+    let providerAtLaunch: string | undefined;
+    class ProviderBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return {
+          claudeToken: "tok",
+          codexAuthDir: "/x/codex",
+          grokAuthDir: "/x/grok",
+          ghToken: "gho_ok",
+          providerAuth: { claude: true, grok: true },
+        };
+      }
+      protected override async shipContainerRun(
+        spec: WorkerSpec,
+        _auth: ShipAuth,
+        _outcomeLanding?: { path: string; sandboxPath: string },
+        ctx?: Pick<DispatchContext, "billingPool">,
+      ): Promise<never> {
+        providerAtLaunch = this.agentForSpec(spec, ctx).name;
+        throw new Error("SENTINEL: provider captured");
+      }
+    }
+    const b = new ProviderBackend({
+      workingRepo: realRepo(),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-provider-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+    });
+
+    await expect(
+      (b as unknown as { runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<unknown> }).runShipWorker(
+        { ...familyShipWorkerSpec(), model: "grok-4.5" },
+        { familyBase: FAMILY_BASE, billingPool: "grok-build" },
+      ),
+    ).rejects.toThrow(/SENTINEL/);
+    expect(providerAtLaunch).toBe("grok");
   });
 
   it("runShipWorker removes the temporary outcome sidecar directory after parsing it", async () => {
