@@ -1700,7 +1700,7 @@ export class RealFamilyBackend implements FamilyBackend {
           name: "family-cmr",
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: this.opts.workingRepo,
-          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
+          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
           // Derive the model from the spec via the shared validated seam (cmr S336 r7
           // symmetry): resolve the worker's slug through the same registry as the
           // single-slice + family ship paths — no constant that could silently drift
@@ -1789,7 +1789,7 @@ export class RealFamilyBackend implements FamilyBackend {
           name: `family-cmr-outcome-rewrite-${ctx.cmrPass ?? "legacy"}-${attempt}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: this.opts.workingRepo,
-          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
+          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
           agent: this.agentForSpec(spec, ctx),
           maxIterations: 1,
           completionSignal: spec.completionSignal,
@@ -2636,8 +2636,9 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: CmrAuth,
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
   ): sc.SandboxProvider {
-    return docker(this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding));
+    return docker(this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding, ctx));
   }
 
   /**
@@ -2793,6 +2794,7 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: CmrAuth,
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -2828,6 +2830,7 @@ export class RealFamilyBackend implements FamilyBackend {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
     // `readonly`); codex auth likewise. No skills mount — the baked image wins (#334).
@@ -2845,6 +2848,7 @@ export class RealFamilyBackend implements FamilyBackend {
       mounts,
       opencodeAuthFile: auth.opencodeAuthFile,
       models: reviewLegs.map((leg) => leg.slug),
+      billingPool: pool,
     });
     if (outcomeLanding !== undefined) {
       mounts.push({

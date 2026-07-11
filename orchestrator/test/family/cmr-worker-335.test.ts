@@ -42,6 +42,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as sc from "@ai-hero/sandcastle";
+import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import {
   CMR_ROUTE_FILENAME,
   CMR_FOCUS_FILENAME,
@@ -57,6 +58,7 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_GROK_DIR,
+  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
@@ -1378,6 +1380,113 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(res.kind).toBe("completed"); // the fixtured ship outcome, not the cmr path
     expect(be.runShipCalls.length).toBe(1); // reached the ship worker seam
     expect(be.runCmrCalls.length).toBe(0); // the cmr worker seam was NOT touched
+  });
+});
+
+describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () => {
+  class AuthDispatchBackend extends RealFamilyBackend {
+    config?: {
+      env: Record<string, string>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+    };
+    outcomePath?: string;
+
+    constructor(private readonly auth: CmrAuth, workingRepo: string) {
+      super({
+        workingRepo,
+        familyBase: "fb",
+        ledgerDir: mkDir("cmr-auth-ledger-"),
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc123",
+      });
+    }
+
+    protected override mountCmrAuth(): CmrAuth {
+      return this.auth;
+    }
+
+    protected override cmrSandbox(
+      auth: CmrAuth,
+      reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
+      outcomeLanding?: { path: string; sandboxPath: string },
+      ctx?: Pick<DispatchContext, "billingPool">,
+    ): sc.SandboxProvider {
+      this.config = this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding, ctx);
+      return docker(this.config);
+    }
+
+    protected override prepareCmrOutcomeLanding(
+      ctx: DispatchContext,
+    ): { path: string; sandboxPath: string } {
+      const landing = super.prepareCmrOutcomeLanding(ctx);
+      this.outcomePath = landing.path;
+      return landing;
+    }
+
+    protected override async runAgentSandbox(
+      _options: Parameters<typeof sc.run>[0],
+    ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+      if (this.outcomePath === undefined) throw new Error("missing outcome path");
+      writeFileSync(this.outcomePath, JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...CMR_EVIDENCE,
+      }));
+      return { stdout: "", commits: [], iterations: [] } as unknown as Awaited<ReturnType<typeof sc.run>>;
+    }
+  }
+
+  function authFile(contents: Record<string, unknown>): string {
+    const dir = mkDir("cmr-opencode-auth-");
+    const path = join(dir, "auth.json");
+    writeFileSync(path, JSON.stringify(contents));
+    return path;
+  }
+
+  async function dispatch(pool: DispatchContext["billingPool"], contents: Record<string, unknown>) {
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    const path = authFile(contents);
+    const backend = new AuthDispatchBackend({ opencodeAuthFile: path }, repo);
+    await backend.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb", billingPool: pool });
+    return { backend, path };
+  }
+
+  it("zai-pool production CMR dispatch carries GLM_KEY + readonly auth mount + API preflight", async () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    const { backend, path } = await dispatch("zai", {
+      "opencode-go": { type: "api", key: "secret" },
+    });
+    expect(backend.config?.env.GLM_KEY).toBe("glm-secret");
+    expect(backend.config?.mounts).toContainEqual({
+      hostPath: path,
+      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+      readonly: true,
+    });
+  });
+
+  it("codex-pool production CMR dispatch carries none of the OpenCode auth trio", async () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    const { backend } = await dispatch("codex-5h", {
+      "opencode-go": { type: "oauth", refresh: "secret" },
+    });
+    expect(backend.config?.env.GLM_KEY).toBeUndefined();
+    expect(backend.config?.mounts).not.toContainEqual(
+      expect.objectContaining({ sandboxPath: SANDBOX_OPENCODE_AUTH_FILE }),
+    );
+  });
+
+  it("bare-id OpenCode model fails closed when its derived provider is absent from auth", async () => {
+    await expect(dispatch(undefined, {
+      "opencode-go": { type: "oauth", refresh: "secret" },
+    })).rejects.toThrow(/grok-4\.5.*derived provider.*missing.*read-only/i);
   });
 });
 

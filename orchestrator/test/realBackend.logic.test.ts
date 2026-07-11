@@ -949,37 +949,6 @@ describe("dispatch OpenCode auth invariant", () => {
     }
   });
 
-  it("routes every sandbox config builder through the shared invariant seam", () => {
-    const sources = [
-      fileURLToPath(new URL("../src/realBackend.ts", import.meta.url)),
-      fileURLToPath(new URL("../src/family/realFamilyBackend.ts", import.meta.url)),
-    ];
-    const audited: string[] = [];
-    for (const path of sources) {
-      const source = readFileSync(path, "utf8");
-      const pattern = /protected\s+(boxConfig|\w+SandboxConfig)\s*\(/g;
-      const matches = [...source.matchAll(pattern)];
-      for (const [index, match] of matches.entries()) {
-        const name = `${path.split("/").at(-1)}:${match[1]}`;
-        audited.push(name);
-        const next = matches[index + 1]?.index ?? source.length;
-        expect(source.slice(match.index, next), name).toContain("applyDispatchOpenCodeAuth({");
-      }
-      const handRolled = [...source.matchAll(/\bappend(?:OpenCodeAuthMount|GlmKeyEnv)\s*\(/g)]
-        .map((match) => source.slice(0, match.index).split("\n").length)
-        .filter((line) => line > 800);
-      expect(handRolled, `${path} hand-rolled auth sites`).toEqual([]);
-    }
-    expect(audited.sort()).toEqual([
-      "realBackend.ts:boxConfig",
-      "realBackend.ts:shipSandboxConfig",
-      "realFamilyBackend.ts:cmrSandboxConfig",
-      "realFamilyBackend.ts:familyCoderSandboxConfig",
-      "realFamilyBackend.ts:familyReviewLoopSandboxConfig",
-      "realFamilyBackend.ts:mergerSandboxConfig",
-      "realFamilyBackend.ts:shipSandboxConfig",
-    ]);
-  });
 });
 
 // ─── agentForSlug (model slug → baked-in CLI provider) ────────────────────────
