@@ -13,7 +13,10 @@ import { describe, expect, it } from "vitest";
 import { findingIdentityKey } from "../../src/findings.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import { isValidFinding } from "../../src/validate.js";
-import { runVerifyCmr } from "../../src/family/verifyCmr.js";
+import {
+  recordThenStampFinalReviewRound,
+  runVerifyCmr,
+} from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -33,6 +36,22 @@ import type {
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
 } as const;
+
+describe("review-round persistence immunity", () => {
+  it("stamps unknown when the injected durable record throws", async () => {
+    const stamped: Array<"accepted" | "rejected" | "unknown"> = [];
+
+    await expect(
+      recordThenStampFinalReviewRound("accepted", async () => {
+        throw new Error("durable ledger unavailable");
+      }, (disposition) => {
+        stamped.push(disposition);
+      }),
+    ).rejects.toThrow("durable ledger unavailable");
+
+    expect(stamped).toEqual(["unknown"]);
+  });
+});
 
 /** #600/#603: successful pr_opened ship → verify → docRelease → post-merge cleanup. */
 const ONLINE_REVIEW_DISPATCH_TAIL = [
