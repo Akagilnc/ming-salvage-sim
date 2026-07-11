@@ -162,6 +162,7 @@ import {
   applyRuntimeTightRoutePolicy,
   modelForSlot,
   printableRouteLineup,
+  degradeOptionalRouteSmokeFailures,
   routeConflictSlugsExcluding,
   resolveActiveModelRoute,
   withCoderSlot,
@@ -3925,6 +3926,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         deferredFindings: [],
       };
     }
+    const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
+    modelRoute = degradation.route;
     const smokeFailure = routeSmokeFailure(
       modelRoute,
       Date.now(),
@@ -3942,6 +3945,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }),
         deferredFindings: [],
       };
+    }
+    for (const dropped of degradation.dropped) {
+      console.error(
+        `[orchestrator] OPTIONAL CMR LEG DROPPED: ${dropped.slug}: ${dropped.reason}`,
+      );
+    }
+    if (degradation.dropped.length > 0) {
+      console.info(
+        `[orchestrator] effective model route lineup\n${printableRouteLineup(modelRoute)}`,
+      );
     }
     routeSmokeChecked = true;
     return undefined;

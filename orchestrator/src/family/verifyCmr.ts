@@ -124,6 +124,7 @@ import {
 } from "../dispatchRetry.js";
 import {
   cmrLegAccountingFailure,
+  requiredCmrLegSkipFailure,
   modelRouteFingerprint,
   resolveActiveModelRoute,
   smokeRouteModels,
@@ -2569,6 +2570,24 @@ async function runIntegratedCmrPass(input: {
       familyHeadAfter: postWorkerFamilyHead,
       stopSummary: providerDegradedFloorStopSummary({
         reason: floorFailure,
+        skippedLegs,
+      }),
+    }));
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
+  const requiredLegFailure = requiredCmrLegSkipFailure(
+    cmrResult.output.skippedLegs,
+    resolvedRoute,
+  );
+  if (requiredLegFailure !== undefined) {
+    const skippedLegs = cmrResult.output.skippedLegs;
+    await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason: requiredLegFailure,
+      familyHeadAfter: postWorkerFamilyHead,
+      stopSummary: providerDegradedFloorStopSummary({
+        reason: requiredLegFailure,
         skippedLegs,
       }),
     }));
