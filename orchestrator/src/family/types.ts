@@ -810,10 +810,16 @@ export interface FamilyAbortedEvent {
 export interface FamilyEscalation {
   /** Why the family gate paused. */
   readonly reason: string;
+  /** Worker-provided context needed for the human decision. */
+  readonly diagnosis?: string;
   /** Family base HEAD at the pause point, when known. */
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary for this pause, when the caller can classify it. */
   readonly stopSummary?: StopSummary;
+  /** Durable escalation semantic; defaults to the decision-gate meaning. */
+  readonly escalationKind?: "decision" | "failure";
+  /** Durable escalation phase; defaults to the final family gate. */
+  readonly phase?: "wave" | "final";
 }
 
 /** What the merger needs to merge one child branch into the family base. */
@@ -874,6 +880,8 @@ export interface MergeResult {
    * merge (the #293 happy path); the LLM resolver is never touched.
    */
   readonly conflicted?: boolean;
+  /** A human decision requested by the merger worker (ADR 0062 durable park). */
+  readonly escalation?: FamilyEscalation;
   /**
    * Was this merge LLM-resolved (the `resolving-merge-conflicts` soul ran) rather
    * than a clean deterministic merge? (#295.) Set by the merger AFTER a successful
