@@ -376,6 +376,23 @@ def test_chat_stream_uses_session_augmented_audience_prompt(game):
     assert agent.calls[0][0][0] == "【增强上下文】辽饷近况如何？"
 
 
+def test_audience_prompt_does_not_expose_unissued_draft_to_uninvolved_minister(game):
+    """未明发草案不应绕过见闻投影，注入未参与大臣的召对提示。"""
+    db, state, content = game
+    minister = next(iter(content.characters.values()))
+    session = SimpleNamespace(
+        db=db,
+        state=state,
+        registry=SimpleNamespace(build_draft_line=lambda: "#1 着户部清核辽饷。"),
+    )
+
+    prompt = GameSession._audience_prompt_for_message(
+        session, "辽饷近况如何？", minister
+    )
+
+    assert "着户部清核辽饷" not in prompt
+
+
 class _CliActionSession(_FakeSession):
     """CLI 路召对：动作经 apply_cli_conversation_actions 落地（密令/pending_action）。"""
 

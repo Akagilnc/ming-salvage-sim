@@ -500,6 +500,8 @@ def build_minister_tools(character: Character, context: CourtContext,
         progress: str = "",
         claim: str = "",
         reason: str = "",
+        excluded_names_json: str = "[]",
+        excluded_offices_json: str = "[]",
     ) -> str:
         """密令统一入口。action 取值：
         - "issue"：下达新密令。需填 title、content；assignee 留空默认当前大臣；deadline_months=0 无硬限。
@@ -513,7 +515,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             return "本月结算未完（恢复中），密令房暂不办事；请先续跑结算，再行降旨。"
         act = (action or "").strip().lower()
         if act == "issue":
-            return _secret_order_issue(title, content, tags_json, assignee, deadline_months)
+            return _secret_order_issue(title, content, tags_json, assignee, deadline_months, excluded_names_json, excluded_offices_json)
         if act == "progress":
             return _secret_order_progress(order_id, progress)
         if act == "submit":
@@ -522,7 +524,7 @@ def build_minister_tools(character: Character, context: CourtContext,
             return _secret_order_rush(order_id, deadline_months, reason)
         return f"未知 action={action!r}，可选：issue / progress / submit / rush。"
 
-    def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0) -> str:
+    def _secret_order_issue(title: str, content: str, tags_json: str = "[]", assignee: str = "", deadline_months: int = 0, excluded_names_json: str = "[]", excluded_offices_json: str = "[]") -> str:
         """皇帝下达密令，返回待确认密令 payload，由召对确认闸门决定是否正式落库。
 
         title：密令标题。
@@ -542,12 +544,22 @@ def build_minister_tools(character: Character, context: CourtContext,
         except (ValueError, TypeError):
             tags = []
         tags_clean = [str(k).strip() for k in tags if str(k).strip()]
+        try:
+            excluded = json.loads(excluded_names_json or "[]")
+            excluded = [str(k).strip() for k in excluded if str(k).strip()] if isinstance(excluded, list) else []
+        except (ValueError, TypeError):
+            excluded = []
+        try:
+            excluded_offices = json.loads(excluded_offices_json or "[]")
+            excluded_offices = [str(k).strip() for k in excluded_offices if str(k).strip()] if isinstance(excluded_offices, list) else []
+        except (ValueError, TypeError):
+            excluded_offices = []
         real_assignee = (assignee or "").strip() or character.name
         try:
             deadline = max(0, min(int(deadline_months or 0), 36))
         except (TypeError, ValueError):
             deadline = 0
-        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline}, ensure_ascii=False)}"
+        return f"__secret_order__{json.dumps({'title': t, 'content': c, 'tags': tags_clean, 'assignee': real_assignee, 'deadline_months': deadline, 'excluded_names': excluded, 'excluded_offices': excluded_offices}, ensure_ascii=False)}"
 
     def _pending_secret_action(action_name: str, order_id: int, payload: Dict[str, object]) -> str:
         return "__secret_action__" + json.dumps(

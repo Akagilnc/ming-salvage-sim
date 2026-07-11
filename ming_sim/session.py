@@ -8,6 +8,7 @@ CLI 和 Web 各自只做 I/O 包装。
 from __future__ import annotations
 
 import json
+import inspect
 import re
 import time
 import uuid
@@ -901,7 +902,22 @@ class GameSession:
         # 控制指令（退下/换人/技能）由 CLI 层 parse_court_command 处理；
         # GameSession.chat 只负责与 agent 对话与 tool 截获。
         agent = self.registry.get(character)
-        augmented = self._audience_prompt_for_message(message)
+        # Keep the public seam compatible with lightweight web/test session
+        # doubles that predate the optional character-aware audience context.
+        audience_prompt = self._audience_prompt_for_message
+        try:
+            accepts_character = any(
+                parameter.kind is inspect.Parameter.VAR_POSITIONAL
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                or parameter.name == "character"
+                for parameter in inspect.signature(audience_prompt).parameters.values()
+            )
+        except (TypeError, ValueError):
+            accepts_character = True
+        augmented = (
+            audience_prompt(message, character)
+            if accepts_character else audience_prompt(message)
+        )
         action_intent_future = self._start_cli_action_intent(character, message)
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")
@@ -1017,6 +1033,8 @@ class GameSession:
                                 "assignee": str(payload.get("assignee") or character.name).strip(),
                                 "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
                                 "deadline_months": payload.get("deadline_months") or 0,
+                                "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
+                                "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
                             },
                         )
                 elif tool_result.startswith("__secret_order_registered__"):
@@ -1037,13 +1055,28 @@ class GameSession:
         )
         return result
 
-    def _audience_prompt_for_message(self, message: str) -> str:
-        augmented = self._retrieve_memories_for_message(message)
-        # 本回合已核定草案随大臣议事滚动累加，agent system 在月初冻结拿不到——
-        # 每次 chat 前置实时 draft_line 到 user message 头，确保大臣看得到兄弟大臣最新动作。
-        draft_line = self.registry.build_draft_line() if self.registry is not None else ""
-        if draft_line and draft_line != "无":
-            augmented = f"【本{TURN_UNIT}已核定草案】{draft_line}\n\n{augmented}"
+    def _audience_prompt_for_message(self, message: str, character: Character) -> str:
+        # Chapter summaries are a global narrative cache and may contain secret
+        # or off-stage facts.  Character knowledge is the only audience input
+        # allowed to cross this boundary; public reports are projected there
+        # with their source-level exclusions applied.
+        augmented = message
+        try:
+            knowledge = self.db.get_character_knowledge(self.state, character.name)
+            world = knowledge.get("world") or {}
+            events = knowledge.get("events") or []
+            public_events = knowledge.get("public_events") or []
+            lines = [f"【{character.name}此刻所知】"]
+            for key, value in world.items():
+                lines.append(f"{key}：{value}")
+            for item in [*public_events, *events][-20:]:
+                lines.append(f"- {item.get('title')}: {item.get('body')}")
+            augmented = "\n".join(lines) + "\n\n" + augmented
+        except Exception:
+            # A corrupt legacy save must not prevent ordinary audience chat.
+            pass
+        # 未明发草案不属于公开层；参与者/知情圈须通过持久见闻事件投影进入提示。
+        # 这里不能直接读取 registry 的全局草案列表，否则未参与大臣会越过排除边界获知密事。
         return augmented
 
     def apply_cli_conversation_actions(
@@ -1196,6 +1229,8 @@ class GameSession:
                     "assignee": assignee,
                     "tags": so.get("tags") or [],
                     "deadline_months": so.get("deadline_months", 0),
+                    "excluded_names": so.get("excluded_names") or [],
+                    "excluded_offices": so.get("excluded_offices") or [],
                 },
             )
         if not out["secret_order_id"] and acts["secret_order"]:
@@ -1768,7 +1803,10 @@ class GameSession:
         except (TypeError, ValueError):
             deadline = 0
         print(f"[secret_order] 截获密令 minister={minister_name} assignee={assignee} title={title!r} tags={tags}")
-        return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline)
+        excluded = data.get("excluded_names") if isinstance(data.get("excluded_names"), list) else []
+        excluded_offices = data.get("excluded_offices") if isinstance(data.get("excluded_offices"), list) else []
+        return self.db.create_secret_order(self.state, assignee, title, content, tags, deadline_months=deadline,
+                                           excluded_names=excluded, excluded_offices=excluded_offices)
 
     def _stage_legacy_registered_secret_order(self, order_id: int, fallback_minister: str) -> int:
         """Convert a legacy already-registered same-turn secret order into a pending candidate.
