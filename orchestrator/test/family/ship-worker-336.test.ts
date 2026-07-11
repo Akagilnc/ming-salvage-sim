@@ -574,7 +574,13 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       // test isolates the focus-write ordering from the auth preflights, so provide
       // BOTH so runShipWorker proceeds past the preflights to the focus write + container.
       protected override mountShipAuth(): ShipAuth {
-        return { claudeToken: "tok", codexAuthDir: "/x/codex", ghToken: "gho_ok" };
+        return {
+          claudeToken: "tok",
+          codexAuthDir: "/x/codex",
+          grokAuthDir: "/x/grok",
+          ghToken: "gho_ok",
+          providerAuth: { claude: true, grok: true },
+        };
       }
       protected override async shipContainerRun(): Promise<never> {
         // Capture the focus-file state at the moment the container would launch.
@@ -612,7 +618,13 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
         return "";
       }
       protected override mountShipAuth(): ShipAuth {
-        return { claudeToken: "tok", codexAuthDir: "/x/codex", ghToken: "gho_ok" };
+        return {
+          claudeToken: "tok",
+          codexAuthDir: "/x/codex",
+          grokAuthDir: "/x/grok",
+          ghToken: "gho_ok",
+          providerAuth: { claude: true, grok: true },
+        };
       }
       protected override async shipContainerRun(
         spec: WorkerSpec,
