@@ -3093,9 +3093,23 @@ export class RealBackend implements Backend {
       );
       return compatibility;
     }
+    // A coder has an independent, host-observed commit result to reconcile, so
+    // its legacy no-tag path remains advisory. Every other role's payload is its
+    // only judgment: inventing a zero-value result here would turn silence into
+    // reviewer/verify success (or a fabricated cleanup/doc-release verdict).
+    // Surface a structural protocol failure so the runner's bounded rerun and
+    // escalation path owns the outcome instead of silently releasing the gate.
+    if (spec.role !== "coder") {
+      const err = new Error(
+        `StructuredOutputError: ${spec.id}-${spec.role} produced no worker outcome ` +
+          "sidecar, typed output, or legacy stdout tag",
+      );
+      err.name = "StructuredOutputError";
+      throw err;
+    }
     console.warn(
       `[orchestrator] telemetry: ${spec.id}-${spec.role} exited without a ` +
-        "worker outcome sidecar, typed output, or legacy stdout tag; continuing with exit fallback",
+        "worker outcome sidecar, typed output, or legacy stdout tag; continuing with commit observation",
     );
     return undefined;
   }
@@ -3129,11 +3143,9 @@ export class RealBackend implements Backend {
         const count = gitCommitCount ?? 0;
         return { kind: "coder", committed: count > 0, commitsAdded: count };
       }
-      if (spec.role === "reviewer") return { kind: "reviewer", findings: [] };
-      if (spec.role === "verify") return { kind: "verify", converged: true };
-      if (spec.role === "fixer") return { kind: "fixer", committed: false };
-      if (spec.role === "cleanup") return { kind: "cleanup", terminal: false, ok: false };
-      if (spec.role === "docRelease") return { kind: "docRelease", released: false };
+      throw new Error(
+        `realBackend: ${spec.id}-${spec.role} reached decodeOutput without a machine outcome`,
+      );
     }
     if (spec.role === "reviewer") {
       const r = reviewerOutputSchema.parse(raw);

@@ -1514,6 +1514,19 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     ).toThrow();
   });
 
+  it("never fabricates review-loop verdicts when every outcome channel is absent", () => {
+    const backend = makeBackend();
+    const decodeOutput = (backend as unknown as {
+      decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
+    }).decodeOutput.bind(backend);
+
+    for (const spec of [verifySpec, fixerSpec, cleanupSpec, docReleaseSpec]) {
+      expect(() => decodeOutput(spec, undefined, undefined)).toThrow(
+        /without a machine outcome/,
+      );
+    }
+  });
+
   it("decodeOutput on RAW valid fixer produces FixerResult via real seam", () => {
     const backend = makeBackend();
     const raw = extractFixerTag('<fixer>{"committed": false}</fixer>');
@@ -1744,6 +1757,56 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       sessionId: "sess-advisory-exit",
     });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("telemetry:"));
+  });
+
+  it("treats a reviewer with no sidecar, typed output, or stdout tag as malformed instead of a clean review", async () => {
+    const backend = makeBackend();
+    backend.agentResult = agentRunResult({
+      stdout: "reviewer finished without a machine verdict",
+      commits: [],
+      sessionId: "sess-missing-review-outcome",
+    });
+
+    await expect(
+      backend.runStep(reviewerSpec, {
+        branch: "feat/issue-824",
+        base: "main",
+        path: "/tmp/worktree/issue-824",
+      }),
+    ).rejects.toMatchObject({
+      name: "StructuredOutputError",
+      message: expect.stringContaining("no worker outcome"),
+    });
+  });
+
+  it("accepts a reviewer verdict from any one supported outcome channel", () => {
+    const backend = makeBackend();
+    const rawOutputFor = (backend as unknown as {
+      rawOutputFor(
+        result: { output?: unknown; stdout: string },
+        spec: StepSpec,
+        typedOutputUsed: boolean,
+        options?: { outcomeLanding?: { path: string; sandboxPath: string } },
+      ): unknown;
+    }).rawOutputFor.bind(backend);
+    const payload = { findings: [] };
+
+    expect(rawOutputFor({ output: payload, stdout: "" }, reviewerSpec, true)).toEqual(payload);
+    expect(
+      rawOutputFor({ stdout: '<review>{"findings": []}</review>' }, reviewerSpec, false),
+    ).toEqual(payload);
+
+    const dir = mkdtempSync(join(tmpdir(), "worker-review-sidecar-channel-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, JSON.stringify(payload), "utf8");
+    expect(
+      rawOutputFor(
+        { stdout: "" },
+        reviewerSpec,
+        false,
+        { outcomeLanding: { path: outcomePath, sandboxPath: ".orchestrator-outcome.json" } },
+      ),
+    ).toEqual(payload);
   });
 
   it("prefers a runner-owned outcome sidecar over malformed coder stdout", async () => {
