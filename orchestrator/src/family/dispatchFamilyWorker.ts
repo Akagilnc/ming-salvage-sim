@@ -225,8 +225,22 @@ export async function dispatchFamilyWorkerWithMonitor(
   landing?: WorkerLandingPayload,
   opts?: DispatchFamilyWorkerWithMonitorOptions,
 ): Promise<DispatchFamilyWorkerWithMonitorOutcome> {
-  const telemetryDir =
-    ctx.telemetryDir ?? familyBackend.resolveTelemetryDir?.(ctx) ?? ctx.stateDir;
+  // Best-effort only: never changes worker semantics. Optional chaining only
+  // guards missing methods; a throwing resolveTelemetryDir must not abort
+  // dispatch (same fail-open as single-slice; CodeRabbit #815).
+  let telemetryDir = ctx.telemetryDir;
+  if (telemetryDir === undefined) {
+    try {
+      telemetryDir = familyBackend.resolveTelemetryDir?.(ctx);
+    } catch (err) {
+      console.warn(
+        `[orchestrator] family resolveTelemetryDir failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    telemetryDir = telemetryDir ?? ctx.stateDir;
+  }
   const telemetryCtx =
     telemetryDir === undefined ? ctx : { ...ctx, telemetryDir };
   const telemetry = createTelemetryLegStamper({

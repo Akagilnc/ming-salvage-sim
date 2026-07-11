@@ -668,6 +668,41 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(backend.opts.installs).toBe(0);
   });
 
+  it("keeps dispatch alive when resolveTelemetryDir throws", async () => {
+    // CodeRabbit #815: optional chaining only guards missing methods; a
+    // throwing resolveTelemetryDir must degrade telemetry, not abort dispatch.
+    const dir = tempDir("orch-809-resolve-throw-");
+    const ledgerDir = join(dir, ".ledger-809");
+    const backend = Object.assign(quickExitBackend("run output\n"), {
+      resolveTelemetryDir: (): string => {
+        throw new Error("resolveTelemetryDir boom");
+      },
+    }) as Backend;
+    const route = smokedRoute();
+
+    const outcome = await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { runId: "run-809-throw", stateDir: ledgerDir, modelRoute: route },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        pollIntervalMs: 20,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-809-resolve-throw",
+          sleepMs: (ms: number) =>
+            new Promise<void>((resolve) => setTimeout(resolve, Math.min(ms, 20))),
+        },
+      },
+    );
+
+    expect(outcome.result.kind).toBe("completed");
+    // Fail-open falls back to stateDir; sidecar may still write there.
+    const records = readTelemetryRecords(ledgerDir);
+    expect(records.filter((r) => r.phase === "dispatch")).toHaveLength(1);
+    expect(records.filter((r) => r.phase === "collect")).toHaveLength(1);
+  });
+
   it("keeps the first run sidecar readable after a same-issue rerun", async () => {
     const root = tempDir("orch-809-two-runs-");
     const durable = join(root, ".ledger-809");
