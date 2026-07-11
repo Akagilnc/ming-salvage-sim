@@ -227,8 +227,29 @@ export async function dispatchFamilyWorkerWithMonitor(
   landing?: WorkerLandingPayload,
   opts?: DispatchFamilyWorkerWithMonitorOptions,
 ): Promise<DispatchFamilyWorkerWithMonitorOutcome> {
-  const ledgerDir = ctx.stateDir;
-  const telemetry = createTelemetryLegStamper({ ledgerDir, spec, ctx });
+  // Best-effort only: never changes worker semantics. Optional chaining only
+  // guards missing methods; a throwing resolveTelemetryDir must not abort
+  // dispatch (same fail-open as single-slice; CodeRabbit #815).
+  let telemetryDir = ctx.telemetryDir;
+  if (telemetryDir === undefined) {
+    try {
+      telemetryDir = familyBackend.resolveTelemetryDir?.(ctx);
+    } catch (err) {
+      console.warn(
+        `[orchestrator] family resolveTelemetryDir failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    telemetryDir = telemetryDir ?? ctx.stateDir;
+  }
+  const telemetryCtx =
+    telemetryDir === undefined ? ctx : { ...ctx, telemetryDir };
+  const telemetry = createTelemetryLegStamper({
+    ledgerDir: telemetryDir,
+    spec,
+    ctx: telemetryCtx,
+  });
   let firstOutputAt: string | null = null;
   let logPath: string | null = null;
   let logStartOffset: number | undefined;
@@ -247,7 +268,7 @@ export async function dispatchFamilyWorkerWithMonitor(
   };
 
   try {
-    const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+    const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, telemetryCtx, landing);
     if (cliSpec !== undefined) {
       const input: MonitoredCliDispatchInput = {
         command: cliSpec.command,
@@ -280,8 +301,8 @@ export async function dispatchFamilyWorkerWithMonitor(
       // start before the persistence callback so a callback throw cannot erase
       // this run's environment row.
       telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
-        ledgerDir,
-        ctx,
+        telemetryDir,
+        telemetryCtx,
         familyBackend,
       );
       if (opts?.onMonitorHandleSpawned !== undefined) {
@@ -333,8 +354,8 @@ export async function dispatchFamilyWorkerWithMonitor(
       ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
     telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
-      ledgerDir,
-      ctx,
+      telemetryDir,
+      telemetryCtx,
       familyBackend,
     );
     const result = await dispatchFamilyWorker(familyBackend, spec, ctx, landing);

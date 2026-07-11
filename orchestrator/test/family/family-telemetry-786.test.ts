@@ -316,4 +316,39 @@ describe("#786 family dispatch telemetry", () => {
     );
     expect(collect?.first_output_at).not.toBeNull();
   });
+
+  it("keeps family dispatch alive when resolveTelemetryDir throws", async () => {
+    // Symmetric to single-slice telemetry-786 "keeps dispatch alive when
+    // resolveTelemetryDir throws" (CodeRabbit #815 / #809): optional chaining
+    // only guards missing methods; a throwing family resolveTelemetryDir must
+    // degrade telemetry (fallback stateDir), not abort dispatch.
+    const ledgerDir = join(tempDir("orch-809-family-resolve-throw-"), ".ledger");
+    const backend = {
+      dispatchWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+        sessionId: "family-809-resolve-throw-session",
+      }),
+      installTelemetryRunEnvironment: async () => {},
+      resolveTelemetryDir: (): string => {
+        throw new Error("resolveTelemetryDir boom");
+      },
+    } as unknown as FamilyBackend;
+
+    const outcome = await dispatchFamilyWorkerWithMonitor(
+      backend,
+      familySpec("cmr"),
+      {
+        familyBase: "feat/family-809",
+        stateDir: ledgerDir,
+        modelRoute: smokedRoute(),
+      },
+    );
+
+    expect(outcome.result.kind).toBe("completed");
+    // Fail-open falls back to stateDir; sidecar may still write there.
+    const records = readTelemetryRecords(ledgerDir);
+    expect(records.filter((r) => r.phase === "dispatch")).toHaveLength(1);
+    expect(records.filter((r) => r.phase === "collect")).toHaveLength(1);
+  });
 });
