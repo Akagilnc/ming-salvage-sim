@@ -107,6 +107,28 @@ def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Op
     }
 
 
+def _public_narrative_projection(db: GameDB, turn: int, narrative: str) -> str:
+    """Keep restricted source fragments out of the aggregate public archive.
+
+    The simulator narrative is an aggregate presentation artifact, not an
+    authorization boundary.  Source rows already materialized for this turn
+    carry the boundary; remove their exact title/body fragments before the
+    aggregate gets a public source row, so a mixed narrative cannot re-publish
+    a restricted item to every character.
+    """
+    projected = str(narrative or "")
+    restricted_fragments = {
+        str(fragment).strip()
+        for item in db.knowledge_items_for_turn(turn)
+        if item.get("excluded_names")
+        for fragment in (item.get("title"), item.get("body"))
+        if str(fragment or "").strip()
+    }
+    for fragment in sorted(restricted_fragments, key=len, reverse=True):
+        projected = projected.replace(fragment, "")
+    return re.sub(r"[；;、 ]{2,}", "；", projected).strip("；;、 ")
+
+
 def write_decree_with_agno(
     llm_config: LLMConfig,
     agno_db: SqliteDb,
@@ -352,7 +374,7 @@ def resolve_directives(
             db.record_public_knowledge_event(
                 state,
                 "本回合邸报",
-                narrative,
+                _public_narrative_projection(db, state.turn, narrative),
                 source_id=f"settlement:narrative:{state.turn}",
                 commit=False,
             )
@@ -1287,7 +1309,7 @@ def _settle_after_extract_body(
     db.record_public_knowledge_event(
         state,
         "本回合邸报",
-        narrative,
+        _public_narrative_projection(db, before_turn, narrative),
         source_id=f"settlement:narrative:{before_turn}",
         commit=False,
     )

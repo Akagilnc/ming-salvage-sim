@@ -154,6 +154,37 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
     assert "生产链受限事项" not in excluded_text
 
 
+def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
+    """真实结算的混合邸报只把公开片段投影给未参与者。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    order = db.create_secret_order(
+        state, knower.name, "混合密查", "混合结算密令标记", [],
+        excluded_names=[excluded.name],
+    )
+    before_turn = state.turn
+    narrative = "公开结算标记；混合结算密令标记；公开结算尾声"
+
+    settle_with_delta(
+        state, db, {}, before_turn=before_turn, content=content,
+        narrative=narrative,
+    )
+
+    excluded_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
+    )
+    assert "公开结算标记" in excluded_text
+    assert "公开结算尾声" in excluded_text
+    assert "混合结算密令标记" not in excluded_text
+    assert order > 0
+
+
 def test_settlement_archive_writes_rollback_on_later_failure(game, monkeypatch):
     """真实结算在归档后续故障时不能留下 source/event/chapter/report 半写。"""
     db, state, _content = game
