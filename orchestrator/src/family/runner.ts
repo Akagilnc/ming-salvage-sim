@@ -242,9 +242,8 @@ function familyStopSummary(input: {
  * agent step → answerable, parkable) from the FAILURE bucket (an
  * infra/retries-exhausted escalate with no valid Escalation → returns undefined,
  * so the caller keeps the CURRENT `"failed"` behaviour — A/B分家). The reason /
- * diagnosis come from the escalated agent step's Escalation payload; the sessionId
- * (for 原地 resume, ADR 0062) is read from the persisted child ledger by the
- * caller — the lean in-memory RunResult ledger carries no session id.
+ * diagnosis and sessionId come from the escalated agent step's in-memory ledger
+ * entry; the durable child ledger independently retains the same resume truth.
  *
  * NOTE: `escalationKindForHandoff` in runner.ts (single-slice) mirrors this exact
  * decision-vs-failure split (a valid Escalation ⇒ "decision", else "failure"); this
@@ -322,9 +321,18 @@ async function runChild(
     const forStep =
       resumeState !== undefined ? escalatedChildStep(resumeState.ledger) : undefined;
     if (resumeState !== undefined && forStep !== undefined) {
+      const parkedSessionId = [...resumeState.ledger]
+        .reverse()
+        .find((entry) => entry.step === forStep)?.sessionId;
+      if (parkedSessionId === undefined) {
+        return { issue: child.issue, status: "failed" };
+      }
       const answerEntry: PersistentLedgerEntry = {
         step: forStep,
-        sessionId: `family-answer-${child.issue}`,
+        // Keep the answer row in the same session lineage as the parked worker.
+        // The durable child step is the fallback truth for legacy family answer
+        // rows that predate sessionId forwarding.
+        sessionId: escalationAnswer.sessionId ?? parkedSessionId,
         prompt_hash: "family-answer",
         branchHEAD: resumeState.worktree.branch,
         ts: new Date().toISOString(),
