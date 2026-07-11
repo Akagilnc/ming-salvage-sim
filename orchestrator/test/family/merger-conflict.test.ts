@@ -242,6 +242,33 @@ describe("merger conflict fallback — conflicting path routes to the LLM resolv
 });
 
 describe("merger conflict fallback — a FAILED resolution is not silently swallowed (#295 acc. 3)", () => {
+  it("forwards a structured merger decision without mechanical re-dispatch", async () => {
+    class DecisionBackend extends ConflictingFamilyBackend {
+      override async resolveMergeConflict(req: ConflictResolveRequest): Promise<MergeResult> {
+        this.resolves.push(req);
+        return {
+          familyHead: "base0",
+          escalation: {
+            reason: "choose the authoritative migration",
+            diagnosis: "both branches intentionally changed the same contract",
+            escalationKind: "decision",
+            phase: "wave",
+          },
+        };
+      }
+    }
+
+    const backend = new DecisionBackend(new Set([14]));
+    const result = await mergeChild(backend, { childIssue: 14, childBranch: "feat/child-14" });
+
+    expect(backend.resolves).toHaveLength(1);
+    expect(result.escalation).toMatchObject({
+      reason: "choose the authoritative migration",
+      diagnosis: "both branches intentionally changed the same contract",
+    });
+    expect(backend.appended).toEqual([]);
+  });
+
   it("throws and does NOT write a merged ledger entry when the LLM resolver fails", async () => {
     const backend = new ConflictingFamilyBackend(new Set([13]), new Set([13]));
     await expect(

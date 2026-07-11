@@ -914,6 +914,25 @@ class FakeSeamsBackend extends RealFamilyBackend {
 }
 
 describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () => {
+  it("checks conflict markers only in files introduced or modified by the merge", () => {
+    class MarkerScopeBackend extends RealFamilyBackend {
+      hasMarkers(before: string, after: string): boolean {
+        return this.hasConflictMarkers(before, after, this.opts.workingRepo);
+      }
+    }
+
+    const repo = trackRepo();
+    const marker = "<<<<<<< archived fixture\n=======\n>>>>>>> archived fixture\n";
+    mkdirSync(join(repo, "docs"));
+    mkdirSync(join(repo, "src"));
+    commitFile(repo, "docs/fixture.md", marker);
+    const before = git(repo, "rev-parse", "HEAD");
+    commitFile(repo, "src/touched.ts", "export const touched = true;\n");
+    const after = git(repo, "rev-parse", "HEAD");
+
+    expect(new MarkerScopeBackend(opts(repo)).hasMarkers(before, after)).toBe(false);
+  });
+
   it("rejects a two-parent merge commit that still contains conflict markers", async () => {
     class MarkerLeavingMergerBackend extends RealFamilyBackend {
       protected override async runMergerAgent(req: ConflictResolveRequest) {
@@ -1268,29 +1287,29 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
   });
 
-  it("falls back from a malformed review-loop sidecar to each stdout tag", async () => {
+  it("treats a non-empty malformed review-loop sidecar as a protocol failure", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
     const dir = trackTempDir("review-loop-outcome-fallback-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
     const sha = "a".repeat(40);
 
-    expect(mod.parseVerifyOutcome('<verify>{"converged": true}</verify>', outcomePath)).toEqual({
-      kind: "verify",
-      converged: true,
+    expect(mod.parseVerifyOutcome('<verify>{"converged": true}</verify>', outcomePath)).toMatchObject({
+      kind: "malformed",
+      reason: expect.stringContaining("sidecar protocol failure"),
     });
     expect(
       mod.parseFixerOutcome(
         `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
         outcomePath,
       ),
-    ).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
+    ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
     expect(
       mod.parseCleanupOutcome('<cleanup>{"terminal": true, "ok": true}</cleanup>', outcomePath),
-    ).toEqual({ kind: "cleanup", terminal: true, ok: true });
+    ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
     expect(
       mod.parseDocReleaseOutcome('<docRelease>{"released": true}</docRelease>', outcomePath),
-    ).toEqual({ kind: "docRelease", released: true });
+    ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
   });
 
   it("pin r39: committed:true without fixCommitSha is malformed on family parseFixerOutcome", async () => {
@@ -1476,7 +1495,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("falls back to stdout when the cmr outcome sidecar is malformed", () => {
+  it("treats a non-empty malformed cmr sidecar as a protocol failure", () => {
     const dir = trackTempDir("cmr-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1490,9 +1509,8 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
 
     expect(outcome).toMatchObject({
-      kind: "verdict",
-      converged: true,
-      successfulLegs: ["gpt-5.6-sol"],
+      kind: "malformed",
+      reason: expect.stringContaining("sidecar protocol failure"),
     });
   });
 
@@ -1539,7 +1557,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("falls back to stdout when a malformed cmr sidecar has no completion signal", () => {
+  it("does not let stdout bypass a malformed cmr sidecar without a completion signal", () => {
     const dir = trackTempDir("cmr-outcome-bad-unsignaled-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1553,9 +1571,8 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
 
     expect(outcome).toMatchObject({
-      kind: "verdict",
-      converged: true,
-      successfulLegs: ["gpt-5.6-sol"],
+      kind: "malformed",
+      reason: expect.stringContaining("sidecar protocol failure"),
     });
   });
 
@@ -1794,7 +1811,7 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
     ).toEqual({ resolved: true });
   });
 
-  it("falls back to stdout when the merger outcome sidecar is malformed", () => {
+  it("treats a non-empty malformed merger sidecar as a protocol failure", () => {
     const dir = trackTempDir("merger-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1805,7 +1822,10 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
       outcomePath,
     });
 
-    expect(outcome).toEqual({ resolved: true });
+    expect(outcome).toMatchObject({
+      resolved: false,
+      reason: expect.stringContaining("sidecar protocol failure"),
+    });
   });
 
   it("falls back to stdout when the merger outcome sidecar is blank", () => {

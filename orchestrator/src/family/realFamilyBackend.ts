@@ -125,6 +125,7 @@ import {
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
+  readWorkerOutcomeSidecar,
   readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
 import {
@@ -745,7 +746,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // the bound on the CURRENT worktree as-is. A returned structured outcome is
     // telemetry; git post-state below is the only resolve decision. A persistent
     // crash re-throws.
-    await retryProcessCrash(async () => {
+    const outcome = await retryProcessCrash(async () => {
       // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
       // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
       // landed merge instead (the post-state check below then returns it clean).
@@ -754,6 +755,14 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       return await this.runMergerAgent(req);
     });
+    if (outcome.escalation !== undefined) {
+      return {
+        familyHead: this.sh("git", ["rev-parse", this.opts.familyBase], repo),
+        familyHeadBefore,
+        childHead,
+        escalation: outcome.escalation,
+      };
+    }
     // The worker has exited — VERIFY git truth before returning clean (the prompt's
     // "resolve → add → commit, never --abort" is a soft LLM instruction, not a
     // postcondition). Failure modes a clean return
@@ -797,7 +806,7 @@ export class RealFamilyBackend implements FamilyBackend {
       this.isAncestorOf(childHead, familyHead, repo) &&
       this.isMergeCommit(familyHead, repo) &&
       !this.hasUnmergedEntries(repo) &&
-      !this.hasConflictMarkers(repo)
+      !this.hasConflictMarkers(familyHeadBefore, familyHead, repo)
     );
   }
 
@@ -820,11 +829,18 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** A merger commit containing conflict markers is not a clean resolution. */
-  protected hasConflictMarkers(repo: string): boolean {
+  protected hasConflictMarkers(before: string, after: string, repo: string): boolean {
     try {
+      const changed = this.sh(
+        "git",
+        ["diff", "--diff-filter=AM", "--name-only", "-z", before, after],
+        repo,
+      );
+      const paths = changed.split("\0").filter(Boolean);
+      if (paths.length === 0) return false;
       const matches = this.sh(
         "git",
-        ["grep", "-n", "-E", "^(<<<<<<<|=======|>>>>>>>)( |$)", "--", "."],
+        ["grep", "-n", "-E", "^(<<<<<<<|=======|>>>>>>>)( |$)", after, "--", ...paths],
         repo,
       );
       return matches.trim().length > 0;
@@ -856,7 +872,7 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected async runMergerAgent(
     req: ConflictResolveRequest,
-  ): Promise<{ resolved: boolean; reason?: string }> {
+  ): Promise<{ resolved: boolean; reason?: string; escalation?: FamilyEscalation }> {
     // FAIL-CLOSED on the WORKER's OWN auth (integ-cmr int-r2 A-1, mirroring the
     // cmr/ship worker preflight): when the merger slot resolves to a Claude-family
     // model, the Claude OAuth token is THIS worker's auth, not a degradable leg.
@@ -3321,20 +3337,24 @@ export function cmrOutcomeFromResult(result: {
   outcomePath?: string;
   stdout: string;
 }): CmrWorkerOutcome {
-  try {
-    if (result.outcomePath !== undefined) {
-      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
-      return classifyCmrOutcomePayload(
-        sidecar,
-        result.cmrReviewLegs ?? process.env,
-        "cmr worker outcome sidecar",
-      );
+  if (result.outcomePath !== undefined) {
+    try {
+      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+      if (sidecar !== undefined) {
+        return classifyCmrOutcomePayload(
+          sidecar,
+          result.cmrReviewLegs ?? process.env,
+          "cmr worker outcome sidecar",
+        );
+      }
+    } catch (err) {
+      return {
+        kind: "malformed",
+        reason:
+          `cmr worker outcome sidecar protocol failure: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      };
     }
-  } catch (err) {
-    // A runner-owned sidecar is preferred, but it is only one transport. Keep
-    // the sidecar failure for diagnostics and let the stdout protocol provide
-    // the next available outcome when the worker emitted one there.
-    void err;
   }
 
   return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
@@ -3726,17 +3746,19 @@ export function mergerOutcomeFromResult(result: {
   completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
-}): { resolved: boolean; reason?: string } {
-  try {
-    if (result.outcomePath !== undefined) {
-      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
-      return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
+}): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
+  if (result.outcomePath !== undefined) {
+    try {
+      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+      if (sidecar !== undefined) {
+        return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
+      }
+    } catch (err) {
+      return {
+        resolved: false,
+        reason: `merger worker outcome sidecar protocol failure: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
-  } catch (err) {
-    // Sidecar is the preferred telemetry source, not a reason to discard a
-    // usable stdout result. Fall through so the telemetry row can still carry
-    // the worker's structured merger signal.
-    void err;
   }
   return parseMergerOutcome(result.stdout);
 }
@@ -3798,7 +3820,7 @@ export function parseMergerOutcome(stdout: string): {
 function classifyMergerOutcomePayload(
   parsed: unknown,
   source: string,
-): { resolved: boolean; reason?: string } {
+): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
   // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"`; the
   // strict schemas reject every non-object, but guard explicitly so the message
   // stays specific (agy R1: a non-object must never crash or coerce to resolved).
@@ -3816,6 +3838,14 @@ function classifyMergerOutcomePayload(
       // code (online review r3, gemini). `diagnosis` stays an optional schema field.
       resolved: false,
       reason: escalate.data.escalate.reason,
+      escalation: {
+        reason: escalate.data.escalate.reason,
+        ...(escalate.data.escalate.diagnosis !== undefined
+          ? { diagnosis: escalate.data.escalate.diagnosis }
+          : {}),
+        escalationKind: "decision",
+        phase: "wave",
+      },
     };
   }
   // No strict schema matched → off-contract (mixed payload, extra key, blank
@@ -3926,14 +3956,14 @@ function parseOutcomePayload(
 ): { parsed: unknown; source: string } | { error: string } {
   if (outcomePath !== undefined) {
     try {
-      return {
-        parsed: readRequiredWorkerOutcomeSidecar(outcomePath),
-        source: `${tag} worker outcome sidecar`,
-      };
+      const sidecar = readWorkerOutcomeSidecar(outcomePath);
+      if (sidecar !== undefined) {
+        return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
+      }
     } catch (err) {
-      // The sidecar is first choice, not the only choice. Continue to the
-      // stdout tag so a broken/blank sidecar does not mask the worker result.
-      void err;
+      return {
+        error: `${tag} worker outcome sidecar protocol failure: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
   const last = extractLastTag(stdout, tag);

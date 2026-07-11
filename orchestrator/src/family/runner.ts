@@ -1445,6 +1445,44 @@ export async function runFamily(
           modelRoute: activeRoutePolicy.route,
           runId,
         });
+        if (mergeResult.escalation !== undefined) {
+          familyHead = mergeResult.familyHead;
+          childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
+          const ledgerMerged = await currentMerged(familyBackend);
+          const children = epic.children.map((child) => {
+            const recorded = childResults.find((entry) => entry.issue === child.issue);
+            if (recorded !== undefined) return recorded;
+            return ledgerMerged.has(child.issue)
+              ? { issue: child.issue, status: "already_done" as const }
+              : { issue: child.issue, status: "skipped" as const };
+          });
+          const escalation = mergeResult.escalation;
+          const stopSummary = familyStopSummary({
+            status: "escalated",
+            familyBase,
+            familyHead,
+            children,
+            escalationReason: escalation.reason,
+          });
+          await familyBackend.escalateFamily?.({
+            ...escalation,
+            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
+            stopSummary,
+            escalationKind: "decision",
+            phase: "wave",
+          });
+          return {
+            status: "escalated" as const,
+            familyBase,
+            familyHead,
+            escalation: {
+              reason: escalation.reason,
+              diagnosis: escalation.diagnosis ?? escalation.reason,
+            },
+            stopSummary,
+            children,
+          };
+        }
         if (mergeResult.conflicted === true) {
           // A merger step that exhausted its bounded mechanical re-dispatch is
           // a family-level escalation boundary, not an uncaught run exception.

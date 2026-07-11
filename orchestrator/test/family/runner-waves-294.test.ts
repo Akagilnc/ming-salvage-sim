@@ -146,6 +146,21 @@ class PersistentlyConflictedFamilyBackend extends FakeFamilyBackend {
   }
 }
 
+class DecisionEscalatingMergerBackend extends PersistentlyConflictedFamilyBackend {
+  override async resolveMergeConflict(request: MergeRequest) {
+    this.resolverCalls.push(request.childIssue);
+    return {
+      familyHead: `conflicted-${request.childIssue}`,
+      escalation: {
+        reason: "choose the canonical migration",
+        diagnosis: "both branches deliberately changed the same public contract",
+        escalationKind: "decision" as const,
+        phase: "wave" as const,
+      },
+    };
+  }
+}
+
 // ─── acceptance 1: topological multi-wave ─────────────────────────────────────
 
 describe("#294 acceptance 1 — dependency chain scheduled in topological order", () => {
@@ -204,6 +219,31 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
         event: "escalated",
       }),
     ]);
+    expect(result.children.find((child) => child.issue === 11)?.status).toBe("skipped");
+  });
+
+  it("durably parks a structured merger decision without retrying it", async () => {
+    const familyBackend = new DecisionEscalatingMergerBackend();
+    const result = await runFamily({
+      epic: { issue: 291, children: [{ issue: 10, blockedBy: [] }, { issue: 11, blockedBy: [] }] },
+      familyBackend,
+      singleSliceBackend: new RecordingChildBackend(),
+      familyBase: "family/291-base",
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(familyBackend.resolverCalls).toEqual([10]);
+    expect(familyBackend.escalationCalls[0]).toEqual(
+      expect.objectContaining({
+        reason: "choose the canonical migration",
+        diagnosis: "both branches deliberately changed the same public contract",
+        escalationKind: "decision",
+        phase: "wave",
+      }),
+    );
+    expect(familyBackend.ledger).toContainEqual(
+      expect.objectContaining({ status: "escalated", escalationKind: "decision", phase: "wave" }),
+    );
     expect(result.children.find((child) => child.issue === 11)?.status).toBe("skipped");
   });
 
