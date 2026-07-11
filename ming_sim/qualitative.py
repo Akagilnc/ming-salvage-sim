@@ -9,7 +9,7 @@ import re
 # ``字段 + 直接数值`` 这种明确的裸抽象轴写法；钱粮、兵额、欠饷月数等
 # 真实可数物不在这里列出，仍可随历史叙事传递。
 _ABSTRACT_VALUE_RE = re.compile(
-    r"(?:民心|动乱|皇威|忠诚(?:度)?|能力|操守|廉洁|胆略|勇气|满意度|态度|"
+    r"(?:民心|动乱|皇威|忠诚(?:度)?|能力|操守|廉洁|清廉|胆略|勇气|满意度|态度|"
     r"朝势|军力|财力|士气|训练|装备|火器|机动|士绅阻力|军事压力|"
     r"进度|进展|bar(?:_value)?|public_support|unrest|loyalty|ability|"
     r"integrity|courage|satisfaction|leverage|military_strength|morale|"

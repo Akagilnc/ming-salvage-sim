@@ -16,7 +16,7 @@ from agno.skills.loaders.local import LocalSkills
 
 from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
-from ming_sim.context import character_context_with_db, faction_context_with_db
+from ming_sim.context import character_context, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.llm_model import create_chat_model
 from ming_sim.qualitative import (
@@ -542,7 +542,7 @@ def create_minister_agent(
         instructions = [
             _minister_game_world_prompt(c.game_world_prompt),
             c.minister_agent_prompt,
-            f"你当前扮演：{character_context_with_db(character, context.db)}，"
+            f"你当前扮演：{character_context(character)}，"
             f"任事处：{_duty_location(character.office, character.office_type, 'active')}。",
             f"你与皇帝的多轮对话会持续到本{TURN_UNIT}退朝；同一{TURN_UNIT}复召时要接续此前奏对，不要重置记忆。",
             "\n\n".join(monthly_block_parts),
