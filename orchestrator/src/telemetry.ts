@@ -1501,151 +1501,6 @@ function isSourcePath(path: string): boolean {
   return /(?:^|\/)src(?:\/|$)/.test(path);
 }
 
-/** Best-effort host-git numstat collection for one already-known commit. */
-export function collectCommitMetrics(
-  repoPath: string,
-  commit: string,
-): TelemetryCommitMetrics | undefined {
-  try {
-    const output = execFileSync("git", ["show", "--format=", "--numstat", commit], {
-      cwd: repoPath,
-      encoding: "utf8",
-      timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    let files = 0;
-    let insertions = 0;
-    let deletions = 0;
-    let source = emptyCommitDistribution();
-    let test = emptyCommitDistribution();
-    for (const line of output.split(/\r?\n/)) {
-      if (line.length === 0) continue;
-      const [addedRaw, deletedRaw, path] = line.split("\t", 3);
-      const added = Number(addedRaw);
-      const deleted = Number(deletedRaw);
-      if (path === undefined || !Number.isInteger(added) || !Number.isInteger(deleted)) {
-        return undefined;
-      }
-      files += 1;
-      insertions += added;
-      deletions += deleted;
-      if (isTestPath(path)) test = addCommitDistribution(test, added, deleted);
-      else if (isSourcePath(path)) source = addCommitDistribution(source, added, deleted);
-    }
-    return {
-      files,
-      insertions,
-      deletions,
-      source,
-      test,
-      // Filled by `buildCommitStamp` from the separate zero-context patch read.
-      escapeHatches: { added: { ...EMPTY_ESCAPE_HATCH_COUNTS }, deleted: { ...EMPTY_ESCAPE_HATCH_COUNTS } },
-      assertions: { added: 0, deleted: 0 },
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-/** Best-effort changed-line read for the #782 and weakened-checks audit axes. */
-export function collectCommitDiffLines(
-  repoPath: string,
-  commit: string,
-): readonly string[] | undefined {
-  try {
-    return execFileSync("git", ["show", "--format=", "--unified=0", commit], {
-      cwd: repoPath,
-      encoding: "utf8",
-      timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).split(/\r?\n/);
-  } catch {
-    return undefined;
-  }
-}
-
-export interface CommitDiffAudit {
-  readonly diffLines: readonly string[];
-  readonly triviaByDiffIndex: ReadonlyMap<number, readonly TriviaSpan[]>;
-}
-
-/**
- * Collect the zero-context patch plus TypeScript-scanned comment/string spans
- * from each changed file's post-image and pre-image. The patch only maps +/-
- * lines to those image line numbers; it never infers language trivia itself.
- */
-export function collectCommitDiffAudit(
-  repoPath: string,
-  commit: string,
-): CommitDiffAudit | undefined {
-  const diffLines = collectCommitDiffLines(repoPath, commit);
-  if (diffLines === undefined) return undefined;
-  try {
-    const postImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
-    const preImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
-    const triviaByDiffIndex = new Map<number, readonly TriviaSpan[]>();
-    let prePath: string | undefined;
-    let postPath: string | undefined;
-    let preImageLine: number | undefined;
-    let postImageLine: number | undefined;
-    for (const [index, line] of diffLines.entries()) {
-      if (line.startsWith("--- ")) {
-        const rawPath = line.slice(4);
-        prePath = rawPath.startsWith("a/") ? rawPath.slice(2) : undefined;
-        continue;
-      }
-      if (line.startsWith("+++ ")) {
-        const rawPath = line.slice(4);
-        postPath = rawPath.startsWith("b/") ? rawPath.slice(2) : undefined;
-        continue;
-      }
-      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-      if (hunk !== null) {
-        preImageLine = Number(hunk[1]);
-        postImageLine = Number(hunk[2]);
-        continue;
-      }
-      if (line.startsWith("+") && !line.startsWith("+++")) {
-        if (postPath === undefined || postImageLine === undefined) return undefined;
-        let spansByLine = postImageTriviaByPath.get(postPath);
-        if (spansByLine === undefined) {
-          const postImage = execFileSync("git", ["show", `${commit}:${postPath}`], {
-            cwd: repoPath,
-            encoding: "utf8",
-            timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
-            stdio: ["ignore", "pipe", "ignore"],
-          });
-          spansByLine = triviaSpansByLine(postImage, postPath);
-          postImageTriviaByPath.set(postPath, spansByLine);
-        }
-        triviaByDiffIndex.set(index, spansByLine.get(postImageLine) ?? []);
-        postImageLine += 1;
-      } else if (line.startsWith("-") && !line.startsWith("---")) {
-        if (prePath === undefined || preImageLine === undefined) return undefined;
-        let spansByLine = preImageTriviaByPath.get(prePath);
-        if (spansByLine === undefined) {
-          const preImage = execFileSync("git", ["show", `${commit}^:${prePath}`], {
-            cwd: repoPath,
-            encoding: "utf8",
-            timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
-            stdio: ["ignore", "pipe", "ignore"],
-          });
-          spansByLine = triviaSpansByLine(preImage, prePath);
-          preImageTriviaByPath.set(prePath, spansByLine);
-        }
-        triviaByDiffIndex.set(index, spansByLine.get(preImageLine) ?? []);
-        preImageLine += 1;
-      } else {
-        preImageLine = preImageLine === undefined ? undefined : preImageLine + 1;
-        postImageLine = postImageLine === undefined ? undefined : postImageLine + 1;
-      }
-    }
-    return { diffLines, triviaByDiffIndex };
-  } catch {
-    return undefined;
-  }
-}
-
 async function gitOutput(
   repoPath: string,
   args: readonly string[],
@@ -1662,7 +1517,7 @@ async function gitOutput(
   });
 }
 
-async function collectCommitMetricsAsync(
+export async function collectCommitMetricsAsync(
   repoPath: string,
   commit: string,
 ): Promise<TelemetryCommitMetrics | undefined> {
@@ -1696,7 +1551,12 @@ function parseCommitMetrics(output: string): TelemetryCommitMetrics | undefined 
   };
 }
 
-async function collectCommitDiffAuditAsync(
+export interface CommitDiffAudit {
+  readonly diffLines: readonly string[];
+  readonly triviaByDiffIndex: ReadonlyMap<number, readonly TriviaSpan[]>;
+}
+
+export async function collectCommitDiffAuditAsync(
   repoPath: string,
   commit: string,
 ): Promise<CommitDiffAudit | undefined> {
@@ -1744,30 +1604,9 @@ async function collectCommitDiffAuditAsync(
   } catch { return undefined; }
 }
 
-async function commitsBetweenAsync(repoPath: string, before: string, after: string): Promise<readonly string[] | undefined> {
+export async function commitsBetweenAsync(repoPath: string, before: string, after: string): Promise<readonly string[] | undefined> {
   const output = await gitOutput(repoPath, ["rev-list", "--reverse", `${before}..${after}`]);
   return output?.split(/\r?\n/).map((value) => value.trim()).filter((value) => value.length > 0);
-}
-
-/** Best-effort ordered host-git commit list for an already-known HEAD movement. */
-export function commitsBetween(
-  repoPath: string,
-  before: string,
-  after: string,
-): readonly string[] | undefined {
-  try {
-    return execFileSync("git", ["rev-list", "--reverse", `${before}..${after}`], {
-      cwd: repoPath,
-      encoding: "utf8",
-      timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .split(/\r?\n/)
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -2128,12 +1967,19 @@ export interface CommitTelemetryScheduleInput {
   readonly repoPath: string;
   readonly runId?: string;
   readonly issue?: number | null;
-  readonly before: string;
-  /** The post-step boundary captured synchronously by the caller. */
-  readonly after: string;
+  readonly before: CommitTelemetryBoundary;
+  readonly after: CommitTelemetryBoundary;
 }
 
-interface CommitTelemetryCollectInput extends CommitTelemetryScheduleInput {
+/** A routing-safe boundary: either an already-held oid or an async resolution request. */
+export type CommitTelemetryBoundary =
+  | string
+  | { readonly kind: "held"; readonly oid: string }
+  | { readonly kind: "resolve-head" }
+  | { readonly kind: "resolve-before-head"; readonly commitsAdded: number };
+
+interface CommitTelemetryCollectInput extends Omit<CommitTelemetryScheduleInput, "before" | "after"> {
+  readonly before: string;
   readonly after: string;
 }
 
@@ -2149,33 +1995,35 @@ export function scheduleCommitTelemetry(
   input: CommitTelemetryScheduleInput,
   collect: (input: CommitTelemetryCollectInput) => Promise<void> = collectCommitTelemetry,
 ): Promise<void> {
-  return new Promise((resolve) => {
-    setImmediate(() => {
-      const collectObservedCommit = async (): Promise<void> => {
-        if (input.after === input.before) return;
-        await collect(input);
-      };
-      const prior = input.ledgerDir === undefined
-        ? undefined
-        : telemetryCollectionQueues.get(input.ledgerDir);
-      const queued = (prior ?? Promise.resolve())
-        .catch(() => undefined)
-        .then(collectObservedCommit);
-      if (input.ledgerDir !== undefined) {
-        telemetryCollectionQueues.set(input.ledgerDir, queued);
-      }
-      void queued
-        .catch((err: unknown) => {
-          console.warn(`[orchestrator] commit telemetry failed (fail-open): ${err instanceof Error ? err.message : String(err)}`);
-        })
-        .finally(() => {
-          if (input.ledgerDir !== undefined && telemetryCollectionQueues.get(input.ledgerDir) === queued) {
-            telemetryCollectionQueues.delete(input.ledgerDir);
-          }
-          resolve();
-        });
-    });
+  const resolveHead = async (): Promise<string | undefined> =>
+    gitOutput(input.repoPath, ["rev-parse", "HEAD"]).then((oid) => oid?.trim() || undefined);
+  let settle!: () => void;
+  const completion = new Promise<void>((resolve) => { settle = resolve; });
+  const prior = input.ledgerDir === undefined
+    ? undefined
+    : telemetryCollectionQueues.get(input.ledgerDir);
+  const queued = (prior ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const after = typeof input.after === "string" ? input.after
+      : input.after.kind === "held" ? input.after.oid : await resolveHead();
+    const before = typeof input.before === "string" ? input.before
+      : input.before.kind === "held" ? input.before.oid
+      : input.before.kind === "resolve-before-head" && after !== undefined
+        ? await gitOutput(input.repoPath, ["rev-parse", `${after}~${input.before.commitsAdded}`]).then((oid) => oid?.trim() || undefined)
+        : await resolveHead();
+    if (before === undefined || after === undefined || before === after) return;
+    await collect({ ...input, before, after });
   });
+  if (input.ledgerDir !== undefined) telemetryCollectionQueues.set(input.ledgerDir, queued);
+  void queued.catch((err: unknown) => {
+    console.warn(`[orchestrator] commit telemetry failed (fail-open): ${err instanceof Error ? err.message : String(err)}`);
+  }).finally(() => {
+    if (input.ledgerDir !== undefined && telemetryCollectionQueues.get(input.ledgerDir) === queued) {
+      telemetryCollectionQueues.delete(input.ledgerDir);
+    }
+    settle();
+  });
+  return completion;
 }
 
 async function collectCommitTelemetry(input: CommitTelemetryCollectInput): Promise<void> {
