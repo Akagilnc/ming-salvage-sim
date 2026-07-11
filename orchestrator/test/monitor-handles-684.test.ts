@@ -26,6 +26,7 @@ import {
 } from "../src/cliMonitorHooks.js";
 import { RealBackend } from "../src/realBackend.js";
 import { RealFamilyBackend } from "../src/family/realFamilyBackend.js";
+import { isJudgedShipDeliveryFailure } from "../src/runner.js";
 import {
   collectPidTree,
   dispatchMonitoredCliWorker,
@@ -212,9 +213,18 @@ describe("#684 worker monitor handles", () => {
 
       expect(result).toMatchObject({ kind: "failed" });
       expect(isMissingMonitorSidecarResult(result)).toBe(true);
+      expect(isJudgedShipDeliveryFailure({ result })).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("keeps a parsed S7 delivery failure caller-owned instead of mechanically retryable", () => {
+    expect(
+      isJudgedShipDeliveryFailure({
+        result: { kind: "failed", reason: "gstack-ship reported a delivery failure" },
+      }),
+    ).toBe(true);
   });
 
   it("dispatchMonitoredCliWorker atomically returns pid/log/pool/signal/instance handle", async () => {

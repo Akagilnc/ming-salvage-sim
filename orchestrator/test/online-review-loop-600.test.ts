@@ -834,6 +834,24 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toEqual({ kind: "next", step: "S10" });
   });
 
+  it("S9 verifier decision gate parks instead of dispatching another fixer", () => {
+    expect(
+      route({
+        from: "S9",
+        output: {
+          kind: "verify",
+          converged: false,
+          terminalState: "decision_gate_raised",
+        },
+        onlineReviewRound: 1,
+      }),
+    ).toEqual({
+      kind: "handoff",
+      status: "escalate",
+      onlineReviewTerminal: "decision_gate_raised",
+    });
+  });
+
   it("S9 not converged at round cap still routes to S10 (AC5: round-3 fix attempted)", () => {
     expect(
       route({
