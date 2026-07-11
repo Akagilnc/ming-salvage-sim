@@ -121,7 +121,14 @@ export const DEFAULT_POOL_MODELS: Readonly<
   "grok-build": ["grok-4.5"],
   cursor: ["grok-4.5"],
   zai: ["grok-4.5"],
-  "codex-5h": ["terra@med", "luna@med", "gpt-5.6-terra", "gpt-5.6-luna"],
+  "codex-5h": [
+    "terra@med",
+    "luna@med",
+    "sol@med",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+  ],
   // #789 — roster ids + runnable slugs (mirrors codex-5h dual keys).
   claude: ["sonnet-5", "haiku-4.5", "sonnet", "haiku"],
 };
@@ -197,6 +204,10 @@ export interface SelectNextRelayBatonInput {
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
   readonly reviewerSlugs?: ReadonlyArray<string>;
+  /** Reviewer legs after this candidate becomes the coder baton. */
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string>;
 }
 
 function poolServesModel(
@@ -291,7 +302,9 @@ export function selectNextRelayBaton(
   const from = startIdx >= 0 ? startIdx + 1 : 0;
   for (let i = from; i < input.rosterOrder.length; i++) {
     const candidate = input.rosterOrder[i]!;
-    if (poolSeparationViolation(candidate, reviewerSlugs) !== undefined) {
+    const candidateReviewerSlugs =
+      input.reviewerSlugsForCandidate?.(candidate) ?? reviewerSlugs;
+    if (poolSeparationViolation(candidate, candidateReviewerSlugs) !== undefined) {
       continue;
     }
     const lives = livePoolsForModel(
@@ -334,7 +347,13 @@ export function selectCapacityRelayBaton(
     const from = startIdx >= 0 ? startIdx + 1 : 0;
     for (let i = from; i < input.rosterOrder.length; i++) {
       const candidate = input.rosterOrder[i]!;
-      if (poolSeparationViolation(candidate, input.reviewerSlugs ?? []) !== undefined) {
+      const candidateReviewerSlugs =
+        input.reviewerSlugsForCandidate?.(candidate) ??
+        input.reviewerSlugs ??
+        [];
+      if (
+        poolSeparationViolation(candidate, candidateReviewerSlugs) !== undefined
+      ) {
         continue;
       }
       if (poolServesModel(currentPool, candidate.id, candidate.slug)) {

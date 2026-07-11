@@ -96,6 +96,7 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
         "grok-4.5",
         "terra@med",
         "luna@med",
+        "sol@med",
         "sonnet-5",
         "haiku-4.5",
       ]),
@@ -104,6 +105,19 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
     expect(lookupCoderRosterEntry("Sonnet 5")?.slug).toBe("sonnet");
     expect(lookupCoderRosterEntry("Haiku 4.5")?.slug).toBe("haiku");
     expect(lookupCoderRosterEntry("haiku")?.id).toBe("haiku-4.5");
+  });
+
+  it("accepts sol@med as a difficult-slice convergence fallback", () => {
+    const sol = lookupCoderRosterEntry("sol@med");
+    expect(sol).toMatchObject({
+      id: "sol@med",
+      slug: "gpt-5.6-sol",
+      pool: "codex",
+    });
+    expect(lookupCoderRosterEntry("gpt-5.6-sol")?.id).toBe("sol@med");
+    expect(
+      resolveCoderRecOrder("Coder-Rec: terra@med → sol@med").map((e) => e.id),
+    ).toEqual(["terra@med", "sol@med"]);
   });
 
   it("keeps only roster-valid entries from a Coder-Rec line", () => {
@@ -199,6 +213,28 @@ describe("#767 Coder-Rec roster — pool separation", () => {
     });
     // terra@med doubles as reviewer → skip to grok-4.5
     expect(selected.id).toBe("grok-4.5");
+  });
+
+  it("moves sol out of the CMR review collection when Coder-Rec assigns it as coder", () => {
+    for (const routeName of ["normal", "codex-cheap"] as const) {
+      const base = resolveRouteModels(routeName, {});
+      const applied = applyCoderRecToRoute(base, "Coder-Rec: sol@med", 0, {});
+
+      expect(applied.entry?.id).toBe("sol@med");
+      expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
+      expect(applied.route.slots.reviewer).toBe("opus");
+      expect(applied.route.legCollections.cmrReview.map((leg) => leg.slug))
+        .not.toContain("gpt-5.6-sol");
+    }
+  });
+
+  it("fails closed when every remaining coder would share a reviewer checkpoint", () => {
+    const order = resolveCoderRecOrder("Coder-Rec: sol@med → terra@med");
+    expect(() =>
+      selectCoderRecEntry(order, 0, {
+        reviewerSlugs: ["gpt-5.6-sol", "gpt-5.6-terra"],
+      }),
+    ).toThrow(/no pool-separated coder roster entry/i);
   });
 
   it("collects cmrCompleteness / cmrCorrectness / verify gate slots as reviewer pool slugs", () => {
@@ -480,6 +516,8 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
   }
 
   class CoderRecBackend implements Backend {
+    constructor(private readonly coderRecBody = CODER_REC_BODY) {}
+
     async smokeModelRoute(route: any) {
       this.smokedCoderSlugs.push(route.slots.coder);
       this.events.push(`smoke:${route.slots.coder}`);
@@ -509,13 +547,13 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         hasSubIssues: false,
         isClosed: false,
         openBlockedBy: [],
-        body: CODER_REC_BODY,
+        body: this.coderRecBody,
       };
     }
     async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
       return {
         number: issueNumber,
-        body: CODER_REC_BODY,
+        body: this.coderRecBody,
         comments: [],
         agentBrief: "",
       };
@@ -673,6 +711,16 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
     expect(backend.coderModels).toEqual(["grok-4.5"]);
+  });
+
+  it("runs Coder-Rec sol@med end-to-end on the default route without CMR leg env overrides", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    const backend = new CoderRecBackend("Coder-Rec: sol@med");
+
+    const result = await runOrchestrator({ issueNumber: 767, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.coderModels).toEqual(["gpt-5.6-sol"]);
   });
 
   it("escalates at S0 instead of dispatching a Coder-Rec slug that violates a tight route", async () => {
