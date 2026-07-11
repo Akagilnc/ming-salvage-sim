@@ -13,8 +13,8 @@
  *
  * Tested WITHOUT a real container:
  *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / malformed;
- *   - cmrOutcomeFromResult: the completion-signal gate (an unsignaled run is NOT a
- *     pass — mirrors the merger gate);
+ *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion signals
+ *     remain compatibility telemetry, not a verdict gate;
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
  *     clean cmr reviewer soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
@@ -601,9 +601,9 @@ describe("integrated CMR pass prompt closure contract", () => {
   });
 });
 
-// ═══════════════════════ 2. cmrOutcomeFromResult (signal gate) ═══════════════════════
+// ═══════════════════════ 2. cmrOutcomeFromResult (structured outcome) ═══════════════════════
 
-describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merger gate)", () => {
+describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
   const SIGNAL = cmrWorkerSpec().completionSignal;
 
   it("a signaled converged run ⇒ a verdict outcome", () => {
@@ -619,7 +619,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
     if (o.kind === "verdict") expect(o.converged).toBe(true);
   });
 
-  it("an UNSIGNALED run ⇒ escalate (a complete-but-unsignaled run is NOT a pass)", () => {
+  it("an UNSIGNALED run still parses the structured verdict (signal is telemetry)", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: undefined,
       stdout: `<cmr>${JSON.stringify({
@@ -628,10 +628,10 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
         ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>`,
     });
-    expect(o.kind).toBe("escalate");
+    expect(o.kind).toBe("verdict");
   });
 
-  it("a wrong-signal run ⇒ escalate", () => {
+  it("a wrong signal does not override the structured verdict", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: "SOME_OTHER_SIGNAL",
       stdout: `<cmr>${JSON.stringify({
@@ -640,7 +640,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
         ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>`,
     });
-    expect(o.kind).toBe("escalate");
+    expect(o.kind).toBe("verdict");
   });
 
   it("accounts worker verdict legs against the frozen worker route, not later process env", () => {
