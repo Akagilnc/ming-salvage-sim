@@ -16,6 +16,8 @@ import {
   isDocOnlyFileList,
   isPrMergedMarker,
   mergeReadinessStopSummary,
+  observeOpenPrForBranch,
+  resolveHostTruthPr,
   runAutoMergeStage,
   tryResumePrMergedBackfill,
   prMergedRecordFromLive,
@@ -131,6 +133,155 @@ describe("#602 isDocOnlyFileList", () => {
     expect(isDocOnlyFileList(["CHANGELOG.md.evil"])).toBe(false);
     expect(isDocOnlyFileList(["docs/../orchestrator/src/runner.ts"])).toBe(false);
     expect(isDocOnlyFileList(["docs/"])).toBe(false);
+  });
+});
+
+describe("#824 reported PR identity", () => {
+  it("discards a foreign-fork hint and resolves the legitimate coexisting PR", () => {
+    const resolved = resolveHostTruthPr(
+      fakeSh({
+        "gh pr view": () => JSON.stringify({
+          number: 824,
+          url: `${REPO}/pull/824`,
+          state: "OPEN",
+          headRefName: "fix/824-radius",
+          headRefOid: "foreign-head",
+          headRepositoryOwner: { login: "foreign" },
+          mergeStateStatus: "CLEAN",
+        }),
+        "gh pr list": () => JSON.stringify([
+          { number: 825, url: `${REPO}/pull/825`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "own-head", headRepositoryOwner: { login: "Akagilnc" }, mergeStateStatus: "CLEAN" },
+        ]),
+      }),
+      REPO,
+      "fix/824-radius",
+      `${REPO}/pull/824`,
+    );
+
+    expect(resolved.prUrl).toBe(`${REPO}/pull/825`);
+  });
+
+  it("discards a hint whose gh lookup throws and falls back to host branch truth", () => {
+    const resolved = resolveHostTruthPr(
+      fakeSh({
+        "gh pr view": () => { throw new Error("not found"); },
+        "gh pr list": () => JSON.stringify([
+          { number: 825, url: `${REPO}/pull/825`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "own-head", headRepositoryOwner: { login: "Akagilnc" }, mergeStateStatus: "CLEAN" },
+        ]),
+      }),
+      REPO,
+      "fix/824-radius",
+      `${REPO}/pull/404`,
+    );
+
+    expect(resolved.prNumber).toBe(825);
+  });
+
+  it("filters same-name fork PRs by owner before choosing a result", () => {
+    let listArgs: string[] = [];
+    const resolved = resolveHostTruthPr(
+      fakeSh({
+        "gh pr list": (args) => {
+          listArgs = args;
+          return JSON.stringify([
+            { number: 1, url: `${REPO}/pull/1`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "fork", headRepositoryOwner: { login: "foreign" }, mergeStateStatus: "CLEAN" },
+            { number: 2, url: `${REPO}/pull/2`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "own", headRepositoryOwner: { login: "Akagilnc" }, mergeStateStatus: "CLEAN" },
+          ]);
+        },
+      }),
+      REPO,
+      "fix/824-radius",
+    );
+
+    expect(listArgs).not.toContain("--limit");
+    expect(resolved.prNumber).toBe(2);
+  });
+
+  it("treats GitHub state and owner login casing as host-formatting, not identity", () => {
+    const resolved = resolveHostTruthPr(
+      fakeSh({
+        "gh pr list": () => JSON.stringify([
+          {
+            number: 2,
+            url: `${REPO}/pull/2`,
+            state: "open",
+            headRefName: "fix/824-radius",
+            headRefOid: "own",
+            headRepositoryOwner: { login: "akagilnc" },
+            mergeStateStatus: "clean",
+          },
+        ]),
+      }),
+      REPO,
+      "fix/824-radius",
+    );
+
+    expect(resolved.prNumber).toBe(2);
+    expect(assessMergeReadiness(resolved, readySnapshot()).ready).toBe(true);
+  });
+
+  it("fails only after host truth contains no own-repository PR", () => {
+    expect(() => resolveHostTruthPr(
+      fakeSh({ "gh pr list": () => JSON.stringify([
+        { number: 1, url: `${REPO}/pull/1`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "fork", headRepositoryOwner: { login: "foreign" }, mergeStateStatus: "CLEAN" },
+      ]) }),
+      REPO,
+      "fix/824-radius",
+    )).toThrow(/no open PR.*fix\/824-radius/i);
+  });
+
+  it("rejects a same-named open branch from another fork", () => {
+    const observation = observeOpenPrForBranch(
+      fakeSh({
+        "gh pr view": () => JSON.stringify({
+          number: 824,
+          url: "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
+          state: "OPEN",
+          headRefName: "fix/824-radius",
+          headRefOid: "fork-head",
+          headRepositoryOwner: { login: "other-fork" },
+          mergeStateStatus: "CLEAN",
+        }),
+        "gh pr list": () => "[]",
+      }),
+      REPO,
+      "fix/824-radius",
+      "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
+    );
+
+    expect(observation).toEqual({ present: false });
+  });
+
+  it("rejects a same-named fallback PR from another fork after discarding the reported PR", () => {
+    let listArgs: string[] | undefined;
+    const observation = observeOpenPrForBranch(
+      fakeSh({
+        "gh pr view": () => JSON.stringify({
+          number: 824,
+          url: "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
+          state: "OPEN",
+          headRefName: "fix/824-radius",
+          headRefOid: "reported-fork-head",
+          headRepositoryOwner: { login: "reported-fork" },
+          mergeStateStatus: "CLEAN",
+        }),
+        "gh pr list": (args) => {
+          listArgs = args;
+          return JSON.stringify([
+            {
+              url: "https://github.com/Akagilnc/ming-salvage-sim/pull/825",
+              headRepositoryOwner: { login: "another-fork" },
+            },
+          ]);
+        },
+      }),
+      REPO,
+      "fix/824-radius",
+      "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
+    );
+
+    expect(listArgs?.join(" ")).toContain("headRepositoryOwner");
+    expect(observation).toEqual({ present: false });
   });
 });
 
@@ -328,6 +479,7 @@ describe("#602 fetchPrMergeLiveState + assessMergeReadiness", () => {
           state: "OPEN",
           headRefName: "feat/issue-602-auto-merge",
           headRefOid: "abc123",
+          headRepositoryOwner: { login: "Akagilnc" },
           mergeStateStatus: "CLEAN",
           mergeable: "MERGEABLE",
         });
@@ -340,6 +492,7 @@ describe("#602 fetchPrMergeLiveState + assessMergeReadiness", () => {
       state: "OPEN",
       headOid: "abc123",
       headRefName: "feat/issue-602-auto-merge",
+      headRepositoryOwnerLogin: "Akagilnc",
       mergeStateStatus: "CLEAN",
       mergeable: "MERGEABLE",
     });
@@ -360,6 +513,22 @@ describe("#602 fetchPrMergeLiveState + assessMergeReadiness", () => {
     );
     expect(readiness.ready).toBe(true);
     expect(readiness.blockers).toEqual([]);
+  });
+
+  it("accepts lowercase live state and merge status", () => {
+    const readiness = assessMergeReadiness(
+      {
+        prNumber: 602,
+        prUrl: PR_URL,
+        state: "open",
+        headOid: "head-ready",
+        headRefName: "feat/x",
+        mergeStateStatus: "clean",
+      },
+      readySnapshot(),
+    );
+
+    expect(readiness.ready).toBe(true);
   });
 
   it("unresolved threads block merge without pretending merged", () => {

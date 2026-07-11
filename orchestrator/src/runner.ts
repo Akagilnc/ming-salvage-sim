@@ -39,6 +39,9 @@ import { execFileSync } from "node:child_process";
 import { mintRunId } from "./runId.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import {
+  offlineSyntheticPollAdmissible,
+} from "./evidenceAdmissibility.js";
+import {
   reviewFixAssertionSignal,
   reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
@@ -99,6 +102,7 @@ import {
 import {
   docReleasePathsFromCommit,
   isPrMergedMarker,
+  observeOpenPrForBranch,
   offlineAutoMergeAllowUnverifiedDocPaths,
   runAutoMergeStage,
   slicePrMergedRecordFromLedger,
@@ -213,6 +217,9 @@ import {
   type AcceptedSuppressionSummary,
   type StopSummary,
 } from "./stopSummary.js";
+import {
+  isStepId,
+} from "./types.js";
 import type {
   Backend,
   ContinueFixingEvent,
@@ -1484,7 +1491,8 @@ function lastAgentStep(
   ledger: ReadonlyArray<LedgerEntry>,
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    if (ledger[i]!.output != null) return ledger[i]!.step;
+    const entry = ledger[i]!;
+    if (entry.output != null && isStepId(entry.step)) return entry.step;
   }
   return undefined;
 }
@@ -1498,7 +1506,8 @@ function lastNonTerminalStep(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    if (ledger[i]!.step !== "S8") return ledger[i]!.step;
+    const entry = ledger[i]!;
+    if (entry.step !== "S8" && isStepId(entry.step)) return entry.step;
   }
   return undefined;
 }
@@ -1507,13 +1516,13 @@ function isReviewLoopStep(step: StepId): boolean {
   return step === "S9" || step === "S10" || step === "S11" || step === "S12";
 }
 
-function shipStatusFromLedger(
+function lastShipFromLedger(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
-): string | undefined {
+): ShipResult | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
     if (entry.step === "S7" && entry.output?.kind === "ship") {
-      return entry.output.status;
+      return entry.output;
     }
   }
   return undefined;
@@ -1601,7 +1610,6 @@ const CODER_STDOUT_MISSING_TAG_RE =
   /\bcoder step stdout carried no <coder>[\s\S]*tag\b/i;
 const WORKER_STDOUT_MISSING_TAG_RE =
   /\b(?:coder step stdout carried no <coder>|reviewer step stdout carried no <review>)[\s\S]*tag\b/i;
-
 function isRecoverableCoderProtocolFailure(
   entry: PersistentLedgerEntry,
 ): boolean {
@@ -1742,7 +1750,7 @@ function lastReviewerStep(
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
-    if (entry.output?.kind === "reviewer") return entry.step;
+    if (entry.output?.kind === "reviewer" && isStepId(entry.step)) return entry.step;
   }
   return undefined;
 }
@@ -1777,6 +1785,7 @@ function replayS4AdjudicationState(
       lastCoderActualRepairPathsForS4 = entry.repairMovementPaths ?? [];
     }
     if (entry.output?.kind === "reviewer") {
+      if (!isStepId(entry.step)) continue;
       lastReviewerOutputForS4 = entry.output;
       lastReviewerStepForS4 = entry.step;
       continue;
@@ -1905,6 +1914,7 @@ function adjudicatedBlockingFindingsForPersistedS4(
 function planResume(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
   repairIntent?: ContinueFixingEvent,
+  hostPrPresent?: boolean,
 ): ResumePlan {
   if (ledger.length === 0) {
     return { resumeStep: "S0", priorLedger: [] };
@@ -2093,6 +2103,9 @@ function planResume(
     agentEscalate != null &&
     isValidEscalation(agentEscalate)
   ) {
+    if (!isStepId(agentEntry.step)) {
+      throw new Error("planResume: agent output cannot belong to bookkeeping ledger row");
+    }
     const escalatedLedgerIdx = ledger.lastIndexOf(agentEntry);
     const answerSearchIndex =
       lastEntry.step === "S8" ? lastEntryIndex : escalatedLedgerIdx;
@@ -2203,6 +2216,9 @@ function planResume(
     lastEntry.step === "S8"
       ? lastNonTerminalStep(executableLedger) ?? lastEntry.step
       : lastEntry.step;
+  if (!isStepId(routeFrom)) {
+    throw new Error("planResume: executable ledger row must use a canonical step id");
+  }
   const pendingBlockingFindings =
     routeFrom === "S4"
       ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
@@ -2211,10 +2227,6 @@ function planResume(
     isReviewLoopStep(routeFrom) && routeFrom === lastEntry.step
       ? lastEntry.output
       : agentEntry?.output;
-  const shipStatusForRoute =
-    routeFrom === "S7"
-      ? shipStatusFromLedger(executableLedger) ?? "pushed"
-      : undefined;
   const onlineReviewRoundForRoute =
     routeFrom === "S9" || routeFrom === "S10"
       ? onlineReviewRoundFromLedger(executableLedger)
@@ -2225,8 +2237,11 @@ function planResume(
     ...(pendingBlockingFindings !== undefined
       ? { pendingBlockingFindings }
       : {}),
-    ...(shipStatusForRoute !== undefined
-      ? { shipStatus: shipStatusForRoute }
+    ...(routeFrom === "S7"
+      ? {
+          shipStatus: lastShipFromLedger(executableLedger)?.status,
+          hostPrPresent,
+        }
       : {}),
     ...(onlineReviewRoundForRoute !== undefined
       ? { onlineReviewRound: onlineReviewRoundForRoute }
@@ -2573,16 +2588,15 @@ function stopSummaryForErrorPackage(errorPackage: ErrorPackage): StopSummary {
         "move executable instructions into a repo-owner-authored Agent Brief, accepted issue body, ADR, or runner Agent Brief, then rerun",
     };
   }
+  // Pure reporting telemetry: this label does not choose retry, park, or
+  // termination. Those control decisions have already happened upstream.
   if (
     /contract|malformed|does not match|no valid result|off-contract|prior claimed-fixed finding|prior finding disposition/i.test(
       errorPackage.reason,
     ) ||
     WORKER_STDOUT_MISSING_TAG_RE.test(errorPackage.reason)
   ) {
-    return contractDriftStopSummary({
-      summary: errorPackage.reason,
-      repairHint,
-    });
+    return contractDriftStopSummary({ summary: errorPackage.reason, repairHint });
   }
   return infraFailureStopSummary({
     summary: errorPackage.reason,
@@ -2823,6 +2837,73 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const canRelayInProcess = (): boolean =>
     canRelayHandoff(mergeResumeLedgerHistory(resumeHistoryLedger, ledger));
 
+  // Attempt markers belong to a dedicated durable ledger namespace, not the
+  // canonical step-result ledger. Keep the live-process delta separately so
+  // successful retries do not add duplicate worker rows to `RunResult.stepLedger`.
+  const mechanicalRedispatchAttempts = new Map<StepId, number>();
+
+  const mechanicalRedispatchAttemptsFor = (step: StepId): number => {
+    const history = mergeResumeLedgerHistory(resumeHistoryLedger, ledger);
+    let durableAttempts = 0;
+    // A canonical completed row starts a new logical invocation.  Markers
+    // before it have already been consumed by a successful invocation and must
+    // not turn repeated S9/S10 rounds (or CI re-polls) into a lifetime budget.
+    for (let index = history.length - 1; index >= 0; index--) {
+      const entry = history[index]!;
+      if (entry.step === step && entry.event === undefined) break;
+      // A relay baton re-enters the same step under a new worker/model scene.
+      // Its prior crash streak is audit history, not the next invocation's
+      // dispatch budget (the same rule that lets a completed S9/S10 round reset).
+      if (entry.step === step && entry.event === "relay_baton_handoff") break;
+      const isCurrentMarker =
+        entry.step === "mechanical_redispatch_attempt" && entry.forStep === step;
+      // Read r5 rows for crash-resume compatibility; new rows use the distinct
+      // marker namespace above.
+      const isLegacyMarker =
+        entry.step === step && entry.event === "mechanical_redispatch_attempt";
+      if (isCurrentMarker || isLegacyMarker) {
+        durableAttempts = Math.max(
+          durableAttempts,
+          entry.mechanicalRedispatchAttempt ?? 0,
+        );
+      }
+    }
+    return Math.max(mechanicalRedispatchAttempts.get(step) ?? 0, durableAttempts);
+  };
+
+  const completeMechanicalRetryInvocation = (step: StepId): void => {
+    mechanicalRedispatchAttempts.delete(step);
+  };
+
+  const durableMechanicalRetryOptions = (
+    step: StepId,
+    options: MechanicalRetryOptions = {},
+  ): MechanicalRetryOptions => ({
+    ...options,
+    attemptsAlreadyUsed: mechanicalRedispatchAttemptsFor(step),
+    onAttempt: async (attempt) => {
+      await options.onAttempt?.(attempt);
+      const marker: LedgerEntry = {
+        step: "mechanical_redispatch_attempt",
+        event: "mechanical_redispatch_attempt",
+        forStep: step,
+        mechanicalRedispatchAttempt: attempt,
+      };
+      mechanicalRedispatchAttempts.set(step, attempt);
+      if (stateDir === undefined) return;
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await hashPrompt(undefined, step, backend),
+          branchHEAD: await resolveBranchHEAD(),
+          ts: new Date().toISOString(),
+        },
+        stateDir,
+      );
+    },
+  });
+
   const modelRefForWallStep = (wallStep: StepId): string => {
     const slots = modelRoute.slots;
     return wallStep === "S3" || wallStep === "S6"
@@ -2960,6 +3041,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let refusedFindingIdentityKeysForReverify: readonly string[] = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
+  let hostPrPresent: boolean | undefined;
   let onlineReviewRound = 1;
   // Resume planning keeps a display-seeded ledger trimmed at S7. Preserve a
   // separate full ledger for S9's cross-round history extraction.
@@ -2994,6 +3076,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     } catch {
       return "Akagilnc/ming-salvage-sim";
     }
+  }
+
+  function observeShipPr(ship: ShipResult): {
+    readonly present: boolean;
+    readonly prUrl?: string;
+  } {
+    // Unit/dogfood backends intentionally have no GitHub host. Keep their
+    // synthetic handles inside the established test boundary; production must
+    // always execute the host query below.
+    if (process.env.NODE_ENV === "test") {
+      return isFilledString(ship.pr)
+        ? { present: true, prUrl: ship.pr }
+        : { present: false };
+    }
+    const repo = defaultRepo();
+    if (
+      ship.pr !== undefined &&
+      (offlineSyntheticPollAdmissible(ship.pr, repo) ||
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1")
+    ) {
+      return { present: true, prUrl: ship.pr };
+    }
+    return observeOpenPrForBranch(ghSh, repo, ship.branch, ship.pr);
   }
 
   async function pollMergeReadinessForShip(
@@ -3448,10 +3553,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       const buffered = pendingEntries[0]!;
       await backend.writeLedger(buffered, stateDir);
       pendingEntries.shift();
-      mirrorInMemoryLedgerPersistedFields(buffered.step, {
-        ts: buffered.ts,
-        branchHEAD: buffered.branchHEAD,
-      });
+      if (isStepId(buffered.step)) {
+        mirrorInMemoryLedgerPersistedFields(buffered.step, {
+          ts: buffered.ts,
+          branchHEAD: buffered.branchHEAD,
+        });
+      }
     }
     await backend.writeLedger(entry, stateDir);
     mirrorInMemoryLedgerPersistedFields(s, {
@@ -3872,12 +3979,28 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       resumeLedger = [...resumeLedger, repairIntentEntry];
     }
+    const executableResumeLedger = executableLedgerEntries(resumeLedger);
+    const resumeTail = executableResumeLedger.at(-1);
+    const resumeRouteFrom =
+      resumeTail?.step === "S8" && resumeTail.handoffStatus === undefined
+        ? lastNonTerminalStep(executableResumeLedger)
+        : resumeTail?.step;
+    const resumedShip =
+      resumeRouteFrom === "S7" ? lastShipFromLedger(resumeLedger) : undefined;
+    let resumedHostPr: ReturnType<typeof observeShipPr> | undefined;
+    if (resumedShip !== undefined) {
+      try {
+        resumedHostPr = observeShipPr(resumedShip);
+      } catch (err) {
+        return await errorTermination("S7", err);
+      }
+    }
     const plan =
       (await planRecoveredLandedCoderProtocolFailure(
         resumeLedger,
         worktree,
         backend,
-      )) ?? planResume(resumeLedger);
+      )) ?? planResume(resumeLedger, undefined, resumedHostPr?.present);
     resumeHistoryLedger = resumeLedger;
 
     // #684 R2: production call site for monitorHandleFromLedger — rebuild any
@@ -4168,12 +4291,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       );
     }
     const coderRecPolicy = await applyCoderRecSelection(
-      coderRecRoundsFromLedger(ledger),
+      coderRecRoundsFromLedger(ledger.filter((entry) => isStepId(entry.step))),
     );
     if (coderRecPolicy?.kind === "stop") {
       return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
-    const relayResume = resumeRelayFromLedger(resumeLedger, plan.resumeStep);
+    const relayResume = resumeRelayFromLedger(
+      resumeLedger.filter(
+        (entry): entry is PersistentLedgerEntry & { readonly step: StepId } =>
+          isStepId(entry.step),
+      ),
+      plan.resumeStep,
+    );
 
     // #686 — after #767 has rebuilt the base Coder-Rec route, resume from a
     // recorded baton before re-entering the interrupted step.
@@ -4534,11 +4663,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ? {
                       callerOwns: (o) =>
                         "result" in o
-                          ? true
+                          ? false
                           : isReviewerStructuredOutputError(o.error),
                       rethrowOnExhaustion: true,
                     }
                   : {};
+              const durableRetryOpts = durableMechanicalRetryOptions(step, retryOpts);
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
@@ -4572,10 +4702,52 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   // runner advances or returns to an external caller. This
                   // deliberately does not delay spawn / first output (#793).
                   await outcome.telemetryEnvironmentStamp;
-                  return outcome.result;
+                  const dispatched = outcome.result;
+                  if (dispatched.kind !== "completed") return dispatched;
+                  const dispatchedEscalation = escalateOf(dispatched.output);
+                  if (
+                    dispatchedEscalation !== undefined &&
+                    isValidEscalation(dispatchedEscalation)
+                  ) {
+                    return dispatched;
+                  }
+
+                  // #824 / ADR 0062: a process may exit cleanly while its control
+                  // envelope is unusable.  Shape failures and coder
+                  // `committed:false` are therefore mechanical dispatch failures,
+                  // not first-sighting run terminals.  Re-express them at the
+                  // shared WorkerResult seam so withMechanicalRetry owns the one
+                  // bounded lifecycle (fresh redispatch, MAX_DISPATCH_ATTEMPTS).
+                  if (!isValidStepOutput(dispatched.output, expectedKind)) {
+                    return {
+                      kind: "malformed" as const,
+                      reason:
+                        `${step}: completed worker output does not match the ` +
+                        `${expectedKind} contract`,
+                      ...(dispatched.sessionId !== undefined
+                        ? { sessionId: dispatched.sessionId }
+                        : {}),
+                    };
+                  }
+                  if (
+                    expectedKind === "coder" &&
+                    dispatched.output.kind === "coder" &&
+                    !dispatched.output.committed &&
+                    dispatched.output.selfReportDiscrepancy === undefined
+                  ) {
+                    return {
+                      kind: "malformed" as const,
+                      reason: `${step}: coder worker produced no commits (committed:false)`,
+                      ...(dispatched.sessionId !== undefined
+                        ? { sessionId: dispatched.sessionId }
+                        : {}),
+                    };
+                  }
+                  return dispatched;
                 },
-                retryOpts,
+                durableRetryOpts,
               );
+              if (result.kind === "completed") completeMechanicalRetryInvocation(step);
             } catch (err) {
               if (
                 expectedKind === "reviewer" &&
@@ -4621,6 +4793,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ));
 
             if (retryableReviewerFailure) {
+              if (isRelayCandidateExhaustion(reason)) {
+                output = {
+                  kind: "reviewer",
+                  findings: [],
+                  escalate: {
+                    reason: "reviewer mechanical redispatch exhausted",
+                    diagnosis: reason ?? "reviewer output remained malformed",
+                    synthesizedFailure: true,
+                  },
+                };
+                stepSessionId =
+                  result.kind === "malformed" || result.kind === "failed"
+                    ? result.sessionId
+                    : undefined;
+                break;
+              }
               if (attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS) {
                 resumeSessionId = undefined;
                 continue;
@@ -4741,15 +4929,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   }
                   ledger.push(marker);
                   activeRelayFocusPath = staged.focus.path;
+                  completeMechanicalRetryInvocation(step);
                   applyRelayBaton(handoff.nextBaton, step);
                   continue orchestratorStepLoop;
                 }
               }
-              return await errorTermination(
+              const exhaustionReason =
+                reason ?? `worker ${step} returned ${result.kind} after bounded redispatch`;
+              return await escalateTermination(
                 step,
-                new Error(
-                  `worker ${step} returned ${result.kind}: ${reason ?? "no reason"}`,
-                ),
+                {
+                  reason: `${step} mechanical redispatch exhausted`,
+                  diagnosis: exhaustionReason,
+                  synthesizedFailure: true,
+                },
+                result.sessionId,
+                "failure",
+                undefined,
+                infraFailureStopSummary({
+                  summary: exhaustionReason,
+                  repairHint: `inspect ${step} worker protocol failure and rerun`,
+                }),
               );
             }
             const normalized =
@@ -4922,6 +5122,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               ledger.push(marker);
               activeRelayFocusPath = staged.focus.path;
+              completeMechanicalRetryInvocation(step);
               applyRelayBaton(handoff.nextBaton, step);
               continue orchestratorStepLoop;
             }
@@ -5132,11 +5333,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               // Join only at result collection, never on the spawn path.
               await outcome.telemetryEnvironmentStamp;
-              return outcome.result;
+              const result = outcome.result;
+              // A clean worker exit is not a successful S7 delivery until its
+              // typed envelope passes the resident-branch contract.  Classify a
+              // completed-but-invalid envelope here, inside the shared retry
+              // predicate, so it consumes the bounded redispatch lifecycle
+              // instead of clearing S7's durable attempt marker below.
+              if (result.kind !== "completed") return result;
+              const candidate = result.output;
+              if (
+                candidate.kind !== "ship" ||
+                candidate.branch !== worktree?.branch ||
+                (candidate.status !== "pushed" && candidate.status !== "pr_opened") ||
+                (candidate.status === "pr_opened" && !isFilledString(candidate.pr))
+              ) {
+                return {
+                  kind: "malformed",
+                  reason:
+                    `ship worker completed with an invalid delivery envelope ` +
+                    `(kind="${candidate.kind}", branch="${
+                      candidate.kind === "ship" ? candidate.branch : "n/a"
+                    }")`,
+                  ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
+                };
+              }
+              return result;
             },
-            {
+            durableMechanicalRetryOptions("S7", {
               callerOwns: isJudgedShipDeliveryFailure,
-            },
+            }),
           );
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
           // S8(escalate) handoff, NOT an error — keep the escalate semantics so
@@ -5191,6 +5416,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
             );
           }
+          completeMechanicalRetryInvocation("S7");
           // Persist the validated SHIP payload + the worker's session id into the S7
           // ledger entry (online review r1, 3 bots): the shared record/emitLedger
           // path below writes `output`/`stepSessionId`, but S7 previously left both
@@ -5203,10 +5429,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // RealBackend ship envelope historically omits it; without it resume uses
           // "offline-review-head" → live poll re-anchors and stales timestamp-only bots.
           let shipWithHead = ship;
+          const hostPr = observeShipPr(ship);
+          hostPrPresent = hostPr.present;
+          // The host-resolved identity replaces the advisory worker URL. Never
+          // preserve a rejected hint when fallback found the real branch PR.
+          const { pr: _reportedPr, ...shipWithoutReportedPr } = shipWithHead;
+          shipWithHead = hostPr.prUrl === undefined
+            ? shipWithoutReportedPr
+            : { ...shipWithoutReportedPr, pr: hostPr.prUrl };
           if (!isFilledString(ship.prHead)) {
             const headOid = await resolveBranchHEAD();
             if (isFilledString(headOid)) {
-              shipWithHead = { ...ship, prHead: headOid };
+              shipWithHead = { ...shipWithHead, prHead: headOid };
             }
           }
           output = shipWithHead;
@@ -5361,6 +5595,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               ledger.push(marker);
               activeRelayFocusPath = staged.focus.path;
+              completeMechanicalRetryInvocation("S7");
               applyRelayBaton(handoff.nextBaton, "S7");
               continue orchestratorStepLoop;
             }
@@ -5737,9 +5972,28 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 // surface contract_drift, not mechanical-retry on a dirty tree.
                 await assertVerifyReadOnlyContract();
                 if (dispatchError !== undefined) throw dispatchError;
-                return workerResult!;
+                const result = workerResult!;
+                // Completed is only mechanically successful when the envelope
+                // expected by this review-loop role is valid.  Reclassifying an
+                // invalid clean exit before withMechanicalRetry evaluates it keeps
+                // the durable marker until a valid envelope is returned.
+                if (result.kind !== "completed") return result;
+                const outputValid =
+                  (reviewStep === "S9" && isValidVerifyResult(result.output)) ||
+                  (reviewStep === "S10" && isValidFixerResult(result.output)) ||
+                  (reviewStep === "S11" && isValidCleanupResult(result.output)) ||
+                  (reviewStep === "S12" && isValidDocReleaseResult(result.output));
+                if (outputValid) return result;
+                const badKind = (result.output as { kind?: unknown } | undefined | null)?.kind;
+                return {
+                  kind: "malformed",
+                  reason:
+                    `${reviewStep} worker completed with invalid ${reviewStep} envelope ` +
+                    `(output kind '${String(badKind)}')`,
+                  ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
+                };
               },
-              reviewResetOpt,
+              durableMechanicalRetryOptions(reviewStep, reviewResetOpt),
             );
           } catch (err) {
             if (err instanceof VerifyWorkerHeadMovedError) {
@@ -5800,6 +6054,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
             );
           }
+          completeMechanicalRetryInvocation(reviewStep);
           if (
             reviewStep === "S11" &&
             isValidCleanupResult(result.output) &&
@@ -6594,6 +6849,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               ledger.push(marker);
               activeRelayFocusPath = staged.focus.path;
+              completeMechanicalRetryInvocation(reviewStep);
               applyRelayBaton(handoff.nextBaton, reviewStep);
               step = reviewStep;
               continue orchestratorStepLoop;
@@ -6615,15 +6871,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const never: never = step;
         throw new Error(`runner: step ${String(never)} not handled`);
       }
-    }
-
-    // Pending CI re-poll: stay on S9 without ledger/route advance (online R2 Codex P2).
-    // Shared delay with family stage (sleepPendingCiPollInterval).
-    if (reenterS9ForPendingCi) {
-      reenterS9ForPendingCi = false;
-      step = "S9";
-      await sleepPendingCiPollInterval();
-      continue;
     }
 
     const stepFindingDispositions =
@@ -6691,6 +6938,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       });
     }
 
+    // A green verify is a completed mechanical invocation even when CI is still
+    // pending. Persist its canonical S9 row above before re-entering so the
+    // durable retry scan sees a success boundary across both live loops and
+    // crash/re-feed. Shared delay with the family stage.
+    if (reenterS9ForPendingCi) {
+      reenterS9ForPendingCi = false;
+      step = "S9";
+      await sleepPendingCiPollInterval();
+      continue;
+    }
+
     // A relay baton is a step-local override. Once its relayed step has
     // durably completed, normal downstream roles must reselect their own route.
     clearCompletedRelayState(step, output);
@@ -6711,6 +6969,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             shipStatus:
               lastShipOutput?.status ??
               (family?.noPush ? "pushed" : undefined),
+            hostPrPresent: family?.noPush ? false : hostPrPresent,
           }
         : {}),
       ...(step === "S9" || step === "S10"

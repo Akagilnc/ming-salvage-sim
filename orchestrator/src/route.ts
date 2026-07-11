@@ -12,7 +12,9 @@
  *     clean/deferred only → S7(ship)→S9(verify)→S10(fixer)→S12(docRelease)→S11(cleanup)→S8(success)
  *     blocking → S5(fix)→S6(fresh full-diff review)→S4
  *
- * Escalate stays the global stop edge (checked FIRST).
+ * A valid decision escalation stays the global stop edge (checked FIRST).
+ * Malformed envelopes return the same step as a redispatch request; the runner's
+ * shared mechanical retry layer owns the bound and exhaustion escalation.
  */
 
 import type { Finding, OnlineReviewTerminalState, StepId, StepOutput } from "./types.js";
@@ -69,11 +71,10 @@ export interface RouteContext {
    * were closure.
    */
   readonly pendingBlockingFindings?: ReadonlyArray<Finding>;
-  /**
-   * S7 ship output status — `pushed` skips the online review loop (#600 AC).
-   * When `pr_opened`, the runner enters S9+ after bot polling.
-   */
+  /** Worker-reported S7 status, retained as telemetry only. */
   readonly shipStatus?: string;
+  /** Host-observed truth: whether the shipped branch currently has an open PR. */
+  readonly hostPrPresent?: boolean;
   /** 1-based online review round for S9/S10 routing (#600 / ADR 0061). */
   readonly onlineReviewRound?: number;
 }
@@ -105,7 +106,7 @@ export function route(ctx: RouteContext): RouteDecision {
   if (escalate != null) {
     return isValidEscalation(escalate)
       ? { kind: "handoff", status: "escalate" }
-      : { kind: "handoff", status: "error" };
+      : { kind: "next", step: ctx.from };
   }
 
   switch (ctx.from) {
@@ -126,11 +127,11 @@ export function route(ctx: RouteContext): RouteDecision {
       // output (the runner also guards this, but route() must be safe at the
       // seam regardless of caller).
       if (!isValidCoderOutput(ctx.output)) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S2" };
       }
       // #252 error edge: 0 commits → S8(error: build produced nothing).
       if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S2" };
       }
       return { kind: "next", step: "S3" };
     }
@@ -138,13 +139,13 @@ export function route(ctx: RouteContext): RouteDecision {
     case "S3":
     case "S6":
       if (!isValidReviewerOutput(ctx.output)) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: ctx.from };
       }
       return { kind: "next", step: "S4" };
 
     case "S4": {
       if (!isValidReviewerOutput(ctx.output)) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S4" };
       }
       const blockingCount =
         ctx.pendingBlockingFindings !== undefined
@@ -157,18 +158,18 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S5": {
       if (!isValidCoderOutput(ctx.output)) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S5" };
       }
       if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S5" };
       }
       return { kind: "next", step: "S6" };
     }
 
     case "S7": {
-      // #600: a push-only delivery (`pushed`) does not engage the online review
-      // loop — only `pr_opened` with a PR URL enters S9+.
-      if (ctx.shipStatus === "pushed") {
+      // #824: the worker's shipStatus is telemetry, not routing authority. Only
+      // a fresh host-side GitHub observation decides whether S9+ is applicable.
+      if (ctx.hostPrPresent !== true) {
         return { kind: "handoff", status: "success" };
       }
       return { kind: "next", step: "S9" };

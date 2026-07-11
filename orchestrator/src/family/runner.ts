@@ -32,6 +32,7 @@ import {
   routeSmokeFailure,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import { isStepId } from "../types.js";
 import type {
   Backend,
   EscalationAnswerPayload,
@@ -291,7 +292,8 @@ function escalatedChildStep(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
 ): StepId | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
-    if (ledger[i]!.step !== "S8") return ledger[i]!.step;
+    const entry = ledger[i]!;
+    if (entry.step !== "S8" && isStepId(entry.step)) return entry.step;
   }
   return undefined;
 }

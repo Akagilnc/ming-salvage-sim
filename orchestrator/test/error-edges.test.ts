@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
+import { MAX_DISPATCH_ATTEMPTS } from "../src/dispatchRetry.js";
 import type {
   Backend,
   IssueMeta,
@@ -83,8 +84,8 @@ class BaseBackend implements Backend {
 
 // ─── 0-commit (S2 coder_implement returns committed:false) ─────────────────
 
-describe("error edge: S2 coder 0-commit → S8(error)", () => {
-  it("does NOT proceed to reviewer (S3 never called) when coder committed:false", async () => {
+describe("S2 coder 0-commit bounded mechanical redispatch", () => {
+  it("redispatches through the shared bound, then failure-escalates without reaching S3", async () => {
     const runStepIds: string[] = [];
     const backend = new BaseBackend();
     backend.runStep = async (spec) => {
@@ -97,10 +98,13 @@ describe("error edge: S2 coder 0-commit → S8(error)", () => {
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("error");
-    // S3 must never be reached — coder produced nothing so we stop immediately.
+    expect(result.status).toBe("escalate");
     expect(runStepIds).not.toContain("S3");
-    expect(runStepIds).toContain("S2");
+    expect(runStepIds.filter((id) => id === "S2")).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    expect(result.stopSummary?.reason).toBe("infra_failure");
+    expect(result.stopSummary?.summary).toContain(
+      `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
+    );
   });
 
   it("converges to S8 handoff(status=error) with an error package identifying S2", async () => {
@@ -114,12 +118,9 @@ describe("error edge: S2 coder 0-commit → S8(error)", () => {
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("error");
-    // Error package must identify the failing step.
-    expect(result.errorPackage).toBeDefined();
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
-    expect(typeof result.errorPackage?.reason).toBe("string");
-    expect(result.errorPackage?.reason.length).toBeGreaterThan(0);
+    expect(result.stopSummary?.reason).toBe("infra_failure");
   });
 
   it("records S8 in the ledger on 0-commit error path", async () => {
@@ -139,6 +140,9 @@ describe("error edge: S2 coder 0-commit → S8(error)", () => {
     expect(steps).toContain("S2");
     // Must NOT include S3 (reviewer skipped).
     expect(steps).not.toContain("S3");
+    expect(result.stepLedger.find((entry) => entry.step === "S8")?.stopSummary?.reason).toBe(
+      "infra_failure",
+    );
   });
 });
 
@@ -199,7 +203,7 @@ describe("error edge: S7 push failure → S8(error)", () => {
 // ─── backend throws mid-pipeline (sandbox.run / gh / git) ──────────────────
 
 describe("error edge: any backend call throws → S8(error), not silently swallowed", () => {
-  it("sandbox.run (S2 runStep) throws → S8(status=error)", async () => {
+  it("sandbox.run (S2 runStep) permanently throws → bounded failure escalation", async () => {
     const backend = new BaseBackend();
     backend.runStep = async (spec) => {
       if (spec.role === "coder") {
@@ -210,7 +214,7 @@ describe("error edge: any backend call throws → S8(error), not silently swallo
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
     expect(result.errorPackage?.reason).toContain("sandbox.run crashed");
   });
@@ -264,7 +268,7 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
     expect(result.errorPackage).toBeUndefined();
   });
 
-  it("0-commit yields S8(status=error) — distinct from success", async () => {
+  it("0-commit exhaustion yields failure escalation — distinct from success and decision park", async () => {
     const backend = new BaseBackend();
     backend.runStep = async (spec) => {
       if (spec.role === "coder") {
@@ -273,9 +277,9 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
       return { kind: "reviewer", findings: [] };
     };
     const result = await runOrchestrator({ issueNumber: 252, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.status).not.toBe("success");
-    expect(result.status).not.toBe("escalate");
+    expect(result.stopSummary?.reason).toBe("infra_failure");
   });
 
   it("escalate signal yields S8(status=escalate) — distinct from error", async () => {

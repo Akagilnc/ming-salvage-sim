@@ -137,10 +137,12 @@ async function runAndCapture() {
 // ─── tests ───────────────────────────────────────────────────────────────────
 
 describe("persisted step ledger (#249)", () => {
-  it("writeLedger is called once per executed step including S8 handoff", async () => {
+  it("writes one canonical row per executed step including S8 handoff", async () => {
     const { backend } = await runAndCapture();
 
-    const steps = backend.ledgerCalls.map((c) => c.entry.step);
+    const steps = backend.ledgerCalls
+      .filter((c) => c.entry.step !== "mechanical_redispatch_attempt")
+      .map((c) => c.entry.step);
     expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S8"]);
   });
 
@@ -242,7 +244,9 @@ describe("persisted step ledger (#249)", () => {
      * The test name reflects what it actually verifies: all steps are present.
      */
     const { backend } = await runAndCapture();
-    const allSteps = backend.ledgerCalls.map((c) => c.entry.step);
+    const allSteps = backend.ledgerCalls
+      .filter((c) => c.entry.step !== "mechanical_redispatch_attempt")
+      .map((c) => c.entry.step);
 
     // Every step in the canonical order must appear exactly once (ADR 0030).
     const canonicalOrder = ["S0", "S1", "S2", "S3", "S4", "S7", "S8"];

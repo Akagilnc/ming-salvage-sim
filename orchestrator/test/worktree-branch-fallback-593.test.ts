@@ -251,6 +251,41 @@ describe("RealBackend findResumeState old-branch fallback (#593)", () => {
     expect(backend.gitCalls.map((c) => c.args.join(" "))).not.toContain("worktree move");
   });
 
+  it("round-trips #824 mechanical redispatch markers for durable resume accounting", async () => {
+    const wtRoot = mkDir("wt-mechanical-marker-resume-");
+    const existingWt = join(wtRoot, "issue-593");
+    mkdirSync(existingWt, { recursive: true });
+
+    const backend = newBackend(porcelainForBranch(NEW_BRANCH, existingWt));
+    const stateDir = writeLedger(
+      existingWt,
+      ISSUE,
+      [
+        {
+          step: "mechanical_redispatch_attempt",
+          event: "mechanical_redispatch_attempt",
+          forStep: "S2",
+          mechanicalRedispatchAttempt: 2,
+          sessionId: "retry-marker-session",
+        },
+        { step: "S1", branchHEAD: HEAD_SHA },
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+    );
+
+    const resume = await backend.findResumeState(ISSUE);
+
+    expect(resume?.stateDir).toBe(stateDir);
+    expect(resume?.ledger).toMatchObject([
+      {
+        step: "mechanical_redispatch_attempt",
+        event: "mechanical_redispatch_attempt",
+        forStep: "S2",
+        mechanicalRedispatchAttempt: 2,
+      },
+      { step: "S1" },
+    ]);
+  });
+
   it("returns undefined when neither branch convention matches", async () => {
     const backend = newBackend("");
     expect(await backend.findResumeState(ISSUE)).toBeUndefined();

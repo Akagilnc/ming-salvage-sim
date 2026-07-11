@@ -419,7 +419,7 @@ describe("#331 a non-completed WorkerResult routes via workerResultToStep", () =
   it("a failed worker → S8(error) with the reason surfaced", async () => {
     const backend = new FailedBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.reason).toContain("container crashed");
   });
 });
@@ -455,11 +455,12 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
     }
   }
 
-  it("a completed-but-non-ship S7 result → S8(error), NOT a false success", async () => {
+  it("a persistently completed-but-non-ship S7 result exhausts bounded redispatch, never false-success", async () => {
     const backend = new WrongShipPayloadBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
     expect(result.status).toBe("error");
-    expect(result.errorPackage?.reason).toContain("non-ship output kind");
+    expect(result.errorPackage?.reason).toContain("invalid delivery envelope");
+    expect(result.errorPackage?.reason).toContain("after 3 dispatch attempts");
   });
 });
 
@@ -508,12 +509,12 @@ describe("#596 S9 (verify) worker must return a valid verify payload — finding
     }
   }
 
-  it("S9 worker returning completed-with-undefined-output → errorTermination with the non-crash message, not a TypeError", async () => {
+  it("S9 worker returning completed-with-undefined-output exhausts bounded redispatch without a TypeError", async () => {
     const backend = new S9UndefinedOutputBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
     expect(result.status).toBe("error");
-    // Must be the clean message from the !outputValid branch (defensive String()).
-    expect(result.errorPackage?.reason).toContain("S9 worker returned non-S9 output kind 'undefined'");
+    expect(result.errorPackage?.reason).toContain("invalid S9 envelope (output kind 'undefined')");
+    expect(result.errorPackage?.reason).toContain("after 3 dispatch attempts");
     // Sanity: did not surface a TypeError string.
     expect(result.errorPackage?.reason).not.toMatch(/TypeError/i);
   });
