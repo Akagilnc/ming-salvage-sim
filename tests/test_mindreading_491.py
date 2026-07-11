@@ -3,9 +3,10 @@
 from dataclasses import replace
 import inspect
 
+import ming_sim.mindreading as mindreading
 from ming_sim.mindreading import (
     build_mindreading_payload,
-    intelligence_precision,
+    build_scouting_precision_payload,
     is_inner_court_attendant,
 )
 
@@ -24,11 +25,29 @@ def test_reader_is_selected_by_inner_court_post_not_name(game):
     assert not is_inner_court_attendant(minister)
 
 
-def test_precision_is_shared_and_target_factor_is_reserved_for_scouting():
-    assert intelligence_precision(1.0, 1.0) == intelligence_precision(1.0, 1.0)
-    assert intelligence_precision(0.5, 1.0) == "隐约"
-    assert intelligence_precision(1.0, 0.5) == "隐约"
-    assert intelligence_precision(1.0, 1.0) == "清晰"
+def test_mindreading_and_scouting_consume_the_same_precision_contract(game, monkeypatch):
+    calls = []
+
+    def shared_precision(target_factor, channel_factor):
+        calls.append((target_factor, channel_factor))
+        return "隐约"
+
+    monkeypatch.setattr(mindreading, "intelligence_precision", shared_precision)
+    db, state, content = game
+    reading_payload = build_mindreading_payload(
+        db,
+        state,
+        content.characters["王承恩"],
+        content.characters["温体仁"],
+        "臣愿担责。",
+        target_factor=0.5,
+        channel_factor=1.0,
+    )
+    scouting = build_scouting_precision_payload(0.5, 1.0)
+
+    assert reading_payload["precision"] == "隐约"
+    assert scouting == {"source": "锦衣卫查探预留", "precision": "隐约"}
+    assert calls == [(0.5, 1.0), (0.5, 1.0)]
 
 
 def test_mindreading_uses_three_truth_sources_without_naked_values(game):
