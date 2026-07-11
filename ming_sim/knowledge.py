@@ -12,7 +12,7 @@ import json
 import re
 from typing import Any, Dict
 
-from ming_sim.qualitative import qualitative_band
+from ming_sim.qualitative import qualitative_audience_text, qualitative_band
 
 
 def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
@@ -95,7 +95,7 @@ def _qualitative(text: object) -> str:
         label, raw = match.groups()
         return label + "：" + qualitative_band(raw, labels[label])
     rendered = pattern.sub(replace, rendered)
-    return rendered
+    return qualitative_audience_text(rendered, "见闻记录")
 
 
 def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:
@@ -122,8 +122,8 @@ def render_character_knowledge(knowledge: Dict[str, object], character_name: str
         key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
     )[-20:]
     for item in recent_items:
-        title = item.get("title") or "旧闻"
-        body = item.get("body") or ""
+        title = qualitative_audience_text(item.get("title") or "旧闻", "见闻标题")
+        body = qualitative_audience_text(item.get("body") or "", "见闻正文")
         if body:
             lines.append(f"- {title}：{body}")
     return "\n".join(lines) if len(lines) > 1 else ""
@@ -275,7 +275,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "body": _qualitative(directive.get("text") or ""),
             "source_id": f"directive:{directive['id']}",
         })
-    def source_projection(turn: int, fallback: object) -> str:
+    def source_projection(turn: int, fallback: object, *, public_counterpart: str = "") -> str:
         """Project aggregate narrative from source rows, never from redaction.
 
         Reports and chapter memories are rendered aggregates.  When their turn
@@ -288,15 +288,29 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         # feeding one archive back into the next archive would duplicate
         # material and make an already-rendered aggregate look like an
         # unrestricted source.
-        rows = [
-            row for row in public_events
-            if int(row.get("turn") or 0) == turn
-            and not str(row.get("source_id") or "").startswith(
-                ("opening:", "directive:", "turn_report:", "chapter:", "chapter_source:",
-                )
+        rows = []
+        for row in public_events:
+            source_id = str(row.get("source_id") or "")
+            # ``turn_report:*:public`` and ``chapter_source:*`` are explicit,
+            # source-scoped public counterparts written by the archive API.
+            # Unlike aggregate read-model rows, each has its own durable source
+            # boundary and remains visible beside a same-turn secret.
+            aggregate_row = (
+                source_id.startswith("opening:")
+                or source_id.startswith("directive:")
+                or (source_id.startswith("turn_report:") and not source_id.endswith(":public"))
+                or source_id.startswith("chapter:")
+                or source_id == f"settlement:narrative:{turn}"
             )
-            and str(row.get("source_id") or "") != f"settlement:narrative:{turn}"
-        ]
+            if int(row.get("turn") or 0) == turn and not aggregate_row:
+                rows.append(row)
+        # Direct archive callers persist an explicit public counterpart.  It
+        # is the authoritative public fragment for that aggregate; mixing it
+        # with unrelated same-turn sources would turn one gazette item into a
+        # synthetic bundle and lose its independently addressable history.
+        counterpart_rows = [row for row in rows if str(row.get("source_id") or "") == public_counterpart]
+        if counterpart_rows:
+            rows = counterpart_rows
         visible = [
             row for row in rows
             if knowledge_row_visible_to(
@@ -330,24 +344,32 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             # turning the turn-zero aggregate into every role's public rail.
             if int(report["turn"]) <= 0:
                 continue
-            body = source_projection(int(report["turn"]), report.get("report"))
+            report_turn = int(report["turn"])
+            body = source_projection(
+                report_turn, report.get("report"),
+                public_counterpart=f"turn_report:{report_turn}:public",
+            )
             if body:
                 public_events.append({
                     "turn": int(report["turn"]), "year": int(report["year"]),
                     "period": int(report["period"]), "kind": "public",
                     "title": "邸报", "body": body,
-                    "source_id": f"turn_report:{report['turn']}",
+                    "source_id": f"projection:turn_report:{report['turn']}",
                     "excluded_names": "[]",
                 })
     if hasattr(db, "list_chapter_memories"):
         for chapter in db.list_chapter_memories(upto_turn=state.turn):
-            body = source_projection(int(chapter["turn"]), chapter.get("body"))
+            chapter_turn = int(chapter["turn"])
+            body = source_projection(
+                chapter_turn, chapter.get("body"),
+                public_counterpart=f"chapter_source:{chapter_turn}",
+            )
             if body:
                 public_events.append({
                     "turn": int(chapter["turn"]), "year": int(chapter["year"]),
                     "period": int(chapter["period"]), "kind": "chapter_summary",
                     "title": chapter.get("title") or "朝局旧闻", "body": body,
-                    "source_id": f"chapter:{chapter['turn']}",
+                    "source_id": f"projection:chapter:{chapter['turn']}",
                     "excluded_names": "[]",
                 })
 

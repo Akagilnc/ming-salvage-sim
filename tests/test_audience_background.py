@@ -396,7 +396,7 @@ def test_audience_prompt_does_not_expose_unissued_draft_to_uninvolved_minister(g
 def test_audience_prompt_projects_return_report_with_derived_source(game, monkeypatch):
     """回奏进入该角色知识投影，查访问题不能被生产编排伪装成见闻。"""
     db, state, content = game
-    minister = next(iter(content.characters.values()))
+    minister = content.characters["王承恩"]
     calls = []
     original = db.build_return_report
 
@@ -412,6 +412,23 @@ def test_audience_prompt_projects_return_report_with_derived_source(game, monkey
     assert calls == ["inquiry"]
     assert "近臣查访" in prompt
     assert "军队警讯" in prompt
+
+
+def test_audience_prompt_does_not_create_near_minister_report_for_ordinary_minister(game):
+    db, state, content = game
+    minister = next(
+        character for character in content.characters.values()
+        if character.office_type not in {"司礼监", "内廷"}
+        and "太监" not in character.office
+    )
+    session = SimpleNamespace(db=db, state=state)
+
+    GameSession._audience_prompt_for_message(session, "请查访各镇欠饷如何？", minister)
+
+    assert not any(
+        item.get("source_id", "").startswith("near_minister:")
+        for item in db.get_character_knowledge(state, minister.name)["events"]
+    )
 
 
 class _CliActionSession(_FakeSession):
@@ -511,6 +528,32 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     ).fetchone() is None
     assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
+
+
+def test_background_audience_recommendation_stages_candidate_snapshot(game):
+    """Web 流式路径与 session 共用荐人 sentinel 的任命暂存语义。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    candidate = db.list_recommendation_candidates(state, minister_name)[0]
+    payload = {
+        "name": candidate["name"], "office": "巡盐御史", "reason": "可堪任事",
+        "faction": candidate["faction"],
+        "recommendation": {"candidate": candidate, "recommender": minister_name},
+    }
+    agent = _FakeAgent([
+        ToolExec("recommend_person", "__pending_recommendation__" + json.dumps(payload, ensure_ascii=False))
+    ])
+    web_game = _web_game(db, state, content, agent)
+
+    stream = web_game.chat_stream(minister_name, "可荐何人巡盐？")
+    assert next(stream)["type"] == "delta"
+    stream.close()
+
+    assert agent.completed.wait(1.0)
+    assert _wait_for(lambda: len(db.list_pending_actions(state.turn)) == 1)
+    staged = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
+    assert staged["recommendation"]["recommender"] == minister_name
+    assert staged["recommendation"]["candidate"]["name"] == candidate["name"]
 
 
 def test_llm_failure_does_not_leave_half_chat_in_history(game):

@@ -64,7 +64,7 @@ _REGISTRY_PATCHES = [
     ("ming_sim.registry.build_secret_order_brief", ""),
     ("ming_sim.registry.build_minister_tools", []),
     ("ming_sim.registry._skills_for", MagicMock()),
-    ("ming_sim.registry.character_context", "角色描述"),
+    ("ming_sim.registry.character_context_with_db", "角色描述"),
     ("ming_sim.registry.Agent", MagicMock(return_value=MagicMock())),
 ]
 

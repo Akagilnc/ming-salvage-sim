@@ -683,7 +683,7 @@ def test_historical_context_rejects_injected_abstract_values_across_all_history_
         assert "能力评分：98" not in rendered
         assert "民心数值：73" not in rendered
         assert "进度指标：41/100" not in rendered
-        assert "已略去" in rendered or "未见正式邸报记录" in rendered
+        assert "已略去" in rendered or "欠饷约三月" in rendered
 
 
 def test_historical_context_rejects_adjacent_abstract_values_at_every_history_seam(game):
@@ -711,7 +711,7 @@ def test_historical_context_rejects_adjacent_abstract_values_at_every_history_se
         tools["search_memories"](keywords="旧事"),
     )
     for text in rendered:
-        assert "已略去" in text or "未见正式邸报记录" in text
+        assert "已略去" in text or "欠饷约三月" in text
         assert not re.search(r"(?:忠诚值88|能力评分98|民心值73|进度评分73/100)", text)
 
 

@@ -95,4 +95,6 @@ def test_minister_agent_injects_faction_dossier_once(game):
         )
 
     rendered = "\n".join(captured["instructions"])
-    assert rendered.count("【派系档料】") == 1
+    # The prompt guide may name this block, but the production character
+    # assembly must contain the faction's actual bucketed dossier once.
+    assert rendered.count("以皇帝直控、清账和让诏令落地为共同取向") == 1

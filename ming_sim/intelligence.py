@@ -9,6 +9,8 @@ import hashlib
 import re
 from typing import Any, Dict, Iterable, Mapping, Optional
 
+from ming_sim.qualitative import qualitative_audience_text
+
 
 OFFICE_SLOTS = (
     ("陕西巡抚", "督抚", "shaanxi", "陕西"),
@@ -66,7 +68,7 @@ def _safe_report_text(text: object) -> str:
     DB report readers already hide abstract axes.  Do not erase countable
     military, fiscal, date, or arrears facts from a near-minister's return.
     """
-    return str(text or "")
+    return qualitative_audience_text(text, "近臣回奏")
 
 
 def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
