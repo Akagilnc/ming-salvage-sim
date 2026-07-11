@@ -6985,6 +6985,8 @@ class GameDB:
         source_kind: str = "system",
         source_id: str = "",
         expires_turn: Optional[int] = None,
+        *,
+        commit: bool = True,
     ) -> int:
         """写入/更新一张事件记忆摘要卡，按主体+类型+来源去重。"""
         subject_type = (subject_type or "").strip()
@@ -7051,7 +7053,8 @@ class GameDB:
             """,
             (subject_type, subject_id, event_type, source_kind, source_id),
         ).fetchone()
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         action = "更新" if existed else "保存"
         tlog(
             f"[memory/{action}] #{int(row['id']) if row else '?'} "
@@ -7369,8 +7372,19 @@ class GameDB:
         tlog(f"[MEM-IO/db.detail/OUTPUT] #{memory_id} ({len(out)}字):\n{out}")
         return out
 
-    def save_turn_report(self, state: GameState, report: str) -> None:
-        """每回合月末奏报单独存档（turn_reports），与 turn_logs 日志解耦。"""
+    def save_turn_report(
+        self, state: GameState, report: str,
+        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
+        *,
+        commit: bool = True,
+    ) -> None:
+        """每回合月末奏报单独存档（turn_reports），与 turn_logs 解耦。
+
+        ``report`` is a presentation aggregate and is not used for access
+        control.  Producers that mix public and restricted material may pass
+        the source-scoped ``knowledge_items`` projection; each item is then
+        durable independently for character reads.
+        """
         self.conn.execute(
             """
             INSERT INTO turn_reports (turn, year, period, report)
@@ -7382,7 +7396,9 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
         )
-        self.conn.commit()
+        self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
+        if commit:
+            self.conn.commit()
 
     def get_turn_report(self, turn: int) -> str:
         row = self.conn.execute(
@@ -7405,7 +7421,10 @@ class GameDB:
     # ── 章节记忆（event_memories 的 chapter_summary 类，每回合一条，importance=5 永久）──
 
     def save_chapter_memory(
-        self, state: GameState, title: str, body: str, tags: Optional[List[str]] = None
+        self, state: GameState, title: str, body: str, tags: Optional[List[str]] = None,
+        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
+        *,
+        commit: bool = True,
     ) -> int:
         """落本回合章节记忆。subject 固定 court/chapter，event_type=chapter_summary，
         source_id=turn 保证每回合唯一。body 存整段叙事章节（不受 outcome 80 字限）。
@@ -7430,14 +7449,138 @@ class GameDB:
             source_kind="turn_report",
             source_id=str(state.turn),
             expires_turn=None,
+            commit=commit,
         )
         if memory_id:
             self.conn.execute(
                 "UPDATE event_memories SET body = ? WHERE id = ?",
                 (str(body or ""), memory_id),
             )
+        self.persist_knowledge_items_for_turn(
+            state, knowledge_items, default_title=title, commit=commit
+        )
+        if commit:
             self.conn.commit()
         return memory_id
+
+    def persist_knowledge_items_for_turn(
+        self,
+        state: GameState,
+        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
+        *,
+        default_title: str = "邸报事项",
+        commit: bool = True,
+    ) -> None:
+        """Materialize every turn source before any aggregate archive is read.
+
+        The gazette and chapter are derived prose, not authorization boundaries.
+        Persisting the public projection of both unscoped and participant-scoped
+        source rows first gives the read model an independent item boundary.  The
+        operation is idempotent by ``(character_name, kind, source_id)`` and is
+        deliberately callable from the real settlement transaction before the
+        aggregate writers run.
+        """
+        items = knowledge_items
+        if items is None:
+            items = self.knowledge_items_for_turn(state.turn)
+        for item in items:
+            self.record_public_knowledge_event(
+                state,
+                str(item.get("title") or default_title),
+                str(item.get("body") or ""),
+                source_id=str(item.get("source_id") or ""),
+                excluded_names=item.get("excluded_names") or (),
+                commit=commit,
+            )
+
+    def knowledge_items_for_turn(self, turn: int) -> List[Dict[str, object]]:
+        """Return source-scoped public material for archive projection.
+
+        Aggregate archives are presentation artifacts.  Replaying the durable
+        public rows here keeps source_id and explicit exclusions attached to
+        each item when a turn report or chapter is saved.  Source rows are
+        included as well: settlement producers may register a participating
+        item before either aggregate is rendered, and the archive write must
+        not lose that item's access boundary.
+        """
+        rows = self.conn.execute(
+            "SELECT turn, year, period, title, body, source_id, excluded_names "
+            "FROM character_knowledge_events WHERE character_name='' AND turn=? "
+            "ORDER BY id",
+            (int(turn),),
+        ).fetchall()
+        by_source: Dict[str, Dict[str, object]] = {}
+        for row in rows:
+            try:
+                excluded_names = json.loads(row["excluded_names"] or "[]")
+            except (TypeError, ValueError):
+                excluded_names = []
+            if not isinstance(excluded_names, list):
+                excluded_names = []
+            item = {
+                "title": row["title"], "body": row["body"],
+                "source_id": row["source_id"], "excluded_names": excluded_names,
+            }
+            by_source[str(row["source_id"] or "")] = item
+
+        source_rows = self.conn.execute(
+            "SELECT title, body, source_id, participant_roster, excluded_names, "
+            "excluded_targets FROM character_knowledge_sources WHERE turn=? "
+            "ORDER BY id",
+            (int(turn),),
+        ).fetchall()
+        characters = self.conn.execute(
+            "SELECT name, office, office_type FROM characters"
+        ).fetchall()
+        character_names = {str(row["name"]) for row in characters}
+        for row in source_rows:
+            try:
+                roster = json.loads(row["participant_roster"] or "[]")
+            except (TypeError, ValueError):
+                roster = []
+            participants = {
+                str(item.get("character_id") or item.get("name"))
+                for item in roster
+                if isinstance(item, Mapping) and (item.get("character_id") or item.get("name"))
+            }
+            try:
+                excluded_names = json.loads(row["excluded_names"] or "[]")
+            except (TypeError, ValueError):
+                excluded_names = []
+            if not isinstance(excluded_names, list):
+                excluded_names = []
+            try:
+                excluded_targets = json.loads(row["excluded_targets"] or "{}")
+            except (TypeError, ValueError):
+                excluded_targets = {}
+            if not isinstance(excluded_targets, dict):
+                excluded_targets = {}
+            target_people = {
+                str(name) for name in excluded_targets.get("people", [])
+            }
+            target_offices = {
+                str(office) for office in excluded_targets.get("offices", [])
+            }
+            excluded_names = list(dict.fromkeys(
+                [*(str(name) for name in excluded_names),
+                 *(str(item["name"]) for item in characters
+                   if item["name"] in target_people
+                   or item["office"] in target_offices
+                   or item["office_type"] in target_offices)]
+            ))
+            # A participant-scoped source is materialized as a public ledger
+            # row whose exclusion snapshot is stable across later transfers.
+            # Empty rosters are genuinely public and therefore add no names.
+            if participants:
+                excluded_names = list(dict.fromkeys(
+                    [*(str(name) for name in excluded_names),
+                     *(sorted(character_names - participants))]
+                ))
+            by_source[str(row["source_id"] or "")] = {
+                "title": row["title"], "body": row["body"],
+                "source_id": row["source_id"], "excluded_names": excluded_names,
+            }
+        return list(by_source.values())
 
     def list_chapter_memories(
         self, upto_turn: Optional[int] = None, recent: Optional[int] = None
@@ -9513,7 +9656,16 @@ class GameDB:
         if commit:
             self.conn.commit()
 
-    def record_public_knowledge_event(self, state: GameState, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None) -> None:
+    def record_public_knowledge_event(
+        self,
+        state: GameState,
+        title: str,
+        body: str = "",
+        source_id: str = "",
+        excluded_names: Optional[Iterable[str]] = None,
+        *,
+        commit: bool = True,
+    ) -> None:
         source_id = source_id or f"public:{state.turn}:{title}"
         inherited = self.knowledge_exclusions_for_source(source_id)
         merged_exclusions = list(dict.fromkeys(
@@ -9523,7 +9675,8 @@ class GameDB:
             "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
             (state.turn, state.year, state.period, "", "public", title[:80], body[:400], source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def get_character_knowledge(self, state: GameState, character_name: str) -> Dict[str, object]:
         from ming_sim.knowledge import build_character_knowledge

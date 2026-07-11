@@ -30,6 +30,37 @@ def _qualitative(text: object) -> str:
     return re.sub(r"[-+]?\d+(?:\.\d+)?%?", "若干", value)
 
 
+def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:
+    """Render one character's projected knowledge for an audience prompt.
+
+    This is the single presentation seam for both live session prompts and
+    minister-agent prompts.  The projection has already enforced access
+    control; this function only de-duplicates sources, orders them, and caps
+    the prompt material.
+    """
+    lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
+    for key, value in (knowledge.get("world") or {}).items():
+        if value:
+            lines.append(f"{key}：{value}")
+    by_source = {}
+    for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
+        source_id = str(item.get("source_id") or "")
+        key = source_id or (
+            int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
+        )
+        by_source[key] = item
+    recent_items = sorted(
+        by_source.values(),
+        key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
+    )[-20:]
+    for item in recent_items:
+        title = item.get("title") or "旧闻"
+        body = item.get("body") or ""
+        if body:
+            lines.append(f"- {title}：{body}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def _role_roster(db: Any, office_type: str) -> str:
     """Return only the current roster for this office type.
 
@@ -54,15 +85,64 @@ def _role_roster(db: Any, office_type: str) -> str:
     return f"{office_type}本职在册：{roster}。"
 
 
+def _source_archive_rows(db: Any, character_name: str, upto_turn: int) -> list[Dict[str, object]]:
+    """Project durable source rows into this character's archive boundary.
+
+    ``character_knowledge_sources`` is the write-side source of truth for
+    restricted matters.  It must participate in archive projection even when
+    no public-event mirror exists; otherwise a mixed aggregate has no exact
+    source fragment to redact.
+    """
+    if not hasattr(db, "conn"):
+        return []
+    rows = db.conn.execute(
+        "SELECT turn, year, period, kind, title, body, source_id, "
+        "participant_roster, excluded_names FROM character_knowledge_sources "
+        "WHERE turn <= ? ORDER BY turn, id",
+        (int(upto_turn),),
+    ).fetchall()
+    projected: list[Dict[str, object]] = []
+    for row in rows:
+        try:
+            roster = json.loads(row["participant_roster"] or "[]")
+        except (TypeError, ValueError):
+            roster = []
+        participants = {
+            str(item.get("character_id") or item.get("name"))
+            for item in roster
+            if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
+        }
+        try:
+            excluded = json.loads(row["excluded_names"] or "[]")
+        except (TypeError, ValueError):
+            excluded = []
+        if not isinstance(excluded, list):
+            excluded = []
+        # A participant-rostered source is private to its participants unless
+        # an explicit exclusion says otherwise.  Empty rosters are not added
+        # here: public events already have their own projection path.
+        if not participants:
+            continue
+        if character_name not in participants:
+            excluded.append(character_name)
+        projected.append({
+            "turn": int(row["turn"]), "year": int(row["year"]),
+            "period": int(row["period"]), "kind": row["kind"],
+            "title": row["title"], "body": row["body"],
+            "source_id": row["source_id"],
+            "excluded_names": json.dumps(list(dict.fromkeys(excluded)), ensure_ascii=False),
+        })
+    return projected
+
+
 def _world(
     db: Any, state: Any, office_type: str,
 ) -> Dict[str, str]:
-    reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
-    def fact(text: object) -> str:
-        return _qualitative(text)
-
-    public = "\n".join(fact(r.get("report")) for r in reports)
-    result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
+    # ``turn_reports`` is a rendered aggregate.  It has no item/source
+    # boundary, so reading it here would make a secret-bearing report a public
+    # event.  ``public`` is filled from the source-scoped event projection in
+    # build_character_knowledge after exclusions have been applied.
+    result: Dict[str, str] = {"public": "登基伊始，朝廷暂无已公开的前回合见闻。"}
 
     visible_domains = _visible_domains(db, office_type)
     # Build only the current-state rails that this office is entitled to read.
@@ -90,7 +170,7 @@ def _world(
             # office label to manufacture a difference between otherwise
             # identical reports; the value must remain an actual current-state
             # fact selected by the content-owned domain mapping.
-            result[domain] = fact(facts[domain])
+            result[domain] = _qualitative(facts[domain])
     return result
 
 
@@ -116,6 +196,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     world = _world(db, state, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
+    public_events.extend(_source_archive_rows(db, character_name, int(state.turn)))
     # Issued directives are public by their nature.  Read them here so old
     # saves and the normal decree path need no second write hook.
     for directive in db.list_issued_directives():
@@ -126,14 +207,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "body": _qualitative(directive.get("text") or ""),
             "source_id": f"directive:{directive['id']}",
         })
-    for report in db.list_turn_reports():
-        public_events.append({
-            "turn": int(report["turn"]), "year": int(report["year"]),
-            "period": int(report["period"]), "kind": "public",
-            "title": "邸报", "body": _qualitative(report.get("report")),
-            "source_id": f"turn_report:{report['turn']}",
-            "excluded_names": "[]",
-        })
+
     def is_excluded(row: Dict[str, object]) -> bool:
         try:
             excluded_names = json.loads(str(row.get("excluded_names") or "[]"))
@@ -142,11 +216,79 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         if character_name in excluded_names:
             return True
         source_id = str(row.get("source_id") or "")
-        targets = db.knowledge_exclusion_targets_for_source(source_id) if hasattr(db, "knowledge_exclusion_targets_for_source") else {"people": [], "offices": []}
+        targets = row.get("excluded_targets") or (
+            db.knowledge_exclusion_targets_for_source(source_id)
+            if hasattr(db, "knowledge_exclusion_targets_for_source")
+            else {"people": [], "offices": []}
+        )
         return (character_name in excluded_names
                 or character_name in targets.get("people", [])
                 or office_type in targets.get("offices", [])
                 or office_name in targets.get("offices", []))
+
+    def source_projection(turn: int, fallback: object) -> str:
+        """Project aggregate narrative from source rows, never from redaction.
+
+        Reports and chapter memories are rendered aggregates.  When their turn
+        has source-scoped knowledge rows, those rows are the only material used
+        for this character.  The aggregate is a compatibility fallback for old
+        saves that predate the source projection and have no rows at all.
+        """
+        # Only durable source rows are inputs here.  The synthetic
+        # ``turn_report:*``/``chapter:*`` rows below are read-model outputs;
+        # feeding one archive back into the next archive would duplicate
+        # material and make an already-rendered aggregate look like an
+        # unrestricted source.
+        rows = [
+            row for row in public_events
+            if int(row.get("turn") or 0) == turn
+            and not str(row.get("source_id") or "").startswith(
+                ("opening:", "directive:", "turn_report:", "chapter:")
+            )
+        ]
+        visible = [row for row in rows if not is_excluded(row)]
+
+        # Once any source boundary exists, the aggregate is no longer an
+        # authorization boundary: chapter-memory/LLM rewriting can paraphrase
+        # a secret so that it is no longer an exact substring of the source.
+        # Project only independently persisted visible items.  The aggregate
+        # remains a compatibility fallback solely for old saves with no source
+        # rows at all; new settlement producers must persist public and
+        # restricted items through ``knowledge_items``.
+        if rows:
+            return "\n".join(
+                _qualitative(row.get("body") or row.get("title") or "")
+                for row in visible
+                if row.get("body") or row.get("title")
+            )
+        return _qualitative(fallback)
+
+    # Keep the durable source rows, and add a character-specific projection of
+    # each aggregate archive.  Source rows redact restricted fragments from
+    # the aggregate, while independently persisted public fragments remain
+    # available to the character.
+    if hasattr(db, "list_turn_reports"):
+        for report in db.list_turn_reports():
+            body = source_projection(int(report["turn"]), report.get("report"))
+            if body:
+                public_events.append({
+                    "turn": int(report["turn"]), "year": int(report["year"]),
+                    "period": int(report["period"]), "kind": "public",
+                    "title": "邸报", "body": body,
+                    "source_id": f"turn_report:{report['turn']}",
+                    "excluded_names": "[]",
+                })
+    if hasattr(db, "list_chapter_memories"):
+        for chapter in db.list_chapter_memories(upto_turn=state.turn):
+            body = source_projection(int(chapter["turn"]), chapter.get("body"))
+            if body:
+                public_events.append({
+                    "turn": int(chapter["turn"]), "year": int(chapter["year"]),
+                    "period": int(chapter["period"]), "kind": "chapter_summary",
+                    "title": chapter.get("title") or "朝局旧闻", "body": body,
+                    "source_id": f"chapter:{chapter['turn']}",
+                    "excluded_names": "[]",
+                })
 
     visible_events = [
         {
@@ -162,6 +304,43 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         }
         for row in public_events if not is_excluded(row)
     ]
+    public_bodies = [
+        _qualitative(item.get("body") or item.get("title") or "")
+        for item in visible_public
+        if item.get("body") or item.get("title")
+    ]
+    world["public"] = "\n".join(public_bodies) or world["public"]
+    known_source_ids = {
+        str(row.get("source_id") or "")
+        for row in [*events, *public_events]
+        if row.get("source_id")
+    }
+    visible_issues = []
+    for issue in db.list_active_issues() if hasattr(db, "list_active_issues") else []:
+        source_id = f"issue:{issue['id']}"
+        try:
+            roster = json.loads(issue["participant_roster"] or "[]")
+        except (TypeError, ValueError, KeyError):
+            roster = []
+        # Unassigned issues are public; assigned issues are visible only when
+        # this character entered the durable source projection.
+        if roster and source_id not in known_source_ids:
+            continue
+        if is_excluded({"source_id": source_id, "excluded_names": "[]"}):
+            continue
+        visible_issues.append({
+            "id": int(issue["id"]), "kind": issue["kind"],
+            "title": issue["title"], "bar_value": issue["bar_value"],
+            "bar_good_meaning": issue["bar_good_meaning"],
+            "bar_bad_meaning": issue["bar_bad_meaning"],
+            "stage_text": issue["stage_text"], "faction_hint": issue["faction_hint"],
+            "severity": issue["severity"], "source_id": source_id,
+            "resolve_condition": issue["resolve_condition"],
+            "fail_condition": issue["fail_condition"],
+            "stop_condition": issue["stop_condition"],
+            "end_turn": issue["end_turn"],
+            "commitment_kind": issue["commitment_kind"],
+        })
     return {
         "character_name": character_name,
         "office_type": office_type,
@@ -169,4 +348,42 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         "world": world,
         "events": visible_events,
         "public_events": visible_public,
+        "issues": visible_issues,
     }
+
+
+def build_character_treasury_ledger(
+    db: Any, state: Any, character_name: str, account: str, turns: int,
+) -> str:
+    """Render ledger history through the character's treasury projection.
+
+    This is intentionally part of the knowledge read model: callers must not
+    query ``economy_ledger`` before the office-domain gate has been applied.
+    Amounts and balances are qualitative in audience-facing text.
+    """
+    knowledge = build_character_knowledge(db, state, character_name)
+    if "treasury" not in (knowledge.get("world") or {}):
+        return ""
+    try:
+        window = max(1, min(24, int(turns)))
+    except (TypeError, ValueError):
+        window = 6
+    if not hasattr(db, "conn"):
+        return ""
+    start_turn = max(0, int(state.turn) - window + 1)
+    rows = db.conn.execute(
+        "SELECT year, period, delta, balance_after, category, reason "
+        "FROM economy_ledger WHERE account=? AND turn>=? AND turn<=? "
+        "ORDER BY turn DESC, id DESC",
+        (account, start_turn, int(state.turn)),
+    ).fetchall()
+    if not rows:
+        return f"见闻中未载{account}近{window}回合流水。"
+    lines = [f"【{account}近{window}回合流水】"]
+    for row in rows:
+        line = (
+            f"{row['year']}年{row['period']}月：{row['delta']:+d}（{row['reason'] or row['category']}；"
+            f"余额{row['balance_after']}）"
+        )
+        lines.append(_qualitative(line))
+    return "\n".join(lines)

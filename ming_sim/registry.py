@@ -19,6 +19,7 @@ from ming_sim.content import GameContent
 from ming_sim.context import character_context, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.llm_model import create_chat_model
+from ming_sim.knowledge import render_character_knowledge
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
@@ -76,7 +77,13 @@ def build_court_brief(context: CourtContext, character: Optional[Character] = No
         f"国库{metrics.get('国库', 0)}万两，内库{metrics.get('内库', 0)}万两。"
     )
     score_line = "民情与君威见于各地奏报和行事反应。"
-    issues = context.db.list_active_issues()
+    if character:
+        # Characterized callers must use the same perspectival issue rail as
+        # the agent prompt; the uncharacterized board brief remains an engine
+        # overview for non-minister callers.
+        issues = context.db.get_character_knowledge(context.state, character.name).get("issues", [])
+    else:
+        issues = context.db.list_active_issues()
     issue_lines: List[str] = []
     for row in issues[:10]:
         kind_tag = "系统" if row["kind"] == "situation" else "玩家"
@@ -193,13 +200,11 @@ def build_last_gazette_brief(context: CourtContext) -> str:
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
-    """更早朝局的章节记忆。上月（turn-1）整体动静已由 build_last_gazette_brief 喂全文，
-    此处跳过 turn-1，只留 turn-2 及更早数月的章节，避免与邸报重叠。"""
+    """从人物见闻投影渲染更早朝局；章节表不是人物读取端。"""
     prev_turn = int(context.state.turn) - 1
-    chapters = [
-        c for c in context.db.list_chapter_memories(upto_turn=context.state.turn, recent=4)
-        if int(c["turn"]) != prev_turn  # 上月已由邸报全文覆盖
-    ]
+    knowledge = context.db.get_character_knowledge(context.state, character.name)
+    chapters = [c for c in knowledge.get("public_events", [])
+                if c.get("kind") == "chapter_summary" and int(c.get("turn") or 0) != prev_turn]
     if not chapters:
         return ""
     lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]
@@ -217,6 +222,18 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
         f"让他作答能记得这几月发生过什么。本次装 {len(chapters)} 章：{chap_list}，共 {len(brief)} 字"
     )
     return brief
+
+
+def build_character_knowledge_brief(character: Character, context: CourtContext) -> str:
+    """Render the minister's perspectival world slice for the audience prompt.
+
+    ``get_character_knowledge`` is the sole read boundary here: unlike the
+    legacy registry builders it applies office scoping and source exclusions
+    before anything reaches the model.  Keep this as one block so a future
+    prompt assembly change cannot accidentally reintroduce a global rail.
+    """
+    knowledge = context.db.get_character_knowledge(context.state, character.name)
+    return render_character_knowledge(knowledge, character.name)
 
 
 def build_secret_order_brief(character: Character, context: CourtContext) -> str:
@@ -490,11 +507,9 @@ def create_minister_agent(
         ]
         tools = [_make_cultivate_tool(character, context)]
     else:
-        # 月度动态上下文全挂 system 末尾——每月变一次破尾段缓存，但前面 game_world /
-        # minister_agent / character 静态段仍命中前缀缓存，且大臣全程不会因 history 滚窗
-        # 而忘掉年月、钱粮、在办事项、上回合旧事、自己名下密令。
-        court_brief = build_court_brief(context, character)
-        # 运行时判断规模：人物>100 或军队>30 切换为 tool 按需查，否则全量注入 system
+        # 月度动态上下文全挂 system 末尾——见闻投影是唯一世界输入；前面 game_world /
+        # minister_agent / character 静态段仍命中前缀缓存。旧 registry 全知 builders
+        # 保留给其他调用方，但不能从此处绕过角色见闻边界。
         active_char_count = sum(
             1 for ch in _ctx().characters.values()
             # 排除后宫+宗藩：本计数是 build_court_roster↔index 切换阈值，须与两 builder 同口径
@@ -507,36 +522,14 @@ def create_minister_agent(
         army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
         use_roster_tool = active_char_count > 100
         use_army_tool = army_count > 30
-        if use_roster_tool:
-            court_roster = build_court_roster_index(context)
-        else:
-            court_roster = build_court_roster(context)
-        if use_army_tool:
-            army_roster = context.db.army_roster(index_only=True)
-        else:
-            army_roster = context.db.army_roster(qualitative_equipment=True)
-        last_gazette = build_last_gazette_brief(context)
-        memory_brief = build_memory_brief(character, context)
+        knowledge_brief = build_character_knowledge_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)
-        region_brief = build_region_brief(context)
-        building_brief = build_building_brief(context)
         monthly_block_parts = [
             f"当前为 {context.state.year} 年 {context.state.period} 月（第 {context.state.turn} 回合）。"
             "作答涉及时序（某事多久前、某人是否已亡、某限期是否到）时以此为准。",
-            f"本{TURN_UNIT}朝会盘面：{court_brief}",
         ]
-        if court_roster:
-            monthly_block_parts.append(court_roster)
-        if army_roster:
-            monthly_block_parts.append(army_roster)
-        if region_brief:
-            monthly_block_parts.append(region_brief)
-        if building_brief:
-            monthly_block_parts.append(building_brief)
-        if last_gazette:
-            monthly_block_parts.append(last_gazette)
-        if memory_brief:
-            monthly_block_parts.append(memory_brief)
+        if knowledge_brief:
+            monthly_block_parts.append(knowledge_brief)
         if secret_brief:
             monthly_block_parts.append(secret_brief)
         instructions = [

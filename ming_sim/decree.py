@@ -107,6 +107,65 @@ def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Op
     }
 
 
+def _public_narrative_projection(db: GameDB, turn: int, narrative: str) -> str:
+    """Keep restricted source fragments out of the aggregate public archive.
+
+    The simulator narrative is an aggregate presentation artifact, not an
+    authorization boundary.  Source rows already materialized for this turn
+    carry the boundary; remove their exact title/body fragments before the
+    aggregate gets a public source row, so a mixed narrative cannot re-publish
+    a restricted item to every character.
+    """
+    projected = str(narrative or "")
+    restricted_fragments = {
+        str(fragment).strip()
+        for item in db.knowledge_items_for_turn(turn)
+        if item.get("excluded_names")
+        for fragment in (item.get("title"), item.get("body"))
+        if str(fragment or "").strip()
+    }
+    for fragment in sorted(restricted_fragments, key=len, reverse=True):
+        projected = projected.replace(fragment, "")
+    return re.sub(r"[；;、 ]{2,}", "；", projected).strip("；;、 ")
+
+
+def _record_settlement_narrative_sources(
+    db: GameDB, state: GameState, narrative: str, *, commit: bool = False,
+) -> None:
+    """Archive settlement prose without making an aggregate an access boundary.
+
+    A simulator narrative is an aggregate and may paraphrase a restricted
+    source.  The aggregate therefore inherits every exclusion from the
+    source-scoped items already materialized for this turn.  A redacted copy is
+    public only when removing a known restricted fragment actually produced a
+    different string; an unchanged aggregate is never published as public
+    material while a restricted source exists.
+    """
+    items = db.knowledge_items_for_turn(state.turn)
+    restricted_names = list(dict.fromkeys(
+        str(name)
+        for item in items
+        for name in (item.get("excluded_names") or ())
+        if str(name).strip()
+    ))
+    projected = _public_narrative_projection(db, state.turn, narrative)
+    source_id = f"settlement:narrative:{state.turn}"
+    if restricted_names:
+        db.record_public_knowledge_event(
+            state, "本回合邸报", str(narrative or ""), source_id=source_id,
+            excluded_names=restricted_names, commit=commit,
+        )
+        if projected and projected != str(narrative or ""):
+            db.record_public_knowledge_event(
+                state, "本回合公开事项", projected,
+                source_id=f"{source_id}:public", commit=commit,
+            )
+        return
+    db.record_public_knowledge_event(
+        state, "本回合邸报", projected, source_id=source_id, commit=commit,
+    )
+
+
 def write_decree_with_agno(
     llm_config: LLMConfig,
     agno_db: SqliteDb,
@@ -344,12 +403,20 @@ def resolve_directives(
             db.commit_pending_actions(state, content=content, registry=registry)
             # 跳过 extractor，避免连锁失败
             db.record_log(state, narrative[:1200])
-            db.save_turn_report(state, narrative)
+            apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
+            # Inertia/ongoing effects may create participant-scoped sources.
+            # Materialize the complete source set only after those writes and
+            # before either aggregate archive is saved, matching the normal
+            # settlement path's source-first authorization boundary.
+            _record_settlement_narrative_sources(db, state, narrative, commit=False)
+            db.persist_knowledge_items_for_turn(state, commit=False)
+            db.save_turn_report(
+                state, narrative, knowledge_items=[], commit=False
+            )
             db.save_turn_extraction(
                 state, decree_text=decree_text, narrative=narrative,
                 extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
             )
-            apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
             # #9 线上 R6（codex P2）：fallback 路同样须在 clear_gated_legacies 之前 reconcile——
             # commit_pending_actions / inertia 可能经绕 hook 的路径改 faction 成员，否则 legacy gate
             # （如「阉党专权」读 faction.阉党.leverage）读陈旧值、帝国修正多挂一回合。幂等、可整体回滚。
@@ -1267,7 +1334,17 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
-    db.save_turn_report(state, narrative)
+    # The simulator narrative is the real settlement input for the public
+    # gazette.  Keep it as its own source before archiving, so a mixed
+    # aggregate cannot become the only durable representation of this turn.
+    _record_settlement_narrative_sources(db, state, narrative, commit=False)
+    # Persist the per-source public projection before either aggregate archive
+    # is written.  turn_report/chapter are derived prose and cannot provide an
+    # authorization boundary when they mix public and restricted matters.
+    db.persist_knowledge_items_for_turn(state, commit=False)
+    db.save_turn_report(
+        state, narrative, knowledge_items=[], commit=False
+    )
 
     # 推演链留痕：extractor_input 保留输入；extractor_output 存最终 applied 结果,
     # 供玩家明细/时间线读取（raw canonical delta 的重跑真源在 pending_resolve_context）。
