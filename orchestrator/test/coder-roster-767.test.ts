@@ -215,15 +215,16 @@ describe("#767 Coder-Rec roster — pool separation", () => {
     expect(selected.id).toBe("grok-4.5");
   });
 
-  it("rejects sol when its complete landed route still has a sol CMR review leg", () => {
+  it("moves sol out of the CMR review collection when Coder-Rec assigns it as coder", () => {
     for (const routeName of ["normal", "codex-cheap"] as const) {
-      const relayRoute = resolveRouteModels(routeName, {
-        reviewer: "gpt-5.6-sol",
-      });
+      const base = resolveRouteModels(routeName, {});
+      const applied = applyCoderRecToRoute(base, "Coder-Rec: sol@med", 0, {});
 
-      expect(() =>
-        applyCoderRecToRoute(relayRoute, "Coder-Rec: sol@med", 0, {}),
-      ).toThrow(/no pool-separated coder roster entry/i);
+      expect(applied.entry?.id).toBe("sol@med");
+      expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
+      expect(applied.route.slots.reviewer).toBe("opus");
+      expect(applied.route.legCollections.cmrReview.map((leg) => leg.slug))
+        .not.toContain("gpt-5.6-sol");
     }
   });
 
@@ -515,6 +516,8 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
   }
 
   class CoderRecBackend implements Backend {
+    constructor(private readonly coderRecBody = CODER_REC_BODY) {}
+
     async smokeModelRoute(route: any) {
       this.smokedCoderSlugs.push(route.slots.coder);
       this.events.push(`smoke:${route.slots.coder}`);
@@ -544,13 +547,13 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         hasSubIssues: false,
         isClosed: false,
         openBlockedBy: [],
-        body: CODER_REC_BODY,
+        body: this.coderRecBody,
       };
     }
     async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
       return {
         number: issueNumber,
-        body: CODER_REC_BODY,
+        body: this.coderRecBody,
         comments: [],
         agentBrief: "",
       };
@@ -708,6 +711,16 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
     expect(backend.coderModels).toEqual(["grok-4.5"]);
+  });
+
+  it("runs Coder-Rec sol@med end-to-end on the default route without CMR leg env overrides", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    const backend = new CoderRecBackend("Coder-Rec: sol@med");
+
+    const result = await runOrchestrator({ issueNumber: 767, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.coderModels).toEqual(["gpt-5.6-sol"]);
   });
 
   it("escalates at S0 instead of dispatching a Coder-Rec slug that violates a tight route", async () => {

@@ -2165,6 +2165,51 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
 describe("#686 reviewer relay candidate conflict set", () => {
   const sol = lookupCoderRosterEntry("sol@med")!;
 
+  it.each(["S7", "S9", "S10", "S11", "S12"] as const)(
+    "%s skips a default-route relay candidate that is already on a reviewer or CMR checkpoint",
+    (wallStep) => {
+      const route = resolveRouteModels("normal", {});
+      const terra = lookupCoderRosterEntry("terra@med")!;
+      const order = resolveCoderRecOrder(
+        "Coder-Rec: grok-4.5 → terra@med → luna@med",
+      );
+
+      const next = selectNextRelayBaton({
+        currentModelId: "grok-4.5",
+        currentPool: "grok-build",
+        rosterOrder: order,
+        pools: [
+          {
+            id: "grok-build",
+            status: "limited",
+            resetAt: new Date("2026-07-11T12:00:00.000Z"),
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["grok-4.5"],
+          },
+          {
+            id: "codex-5h",
+            status: "live",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["terra@med", "luna@med"],
+          },
+        ],
+        reviewerSlugsForCandidate: (candidate) =>
+          relayCandidateConflictSlugs(route, candidate, wallStep),
+      });
+
+      expect(relayCandidateConflictSlugs(route, terra, wallStep)).toEqual(
+        expect.arrayContaining([
+          route.slots.reviewer,
+          route.slots.cmrCompleteness,
+          route.slots.cmrCorrectness,
+          route.slots.verify,
+          ...route.legCollections.cmrReview.map((leg) => leg.slug),
+        ]),
+      );
+      expect(next?.modelId).toBe("luna@med");
+    },
+  );
+
   it.each(["S3", "S6"] as const)(
     "%s rejects sol when any complete-route CMR or verify leg shares its checkpoint",
     (wallStep) => {

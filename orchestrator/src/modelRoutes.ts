@@ -429,9 +429,23 @@ export function withCoderSlot(
     ...(opts.preserveCoderFix ? {} : { coderFix: trimmed }),
     ...(reviewerOverride !== undefined ? { reviewer: reviewerOverride } : {}),
   };
+  // Sol is an owner-approved coder only when Opus remains the primary reviewer
+  // throughout the review loop. Remove Sol's default CMR review leg as well as
+  // replacing the per-slice reviewer, otherwise the final route fails the
+  // #767 pool-separation gate against its own CMR checkpoint.
+  const legCollections: ModelRouteLegCollectionMap = {
+    ...route.legCollections,
+    ...(reviewerOverride !== undefined
+      ? {
+          cmrReview: route.legCollections.cmrReview.filter(
+            (leg) => leg.slug !== trimmed,
+          ),
+        }
+      : {}),
+  };
   const next: Pick<ResolvedModelRoute, "slots" | "legCollections"> = {
     slots,
-    legCollections: route.legCollections,
+    legCollections,
   };
   const smoke: Record<string, RouteSmokeStatus> = { ...route.smoke };
   for (const entry of routeSmokeEntries(next)) {
@@ -445,9 +459,10 @@ export function withCoderSlot(
   return {
     ...route,
     slots,
+    legCollections,
     tightFamilyViolations: tightFamilyViolations(
       slots,
-      route.legCollections,
+      legCollections,
       ROUTE_PRESETS[route.routeName]?.tightFamilies ?? [],
     ),
     smoke,
@@ -461,14 +476,14 @@ export function withCoderSlot(
  */
 export function routeConflictSlugsExcluding(
   route: Pick<ResolvedModelRoute, "slots" | "legCollections">,
-  excludedSlot: "coder" | "reviewer",
+  excludedSlot: ModelRouteSlot,
 ): ReadonlyArray<string> {
   return [
     ...(excludedSlot === "coder" ? [] : [route.slots.coder]),
     ...(excludedSlot === "reviewer" ? [] : [route.slots.reviewer]),
-    route.slots.cmrCompleteness,
-    route.slots.cmrCorrectness,
-    route.slots.verify,
+    ...(excludedSlot === "cmrCompleteness" ? [] : [route.slots.cmrCompleteness]),
+    ...(excludedSlot === "cmrCorrectness" ? [] : [route.slots.cmrCorrectness]),
+    ...(excludedSlot === "verify" ? [] : [route.slots.verify]),
     ...route.legCollections.cmrReview.map((leg) => leg.slug),
   ];
 }
