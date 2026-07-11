@@ -486,27 +486,29 @@ export function isHangWithLivePoolError(
 }
 
 /**
- * #686 — worker self-reported `<relay>{"blocked":…}` (or phase_complete).
- * Resource failure: preserve drift, hand off — never reset.
+ * #686 — worker self-reported actionable `<relay>` terminal. Resource signals
+ * preserve drift and hand off; decision gates park for a human ruling.
  */
 export class SelfReportedRelayError extends Error {
   readonly tag: Extract<
     RelayTagOutcome,
-    { kind: "blocked" } | { kind: "phase_complete" }
+    { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
   >;
   readonly step?: StepId;
 
   constructor(
     tag: Extract<
       RelayTagOutcome,
-      { kind: "blocked" } | { kind: "phase_complete" }
+      { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
     >,
     step?: StepId,
   ) {
     const label =
       tag.kind === "blocked"
         ? `self-reported blocked: ${tag.reason}`
-        : `phase_complete:${tag.phase}`;
+        : tag.kind === "phase_complete"
+          ? `phase_complete:${tag.phase}`
+          : `decision_gate:${tag.state_summary}`;
     super(label);
     this.name = "SelfReportedRelayError";
     this.tag = tag;
@@ -532,10 +534,17 @@ export function isSelfReportedRelayError(
 export function tryParseActionableRelayTag(
   stdout: string,
 ):
-  | Extract<RelayTagOutcome, { kind: "blocked" } | { kind: "phase_complete" }>
+  | Extract<
+      RelayTagOutcome,
+      { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
+    >
   | undefined {
   const parsed = parseRelayTag(stdout);
-  if (parsed.kind === "blocked" || parsed.kind === "phase_complete") {
+  if (
+    parsed.kind === "blocked" ||
+    parsed.kind === "phase_complete" ||
+    parsed.kind === "decision_gate"
+  ) {
     return parsed;
   }
   return undefined;

@@ -4654,6 +4654,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             break;
           }
         } catch (err) {
+          if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
+            return await errorTermination(step, err, {
+              stopSummary: decisionGateParkStopSummary({
+                summary: `${step} worker raised a decision gate: ${err.tag.state_summary}`,
+                repairHint:
+                  "answer the decision gate, then re-feed to resume the parked worker step",
+              }),
+            });
+          }
           // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
           // with a live baton (write handoff + focus, apply next baton, re-enter).
           if (isQuotaWaitForResetError(err)) {
@@ -5052,6 +5061,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           lastShipOutput = shipWithHead;
           stepSessionId = shipResult.sessionId;
         } catch (err) {
+          if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
+            return await errorTermination("S7", err, {
+              stopSummary: decisionGateParkStopSummary({
+                summary: `S7 worker raised a decision gate: ${err.tag.state_summary}`,
+                repairHint:
+                  "answer the decision gate, then re-feed to resume the parked worker step",
+              }),
+            });
+          }
           // #683/#686: ship idle 429 → park or relay (same family as agent-step).
           if (isQuotaWaitForResetError(err)) {
             const currentPool =
@@ -6228,6 +6246,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           stepSessionId = result.sessionId;
           lastOutput = output;
         } catch (err) {
+          if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
+            return await errorTermination(reviewStep, err, {
+              stopSummary: decisionGateParkStopSummary({
+                summary: `${reviewStep} worker raised a decision gate: ${err.tag.state_summary}`,
+                repairHint:
+                  "answer the decision gate, then re-feed to resume the parked worker step",
+              }),
+            });
+          }
           // #683/#686: S9–S12 online-review legs hit the same park/relay fork as
           // S2/S7 — do NOT fall into errorTermination (would sticky-fail a
           // quota wall and break sliceQuotaWaitPending resume).

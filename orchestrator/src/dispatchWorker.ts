@@ -1144,8 +1144,9 @@ export async function dispatchWorkerWithMonitor(
           reason: `CLI worker ${spec.id} killed by signal ${killSignal}`,
         };
       }
-      // #686: self-reported blocked / phase_complete in the worker log → resource
-      // relay (preserve drift). Malformed/absent tags are ignored here.
+      // #686/#826: actionable worker-log relay tags become either resource
+      // handoff signals or a decision-gate park. Malformed/absent tags are
+      // ignored here.
       // #786: token extract uses the same log slice (GC happens later at terminal).
       try {
         const logText = readDispatchLogSlice(
