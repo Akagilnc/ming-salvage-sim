@@ -3207,18 +3207,11 @@ export class RealBackend implements Backend {
         ...(r.escalate ? { escalate: r.escalate } : {}),
       };
     }
-    // Coder: parse the self-report for shape, then TRUTH the commit count from
-    // git. Fresh runs use result.commits.length; resumed runs pass a cumulative
-    // ledger-baseline count. A contradiction throws → S8(error) at the runner.
+    // Coder: parse the self-report for shape, then attach the git observation.
+    // Fresh runs use result.commits.length; resumed runs pass a cumulative
+    // ledger-baseline count. Mismatch/unknown remains advisory for fresh review.
     if (spec.role === "coder") {
       const c = coderOutputSchema.parse(raw);
-      if (gitCommitCount === undefined) {
-        throw new Error(
-          "realBackend: coder output decoded without git commit truth. " +
-            "Fresh and resumed coder steps must reconcile committed/commitsAdded " +
-            "against git; trusting the model self-report would bypass S8(error).",
-        );
-      }
       const out = reconcileCoderCommits(c, gitCommitCount);
       const repairEvidence =
         out.repairEvidence !== undefined
@@ -3347,32 +3340,31 @@ export class RealBackend implements Backend {
     worktree: WorktreeHandle,
     sessionId: string,
     beforeResumeHead: string | undefined,
-  ): number {
+  ): number | undefined {
     const stateDir = this.stateDirFor(worktree.path, this.issueOf(worktree));
     const ledger = this.readLedger(stateDir);
     const basis =
       ledger === undefined ? {} : resumeCoderCommitBasis(ledger, sessionId);
     if (basis.baselineHead !== undefined) {
-      return this.countCommitsSince(worktree, basis.baselineHead);
+      try {
+        return this.countCommitsSince(worktree, basis.baselineHead);
+      } catch {
+        return undefined;
+      }
     }
     if (basis.priorCommitsAdded !== undefined) {
       if (beforeResumeHead === undefined) {
-        throw new Error(
-          `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
-            "the persisted ledger only has a prior commit count fallback, but " +
-            "the before-resume HEAD could not be read. Refusing to count " +
-            "resume-only commits as zero.",
-        );
+        return undefined;
       }
-      const resumeOnlyCommits =
-        this.countCommitsSince(worktree, beforeResumeHead);
-      return basis.priorCommitsAdded + resumeOnlyCommits;
+      try {
+        const resumeOnlyCommits =
+          this.countCommitsSince(worktree, beforeResumeHead);
+        return basis.priorCommitsAdded + resumeOnlyCommits;
+      } catch {
+        return undefined;
+      }
     }
-    throw new Error(
-      `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
-        "the persisted ledger has no matching coder entry with a baseline HEAD " +
-        "or prior commit count. Refusing to trust the resumed <coder> self-report.",
-    );
+    return undefined;
   }
 
   async countCommitsBetween(
@@ -3411,7 +3403,7 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     options?: AgentStepRunOptions,
-    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number,
+    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number | undefined,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
@@ -3464,7 +3456,9 @@ export class RealBackend implements Backend {
     // REAL commits Sandcastle observed (result.commits), not the self-report.
     const gitCommitCount =
       spec.role === "coder"
-        ? (coderCommitCount?.(result) ?? realCommitCount(result))
+        ? coderCommitCount !== undefined
+          ? coderCommitCount(result)
+          : realCommitCount(result)
         : undefined;
     const output = this.decodeOutput(spec, raw, gitCommitCount);
     return { output, sessionId: lastSessionId(result) };

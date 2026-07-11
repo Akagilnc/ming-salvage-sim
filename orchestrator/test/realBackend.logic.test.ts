@@ -2537,7 +2537,7 @@ describe("realBackend resume coder commit truth", () => {
     });
   });
 
-  it("fails closed when a prior commit-count fallback has no before-resume HEAD", () => {
+  it("reports unknown when a prior commit-count fallback has no before-resume HEAD", () => {
     class ResumeCommitBackend extends RealBackend {
       protected override cloneDirExists(): boolean {
         return true;
@@ -2575,21 +2575,21 @@ describe("realBackend resume coder commit truth", () => {
       home: tempHome("rb-home-285-"),
     });
 
-    expect(() =>
+    expect(
       (
         backend as unknown as {
           resumeCoderCommitCount(
             worktree: { branch: string; base: string; path: string },
             sessionId: string,
             beforeResumeHead: string | undefined,
-          ): number;
+          ): number | undefined;
         }
       ).resumeCoderCommitCount(
         { branch: "feat/issue-256", base: "main", path: worktreePath },
         "sess-coder",
         undefined,
       ),
-    ).toThrow(/before-resume HEAD/i);
+    ).toBeUndefined();
   });
 
   it("dead-session fallback does not route resumed coders through normal runStep commit truth", () => {

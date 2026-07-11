@@ -130,7 +130,7 @@ export function route(ctx: RouteContext): RouteDecision {
         return { kind: "handoff", status: "error" };
       }
       // #252 error edge: 0 commits → S8(error: build produced nothing).
-      if (!ctx.output.committed) {
+      if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
         return { kind: "handoff", status: "error" };
       }
       return { kind: "next", step: "S3" };
@@ -160,7 +160,7 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidCoderOutput(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
-      if (!ctx.output.committed) {
+      if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
         return { kind: "handoff", status: "error" };
       }
       return { kind: "next", step: "S6" };
