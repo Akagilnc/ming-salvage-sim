@@ -13,56 +13,15 @@ import re
 from typing import Any, Dict
 
 
-_OFFICE_BUCKETS = {
-    "户部": "treasury", "兵部": "military", "吏部": "personnel",
-    "工部": "construction", "礼部": "personnel", "刑部": "security",
-    "翰林院": "personnel", "都察院": "security", "内阁": "court",
-    "督抚": "regional", "司礼监": "court",
-    "内臣": "court", "锦衣卫": "security", "东厂": "security",
-    "边镇": "military", "地方": "regional", "外臣": "regional",
-    "未仕": "personnel", "后宫": "personnel", "宗藩": "regional",
-    "内廷": "court", "生员": "personnel", "乡绅": "regional",
-    "富商": "treasury", "布衣": "regional", "流寇": "military", "待铨": "personnel",
-}
-
-# Every supported office type gets a current-state rail in addition to the
-# public layer.  These are the closest existing reports for social/roster
-# roles whose dedicated rail is not yet modeled.
-_OFFICE_VISIBLE_DOMAINS = {
-    # Tuples make prompt field order stable; every entry deliberately contains
-    # its _OFFICE_BUCKETS rail, so adding a role cannot silently produce a
-    # public-only or unrelated current-state view.
-    "户部": ("treasury", "role"), "兵部": ("military", "regional", "role"),
-    "吏部": ("personnel", "role"), "工部": ("construction", "role"),
-    "礼部": ("personnel", "role"), "刑部": ("security", "role"),
-    "翰林院": ("personnel", "role"), "都察院": ("personnel", "security", "role"),
-    "内阁": ("court", "treasury", "personnel", "role"), "督抚": ("regional", "role"),
-    "司礼监": ("court", "treasury", "personnel", "role"), "内臣": ("court", "treasury", "personnel", "role"),
-    "锦衣卫": ("security", "role"), "东厂": ("security", "role"),
-    "边镇": ("military", "regional", "role"), "地方": ("regional", "role"),
-    "外臣": ("regional", "role"), "内廷": ("court", "treasury", "personnel", "role"),
-    "后宫": ("personnel", "role"), "宗藩": ("regional", "role"), "未仕": ("personnel", "role"),
-    "生员": ("personnel", "role"), "乡绅": ("regional", "role"), "富商": ("treasury", "role"),
-    "布衣": ("regional", "role"), "流寇": ("military", "regional", "role"), "待铨": ("personnel", "role"),
-}
-
-# A persisted character can temporarily carry a newly introduced or malformed
-# office type while an old save is being upgraded.  Such a role still needs a
-# useful current-state rail; falling back to ``public`` would recreate a
-# one-world view for precisely the characters this projection is meant to
-# differentiate.
 _DEFAULT_VISIBLE_DOMAINS = ("personnel",)
 
 
-def _visible_domains(office_type: str) -> tuple[str, ...]:
-    """Return a deterministic role slice whose primary bucket is always present."""
-    bucket = _OFFICE_BUCKETS.get(office_type, "personnel")
-    configured = _OFFICE_VISIBLE_DOMAINS.get(office_type, _DEFAULT_VISIBLE_DOMAINS)
-    if bucket in configured:
-        return configured
-    # Keep old saves with a newly introduced/malformed role useful even when
-    # its mapping was not deployed alongside the bucket table.
-    return (bucket, *configured)
+def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
+    """Return the validated content setting for this office's current-state rail."""
+    configured = getattr(getattr(db, "content", None), "office_knowledge_domains", {}).get(
+        office_type, _DEFAULT_VISIBLE_DOMAINS
+    )
+    return tuple(configured) or _DEFAULT_VISIBLE_DOMAINS
 
 
 def _qualitative(text: object) -> str:
@@ -107,7 +66,7 @@ def _world(
     public = "\n".join(fact(r.get("report")) for r in reports)
     result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
 
-    visible_domains = _visible_domains(office_type)
+    visible_domains = _visible_domains(db, office_type)
     # Build only the current-state rails that this office is entitled to read.
     # Besides keeping the returned projection scoped, this prevents a future
     # report implementation from leaking a sensitive cross-domain payload via
@@ -120,26 +79,16 @@ def _world(
         "construction": db.buildings_report,
         "security": lambda: db.power_report(exclude_self=True),
         "court": lambda: "\n".join((db.faction_report(), db.power_report(exclude_self=True))),
-        "role": lambda: _role_roster(db, office_type),
     }
     facts = {
         domain: _qualitative(report_builders[domain]())
         for domain in visible_domains
-        if domain in report_builders and domain != "role"
+        if domain in report_builders
     }
-    if "role" in visible_domains:
-        facts["role"] = report_builders["role"]()
+    result["role"] = _role_roster(db, office_type)
     for domain in visible_domains:
-        if domain == "public":
-            # The public layer is already built from the turn reports above;
-            # generic offices must not treat it as a deterministic report
-            # source (there is no ``facts["public"]`` entry).
-            continue
-        # Keep the domain key stable for prompt consumers, while retaining the
-        # office context in the slice.  Without it, offices that share a
-        # domain (for example 礼部 and 翰林院) receive byte-for-byte identical
-        # world views and lose the distinction required by the read model.
-        result[domain] = fact(f"{office_type}本职所涉：{facts[domain]}")
+        if domain in facts:
+            result[domain] = fact(f"{office_type}本职所涉：{facts[domain]}")
     return result
 
 

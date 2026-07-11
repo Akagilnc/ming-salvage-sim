@@ -3,7 +3,6 @@
 import json
 
 from ming_sim.models import Character
-from ming_sim.knowledge import _OFFICE_BUCKETS
 
 
 def test_every_supported_office_type_has_a_role_specific_current_world_slice(game):
@@ -14,13 +13,13 @@ def test_every_supported_office_type_has_a_role_specific_current_world_slice(gam
         if character.office_type
     }
 
-    for office_type, bucket in _OFFICE_BUCKETS.items():
+    for office_type, domains in content.office_knowledge_domains.items():
         character = characters_by_type.get(office_type)
         if character is None:
             continue
         world = db.get_character_knowledge(state, character.name)["world"]
-        assert bucket in world, office_type
-        assert bucket != "public" or len(world) > 1, office_type
+        assert domains[0] in world, office_type
+        assert len(world) > 1, office_type
 
 
 def test_generic_offices_receive_distinct_current_world_slices(game):
@@ -72,7 +71,7 @@ def test_every_distinct_office_type_gets_a_distinct_current_world_slice(game):
     characters_by_type = {
         character.office_type: character
         for character in content.characters.values()
-        if character.office_type in _OFFICE_BUCKETS
+        if character.office_type in content.office_knowledge_domains
     }
 
     views = {
@@ -93,7 +92,7 @@ def test_role_slice_contains_only_the_current_office_roster(game):
     characters_by_type = {
         character.office_type: character
         for character in content.characters.values()
-        if character.office_type in _OFFICE_BUCKETS
+        if character.office_type in content.office_knowledge_domains
     }
 
     for office_type, character in characters_by_type.items():
@@ -112,7 +111,7 @@ def test_different_office_types_do_not_share_the_same_role_facts(game):
     db, state, content = game
     representatives = {}
     for character in content.characters.values():
-        if character.office_type in _OFFICE_BUCKETS:
+        if character.office_type in content.office_knowledge_domains:
             representatives.setdefault(character.office_type, character)
 
     role_facts = {
@@ -121,6 +120,17 @@ def test_different_office_types_do_not_share_the_same_role_facts(game):
     }
 
     assert len(set(role_facts.values())) == len(role_facts)
+
+
+def test_office_knowledge_domains_are_loaded_from_content(game, monkeypatch):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    monkeypatch.setitem(content.office_knowledge_domains, "礼部", ("military",))
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert "military" in view["world"]
+    assert "personnel" not in view["world"]
 
 
 def test_turn_zero_knowledge_is_role_specific_and_restores(game):
