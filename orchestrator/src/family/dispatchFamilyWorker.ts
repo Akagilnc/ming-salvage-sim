@@ -27,6 +27,10 @@ import type { ChildProcess } from "node:child_process";
 
 import { workerHostForModel } from "../dispatchWorker.js";
 import {
+  createTelemetryLegStamper,
+  scheduleTelemetryEnvironmentStamp,
+} from "../telemetry.js";
+import {
   dispatchMonitoredCliWorker,
   killWorkerTree,
   type MonitoredCliDispatchInput,
@@ -220,68 +224,98 @@ export async function dispatchFamilyWorkerWithMonitor(
   landing?: WorkerLandingPayload,
   opts?: DispatchFamilyWorkerWithMonitorOptions,
 ): Promise<DispatchFamilyWorkerWithMonitorOutcome> {
-  const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, ctx, landing);
-  if (cliSpec !== undefined) {
-    const input: MonitoredCliDispatchInput = {
-      command: cliSpec.command,
-      args: cliSpec.args,
-      logDir: cliSpec.logDir,
-      poolId: cliSpec.poolId,
-      completionSignal: cliSpec.completionSignal,
-      stepId: cliSpec.stepId,
-      ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
-      ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
-      ...(cliSpec.logBasename !== undefined
-        ? { logBasename: cliSpec.logBasename }
-        : {}),
-      ...(cliSpec.readInstanceId !== undefined
-        ? { readInstanceId: cliSpec.readInstanceId }
-        : {}),
-      ...(cliSpec.resultPath !== undefined
-        ? { resultPath: cliSpec.resultPath }
-        : {}),
-    };
-    const { handle, child } = await dispatchMonitoredCliWorker(input);
-    const exitPromise = waitForChildExit(child);
-    if (opts?.onMonitorHandleSpawned !== undefined) {
-      try {
-        await opts.onMonitorHandleSpawned(handle);
-      } catch (error) {
-        // Cleanup remains scoped to the verified monitor handle; never signal
-        // an unverified PID or process group on callback failure.
-        await killWorkerTree(handle);
+  const ledgerDir = ctx.stateDir;
+  const telemetry = createTelemetryLegStamper({ ledgerDir, spec, ctx });
+  let logPath: string | null = null;
+  let logStartOffset: number | undefined;
+  try {
+    const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+    if (cliSpec !== undefined) {
+      const input: MonitoredCliDispatchInput = {
+        command: cliSpec.command,
+        args: cliSpec.args,
+        logDir: cliSpec.logDir,
+        poolId: cliSpec.poolId,
+        completionSignal: cliSpec.completionSignal,
+        stepId: cliSpec.stepId,
+        ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
+        ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
+        ...(cliSpec.logBasename !== undefined
+          ? { logBasename: cliSpec.logBasename }
+          : {}),
+        ...(cliSpec.readInstanceId !== undefined
+          ? { readInstanceId: cliSpec.readInstanceId }
+          : {}),
+        ...(cliSpec.resultPath !== undefined
+          ? { resultPath: cliSpec.resultPath }
+          : {}),
+      };
+      const { handle, child } = await dispatchMonitoredCliWorker(input);
+      logPath = handle.logPath;
+      logStartOffset = handle.logStartOffset;
+      telemetry.stampDispatch(handle.dispatchedAt, cliSpec.poolId);
+      const exitPromise = waitForChildExit(child);
+      // Environment collection is intentionally lazy and non-blocking. It must
+      // start before the persistence callback so a callback throw cannot erase
+      // this run's environment row.
+      scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, familyBackend);
+      if (opts?.onMonitorHandleSpawned !== undefined) {
         try {
-          await exitPromise;
-        } catch {
-          // Preserve the original spawn-persist error if child cleanup fails.
+          await opts.onMonitorHandleSpawned(handle);
+        } catch (error) {
+          // Cleanup remains scoped to the verified monitor handle; never signal
+          // an unverified PID or process group on callback failure.
+          await killWorkerTree(handle);
+          try {
+            await exitPromise;
+          } catch {
+            // Preserve the original spawn-persist error if child cleanup fails.
+          }
+          throw error;
         }
-        throw error;
       }
-    }
-    const exitCode = await exitPromise;
-    if (familyBackend.awaitMonitoredCliWorker === undefined) {
-      return {
-        result: {
+      const exitCode = await exitPromise;
+      if (familyBackend.awaitMonitoredCliWorker === undefined) {
+        const result: WorkerResult = {
           kind: "failed",
           reason:
             `family CLI worker ${spec.id} finished (exit ${exitCode}) but backend ` +
             `has no awaitMonitoredCliWorker to map the process into a WorkerResult`,
-        },
-        monitorHandle: handle,
-      };
+        };
+        telemetry.stampCollect(
+          { kind: "result", result },
+          { logPath, logStartOffset },
+        );
+        return { result, monitorHandle: handle };
+      }
+      const result = await familyBackend.awaitMonitoredCliWorker(
+        handle,
+        exitCode,
+        spec,
+        ctx,
+        landing,
+      );
+      telemetry.stampCollect(
+        { kind: "result", result },
+        { logPath, logStartOffset },
+      );
+      return { result, monitorHandle: handle };
     }
-    const result = await familyBackend.awaitMonitoredCliWorker(
-      handle,
-      exitCode,
-      spec,
-      ctx,
-      landing,
+    telemetry.stampDispatch(
+      new Date().toISOString(),
+      ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
-    return { result, monitorHandle: handle };
+    scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, familyBackend);
+    const result = await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
+    telemetry.stampCollect({ kind: "result", result });
+    return { result };
+  } catch (error) {
+    telemetry.stampCollect(
+      { kind: "thrown", error },
+      { logPath, logStartOffset },
+    );
+    throw error;
   }
-  return {
-    result: await dispatchFamilyWorker(familyBackend, spec, ctx, landing),
-  };
 }
 
 /**
