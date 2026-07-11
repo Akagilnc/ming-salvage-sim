@@ -1571,7 +1571,10 @@ export interface Backend {
     currentCliVersions?: Readonly<Record<string, string | undefined>>,
     billingPool?: string,
   ): Promise<ResolvedModelRoute>;
-  currentCliVersions?(route: ResolvedModelRoute): Promise<Readonly<Record<string, string | undefined>>>;
+  currentCliVersions?(
+    route: ResolvedModelRoute,
+    billingPool?: string,
+  ): Promise<Readonly<Record<string, string | undefined>>>;
   /**
    * #255: detect resume residue for this issue at the very start of a run.
    *

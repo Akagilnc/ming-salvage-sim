@@ -3715,7 +3715,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     let currentCliVersions: Readonly<Record<string, string | undefined>>;
     try {
       currentCliVersions = backend.currentCliVersions
-        ? await backend.currentCliVersions(modelRoute)
+        ? await backend.currentCliVersions(
+            modelRoute,
+            activeRelayStep === undefined ? undefined : currentBillingPool,
+          )
         : {};
       modelRoute = await backend.smokeModelRoute(
         modelRoute,

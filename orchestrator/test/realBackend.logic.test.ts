@@ -145,6 +145,14 @@ describe("#685 route smoke hardening", () => {
     );
   });
 
+  it("separates a relay pool from the default provider cache", () => {
+    const route = resolveRouteModels("normal", { coder: "grok-4.5" });
+
+    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
+      routeSmokeCacheKey(route, "image-a", "grok-build"),
+    );
+  });
+
   it("turns a missing host CLI into an unknown version instead of throwing", () => {
     const backend = {
       sh: () => {
@@ -158,6 +166,24 @@ describe("#685 route smoke hardening", () => {
     ).cliVersionForSlug;
 
     expect(cliVersionForSlug.call(backend, "sonnet")).toBe("unknown");
+  });
+
+  it("looks up the CLI for the relay pool's final provider", () => {
+    const calls: string[] = [];
+    const backend = {
+      sh: (file: string) => {
+        calls.push(file);
+        return "test-version";
+      },
+    };
+    const cliVersionForSlug = (
+      RealBackend.prototype as unknown as {
+        cliVersionForSlug(this: typeof backend, slug: string, billingPool?: string): string;
+      }
+    ).cliVersionForSlug;
+
+    expect(cliVersionForSlug.call(backend, "grok-4.5", "grok-build")).toBe("test-version");
+    expect(calls).toEqual(["grok"]);
   });
 });
 
@@ -1728,7 +1754,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     }
   }
 
-  function makeBackend(): PreflightBackend {
+  function makeBackend(home = tempHome("rb-home-286-")): PreflightBackend {
     return new PreflightBackend({
       sourceRepo: "/tmp/source",
       remote: "https://github.com/owner/name.git",
@@ -1738,7 +1764,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       // #748: runStep → box → mountAuth must not touch real ~/.sc-orchestrator.
-      home: tempHome("rb-home-286-"),
+      home,
     });
   }
 
@@ -1776,6 +1802,31 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "sess-286",
     });
+  });
+
+  it("reclaims the temporary Grok OAuth copy after a worker container exits", async () => {
+    const home = tempHome("rb-home-grok-auth-");
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
+    const backend = makeBackend(home);
+    backend.agentResult = agentRunResult({
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
+      commits: [],
+      sessionId: "sess-grok-auth-cleanup",
+    });
+
+    await backend.runStep(coderSpec, {
+      branch: "feat/issue-286",
+      base: "main",
+      path: "/tmp/worktree/issue-286",
+    });
+
+    expect(
+      readdirSync(join(home, ".sc-orchestrator")).filter((name) =>
+        name.startsWith("grok-auth-286-"),
+      ),
+    ).toEqual([]);
   });
 
   it("prefers a runner-owned outcome sidecar over malformed coder stdout", async () => {

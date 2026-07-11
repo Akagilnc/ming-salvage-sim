@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -375,6 +375,48 @@ describe("#685 route tool smoke", () => {
       await backend.smokeModelRoute(route, {}, "grok-build");
       const grokRun = runSpy.mock.calls.find(([options]) => options.agent.name === "grok");
       expect(grokRun).toBeDefined();
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reuse a default-provider smoke for the grok-build relay pool", async () => {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-cache-"));
+    runSpy.mockImplementation(async () =>
+      ({ completionSignal: "ROUTE_SMOKE_COMPLETE" }) as Awaited<ReturnType<typeof sc.run>>,
+    );
+    try {
+      const backend = productionSmokeBackend(home);
+      const route = resolveRouteModels("normal", { coder: "grok-4.5" });
+
+      await backend.smokeModelRoute(route);
+      runSpy.mockClear();
+      await backend.smokeModelRoute(route, {}, "grok-build");
+
+      expect(runSpy.mock.calls.some(([options]) => options.agent.name === "grok")).toBe(true);
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reclaims the temporary Grok OAuth directory after each smoke container exits", async () => {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-auth-"));
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
+    runSpy.mockImplementation(async () =>
+      ({ completionSignal: "ROUTE_SMOKE_COMPLETE" }) as Awaited<ReturnType<typeof sc.run>>,
+    );
+    try {
+      const backend = productionSmokeBackend(home);
+      await backend.smokeModelRoute(resolveRouteModels("normal", { coder: "grok-4.5" }));
+
+      expect(
+        readdirSync(join(home, ".sc-orchestrator")).filter((name) =>
+          name.startsWith("grok-auth-685-"),
+        ),
+      ).toEqual([]);
     } finally {
       runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });

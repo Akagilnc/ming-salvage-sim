@@ -116,8 +116,13 @@ import {
 export function routeSmokeCacheKey(
   route: ResolvedModelRoute,
   sandboxFingerprint: string,
+  billingPool?: string,
 ): string {
-  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}`;
+  const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
+  const providerFingerprint = routeSmokeEntries(route)
+    .map(({ key, slug }) => `${key}:${resolveModelSlugForPool(slug, dispatchPool).provider}`)
+    .join("|");
+  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}\0${dispatchPool ?? "default"}\0${providerFingerprint}`;
 }
 
 export function routeSmokeToolCallIsEchoOk(event: {
@@ -2293,11 +2298,13 @@ export class RealBackend implements Backend {
    */
   async currentCliVersions(
     route: ResolvedModelRoute,
+    billingPool?: string,
   ): Promise<Readonly<Record<string, string | undefined>>> {
+    const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const versions: Record<string, string | undefined> = {};
     for (const entry of routeSmokeEntries(route)) {
       if (versions[entry.slug] === undefined) {
-        versions[entry.slug] = this.cliVersionForSlug(entry.slug);
+        versions[entry.slug] = this.cliVersionForSlug(entry.slug, dispatchPool);
       }
     }
     return versions;
@@ -2310,7 +2317,7 @@ export class RealBackend implements Backend {
   ): Promise<ResolvedModelRoute> {
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
-    const persisted = this.readRouteSmokeState(route, sandboxFingerprint);
+    const persisted = this.readRouteSmokeState(route, sandboxFingerprint, dispatchPool);
     if (persisted !== undefined) {
       const hydrated = withRouteSmoke(route, persisted);
       if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
@@ -2324,6 +2331,7 @@ export class RealBackend implements Backend {
       let sawToolCallEchoOk = false;
       const resolved = resolveModelSlugForPool(entry.slug, dispatchPool);
       const provider = resolved.provider;
+      const auth = this.mountAuth(this.opts.runKey);
       const nonce = randomUUID();
       const nonceFile = `.route-smoke-${nonce}.nonce`;
       const noncePath = join(this.workingRepo, nonceFile);
@@ -2336,7 +2344,7 @@ export class RealBackend implements Backend {
             effortForLiveOfficer(entry.slug, { smokeKey: entry.key }),
             dispatchPool,
           ),
-          sandbox: this.routeSmokeSandbox(),
+          sandbox: this.routeSmokeSandbox(auth),
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
           promptArgs: { NONCE: nonce, NONCE_FILE: nonceFile },
@@ -2369,13 +2377,14 @@ export class RealBackend implements Backend {
             `model did not complete an observable bash smoke for ${entry.slug}`,
           );
         }
-        return { cliVersion: this.cliVersionForSlug(entry.slug) };
+        return { cliVersion: this.cliVersionForSlug(entry.slug, dispatchPool) };
       } finally {
         rmSync(noncePath, { force: true });
         rmSync(logDir, { recursive: true, force: true });
+        this.cleanupTempAuthDirs([auth.grokAuthDir]);
       }
     });
-    this.writeRouteSmokeState(smoked, sandboxFingerprint);
+    this.writeRouteSmokeState(smoked, sandboxFingerprint, dispatchPool);
     return smoked;
   }
 
@@ -2386,11 +2395,12 @@ export class RealBackend implements Backend {
   private readRouteSmokeState(
     route: ResolvedModelRoute,
     sandboxFingerprint: string,
+    billingPool?: string,
   ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
     try {
       const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
       if (raw === null || typeof raw !== "object") return undefined;
-      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint)];
+      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint, billingPool)];
       if (state === null || typeof state !== "object") return undefined;
       return state as Readonly<Record<string, RouteSmokeStatus>>;
     } catch {
@@ -2398,7 +2408,11 @@ export class RealBackend implements Backend {
     }
   }
 
-  private writeRouteSmokeState(route: ResolvedModelRoute, sandboxFingerprint: string): void {
+  private writeRouteSmokeState(
+    route: ResolvedModelRoute,
+    sandboxFingerprint: string,
+    billingPool?: string,
+  ): void {
     const path = this.routeSmokeStatePath();
     let all: Record<string, unknown> = {};
     try {
@@ -2408,7 +2422,7 @@ export class RealBackend implements Backend {
       // Missing or malformed state is treated as empty; the fresh smoke result
       // below becomes the new durable source of truth.
     }
-    all[routeSmokeCacheKey(route, sandboxFingerprint)] = route.smoke;
+    all[routeSmokeCacheKey(route, sandboxFingerprint, billingPool)] = route.smoke;
     mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
     const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     try {
@@ -2419,8 +2433,11 @@ export class RealBackend implements Backend {
     }
   }
 
-  private cliVersionForSlug(slug: string): string {
-    const provider = resolveModelSlug(slug).provider;
+  private cliVersionForSlug(slug: string, billingPool?: string): string {
+    const provider = resolveModelSlugForPool(
+      slug,
+      isBillingPoolDispatchId(billingPool) ? billingPool : undefined,
+    ).provider;
     const command = provider === "claudeCode" ? "claude" : provider;
     try {
       return this.sh(command, ["--version"]).trim() || "unknown";
@@ -2463,8 +2480,7 @@ export class RealBackend implements Backend {
   }
 
   /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
-  private routeSmokeSandbox(): sc.SandboxProvider {
-    const auth = this.mountAuth(this.opts.runKey);
+  private routeSmokeSandbox(auth: ReturnType<RealBackend["mountAuth"]>): sc.SandboxProvider {
     return docker(
       this.boxConfig(
         { ...auth, ghToken: this.readGhToken() },
@@ -2995,20 +3011,39 @@ export class RealBackend implements Backend {
     return { authDir: paths.hostCodexAuthDir, claudeToken, grokAuthDir };
   }
 
+  /**
+   * Grok OAuth copies are invocation-unique and only needed while their mounted
+   * container runs. Reclaim them on every terminal path without masking the
+   * worker result; this mirrors the family backend's per-run auth lifecycle.
+   */
+  protected cleanupTempAuthDirs(dirs: ReadonlyArray<string | undefined>): void {
+    for (const dir of dirs) {
+      if (dir === undefined) continue;
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup must not mask the worker's own outcome.
+      }
+    }
+  }
+
   private box(
     issueNumber: number,
     spec: Pick<StepSpec, "role" | "soul">,
     options?: AgentStepRunOptions,
-  ): sc.SandboxProvider {
+  ): { sandbox: sc.SandboxProvider; cleanup: () => void } {
     const auth = this.mountAuth(issueNumber);
-    return docker(
-      this.boxConfig(
-        { ...auth, ghToken: this.readGhToken() },
-        spec,
-        issueNumber,
-        options,
+    return {
+      sandbox: docker(
+        this.boxConfig(
+          { ...auth, ghToken: this.readGhToken() },
+          spec,
+          issueNumber,
+          options,
+        ),
       ),
-    );
+      cleanup: () => this.cleanupTempAuthDirs([auth.grokAuthDir]),
+    };
   }
 
   /**
@@ -3496,11 +3531,13 @@ export class RealBackend implements Backend {
     await this.preflightToolchain(spec);
     const typedOutputUsed =
       spec.maxIter === 1 && options?.outcomeLanding === undefined;
+    const box = this.box(issueNumber, spec, options);
+    try {
     const result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
-      sandbox: this.box(issueNumber, spec, options),
+      sandbox: box.sandbox,
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
       // runs on Codex gpt-5.6-terra; a claude slug stays claudeCode). agentForSlug keeps
       // the "model slug → baked CLI" #244 mapping unit-testable. #686: billing pool
@@ -3547,6 +3584,9 @@ export class RealBackend implements Backend {
         : undefined;
     const output = this.decodeOutput(spec, raw, gitCommitCount);
     return { output, sessionId: lastSessionId(result) };
+    } finally {
+      box.cleanup();
+    }
   }
 
   async runStep(
@@ -3568,13 +3608,14 @@ export class RealBackend implements Backend {
     const beforeResumeHead =
       spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     await this.preflightToolchain(spec);
+    const box = this.box(issueNumber, spec, options);
     try {
       const typedOutputUsed = options?.outcomeLanding === undefined;
       const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
-        sandbox: this.box(issueNumber, spec, options),
+        sandbox: box.sandbox,
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
         // codex for the gpt-5.6-terra coder, claudeCode for a claude slug). #686 pool
         // channel must match the fresh dispatch.
@@ -3649,6 +3690,8 @@ export class RealBackend implements Backend {
         );
       }
       throw err;
+    } finally {
+      box.cleanup();
     }
   }
 
