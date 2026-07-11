@@ -50,6 +50,23 @@ def test_generic_offices_receive_distinct_current_world_slices(game):
     assert views["刑部"] != views["都察院"]
 
 
+def test_office_slice_does_not_read_unrelated_sensitive_reports(game, monkeypatch):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("礼部见闻不应读取军情或国库报告")
+
+    monkeypatch.setattr(db, "army_report", forbidden)
+    monkeypatch.setattr(db, "treasury_report", forbidden)
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert "personnel" in view["world"]
+    assert "military" not in view["world"]
+    assert "treasury" not in view["world"]
+
+
 def test_every_distinct_office_type_gets_a_distinct_current_world_slice(game):
     db, state, content = game
     characters_by_type = {
