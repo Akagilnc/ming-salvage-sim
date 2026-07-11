@@ -4,7 +4,6 @@ import {
   parseCoderRec,
   reviewerOverrideForCoderSlug,
   resolveCoderRecOrder,
-  reviewerSlugsFromRoute,
   selectCoderRecEntry,
   type CoderRosterEntry,
 } from "./coderRoster.js";
@@ -455,6 +454,25 @@ export function withCoderSlot(
   };
 }
 
+/**
+ * All self-review peers in a complete landed route except one slot owned by
+ * the relay candidate. Exclusion is by slot identity: a matching slug in any
+ * other slot or CMR review leg remains a conflict.
+ */
+export function routeConflictSlugsExcluding(
+  route: Pick<ResolvedModelRoute, "slots" | "legCollections">,
+  excludedSlot: "coder" | "reviewer",
+): ReadonlyArray<string> {
+  return [
+    ...(excludedSlot === "coder" ? [] : [route.slots.coder]),
+    ...(excludedSlot === "reviewer" ? [] : [route.slots.reviewer]),
+    route.slots.cmrCompleteness,
+    route.slots.cmrCorrectness,
+    route.slots.verify,
+    ...route.legCollections.cmrReview.map((leg) => leg.slug),
+  ];
+}
+
 export function routeSmokeFailure(
   route: Pick<ResolvedModelRoute, "slots" | "legCollections" | "smoke">,
   now = Date.now(),
@@ -678,10 +696,9 @@ async function askContinue(message: string): Promise<boolean> {
  * only an explicit `Coder-Rec:` marking in the issue body overrides the active
  * route's coder slot — unmarked issues keep the route preset. A present but
  * all-invalid marking falls through to {@link DEFAULT_CODER_REC_ORDER}.
- * Entries are normally checked against every active reviewer / CMR leg.
- * The owner-ratified sol exception instead checks its resulting per-slice
- * reviewer pairing: sol wins its Coder-Rec position and that reviewer becomes
- * Opus, rather than skipping sol to retain a sol reviewer.
+ * Entries are checked against every complete-route peer other than the coder
+ * slot they replace. Sol's resulting per-slice reviewer pairing is still
+ * modeled by {@link withCoderSlot}; it does not exempt any CMR checkpoint.
  */
 export function applyCoderRecToRoute(
   route: ResolvedModelRoute,
@@ -725,9 +742,7 @@ export function applyCoderRecToRoute(
       const candidateRoute = withCoderSlot(route, candidate.slug, {
         preserveCoderFix,
       });
-      return candidate.id === "sol@med"
-        ? [candidateRoute.slots.reviewer]
-        : reviewerSlugsFromRoute(candidateRoute);
+      return routeConflictSlugsExcluding(candidateRoute, "coder");
     },
   });
   if (

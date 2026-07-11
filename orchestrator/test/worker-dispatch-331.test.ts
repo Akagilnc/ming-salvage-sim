@@ -528,6 +528,7 @@ describe("#796 Coder-Rec host dispatch", () => {
     vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "opus");
     vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "opus");
     vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "opus");
+    vi.stubEnv("ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS", "opus,agy");
     for (const entry of CODER_ROSTER) {
       const backend = new CoderRecDispatchBackend(`Coder-Rec: ${entry.id}`);
       const result = await runOrchestrator({ issueNumber: 796, backend });
