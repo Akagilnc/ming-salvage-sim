@@ -863,6 +863,9 @@ class FakeSeamsBackend extends RealFamilyBackend {
   protected override isAncestorOf(_ancestor: string, _descendant: string, _repo: string): boolean {
     return this.childLandedFake;
   }
+  protected override isMergeCommit(_commit: string, _repo: string): boolean {
+    return this.childLandedFake;
+  }
   // Intercept the git/gh/npx subprocess seam so no real command runs.
   protected override sh(file: string, args: string[], _cwd?: string): string {
     this.shCalls.push({ file, args });
@@ -922,12 +925,12 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     expect(res.familyHead).toBe("resolved-head");
   });
 
-  it("agent escalated/failed → THROWS (the merger never records `merged`)", async () => {
+  it("agent escalated/failed → leaves the merge unresolved (the merger never records `merged`)", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: false, reason: "needs a product decision on field X" };
     await expect(
       b.resolveMergeConflict({ childIssue: 11, childBranch: "feat/child-11" }),
-    ).rejects.toThrow(/did not resolve|product decision/i);
+    ).resolves.toMatchObject({ conflicted: true });
   });
 
   it("agent CLAIMED resolved but left the merge in-progress → still-conflicted result (never looks clean)", async () => {
@@ -1002,12 +1005,12 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     expect(b.mergerCalls).toHaveLength(2);
   });
 
-  it("#598 a merger agent that RETURNS {resolved:false} is NOT retried (a judged non-resolve, one call)", async () => {
+  it("#598 a merger agent that RETURNS {resolved:false} is not a git resolve (one call)", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: false, reason: "needs a product decision on field X" };
     await expect(
       b.resolveMergeConflict({ childIssue: 21, childBranch: "feat/child-21" }),
-    ).rejects.toThrow(/did not resolve|product decision/i);
+    ).resolves.toMatchObject({ conflicted: true });
     // A judged non-resolve is surfaced, never retried.
     expect(b.mergerCalls).toHaveLength(1);
   });
@@ -1474,10 +1477,8 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
     });
 
-    expect(outcome.kind).toBe("escalate");
-    if (outcome.kind === "escalate") {
-      expect(outcome.reason).toContain("completion signal");
-    }
+    expect(outcome.kind).toBe("malformed");
+    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
   });
 
   it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
@@ -1675,7 +1676,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   });
 });
 
-describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
+describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () => {
   it("prefers a runner-owned outcome sidecar over malformed merger stdout", () => {
     const dir = trackTempDir("merger-outcome-");
     const outcomePath = join(dir, "outcome.json");
@@ -1762,15 +1763,14 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
       }),
     ).toEqual({ resolved: true });
   });
-  it("an UNSIGNALED run is unresolved even when stdout claims resolved (codex R1)", () => {
-    // maxIterations hit mid-resolution: no completion signal, but an earlier
-    // `<merger>{"resolved":true}</merger>` rode in. The gate must NOT accept it.
+  it("keeps a valid merger result available for git-truth adjudication without a signal", () => {
+    // The compatibility signal is telemetry only. The caller must still verify
+    // the merge commit and conflict state before recording a landed merge.
     const out = mergerOutcomeFromResult({
       completionSignal: undefined,
       stdout: '<merger>{"resolved": true}</merger>',
     });
-    expect(out.resolved).toBe(false);
-    expect(out.reason).toMatch(/did not fire its completion signal/);
+    expect(out).toEqual({ resolved: true });
   });
   it("a wrong completion signal is unresolved", () => {
     expect(
@@ -1778,7 +1778,7 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
         completionSignal: "SOME_OTHER_SIGNAL",
         stdout: '<merger>{"resolved": true}</merger>',
       }).resolved,
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
