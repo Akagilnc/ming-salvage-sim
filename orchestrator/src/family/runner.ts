@@ -24,6 +24,7 @@
  */
 
 import { runOrchestrator } from "../runner.js";
+import { mintRunId } from "../runId.js";
 import {
   applyRuntimeTightRoutePolicy,
   printableRouteLineup,
@@ -428,6 +429,7 @@ async function readCurrentFamilyHead(
 async function requirePostMergeCleanupForAlreadyDone(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
+  readonly runId: string;
   readonly familyHeadAfter: string;
   readonly prUrl: string;
   readonly familyIssue: number;
@@ -451,6 +453,7 @@ async function requirePostMergeCleanupForAlreadyDone(input: {
   const cleanup = await ensureFamilyPostMergeCleanup({
     familyBackend: input.familyBackend,
     familyBase: input.familyBase,
+    runId: input.runId,
     familyHeadAfter: input.familyHeadAfter,
     prUrl: input.prUrl,
     familyIssue: input.familyIssue,
@@ -765,6 +768,9 @@ export async function runFamily(
   input: FamilyRunInput,
 ): Promise<FamilyRunResult> {
   const { familyBackend, singleSliceBackend, familyBase } = input;
+  // A durable family sidecar is shared across restarts, so it needs an
+  // invocation-scoped identity just like the single-slice runner.
+  const runId = mintRunId();
   let modelRoute: ResolvedModelRoute;
   try {
     modelRoute = resolveActiveModelRoute();
@@ -1437,6 +1443,7 @@ export async function runFamily(
           childIssue: r.issue,
           childBranch: r.branch,
           modelRoute: activeRoutePolicy.route,
+          runId,
         });
         familyHead = mergeResult.familyHead;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
@@ -1501,6 +1508,7 @@ export async function runFamily(
       phase: "wave",
       familyBase,
       familyBackend,
+      runId,
       modelRoute: activeRoutePolicy.route,
       // #291 缺口 2: hand the abort-time family head to the hook so a RED wave verify
       // records it on the PHASE-LEVEL durable aborted entry's `familyHeadAfter`
@@ -1588,6 +1596,7 @@ export async function runFamily(
       const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
         familyBackend,
         familyBase,
+        runId,
         familyHeadAfter: preFinalFamilyHead!,
         prUrl: priorPrMerged.pr,
         familyIssue: epic.issue,
@@ -1648,6 +1657,7 @@ export async function runFamily(
         const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
           familyBackend,
           familyBase,
+          runId,
           familyHeadAfter: preFinalFamilyHead,
           prUrl: convergedRecord.pr,
           familyIssue: epic.issue,
@@ -1786,6 +1796,7 @@ export async function runFamily(
     const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
       familyBackend,
       familyBase,
+      runId,
       familyHeadAfter: preFinalFamilyHead!,
       prUrl: convergedRecord.pr,
       familyIssue: epic.issue,
@@ -1910,6 +1921,7 @@ export async function runFamily(
     const reviewLoop = await runFamilyOnlineReviewLoop({
       familyBackend,
       familyBase,
+      runId,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
       ship: {
         kind: "ship",
@@ -2058,6 +2070,7 @@ export async function runFamily(
     const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
       familyBackend,
       familyBase,
+      runId,
       familyHeadAfter: convergedFamilyHead,
       prUrl: shippedRecord.pr,
       familyIssue: epic.issue,
@@ -2147,6 +2160,7 @@ export async function runFamily(
     phase: "final",
     familyBase,
     familyBackend,
+    runId,
     modelRoute: activeRoutePolicy.route,
     // #291 缺口 1: derive the LLM-resolved children from the durable ledger and
     // hand them to the final-phase integrated cmr 承重闸 (via runVerifyCmr →

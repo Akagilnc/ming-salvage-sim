@@ -36,6 +36,7 @@
 
 import { execFileSync } from "node:child_process";
 
+import { mintRunId } from "./runId.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import {
   reviewFixAssertionSignal,
@@ -3180,7 +3181,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // State directories deliberately survive and are deterministically derived
   // from an issue. Telemetry therefore needs a separate per-invocation key:
   // same-issue restarts must append a fresh environment row, never dedupe it.
-  const runId = `${new Date().toISOString()}-${globalThis.crypto.randomUUID()}`;
+  const runId = mintRunId();
 
   /**
    * Resolve the ledger's `branchHEAD` value (#256).
