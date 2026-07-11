@@ -93,6 +93,7 @@ export async function mergeChild(
         ...(request.runId !== undefined ? { runId: request.runId } : {}),
         ...(request.modelRoute !== undefined ? { modelRoute: request.modelRoute } : {}),
       });
+      if (resolved.escalation !== undefined) return resolved;
       // A normal worker return with Git still unresolved is a STEP failure, not
       // a run-level exception. Re-dispatch the merger step with the same
       // in-progress merge, matching the bounded mechanical retry shape used by
