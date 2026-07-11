@@ -344,8 +344,11 @@ def resolve_directives(
             db.commit_pending_actions(state, content=content, registry=registry)
             # 跳过 extractor，避免连锁失败
             db.record_log(state, narrative[:1200])
+            # Keep the degraded settlement path on the same source-first
+            # archive contract as the normal extractor path.
+            db.persist_knowledge_items_for_turn(state)
             db.save_turn_report(
-                state, narrative, knowledge_items=db.knowledge_items_for_turn(state.turn)
+                state, narrative, knowledge_items=[]
             )
             db.save_turn_extraction(
                 state, decree_text=decree_text, narrative=narrative,
@@ -1269,8 +1272,12 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    # Persist the per-source public projection before either aggregate archive
+    # is written.  turn_report/chapter are derived prose and cannot provide an
+    # authorization boundary when they mix public and restricted matters.
+    db.persist_knowledge_items_for_turn(state)
     db.save_turn_report(
-        state, narrative, knowledge_items=db.knowledge_items_for_turn(state.turn)
+        state, narrative, knowledge_items=[]
     )
 
     # 推演链留痕：extractor_input 保留输入；extractor_output 存最终 applied 结果,
