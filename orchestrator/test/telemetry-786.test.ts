@@ -773,7 +773,7 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       quickExitBackend("done\n"),
     ) as Backend & ReceiverBoundTelemetryBackend;
 
-    await dispatchWorkerWithMonitor(
+    const outcome = await dispatchWorkerWithMonitor(
       backend,
       workerSpec(),
       { stateDir: ledgerDir, modelRoute: smokedRoute() },
@@ -788,7 +788,89 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       },
     );
 
+    await outcome.telemetryEnvironmentStamp;
     expect(backend.opts.installs).toBe(1);
+    expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
+  });
+
+  it("returns before a blocked environment fingerprint, then exposes a completion handle", async () => {
+    const dir = tempDir("orch-786-joinable-env-");
+    const ledgerDir = join(dir, ".ledger-786");
+    let releaseFingerprint: (() => void) | undefined;
+    const fingerprintReleased = new Promise<void>((resolve) => {
+      releaseFingerprint = resolve;
+    });
+    let fingerprintStarted = false;
+    const backend = {
+      ...quickExitBackend("done\n"),
+      installTelemetryRunEnvironment: async () => {
+        fingerprintStarted = true;
+        await fingerprintReleased;
+      },
+    } as Backend;
+
+    const outcome = await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir, modelRoute: smokedRoute() },
+      undefined,
+      {
+        idleThresholdMs: 60_000,
+        pollIntervalMs: 20,
+        monitorDeps: {
+          readInstanceId: () => "test-instance-786-joinable-env",
+          sleepMs: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 20))),
+        },
+      },
+    );
+
+    // #793: dispatch completion must not wait for first-run fingerprints.
+    expect(fingerprintStarted).toBe(true);
+    expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(false);
+
+    releaseFingerprint!();
+    await outcome.telemetryEnvironmentStamp;
+    expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
+  });
+
+  it("waits for the environment stamp before rethrowing a failed worker dispatch", async () => {
+    const dir = tempDir("orch-786-env-on-throw-");
+    const ledgerDir = join(dir, ".ledger-786");
+    let releaseFingerprint!: () => void;
+    const fingerprintReleased = new Promise<void>((resolve) => {
+      releaseFingerprint = resolve;
+    });
+    let fingerprintStarted = false;
+    let dispatchSettled = false;
+    const backend = {
+      dispatchWorker: async (): Promise<WorkerResult> => {
+        throw new Error("worker boom");
+      },
+      installTelemetryRunEnvironment: async () => {
+        fingerprintStarted = true;
+        await fingerprintReleased;
+      },
+    } as unknown as Backend;
+
+    const dispatch = dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir, modelRoute: smokedRoute() },
+    );
+    void dispatch.then(
+      () => {
+        dispatchSettled = true;
+      },
+      () => {
+        dispatchSettled = true;
+      },
+    );
+
+    await vi.waitFor(() => expect(fingerprintStarted).toBe(true));
+    expect(dispatchSettled).toBe(false);
+
+    releaseFingerprint();
+    await expect(dispatch).rejects.toThrow("worker boom");
     expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
   });
 
@@ -852,17 +934,12 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
           new Date(dispatch!.dispatched_at).getTime(),
       ).toBeLessThan(200);
 
-      // The delayed first calculation must still finish before writing the
-      // environment row; a prompt first-output stamp must not trade away data.
-      let environment: TelemetryEnvironmentRecord | undefined;
-      for (let attempt = 0; attempt < 100 && environment === undefined; attempt += 1) {
-        environment = readTelemetryRecords(ledgerDir).find(
-          (r) => r.phase === "environment",
-        ) as TelemetryEnvironmentRecord | undefined;
-        if (environment === undefined) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 20));
-        }
-      }
+      // The delayed first calculation can be joined explicitly; a prompt
+      // first-output stamp must not trade away a durable environment row.
+      await outcome.telemetryEnvironmentStamp;
+      const environment = readTelemetryRecords(ledgerDir).find(
+        (r) => r.phase === "environment",
+      ) as TelemetryEnvironmentRecord | undefined;
       expect(environment?.imageDigest).toBe("sha256:telemetry-test");
     } finally {
       if (originalPath === undefined) {
@@ -1210,19 +1287,17 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       }),
     } as unknown as Backend;
 
-    await dispatchWorkerWithMonitor(backend, workerSpec(), {
+    const outcome = await dispatchWorkerWithMonitor(backend, workerSpec(), {
       stateDir: ledgerDir,
     });
 
-    let env: TelemetryEnvironmentRecord | undefined;
-    for (let attempt = 0; attempt < 100 && env === undefined; attempt += 1) {
-      env = readTelemetryRecords(ledgerDir).find(
-        (r) => r.phase === "environment",
-      ) as TelemetryEnvironmentRecord | undefined;
-      if (env === undefined) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
-      }
-    }
+    // Environment fingerprints are intentionally scheduled after the monitor
+    // handle and must not delay a quick worker exit. The outcome exposes the
+    // exact completion to a caller that needs the durable side effect.
+    await outcome.telemetryEnvironmentStamp;
+    const env = readTelemetryRecords(ledgerDir).find(
+      (r) => r.phase === "environment",
+    ) as TelemetryEnvironmentRecord | undefined;
     expect(env).toBeDefined();
     expect(env?.promptHash).toBe(childHash);
   });

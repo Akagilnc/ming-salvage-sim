@@ -885,7 +885,11 @@ export class RealFamilyBackend implements FamilyBackend {
           spec: telemetrySpec,
           ctx: telemetryCtx,
         });
-        scheduleTelemetryEnvironmentStamp(this.opts.ledgerDir, telemetryCtx, this);
+        const telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
+          this.opts.ledgerDir,
+          telemetryCtx,
+          this,
+        );
         telemetry.stampDispatch(new Date().toISOString());
         try {
           const result = await this.runAgentSandbox({
@@ -909,6 +913,7 @@ export class RealFamilyBackend implements FamilyBackend {
           return outcome;
         } catch (error) {
           telemetry.stampCollect({ kind: "thrown", error });
+          await telemetryEnvironmentStamp;
           throw error;
         }
       } finally {

@@ -161,8 +161,10 @@ import {
 } from "./coderRoster.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
+  billingPoolForModelRef,
   billingPoolFromQuotaPool,
   buildDefaultBillingPools,
+  findLiveBillingPoolForModel,
   type BillingPoolEntry,
   type BillingPoolId,
   type NextRelayBaton,
@@ -174,6 +176,7 @@ import {
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
   tryStageRelayFocusFile,
+  isCapacityRelayError,
   isHangWithLivePoolError,
   isSelfReportedRelayError,
   RELAY_FOCUS_FILENAME,
@@ -2707,23 +2710,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const canRelayInProcess = (): boolean =>
     canRelayHandoff(mergeResumeLedgerHistory(resumeHistoryLedger, ledger));
 
-  const modelIdForWallStep = (wallStep: StepId): string => {
+  const modelRefForWallStep = (wallStep: StepId): string => {
     const slots = modelRoute.slots;
-    const slug =
-      wallStep === "S3" || wallStep === "S6"
-        ? slots.reviewer
-        : wallStep === "S7"
-          ? slots.ship
-          : wallStep === "S9"
-            ? slots.verify
-            : wallStep === "S10"
-              ? slots.fixer
-              : wallStep === "S11"
-                ? slots.cleanup
-                : wallStep === "S12"
-                  ? slots.docRelease
-                  : slots.coder;
-    return lookupCoderRosterEntry(slug)?.id ?? slug;
+    return wallStep === "S3" || wallStep === "S6"
+      ? slots.reviewer
+      : wallStep === "S7"
+        ? slots.ship
+        : wallStep === "S9"
+          ? slots.verify
+          : wallStep === "S10"
+            ? slots.fixer
+            : wallStep === "S11"
+              ? slots.cleanup
+              : wallStep === "S12"
+                ? slots.docRelease
+                : slots.coder;
+  };
+
+  const modelIdForWallStep = (wallStep: StepId): string => {
+    const modelRef = modelRefForWallStep(wallStep);
+    return lookupCoderRosterEntry(modelRef)?.id ?? modelRef;
   };
 
   const resolveRelayPools = (
@@ -2740,6 +2746,45 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }));
     }
     return buildDefaultBillingPools({ limitedPool, resetAt });
+  };
+
+  const hasExplicitRelayPools = input.relayPools !== undefined;
+
+  const resolveResourceFailurePool = (input: {
+    readonly modelRef: string;
+    readonly knownPool?: BillingPoolId;
+    readonly capacity: boolean;
+  }): {
+    readonly currentPool: BillingPoolId;
+    readonly pools: ReadonlyArray<BillingPoolEntry>;
+  } => {
+    const inferredPool =
+      billingPoolForModelRef(input.modelRef) ??
+      billingPoolFromQuotaPool(poolForModelRef(input.modelRef));
+    const configuredPools = resolveRelayPools(inferredPool, undefined);
+    const confirmedPool =
+      input.knownPool ??
+      currentBillingPool ??
+      findLiveBillingPoolForModel(configuredPools, input.modelRef);
+    const currentPool = confirmedPool ?? inferredPool;
+    // A first-leg capacity result comes from the currently dispatched model,
+    // so it proves that its inferred billing pool is live. Keep an explicit
+    // relay table authoritative, and keep later relay legs tied to their
+    // recorded pool; only the default, unbatoned first leg gets this proof.
+    const firstLegCapacityPoolIsLive =
+      input.capacity &&
+      confirmedPool === undefined &&
+      !hasExplicitRelayPools;
+    return {
+      currentPool,
+      pools: configuredPools.map((pool) => {
+        if (pool.id !== currentPool) return pool;
+        if (!input.capacity) return { ...pool, status: "dead" as const };
+        return confirmedPool !== undefined || firstLegCapacityPoolIsLive
+          ? { ...pool, status: "live" as const }
+          : pool;
+      }),
+    };
   };
 
   const currentCoderModelId = (): string => {
@@ -4365,6 +4410,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
                   }
+                  // The worker has already exited and its result is collected;
+                  // join the first-run environment side effect before this
+                  // runner advances or returns to an external caller. This
+                  // deliberately does not delay spawn / first output (#793).
+                  await outcome.telemetryEnvironmentStamp;
                   return outcome.result;
                 },
                 retryOpts,
@@ -4597,30 +4647,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             applyRelayBaton(outcome.nextBaton, step);
             continue orchestratorStepLoop;
           }
-          // #686: hang-with-live-pool / self-reported blocked → resource relay
+          // #686/#787: resource failures relay without retry; capacity keeps its
+          // pool live so the capacity selector can change checkpoints in-pool.
           // (never mechanical-retry / never reset).
           if (
-            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            (isHangWithLivePoolError(err) ||
+              isSelfReportedRelayError(err) ||
+              isCapacityRelayError(err)) &&
             canRelayInProcess()
           ) {
-            const currentPool =
-              currentBillingPool ??
-              billingPoolFromQuotaPool(
-                isHangWithLivePoolError(err)
-                  ? err.poolId
-                  : poolForModelRef(modelRoute.slots.coder),
-              );
-            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id === currentPool ? { ...p, status: "dead" as const } : p,
-            );
-            const trigger = isHangWithLivePoolError(err)
+            const { currentPool, pools } = resolveResourceFailurePool({
+              modelRef: modelRefForWallStep(step),
+              ...(isHangWithLivePoolError(err)
+                ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
+                : {}),
+              capacity: isCapacityRelayError(err),
+            });
+            const trigger = isCapacityRelayError(err)
+              ? ("capacity" as const)
+              : isHangWithLivePoolError(err)
               ? ("hang_with_live_pool" as const)
               : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
                 ? ("self_reported_blocked" as const)
                 : ("phase_complete" as const);
             const stateSummary = isSelfReportedRelayError(err)
               ? err.tag.state_summary
-              : "worker hang with live pool; pid tree killed; drift preserved";
+              : isCapacityRelayError(err)
+                ? "model checkpoint at capacity; drift preserved"
+                : "worker hang with live pool; pid tree killed; drift preserved";
             const remaining =
               isSelfReportedRelayError(err) && "remaining" in err.tag
                 ? err.tag.remaining
@@ -4862,6 +4916,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               if (outcome.monitorHandle !== undefined) {
                 stepMonitorHandle = outcome.monitorHandle;
               }
+              // Join only at result collection, never on the spawn path.
+              await outcome.telemetryEnvironmentStamp;
               return outcome.result;
             },
             {
@@ -4990,27 +5046,30 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // resource failure on ship too. Preserve the current scene and hand
           // the S7 slot to the next baton; never fall through to S8.
           if (
-            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            (isHangWithLivePoolError(err) ||
+              isSelfReportedRelayError(err) ||
+              isCapacityRelayError(err)) &&
             canRelayInProcess()
           ) {
-            const currentPool =
-              currentBillingPool ??
-              billingPoolFromQuotaPool(
-                isHangWithLivePoolError(err)
-                  ? err.poolId
-                  : poolForModelRef(modelRoute.slots.ship),
-              );
-            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id === currentPool ? { ...p, status: "dead" as const } : p,
-            );
-            const trigger = isHangWithLivePoolError(err)
+            const { currentPool, pools } = resolveResourceFailurePool({
+              modelRef: modelRoute.slots.ship,
+              ...(isHangWithLivePoolError(err)
+                ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
+                : {}),
+              capacity: isCapacityRelayError(err),
+            });
+            const trigger = isCapacityRelayError(err)
+              ? ("capacity" as const)
+              : isHangWithLivePoolError(err)
               ? ("hang_with_live_pool" as const)
               : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
                 ? ("self_reported_blocked" as const)
                 : ("phase_complete" as const);
             const stateSummary = isSelfReportedRelayError(err)
               ? err.tag.state_summary
-              : "worker hang with live pool; pid tree killed; drift preserved";
+              : isCapacityRelayError(err)
+                ? "model checkpoint at capacity; drift preserved"
+                : "worker hang with live pool; pid tree killed; drift preserved";
             const remaining =
               isSelfReportedRelayError(err) && "remaining" in err.tag
                 ? err.tag.remaining
@@ -5413,6 +5472,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
                   }
+                  // Review-loop collection is also an external-run boundary;
+                  // keep the telemetry environment row durable before it
+                  // advances, without delaying worker spawn / first output.
+                  await outcome.telemetryEnvironmentStamp;
                 } catch (err) {
                   dispatchError = err;
                 }
@@ -6158,35 +6221,38 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // #686: S9–S12 must treat the other two resource-failure signals
           // exactly like S2/S3/S5/S6: hand off on the current scene, not S8.
           if (
-            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            (isHangWithLivePoolError(err) ||
+              isSelfReportedRelayError(err) ||
+              isCapacityRelayError(err)) &&
             canRelayInProcess()
           ) {
-            const currentPool =
-              currentBillingPool ??
-              billingPoolFromQuotaPool(
-                isHangWithLivePoolError(err)
-                  ? err.poolId
-                  : poolForModelRef(
-                      reviewStep === "S9"
-                        ? modelRoute.slots.verify
-                        : reviewStep === "S10"
-                          ? modelRoute.slots.fixer
-                          : reviewStep === "S11"
-                            ? modelRoute.slots.cleanup
-                            : modelRoute.slots.docRelease,
-                    ),
-              );
-            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id === currentPool ? { ...p, status: "dead" as const } : p,
-            );
-            const trigger = isHangWithLivePoolError(err)
+            const reviewModelRef =
+              reviewStep === "S9"
+                ? modelRoute.slots.verify
+                : reviewStep === "S10"
+                  ? modelRoute.slots.fixer
+                  : reviewStep === "S11"
+                    ? modelRoute.slots.cleanup
+                    : modelRoute.slots.docRelease;
+            const { currentPool, pools } = resolveResourceFailurePool({
+              modelRef: reviewModelRef,
+              ...(isHangWithLivePoolError(err)
+                ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
+                : {}),
+              capacity: isCapacityRelayError(err),
+            });
+            const trigger = isCapacityRelayError(err)
+              ? ("capacity" as const)
+              : isHangWithLivePoolError(err)
               ? ("hang_with_live_pool" as const)
               : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
                 ? ("self_reported_blocked" as const)
                 : ("phase_complete" as const);
             const stateSummary = isSelfReportedRelayError(err)
               ? err.tag.state_summary
-              : "worker hang with live pool; pid tree killed; drift preserved";
+              : isCapacityRelayError(err)
+                ? "model checkpoint at capacity; drift preserved"
+                : "worker hang with live pool; pid tree killed; drift preserved";
             const remaining =
               isSelfReportedRelayError(err) && "remaining" in err.tag
                 ? err.tag.remaining

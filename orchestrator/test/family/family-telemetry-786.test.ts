@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sc from "@ai-hero/sandcastle";
 
 import { dispatchFamilyWorkerWithMonitor } from "../../src/family/dispatchFamilyWorker.js";
@@ -141,6 +141,46 @@ describe("#786 family dispatch telemetry", () => {
       });
     },
   );
+
+  it("joins the environment stamp before rethrowing a failed family dispatch", async () => {
+    const ledgerDir = join(tempDir("orch-786-family-env-on-throw-"), ".ledger");
+    let releaseFingerprint!: () => void;
+    const fingerprintReleased = new Promise<void>((resolve) => {
+      releaseFingerprint = resolve;
+    });
+    let fingerprintStarted = false;
+    let dispatchSettled = false;
+    const backend = {
+      dispatchWorker: async (): Promise<WorkerResult> => {
+        throw new Error("family worker boom");
+      },
+      installTelemetryRunEnvironment: async () => {
+        fingerprintStarted = true;
+        await fingerprintReleased;
+      },
+    } as unknown as FamilyBackend;
+
+    const dispatch = dispatchFamilyWorkerWithMonitor(
+      backend,
+      familySpec("cmr"),
+      { familyBase: "feat/family-786", stateDir: ledgerDir, modelRoute: smokedRoute() },
+    );
+    void dispatch.then(
+      () => {
+        dispatchSettled = true;
+      },
+      () => {
+        dispatchSettled = true;
+      },
+    );
+
+    await vi.waitFor(() => expect(fingerprintStarted).toBe(true));
+    expect(dispatchSettled).toBe(false);
+
+    releaseFingerprint();
+    await expect(dispatch).rejects.toThrow("family worker boom");
+    expect(readTelemetryRecords(ledgerDir).some((record) => record.phase === "environment")).toBe(true);
+  });
 
   it("writes telemetry when the real merger-agent sandbox path runs", async () => {
     const ledgerDir = join(tempDir("orch-786-real-merger-"), ".ledger");
