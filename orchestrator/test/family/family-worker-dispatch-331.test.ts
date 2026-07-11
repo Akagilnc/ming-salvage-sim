@@ -158,11 +158,13 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
         familyBase: "family/base",
         modelRoute: await smokeRouteModels(
           resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" }),
-          async () => ({ ok: true }),
+          async () => ({ cliVersion: "test" }),
         ),
       },
       undefined,
-      { onDispatchConfirmed: () => events.push("confirmed") },
+      { onDispatchConfirmed: () => {
+        events.push("confirmed");
+      } },
     );
 
     expect(events).toEqual(["launched", "confirmed"]);

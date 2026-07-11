@@ -12,23 +12,23 @@ parameters.
 
 ## Required output
 
-When you are done (or are escalating), write the single JSON object to
-`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for compatibility
-with older runners, emit EXACTLY ONE `<review>` tag on its own containing the same
-single JSON object, and print the completion signal on its own line.
+When you are done (or are escalating), the real completion evidence is the
+single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
+set and the typed `<review>` outcome. For compatibility with older runners,
+emit EXACTLY ONE `<review>` tag on its own containing the same single JSON
+object. The completion signal is optional telemetry and may be printed as an
+extra line.
 
 Success:
 
 ```text
 <review>{"findings":[]}</review>
-REVIEWER_STEP_COMPLETE
 ```
 
 With findings:
 
 ```text
 <review>{"findings":[{"severity":"high","category":"correctness","claim_quote":"<short>","location":"path:line","suggested_fix":"<short>","action":"fix_now"}]}</review>
-REVIEWER_STEP_COMPLETE
 ```
 
 Report each active finding with only its body (`severity`, `category`,
@@ -62,12 +62,12 @@ the same escalation unless the answer leaves a concrete blocker unresolved.
 
 ```text
 <review>{"findings":[],"priorFindingDispositions":[{"identityKey":"<prior-key>","status":"verified-closed","reason":"<short>"}]}</review>
-REVIEWER_STEP_COMPLETE
 ```
 
 Escalation:
 
 ```text
 <review>{"findings":[],"escalate":{"reason":"<short>","diagnosis":"<what blocks review>"}}</review>
-REVIEWER_STEP_COMPLETE
 ```
+
+For optional telemetry, you may print REVIEWER_STEP_COMPLETE on its own final line.

@@ -42,14 +42,12 @@ Emit one `<docRelease>` tag with thin JSON only:
 
 ```text
 <docRelease>{"released": true}</docRelease>
-DOCRELEASE_STEP_COMPLETE
 ```
 
 or, on skill failure / hang that you can report / required push failure:
 
 ```text
 <docRelease>{"released": false}</docRelease>
-DOCRELEASE_STEP_COMPLETE
 ```
 
 Rules:
@@ -57,4 +55,4 @@ Rules:
 - No path-allowlist self-check is a success criterion (ADR 0123).
 - Tip / commit SHA is ledger `branchHEAD` on the S12 row — do not invent extra
   result fields (`docCommitSha`, `noop`, etc.).
-- Fire `DOCRELEASE_STEP_COMPLETE` only after the verdict is final.
+- For optional telemetry, you may print DOCRELEASE_STEP_COMPLETE on its own final line.

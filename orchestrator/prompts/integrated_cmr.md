@@ -22,32 +22,29 @@ orchestrator-outcome-guard \
   --draft "<draft-json-path>" \
   --outcome "$ORCHESTRATOR_OUTCOME_PATH" \
   --evidence-root "$PWD" \
-  --completion-signal "CMR_STEP_COMPLETE"
+  --completion-signal "<COMPLETION_SIGNAL>"
 ```
 
-The guard emits the compatibility `<cmr>` tag and completion signal only after
-validation passes. If `$ORCHESTRATOR_OUTCOME_PATH` is not set, use the same JSON
-shape in the legacy tag/signal output.
+After validation, the guard may emit the compatibility `<cmr>` tag and completion
+signal as optional telemetry. If `$ORCHESTRATOR_OUTCOME_PATH` is not set, use the
+same JSON shape in the legacy tag/signal output.
 
 Converged:
 
 ```text
 <cmr>{"converged": true, "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
-CMR_STEP_COMPLETE
 ```
 
 Not converged:
 
 ```text
 <cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now"}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
-CMR_STEP_COMPLETE
 ```
 
 Escalation:
 
 ```text
 <cmr>{"escalate": {"reason": "<short>", "diagnosis": "<why the worker cannot converge>"}}</cmr>
-CMR_STEP_COMPLETE
 ```
 
 Rules:
@@ -109,8 +106,10 @@ Rules:
   MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
   `action:"fix_now"` (that would silently turn the governance suppression into a
   blocker).
-- When `$ORCHESTRATOR_OUTCOME_PATH` is set, let `orchestrator-outcome-guard` emit
-  the `<cmr>` tag and `CMR_STEP_COMPLETE`; do not print them yourself.
-- Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,
-  the LAST tag is the one that counts, then print `CMR_STEP_COMPLETE` on its own
-  line at the very end.
+- When `$ORCHESTRATOR_OUTCOME_PATH` is set, completion is judged by the validated
+  sidecar JSON and typed CMR outcome; let `orchestrator-outcome-guard` emit the
+  `<cmr>` tag and optional completion telemetry.
+- Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag as the last typed tag;
+  if you iterate, the last typed `<cmr>` tag is the one that counts. The optional
+  telemetry line below may follow it.
+- For optional telemetry, you may print CMR_STEP_COMPLETE on its own final line.
