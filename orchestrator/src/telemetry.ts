@@ -549,12 +549,21 @@ export interface TelemetryCommitMetrics {
   readonly assertions: { readonly added: number; readonly deleted: number };
 }
 
+/** Dispatch identity frozen when the runner schedules a commit collection. */
+export interface TelemetryCommitWorkerIdentity {
+  /** Orchestrator step / worker leg that produced the observed commit. */
+  readonly stepId: string | null;
+  /** Exact dispatched model or checkpoint slug; never inferred after the fact. */
+  readonly modelSlug: string | null;
+}
+
 /** Per host-git commit observation. Telemetry only; never read for routing. */
 export interface TelemetryCommitRecord extends TelemetryRecordBase {
   readonly phase: "commit";
   readonly runId: string | null;
   readonly issue: number | null;
   readonly commit: string;
+  readonly worker: TelemetryCommitWorkerIdentity;
   readonly files: number | null;
   readonly insertions: number | null;
   readonly deletions: number | null;
@@ -1212,12 +1221,16 @@ export interface BuildCommitStampInput {
   readonly runId?: string | null;
   readonly issue?: number | null;
   readonly commit: string;
+  /** Dispatch identity frozen by the runner when collection was scheduled. */
+  readonly worker?: TelemetryCommitWorkerIdentity;
   /** Host-git numstat result. Omit when collection failed: all metrics become null. */
   readonly metrics?: TelemetryCommitMetrics;
   /** Changed lines from host `git show --unified=0`, for #782 / assertion auditing. */
   readonly diffLines?: readonly string[];
   /** TypeScript-scanned comment/string spans mapped from the relevant diff image. */
   readonly triviaByDiffIndex?: ReadonlyMap<number, readonly TriviaSpan[]>;
+  /** Whether the corresponding changed line belongs to a supported code file. */
+  readonly codeByDiffIndex?: ReadonlyMap<number, boolean>;
 }
 
 const EMPTY_ESCAPE_HATCH_COUNTS: TelemetryEscapeHatchCounts = {
@@ -1275,11 +1288,12 @@ function triviaKindForToken(kind: ts.SyntaxKind): TriviaKind | undefined {
  * masked. This deliberately replaces the former hand-written quote/comment state
  * machine.
  */
-function scriptKindForPath(path: string | undefined): ts.ScriptKind {
+function scriptKindForPath(path: string | undefined): ts.ScriptKind | undefined {
   // Diff fallbacks have no path; retain TSX there so hand-built JSX diff tests
   // are still recognised. Real git image scans always provide a file path.
   if (path === undefined) return ts.ScriptKind.TSX;
-  return /\.(?:tsx|jsx)$/i.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  if (/\.(?:tsx|jsx)$/i.test(path)) return ts.ScriptKind.TSX;
+  return /\.(?:ts|mts|cts|js)$/i.test(path) ? ts.ScriptKind.TS : undefined;
 }
 
 function triviaSpansByLine(
@@ -1347,7 +1361,7 @@ function triviaSpansByLine(
     source,
     ts.ScriptTarget.Latest,
     true,
-    scriptKindForPath(path),
+    scriptKindForPath(path) ?? ts.ScriptKind.TS,
   );
   const visit = (node: ts.Node): void => {
     if (node.kind === ts.SyntaxKind.JsxText) {
@@ -1406,6 +1420,7 @@ export function buildCommitStamp(input: BuildCommitStampInput): TelemetryCommitR
     const triviaByDiffIndex = input.triviaByDiffIndex ?? fallbackTriviaByDiffIndex(input.diffLines);
     for (const [index, line] of input.diffLines.entries()) {
       const kind = changedLineKind(line);
+      if (input.codeByDiffIndex?.get(index) === false) continue;
       const content = auditableLine(line, triviaByDiffIndex.get(index) ?? []);
       if (kind === undefined || content === undefined) continue;
       const counts = kind === "added" ? added : deleted;
@@ -1430,6 +1445,7 @@ export function buildCommitStamp(input: BuildCommitStampInput): TelemetryCommitR
     runId: input.runId ?? null,
     issue: input.issue ?? null,
     commit: input.commit,
+    worker: input.worker ?? { stepId: null, modelSlug: null },
     files: metrics?.files ?? null,
     insertions: metrics?.insertions ?? null,
     deletions: metrics?.deletions ?? null,
@@ -1521,6 +1537,8 @@ function parseCommitMetrics(output: string): TelemetryCommitMetrics | undefined 
 export interface CommitDiffAudit {
   readonly diffLines: readonly string[];
   readonly triviaByDiffIndex: ReadonlyMap<number, readonly TriviaSpan[]>;
+  /** Code-file gate for line-pattern metrics; non-code files retain numstat only. */
+  readonly codeByDiffIndex: ReadonlyMap<number, boolean>;
 }
 
 export async function collectCommitDiffAuditAsync(
@@ -1534,6 +1552,7 @@ export async function collectCommitDiffAuditAsync(
     const postImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
     const preImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
     const triviaByDiffIndex = new Map<number, readonly TriviaSpan[]>();
+    const codeByDiffIndex = new Map<number, boolean>();
     let prePath: string | undefined;
     let postPath: string | undefined;
     let preImageLine: number | undefined;
@@ -1545,6 +1564,9 @@ export async function collectCommitDiffAuditAsync(
       if (hunk !== null) { preImageLine = Number(hunk[1]); postImageLine = Number(hunk[2]); continue; }
       if (line.startsWith("+") && !line.startsWith("+++")) {
         if (postPath === undefined || postImageLine === undefined) return undefined;
+        const scriptKind = scriptKindForPath(postPath);
+        codeByDiffIndex.set(index, scriptKind !== undefined);
+        if (scriptKind === undefined) { postImageLine += 1; continue; }
         let spans = postImageTriviaByPath.get(postPath);
         if (spans === undefined) {
           const image = await gitOutput(repoPath, ["show", `${commit}:${postPath}`]);
@@ -1556,6 +1578,9 @@ export async function collectCommitDiffAuditAsync(
         postImageLine += 1;
       } else if (line.startsWith("-") && !line.startsWith("---")) {
         if (prePath === undefined || preImageLine === undefined) return undefined;
+        const scriptKind = scriptKindForPath(prePath);
+        codeByDiffIndex.set(index, scriptKind !== undefined);
+        if (scriptKind === undefined) { preImageLine += 1; continue; }
         let spans = preImageTriviaByPath.get(prePath);
         if (spans === undefined) {
           const image = await gitOutput(repoPath, ["show", `${commit}^:${prePath}`]);
@@ -1567,7 +1592,7 @@ export async function collectCommitDiffAuditAsync(
         preImageLine += 1;
       } else { preImageLine = preImageLine === undefined ? undefined : preImageLine + 1; postImageLine = postImageLine === undefined ? undefined : postImageLine + 1; }
     }
-    return { diffLines, triviaByDiffIndex };
+    return { diffLines, triviaByDiffIndex, codeByDiffIndex };
   } catch { return undefined; }
 }
 
@@ -1934,6 +1959,8 @@ export interface CommitTelemetryScheduleInput {
   readonly repoPath: string;
   readonly runId?: string;
   readonly issue?: number | null;
+  /** Worker identity captured at the scheduling seam, before deferred collection. */
+  readonly worker?: TelemetryCommitWorkerIdentity;
   readonly before: CommitTelemetryBoundary;
   readonly after: CommitTelemetryHeldBoundary;
 }
@@ -2005,6 +2032,7 @@ async function collectCommitTelemetry(input: CommitTelemetryCollectInput): Promi
       runId: input.runId,
       issue: input.issue ?? null,
       commit,
+      ...(input.worker !== undefined ? { worker: input.worker } : {}),
       ...(metrics !== undefined ? { metrics } : {}),
       ...(diffAudit !== undefined ? diffAudit : {}),
     }));

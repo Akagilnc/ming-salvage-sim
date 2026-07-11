@@ -302,6 +302,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       expect(schedule).toHaveBeenCalledOnce();
       expect(schedule.mock.calls[0]?.[0]).toMatchObject({
         repoPath: repo,
+        worker: { stepId: "S2", modelSlug: "gpt-5.6-terra" },
         before: { kind: "held", oid: expect.stringMatching(/^[0-9a-f]{40}$/) },
         after: { kind: "held", oid: expect.stringMatching(/^[0-9a-f]{40}$/) },
       });

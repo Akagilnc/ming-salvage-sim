@@ -216,6 +216,7 @@ describe("#786 telemetry pure helpers", () => {
       runId: "run-786",
       issue: 786,
       commit: "abc123",
+      worker: { stepId: null, modelSlug: null },
       files: 3,
       insertions: 12,
       deletions: 4,
@@ -348,6 +349,30 @@ describe("#786 telemetry pure helpers", () => {
     expect(buildCommitStamp({ commit, ...audit! }).escapeHatches?.added.asAny).toBe(1);
   });
 
+  it("does not count escape-hatch examples in Markdown diff lines", async () => {
+    const repo = tempDir("orch-786-markdown-escape-hatch-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "README.md");
+    writeFileSync(fixture, "# Example\n");
+    execFileSync("git", ["add", "README.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    writeFileSync(
+      fixture,
+      "# Example\n\nvalue as any\n@ts-ignore\nJSON.parse(JSON.stringify(value))\n",
+    );
+    execFileSync("git", ["commit", "-am", "document escape hatches", "-q"], { cwd: repo });
+
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
+
+    expect(buildCommitStamp({ commit, ...audit! }).escapeHatches).toEqual({
+      added: { asAny: 0, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+      deleted: { asAny: 0, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+    });
+  });
+
   it("returns before a gated commit collection begins or completes", async () => {
     let beginCollection!: () => void;
     const collectionBegun = new Promise<void>((resolve) => { beginCollection = resolve; });
@@ -458,7 +483,13 @@ describe("#786 telemetry pure helpers", () => {
     const secondCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
 
     gitExecControl.hangNextGitNumstat = true;
-    const first = scheduleCommitTelemetry({ ledgerDir, repoPath: repo, before: base, after: firstCommit });
+    const first = scheduleCommitTelemetry({
+      ledgerDir,
+      repoPath: repo,
+      worker: { stepId: "S5", modelSlug: "relay-fallback" },
+      before: base,
+      after: firstCommit,
+    });
     const second = scheduleCommitTelemetry({ ledgerDir, repoPath: repo, before: firstCommit, after: secondCommit });
     await vi.waitFor(() => {
       expect(gitExecControl.releaseHungGit).toBeTypeOf("function");
@@ -476,6 +507,7 @@ describe("#786 telemetry pure helpers", () => {
     );
     expect(records.map((record) => record.commit)).toEqual([firstCommit, secondCommit]);
     expect(records[0]).toMatchObject({ files: null, insertions: null, deletions: null });
+    expect(records[0]?.worker).toEqual({ stepId: "S5", modelSlug: "relay-fallback" });
   });
 
   it("excludes an escape hatch changed inside an existing post-image block comment", () => {
@@ -636,6 +668,7 @@ describe("#786 telemetry pure helpers", () => {
       "stamped_at",
       "test",
       "v",
+      "worker",
     ]);
   });
 

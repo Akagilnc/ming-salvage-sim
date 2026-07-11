@@ -1058,9 +1058,10 @@ async function runCmrCoderFix(input: {
 
   const currentFamilyHeadBefore = familyHeadBefore;
   let telemetryFamilyHeadBefore = familyHeadBefore;
-    const fixResult = await dispatchOrAbort(
-      familyBackend,
-      familyCoderFixWorkerSpec(resolvedRoute),
+  const coderFixSpec = familyCoderFixWorkerSpec(resolvedRoute);
+  const fixResult = await dispatchOrAbort(
+    familyBackend,
+    coderFixSpec,
       {
         familyBase,
         ...(runId !== undefined ? { runId } : {}),
@@ -1095,6 +1096,7 @@ async function runCmrCoderFix(input: {
         familyBase,
         runId,
         familyIssue,
+        worker: { stepId: coderFixSpec.id, modelSlug: coderFixSpec.model },
         before: telemetryFamilyHeadBefore,
         after: familyHeadAfter,
       });
@@ -2157,6 +2159,7 @@ function stampCmrCoderFixCommits(input: {
   readonly familyBase: string;
   readonly runId?: string;
   readonly familyIssue?: number;
+  readonly worker: { readonly stepId: string; readonly modelSlug: string };
   readonly before?: string;
   readonly after?: string;
 }): void {
@@ -2178,6 +2181,7 @@ function stampCmrCoderFixCommits(input: {
       repoPath,
       runId: input.runId,
       issue: input.familyIssue ?? null,
+      worker: input.worker,
       before: input.before,
       after: input.after,
     });
