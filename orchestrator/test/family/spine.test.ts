@@ -136,9 +136,9 @@ class FakeFamilyBackend implements FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ) => Promise<WorkerResult>;
-  verifyFamilyShippedPr?: (
+  verifyFamilyShippedPr: (
     _req: VerifyFamilyShippedPrRequest,
-  ) => Promise<VerifyFamilyShippedPrResult>;
+  ) => Promise<VerifyFamilyShippedPrResult> = async () => ({ ok: true });
 }
 
 function epicWith(...childIssues: number[]): FamilyEpic {

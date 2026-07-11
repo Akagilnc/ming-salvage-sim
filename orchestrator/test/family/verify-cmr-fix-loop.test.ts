@@ -97,6 +97,9 @@ class SchedulerFamilyBackend implements FamilyBackend {
   async readFamilyHead(): Promise<string> {
     return this.currentFamilyHead;
   }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     return this.script.verify?.(req) ?? { ok: true };
   }
@@ -246,6 +249,9 @@ class ReviewFixRereviewBackend implements FamilyBackend {
   async readFamilyHead(): Promise<string> {
     return this.currentFamilyHead;
   }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     this.verifyRequests.push(req);
     return { ok: true };
@@ -351,6 +357,9 @@ class ReviewFixRereviewBackend implements FamilyBackend {
  * coder-fix by identity key.
  */
 class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly verifyRequests: FamilyVerifyRequest[] = [];
@@ -474,6 +483,9 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
 }
 
 class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly verifyRequests: FamilyVerifyRequest[] = [];
@@ -599,6 +611,9 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
 }
 
 class RepeatedReviewFixRereviewBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   currentFamilyHead = "head-before-repeat-cmr-review";
@@ -763,6 +778,9 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
 }
 
 class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   currentFamilyHead = "head-before-excessive-cmr-review";
@@ -917,6 +935,9 @@ const DOGFOOD_272_KEYS = DOGFOOD_272_FINDINGS.map((finding) =>
 );
 
 class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   currentFamilyHead = "head-before-dogfood-272";

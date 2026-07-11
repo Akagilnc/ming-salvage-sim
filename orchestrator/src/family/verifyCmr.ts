@@ -2588,6 +2588,13 @@ async function runIntegratedCmrPass(input: {
 export async function runVerifyCmr(
   input: VerifyCmrInput,
 ): Promise<VerifyCmrResult> {
+  return runVerifyCmrWithShipTruthAttempt(input, 1);
+}
+
+async function runVerifyCmrWithShipTruthAttempt(
+  input: VerifyCmrInput,
+  shipTruthAttempt: number,
+): Promise<VerifyCmrResult> {
   const {
     phase,
     familyBase,
@@ -3008,6 +3015,59 @@ export async function runVerifyCmr(
       }),
     });
     return INCOMPLETE_GATE;
+  }
+  const shippedPrVerification =
+    familyBackend.verifyFamilyShippedPr === undefined
+      ? {
+          ok: false as const,
+          reason: "backend has no host PR verification capability",
+        }
+      : await familyBackend.verifyFamilyShippedPr({
+          pr: ship.pr,
+          familyBase,
+          expectedHead: exactPostShipFamilyHead,
+        });
+  if (!shippedPrVerification.ok) {
+    if (shipTruthAttempt < MAX_DISPATCH_ATTEMPTS) {
+      return runVerifyCmrWithShipTruthAttempt(input, shipTruthAttempt + 1);
+    }
+    const reason =
+      `family ship PR failed host verification after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts: ` +
+      shippedPrVerification.reason;
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        "repair the family ship PR on the host or its locator, then rerun the final family barrier",
+      ship: {
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        currentFamilyHead: exactPostShipFamilyHead,
+        shipPrState: "host-verification-failed",
+      },
+      heads: {
+        actualFamilyHead: exactPostShipFamilyHead,
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        sources: {
+          actualFamilyHead: "family head after ship worker",
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: exactPostShipFamilyHead,
+      stopSummary,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: exactPostShipFamilyHead,
+      stopSummary,
+    });
+    return { ok: false, ran: true };
   }
   // ── Persist the terminal SHIPPED marker before reporting success (online review
   // r2, codex P1). The family ship commit (VERSION/CHANGELOG bump) advanced the
