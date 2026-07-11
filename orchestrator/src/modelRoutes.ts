@@ -2,6 +2,7 @@ import { createInterface } from "node:readline/promises";
 
 import {
   parseCoderRec,
+  reviewerOverrideForCoderSlug,
   resolveCoderRecOrder,
   reviewerSlugsFromRoute,
   selectCoderRecEntry,
@@ -409,7 +410,8 @@ export function withRouteSmoke(
 
 /**
  * Override the coder slot (and coderFix unless explicitly env-overridden) for
- * design-time Coder-Rec (#767).
+ * design-time Coder-Rec (#767). Sol's owner-ratified route also moves the
+ * per-slice reviewer to Opus, so the selected coder never self-reviews.
  * Preserves prior smoke status for the new slug when the same slug was already
  * smoked under another key; otherwise marks the new keys unverified so the
  * runner's route-smoke gate can (re)verify before dispatch.
@@ -421,10 +423,12 @@ export function withCoderSlot(
 ): ResolvedModelRoute {
   const trimmed = coderSlug.trim();
   assertKnownWorkerSlug(trimmed);
+  const reviewerOverride = reviewerOverrideForCoderSlug(trimmed);
   const slots: ModelSlotMap = {
     ...route.slots,
     coder: trimmed,
     ...(opts.preserveCoderFix ? {} : { coderFix: trimmed }),
+    ...(reviewerOverride !== undefined ? { reviewer: reviewerOverride } : {}),
   };
   const next: Pick<ResolvedModelRoute, "slots" | "legCollections"> = {
     slots,
@@ -674,7 +678,10 @@ async function askContinue(message: string): Promise<boolean> {
  * only an explicit `Coder-Rec:` marking in the issue body overrides the active
  * route's coder slot — unmarked issues keep the route preset. A present but
  * all-invalid marking falls through to {@link DEFAULT_CODER_REC_ORDER}.
- * Entries that would double as active reviewer legs are skipped.
+ * Entries are normally checked against every active reviewer / CMR leg.
+ * The owner-ratified sol exception instead checks its resulting per-slice
+ * reviewer pairing: sol wins its Coder-Rec position and that reviewer becomes
+ * Opus, rather than skipping sol to retain a sol reviewer.
  */
 export function applyCoderRecToRoute(
   route: ResolvedModelRoute,
@@ -714,7 +721,14 @@ export function applyCoderRecToRoute(
   }
   const order = resolveCoderRecOrder(issueBody);
   const entry = selectCoderRecEntry(order, nonConvergingRounds, {
-    reviewerSlugs: reviewerSlugsFromRoute(route),
+    reviewerSlugsForCandidate: (candidate) => {
+      const candidateRoute = withCoderSlot(route, candidate.slug, {
+        preserveCoderFix,
+      });
+      return candidate.id === "sol@med"
+        ? [candidateRoute.slots.reviewer]
+        : reviewerSlugsFromRoute(candidateRoute);
+    },
   });
   if (
     route.slots.coder === entry.slug &&
