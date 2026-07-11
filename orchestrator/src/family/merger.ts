@@ -37,6 +37,7 @@
  */
 
 import { recordMerged } from "./ledger.js";
+import { MAX_DISPATCH_ATTEMPTS } from "../dispatchRetry.js";
 import type { FamilyBackend, MergeRequest, MergeResult } from "./types.js";
 
 /**
@@ -84,24 +85,27 @@ export async function mergeChild(
     // A throw from the resolver propagates out of mergeChild BEFORE the ledger
     // write — an unresolved conflict is surfaced, never recorded as `merged`
     // (acceptance 3, "不静默吞").
-    const resolved = await backend.resolveMergeConflict({
-      childIssue: request.childIssue,
-      childBranch: request.childBranch,
-      ...(request.runId !== undefined ? { runId: request.runId } : {}),
-      ...(request.modelRoute !== undefined ? { modelRoute: request.modelRoute } : {}),
-    });
-    // The resolver returned WITHOUT throwing, but it may not have actually
-    // cleared the conflict (a misbehaving / escalating backend). A still-
-    // `conflicted` result MUST NOT look like a clean LLM resolution — surface it
-    // BEFORE the ledger write, never record it as `merged` (invariant: "an
-    // unresolved conflict must never look clean").
-    if (resolved.conflicted === true) {
-      throw new Error(
-        `resolveMergeConflict returned a still-conflicted result for child #${request.childIssue}`,
-      );
+    let resolved: MergeResult | undefined;
+    for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt++) {
+      resolved = await backend.resolveMergeConflict({
+        childIssue: request.childIssue,
+        childBranch: request.childBranch,
+        ...(request.runId !== undefined ? { runId: request.runId } : {}),
+        ...(request.modelRoute !== undefined ? { modelRoute: request.modelRoute } : {}),
+      });
+      if (resolved.escalation !== undefined) return resolved;
+      // A normal worker return with Git still unresolved is a STEP failure, not
+      // a run-level exception. Re-dispatch the merger step with the same
+      // in-progress merge, matching the bounded mechanical retry shape used by
+      // worker dispatch. Git truth remains authoritative on every attempt.
+      if (resolved.conflicted !== true) break;
     }
+    // Exhaustion is deliberately returned to the family spine as a conflicted
+    // step result. It must not reach the ledger writer, and it must not be thrown
+    // here: the spine owns the bounded step park/escalation boundary.
+    if (resolved?.conflicted === true) return resolved;
     // 3. Flag the resolution so the downstream verify + cmr (#296) sees it.
-    result = { ...resolved, conflictResolvedByLlm: true };
+    result = { ...resolved!, conflictResolvedByLlm: true };
   } else {
     // Clean deterministic merge. The merger is the SOLE source of truth for
     // `conflictResolvedByLlm` (the type's contract: "Set by the merger AFTER a
