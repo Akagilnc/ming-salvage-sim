@@ -33,4 +33,4 @@ emit `converged:false` instead. Only list `threadsToResolve` for findings you
 confirm fixed. Reply bodies must carry evidence: `fixed: <commit-url>`,
 `rejected:` / `deferred:` with reason.
 
-Fire `VERIFY_STEP_COMPLETE` only after the verdict is final.
+For optional telemetry, you may print VERIFY_STEP_COMPLETE on its own final line.

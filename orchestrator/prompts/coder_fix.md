@@ -35,16 +35,19 @@ scene — do not reset or discard uncommitted prior-baton work.
 
 ## Required output
 
-When you are done (or are escalating), write the single JSON object to
-`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for compatibility
-with older runners, emit EXACTLY ONE `<coder>` tag on its own containing the same
-single JSON object, and print the completion signal on its own line.
+When you are done (or are escalating), the real completion evidence is the
+single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
+set, the typed `<coder>` outcome, the repair evidence, and the worker's actual
+git state. For compatibility with older runners, emit EXACTLY ONE `<coder>` tag
+on its own containing the same single JSON object. The completion signal is
+optional telemetry and may be printed as an extra line.
+
+For optional telemetry, you may print CODER_STEP_COMPLETE on its own final line.
 
 Success:
 
 ```text
 <coder>{"committed": true, "commitsAdded": 1, "repairEvidence": {"findingScope": {"identityKeys": ["<fixed-finding-identity-key>"], "locations": ["<fixed-location-or-file>"]}, "changedFiles": ["<file-you-changed>"], "tests": ["<test command you ran>"], "sameClassBugScan": "<same-class bug scan command or artifact>", "introducedRegressionCheck": "<introduced-regression check command or artifact>", "patchSummary": "<short summary of the scoped repair>"}}</coder>
-CODER_STEP_COMPLETE
 ```
 
 For a fix round, include `repairEvidence` whenever you committed a fix for a
@@ -66,5 +69,4 @@ Escalation:
 
 ```text
 <coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<what blocks the fix>"}}</coder>
-CODER_STEP_COMPLETE
 ```
