@@ -366,6 +366,27 @@ def test_failed_chat_turn_removes_turn_scoped_near_minister_report_but_keeps_pri
     assert ":chat_turn:" not in sources[0]["source_id"]
 
 
+def test_undo_chat_turn_keeps_preexisting_identical_near_minister_report(game):
+    """撤回只清本轮临时来源，不能删除同题已存在的稳定回奏。"""
+    db, state, content = game
+    minister = content.characters["王承恩"]
+    query = "军情如何？"
+
+    db.persist_return_report(state, minister.name, query)
+    chat_turn_id = db.create_chat_turn(state, minister.name, "undo-same-report", 0)
+    # The prompt rebuild sees the stable source and must not turn it into a
+    # turn-owned duplicate that undo could remove.
+    db.persist_return_report(state, minister.name, query, chat_turn_id=chat_turn_id)
+
+    db.undo_chat_turn(chat_turn_id)
+
+    sources = db.conn.execute(
+        "SELECT source_id FROM character_knowledge_sources WHERE source_id LIKE 'near_minister:%'"
+    ).fetchall()
+    assert len(sources) == 1
+    assert ":chat_turn:" not in sources[0]["source_id"]
+
+
 def test_delete_chat_messages_removes_chat_derived_knowledge_from_context(game):
     """删除聊天消息时也不能留下可投影的见闻来源。"""
     db, state, content = game
