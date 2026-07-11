@@ -28,6 +28,7 @@ import {
   type ModelRouteEnv,
 } from "./modelRoutes.js";
 import { runOrchestrator } from "./runner.js";
+import { MAX_DISPATCH_ATTEMPTS } from "./dispatchRetry.js";
 import {
   type StopReason,
   type StopSummary,
@@ -2171,12 +2172,12 @@ async function startupRouteViolationReplay(): Promise<SeamReplay> {
 }
 
 async function providerBlockingReplay(): Promise<SeamReplay> {
-  const backend = new DogfoodCmrFamilyBackend("provider-blocking-head", [], [
-    {
+  const backend = new DogfoodCmrFamilyBackend("provider-blocking-head", [],
+    Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => ({
       kind: "failed",
       reason: "provider authentication failed for agy reviewer",
-    },
-  ]);
+    } as const)),
+  );
   const result = await runVerifyCmr({
     phase: "final",
     familyBase: "family/376-provider",

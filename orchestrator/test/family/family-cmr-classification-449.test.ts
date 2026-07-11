@@ -1483,7 +1483,7 @@ describe("#449 verifyCmr family gate classification", () => {
     // This backend has no coder-fix worker, so the coder-fix attempt fails and the family
     // still aborts; the point preserved here is that the finding CLASSIFIES as blocking.
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatched).toEqual(["cmr", "coder"]);
+    expect(backend.dispatched).toEqual(["cmr", "coder", "coder", "coder"]);
     // #604 slice 3 / ADR 0062: the classification decision no longer persists to the
     // ledger — the runner-visible proof that the finding classified as BLOCKING (and
     // was therefore routed to coder-fix) is its identity key on the thin envelope.
@@ -1540,7 +1540,7 @@ describe("#449 verifyCmr family gate classification", () => {
     // has no coder-fix worker, so the family still fails; the invariant preserved is
     // that the undeclared-target defer CLASSIFIES as blocking.
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatched).toEqual(["cmr", "coder"]);
+    expect(backend.dispatched).toEqual(["cmr", "coder", "coder", "coder"]);
     // #604 slice 3 / ADR 0062: only the thin key envelope persists; the undeclared-
     // target defer classifies as BLOCKING, observable as its key on the envelope.
     expect(backend.ledger[0]).toMatchObject({
@@ -1613,7 +1613,7 @@ module_scope:
     // so the family aborts. The preserved invariant is that the finding CLASSIFIES as
     // blocking (its key on the thin cmr_reviewed envelope), not that it defers.
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatched).toEqual(["cmr", "coder"]);
+    expect(backend.dispatched).toEqual(["cmr", "coder", "coder", "coder"]);
     expect(backend.ledger[0]).toMatchObject({
       status: "cmr_reviewed",
       cmrPass: "completeness",
@@ -1644,7 +1644,7 @@ module_scope:
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.dispatched).toEqual(["cmr"]);
-    expect(backend.ledger[0]).toMatchObject({
+    expect(backend.ledger.find((row) => row.status === "aborted")).toMatchObject({
       status: "aborted",
       cmrPass: "completeness",
       stopSummary: {
@@ -1683,8 +1683,8 @@ module_scope:
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatched).toEqual(["cmr"]);
-    expect(backend.ledger[0]).toMatchObject({
+    expect(backend.dispatched).toEqual(["cmr", "cmr", "cmr"]);
+    expect(backend.ledger.find((row) => row.status === "aborted")).toMatchObject({
       status: "aborted",
       cmrPass: "completeness",
       stopSummary: {

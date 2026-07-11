@@ -280,6 +280,9 @@ export interface FamilyLedgerEntry {
    * failures; `escalated` rows use it for answerable family decision pauses.
    */
   readonly reason?: string;
+  /** Existing worker-dispatch row enriched with #853 retry diagnostics. */
+  readonly workerStep?: string;
+  readonly mechanicalRedispatchAttempt?: number;
   /** Optional route leg removed from this run after a failed startup smoke. */
   readonly droppedLeg?: string;
   /** Admission-skip diagnostic message, when status/event is admission_skipped. */

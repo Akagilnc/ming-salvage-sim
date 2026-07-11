@@ -20,6 +20,7 @@ import { runFamily } from "../../src/family/runner.js";
 import { recordFamilyEscalationAnswered } from "../../src/family/ledger.js";
 import { smokeRouteModels } from "../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import type {
   Backend,
   IssueMeta,
@@ -370,7 +371,7 @@ describe("#744 family decision_gate parks for human (production seam)", () => {
     expect(reentry.status).toBe("escalated");
     expect(reentry.escalation?.diagnosis).toMatch(/classified as failure/i);
     // Review loop must NOT have been re-entered after the answer.
-    expect(verifyPass).toBe(1);
+    expect(verifyPass).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 
   it("verify worker startup/auth escalation stays failure, not an answerable park", async () => {
