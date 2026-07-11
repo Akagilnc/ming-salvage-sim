@@ -20,6 +20,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { runFamily } from "../../src/family/runner.js";
 import type {
   Backend,
@@ -101,9 +102,89 @@ class FakeFamilyBackend implements FamilyBackend {
   }
 }
 
+class LandedWithoutMergerReportBackend extends FakeFamilyBackend {
+  readonly resolverCalls: number[] = [];
+
+  override async mergeChildIntoFamilyBase(child: MergeRequest) {
+    this.mergeOrder.push(child.childIssue);
+    return { familyHead: `conflicted-${child.childIssue}`, conflicted: true };
+  }
+
+  async resolveMergeConflict(request: MergeRequest) {
+    this.resolverCalls.push(request.childIssue);
+    // Git post-state is authoritative: both merger report channels are empty,
+    // but the merge commit has already landed and the step returns clean.
+    return { familyHead: `landed-${request.childIssue}` };
+  }
+}
+
+class PersistentlyConflictedFamilyBackend extends FakeFamilyBackend {
+  readonly resolverCalls: number[] = [];
+
+  override async mergeChildIntoFamilyBase(child: MergeRequest) {
+    this.mergeOrder.push(child.childIssue);
+    return { familyHead: `conflicted-${child.childIssue}`, conflicted: true };
+  }
+
+  async resolveMergeConflict(request: MergeRequest) {
+    this.resolverCalls.push(request.childIssue);
+    return { familyHead: `conflicted-${request.childIssue}`, conflicted: true };
+  }
+}
+
 // ─── acceptance 1: topological multi-wave ─────────────────────────────────────
 
 describe("#294 acceptance 1 — dependency chain scheduled in topological order", () => {
+  it("a landed merge with no merger report still records the child and continues the wave", async () => {
+    const familyBackend = new LandedWithoutMergerReportBackend();
+    const result = await runFamily({
+      epic: {
+        issue: 291,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new RecordingChildBackend(),
+      familyBase: "family/291-base",
+    });
+
+    expect(familyBackend.resolverCalls).toEqual([10, 11]);
+    expect(familyBackend.ledger.map((entry) => entry.childIssue)).toEqual([10, 11]);
+    expect(result.status).toBe("success");
+    expect(result.children.every((child) => child.status === "merged")).toBe(true);
+  });
+
+  it("parks and escalates an unresolved merger step after its bound without starting the next child", async () => {
+    const familyBackend = new PersistentlyConflictedFamilyBackend();
+    const result = await runFamily({
+      epic: {
+        issue: 291,
+        children: [
+          { issue: 10, blockedBy: [] },
+          { issue: 11, blockedBy: [] },
+        ],
+      },
+      familyBackend,
+      singleSliceBackend: new RecordingChildBackend(),
+      familyBase: "family/291-base",
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(familyBackend.resolverCalls).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => 10),
+    );
+    expect(familyBackend.mergeOrder).toEqual([10]);
+    expect(familyBackend.ledger).toEqual([
+      expect.objectContaining({
+        status: "escalated",
+        event: "escalated",
+      }),
+    ]);
+    expect(result.children.find((child) => child.issue === 11)?.status).toBe("skipped");
+  });
+
   it("a 3-link chain (10 → 11 → 12) merges in topological order across waves", async () => {
     const singleSliceBackend = new RecordingChildBackend();
     const familyBackend = new FakeFamilyBackend();
