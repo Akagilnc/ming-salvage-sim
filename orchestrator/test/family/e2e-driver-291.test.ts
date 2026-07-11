@@ -241,8 +241,12 @@ class E2EFamilyBackend extends RealFamilyBackend {
   protected override verifyFamilyShipPr(input: {
     readonly pr: string;
     readonly familyBase: string;
-  }): { ok: true; headOid: string } | { ok: false; reason: string } {
-    return { ok: true, headOid: git(this.opts.workingRepo, "rev-parse", input.familyBase) };
+  }): { ok: true; headOid: string; prUrl: string } | { ok: false; reason: string } {
+    return {
+      ok: true,
+      headOid: git(this.opts.workingRepo, "rev-parse", input.familyBase),
+      prUrl: input.pr,
+    };
   }
   override async openFamilyPr(req: OpenFamilyPrRequest) {
     // LEGACY inline 止于 PR — RETAINED only to record that the production path no

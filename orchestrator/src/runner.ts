@@ -94,7 +94,7 @@ import {
 import {
   docReleasePathsFromCommit,
   isPrMergedMarker,
-  observeOpenPrForBranch,
+  resolveHostTruthPr,
   offlineAutoMergeAllowUnverifiedDocPaths,
   runAutoMergeStage,
   slicePrMergedRecordFromLedger,
@@ -3053,7 +3053,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ) {
       return { present: true, prUrl: ship.pr };
     }
-    return observeOpenPrForBranch(ghSh, repo, ship.branch, ship.pr);
+    const resolved = resolveHostTruthPr(ghSh, repo, ship.branch, ship.pr);
+    return { present: true, prUrl: resolved.prUrl };
   }
 
   async function pollMergeReadinessForShip(
@@ -5319,9 +5320,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           let shipWithHead = ship;
           const hostPr = observeShipPr(ship);
           hostPrPresent = hostPr.present;
-          if (hostPr.prUrl !== undefined && !isFilledString(shipWithHead.pr)) {
-            shipWithHead = { ...shipWithHead, pr: hostPr.prUrl };
-          }
+          // The host-resolved identity replaces the advisory worker URL. Never
+          // preserve a rejected hint when fallback found the real branch PR.
+          const { pr: _reportedPr, ...shipWithoutReportedPr } = shipWithHead;
+          shipWithHead = hostPr.prUrl === undefined
+            ? shipWithoutReportedPr
+            : { ...shipWithoutReportedPr, pr: hostPr.prUrl };
           if (!isFilledString(ship.prHead)) {
             const headOid = await resolveBranchHEAD();
             if (isFilledString(headOid)) {
