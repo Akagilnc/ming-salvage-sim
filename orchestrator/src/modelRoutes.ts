@@ -610,7 +610,9 @@ export function modelRouteFingerprint(route: ResolvedModelRoute): string {
     slots: MODEL_ROUTE_SLOTS.map((slot) => [slot, route.slots[slot]]),
     legCollections: MODEL_ROUTE_LEG_COLLECTIONS.map((collection) => [
       collection,
-      route.legCollections[collection].map((leg) => [leg.family, leg.slug, leg.optional === true]),
+      route.legCollections[collection].map((leg) =>
+        leg.optional === true ? [leg.family, leg.slug, true] : [leg.family, leg.slug],
+      ),
     ]),
   });
 }

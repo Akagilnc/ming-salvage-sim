@@ -892,10 +892,20 @@ export async function runFamily(
       children,
     };
   }
+  const routeLedger = degradation.dropped.length > 0
+    ? await familyBackend.readFamilyLedger()
+    : [];
   for (const dropped of degradation.dropped) {
     console.error(
       `[orchestrator:family] OPTIONAL CMR LEG DROPPED: ${dropped.slug}: ${dropped.reason}`,
     );
+    const alreadyRecorded = routeLedger.some((entry) =>
+      entry.status === "route_degraded" &&
+      entry.event === "route_degraded" &&
+      entry.droppedLeg === dropped.slug &&
+      entry.reason === dropped.reason
+    );
+    if (alreadyRecorded) continue;
     await familyBackend.appendFamilyLedger({
       status: "route_degraded",
       event: "route_degraded",

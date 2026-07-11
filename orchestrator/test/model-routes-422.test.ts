@@ -5,6 +5,7 @@ import {
   applyTightRoutePolicy,
   MODEL_ROUTE_SLOTS,
   cmrLegAccountingFailure,
+  modelRouteFingerprint,
   modelForSlot,
   printableRouteLineup,
   resolveRouteModels,
@@ -82,6 +83,17 @@ describe("#422 model route presets", () => {
 
     const overridden = resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.6-sol", "opus", "agy"] });
     expect(overridden.legCollections.cmrReview.every((leg) => leg.optional !== true)).toBe(true);
+  });
+
+  it("preserves historical fingerprints for unmarked legs and fingerprints optional markers", () => {
+    const route = resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.6-sol", "opus", "agy"] });
+    const historical = JSON.stringify({
+      routeName: route.routeName,
+      slots: MODEL_ROUTE_SLOTS.map((slot) => [slot, route.slots[slot]]),
+      legCollections: [["cmrReview", [["codex", "gpt-5.6-sol"], ["claude", "opus"], ["agy", "agy"]]]],
+    });
+    expect(modelRouteFingerprint(route)).toBe(historical);
+    expect(modelRouteFingerprint(resolveRouteModels("normal", {}))).not.toBe(historical);
   });
 
   it("drops only failed optional smoke legs from the effective lineup", () => {

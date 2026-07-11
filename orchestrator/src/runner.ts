@@ -3860,6 +3860,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   } catch (err) {
     return await errorTermination("S0", err);
   }
+  const recordedRouteDegradations = new Set(
+    (resumeState?.ledger ?? [])
+      .filter((entry) => entry.event === "route_degraded")
+      .map((entry) => `${entry.droppedLeg}\0${entry.reason}`),
+  );
 
   // The runner drives the sequence; the agent never picks the next step.
   let step: StepId = "S0";
@@ -3950,6 +3955,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       console.error(
         `[orchestrator] OPTIONAL CMR LEG DROPPED: ${dropped.slug}: ${dropped.reason}`,
       );
+      const degradationKey = `${dropped.slug}\0${dropped.reason}`;
+      if (!recordedRouteDegradations.has(degradationKey)) {
+        const entry: PersistentLedgerEntry = {
+          step: "S0",
+          event: "route_degraded",
+          droppedLeg: dropped.slug,
+          reason: dropped.reason,
+          runId,
+          sessionId,
+          prompt_hash: await hashPrompt(undefined, "S0", backend),
+          branchHEAD: await resolveBranchHEAD(),
+          ts: new Date().toISOString(),
+        };
+        if (stateDir === undefined) pendingEntries.push(entry);
+        else await backend.writeLedger(entry, stateDir);
+        recordedRouteDegradations.add(degradationKey);
+      }
     }
     if (degradation.dropped.length > 0) {
       console.info(
