@@ -713,6 +713,47 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
   });
 
+  it("waits for the environment stamp before rethrowing a failed worker dispatch", async () => {
+    const dir = tempDir("orch-786-env-on-throw-");
+    const ledgerDir = join(dir, ".ledger-786");
+    let releaseFingerprint!: () => void;
+    const fingerprintReleased = new Promise<void>((resolve) => {
+      releaseFingerprint = resolve;
+    });
+    let fingerprintStarted = false;
+    let dispatchSettled = false;
+    const backend = {
+      dispatchWorker: async (): Promise<WorkerResult> => {
+        throw new Error("worker boom");
+      },
+      installTelemetryRunEnvironment: async () => {
+        fingerprintStarted = true;
+        await fingerprintReleased;
+      },
+    } as unknown as Backend;
+
+    const dispatch = dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: ledgerDir, modelRoute: smokedRoute() },
+    );
+    void dispatch.then(
+      () => {
+        dispatchSettled = true;
+      },
+      () => {
+        dispatchSettled = true;
+      },
+    );
+
+    await vi.waitFor(() => expect(fingerprintStarted).toBe(true));
+    expect(dispatchSettled).toBe(false);
+
+    releaseFingerprint();
+    await expect(dispatch).rejects.toThrow("worker boom");
+    expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
+  });
+
   it("keeps quick-exit first output independent of a slow first environment fingerprint", async () => {
     const dir = tempDir("orch-786-env-after-handle-");
     const ledgerDir = join(dir, ".ledger-786");
