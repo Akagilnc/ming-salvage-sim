@@ -115,6 +115,15 @@ function productionSmokeBackend(home: string, promptsDir = smokePromptsDir): Pro
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
   writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
+  const opencodeDir = join(home, ".local", "share", "opencode");
+  mkdirSync(opencodeDir, { recursive: true });
+  writeFileSync(
+    join(opencodeDir, "auth.json"),
+    JSON.stringify({
+      "opencode-go": { type: "api", key: "test-key" },
+      "grok-4.5": { type: "api", key: "test-key" },
+    }),
+  );
   return new ProductionSmokeBackend({
     sourceRepo: "/tmp/route-smoke-source",
     remote: "https://github.com/owner/route-smoke.git",
