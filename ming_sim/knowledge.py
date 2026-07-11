@@ -89,7 +89,7 @@ def _world(
             # office label to manufacture a difference between otherwise
             # identical reports; the value must remain an actual current-state
             # fact selected by the content-owned domain mapping.
-            result[domain] = fact(facts[domain])
+            result[domain] = _qualitative(facts[domain])
     return result
 
 
@@ -139,10 +139,57 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             if hasattr(db, "knowledge_exclusion_targets_for_source")
             else {"people": [], "offices": []}
         )
-        return (character_name in excluded_names
-                or character_name in targets.get("people", [])
+        return (character_name in targets.get("people", [])
                 or office_type in targets.get("offices", [])
                 or office_name in targets.get("offices", []))
+
+    def source_projection(turn: int, fallback: object) -> str:
+        """Project aggregate narrative from source rows, never from redaction.
+
+        Reports and chapter memories are rendered aggregates.  When their turn
+        has source-scoped knowledge rows, those rows are the only material used
+        for this character.  The aggregate is a compatibility fallback for old
+        saves that predate the source projection and have no rows at all.
+        """
+        rows = [
+            row for row in public_events
+            if int(row.get("turn") or 0) == turn
+            and not str(row.get("source_id") or "").startswith(("opening:", "directive:"))
+        ]
+        visible = [row for row in rows if not is_excluded(row)]
+        if rows:
+            return "\n".join(
+                _qualitative(row.get("body") or row.get("title") or "")
+                for row in visible
+                if row.get("body") or row.get("title")
+            )
+        return _qualitative(fallback)
+
+    # Keep the durable source rows, and add a character-specific projection of
+    # each aggregate archive.  A source-bearing turn never falls back to the
+    # raw aggregate: that is the crucial boundary for mixed public/secret text.
+    if hasattr(db, "list_turn_reports"):
+        for report in db.list_turn_reports():
+            body = source_projection(int(report["turn"]), report.get("report"))
+            if body:
+                public_events.append({
+                    "turn": int(report["turn"]), "year": int(report["year"]),
+                    "period": int(report["period"]), "kind": "public",
+                    "title": "邸报", "body": body,
+                    "source_id": f"turn_report:{report['turn']}",
+                    "excluded_names": "[]",
+                })
+    if hasattr(db, "list_chapter_memories"):
+        for chapter in db.list_chapter_memories(upto_turn=state.turn):
+            body = source_projection(int(chapter["turn"]), chapter.get("body"))
+            if body:
+                public_events.append({
+                    "turn": int(chapter["turn"]), "year": int(chapter["year"]),
+                    "period": int(chapter["period"]), "kind": "chapter_summary",
+                    "title": chapter.get("title") or "朝局旧闻", "body": body,
+                    "source_id": f"chapter:{chapter['turn']}",
+                    "excluded_names": "[]",
+                })
 
     visible_events = [
         {
