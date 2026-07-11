@@ -17,6 +17,43 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const gitExecControl = vi.hoisted(() => ({
+  hangNextGitNumstat: false,
+  timeoutOptions: [] as unknown[],
+  releaseHungGit: undefined as undefined | (() => void),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFile: vi.fn((file, args, options, callback) => {
+      if (
+        file === "git" &&
+        gitExecControl.hangNextGitNumstat &&
+        args[0] === "show" &&
+        args.includes("--numstat")
+      ) {
+        gitExecControl.hangNextGitNumstat = false;
+        gitExecControl.timeoutOptions.push(options);
+        gitExecControl.releaseHungGit = () => {
+          callback(Object.assign(new Error("git timed out"), {
+            killed: true,
+            signal: "SIGTERM",
+          }), "", "");
+        };
+        return undefined;
+      }
+      return actual.execFile(
+        file,
+        args as Parameters<typeof actual.execFile>[1],
+        options as Parameters<typeof actual.execFile>[2],
+        callback as Parameters<typeof actual.execFile>[3],
+      );
+    }),
+  };
+});
+
 import { dispatchWorkerWithMonitor } from "../src/dispatchWorker.js";
 import { workerResultFromMonitorSidecar } from "../src/cliMonitorHooks.js";
 import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
@@ -67,6 +104,9 @@ const tempDirs: string[] = [];
 
 afterEach(() => {
   clearTelemetryRunEnvironment();
+  gitExecControl.hangNextGitNumstat = false;
+  gitExecControl.timeoutOptions = [];
+  gitExecControl.releaseHungGit = undefined;
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -364,6 +404,79 @@ describe("#786 telemetry pure helpers", () => {
     await Promise.all([first, second]);
 
     expect(appendOrder).toEqual(["first", "second"]);
+  });
+
+  it("freezes concurrent collection ranges when each coder schedule captures its own HEAD", async () => {
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstBegun!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstBegun = resolve; });
+    const observed: Array<{ before: string; after: string }> = [];
+    const collect = async (input: { readonly before: string; readonly after: string }): Promise<void> => {
+      observed.push({ before: input.before, after: input.after });
+      if (input.after === "commit-a") {
+        firstBegun();
+        await firstBlocked;
+      }
+    };
+
+    const first = scheduleCommitTelemetry(
+      { ledgerDir: "/frozen-boundary", repoPath: "/unused", before: "base", after: "commit-a" },
+      collect,
+    );
+    const second = scheduleCommitTelemetry(
+      { ledgerDir: "/frozen-boundary", repoPath: "/unused", before: "commit-a", after: "commit-b" },
+      collect,
+    );
+
+    await firstStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(observed).toEqual([{ before: "base", after: "commit-a" }]);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(observed).toEqual([
+      { before: "base", after: "commit-a" },
+      { before: "commit-a", after: "commit-b" },
+    ]);
+  });
+
+  it("times out a hung git read, writes a partial stamp, and drains the ledger queue", async () => {
+    const repo = tempDir("orch-786-timeout-drain-");
+    const ledgerDir = join(repo, "ledger");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    writeFileSync(join(repo, "tracked.txt"), "base\n");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    writeFileSync(join(repo, "tracked.txt"), "first\n");
+    execFileSync("git", ["commit", "-am", "first", "-q"], { cwd: repo });
+    const firstCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    writeFileSync(join(repo, "tracked.txt"), "second\n");
+    execFileSync("git", ["commit", "-am", "second", "-q"], { cwd: repo });
+    const secondCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    gitExecControl.hangNextGitNumstat = true;
+    const first = scheduleCommitTelemetry({ ledgerDir, repoPath: repo, before: base, after: firstCommit });
+    const second = scheduleCommitTelemetry({ ledgerDir, repoPath: repo, before: firstCommit, after: secondCommit });
+    await vi.waitFor(() => {
+      expect(gitExecControl.releaseHungGit).toBeTypeOf("function");
+    });
+    expect(gitExecControl.timeoutOptions).toContainEqual(expect.objectContaining({
+      timeout: 5_000,
+      killSignal: "SIGTERM",
+    }));
+
+    gitExecControl.releaseHungGit!();
+    await Promise.all([first, second]);
+
+    const records = readTelemetryRecords(ledgerDir).filter(
+      (record): record is TelemetryCommitRecord => record.phase === "commit",
+    );
+    expect(records.map((record) => record.commit)).toEqual([firstCommit, secondCommit]);
+    expect(records[0]).toMatchObject({ files: null, insertions: null, deletions: null });
   });
 
   it("excludes an escape hatch changed inside an existing post-image block comment", () => {

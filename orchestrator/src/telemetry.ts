@@ -71,6 +71,9 @@ import { poolIdForWorker } from "./workerMonitor.js";
  * telemetry stays free of the heavy driver/backend import graph.
  */
 const TELEMETRY_DEFAULT_IMAGE_TAG = "ming-orchestrator-coder:latest";
+/** Bound every best-effort telemetry subprocess so a stuck textconv/filesystem
+ * cannot strand the per-ledger collection queue. */
+const TELEMETRY_SUBPROCESS_TIMEOUT_MS = 5_000;
 
 /**
  * Once-per-process run environment for telemetry (image / fast / content hashes).
@@ -1507,6 +1510,7 @@ export function collectCommitMetrics(
     const output = execFileSync("git", ["show", "--format=", "--numstat", commit], {
       cwd: repoPath,
       encoding: "utf8",
+      timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
       stdio: ["ignore", "pipe", "ignore"],
     });
     let files = 0;
@@ -1552,6 +1556,7 @@ export function collectCommitDiffLines(
     return execFileSync("git", ["show", "--format=", "--unified=0", commit], {
       cwd: repoPath,
       encoding: "utf8",
+      timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
       stdio: ["ignore", "pipe", "ignore"],
     }).split(/\r?\n/);
   } catch {
@@ -1607,6 +1612,7 @@ export function collectCommitDiffAudit(
           const postImage = execFileSync("git", ["show", `${commit}:${postPath}`], {
             cwd: repoPath,
             encoding: "utf8",
+            timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
             stdio: ["ignore", "pipe", "ignore"],
           });
           spansByLine = triviaSpansByLine(postImage, postPath);
@@ -1621,6 +1627,7 @@ export function collectCommitDiffAudit(
           const preImage = execFileSync("git", ["show", `${commit}^:${prePath}`], {
             cwd: repoPath,
             encoding: "utf8",
+            timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
             stdio: ["ignore", "pipe", "ignore"],
           });
           spansByLine = triviaSpansByLine(preImage, prePath);
@@ -1644,7 +1651,12 @@ async function gitOutput(
   args: readonly string[],
 ): Promise<string | undefined> {
   return await new Promise((resolve) => {
-    execFile("git", [...args], { cwd: repoPath, encoding: "utf8" }, (err, stdout) => {
+    execFile("git", [...args], {
+      cwd: repoPath,
+      encoding: "utf8",
+      timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
+      killSignal: "SIGTERM",
+    }, (err, stdout) => {
       resolve(err === null ? String(stdout) : undefined);
     });
   });
@@ -1747,6 +1759,7 @@ export function commitsBetween(
     return execFileSync("git", ["rev-list", "--reverse", `${before}..${after}`], {
       cwd: repoPath,
       encoding: "utf8",
+      timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
       stdio: ["ignore", "pipe", "ignore"],
     })
       .split(/\r?\n/)
@@ -2116,12 +2129,8 @@ export interface CommitTelemetryScheduleInput {
   readonly runId?: string;
   readonly issue?: number | null;
   readonly before: string;
-  /**
-   * Callers with a previously observed post-step HEAD may provide it. Routing
-   * callers deliberately omit it: the deferred chain resolves HEAD with async
-   * git I/O after the route has yielded.
-   */
-  readonly after?: string;
+  /** The post-step boundary captured synchronously by the caller. */
+  readonly after: string;
 }
 
 interface CommitTelemetryCollectInput extends CommitTelemetryScheduleInput {
@@ -2131,15 +2140,10 @@ interface CommitTelemetryCollectInput extends CommitTelemetryScheduleInput {
 /** One deferred collection chain per sidecar, preserving observation order. */
 const telemetryCollectionQueues = new Map<string, Promise<void>>();
 
-async function gitHeadAsync(repoPath: string): Promise<string | undefined> {
-  const output = await gitOutput(repoPath, ["rev-parse", "HEAD"]);
-  const head = output?.trim();
-  return head === undefined || head.length === 0 ? undefined : head;
-}
-
 /**
  * Defer best-effort commit observation until after the caller has yielded its
- * routing decision. Collection uses only async subprocess and file I/O.
+ * routing decision. Its commit range is frozen at scheduling time; collection
+ * uses only async subprocess and file I/O.
  */
 export function scheduleCommitTelemetry(
   input: CommitTelemetryScheduleInput,
@@ -2148,9 +2152,8 @@ export function scheduleCommitTelemetry(
   return new Promise((resolve) => {
     setImmediate(() => {
       const collectObservedCommit = async (): Promise<void> => {
-        const after = input.after ?? await gitHeadAsync(input.repoPath);
-        if (after === undefined || after === input.before) return;
-        await collect({ ...input, after });
+        if (input.after === input.before) return;
+        await collect(input);
       };
       const prior = input.ledgerDir === undefined
         ? undefined

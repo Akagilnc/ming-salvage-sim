@@ -303,8 +303,8 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       expect(schedule.mock.calls[0]?.[0]).toMatchObject({
         repoPath: repo,
         before: expect.any(String),
+        after: expect.any(String),
       });
-      expect(schedule.mock.calls[0]?.[0]).not.toHaveProperty("after");
       releaseCollection();
     } finally {
       rmSync(repo, { recursive: true, force: true });

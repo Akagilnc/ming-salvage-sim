@@ -4808,17 +4808,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Trigger this from the expected worker role before any output contract
         // gate: a worker may have committed before reporting malformed output.
         if (expectedKind === "coder" && coderHeadBeforeStep !== undefined && worktree !== undefined) {
-          // The pre-step HEAD is already known. Post-step HEAD resolution,
-          // full-file scanning, and append all happen after a setImmediate
-          // through async I/O, so no telemetry subprocess occupies this route.
+          // Freeze both boundaries before yielding. Deferred collection must
+          // never reread HEAD, or concurrent coder steps can overlap ranges.
+          const coderHeadAfterStep = gitHead(worktree);
           const telemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
-          if (telemetryDir !== undefined) {
+          if (telemetryDir !== undefined && coderHeadAfterStep !== undefined) {
             void scheduleCommitTelemetry({
               ledgerDir: telemetryDir,
               repoPath: worktree.path,
               runId,
               issue: issueNumber,
               before: coderHeadBeforeStep,
+              after: coderHeadAfterStep,
             });
           }
         }
