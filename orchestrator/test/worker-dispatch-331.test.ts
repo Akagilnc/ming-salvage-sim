@@ -20,6 +20,7 @@ import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
 import {
   readTelemetryRecords,
+  type TelemetryCommitRecord,
   type TelemetryEnvironmentRecord,
 } from "../src/telemetry.js";
 import type {
@@ -267,6 +268,63 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       expect(firstRunId).not.toBe(secondRunId);
       expect(first.ctxs.every((ctx) => ctx.runId === firstRunId)).toBe(true);
       expect(second.ctxs.every((ctx) => ctx.runId === secondRunId)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("records a committed coder HEAD movement before rejecting its malformed output", async () => {
+    const root = mkdtempSync(join(tmpdir(), "orch-786-malformed-coder-"));
+    const telemetryDir = join(root, ".ledger-786");
+    execFileSync("git", ["init", "--initial-branch=main", root]);
+    execFileSync("git", ["-C", root, "config", "user.email", "test@example.com"]);
+    execFileSync("git", ["-C", root, "config", "user.name", "Test User"]);
+    execFileSync("git", ["-C", root, "commit", "--allow-empty", "-m", "initial"]);
+
+    class MalformedCoderTelemetryBackend extends DispatchBackend {
+      override readonly worktree: WorktreeHandle = {
+        branch: "feat/orchestrator/issue-786",
+        base: "main",
+        path: root,
+      };
+
+      resolveTelemetryDir(): string {
+        return telemetryDir;
+      }
+
+      async installTelemetryRunEnvironment(): Promise<void> {}
+
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        this.specs.push(spec);
+        this.ctxs.push(ctx);
+        if (spec.kind === "coder") {
+          execFileSync("git", ["-C", root, "commit", "--allow-empty", "-m", "worker commit"]);
+          return {
+            kind: "completed",
+            output: {
+              kind: "coder",
+              committed: true,
+              commitsAdded: "malformed",
+            } as unknown as StepOutput,
+          };
+        }
+        throw new Error("malformed coder output must stop before review");
+      }
+    }
+
+    try {
+      const backend = new MalformedCoderTelemetryBackend();
+      const result = await runOrchestrator({ issueNumber: 786, backend });
+
+      expect(result.status).toBe("error");
+      const commits = readTelemetryRecords(telemetryDir).filter(
+        (record): record is TelemetryCommitRecord => record.phase === "commit",
+      );
+      expect(commits).toHaveLength(1);
+      expect(commits[0]).toMatchObject({ issue: 786, runId: backend.ctxs[0]?.runId });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

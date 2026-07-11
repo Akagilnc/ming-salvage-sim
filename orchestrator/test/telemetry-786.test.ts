@@ -228,6 +228,38 @@ describe("#786 telemetry pure helpers", () => {
     expect(record.assertions).toEqual({ added: 2, deleted: 1 });
   });
 
+  it("excludes escape-hatch examples in trailing and multi-line comments", () => {
+    const record = buildCommitStamp({
+      commit: "abc123",
+      diffLines: [
+        "+const value = parse(input); // example: input as any",
+        "+/* example: input as never",
+        "+ * and JSON.parse(JSON.stringify(input));",
+        "+ */",
+      ],
+    });
+
+    expect(record.escapeHatches).toEqual({
+      added: {
+        asAny: 0,
+        asNever: 0,
+        asUnknownAs: 0,
+        tsIgnore: 0,
+        tsExpectError: 0,
+        jsonParseStringify: 0,
+      },
+      deleted: {
+        asAny: 0,
+        asNever: 0,
+        asUnknownAs: 0,
+        tsIgnore: 0,
+        tsExpectError: 0,
+        jsonParseStringify: 0,
+      },
+    });
+    expect(record.assertions).toEqual({ added: 0, deleted: 0 });
+  });
+
   it("leaves per-commit metrics null when host git collection is unavailable", () => {
     expect(buildCommitStamp({ commit: "abc123" })).toMatchObject({
       files: null,

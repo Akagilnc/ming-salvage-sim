@@ -1274,20 +1274,68 @@ function changedLineKind(line: string): "added" | "deleted" | undefined {
   return undefined;
 }
 
-function auditableLine(line: string): string | undefined {
+interface CommentScanState {
+  inBlockComment: boolean;
+}
+
+function stripComments(content: string, state: CommentScanState): string {
+  let code = "";
+  let quote: "'" | '"' | "`" | undefined;
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index]!;
+    const next = content[index + 1];
+    if (state.inBlockComment) {
+      if (char === "*" && next === "/") {
+        state.inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote !== undefined) {
+      code += char;
+      if (char === "\\") {
+        if (next !== undefined) {
+          code += next;
+          index += 1;
+        }
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      code += char;
+      continue;
+    }
+    if (char === "/" && next === "/") break;
+    if (char === "/" && next === "*") {
+      state.inBlockComment = true;
+      index += 1;
+      continue;
+    }
+    code += char;
+  }
+  return code;
+}
+
+function auditableLine(line: string, state: CommentScanState): string | undefined {
   const kind = changedLineKind(line);
   if (kind === undefined) return undefined;
   const content = line.slice(1).trimStart();
   // TypeScript directives are necessarily comments and are themselves the audit
   // target. Other comment-only examples must not synthesize escape hatches.
-  if (content.startsWith("//") || content.startsWith("/*") || content.startsWith("*")) {
+  if (!state.inBlockComment && content.startsWith("//")) {
     return /^(?:\/\/|\/\*|\*)\s*@ts-(?:ignore|expect-error)\b/.test(content)
       ? content
       : undefined;
   }
+  if (!state.inBlockComment && content.startsWith("*")) return undefined;
+  const uncommented = stripComments(content, state).trim();
+  if (uncommented === "") return undefined;
   // This is still regex-based auditing, but quoted examples must not turn into
   // synthetic escape hatches or weakened assertions.
-  return content.replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, "");
+  return uncommented.replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, "");
 }
 
 /**
@@ -1305,9 +1353,14 @@ export function buildCommitStamp(input: BuildCommitStampInput): TelemetryCommitR
     const deleted = { ...EMPTY_ESCAPE_HATCH_COUNTS };
     let addedAssertions = 0;
     let deletedAssertions = 0;
+    const addedCommentState: CommentScanState = { inBlockComment: false };
+    const deletedCommentState: CommentScanState = { inBlockComment: false };
     for (const line of input.diffLines) {
       const kind = changedLineKind(line);
-      const content = auditableLine(line);
+      const content = auditableLine(
+        line,
+        kind === "added" ? addedCommentState : deletedCommentState,
+      );
       if (kind === undefined || content === undefined) continue;
       const counts = kind === "added" ? added : deleted;
       for (const [name, pattern] of Object.entries(ESCAPE_HATCH_PATTERNS) as Array<
