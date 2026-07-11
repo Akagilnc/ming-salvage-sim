@@ -50,7 +50,12 @@ import {
 import { FIX_FOCUS_LANDING_FILE } from "../../src/findingFamilies.js";
 import { familyEscalationState } from "../../src/family/ledger.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
-import { SANDBOX_SKILLS_DIR, SANDBOX_SOUL_ENV, soulsMount } from "../../src/realBackend.js";
+import {
+  SANDBOX_OPENCODE_AUTH_FILE,
+  SANDBOX_SKILLS_DIR,
+  SANDBOX_SOUL_ENV,
+  soulsMount,
+} from "../../src/realBackend.js";
 import type {
   ConflictResolveRequest,
   FamilyVerifyRequest,
@@ -941,14 +946,15 @@ class FakeSeamsBackend extends RealFamilyBackend {
 
   // Expose the protected sandbox-config seam so the merger soul injection +
   // skills-mount path are unit-testable without a real container.
-  public sandboxConfig() {
-    return this.mergerSandboxConfig({});
+  public sandboxConfig(auth: any = {}) {
+    return this.mergerSandboxConfig(auth);
   }
 
   // Expose for family-coder souls mount assertion (#372).
   public familyCoderConfig() {
     return this.familyCoderSandboxConfig(
       { codexAuthDir: "/tmp/codex", claudeToken: "tok" } as any,
+      "sonnet",
       {} as any,
       { path: "/tmp/land.json", sandboxPath: ".land.json" },
     );
@@ -1183,6 +1189,18 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
 });
 
 describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)", () => {
+  it("mounts OpenCode auth without inspecting credential metadata", () => {
+    vi.stubEnv("ORCHESTRATOR_MERGER_MODEL", "glm-5.2");
+    const dir = mkdtempSync(join(tmpdir(), "family-opencode-oauth-"));
+    const authFile = join(dir, "auth.json");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    expect(b.sandboxConfig({ opencodeAuthFile: authFile }).mounts).toContainEqual({
+      hostPath: authFile,
+      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+      readonly: true,
+    });
+  });
   // F28: the merger conflict fallback follows the "one mirror new soul" model —
   // the merger soul must be selected the SAME way coder/reviewer are: activated
   // via the ORCHESTRATOR_SOUL env (RealBackend.box), NOT a prompt-only role.

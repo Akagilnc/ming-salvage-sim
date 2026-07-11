@@ -303,6 +303,20 @@ launch. Same pattern for capabilities: a backend without a required
 verification seam (`verifyFamilyShippedPr`) is refused before the mutating
 ship, not after.
 
+OpenCode is baked into the worker image and the route-selectable `glm-5.2`
+slug resolves to `opencode-go/glm-5.2`. Its Go-subscription credential remains
+on the host at `~/.local/share/opencode/auth.json` and is mounted read-only at
+runtime. Only that file is shared: OpenCode's SQLite database, WAL, logs, and
+other writable state live in each container's isolated ephemeral home, avoiding
+the CLI's concurrent shared-data-dir lock crash. Credential provisioning is
+uniform across worker roles and routes: when host `auth.json` and `GLM_KEY` are
+present, every sandbox receives the same read-only mount and environment value.
+The dispatcher never inspects credential metadata or contents. Every ignition
+runs a fresh route smoke with the provisioned credentials; that live call is the
+only credential oracle. Expiry, rate limits, and server failures after startup
+flow through the ordinary leg degrade/park paths. `GLM_KEY` is never baked into
+the image or written to orchestrator state.
+
 ## Review loops
 
 1. **Per-slice loop** (runner-visible, ADR 0030): coder → fresh read-only

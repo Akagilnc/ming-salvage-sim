@@ -54,7 +54,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  renameSync,
   readFileSync,
   rmSync,
   statSync,
@@ -106,28 +105,11 @@ import {
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
 import {
-  modelRouteFingerprint,
   routeSmokeEntries,
-  routeSmokeFailure,
   smokeRouteModels,
-  withRouteSmoke,
   type ResolvedModelRoute,
-  type RouteSmokeStatus,
 } from "./modelRoutes.js";
 import type { CoderSelfReportDiscrepancy } from "./types.js";
-
-export function routeSmokeCacheKey(
-  route: ResolvedModelRoute,
-  sandboxFingerprint: string,
-  billingPool?: string,
-  relaySmokeEntryKey?: string,
-): string {
-  const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
-  const providerFingerprint = routeSmokeEntries(route)
-    .map(({ key, slug }) => `${key}:${resolveModelSlugForPool(slug, key === relaySmokeEntryKey ? dispatchPool : undefined).provider}`)
-    .join("|");
-  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}\0${dispatchPool ?? "default"}\0${providerFingerprint}`;
-}
 
 export function routeSmokeToolCallIsEchoOk(event: {
   readonly type?: unknown;
@@ -712,6 +694,47 @@ export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
  * symlink into this tree) so the bind-mount does not hide PATH.
  */
 export const SANDBOX_GROK_DIR = "/home/agent/.grok";
+/** OpenCode Go auth is a single read-only file; SQLite/runtime state stays per-container. */
+export const SANDBOX_OPENCODE_AUTH_FILE = "/home/agent/.local/share/opencode/auth.json";
+
+export function opencodeAuthMount(home: string): {
+  hostPath: string;
+  sandboxPath: string;
+  readonly: true;
+} {
+  return {
+    hostPath: join(home, ".local", "share", "opencode", "auth.json"),
+    sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+    readonly: true,
+  };
+}
+
+export function hostOpenCodeAuthFile(home: string): string | undefined {
+  const path = opencodeAuthMount(home).hostPath;
+  return existsSync(path) ? path : undefined;
+}
+
+export function appendOpenCodeAuthMount(
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
+  hostPath: string | undefined,
+): void {
+  if (hostPath !== undefined) {
+    mounts.push({ hostPath, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true });
+  }
+}
+
+/**
+ * Provision optional OpenCode credentials identically in every worker sandbox.
+ * Credential validity is established only by the live route smoke.
+ */
+export function applyUniformCredentialProvisioning(input: {
+  env: Record<string, string>;
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[];
+  opencodeAuthFile?: string;
+}): void {
+  if (process.env.GLM_KEY !== undefined) input.env.GLM_KEY = process.env.GLM_KEY;
+  appendOpenCodeAuthMount(input.mounts, input.opencodeAuthFile);
+}
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -870,6 +893,8 @@ export interface ShipAuth {
   readonly codexAuthDir?: string;
   /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
   readonly grokAuthDir?: string;
+  /** Host OpenCode auth.json mounted read-only; runtime DB remains container-local. */
+  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -2261,14 +2286,6 @@ export class RealBackend implements Backend {
     relaySmokeEntryKey?: string,
   ): Promise<ResolvedModelRoute> {
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
-    const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
-    const persisted = this.readRouteSmokeState(route, sandboxFingerprint, dispatchPool, relaySmokeEntryKey);
-    if (persisted !== undefined) {
-      const hydrated = withRouteSmoke(route, persisted);
-      if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
-        return hydrated;
-      }
-    }
     const idleTimeoutSeconds = resolveRouteSmokeIdleTimeoutSeconds(
       process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
     );
@@ -2327,55 +2344,7 @@ export class RealBackend implements Backend {
         this.cleanupTempAuthDirs([auth.grokAuthDir]);
       }
     });
-    this.writeRouteSmokeState(smoked, sandboxFingerprint, dispatchPool, relaySmokeEntryKey);
     return smoked;
-  }
-
-  private routeSmokeStatePath(): string {
-    return join(this.opts.home ?? homedir(), ".sc-orchestrator", "route-smoke-state.json");
-  }
-
-  private readRouteSmokeState(
-    route: ResolvedModelRoute,
-    sandboxFingerprint: string,
-    billingPool?: string,
-    relaySmokeEntryKey?: string,
-  ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
-    try {
-      const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
-      if (raw === null || typeof raw !== "object") return undefined;
-      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint, billingPool, relaySmokeEntryKey)];
-      if (state === null || typeof state !== "object") return undefined;
-      return state as Readonly<Record<string, RouteSmokeStatus>>;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private writeRouteSmokeState(
-    route: ResolvedModelRoute,
-    sandboxFingerprint: string,
-    billingPool?: string,
-    relaySmokeEntryKey?: string,
-  ): void {
-    const path = this.routeSmokeStatePath();
-    let all: Record<string, unknown> = {};
-    try {
-      const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-      if (raw !== null && typeof raw === "object") all = raw as Record<string, unknown>;
-    } catch {
-      // Missing or malformed state is treated as empty; the fresh smoke result
-      // below becomes the new durable source of truth.
-    }
-    all[routeSmokeCacheKey(route, sandboxFingerprint, billingPool, relaySmokeEntryKey)] = route.smoke;
-    mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
-    const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-    try {
-      writeFileSync(tempPath, JSON.stringify(all, null, 2) + "\n", "utf8");
-      renameSync(tempPath, path);
-    } finally {
-      if (existsSync(tempPath)) rmSync(tempPath, { force: true });
-    }
   }
 
   private cliVersionForSlug(slug: string, billingPool?: string): string {
@@ -2391,45 +2360,16 @@ export class RealBackend implements Backend {
     }
   }
 
-  private routeSmokeSandboxFingerprint(): string {
-    const hash = createHash("sha256");
-    hash.update(`image:${this.opts.imageName}\n`);
-    try {
-      hash.update(`image-id:${this.sh("docker", ["image", "inspect", "--format", "{{.Id}}", this.opts.imageName]).trim()}\n`);
-    } catch {
-      hash.update("image-id:unknown\n");
-    }
-    const auth = buildAuthPaths(this.opts.runKey, this.opts.home);
-    const files = [
-      join(this.opts.promptsDir, "route-smoke.md"),
-      ...REQUIRED_SOUL_FILES.map((file) => join(this.opts.soulsDir, file)),
-      auth.srcCodexAuth,
-      auth.srcCodexConfig,
-      auth.srcGrokAuth,
-      auth.claudeTokenFile,
-    ];
-    for (const file of files) {
-      hash.update(`file:${file}\0`);
-      try {
-        hash.update(readFileSync(file));
-      } catch {
-        hash.update("missing");
-      }
-    }
-    try {
-      hash.update(`gh:${this.sh("gh", ["auth", "token"]).trim()}\n`);
-    } catch {
-      hash.update("gh:missing\n");
-    }
-    return hash.digest("hex");
-  }
-
   /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
-  private routeSmokeSandbox(auth: ReturnType<RealBackend["mountAuth"]>): sc.SandboxProvider {
+  private routeSmokeSandbox(
+    auth: ReturnType<RealBackend["mountAuth"]>,
+  ): sc.SandboxProvider {
     return docker(
       this.boxConfig(
         { ...auth, ghToken: this.readGhToken() },
         { role: "reviewer", soul: "READ-ONLY" },
+        undefined,
+        undefined,
       ),
     );
   }
@@ -2900,6 +2840,7 @@ export class RealBackend implements Backend {
     claudeToken?: string;
     /** Per-issue host dir for grok auth, only when host `~/.grok/auth.json` exists. */
     grokAuthDir?: string;
+    opencodeAuthFile?: string;
     providerAuth: ProviderAuthAvailability;
   } {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
@@ -2958,6 +2899,7 @@ export class RealBackend implements Backend {
       authDir: paths.hostCodexAuthDir,
       claudeToken,
       grokAuthDir,
+      opencodeAuthFile: hostOpenCodeAuthFile(this.opts.home ?? homedir()),
       providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
     };
   }
@@ -2995,7 +2937,7 @@ export class RealBackend implements Backend {
 
   private box(
     issueNumber: number,
-    spec: Pick<StepSpec, "role" | "soul">,
+    spec: Pick<StepSpec, "role" | "soul" | "model">,
     options?: AgentStepRunOptions,
   ): { sandbox: sc.SandboxProvider; providerAuth: ProviderAuthAvailability; cleanup: () => void } {
     const auth = this.mountAuth(issueNumber);
@@ -3095,8 +3037,9 @@ export class RealBackend implements Backend {
       ghToken?: string;
       /** #807: optional per-issue grok auth dir (omit when host auth absent). */
       grokAuthDir?: string;
+      opencodeAuthFile?: string;
     },
-    spec: Pick<StepSpec, "role" | "soul">,
+    spec: Pick<StepSpec, "role" | "soul"> & { model?: string },
     issueNumber?: number,
     options?: AgentStepRunOptions,
   ): {
@@ -3147,6 +3090,11 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    applyUniformCredentialProvisioning({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+    });
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
@@ -4286,6 +4234,7 @@ export class RealBackend implements Backend {
     return {
       codexAuthDir,
       grokAuthDir,
+      opencodeAuthFile: hostOpenCodeAuthFile(this.opts.home ?? homedir()),
       claudeToken,
       ghToken: this.readGhToken(),
       providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
@@ -4356,6 +4305,11 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    applyUniformCredentialProvisioning({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+    });
     // #372: souls mount for ship worker too (live source, shadows baked if any).
     // Shared helper forces readonly:true at all sites.
     mounts.push(soulsMount(this.opts.soulsDir));
