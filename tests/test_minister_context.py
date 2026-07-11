@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from itertools import combinations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -343,6 +344,262 @@ def test_characterized_court_brief_scopes_faction_dossier_to_current_identity(ga
     assert f"【党派认同】" in rendered
 
 
+def test_minister_agent_uses_only_its_character_knowledge_projection(game, monkeypatch):
+    """召对上下文按人物切片，不能再从 registry 拼全知盘面。"""
+    db, state, content = game
+    ministers = [
+        c for c in content.characters.values()
+        if c.office_type not in ("后宫", "宗藩")
+    ]
+    first, second = ministers[:2]
+    projections = {
+        first.name: {
+            "world": {"role": f"只给{first.name}的职位事实", "secret": "不可知密报"},
+            "events": [{"title": "参与事项", "body": "只给本人"}],
+            "public_events": [],
+        },
+        second.name: {
+            "world": {"role": f"只给{second.name}的职位事实"},
+            "events": [],
+            "public_events": [],
+        },
+    }
+    monkeypatch.setattr(db, "get_character_knowledge", lambda _state, name: projections[name])
+
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured[kwargs["name"]] = kwargs["instructions"]
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry._ctx", return_value=content), \
+         patch("ming_sim.registry._skills_for", return_value=None), \
+         patch("ming_sim.registry.build_minister_tools", return_value=[]), \
+         patch("ming_sim.registry.build_court_brief", side_effect=AssertionError("全知 court_brief 残留")), \
+         patch("ming_sim.registry.build_court_roster", side_effect=AssertionError("全知 court_roster 残留")), \
+         patch("ming_sim.registry.build_last_gazette_brief", side_effect=AssertionError("全知 gazette 残留")), \
+         patch("ming_sim.registry.build_region_brief", side_effect=AssertionError("全知 region 残留")), \
+         patch("ming_sim.registry.build_building_brief", side_effect=AssertionError("全知 building 残留")):
+        create_minister_agent(first, cfg, _ctx(game), db)
+        create_minister_agent(second, cfg, _ctx(game), db)
+
+    first_rendered = "\n".join(captured[first.name])
+    second_rendered = "\n".join(captured[second.name])
+    assert f"只给{first.name}的职位事实" in first_rendered
+    assert "参与事项" in first_rendered
+    assert f"只给{second.name}的职位事实" not in first_rendered
+    assert "不可知密报" in first_rendered
+    assert f"只给{first.name}的职位事实" not in second_rendered
+    assert "不可知密报" not in second_rendered
+
+
+def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game):
+    """最终 instructions 从真实见闻账本组装，瞒某人的密令不靠 mock 过滤。"""
+    db, state, content = game
+    ministers = []
+    seen_offices = set()
+    for minister in content.characters.values():
+        if minister.office_type in ("后宫", "宗藩") or minister.office_type in seen_offices:
+            continue
+        if db.get_character_status(minister.name)[0] != "active":
+            continue
+        ministers.append(minister)
+        seen_offices.add(minister.office_type)
+    first, second = ministers[:2]
+    hidden = "全局独有密报标记-瞒二人"
+    db.record_public_knowledge_event(
+        state, "密查辽饷", hidden, source_id="test:hidden-secret",
+        excluded_names=[second.name],
+    )
+    db.save_chapter_memory(state, "本月朝局", "章节上游标记-两人可见")
+
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured[kwargs["name"]] = kwargs["instructions"]
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
+        create_minister_agent(first, cfg, _ctx(game), db)
+        create_minister_agent(second, cfg, _ctx(game), db)
+
+    first_rendered = "\n".join(captured[first.name])
+    second_rendered = "\n".join(captured[second.name])
+    assert hidden in first_rendered
+    assert hidden not in second_rendered
+    assert "章节上游标记-两人可见" in first_rendered
+    assert "章节上游标记-两人可见" in second_rendered
+
+    second_tools = {f.__name__: f for f in build_minister_tools(second, _ctx(game))}
+    assert hidden not in second_tools["search_memories"](keywords="密查辽饷")
+
+
+def test_minister_agents_use_distinct_real_db_world_slices_by_office(game):
+    """两个职位经最终 agent seam 组装出各自真实职位域的世界切片。"""
+    db, _state, content = game
+    representatives = {}
+    for minister in content.characters.values():
+        if (minister.office_type in content.office_knowledge_domains
+                and db.get_character_status(minister.name)[0] == "active"):
+            representatives.setdefault(minister.office_type, minister)
+
+    first, second = next(
+        (pair for pair in combinations(representatives.values(), 2)
+         if set(content.office_knowledge_domains[pair[0].office_type])
+         != set(content.office_knowledge_domains[pair[1].office_type])),
+        (None, None),
+    )
+    assert first is not None and second is not None, "fixture must contain distinct active office domains"
+
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured[kwargs["name"]] = kwargs
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
+        create_minister_agent(first, cfg, _ctx(game), db)
+        create_minister_agent(second, cfg, _ctx(game), db)
+
+    first_text = "\n".join(captured[first.name]["instructions"])
+    second_text = "\n".join(captured[second.name]["instructions"])
+    first_domains = set(content.office_knowledge_domains[first.office_type])
+    second_domains = set(content.office_knowledge_domains[second.office_type])
+    assert first_domains != second_domains
+    for domain in first_domains - second_domains:
+        assert f"{domain}：" in first_text
+        assert f"{domain}：" not in second_text
+    for domain in second_domains - first_domains:
+        assert f"{domain}：" in second_text
+        assert f"{domain}：" not in first_text
+
+
+def test_minister_context_secret_order_chain_filters_final_tools_and_instructions(game):
+    """密令真实建档后，排除名单同时约束 instructions 与事项/记忆工具。"""
+    db, state, content = game
+    ministers = [c for c in content.characters.values()
+                 if c.office_type not in ("后宫", "宗藩")
+                 and db.get_character_status(c.name)[0] == "active"]
+    first, second = ministers[:2]
+    order = db.create_secret_order(
+        state, first.name, "暗查军饷", "查验边镇欠饷", [],
+        excluded_names=[second.name],
+    )
+    db.record_public_knowledge_event(
+        state, "密令转为明证", "密查军饷已获确认", source_id=f"secret_order:{order}"
+    )
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured[kwargs["name"]] = kwargs
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
+        create_minister_agent(first, cfg, _ctx(game), db)
+        create_minister_agent(second, cfg, _ctx(game), db)
+
+    first_text = "\n".join(captured[first.name]["instructions"])
+    second_text = "\n".join(captured[second.name]["instructions"])
+    assert "密令转为明证" in first_text
+    assert "密令转为明证" not in second_text
+    second_tools = {f.__name__: f for f in build_minister_tools(second, _ctx(game))}
+    assert "密令转为明证" not in second_tools["search_memories"](keywords="军饷")
+
+
+def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):
+    """真实密令只约束自身来源，不能把同回合章节整份变成密件。"""
+    db, state, content = game
+    ministers = [c for c in content.characters.values()
+                 if c.office_type not in ("后宫", "宗藩")
+                 and db.get_character_status(c.name)[0] == "active"]
+    knower, excluded = ministers[:2]
+    order = db.create_secret_order(
+        state, knower.name, "密查军饷", "核验欠饷", [],
+        excluded_names=[excluded.name],
+    )
+    db.record_public_knowledge_event(
+        state, "密令确认", "密令来源标记",
+        source_id=f"secret_order:{order}",
+    )
+    db.save_chapter_memory(state, "本月朝局", "同回合公开章节标记")
+
+    excluded_knowledge = db.get_character_knowledge(state, excluded.name)
+    knower_knowledge = db.get_character_knowledge(state, knower.name)
+    excluded_text = " ".join(
+        item.get("body", "") for item in excluded_knowledge["public_events"]
+    )
+    knower_text = " ".join(
+        item.get("body", "") for item in knower_knowledge["public_events"]
+    )
+    assert "密令来源标记" not in excluded_text
+    assert "同回合公开章节标记" in excluded_text
+    assert "密令来源标记" in knower_text
+
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="仅知者可见事项", origin_kind="test",
+        origin_ref="test:scoped-issue", bar_value=20, inertia=0,
+        stage_text="核验", participants=[{"character_id": knower.name}],
+        resolve_condition="treasury >= 1", fail_condition="treasury < 1",
+    )
+    knower_tools = {f.__name__: f for f in build_minister_tools(knower, _ctx(game))}
+    excluded_tools = {f.__name__: f for f in build_minister_tools(excluded, _ctx(game))}
+    assert f"#{issue_id}" in knower_tools["list_memorials"]()
+    assert f"#{issue_id}" not in excluded_tools["list_memorials"]()
+    assert "结案条件" in knower_tools["inspect_memorial"](1)
+
+
+def test_inspect_treasury_ledger_honors_account_and_turn_window(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values()
+                    if c.office_type not in ("后宫", "宗藩"))
+    db.conn.execute(
+        "INSERT INTO economy_ledger "
+        "(turn,year,period,account,delta,balance_after,category,reason) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (state.turn - 3, state.year, state.period, "国库", 99, 999, "test", "过期流水"),
+    )
+    db.conn.execute(
+        "INSERT INTO economy_ledger "
+        "(turn,year,period,account,delta,balance_after,category,reason) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (state.turn, state.year, state.period, "国库", 7, 107, "test", "近期国库流水"),
+    )
+    db.conn.commit()
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+    rendered = tools["inspect_treasury_ledger"](account="国库", turns=1)
+    assert "近期国库流水" in rendered
+    assert "过期流水" not in rendered
+
+
+def test_inspect_treasury_ledger_respects_treasury_knowledge_domain(game):
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.conn.execute(
+        "INSERT INTO economy_ledger "
+        "(turn,year,period,account,delta,balance_after,category,reason) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (1, 1627, 10, "国库", 987654, 1234567, "test", "不得越权见到的全局流水"),
+    )
+    db.conn.commit()
+
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+    rendered = tools["inspect_treasury_ledger"](account="国库", turns=24)
+
+    assert rendered == "本职见闻未载此项。"
+    assert "不得越权见到的全局流水" not in rendered
+    assert "1234567" not in rendered
+
+
 def test_final_minister_context_rejects_injected_abstract_values(game):
     """最终 instructions seam 不得把抽象分数重新带回上下文。"""
     db, _state, content = game
@@ -519,7 +776,7 @@ def test_minister_tools_characterize_region_army_and_issue_progress(game):
         stage_text="正在推进",
     )
     db.conn.commit()
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    minister = next(c for c in content.characters.values() if c.office_type == "兵部")
     tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game), use_army_tool=True)}
 
     region = tools["inspect_region"]("陕西")
@@ -539,7 +796,7 @@ def test_minister_tools_characterize_building_and_metric_outputs(game):
         "UPDATE buildings SET level=4, condition=22, risk=91, output_metric='民心', output_amount=37"
     )
     db.conn.commit()
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    minister = next(c for c in content.characters.values() if c.office_type == "工部")
     tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
 
     listing = tools["list_buildings"]()

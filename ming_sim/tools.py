@@ -10,7 +10,6 @@ from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
 from ming_sim.qualitative import qualitative_band, safe_historical_text
-from ming_sim.skills import skill_template
 
 _STATUS_CN = {
     "active": "在朝",
@@ -201,43 +200,47 @@ def _commitment_tool_fields(db, state, row) -> str:
 
 def build_minister_tools(character: Character, context: CourtContext,
                          use_roster_tool: bool = False, use_army_tool: bool = False):
+    def projection() -> Dict[str, object]:
+        from ming_sim.knowledge import build_character_knowledge
+        return build_character_knowledge(context.db, context.state, character.name)
+
+    def scoped_world(domain: str) -> str:
+        """Read only the already-built character projection, never a global rail."""
+        world = projection().get("world") or {}
+        return str(world.get(domain) or "本职见闻未载此项。")
+
+    def visible_issues() -> List[Dict[str, object]]:
+        return list(projection().get("issues") or [])
+
+    def filter_domain(domain: str, query: str = "") -> str:
+        rendered = scoped_world(domain)
+        needle = str(query or "").strip()
+        if not needle:
+            return rendered
+        lines = [line for line in rendered.splitlines() if needle in line]
+        return "\n".join(lines) if lines else f"见闻中未载{needle}。"
+
     def query_court_roster(names: List[str] = []) -> str:
         """查在朝人事名册。names 为空返回全部姓名+状态索引；传姓名列表返回指定人物详情（现职/官署/派系/状态）。"""
-        db = context.db
-        results = []
-        for c in _content_ctx().characters.values():
-            # roster scope：非后宫、非宗藩（宗室就藩非朝堂命官，PR#121 隐藏宗藩；
-            # 大臣据此知他人现状，宗藩不应入此名册，cmr R3 cross-section）。
-            if c.office_type in ("后宫", "宗藩"):
-                continue
-            status, reason = db.get_character_status(c.name)
-            if status == "offstage":  # offstage 多，先短路省一次 resolve_power_id DB 查询（gemini PR#130 R1）
-                continue
-            if db.resolve_power_id(c) != "ming":  # DB 权威：招抚归明者入册（同 court_roster）
-                continue
-            if names and c.name not in names:
-                continue
-            if names:
-                state_cell = f"{status}（{reason}）" if reason else status
-                results.append("|".join((c.name, c.office or "无现任官职", c.office_type, c.faction, state_cell)))
-            else:
-                state_cell = f"{status}（{reason}）" if reason else status
-                results.append(f"{c.name}：{state_cell}")
-        if not results:
-            return "未找到指定人物。" if names else "当前无在朝人物。"
-        return "\n".join(results)
+        rendered = scoped_world("personnel")
+        wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
+        if not wanted:
+            return rendered
+        return "\n".join(line for line in rendered.splitlines()
+                          if any(name in line for name in wanted)) or "见闻中未载所查人物。"
 
     def query_army_roster(names: List[str] = []) -> str:
         """查全军名册。names 为空返回军名+欠饷+状态索引；传军名列表返回指定军队完整信息。"""
-        return context.db.army_roster(
-            filter_names=names if names else None,
-            index_only=not names,
-            qualitative_equipment=True,
-        )
+        wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
+        rendered = scoped_world("military")
+        if not wanted:
+            return rendered
+        return "\n".join(line for line in rendered.splitlines()
+                          if any(name in line for name in wanted)) or "见闻中未载所查军队。"
 
     def list_memorials() -> str:
         """查看当前在办的所有事项（issue）。"""
-        rows = context.db.list_active_issues()
+        rows = visible_issues()
         if not rows:
             return f"本{TURN_UNIT}无在办事项。"
         lines = []
@@ -254,7 +257,7 @@ def build_minister_tools(character: Character, context: CourtContext,
 
     def inspect_memorial(slot: int) -> str:
         """查看某条在办事项的细节。slot 是事项编号（由 list_memorials 给出）。"""
-        rows = context.db.list_active_issues()
+        rows = visible_issues()
         try:
             n = int(slot)
         except (ValueError, TypeError):
@@ -275,29 +278,23 @@ def build_minister_tools(character: Character, context: CourtContext,
 
     def list_regions() -> str:
         f"""查看两京十三省最危险地区和账面{TURN_UNIT}税。"""
-        return context.db.region_report(limit=6)
+        return scoped_world("regional")
 
     def inspect_region(region_name: str) -> str:
         """查看某一地区人口、民心、动乱、天灾、人祸、田亩和税收。"""
-        try:
-            return context.db.region_detail(region_name, qualitative=True)
-        except ValueError as e:
-            return f"未找到地区 '{region_name}'。可先调 list_regions 看地区 id/名称列表。错误：{e}"
+        return filter_domain("regional", region_name)
 
     def list_buildings() -> str:
         """查看全国在册建筑（火炮厂、矿厂、常平仓、边堡、织造局等）的等级、完好、维护费与产出。"""
-        return context.db.buildings_report(qualitative=True)
+        return scoped_world("construction")
 
     def inspect_building(building_name: str) -> str:
         """查看某座建筑的类别、等级、完好、维护费、风险与产出。"""
-        try:
-            return context.db.building_detail(building_name, qualitative=True)
-        except ValueError as e:
-            return f"未找到建筑 '{building_name}'。可先调 list_buildings 看建筑列表。错误：{e}"
+        return filter_domain("construction", building_name)
 
     def estimate_resistance(slot: int) -> str:
         """估算某条在办事项若下旨推动的主要阻力。slot 是事项编号（由 list_memorials 给出）。"""
-        rows = context.db.list_active_issues()
+        rows = visible_issues()
         try:
             n = int(slot)
         except (ValueError, TypeError):
@@ -305,27 +302,12 @@ def build_minister_tools(character: Character, context: CourtContext,
         if n < 1 or n > len(rows):
             return f"slot 越界 {n}。本{TURN_UNIT}有 {len(rows)} 条在办事项。"
         row = rows[n - 1]
-        db = context.db
-        faction_lev_avg = db.conn.execute("SELECT AVG(leverage) AS v FROM factions").fetchone()["v"] or 50
-        resistance = int(row["severity"]) // 4 + int(faction_lev_avg) // 6
+        # The tool may only estimate from the issue already present in the
+        # character projection.  Do not rebuild a national resistance score
+        # from global factions/regions/armies here: those are separate
+        # perspectival rails and would bypass the read boundary.
+        resistance = int(row["severity"]) // 4
         tags = row["faction_hint"] or ""
-        if any(t in tags for t in ("边", "军")):
-            # arrears 累计欠饷万两，按【引擎实扣月应发 army_needed】归一成"平均欠饷月数"再加权
-            # （#173：替退役 maintenance_per_turn；army_needed 是 Python 公式，故在此 Python 求均值）。
-            from ming_sim.flows import army_needed
-
-            ratios = [
-                float(r["arrears"] or 0) / pay
-                for r in db.army_rows()  # 封装入口（线上 gemini），不直接碰 db.conn
-                if (pay := army_needed(r)) > 0
-            ]
-            months = (sum(ratios) / len(ratios)) if ratios else 0.0
-            resistance += int(months * 2)
-        if any(t in tags for t in ("百姓", "地方", "士绅")):
-            unrest_avg = db.conn.execute("SELECT AVG(unrest) AS v FROM regions").fetchone()["v"] or 0
-            resistance += int(unrest_avg) // 12
-        if any(t in tags for t in ("户部", "财")):
-            resistance += max(0, 500 - context.state.metrics["国库"]) // 50
         if resistance >= 28:
             level = "高"
         elif resistance >= 18:
@@ -353,14 +335,19 @@ def build_minister_tools(character: Character, context: CourtContext,
             target_year = int(year)
             target_month = int(month) if month else 1
             target_month = max(1, min(12, target_month))
-        row = context.db.conn.execute(
-            "SELECT turn, report FROM turn_reports WHERE year=? AND period=?",
-            (target_year, target_month),
-        ).fetchone()
-        if not row or not row["report"]:
+        knowledge = projection()
+        rows = [
+            item for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
+            if int(item.get("year") or 0) == target_year
+            and int(item.get("period") or 0) == target_month
+            and item.get("body")
+        ]
+        if not rows:
             return f"{target_year}年{target_month}月未见正式邸报记录。"
-        report = safe_historical_text(row["report"], "历史邸报")
-        return f"【{target_year}年{target_month}月邸报】\n{report}"
+        lines = [f"【{target_year}年{target_month}月见闻】"]
+        for item in rows:
+            lines.append(f"{item.get('title') or '旧闻'}：{safe_historical_text(item['body'], '历史邸报')}")
+        return "\n".join(lines)
 
     def search_memories(keywords: str = "", year: int = 0, period: int = 0) -> str:
         """检索起居注章节旧事。支持两种方式（可同时用）：
@@ -368,55 +355,60 @@ def build_minister_tools(character: Character, context: CourtContext,
         - year+period: 按年月检索，取前后2月窗口，如 year=1628, period=3。
         两种场景必须调用：1.皇帝问及某人/某地/某事；2.拟旨前涉及人事处置，先查旧况避免重复。
         """
-        all_ch = context.db.list_chapter_memories(upto_turn=context.state.turn)
+        knowledge = projection()
+        all_ch = [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
         hits = []
         if year:
             ref_turn = (int(year) - 1627) * 12 + (int(period or 1) - 10) + 1
-            hits = [c for c in all_ch if abs(int(c["turn"]) - ref_turn) <= 2]
+            hits = [c for c in all_ch if abs(int(c.get("turn") or 0) - ref_turn) <= 2]
         kw_list = [k.strip() for k in str(keywords or "").split(",") if k.strip()]
         if kw_list:
             kw_hits = [
                 c for c in all_ch
                 if any(kw in (c.get("body") or "") or kw in (c.get("title") or "") for kw in kw_list)
             ]
-            seen = {c["turn"] for c in hits}
-            hits += [c for c in kw_hits if c["turn"] not in seen]
+            seen = {c.get("source_id") for c in hits}
+            hits += [c for c in kw_hits if c.get("source_id") not in seen]
         if not hits:
             desc = f"「{'、'.join(kw_list)}」" if kw_list else f"{year}年{period}月前后"
             return f"未找到与{desc}相关的起居注记载。"
         tlog(f"[search_memories] kw={kw_list} year={year} period={period} hit={len(hits)}")
         label = " ".join(kw_list) or f"{year}年{period}月"
         lines = [f"【起居注检索：{label}】"]
-        for c in hits[-8:]:
+        for c in sorted(hits, key=lambda item: int(item.get("turn") or 0))[-8:]:
             body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
             lines.append(f"- {c['year']}年{c['period']}月：{body}")
         return "\n".join(lines)
 
     def check_treasury() -> str:
         """查国库、内库、收支和欠账。"""
-        return skill_template("check_treasury_prefix") + context.db.treasury_report(context.state)
+        return scoped_world("treasury")
 
     def inspect_treasury_ledger(account: str = "内库", turns: int = 6) -> str:
-        """查国库或内库的历史流水明细（每笔收支原因、金额、余额）。
+        """查本职见闻中的国库或内库流水摘要。
         涉及内库/国库调动来源、历史拨款、查抄收益、赏赐开销时调用。
         account: "国库" 或 "内库"；turns: 查最近几回合（默认6）。
         """
         acc = (account or "内库").strip()
         if acc not in {"国库", "内库"}:
             return "account 须为「国库」或「内库」。"
-        try:
-            t = max(1, min(24, int(turns)))
-        except (TypeError, ValueError):
-            t = 6
-        return context.db.treasury_ledger(acc, t)
+        # The ledger read is owned by the role-scoped knowledge projection.
+        # Never reopen economy_ledger here: doing so bypasses the office gate.
+        from ming_sim.knowledge import build_character_treasury_ledger
+        rendered = build_character_treasury_ledger(
+            context.db, context.state, character.name, acc, turns,
+        )
+        if not rendered:
+            return "本职见闻未载此项。"
+        return rendered
 
     def audit_tax_arrears(target: str = "各省积欠") -> str:
         """清查积欠、估算可追收入库。"""
-        return skill_template("audit_tax_arrears", target=target)
+        return filter_domain("regional", target)
 
     def allocate_payroll(target: str = f"本{TURN_UNIT}急需钱粮处") -> str:
         """核算军饷调度。"""
-        return skill_template("allocate_payroll", target=target)
+        return filter_domain("military", target)
 
     def propose_directive(decree_text: str) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。decree_text 为完整圣旨正文。"""

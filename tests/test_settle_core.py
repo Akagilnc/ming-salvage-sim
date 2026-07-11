@@ -104,6 +104,141 @@ def test_settle_with_delta_includes_inertia_person_changes_in_chapter_brief(game
         content.characters[name].office = old_office
 
 
+def test_settle_persists_public_and_restricted_sources_before_archive_projection(game):
+    """生产结算先落逐 source 事项，聚合邸报不能成为泄密边界。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    order = db.create_secret_order(
+        state,
+        knower.name,
+        "生产链密查",
+        "生产链受限事项",
+        [],
+        excluded_names=[excluded.name],
+    )
+    before_turn = state.turn
+    source_id = f"secret_order:{order}"
+    assert db.conn.execute(
+        "SELECT 1 FROM character_knowledge_events WHERE source_id=?",
+        (source_id,),
+    ).fetchone() is None
+    settle_with_delta(
+        state,
+        db,
+        {},
+        before_turn=before_turn,
+        content=content,
+        narrative="生产链公开事项",
+    )
+
+    rows = db.conn.execute(
+        "SELECT source_id, excluded_names FROM character_knowledge_events "
+        "WHERE character_name='' AND turn=? ORDER BY source_id",
+        (before_turn,),
+    ).fetchall()
+    by_source = {row["source_id"]: row for row in rows}
+    assert f"settlement:narrative:{before_turn}" in by_source
+    assert source_id in by_source
+    assert excluded.name in by_source[source_id]["excluded_names"]
+
+    excluded_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
+    )
+    assert "生产链公开事项" in excluded_text
+    assert "生产链受限事项" not in excluded_text
+
+
+def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
+    """真实结算的混合邸报只把公开片段投影给未参与者。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    order = db.create_secret_order(
+        state, knower.name, "混合密查", "混合结算密令标记", [],
+        excluded_names=[excluded.name],
+    )
+    before_turn = state.turn
+    narrative = "公开结算标记；混合结算密令标记；公开结算尾声"
+
+    settle_with_delta(
+        state, db, {}, before_turn=before_turn, content=content,
+        narrative=narrative,
+    )
+
+    excluded_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
+    )
+    assert "公开结算标记" in excluded_text
+    assert "公开结算尾声" in excluded_text
+    assert "混合结算密令标记" not in excluded_text
+    assert order > 0
+
+
+def test_settlement_rewritten_narrative_cannot_publish_restricted_source(game):
+    """聚合邸报改写密令后，受排除者仍不能从真实结算归档读到它。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    order = db.create_secret_order(
+        state, knower.name, "改写密查", "核验边镇欠饷密令", [],
+        excluded_names=[excluded.name],
+    )
+
+    settle_with_delta(
+        state, db, {}, before_turn=state.turn, content=content,
+        narrative="邸报只说边镇近日另有一番暗中安排，未直书其名。",
+    )
+
+    excluded_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
+    )
+    assert "暗中安排" not in excluded_text
+    assert order > 0
+
+
+def test_settlement_archive_writes_rollback_on_later_failure(game, monkeypatch):
+    """真实结算在归档后续故障时不能留下 source/event/chapter/report 半写。"""
+    db, state, _content = game
+    turn = state.turn
+
+    def fail_after_archive(*_args, **_kwargs):
+        raise RuntimeError("archive failure")
+
+    monkeypatch.setattr(db, "save_turn_extraction", fail_after_archive)
+    with pytest.raises(decree.SettlementAbort):
+        settle_with_delta(
+            state, db, {}, before_turn=turn, narrative="归档公开事项"
+        )
+
+    assert db.conn.execute(
+        "SELECT 1 FROM character_knowledge_events WHERE source_id=?",
+        (f"settlement:narrative:{turn}",),
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM turn_reports WHERE turn=?", (turn,)
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM event_memories WHERE turn=? AND event_type='chapter_summary'",
+        (turn,),
+    ).fetchone() is None
+
+
 def test_pre_settle_runs_fixed_fiscal_tick(game):
     """pre_settle 跑固定月度财政 tick（落 economy_ledger 行）+ 返回 auto_triggered 清单。"""
     db, state, content = game

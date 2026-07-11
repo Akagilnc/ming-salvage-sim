@@ -59,3 +59,142 @@ def test_knowledge_exclusion_reads_current_office_without_nameerror(
         assert knowledge["events"][0]["body"] == "不可忽略的密令"
     else:
         assert knowledge["events"] == []
+
+
+def test_knowledge_projects_gazette_and_chapter_sources_per_character(game):
+    """同一份公共叙事中的密事不能借原始邸报/章节副本泄漏。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    public_marker = "公开事项标记"
+    secret_marker = "不得知密事标记"
+
+    db.record_public_knowledge_event(
+        state, "密查", secret_marker, source_id="test:mixed-source",
+        excluded_names=[excluded.name],
+    )
+    db.record_public_knowledge_event(
+        state, "公开事项", public_marker, source_id="test:mixed-public",
+    )
+    db.save_turn_report(state, f"{public_marker}；{secret_marker}")
+    db.save_chapter_memory(state, "朝局", f"{public_marker}；{secret_marker}")
+
+    excluded_knowledge = db.get_character_knowledge(state, excluded.name)
+    knower_knowledge = db.get_character_knowledge(state, knower.name)
+    excluded_text = " ".join(
+        item.get("body", "") for item in excluded_knowledge["public_events"]
+    )
+    knower_text = " ".join(
+        item.get("body", "") for item in knower_knowledge["public_events"]
+    )
+
+    assert public_marker in excluded_text
+    assert secret_marker not in excluded_text
+    assert secret_marker in knower_text
+
+
+def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
+    """受限事项来自 source 表时，聚合邸报仍保留公开事项但不泄密。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    public_marker = "source表公开事项"
+    secret_marker = "source表不得知密事"
+
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": knower.name, "tier": "主办"}],
+        "secret_order",
+        "密查",
+        secret_marker,
+        source_id="test:durable-secret",
+        excluded_names=[excluded.name],
+    )
+    db.record_public_knowledge_event(
+        state, "公开事项", public_marker, source_id="test:durable-public",
+    )
+    db.save_turn_report(state, f"{public_marker}；{secret_marker}")
+    db.save_chapter_memory(state, "朝局", f"{public_marker}；{secret_marker}")
+
+    excluded_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
+    )
+    knower_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, knower.name)["public_events"]
+    )
+
+    assert public_marker in excluded_text
+    assert secret_marker not in excluded_text
+    assert secret_marker in knower_text
+
+
+def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
+    """章节改写不是来源边界；受限事项必须在改写后仍不可见。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": knower.name, "tier": "主办"}],
+        "secret_order",
+        "密查",
+        "原始密事",
+        source_id="test:rewritten-secret",
+        excluded_names=[excluded.name],
+    )
+    db.save_turn_report(state, "聚合邸报改写：有人暗中安排了不应知晓的事务。")
+    db.save_chapter_memory(state, "朝局", "章节改写：宫中另有暗流，未明言其由来。")
+
+    excluded_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
+    )
+    assert "有人暗中安排了不应知晓的事务" not in excluded_text
+    assert "宫中另有暗流" not in excluded_text
+
+
+def test_archive_write_materializes_unmirrored_source_scope(game):
+    """结算保存聚合档案时，不能丢掉先写入的受限事项来源边界。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    secret_marker = "未镜像的受限事项"
+
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": knower.name, "tier": "主办"}],
+        "secret_order",
+        "密查",
+        secret_marker,
+        source_id="test:unmirrored-source",
+        excluded_names=[excluded.name],
+    )
+    db.save_turn_report(state, "聚合邸报中的公开事项")
+
+    rows = db.conn.execute(
+        "SELECT character_name, body, excluded_names FROM character_knowledge_events "
+        "WHERE source_id = ? ORDER BY character_name",
+        ("test:unmirrored-source",),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["character_name"] == ""
+    assert rows[0]["body"] == secret_marker
+    assert excluded.name in rows[0]["excluded_names"]
