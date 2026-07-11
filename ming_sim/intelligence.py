@@ -88,14 +88,11 @@ def _character_domain_statement(db: Any, state: Any, character_name: str, query:
     firsthand reports are limited to the role projection already granted to
     this character.
     """
-    domain = _query_domain(query)
-    knowledge_domain = {"arrears": "military", "bandits": "security", "military": "military"}.get(domain)
-    knowledge = db.get_character_knowledge(state, character_name)
-    if domain == "office":
-        return _vacancy_statement(db.list_office_vacancies(), query), "office_vacancies"
-    if not knowledge_domain or knowledge_domain not in (knowledge.get("world") or {}):
-        return "近臣未从自身见闻掌握所问一事。", f"knowledge_denied:{domain}"
-    return _safe_report_text((knowledge.get("world") or {}).get(knowledge_domain)), f"knowledge:{knowledge_domain}"
+    record = _matching_firsthand_record(db, state, character_name, query)
+    if record is None:
+        return "近臣未从自身见闻掌握所问一事。", f"knowledge_denied:{_query_domain(query)}"
+    source_id = str(record.get("source_id") or "")
+    return _safe_report_text(record.get("body")), source_id
 
 
 def _canonical_source_ref(source_kind: str, source_ref: Optional[str], domain_ref: str) -> str:
@@ -122,9 +119,9 @@ def _domain_terms(domain: str) -> tuple[str, ...]:
     }.get(domain, ())
 
 
-def _persisted_firsthand_exists(
+def _matching_firsthand_record(
     db: Any, state: Any, character_name: str, query: str,
-) -> bool:
+) -> Optional[Mapping[str, Any]]:
     """Return whether this character has a durable witness for this domain.
 
     A witness in another domain cannot be promoted to a source for an
@@ -133,10 +130,14 @@ def _persisted_firsthand_exists(
     """
     terms = _domain_terms(_query_domain(query))
     knowledge = db.get_character_knowledge(state, character_name)
-    return any(
-        str(item.get("kind") or "") in {"witness", "scout", "firsthand"}
-        and any(term in f"{item.get('title') or ''}{item.get('body') or ''}" for term in terms)
-        for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
+    return next(
+        (
+            item for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
+            if str(item.get("kind") or "") in {"witness", "scout", "firsthand"}
+            and any(term in f"{item.get('title') or ''}{item.get('body') or ''}" for term in terms)
+            and str(item.get("body") or "").strip()
+        ),
+        None,
     )
 
 
@@ -173,10 +174,8 @@ def persist_return_report(
     # An emperor's question opens the inquiry channel by default.  Firsthand
     # is allowed only when a durable witness/scout record for this domain
     # already exists; wording alone may not manufacture provenance.
-    source_kind = (
-        "firsthand" if _persisted_firsthand_exists(db, state, character_name, query)
-        else "inquiry"
-    )
+    firsthand_record = _matching_firsthand_record(db, state, character_name, query)
+    source_kind = "firsthand" if firsthand_record is not None else "inquiry"
     if source_kind == "firsthand":
         statement, domain_ref = _character_domain_statement(db, state, character_name, query)
     else:

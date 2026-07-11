@@ -116,6 +116,21 @@ def test_firsthand_witness_must_match_questioned_domain(game):
     assert report["source_ref"].startswith("查访/")
 
 
+def test_firsthand_report_uses_the_matching_witness_body(game):
+    db, state, _content = game
+    minister = next(iter(db.content.characters))
+    db.register_character_knowledge_source(
+        state, [{"character_id": minister}], "witness", "边地见闻", "辽东有报",
+        source_id="witness:492:matching",
+    )
+
+    report = persist_return_report(db, state, minister, "军情如何？")
+
+    assert report["source_kind"] == "firsthand"
+    assert report["statement"] == "辽东有报"
+    assert report["source_ref"] == "见闻/witness:492:matching"
+
+
 def test_question_wording_cannot_create_firsthand_provenance(game):
     db, state, _content = game
     minister = next(iter(db.content.characters))
