@@ -81,6 +81,8 @@ import {
 } from "../modelRegistry.js";
 import {
   agentForSlug,
+  applyUniformCredentialProvisioning,
+  hostOpenCodeAuthFile,
   candidateBranches,
   extractCoderTag,
   lastSessionId,
@@ -1059,7 +1061,11 @@ export class RealFamilyBackend implements FamilyBackend {
       // claude token absent ⇒ the top-level merger worker degrades; the
       // runMergerAgent preflight returns a structured non-resolve.
     }
-    return { codexAuthDir, claudeToken };
+    return {
+      codexAuthDir,
+      claudeToken,
+      opencodeAuthFile: hostOpenCodeAuthFile(home),
+    };
   }
 
   /**
@@ -1108,6 +1114,11 @@ export class RealFamilyBackend implements FamilyBackend {
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    applyUniformCredentialProvisioning({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+    });
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -1688,7 +1699,7 @@ export class RealFamilyBackend implements FamilyBackend {
           name: "family-cmr",
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: this.opts.workingRepo,
-          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
+          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
           // Derive the model from the spec via the shared validated seam (cmr S336 r7
           // symmetry): resolve the worker's slug through the same registry as the
           // single-slice + family ship paths — no constant that could silently drift
@@ -1777,7 +1788,7 @@ export class RealFamilyBackend implements FamilyBackend {
           name: `family-cmr-outcome-rewrite-${ctx.cmrPass ?? "legacy"}-${attempt}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: this.opts.workingRepo,
-          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
+          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
           agent: this.agentForSpec(spec, ctx),
           maxIterations: 1,
           completionSignal: spec.completionSignal,
@@ -1889,7 +1900,13 @@ export class RealFamilyBackend implements FamilyBackend {
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
-            sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding, fixFocusLanding),
+            sandbox: this.familyCoderSandbox(
+              auth,
+              spec.model,
+              ctx,
+              outcomeLanding,
+              fixFocusLanding,
+            ),
             agent: this.agentForSpec(spec, ctx),
             maxIterations: spec.maxIter,
             completionSignal: spec.completionSignal,
@@ -1997,17 +2014,19 @@ export class RealFamilyBackend implements FamilyBackend {
 
   protected familyCoderSandbox(
     auth: ShipAuth,
+    model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
     fixFocusLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
-      this.familyCoderSandboxConfig(auth, ctx, outcomeLanding, fixFocusLanding),
+      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding, fixFocusLanding),
     );
   }
 
   protected familyCoderSandboxConfig(
     auth: ShipAuth,
+    model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
     fixFocusLanding?: { path: string; sandboxPath: string },
@@ -2049,6 +2068,11 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    applyUniformCredentialProvisioning({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+    });
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
@@ -2329,6 +2353,11 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    applyUniformCredentialProvisioning({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+    });
     mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
@@ -2600,8 +2629,9 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: CmrAuth,
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
   ): sc.SandboxProvider {
-    return docker(this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding));
+    return docker(this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding, ctx));
   }
 
   /**
@@ -2709,6 +2739,7 @@ export class RealFamilyBackend implements FamilyBackend {
       codexAuthDir,
       agyDir,
       grokAuthDir,
+      opencodeAuthFile: hostOpenCodeAuthFile(home),
       claudeToken,
       ghToken: this.readGhToken(),
       providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
@@ -2756,6 +2787,7 @@ export class RealFamilyBackend implements FamilyBackend {
     auth: CmrAuth,
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -2803,6 +2835,11 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    applyUniformCredentialProvisioning({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+    });
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3167,6 +3204,7 @@ export class RealFamilyBackend implements FamilyBackend {
     return {
       codexAuthDir,
       grokAuthDir,
+      opencodeAuthFile: hostOpenCodeAuthFile(home),
       claudeToken,
       ghToken: this.readGhToken(),
       providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
@@ -3231,6 +3269,11 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    applyUniformCredentialProvisioning({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+    });
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3490,6 +3533,7 @@ export interface CmrAuth {
   readonly agyDir?: string;
   /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
   readonly grokAuthDir?: string;
+  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3517,6 +3561,7 @@ export interface ShipAuth {
   readonly codexAuthDir?: string;
   /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
   readonly grokAuthDir?: string;
+  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3539,6 +3584,7 @@ export interface ShipAuth {
 export interface MergerAuth {
   /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
   readonly codexAuthDir?: string;
+  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
 }

@@ -35,6 +35,7 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_GROK_DIR,
+  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SHIP_FOCUS_FILENAME,
@@ -227,7 +228,7 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     protected override assertIndependentClone(): void {
       // pure config seam under test, not a real clone.
     }
-    public config(auth: ShipAuth): {
+    public config(auth: ShipAuth, model = "sonnet", billingPool?: "zai" | "codex-5h"): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
@@ -266,6 +267,27 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     expect(c.mounts).toContainEqual({
       hostPath: "/tmp/grok",
       sandboxPath: SANDBOX_GROK_DIR,
+    });
+  });
+
+  it("provisions OpenCode auth uniformly regardless of ship model or billing pool", () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    const authFile = join(mkDir("ship-opencode-"), "auth.json");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "api", key: "x" } }));
+    const openCode = cfg().config({ opencodeAuthFile: authFile }, "sonnet", "zai");
+    expect(openCode.env.GLM_KEY).toBe("glm-secret");
+    expect(openCode.mounts).toContainEqual({
+      hostPath: authFile,
+      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+      readonly: true,
+    });
+
+    const codex = cfg().config({ opencodeAuthFile: authFile }, "gpt-5.6-terra", "codex-5h");
+    expect(codex.env.GLM_KEY).toBe("glm-secret");
+    expect(codex.mounts).toContainEqual({
+      hostPath: authFile,
+      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+      readonly: true,
     });
   });
 

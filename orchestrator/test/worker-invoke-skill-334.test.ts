@@ -41,6 +41,7 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_ONLINE_REVIEW_PATH_ENV,
+  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
@@ -100,13 +101,14 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     public config(
       spec: StepSpec,
       options?: Parameters<RealBackend["runStep"]>[2],
+      opencodeAuthFile?: string,
     ): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.boxConfig(
-        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test" },
+        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test", opencodeAuthFile },
         spec,
         334,
         options,
@@ -155,6 +157,22 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
       cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR),
     ).toBe(true);
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+
+  it("provisions OpenCode credentials uniformly without metadata inspection", () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    const dir = mkdtempSync(join(tmpdir(), "pool-auth-"));
+    const authFile = join(dir, "auth.json");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
+
+    expect(makeBackend().config(coderSpec, { billingPool: "zai" }, authFile).env.GLM_KEY).toBe("glm-secret");
+    const codex = makeBackend().config(coderSpec, { billingPool: "codex-5h" }, authFile);
+    expect(codex.env.GLM_KEY).toBe("glm-secret");
+    expect(codex.mounts).toContainEqual({
+      hostPath: authFile,
+      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+      readonly: true,
+    });
   });
 
   it("boxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) at this site (#372)", () => {

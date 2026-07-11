@@ -56,6 +56,14 @@ FROM ${BASE_IMAGE}
 
 USER root
 
+# OpenCode Go backend (#420). Scope npm's global prefix to this build layer;
+# runtime sessions keep normal npm behavior while /usr/local/bin/opencode stays
+# on PATH. Only the empty parent dir is baked — auth is runtime-mounted.
+RUN NPM_CONFIG_PREFIX=/usr/local npm install --global opencode-ai@1.17.18 \
+ && opencode --version \
+ && mkdir -p /home/agent/.local/share/opencode \
+ && chown -R agent /home/agent/.local
+
 # ── Multi-model review CLIs + gstack-ship runtime deps ───────────────────────
 # claude + codex are already in the base (#332 verified). 2b adds:
 #   - gh   : gstack-ship PR creation + cmr native-dependency reads
@@ -83,6 +91,10 @@ USER root
 # orchestrator copies it into a per-issue writable dir and bind-mounts at
 #   /home/agent/.grok/
 # (realBackend.ts `mountAuth`, #807). Missing host auth → that leg degrades.
+# opencode AUTH is also runtime-only: host
+# `~/.local/share/opencode/auth.json` is mounted as one read-only file. The
+# surrounding data dir is the container's ephemeral home, so concurrent workers
+# never share OpenCode's writable SQLite database/WAL/log state (#420).
 # codex AUTH = writable CODEX_HOME: the orchestrator copies ~/.codex into a
 # per-issue writable dir and bind-mounts it to /home/agent/.codex — NOT a ro
 # mount, or codex's first run rc=1 on an unwritable auth dir (spike constraint #2;

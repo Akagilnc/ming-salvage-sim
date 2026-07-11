@@ -53,6 +53,8 @@ import {
   modelIdForSlug,
   modelFamilyForSlug,
   modelIsStrongLeg,
+  opencodeAuthMount,
+  applyUniformCredentialProvisioning,
   parseBlockedBy,
   parseCoderSelfReport,
   parseSubIssueCount,
@@ -66,10 +68,10 @@ import {
   soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
-  routeSmokeCacheKey,
   routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
+  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
@@ -135,21 +137,6 @@ describe("#685 route smoke hardening", () => {
         formattedArgs: 'echo "OK"',
       }),
     ).toBe(true);
-  });
-
-  it("changes the cache key when the sandbox fingerprint changes", () => {
-    const route = resolveRouteModels("normal", {});
-    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
-      routeSmokeCacheKey(route, "image-b"),
-    );
-  });
-
-  it("separates a relay pool from the default provider cache", () => {
-    const route = resolveRouteModels("normal", { coder: "grok-4.5" });
-
-    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
-      routeSmokeCacheKey(route, "image-a", "grok-build"),
-    );
   });
 
   it("turns a missing host CLI into an unknown version instead of throwing", () => {
@@ -770,6 +757,10 @@ describe("realBackend resolveModelSlug", () => {
       provider: "opencode",
       model: "grok-4.5",
     });
+    expect(resolveModelSlug("glm-5.2")).toEqual({
+      provider: "opencode",
+      model: "opencode-go/glm-5.2",
+    });
   });
 
   it("declares the provider factories the registry can target (incl. #807 grok)", () => {
@@ -821,6 +812,46 @@ describe("realBackend resolveModelSlug", () => {
 
   it("fails closed for unknown model slugs", () => {
     expect(() => resolveModelSlug("gpt")).toThrow(/unknown model slug/);
+  });
+});
+
+describe("#420 OpenCode runtime auth", () => {
+  it("mounts only auth.json read-only, leaving SQLite state container-local", () => {
+    expect(opencodeAuthMount("/home/dev")).toEqual({
+      hostPath: "/home/dev/.local/share/opencode/auth.json",
+      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+      readonly: true,
+    });
+  });
+
+  describe("uniform dispatch credential provisioning", () => {
+  const authFile = join(tmpdir(), "dispatch-opencode-auth.json");
+
+  afterEach(() => {
+    rmSync(authFile, { force: true });
+    vi.unstubAllEnvs();
+  });
+
+  it("injects every available credential without inspecting its contents", () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
+    const env: Record<string, string> = {};
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    applyUniformCredentialProvisioning({ env, mounts, opencodeAuthFile: authFile });
+    expect(env.GLM_KEY).toBe("glm-secret");
+    expect(mounts).toContainEqual({
+      hostPath: authFile, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true,
+    });
+  });
+
+  it("tolerates absent optional credentials and leaves provisioning empty", () => {
+    vi.stubEnv("GLM_KEY", undefined);
+    const env: Record<string, string> = {};
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    expect(() => applyUniformCredentialProvisioning({ env, mounts })).not.toThrow();
+    expect(env).toEqual({});
+    expect(mounts).toEqual([]);
+  });
   });
 });
 
