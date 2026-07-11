@@ -602,6 +602,70 @@ describe("#677 real S5 fix-commit path wiring", () => {
     );
   });
 
+  it("still runs the S5 assertion gate when telemetry is enabled and the backend has no worktreeHead", async () => {
+    let worktree = makeGitWorktreeWithPreexistingPin();
+    const baseSha = execFileSync("git", ["-C", worktree.path, "rev-parse", "main"], {
+      encoding: "utf8",
+    }).trim();
+    worktree = { ...worktree, base: baseSha };
+    const finding: Finding = {
+      severity: "high",
+      category: "Correctness",
+      claim_quote: "something real to fix without touching the pin",
+      location: "src/app.ts:1",
+      suggested_fix: "fix app",
+      action: "fix_now",
+    };
+    const findingKey =
+      "correctness|src/app.ts:1|something real to fix without touching the pin";
+
+    class NoWorktreeHeadTelemetryBackend extends FixLoopBackend {
+      resolveTelemetryDir(): string {
+        return join(worktree.path, ".ledger-677");
+      }
+    }
+
+    const backend = new NoWorktreeHeadTelemetryBackend({
+      worktree,
+      reviewerResults: [
+        { kind: "completed", output: { kind: "reviewer", findings: [finding] } },
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            priorFindingDispositions: [
+              { identityKey: findingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      coderOutputs: [
+        { kind: "coder", committed: true, commitsAdded: 1 },
+        { kind: "coder", committed: true, commitsAdded: 1 },
+      ],
+      onCoderDispatch: (attempt, wt) => {
+        if (attempt === 0) {
+          mkdirSync(join(wt.path, "src"), { recursive: true });
+          writeFileSync(join(wt.path, "src", "app.ts"), "export const x = 1;\n", "utf8");
+          execFileSync("git", ["-C", wt.path, "add", "src/app.ts"], { stdio: "ignore" });
+          execFileSync("git", ["-C", wt.path, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "s2: implement"], { stdio: "ignore" });
+        } else if (attempt === 1) {
+          const testPath = join(wt.path, "test", "gate.test.ts");
+          writeFileSync(testPath, readFileSync(testPath, "utf8").replace("'blocked'", "'allowed'"), "utf8");
+          execFileSync("git", ["-C", wt.path, "add", "test/gate.test.ts"], { stdio: "ignore" });
+          execFileSync("git", ["-C", wt.path, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "s5: flip pin"], { stdio: "ignore" });
+        }
+      },
+    });
+
+    const result = await runOrchestrator({ issueNumber: 677, backend });
+
+    expect(result.status).toBe("success");
+    const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
+    expect(backend.ctxs[s6Index]?.preexistingAssertionTouched).toBe(true);
+  });
+
   it("wires reviewFixDecisionGate refuse records into the S6 landing payload", async () => {
     const overturn: Finding = {
       severity: "high",

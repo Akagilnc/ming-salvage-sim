@@ -54,7 +54,6 @@ export {
   collectCommitDiffAuditAsync,
   collectCommitMetricsAsync,
   commitsBetweenAsync,
-  computeSandboxFingerprint,
   configureTelemetryFromWorkerImage,
   configureTelemetryRunEnvironment,
   durableTelemetryDirForSingleSlice,
@@ -68,7 +67,6 @@ export {
   newLegId,
   readDispatchLogSlice,
   readTelemetryRecords,
-  resolveDockerImageDigest,
   telemetryPath,
   tryAppendTelemetryRecord,
 } from "./telemetry.js";
