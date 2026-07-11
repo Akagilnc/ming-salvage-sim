@@ -416,22 +416,15 @@ export class CapacityRelayError extends Error {
 
 /**
  * Capacity is deliberately narrower than generic 5xx failure and never absorbs
- * a quota 429. These are provider fingerprints observed at the CLI boundary.
+ * a quota 429. This is the provider's model-specific CLI fingerprint, not the
+ * broader telemetry taxonomy (which is intentionally descriptive).
  */
 export function isCapacityRelayError(err: unknown): err is CapacityRelayError {
   if (err instanceof CapacityRelayError) return true;
   const message = err instanceof Error ? err.message : String(err);
   const lower = message.toLowerCase();
   if (/\b(?:http\s*(?:status|code)?\s*)?429\b/.test(lower)) return false;
-  return (
-    lower.includes("selected model is at capacity") ||
-    lower.includes("at capacity") ||
-    lower.includes("capacity exceeded") ||
-    lower.includes("service overloaded") ||
-    lower.includes("server overloaded") ||
-    lower.includes("temporarily overloaded") ||
-    /\b(?:http\s*(?:status|code)?\s*)?(?:503|529)\b/.test(lower)
-  );
+  return lower.includes("selected model is at capacity");
 }
 
 export function capacityRelayErrorFrom(err: unknown): CapacityRelayError | undefined {

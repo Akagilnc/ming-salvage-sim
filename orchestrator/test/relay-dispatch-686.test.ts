@@ -508,11 +508,129 @@ describe("#787 capacity relay", () => {
     expect(handoff.ledgerEntry?.trigger).toBe("capacity");
   });
 
-  it("recognizes capacity congestion but keeps 429 quota out of the capacity path", () => {
+  it("recognizes only model-capacity fingerprints and leaves quota plus ordinary 5xx to retry", () => {
     const capacity = new CapacityRelayError("Selected model is at capacity");
     expect(isCapacityRelayError(capacity)).toBe(true);
+    expect(isCapacityRelayError(new Error("Selected model is at capacity"))).toBe(true);
     expect(isCapacityRelayError(new Error("HTTP 429 rate limit exceeded"))).toBe(false);
-    expect(isCapacityRelayError(new Error("HTTP 503 service overloaded"))).toBe(true);
+    expect(isCapacityRelayError(new Error("HTTP 503 service overloaded"))).toBe(false);
+    expect(isCapacityRelayError(new Error("gateway returned 503"))).toBe(false);
+    expect(isCapacityRelayError(new Error("worker queue is at capacity"))).toBe(false);
+  });
+
+  it("wires a capacity failure through runOrchestrator: same-pool checkpoint first, then cross-pool only when needed", async () => {
+    async function runCapacityCase(input: {
+      readonly pools: BillingPoolEntry[];
+    }): Promise<{ readonly coderModels: readonly string[]; readonly handoff: unknown }> {
+      const worktree: WorktreeHandle = {
+        branch: "feat/787-capacity-relay-test",
+        base: "main",
+        path: mkdtempSync(join(tmpdir(), "relay-787-capacity-")),
+      };
+      const coderModels: string[] = [];
+      class CapacityBackend implements Backend {
+        async smokeModelRoute(route: any): Promise<any> {
+          const { smokeRouteModels } = await import("../src/modelRoutes.js");
+          return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+        }
+        async findResumeState(): Promise<undefined> { return undefined; }
+        async cleanResidue(): Promise<void> {}
+        async resumeSession(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async fetchIssueMeta(n: number): Promise<IssueMeta> {
+          return {
+            number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false,
+            openBlockedBy: [], body: "Coder-Rec: terra@med → luna@med",
+          };
+        }
+        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+          return { number: n, body: "Coder-Rec: terra@med → luna@med", comments: [], agentBrief: "" };
+        }
+        async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
+        async writeSnapshot(): Promise<void> {}
+        async runStep(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async push(): Promise<void> {}
+        async writeLedger(): Promise<void> {}
+        async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+          if (spec.kind === "coder" && spec.id === "S2") {
+            coderModels.push(spec.model);
+            if (spec.model === "gpt-5.6-terra") {
+              return { kind: "failed", reason: "Selected model is at capacity" };
+            }
+            return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+          }
+          if (spec.kind === "reviewer") {
+            return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+          }
+          if (spec.kind === "ship") {
+            return { kind: "completed", output: { kind: "ship", branch: worktree.branch, status: "pushed" } };
+          }
+          const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+          if (skeleton !== undefined) return skeleton;
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+      }
+
+      const previous = process.env.ORCHESTRATOR_CODER_MODEL;
+      process.env.ORCHESTRATOR_CODER_MODEL = "gpt-5.6-terra";
+      try {
+        const result = await runOrchestrator({
+          issueNumber: 787,
+          backend: new CapacityBackend(),
+          relayPools: input.pools,
+          now: () => now,
+        });
+        expect(result.status).not.toBe("error");
+        return {
+          coderModels,
+          handoff: result.stepLedger.find((entry) => entry.event === "relay_baton_handoff"),
+        };
+      } finally {
+        if (previous === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
+        else process.env.ORCHESTRATOR_CODER_MODEL = previous;
+        rmSync(worktree.path, { recursive: true, force: true });
+      }
+    }
+
+    const samePool = await runCapacityCase({
+      pools: [
+        { id: "grok-build", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["terra@med", "luna@med"] },
+        { id: "cursor", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["luna@med"] },
+      ],
+    });
+    expect(samePool.coderModels).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
+    expect(samePool.handoff).toMatchObject({ trigger: "capacity", toModelId: "luna@med", toPool: "grok-build" });
+
+    const crossPool = await runCapacityCase({
+      pools: [
+        { id: "grok-build", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["terra@med"] },
+        { id: "cursor", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["luna@med"] },
+      ],
+    });
+    expect(crossPool.coderModels).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
+    expect(crossPool.handoff).toMatchObject({ trigger: "capacity", toModelId: "luna@med", toPool: "cursor" });
+  });
+
+  it("keeps pre-capacity trigger rows readable when resuming a relay", () => {
+    const legacyQuotaWall = {
+      event: "relay_baton_handoff" as const,
+      trigger: "quota_wall" as const,
+      state_summary: "legacy baton state",
+      fromModelId: "grok-4.5",
+      fromPool: "grok-build" as const,
+      toModelId: "terra@med",
+      toPool: "codex-5h" as const,
+      step: "S2" as const,
+      ts: now.toISOString(),
+    };
+    expect(resumeRelayFromLedger([legacyQuotaWall], "S2")).toMatchObject({
+      trigger: "quota_wall",
+      state_summary: "legacy baton state",
+      toModelId: "terra@med",
+    });
   });
 });
 
