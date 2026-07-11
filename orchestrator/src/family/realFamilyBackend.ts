@@ -1914,16 +1914,19 @@ export class RealFamilyBackend implements FamilyBackend {
     if (headBefore === undefined || headBefore.trim().length === 0) {
       return undefined;
     }
-    const rawCount = this.sh(
-      "git",
-      ["rev-list", "--count", `${headBefore.trim()}..HEAD`],
-      this.opts.workingRepo,
-    );
-    const count = Number(rawCount);
-    if (!Number.isSafeInteger(count) || count < 0) {
-      throw new Error(`family coder-fix git rev-list returned invalid commit count: ${rawCount}`);
+    try {
+      const rawCount = this.sh(
+        "git",
+        ["rev-list", "--count", `${headBefore.trim()}..HEAD`],
+        this.opts.workingRepo,
+      );
+      const count = Number(rawCount);
+      return Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+    } catch {
+      // Git observation is telemetry only. The fresh reviewer, not this probe,
+      // decides whether the coder-fix actually closed the findings.
+      return undefined;
     }
-    return count;
   }
 
   private familyCoderOutput(output: SelfReportedCoder): CoderResult {

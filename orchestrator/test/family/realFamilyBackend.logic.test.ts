@@ -209,6 +209,20 @@ describe("RealFamilyBackend family coder-fix commit truth (#818)", () => {
     expect(backend.finalCommitCountSince(undefined)).toBeUndefined();
   });
 
+  it("degrades a post-worker rev-list observation failure to an unknown count", () => {
+    class RevListFailureProbe extends Probe {
+      protected override sh(file: string, args: string[]): string {
+        if (file === "git" && args[0] === "rev-list") {
+          throw new Error("rev-list unavailable");
+        }
+        return super.sh(file, args);
+      }
+    }
+    const backend = new RevListFailureProbe(opts(trackRepo()));
+
+    expect(backend.finalCommitCountSince("a".repeat(40))).toBeUndefined();
+  });
+
   it("runs the real coder-fix chain after rev-parse HEAD fails and emits unknown-count telemetry", async () => {
     const repo = trackRepo();
     class RevParseFailureBackend extends RealFamilyBackend {
