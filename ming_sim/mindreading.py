@@ -68,6 +68,17 @@ def intelligence_precision(target_factor: float = 1.0, channel_factor: float = 1
     return "模糊"
 
 
+def build_scouting_precision_payload(
+    target_factor: float = 1.0,
+    channel_factor: float = 1.0,
+) -> Dict[str, str]:
+    """为后续锦衣卫查探链提供精度 payload，复用读心的同一口径。"""
+    return {
+        "source": "锦衣卫查探预留",
+        "precision": intelligence_precision(target_factor, channel_factor),
+    }
+
+
 def _seed_guilt_text(character: object) -> str:
     raw = _character_field(character, "seed_guilt") or ""
     try:
