@@ -163,6 +163,7 @@ import {
   DEFAULT_PARK_THRESHOLD_MS,
   billingPoolFromQuotaPool,
   buildDefaultBillingPools,
+  findLiveBillingPoolForModel,
   type BillingPoolEntry,
   type BillingPoolId,
   type NextRelayBaton,
@@ -2741,6 +2742,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     return buildDefaultBillingPools({ limitedPool, resetAt });
   };
 
+  const resolveResourceFailurePool = (input: {
+    readonly modelRef: string;
+    readonly knownPool?: BillingPoolId;
+    readonly capacity: boolean;
+  }): {
+    readonly currentPool: BillingPoolId;
+    readonly pools: ReadonlyArray<BillingPoolEntry>;
+  } => {
+    const inferredPool = billingPoolFromQuotaPool(poolForModelRef(input.modelRef));
+    const configuredPools = resolveRelayPools(inferredPool, undefined);
+    const confirmedPool =
+      input.knownPool ??
+      currentBillingPool ??
+      findLiveBillingPoolForModel(configuredPools, input.modelRef);
+    const currentPool = confirmedPool ?? inferredPool;
+    return {
+      currentPool,
+      pools: configuredPools.map((pool) => {
+        if (pool.id !== currentPool) return pool;
+        if (!input.capacity) return { ...pool, status: "dead" as const };
+        // A capacity failure preserves only a known live billing pool. Never
+        // promote a slug-derived fallback (for example unknown → grok-build).
+        return confirmedPool !== undefined
+          ? { ...pool, status: "live" as const }
+          : pool;
+      }),
+    };
+  };
+
   const currentCoderModelId = (): string => {
     const slug = modelRoute.slots.coder;
     return lookupCoderRosterEntry(slug)?.id ?? slug;
@@ -4598,20 +4628,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               isCapacityRelayError(err)) &&
             canRelayInProcess()
           ) {
-            const currentPool =
-              currentBillingPool ??
-              billingPoolFromQuotaPool(
-                isHangWithLivePoolError(err)
-                  ? err.poolId
-                  : poolForModelRef(modelRoute.slots.coder),
-              );
-            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id !== currentPool
-                ? p
-                : isCapacityRelayError(err)
-                  ? { ...p, status: "live" as const }
-                  : { ...p, status: "dead" as const },
-            );
+            const { currentPool, pools } = resolveResourceFailurePool({
+              modelRef: modelRoute.slots.coder,
+              ...(isHangWithLivePoolError(err)
+                ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
+                : {}),
+              capacity: isCapacityRelayError(err),
+            });
             const trigger = isCapacityRelayError(err)
               ? ("capacity" as const)
               : isHangWithLivePoolError(err)
@@ -4997,20 +5020,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               isCapacityRelayError(err)) &&
             canRelayInProcess()
           ) {
-            const currentPool =
-              currentBillingPool ??
-              billingPoolFromQuotaPool(
-                isHangWithLivePoolError(err)
-                  ? err.poolId
-                  : poolForModelRef(modelRoute.slots.ship),
-              );
-            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id !== currentPool
-                ? p
-                : isCapacityRelayError(err)
-                  ? { ...p, status: "live" as const }
-                  : { ...p, status: "dead" as const },
-            );
+            const { currentPool, pools } = resolveResourceFailurePool({
+              modelRef: modelRoute.slots.ship,
+              ...(isHangWithLivePoolError(err)
+                ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
+                : {}),
+              capacity: isCapacityRelayError(err),
+            });
             const trigger = isCapacityRelayError(err)
               ? ("capacity" as const)
               : isHangWithLivePoolError(err)
@@ -6174,28 +6190,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               isCapacityRelayError(err)) &&
             canRelayInProcess()
           ) {
-            const currentPool =
-              currentBillingPool ??
-              billingPoolFromQuotaPool(
-                isHangWithLivePoolError(err)
-                  ? err.poolId
-                  : poolForModelRef(
-                      reviewStep === "S9"
-                        ? modelRoute.slots.verify
-                        : reviewStep === "S10"
-                          ? modelRoute.slots.fixer
-                          : reviewStep === "S11"
-                            ? modelRoute.slots.cleanup
-                            : modelRoute.slots.docRelease,
-                    ),
-              );
-            const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id !== currentPool
-                ? p
-                : isCapacityRelayError(err)
-                  ? { ...p, status: "live" as const }
-                  : { ...p, status: "dead" as const },
-            );
+            const reviewModelRef =
+              reviewStep === "S9"
+                ? modelRoute.slots.verify
+                : reviewStep === "S10"
+                  ? modelRoute.slots.fixer
+                  : reviewStep === "S11"
+                    ? modelRoute.slots.cleanup
+                    : modelRoute.slots.docRelease;
+            const { currentPool, pools } = resolveResourceFailurePool({
+              modelRef: reviewModelRef,
+              ...(isHangWithLivePoolError(err)
+                ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
+                : {}),
+              capacity: isCapacityRelayError(err),
+            });
             const trigger = isCapacityRelayError(err)
               ? ("capacity" as const)
               : isHangWithLivePoolError(err)

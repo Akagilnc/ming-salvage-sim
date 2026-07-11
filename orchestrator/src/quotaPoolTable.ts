@@ -214,6 +214,21 @@ function livePoolsForModel(
 }
 
 /**
+ * Return a pool whose liveness is confirmed by the relay table and which can
+ * serve the dispatched model. A model slug alone is not evidence that its
+ * quota/billing pool is live.
+ */
+export function findLiveBillingPoolForModel(
+  pools: ReadonlyArray<BillingPoolEntry>,
+  modelRef: string,
+): BillingPoolId | undefined {
+  const rosterEntry = lookupCoderRosterEntry(modelRef);
+  const modelId = rosterEntry?.id ?? modelRef;
+  const slug = rosterEntry?.slug ?? modelRef;
+  return livePoolsForModel(pools, modelId, slug)[0]?.id;
+}
+
+/**
  * ADR 0126: next baton from the SAME #767 Coder-Rec roster, with one extra
  * pool-orthogonal step for resource triggers:
  *   1. same model on a different live pool (换马甲)
