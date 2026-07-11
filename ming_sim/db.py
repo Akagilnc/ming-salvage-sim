@@ -939,6 +939,23 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS recommendation_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                recommender TEXT NOT NULL,
+                candidate TEXT NOT NULL,
+                candidate_kind TEXT NOT NULL,
+                target_office TEXT NOT NULL DEFAULT '',
+                basis TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'adopted',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_recommendation_events_recommender
+                ON recommendation_events(recommender, turn, id);
+
             -- 召对聊天记录持久化，每条消息一行，进程重启不丢。
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8140,7 +8157,20 @@ class GameDB:
             res = apply_office_appointment(
                 self, state, content, registry, name, office,
                 reason=reason, new_office_type=office_type, faction=faction, llm_config=self.llm_config)
-            return not res.get("rejected")
+            accepted = not res.get("rejected")
+            recommendation = payload.get("recommendation")
+            if accepted and isinstance(recommendation, dict):
+                candidate_rows = self.list_recommendation_candidates(
+                    state, str(recommendation.get("recommender") or pa["minister_name"])
+                )
+                candidate = next((row for row in candidate_rows if row["name"] == name), None)
+                if candidate is None:
+                    return False
+                self.record_recommendation(
+                    state, str(recommendation.get("recommender") or pa["minister_name"]),
+                    candidate, office, reason,
+                )
+            return accepted
         if pa["action"] == "罢免":
             # 仅大明【在职】大臣可罢:_find_existing_minister 已 ming-guard + 解 alias;
             # 外藩(power_id≠ming)/后宫/不在册不接(无字面 fallback,免误黜皇太极,CMR R2);
@@ -9528,6 +9558,28 @@ class GameDB:
     def get_character_knowledge(self, state: GameState, character_name: str) -> Dict[str, object]:
         from ming_sim.knowledge import build_character_knowledge
         return build_character_knowledge(self, state, character_name)
+
+    def list_recommendation_candidates(self, state: GameState, recommender: str) -> List[Dict[str, object]]:
+        from ming_sim.recommendations import list_recommendation_candidates
+        return list_recommendation_candidates(self, state, recommender)
+
+    def record_recommendation(
+        self, state: GameState, recommender: str, candidate: Dict[str, object],
+        target_office: str, reason: str = "",
+    ) -> int:
+        from ming_sim.recommendations import record_recommendation
+        event_id = record_recommendation(self, state, recommender, candidate, target_office, reason)
+        if not bool(getattr(self.conn, "_commit_suspended", False)) and int(
+            getattr(self.conn, "_atomic_depth", 0) or 0
+        ) <= 0:
+            self.conn.commit()
+        return event_id
+
+    def list_recommendation_events(
+        self, state: GameState, recommender: Optional[str] = None,
+    ) -> List[Dict[str, object]]:
+        from ming_sim.recommendations import list_recommendation_events
+        return list_recommendation_events(self, state, recommender)
 
     def create_secret_order(
         self,
