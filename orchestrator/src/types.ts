@@ -836,6 +836,12 @@ export interface WorkerLandingPayload {
  * (human answer, runner-observed gate failures) — never finding free-text content.
  */
 export interface DispatchContext {
+  /**
+   * Ephemeral identity for one invocation of the orchestrator runner. Unlike
+   * `stateDir`, this is freshly minted on every run, including a same-issue
+   * resume against the same durable ledger.
+   */
+  readonly runId?: string;
   /** The immutable route selected for this run, including its smoke records. */
   readonly modelRoute?: ResolvedModelRoute;
   /**
@@ -1466,6 +1472,8 @@ export type MonitoredWorkerIdleDisposition =
  * sibling state directory (outside the worktree so `git clean -fd` cannot remove it).
  */
 export interface PersistentLedgerEntry extends LedgerEntry {
+  /** Runner invocation identity; shared by this run's ledger rows. */
+  readonly runId?: string;
   /**
    * Sandbox session identifier (resume truth).
    *

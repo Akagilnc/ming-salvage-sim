@@ -67,6 +67,8 @@ class DispatchBackend implements Backend {
   readonly specs: WorkerSpec[] = [];
   /** The DispatchContext of each dispatch, in order. */
   readonly ctxs: DispatchContext[] = [];
+  /** Durable runner ledger rows, including the buffered S0 start row. */
+  readonly persistedLedger: PersistentLedgerEntry[] = [];
   /** Asserts the runner NEVER reaches for the legacy methods directly. */
   legacyRunStepCount = 0;
   pushCount = 0;
@@ -139,9 +141,11 @@ class DispatchBackend implements Backend {
   }
 
   async writeLedger(
-    _entry: PersistentLedgerEntry,
+    entry: PersistentLedgerEntry,
     _stateDir: string,
-  ): Promise<void> {}
+  ): Promise<void> {
+    this.persistedLedger.push(entry);
+  }
 
   async dispatchWorker(
     spec: WorkerSpec,
@@ -229,6 +233,24 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     for (const ctx of backend.ctxs) {
       expect(ctx.worktree).toEqual(backend.worktree);
     }
+  });
+
+  it("mints one fresh run id per invocation and persists it from the S0 start row", async () => {
+    const first = new DispatchBackend();
+    const second = new DispatchBackend();
+
+    await runOrchestrator({ issueNumber: 331, backend: first });
+    await runOrchestrator({ issueNumber: 331, backend: second });
+
+    const firstRunId = first.ctxs[0]?.runId;
+    const secondRunId = second.ctxs[0]?.runId;
+    expect(firstRunId).toEqual(expect.any(String));
+    expect(secondRunId).toEqual(expect.any(String));
+    expect(firstRunId).not.toBe(secondRunId);
+    expect(first.ctxs.every((ctx) => ctx.runId === firstRunId)).toBe(true);
+    expect(second.ctxs.every((ctx) => ctx.runId === secondRunId)).toBe(true);
+    expect(first.persistedLedger.find((entry) => entry.step === "S0")?.runId).toBe(firstRunId);
+    expect(second.persistedLedger.find((entry) => entry.step === "S0")?.runId).toBe(secondRunId);
   });
 });
 
