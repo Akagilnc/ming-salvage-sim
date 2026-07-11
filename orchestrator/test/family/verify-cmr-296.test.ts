@@ -422,6 +422,167 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.ledger.filter((row) => row.status === "cmr_passed")).toHaveLength(2);
   });
 
+  it("#855 review: a coder-fix worker whose outcome is malformed once is mechanically retried (only the CMR reviewer path caller-owns malformed)", async () => {
+    const findingKey =
+      "completeness|ming_sim/knowledge.py:1|明发旨意/邸报所载 = 人人该知";
+    const finding: Finding = {
+      severity: "medium",
+      category: "completeness",
+      claim_quote: "明发旨意/邸报所载 = 人人该知",
+      location: "ming_sim/knowledge.py:1",
+      suggested_fix: "propagate public decrees into every character's knowledge",
+      action: "fix_now",
+    };
+    let coderDispatches = 0;
+    let backend!: CapableFamilyBackend;
+    backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: (req) => {
+        if (req.priorCmrFindingIdentityKeys?.includes(findingKey)) {
+          return {
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+            claimedFixedFindingIdentityKeys: [findingKey],
+            priorFindingDispositions: [
+              {
+                identityKey: findingKey,
+                status: "verified-closed",
+                evidence: "knowledge propagation verified after coder-fix",
+              },
+            ],
+          };
+        }
+        if (req.cmrPass === "correctness") {
+          return {
+            converged: true,
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          };
+        }
+        return {
+          converged: false,
+          reason: "completeness found a knowledge propagation gap",
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          findings: [finding],
+          ...CMR_EVIDENCE,
+        };
+      },
+      async worker(spec, ctx) {
+        if (spec.kind === "cmr") {
+          const cmr = await backend.runIntegratedCmr({
+            familyBase: ctx.familyBase ?? "family/291-base",
+            ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+            ...(ctx.priorCmrFindingIdentityKeys !== undefined
+              ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+              : {}),
+          });
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+              converged: cmr.converged,
+              ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
+              ...(cmr.successfulLegs !== undefined
+                ? { successfulLegs: cmr.successfulLegs }
+                : {}),
+              ...(cmr.claimedFixedFindingIdentityKeys !== undefined
+                ? { claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys }
+                : {}),
+              ...(cmr.priorFindingDispositions !== undefined
+                ? { priorFindingDispositions: cmr.priorFindingDispositions }
+                : {}),
+              ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
+              ...(cmr.evidencePaths !== undefined ? { evidencePaths: cmr.evidencePaths } : {}),
+            },
+          };
+        }
+        if (spec.kind === "coder") {
+          coderDispatches += 1;
+          if (coderDispatches === 1) {
+            // Transient garbage outcome — must retry mechanically, NOT surface
+            // as caller-owned terminal (the coder-fix caller has no malformed
+            // follow-up loop and would abort the gate).
+            return { kind: "malformed", reason: "outcome sidecar was truncated" };
+          }
+          backend.currentFamilyHead = "head-after-completeness-fix";
+          return {
+            kind: "completed",
+            output: {
+              kind: "coder",
+              committed: true,
+              commitsAdded: 1,
+              repairEvidence: {
+                findingScope: { identityKeys: [findingKey] },
+                changedFiles: ["ming_sim/knowledge.py"],
+                tests: ["pytest tests/test_character_knowledge_489.py"],
+                sameClassBugScan: "rg 'propagate' ming_sim tests",
+                introducedRegressionCheck:
+                  "npm test -- --run test/family/verify-cmr-296.test.ts",
+              },
+            },
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase ?? "family/291-base",
+              pr: "pr://family/291-base",
+              prHead: backend.currentFamilyHead,
+              status: "pr_opened",
+            },
+          };
+        }
+        if (
+          spec.kind === "verify" ||
+          spec.kind === "fixer" ||
+          spec.kind === "cleanup" ||
+          spec.kind === "docRelease"
+        ) {
+          return {
+            kind: "completed",
+            output:
+              spec.kind === "verify"
+                ? { kind: "verify", converged: true }
+                : spec.kind === "fixer"
+                  ? {
+                    kind: "fixer",
+                    committed: true,
+                    fixCommitSha: "fixsha1111111111111111111111111111111111",
+                  }
+                  : spec.kind === "cleanup"
+                    ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
+                    : { kind: "docRelease", released: true },
+          };
+        }
+        return { kind: "failed", reason: `unexpected worker ${spec.kind}` };
+      },
+    });
+    backend.currentFamilyHead = "head-before-completeness-fix";
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-before-completeness-fix",
+    });
+
+    expect(result.ran).toBe(true);
+    // The malformed first attempt was retried mechanically and the fix landed.
+    expect(coderDispatches).toBe(2);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      mechanicalRedispatchAttempt: 1,
+      reason: "outcome sidecar was truncated",
+    }));
+    // The gate converged instead of aborting on the transient malformed outcome.
+    expect(
+      backend.aborted.some((e) => /malformed|sidecar/i.test(e.errorPackage.reason)),
+    ).toBe(false);
+  });
+
   it("checks CMR leg floor before routing fix_now findings to coder-fix", async () => {
     const weakLegFinding: Finding = {
       severity: "medium",
