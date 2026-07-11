@@ -1956,7 +1956,12 @@ async function dispatchOrAbort(
       {
         callerOwns: (o) =>
           opts?.extraCallerOwns?.(o) === true ||
-          ("result" in o &&
+          // Only the integrated CMR reviewer path has a follow-up loop for
+          // malformed outcomes (`rewriteOutcomeProtocolFailure`); every other
+          // family worker's caller would just abort on them, so those retry
+          // mechanically like any transient failure.
+          (spec.kind === "cmr" &&
+            "result" in o &&
             (o.result.kind === "malformed" ||
               o.result.kind === "outcome_protocol_failure")),
         onFailure: async (outcome, attempt) => {
