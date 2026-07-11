@@ -713,27 +713,8 @@ class GameSession:
         return character_from_name(name)
 
     def _retrieve_memories_for_message(self, message: str) -> str:
-        """注入近几回合章节记忆，让大臣知道近来朝局大事。章节记忆是回合粒度全局摘要，
-        直接取最近 N 回合，不再按关键词检索（旧原子记忆已废）。"""
-        from ming_sim.token_stats import tlog
-        try:
-            chapters = self.db.list_chapter_memories(upto_turn=self.state.turn, recent=4)
-            if not chapters:
-                return message
-            lines = ["【近来朝局（近几月章节）】"]
-            for c in chapters:
-                body = (c.get("body") or "").strip()
-                if not body:
-                    continue
-                lines.append(f"- {c['year']}年{c['period']}月：{body}")
-            if len(lines) == 1:
-                return message
-            new_msg = "\n".join(lines) + "\n\n" + message
-            tlog(f"[chat/chapter-recall] hit={len(chapters)} ({len(new_msg)}字)")
-            return new_msg
-        except Exception as exc:
-            tlog(f"[chat/chapter-recall] 失败跳过：{exc}")
-            return message
+        """Compatibility shim; character context owns all historical reads."""
+        return message
 
     def _temporary_character(self, name: str) -> Character:
         clean_name = str(name or "").strip()

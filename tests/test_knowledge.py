@@ -59,3 +59,36 @@ def test_knowledge_exclusion_reads_current_office_without_nameerror(
         assert knowledge["events"][0]["body"] == "不可忽略的密令"
     else:
         assert knowledge["events"] == []
+
+
+def test_knowledge_projects_gazette_and_chapter_sources_per_character(game):
+    """同一份公共叙事中的密事不能借原始邸报/章节副本泄漏。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    public_marker = "公开事项标记"
+    secret_marker = "不得知密事标记"
+
+    db.record_public_knowledge_event(
+        state, "密查", secret_marker, source_id="test:mixed-source",
+        excluded_names=[excluded.name],
+    )
+    db.save_turn_report(state, f"{public_marker}；{secret_marker}")
+    db.save_chapter_memory(state, "朝局", f"{public_marker}；{secret_marker}")
+
+    excluded_knowledge = db.get_character_knowledge(state, excluded.name)
+    knower_knowledge = db.get_character_knowledge(state, knower.name)
+    excluded_text = " ".join(
+        item.get("body", "") for item in excluded_knowledge["public_events"]
+    )
+    knower_text = " ".join(
+        item.get("body", "") for item in knower_knowledge["public_events"]
+    )
+
+    assert public_marker in excluded_text
+    assert secret_marker not in excluded_text
+    assert secret_marker in knower_text
