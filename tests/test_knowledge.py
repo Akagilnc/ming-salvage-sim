@@ -198,3 +198,29 @@ def test_archive_write_materializes_unmirrored_source_scope(game):
     assert rows[0]["character_name"] == ""
     assert rows[0]["body"] == secret_marker
     assert excluded.name in rows[0]["excluded_names"]
+
+
+def test_chapter_public_counterpart_keeps_only_independent_public_sources(game):
+    """公开章节对应体来自公开 source，不从聚合章节删改密事。"""
+    from ming_sim.memories import _public_chapter_counterpart
+
+    db, state, content = game
+    knower, excluded = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ][:2]
+    db.record_public_knowledge_event(
+        state, "公开事项", "公开来源标记", source_id="test:chapter-public",
+    )
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": knower.name, "tier": "主办"}],
+        "secret_order", "密查", "受限来源标记",
+        source_id="test:chapter-restricted", excluded_names=[excluded.name],
+    )
+
+    counterpart = _public_chapter_counterpart(db.knowledge_items_for_turn(state.turn))
+
+    assert "公开来源标记" in counterpart
+    assert "受限来源标记" not in counterpart
