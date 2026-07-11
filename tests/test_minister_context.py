@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from itertools import combinations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -436,6 +437,48 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
 
     second_tools = {f.__name__: f for f in build_minister_tools(second, _ctx(game))}
     assert hidden not in second_tools["search_memories"](keywords="密查辽饷")
+
+
+def test_minister_agents_use_distinct_real_db_world_slices_by_office(game):
+    """两个职位经最终 agent seam 组装出各自真实职位域的世界切片。"""
+    db, _state, content = game
+    representatives = {}
+    for minister in content.characters.values():
+        if (minister.office_type in content.office_knowledge_domains
+                and db.get_character_status(minister.name)[0] == "active"):
+            representatives.setdefault(minister.office_type, minister)
+
+    first, second = next(
+        (pair for pair in combinations(representatives.values(), 2)
+         if set(content.office_knowledge_domains[pair[0].office_type])
+         != set(content.office_knowledge_domains[pair[1].office_type])),
+        (None, None),
+    )
+    assert first is not None and second is not None, "fixture must contain distinct active office domains"
+
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured[kwargs["name"]] = kwargs
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
+        create_minister_agent(first, cfg, _ctx(game), db)
+        create_minister_agent(second, cfg, _ctx(game), db)
+
+    first_text = "\n".join(captured[first.name]["instructions"])
+    second_text = "\n".join(captured[second.name]["instructions"])
+    first_domains = set(content.office_knowledge_domains[first.office_type])
+    second_domains = set(content.office_knowledge_domains[second.office_type])
+    assert first_domains != second_domains
+    for domain in first_domains - second_domains:
+        assert f"{domain}：" in first_text
+        assert f"{domain}：" not in second_text
+    for domain in second_domains - first_domains:
+        assert f"{domain}：" in second_text
+        assert f"{domain}：" not in first_text
 
 
 def test_minister_context_secret_order_chain_filters_final_tools_and_instructions(game):
