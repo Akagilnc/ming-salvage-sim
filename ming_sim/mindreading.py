@@ -85,14 +85,16 @@ def _seed_guilt_text(character: object) -> str:
 
 def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]:
     knowledge = db.get_character_knowledge(state, reader.name)
-    # 去掉 turn/kind/source 等机面元数据，只传读心者自己的世界与听闻正文。
+    # 去掉 turn/kind/source 等机面元数据，只传读心者自己的听闻正文。当前盘面
+    # 会包含可数军政事实；读心 payload 的职责是转译人物底账，不能把无关盘面
+    # 混入而意外重现裸人物分值。
     heard = []
     for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
         heard.append({
             "title": safe_historical_text(item.get("title"), "见闻标题"),
             "body": safe_historical_text(item.get("body"), "见闻正文"),
         })
-    return {"world": dict(knowledge.get("world") or {}), "heard": heard[-20:]}
+    return {"heard": heard[-20:]}
 
 
 def _safe_reply_text(minister_reply: object) -> str:
@@ -141,8 +143,14 @@ def _infer_subtext(
         axis_hint = "党君两面都还隔着一层"
 
     heard = reader_context.get("heard") or []
-    if heard:
-        latest = heard[-1]
+    # Archive projections are appended after the event ledger, so prefer an
+    # actual witnessed item over a derived gazette when both exist.
+    firsthand = [
+        item for item in heard
+        if isinstance(item, Mapping) and item.get("title") not in {"邸报", "朝局旧闻"}
+    ]
+    if firsthand:
+        latest = firsthand[-1]
         title = str(latest.get("title") or "旧闻") if isinstance(latest, Mapping) else "旧闻"
         view_hint = f"近臣又想起听来的「{title}」"
     else:
