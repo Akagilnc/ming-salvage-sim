@@ -809,7 +809,7 @@ async function runnerModuleNotFoundReplay(): Promise<SeamReplay> {
     issueNumber: 440,
     backend: new ThrowingDogfoodSingleSliceBackend(),
   });
-  if (result.status !== "error" || result.stopSummary.reason !== "infra_failure") {
+  if (result.status !== "escalate" || result.stopSummary.reason !== "infra_failure") {
     throw new Error(`dogfood runner module-not-found replay ended ${result.status}`);
   }
   return {

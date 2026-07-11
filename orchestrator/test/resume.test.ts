@@ -36,7 +36,28 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+
+const childProcessFault = vi.hoisted(() => ({ ghUnavailable: false }));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFileSync: vi.fn((file: string, args: string[], options?: object) => {
+      if (file === "gh" && childProcessFault.ghUnavailable) {
+        throw new Error("gh temporarily unavailable");
+      }
+      return actual.execFileSync(
+        file,
+        args as Parameters<typeof actual.execFileSync>[1],
+        options as Parameters<typeof actual.execFileSync>[2],
+      );
+    }),
+  };
+});
+
 import { runOrchestrator } from "../src/runner.js";
+import { parseLedgerJsonl } from "../src/realBackend.js";
 import { buildRoundTrigger } from "../src/evidenceAdmissibility.js";
 import {
   ONLINE_REVIEW_SNAPSHOT_FILE,
@@ -502,8 +523,8 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.stopSummary.reason).toBe("contract_drift");
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("infra_failure");
   });
 });
 
@@ -901,6 +922,93 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S8",
     ]);
     expect(result.stopSummary?.summary).toContain("payload was malformed");
+  });
+});
+
+describe("#824 durable mechanical redispatch budget", () => {
+  it("continues the prior S2 attempt count after a crash instead of granting a fresh budget", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: parseLedgerJsonl([
+        entry("S0"),
+        entry("S1"),
+        {
+          ...entry("S2"),
+          step: "mechanical_redispatch_attempt",
+          event: "mechanical_redispatch_attempt",
+          forStep: "S2",
+          mechanicalRedispatchAttempt: 1,
+        },
+        {
+          ...entry("S2"),
+          step: "mechanical_redispatch_attempt",
+          event: "mechanical_redispatch_attempt",
+          forStep: "S2",
+          mechanicalRedispatchAttempt: 2,
+        },
+      ].map((row) => JSON.stringify(row)).join("\n")),
+    };
+    const backend = new ResumeBackend(resumeState);
+    backend.runStep = async (spec) => {
+      backend.runStepIds.push(spec.id);
+      return spec.role === "coder"
+        ? { kind: "coder", committed: false, commitsAdded: 0 }
+        : { kind: "reviewer", findings: [] };
+    };
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.runStepIds).toEqual(["S2"]);
+    expect(
+      backend.ledgerWrites.filter(
+        (written) => written.event === "mechanical_redispatch_attempt",
+      ).map((written) => written.mechanicalRedispatchAttempt),
+    ).toContain(3);
+    expect(result.stopSummary?.summary).toContain(
+      "after 3 dispatch attempts",
+    );
+  });
+
+  it("re-feeds S9 after a crash mid pending-CI re-poll without inheriting the prior successful streak", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S7", {
+          kind: "ship",
+          branch: WORKTREE.branch,
+          status: "pr_opened",
+          pr: "pr://slice/offline-255",
+        }),
+        entry("S9", { kind: "verify", converged: true }),
+        {
+          ...entry("S9"),
+          event: "online_review_ci_pending",
+          prUrl: "pr://slice/offline-255",
+          prHead: "deadbeefcommitsha",
+        },
+        {
+          ...entry("S9"),
+          step: "mechanical_redispatch_attempt",
+          event: "mechanical_redispatch_attempt",
+          forStep: "S9",
+          mechanicalRedispatchAttempt: 1,
+        },
+      ],
+    };
+    const backend = new DispatchRecordingResumeBackend(resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(backend.dispatchSpecs.some((spec) => spec.id === "S9")).toBe(true);
+    expect(result.stopSummary?.summary).not.toContain("after 3 dispatch attempts");
   });
 });
 
@@ -3273,6 +3381,50 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
 
 // ─── AC4: recovery decides next step from ledger, not memory ──────────────────
 
+describe("S7 ship observation during resume setup (#824 r10)", () => {
+  it("turns transient gh failure into resumable S8(error) instead of rejecting runOrchestrator", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
+    childProcessFault.ghUnavailable = true;
+    const backend = new ResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S7", {
+          kind: "ship",
+          branch: WORKTREE.branch,
+          status: "pushed",
+        }),
+      ],
+    });
+
+    try {
+      const result = await runOrchestrator({ issueNumber: 824, backend });
+
+      expect(result.status).toBe("error");
+      expect(result.stepLedger.at(-1)).toEqual(
+        expect.objectContaining({
+          step: "S8",
+          stopSummary: expect.objectContaining({
+            summary: "gh temporarily unavailable",
+          }),
+        }),
+      );
+      expect(backend.ledgerWrites.at(-1)).toEqual(
+        expect.objectContaining({ step: "S8", handoffStatus: "error" }),
+      );
+    } finally {
+      childProcessFault.ghUnavailable = false;
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", () => {
   it("ledger stopping at a committed S2 resumes at the route successor S3, not S0", async () => {
     // Prior run got through S2 but died before review. Resume must route
@@ -3381,7 +3533,7 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(backend.resumeSessionCalls).toHaveLength(0);
   });
 
-  it("prior crash with last entry = coder committed:false (no S8 yet) → status error, NOT success", async () => {
+  it("prior crash with last entry = coder committed:false (no S8 yet) → redispatches instead of treating it as terminal", async () => {
     // The prior run crashed AFTER persisting the 0-commit coder entry but
     // BEFORE writing the S8 handoff. route(S2, committed:false) → error handoff.
     // Recovery must report error, not collapse it into success.
@@ -3398,10 +3550,8 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.branch).toBeUndefined();
-    expect(result.errorPackage).toBeDefined();
-    expect(backend.runStepIds).toEqual([]);
+    expect(result.status).toBe("success");
+    expect(backend.runStepIds).toContain("S2");
   });
 
   it("prior crash with an advisory S2 commit count resumes through review", async () => {

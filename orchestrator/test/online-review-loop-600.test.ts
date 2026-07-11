@@ -124,6 +124,7 @@ import {
 } from "../src/onlineReviewLoop.js";
 import { runOrchestrator } from "../src/runner.js";
 import { route } from "../src/route.js";
+import { observeOpenPrForBranch } from "../src/autoMerge.js";
 import {
   fixerHasFixCommit,
   skeletonReviewLoopWorkerResult,
@@ -798,18 +799,88 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
 });
 
 describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => {
-  it("S7 pushed skips the online review loop → S8 success", () => {
-    expect(
-      route({ from: "S7", shipStatus: "pushed", output: { kind: "ship", branch: "b", status: "pushed" } }),
-    ).toEqual({ kind: "handoff", status: "success" });
+  it("observes an open PR for the shipped branch from GitHub host state", () => {
+    const calls: string[] = [];
+    const observation = observeOpenPrForBranch((file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      return JSON.stringify([
+        {
+          number: 42,
+          url: "https://github.com/o/r/pull/42",
+          state: "OPEN",
+          headRefName: "fix/824-radius",
+          headRefOid: "head-42",
+          headRepositoryOwner: { login: "o" },
+          mergeStateStatus: "CLEAN",
+        },
+      ]);
+    }, "o/r", "fix/824-radius");
+
+    expect(observation).toEqual({
+      present: true,
+      prUrl: "https://github.com/o/r/pull/42",
+    });
+    expect(calls[0]).toContain("gh pr list --repo o/r --head fix/824-radius --state open");
   });
 
-  it("S7 pr_opened enters S9", () => {
+  it("observes no open PR from an empty GitHub host result", () => {
+    expect(
+      observeOpenPrForBranch(() => "[]", "o/r", "fix/824-radius"),
+    ).toEqual({ present: false });
+  });
+
+  it("discards a reported open PR on another branch and routes from the shipped branch host truth", () => {
+    const observation = observeOpenPrForBranch(
+      (_file, args) =>
+        args[1] === "view"
+          ? JSON.stringify({
+              number: 99,
+              url: "https://github.com/o/r/pull/99",
+              state: "OPEN",
+              headRefName: "other-open-branch",
+              headRefOid: "deadbeef",
+              mergeStateStatus: "CLEAN",
+            })
+          : JSON.stringify([
+              {
+                number: 100,
+                url: "https://github.com/o/r/pull/100",
+                state: "OPEN",
+                headRefName: "fix/824-radius",
+                headRefOid: "head-100",
+                headRepositoryOwner: { login: "o" },
+                mergeStateStatus: "CLEAN",
+              },
+            ]),
+      "o/r",
+      "fix/824-radius",
+      "https://github.com/o/r/pull/99",
+    );
+
+    expect(observation).toEqual({
+      present: true,
+      prUrl: "https://github.com/o/r/pull/100",
+    });
+  });
+
+  it("S7 skips online review when host truth says no PR, regardless of worker shipStatus", () => {
     expect(
       route({
         from: "S7",
         shipStatus: "pr_opened",
+        hostPrPresent: false,
         output: { kind: "ship", branch: "b", status: "pr_opened", pr: "https://x" },
+      }),
+    ).toEqual({ kind: "handoff", status: "success" });
+  });
+
+  it("S7 enters S9 when host truth says a PR exists, regardless of worker shipStatus", () => {
+    expect(
+      route({
+        from: "S7",
+        shipStatus: "pushed",
+        hostPrPresent: true,
+        output: { kind: "ship", branch: "b", status: "pushed" },
       }),
     ).toEqual({ kind: "next", step: "S9" });
   });
@@ -6250,7 +6321,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       return worktree;
     }
     async writeSnapshot(): Promise<void> {}
-    async writeLedger(): Promise<void> {}
+    async writeLedger(_entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {}
     async runStep(): Promise<StepOutput> {
       throw new Error("runStep should not be called");
     }
@@ -6392,6 +6463,113 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
           line: 42,
         }),
       );
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("#824 pending-CI verify re-polls reset the durable S9 dispatch budget", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      class SlowCiBackend extends HookPollBackend {
+        readonly ledgerWrites: PersistentLedgerEntry[] = [];
+        verifyDispatches = 0;
+
+        override async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
+          this.ledgerWrites.push(entry);
+        }
+
+        override async pollOnlineReviewState(): Promise<OnlineReviewLandingSnapshot> {
+          return {
+            ...greenHookSnapshot(),
+            prUrl: offlinePr,
+            checkRuns: this.verifyDispatches < 4
+              ? [{ id: 1, name: "ci", headSha: "head-1", status: "in_progress" }]
+              : [],
+          };
+        }
+
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (spec.kind === "ship") {
+            return {
+              kind: "completed",
+              output: { kind: "ship", branch: worktree.branch, status: "pr_opened", pr: offlinePr },
+            };
+          }
+          if (spec.kind === "verify") this.verifyDispatches += 1;
+          return super.dispatchWorker(spec, ctx, landing);
+        }
+      }
+
+      const backend = new SlowCiBackend();
+      const result = await runOrchestrator({ issueNumber: 824, backend });
+
+      expect(result.status).toBe("success");
+      expect(backend.verifyDispatches).toBe(5);
+      expect(
+        backend.ledgerWrites.filter((entry) => entry.step === "S9" && entry.event === undefined),
+      ).toHaveLength(5);
+    } finally {
+      if (prev === undefined) delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      else process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+    }
+  });
+
+  it("retries a clean-exit verify worker whose completed envelope is invalid", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      class InvalidVerifyThenConvergeBackend extends HookPollBackend {
+        verifyDispatches = 0;
+
+        override async pollOnlineReviewState(
+          _input: { repo: string; prUrl: string; pollCount: number },
+        ): Promise<OnlineReviewLandingSnapshot> {
+          return { ...greenHookSnapshot(), prUrl: offlinePr };
+        }
+
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (spec.kind === "ship") {
+            return {
+              kind: "completed",
+              output: {
+                kind: "ship",
+                branch: worktree.branch,
+                status: "pr_opened",
+                pr: offlinePr,
+              },
+            };
+          }
+          if (spec.kind === "verify") {
+            this.verifyDispatches += 1;
+            if (this.verifyDispatches === 1) {
+              return {
+                kind: "completed",
+                output: { kind: "verify", converged: "bad" },
+              } as WorkerResult;
+            }
+          }
+          return super.dispatchWorker(spec, ctx, landing);
+        }
+      }
+
+      const backend = new InvalidVerifyThenConvergeBackend();
+      const result = await runOrchestrator({ issueNumber: 600, backend });
+      expect(result.status).toBe("success");
+      expect(backend.verifyDispatches).toBe(2);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

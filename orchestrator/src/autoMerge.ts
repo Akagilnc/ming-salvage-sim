@@ -34,6 +34,9 @@ export interface PrMergeLiveState {
   readonly state: string;
   readonly headOid: string;
   readonly headRefName: string;
+  /** GitHub's owner login for the PR head repository. */
+  readonly headRepositoryOwnerLogin?: string;
+  readonly baseRefName?: string;
   readonly mergeStateStatus: string;
   readonly mergeable?: string;
 }
@@ -53,6 +56,96 @@ export interface PrMergedTerminalRecord {
   readonly remoteBranchName: string;
   readonly mergedHeadOid: string;
   readonly convergedHeadOid: string;
+}
+
+export interface OpenPrObservation {
+  readonly present: boolean;
+  readonly prUrl?: string;
+}
+
+export class NoOpenPrForBranchError extends Error {}
+
+function repositoryOwner(repo: string): string {
+  return repo.split("/")[0] ?? "";
+}
+
+function githubFieldEquals(actual: string | undefined, expected: string): boolean {
+  return actual?.trim().toLowerCase() === expected.trim().toLowerCase();
+}
+
+function isOwnOpenBranchPr(
+  live: PrMergeLiveState,
+  repo: string,
+  branch: string,
+): boolean {
+  return githubFieldEquals(live.state, "OPEN") &&
+    live.headRefName === branch &&
+    githubFieldEquals(live.headRepositoryOwnerLogin, repositoryOwner(repo));
+}
+
+/**
+ * Resolve the one downstream PR identity from GitHub host truth.
+ * Worker output is advisory only: every rejected or unreadable hint is discarded
+ * before the branch query, and owner filtering happens over the complete result set.
+ */
+export function resolveHostTruthPr(
+  sh: Sh,
+  repo: string,
+  branch: string,
+  reportedPr?: string,
+): PrMergeLiveState {
+  if (reportedPr !== undefined && reportedPr.trim().length > 0) {
+    try {
+      const hinted = fetchPrMergeLiveState(sh, repo, reportedPr);
+      if (isOwnOpenBranchPr(hinted, repo, branch)) return hinted;
+    } catch {
+      // A stale/deleted/mistyped hint is untrusted input, not a routing failure.
+    }
+  }
+
+  const raw = sh("gh", [
+    "pr", "list", "--repo", repo, "--head", branch, "--state", "open",
+    "--json",
+    "number,url,state,baseRefName,headRefName,headRefOid,headRepositoryOwner,mergeStateStatus,mergeable",
+  ]);
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    throw new Error(`autoMerge: malformed gh pr list payload for branch ${branch}`);
+  }
+  for (const candidate of parsed) {
+    if (candidate === null || typeof candidate !== "object") {
+      throw new Error(`autoMerge: malformed gh pr list entry for branch ${branch}`);
+    }
+    const owner = (candidate as Record<string, unknown>).headRepositoryOwner;
+    const login = owner !== null && typeof owner === "object"
+      ? (owner as Record<string, unknown>).login
+      : undefined;
+    if (
+      typeof login !== "string" ||
+      !githubFieldEquals(login, repositoryOwner(repo))
+    ) continue;
+    const live = parsePrMergeLivePayload(JSON.stringify(candidate), `branch ${branch}`);
+    if (isOwnOpenBranchPr(live, repo, branch)) return live;
+  }
+  throw new NoOpenPrForBranchError(
+    `autoMerge: no open PR for branch ${branch} owned by repository ${repo}`,
+  );
+}
+
+/** Host truth for the open PR currently associated with a pushed branch. */
+export function observeOpenPrForBranch(
+  sh: Sh,
+  repo: string,
+  branch: string,
+  reportedPr?: string,
+): OpenPrObservation {
+  try {
+    const resolved = resolveHostTruthPr(sh, repo, branch, reportedPr);
+    return { present: true, prUrl: resolved.prUrl };
+  } catch (err) {
+    if (!(err instanceof NoOpenPrForBranchError)) throw err;
+    return { present: false };
+  }
 }
 
 export type AutoMergeTerminalState =
@@ -152,10 +245,20 @@ function parsePrMergeLivePayload(raw: string, prUrl: string): PrMergeLiveState {
     typeof obj.headRefName === "string" ? obj.headRefName.trim() : "";
   const headRefOid =
     typeof obj.headRefOid === "string" ? obj.headRefOid.trim() : "";
+  const headRepositoryOwner = obj.headRepositoryOwner;
+  const headRepositoryOwnerRecord =
+    headRepositoryOwner !== null && typeof headRepositoryOwner === "object"
+      ? (headRepositoryOwner as Record<string, unknown>)
+      : undefined;
+  const ownerLogin = headRepositoryOwnerRecord?.login;
+  const headRepositoryOwnerLogin =
+    typeof ownerLogin === "string" ? ownerLogin.trim() : "";
   const mergeStateStatus =
     typeof obj.mergeStateStatus === "string" ? obj.mergeStateStatus.trim() : "";
   const mergeable =
     typeof obj.mergeable === "string" ? obj.mergeable.trim() : undefined;
+  const baseRefName =
+    typeof obj.baseRefName === "string" ? obj.baseRefName.trim() : undefined;
   if (!Number.isFinite(prNumber) || prNumber <= 0) {
     throw new Error(`autoMerge: gh pr view missing pr number for ${prUrl}`);
   }
@@ -168,6 +271,8 @@ function parsePrMergeLivePayload(raw: string, prUrl: string): PrMergeLiveState {
     state,
     headOid: headRefOid,
     headRefName,
+    ...(headRepositoryOwnerLogin.length > 0 ? { headRepositoryOwnerLogin } : {}),
+    ...(baseRefName !== undefined ? { baseRefName } : {}),
     mergeStateStatus,
     ...(mergeable !== undefined ? { mergeable } : {}),
   };
@@ -187,7 +292,7 @@ export function fetchPrMergeLiveState(
     "--repo",
     repo,
     "--json",
-    "number,url,state,headRefName,headRefOid,mergeStateStatus,mergeable",
+    "number,url,state,baseRefName,headRefName,headRefOid,headRepositoryOwner,mergeStateStatus,mergeable",
   ]);
   return parsePrMergeLivePayload(raw, prUrl);
 }
@@ -197,10 +302,13 @@ export function assessMergeReadiness(
   snapshot: PrReviewSnapshot,
 ): MergeReadinessResult {
   const blockers: MergeReadinessBlocker[] = [];
-  if (live.state !== "OPEN" && live.state !== "MERGED") {
+  if (!githubFieldEquals(live.state, "OPEN") && !githubFieldEquals(live.state, "MERGED")) {
     blockers.push("not_open");
   }
-  if (live.state === "OPEN" && live.mergeStateStatus !== "CLEAN") {
+  if (
+    githubFieldEquals(live.state, "OPEN") &&
+    !githubFieldEquals(live.mergeStateStatus, "CLEAN")
+  ) {
     blockers.push("ruleset_blocked");
   }
   const unresolvedThreads = unresolvedThreadCount(snapshot);
@@ -214,7 +322,7 @@ export function assessMergeReadiness(
   if (ciGate === "pending") blockers.push("ci_pending");
   if (ciGate === "failed") blockers.push("ci_failed");
   return {
-    ready: blockers.length === 0 && live.state === "OPEN",
+    ready: blockers.length === 0 && githubFieldEquals(live.state, "OPEN"),
     blockers,
     live,
     snapshot,
@@ -264,7 +372,7 @@ export function confirmPrMergedLive(
   expectedHeadOid: string,
 ): PrMergedTerminalRecord | undefined {
   const live = fetchPrMergeLiveState(sh, repo, prUrl);
-  if (live.state !== "MERGED") return undefined;
+  if (!githubFieldEquals(live.state, "MERGED")) return undefined;
   if (live.headOid !== expectedHeadOid) return undefined;
   return {
     prUrl: live.prUrl,
@@ -280,7 +388,7 @@ export function prMergedRecordFromLive(
   convergedHeadOid: string,
   expectedMergeHeadOid?: string,
 ): PrMergedTerminalRecord | undefined {
-  if (live.state !== "MERGED") return undefined;
+  if (!githubFieldEquals(live.state, "MERGED")) return undefined;
   if (live.headOid.length === 0) return undefined;
   const hasExpected =
     expectedMergeHeadOid !== undefined && expectedMergeHeadOid.trim().length > 0;
@@ -389,6 +497,7 @@ function offlineSyntheticLiveState(
     state,
     headOid: snapshot.headOid,
     headRefName: "offline-branch",
+    headRepositoryOwnerLogin: "offline",
     mergeStateStatus: state === "OPEN" ? "CLEAN" : "UNKNOWN",
   };
 }
@@ -494,7 +603,7 @@ export async function tryResumePrMergedBackfill(
   }
   const live =
     liveState ?? fetchPrMergeLiveState(input.sh, input.repo, input.prUrl);
-  if (live.state !== "MERGED") return undefined;
+  if (!githubFieldEquals(live.state, "MERGED")) return undefined;
   if (!input.priorConvergenceRecorded) {
     return {
       ok: false,
@@ -552,7 +661,7 @@ export async function runAutoMergeStage(
     return backfill;
   }
 
-  if (live.state === "MERGED") {
+  if (githubFieldEquals(live.state, "MERGED")) {
     if (!input.priorConvergenceRecorded) {
       return {
         ok: false,

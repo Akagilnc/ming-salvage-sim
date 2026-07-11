@@ -69,6 +69,7 @@ import {
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
+import { NoOpenPrForBranchError, resolveHostTruthPr } from "../autoMerge.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
 import {
@@ -493,72 +494,30 @@ export class RealFamilyBackend implements FamilyBackend {
     readonly pr: string;
     readonly familyBase: string;
   }):
-    | { ok: true; headOid: string }
+    | { ok: true; headOid: string; prUrl: string }
     | {
         ok: false;
         kind: "pr_missing" | "observation_failed" | "mismatch";
         reason: string;
       } {
     try {
-      const raw = this.sh(
-        "gh",
-        [
-          "pr",
-          "view",
-          input.pr,
-          "--repo",
-          this.opts.repo,
-          "--json",
-          "baseRefName,headRefName,headRefOid,state",
-        ],
-        this.opts.workingRepo,
+      const resolved = resolveHostTruthPr(
+        (file, args) => this.sh(file, args, this.opts.workingRepo),
+        this.opts.repo,
+        input.familyBase,
+        input.pr,
       );
-      const parsed = JSON.parse(raw) as {
-        readonly baseRefName?: unknown;
-        readonly headRefName?: unknown;
-        readonly headRefOid?: unknown;
-        readonly state?: unknown;
-      };
-      if (parsed.state !== "OPEN") {
+      if (resolved.baseRefName !== this.opts.base) {
         return {
           ok: false,
           kind: "mismatch",
-          reason: `family PR "${input.pr}" is ${String(parsed.state)} but must be OPEN`,
+          reason: `family PR "${resolved.prUrl}" targets base "${String(resolved.baseRefName)}" but expected "${this.opts.base}"`,
         };
       }
-      if (parsed.baseRefName !== this.opts.base) {
-        return {
-          ok: false,
-          kind: "mismatch",
-          reason: `family PR "${input.pr}" targets base "${String(parsed.baseRefName)}" but expected "${this.opts.base}"`,
-        };
-      }
-      if (parsed.headRefName !== input.familyBase) {
-        return {
-          ok: false,
-          kind: "mismatch",
-          reason: `family PR "${input.pr}" uses head "${String(parsed.headRefName)}" but expected "${input.familyBase}"`,
-        };
-      }
-      if (typeof parsed.headRefOid !== "string" || parsed.headRefOid.trim().length === 0) {
-        return {
-          ok: false,
-          kind: "mismatch",
-          reason: `family PR "${input.pr}" did not expose a non-empty headRefOid`,
-        };
-      }
-      return { ok: true, headOid: parsed.headRefOid.trim() };
+      return { ok: true, headOid: resolved.headOid, prUrl: resolved.prUrl };
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      // Only an explicit host/gh not-found answer proves absence. Authentication,
-      // transport, rate-limit, JSON, and every unknown CLI failure mean merely
-      // that host truth could not be observed.
-      const kind =
-        /(?:pull request|pr).*(?:not found|does not exist)|no pull requests found|could not resolve to a pullrequest/i.test(
-          detail,
-        )
-        ? "pr_missing"
-        : "observation_failed";
+      const kind = err instanceof NoOpenPrForBranchError ? "pr_missing" : "observation_failed";
       return {
         ok: false,
         kind,
@@ -592,35 +551,24 @@ export class RealFamilyBackend implements FamilyBackend {
     readonly expectedHead: string;
   }): Promise<FindFamilyShippedPrResult> {
     try {
-      const raw = this.sh("gh", [
-        "pr", "list", "--repo", this.opts.repo, "--base", this.opts.base,
-        "--head", input.familyBase, "--state", "open", "--json", "url,headRefOid",
-      ], this.opts.workingRepo);
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        return {
-          ok: false,
-          kind: "observation_failed",
-          reason: "could not discover family PR via gh pr list: host response was not an array",
-        };
+      const resolved = resolveHostTruthPr(
+        (file, args) => this.sh(file, args, this.opts.workingRepo),
+        this.opts.repo,
+        input.familyBase,
+      );
+      if (resolved.baseRefName !== this.opts.base) {
+        return { ok: false, kind: "mismatch", reason: `host family PR "${resolved.prUrl}" targets base "${String(resolved.baseRefName)}" but expected "${this.opts.base}"` };
       }
-      const matches = parsed as readonly { readonly url?: unknown; readonly headRefOid?: unknown }[];
-      if (matches.length === 0) {
-        return { ok: false, kind: "pr_missing", reason: `host has no open family PR for branch "${input.familyBase}"` };
+      if (resolved.headOid !== input.expectedHead) {
+        return { ok: false, kind: "mismatch", reason: `host family PR head ${resolved.headOid} does not match current family HEAD ${input.expectedHead}` };
       }
-      if (matches.length !== 1) {
-        return { ok: false, kind: "mismatch", reason: `host found ${matches.length} open family PRs for branch "${input.familyBase}"` };
-      }
-      const match = matches[0]!;
-      if (typeof match.url !== "string" || match.url.trim().length === 0) {
-        return { ok: false, kind: "mismatch", reason: "host family PR has no URL" };
-      }
-      if (match.headRefOid !== input.expectedHead) {
-        return { ok: false, kind: "mismatch", reason: `host family PR head ${String(match.headRefOid)} does not match current family HEAD ${input.expectedHead}` };
-      }
-      return { ok: true, pr: match.url.trim() };
+      return { ok: true, pr: resolved.prUrl };
     } catch (err) {
-      return { ok: false, kind: "observation_failed", reason: `could not discover family PR via gh pr list: ${err instanceof Error ? err.message : String(err)}` };
+      return {
+        ok: false,
+        kind: err instanceof NoOpenPrForBranchError ? "pr_missing" : "observation_failed",
+        reason: `could not discover family PR via host truth: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 
@@ -2880,7 +2828,7 @@ export class RealFamilyBackend implements FamilyBackend {
         kind: "ship",
         branch: outcome.branch,
         status: outcome.status,
-        pr: outcome.pr,
+        pr: verifiedPr.ok ? verifiedPr.prUrl : outcome.pr,
         ...(verifiedPr.ok ? { prHead: verifiedPr.headOid } : {}),
       },
     };
@@ -3269,7 +3217,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (!verifiedPr.ok) {
       throw new Error(verifiedPr.reason);
     }
-    return { url, prHead: verifiedPr.headOid };
+    return { url: verifiedPr.prUrl, prHead: verifiedPr.headOid };
   }
 
   // ─────────────────────────── aborted / escalate ───────────────────────────

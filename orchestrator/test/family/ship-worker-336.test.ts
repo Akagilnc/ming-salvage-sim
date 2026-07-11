@@ -92,10 +92,11 @@ class FixturedShipBackend extends RealFamilyBackend {
   };
   openFamilyPrCount = 0;
   verifiedPr:
-    | { ok: true; headOid: string }
+    | { ok: true; headOid: string; prUrl: string }
     | { ok: false; kind: "pr_missing" | "observation_failed" | "mismatch"; reason: string } = {
       ok: true,
       headOid: "head-1",
+      prUrl: "u",
     };
   protected override async runShipWorker(
     spec: WorkerSpec,
@@ -110,7 +111,7 @@ class FixturedShipBackend extends RealFamilyBackend {
     throw new Error("openFamilyPr must not be reached — family ship via gstack-ship (#336)");
   }
   protected override verifyFamilyShipPr():
-    | { ok: true; headOid: string }
+    | { ok: true; headOid: string; prUrl: string }
     | { ok: false; kind: "pr_missing" | "observation_failed" | "mismatch"; reason: string } {
     return this.verifiedPr;
   }
@@ -670,8 +671,8 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       protected override mountShipAuth(): ShipAuth {
         return { claudeToken: "tok", ghToken: "gho_ok" };
       }
-      protected override verifyFamilyShipPr(): { ok: true; headOid: string } {
-        return { ok: true, headOid: "head-1" };
+      protected override verifyFamilyShipPr(): { ok: true; headOid: string; prUrl: string } {
+        return { ok: true, headOid: "head-1", prUrl: "u" };
       }
       protected override async shipContainerRun(
         _spec: WorkerSpec,
