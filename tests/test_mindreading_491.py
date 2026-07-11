@@ -76,3 +76,38 @@ def test_reply_is_an_explicit_pipeline_input():
     signature = inspect.signature(build_mindreading_payload)
     assert "minister_reply" in signature.parameters
     assert signature.parameters["minister_reply"].default is inspect.Parameter.empty
+
+
+def test_reader_eligibility_uses_current_db_office_after_reassignment(game):
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    db.conn.execute(
+        "UPDATE characters SET office='礼部尚书', office_type='礼部' WHERE name=?",
+        (reader.name,),
+    )
+    db.conn.commit()
+
+    try:
+        build_mindreading_payload(db, state, reader, content.characters["温体仁"], "臣愿担责。")
+    except ValueError as exc:
+        assert "御前近臣" in str(exc)
+    else:
+        raise AssertionError("读心资格不能沿用任免前的内存职位")
+
+
+def test_mindreading_event_title_and_body_are_p4_safe(game):
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    db.record_public_knowledge_event(
+        state,
+        "民心值：73",
+        "忠诚评分98，内廷已知。",
+    )
+
+    payload = build_mindreading_payload(
+        db, state, reader, content.characters["温体仁"], "臣愿担责。"
+    )
+    heard = str(payload["reader_context"]["heard"])
+    assert "民心值：73" not in heard
+    assert "忠诚评分98" not in heard
+    assert "已略去" in heard
