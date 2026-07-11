@@ -122,12 +122,15 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
         source_id="test:settle-restricted",
         excluded_names=[excluded.name],
     )
-    db.record_public_knowledge_event(
-        state, "生产链公开事项", "生产链公开事项", source_id="test:settle-public"
-    )
-
     before_turn = state.turn
-    settle_with_delta(state, db, {}, before_turn=before_turn, content=content)
+    settle_with_delta(
+        state,
+        db,
+        {},
+        before_turn=before_turn,
+        content=content,
+        narrative="生产链公开事项",
+    )
 
     rows = db.conn.execute(
         "SELECT source_id, excluded_names FROM character_knowledge_events "
@@ -135,7 +138,7 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
         (before_turn,),
     ).fetchall()
     by_source = {row["source_id"]: row for row in rows}
-    assert "test:settle-public" in by_source
+    assert f"settlement:narrative:{before_turn}" in by_source
     assert "test:settle-restricted" in by_source
     assert excluded.name in by_source["test:settle-restricted"]["excluded_names"]
 

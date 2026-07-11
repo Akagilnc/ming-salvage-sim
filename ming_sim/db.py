@@ -9642,7 +9642,16 @@ class GameDB:
         if commit:
             self.conn.commit()
 
-    def record_public_knowledge_event(self, state: GameState, title: str, body: str = "", source_id: str = "", excluded_names: Optional[Iterable[str]] = None) -> None:
+    def record_public_knowledge_event(
+        self,
+        state: GameState,
+        title: str,
+        body: str = "",
+        source_id: str = "",
+        excluded_names: Optional[Iterable[str]] = None,
+        *,
+        commit: bool = True,
+    ) -> None:
         source_id = source_id or f"public:{state.turn}:{title}"
         inherited = self.knowledge_exclusions_for_source(source_id)
         merged_exclusions = list(dict.fromkeys(
@@ -9652,7 +9661,8 @@ class GameDB:
             "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
             (state.turn, state.year, state.period, "", "public", title[:80], body[:400], source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def get_character_knowledge(self, state: GameState, character_name: str) -> Dict[str, object]:
         from ming_sim.knowledge import build_character_knowledge

@@ -349,6 +349,13 @@ def resolve_directives(
             # Materialize the complete source set only after those writes and
             # before either aggregate archive is saved, matching the normal
             # settlement path's source-first authorization boundary.
+            db.record_public_knowledge_event(
+                state,
+                "本回合邸报",
+                narrative,
+                source_id=f"settlement:narrative:{state.turn}",
+                commit=False,
+            )
             db.persist_knowledge_items_for_turn(state)
             db.save_turn_report(
                 state, narrative, knowledge_items=[]
@@ -1274,6 +1281,16 @@ def _settle_after_extract_body(
     # record_log(sim 下月前文)在 inertia 前已跑、不带此提示噪声。提示极简、不暴露明细（明细落 DB/jsonl）。
     if _has_durable_player_visible_rejection(db, before_turn):
         narrative = narrative + "\n\n有司奏：所拟之事有窒碍未行者，已录档待酌。"
+    # The simulator narrative is the real settlement input for the public
+    # gazette.  Keep it as its own source before archiving, so a mixed
+    # aggregate cannot become the only durable representation of this turn.
+    db.record_public_knowledge_event(
+        state,
+        "本回合邸报",
+        narrative,
+        source_id=f"settlement:narrative:{before_turn}",
+        commit=False,
+    )
     # Persist the per-source public projection before either aggregate archive
     # is written.  turn_report/chapter are derived prose and cannot provide an
     # authorization boundary when they mix public and restricted matters.
