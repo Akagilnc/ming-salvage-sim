@@ -5,9 +5,12 @@ import {
   applyTightRoutePolicy,
   MODEL_ROUTE_SLOTS,
   cmrLegAccountingFailure,
+  modelRouteFingerprint,
   modelForSlot,
   printableRouteLineup,
   resolveRouteModels,
+  degradeOptionalRouteSmokeFailures,
+  requiredCmrLegSkipFailure,
 } from "../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
@@ -70,6 +73,67 @@ describe("#422 model route presets", () => {
         "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
       ].join("\n"),
     );
+  });
+
+  it("marks every preset agy CMR leg optional while operator override legs stay hard", () => {
+    for (const routeName of ["normal", "codex-cheap", "codex-tight", "claude-cheap", "claude-tight"]) {
+      const agy = resolveRouteModels(routeName, {}).legCollections.cmrReview.find((leg) => leg.slug === "agy");
+      expect(agy, routeName).toMatchObject({ slug: "agy", optional: true });
+    }
+
+    const overridden = resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.6-sol", "opus", "agy"] });
+    expect(overridden.legCollections.cmrReview.every((leg) => leg.optional !== true)).toBe(true);
+  });
+
+  it("preserves historical fingerprints for unmarked legs and fingerprints optional markers", () => {
+    const route = resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.6-sol", "opus", "agy"] });
+    const historical = JSON.stringify({
+      routeName: route.routeName,
+      slots: MODEL_ROUTE_SLOTS.map((slot) => [slot, route.slots[slot]]),
+      legCollections: [["cmrReview", [["codex", "gpt-5.6-sol"], ["claude", "opus"], ["agy", "agy"]]]],
+    });
+    expect(modelRouteFingerprint(route)).toBe(historical);
+    expect(modelRouteFingerprint(resolveRouteModels("normal", {}))).not.toBe(historical);
+  });
+
+  it("drops only failed optional smoke legs from the effective lineup", () => {
+    const route = resolveRouteModels("normal", {}, {}, {
+      "cmrReview:agy": { state: "failed", at: "2026-07-11T00:00:00.000Z", error: "opencode unavailable" },
+    });
+
+    const degraded = degradeOptionalRouteSmokeFailures(route);
+
+    expect(degraded.dropped).toEqual([{ slug: "agy", reason: "opencode unavailable" }]);
+    expect(degraded.route.legCollections.cmrReview.map((leg) => leg.slug)).toEqual(["gpt-5.6-sol", "opus"]);
+    expect(printableRouteLineup(degraded.route)).toContain("cmrReview=[codex:gpt-5.6-sol,claude:opus]");
+  });
+
+  it("keeps anchor and env-override smoke failures hard", () => {
+    const anchor = resolveRouteModels("normal", {}, {}, {
+      "cmrReview:opus": { state: "failed", at: "2026-07-11T00:00:00.000Z", error: "claude unavailable" },
+    });
+    expect(degradeOptionalRouteSmokeFailures(anchor).dropped).toEqual([]);
+
+    const overridden = resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.6-sol", "opus", "agy"] }, {
+      "cmrReview:agy": { state: "failed", at: "2026-07-11T00:00:00.000Z", error: "opencode unavailable" },
+    });
+    expect(degradeOptionalRouteSmokeFailures(overridden).dropped).toEqual([]);
+  });
+
+  it("allows an optional CMR leg death but rejects an absent anchor", () => {
+    const route = resolveRouteModels("normal", {});
+    expect(cmrLegAccountingFailure({
+      successfulLegs: ["gpt-5.6-sol", "opus"],
+      skippedLegs: [{ slug: "agy", reason: "quota exhausted" }],
+    }, route)).toBeUndefined();
+    expect(cmrLegAccountingFailure({
+      successfulLegs: ["gpt-5.6-sol", "agy"],
+      skippedLegs: [{ slug: "opus", reason: "quota exhausted" }],
+    }, route)).toBeUndefined();
+    expect(requiredCmrLegSkipFailure(
+      [{ slug: "opus", reason: "quota exhausted" }],
+      route,
+    )).toMatch(/anchor.*opus/i);
   });
 
   it("single-slot overrides win over the selected base route", () => {

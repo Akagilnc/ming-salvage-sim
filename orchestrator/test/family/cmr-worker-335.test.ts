@@ -1506,7 +1506,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(legs).toEqual([
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
-      { family: "agy", slug: "agy" },
+      { family: "agy", slug: "agy", optional: true },
     ]);
   });
 
@@ -1520,7 +1520,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(legs).toEqual([
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
-      { family: "agy", slug: "agy" },
+      { family: "agy", slug: "agy", optional: true },
     ]);
   });
 
@@ -1990,7 +1990,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       reviewLegs: [
         { family: "codex", slug: "gpt-5.6-sol" },
         { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy" },
+        { family: "agy", slug: "agy", optional: true },
       ],
     });
     const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
@@ -2022,7 +2022,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(route.reviewLegs).toEqual([
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
-      { family: "agy", slug: "agy" },
+      { family: "agy", slug: "agy", optional: true },
     ]);
   });
 
