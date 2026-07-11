@@ -351,7 +351,7 @@ describe("#677 legal refuse one finding, fix the others", () => {
           ],
         },
       }),
-    ).toEqual({ kind: "handoff", status: "error" });
+    ).toEqual({ kind: "next", step: "S5" });
   });
 
   it("end-to-end: refuse one + fix others → not abort; still dispatches fresh re-review", async () => {

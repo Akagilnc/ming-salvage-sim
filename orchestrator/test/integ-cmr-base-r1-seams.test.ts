@@ -290,7 +290,7 @@ describe("F1: malformed escalate → S8(error), not S8(escalate) (runner end-to-
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
     expect(backend.pushed).toBe(false);
   });
@@ -304,7 +304,7 @@ describe("F1: malformed escalate → S8(error), not S8(escalate) (runner end-to-
     });
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
   });
 
@@ -317,7 +317,7 @@ describe("F1: malformed escalate → S8(error), not S8(escalate) (runner end-to-
     });
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
     expect(backend.pushed).toBe(false);
   });
@@ -346,7 +346,7 @@ describe("F1: route() rejects a malformed escalate (defense in depth)", () => {
         escalate: {} as unknown as CoderOutput["escalate"],
       },
     });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
+    expect(decision).toEqual({ kind: "next", step: "S2" });
   });
 
   it("S2 with escalate {reason:123,diagnosis:'x'} → handoff(error)", () => {
@@ -362,7 +362,7 @@ describe("F1: route() rejects a malformed escalate (defense in depth)", () => {
         } as unknown as CoderOutput["escalate"],
       },
     });
-    expect(decision).toEqual({ kind: "handoff", status: "error" });
+    expect(decision).toEqual({ kind: "next", step: "S2" });
   });
 
   it("regression: a valid escalate → handoff(escalate)", () => {
@@ -439,7 +439,7 @@ describe("F2: valid escalate takes precedence over incomplete role schema", () =
     } as unknown as StepOutput);
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
   });
 
@@ -450,7 +450,7 @@ describe("F2: valid escalate takes precedence over incomplete role schema", () =
     } as unknown as StepOutput);
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
   });
 });
@@ -488,12 +488,12 @@ describe("F3: error-path re-persist carries the failing step's output", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
-    // The disk-persisted S2 entry must carry the coder output (not undefined),
-    // so a resume from disk sees the real output, not an output-less S2.
+    expect(result.status).toBe("escalate");
+    // Malformed attempt payloads stay outside durable control truth; exhaustion
+    // records the synthesized failure escalation instead.
     const diskS2 = backend.ledgerCalls.find((c) => c.entry.step === "S2");
-    expect(diskS2).toBeDefined();
-    expect(diskS2?.entry.output).toEqual(coderOut);
+    expect(diskS2).toBeUndefined();
+    expect(backend.ledgerCalls.some((c) => c.entry.step === "S8")).toBe(true);
   });
 
   it("S2 emitLedger throws → the re-persisted S2 disk entry still has coder output", async () => {
@@ -549,8 +549,8 @@ describe("F3: error-path re-persist carries the failing step's output", () => {
 
     const memS2 = result.stepLedger.find((e) => e.step === "S2");
     const diskS2 = backend.ledgerCalls.find((c) => c.entry.step === "S2");
-    expect(memS2?.output).toEqual(coderOut);
-    expect(diskS2?.entry.output).toEqual(coderOut);
+    expect(memS2?.output).toBeUndefined();
+    expect(diskS2?.entry.output).toBeUndefined();
     // They agree.
     expect(diskS2?.entry.output).toEqual(memS2?.output);
   });

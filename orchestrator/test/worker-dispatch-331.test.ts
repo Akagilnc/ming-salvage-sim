@@ -358,7 +358,7 @@ describe("#331 a non-completed WorkerResult routes via workerResultToStep", () =
   it("a failed worker → S8(error) with the reason surfaced", async () => {
     const backend = new FailedBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.reason).toContain("container crashed");
   });
 });

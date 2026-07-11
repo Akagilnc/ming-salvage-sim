@@ -12,7 +12,9 @@
  *     clean/deferred only → S7(ship)→S9(verify)→S10(fixer)→S12(docRelease)→S11(cleanup)→S8(success)
  *     blocking → S5(fix)→S6(fresh full-diff review)→S4
  *
- * Escalate stays the global stop edge (checked FIRST).
+ * A valid decision escalation stays the global stop edge (checked FIRST).
+ * Malformed envelopes return the same step as a redispatch request; the runner's
+ * shared mechanical retry layer owns the bound and exhaustion escalation.
  */
 
 import type { Finding, OnlineReviewTerminalState, StepId, StepOutput } from "./types.js";
@@ -105,7 +107,7 @@ export function route(ctx: RouteContext): RouteDecision {
   if (escalate != null) {
     return isValidEscalation(escalate)
       ? { kind: "handoff", status: "escalate" }
-      : { kind: "handoff", status: "error" };
+      : { kind: "next", step: ctx.from };
   }
 
   switch (ctx.from) {
@@ -126,11 +128,11 @@ export function route(ctx: RouteContext): RouteDecision {
       // output (the runner also guards this, but route() must be safe at the
       // seam regardless of caller).
       if (!isValidCoderOutput(ctx.output)) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S2" };
       }
       // #252 error edge: 0 commits → S8(error: build produced nothing).
       if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S2" };
       }
       return { kind: "next", step: "S3" };
     }
@@ -138,13 +140,13 @@ export function route(ctx: RouteContext): RouteDecision {
     case "S3":
     case "S6":
       if (!isValidReviewerOutput(ctx.output)) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: ctx.from };
       }
       return { kind: "next", step: "S4" };
 
     case "S4": {
       if (!isValidReviewerOutput(ctx.output)) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S4" };
       }
       const blockingCount =
         ctx.pendingBlockingFindings !== undefined
@@ -157,10 +159,10 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S5": {
       if (!isValidCoderOutput(ctx.output)) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S5" };
       }
       if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
-        return { kind: "handoff", status: "error" };
+        return { kind: "next", step: "S5" };
       }
       return { kind: "next", step: "S6" };
     }

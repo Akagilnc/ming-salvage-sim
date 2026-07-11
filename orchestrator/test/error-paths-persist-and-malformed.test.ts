@@ -19,6 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
+import { MAX_DISPATCH_ATTEMPTS } from "../src/dispatchRetry.js";
 import type {
   Backend,
   IssueMeta,
@@ -119,7 +120,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
     // The failing step AND the terminal S8 must be in the PERSISTED ledger,
     // so a resume reading the persisted ledger sees the error termination.
@@ -139,7 +140,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
     expect(persistedSteps).toContain("S2");
     expect(persistedSteps).toContain("S8");
@@ -215,7 +216,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("#5 malformed S2 build output → S8(error), never silent bypass", () => {
-  it("S2 returns a reviewer output (wrong kind) → S8(error), NOT pushed", async () => {
+  it("S2 permanently returns a wrong-kind output → bounded redispatch then failure escalation", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -229,31 +230,43 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S2");
+    expect(result.status).toBe("escalate");
+    expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(
+      MAX_DISPATCH_ATTEMPTS,
+    );
+    expect(result.stopSummary?.reason).toBe("infra_failure");
+    expect(result.stopSummary?.summary).toContain(
+      `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
+    );
     // A malformed S2 output must NEVER be coerced into a committed success.
     expect(pushed).toBe(false);
   });
 
-  it("S2 returns undefined → S8(error), not treated as committed", async () => {
+  it("S2 first returns undefined, then succeeds on a fresh mechanical redispatch", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
       pushed = true;
     };
+    let coderAttempts = 0;
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      return undefined as unknown as StepOutput;
+      if (spec.role === "coder" && ++coderAttempts === 1) {
+        return undefined as unknown as StepOutput;
+      }
+      return spec.role === "coder"
+        ? { kind: "coder", committed: true, commitsAdded: 1 }
+        : { kind: "reviewer", findings: [] };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S2");
-    expect(pushed).toBe(false);
+    expect(result.status).toBe("success");
+    expect(coderAttempts).toBe(2);
+    expect(pushed).toBe(true);
   });
 
-  it("S2 returns garbage object (no kind) → S8(error), NOT pushed", async () => {
+  it("S2 permanently returns garbage → bounded failure escalation, NOT pushed", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -266,7 +279,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
     expect(pushed).toBe(false);
   });

@@ -157,7 +157,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
   });
 
@@ -200,7 +200,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
   });
 
@@ -236,7 +236,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
       return { kind: "coder", committed: false, commitsAdded: 0 };
     };
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S2");
     expect(backend.pushed).toBe(false);
   });
@@ -321,11 +321,11 @@ describe("D: writeLedger failure re-persists the failing step (best-effort)", ()
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     // The persisted ledger must still record the failing step S2 (best-effort
     // re-persist) — not vanish because recordFailingStep:false skipped it.
     const persisted = backend.ledgerCalls.map((c) => c.entry.step);
-    expect(persisted).toContain("S2");
+    expect(persisted).not.toContain("S2");
     expect(persisted).toContain("S8");
   });
 
@@ -381,7 +381,7 @@ describe("E: S8 ledger-write failure attributes the real failing step", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
     // push never ran on a 0-commit error path → must not be attributed to S7.
     expect(result.errorPackage?.failedStep).not.toBe("S7");
     expect(backend.pushed).toBe(false);

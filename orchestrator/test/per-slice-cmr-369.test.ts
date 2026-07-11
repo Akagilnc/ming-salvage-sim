@@ -297,6 +297,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "truncated JSON" },
       { kind: "malformed", reason: "truncated JSON again" },
+      { kind: "malformed", reason: "permanently truncated JSON" },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
@@ -306,12 +307,13 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       "S2:coder",
       "S3:reviewer",
       "S3:reviewer",
+      "S3:reviewer",
     ]);
     const s3 = result.stepLedger.find((entry) => entry.step === "S3");
     expect(s3?.output?.kind).toBe("reviewer");
     expect(s3?.output).toMatchObject({
       kind: "reviewer",
-      escalate: { reason: expect.stringMatching(/bounded reruns/i) },
+      escalate: { reason: expect.stringMatching(/redispatch exhausted/i) },
     });
   });
 
@@ -324,6 +326,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "truncated JSON" },
       { kind: "malformed", reason: "truncated JSON again" },
+      { kind: "malformed", reason: "permanently truncated JSON" },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
@@ -377,7 +380,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         from: "S5",
         output: { kind: "coder", committed: false, commitsAdded: 0 },
       }),
-    ).toEqual({ kind: "handoff", status: "error" });
+    ).toEqual({ kind: "next", step: "S5" });
   });
 
   it("fails closed when a fresh re-review omits disposition for a prior claimed-fixed finding", async () => {
