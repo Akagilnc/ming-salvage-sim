@@ -65,6 +65,10 @@ function hasUnframedCompletionSentinel(authoredText: string): boolean {
 }
 
 describe("#825 ADR 0062 completion-sentinel contract sweep", () => {
+  it("fails loudly when the contract glob resolves fewer than the known prompt set", () => {
+    expect(CONTRACT_FILES.length).toBeGreaterThanOrEqual(20);
+  });
+
   it.each([
     "append CODER_STEP_COMPLETE to your response",
     "Finish by writing CODER_STEP_COMPLETE.",
@@ -363,6 +367,12 @@ describe("#825 Group C — durable decision park and in-place resume", () => {
     const result = await runOrchestrator({ issueNumber: 825, backend });
     expect(resumed[0]).toEqual(["S2", "session-decision-825"]);
     expect(result.status).toBe("success");
-    expect(resumeState.ledger.some((entry) => entry.event === "escalation_answered")).toBe(true);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      step: "S2",
+      output: expect.objectContaining({ kind: "coder", committed: true, commitsAdded: 1 }),
+    }));
+    expect(result.stepLedger.filter((entry) => entry.step === "S2").at(-1)).toMatchObject({
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+    });
   });
 });

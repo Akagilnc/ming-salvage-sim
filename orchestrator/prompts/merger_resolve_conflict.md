@@ -42,6 +42,7 @@ Escalation (a conflict you must NOT guess at — surface it to a human):
 Rules:
 
 - The JSON must be valid and match one of the shapes above exactly.
-- Emit the `<merger>` tag LAST.
+- Emit the `<merger>` tag as the last typed tag. The optional telemetry line below
+  may follow it.
 - For optional telemetry, you may print MERGER_STEP_COMPLETE on its own final line.
 - Never `git merge --abort`. Never invent behaviour. Resolve or escalate.

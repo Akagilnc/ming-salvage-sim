@@ -57,5 +57,6 @@ Rules:
 - Every string field you emit (`branch`, `pr`, `reason`, `diagnosis`) must be
   non-empty after trimming — the runner validates them as trimmed-non-empty
   (`shipOutcome.ts`) and rejects a blank/whitespace value.
-- Emit the `<ship>` tag LAST; if you iterate, the LAST tag is the one that counts.
+- Emit the `<ship>` tag as the last typed tag; if you iterate, the last typed
+  `<ship>` tag is the one that counts. The optional telemetry line below may follow it.
 - For optional telemetry, you may print SHIP_STEP_COMPLETE on its own final line.
