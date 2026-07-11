@@ -114,18 +114,17 @@ RUN set -eux; \
 # ~/.grok/{bin,downloads}/ — run as `agent`, then symlink onto PATH for all users.
 # Official npm package is pinned exactly; npm verifies its registry integrity
 # metadata and the version check below fails the build on drift.
-ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global
-ENV PATH=${NPM_CONFIG_PREFIX}/bin:${PATH}
 USER agent
 RUN set -eux; \
+    NPM_CONFIG_PREFIX=/home/agent/.npm-global; \
+    export NPM_CONFIG_PREFIX PATH="$NPM_CONFIG_PREFIX/bin:$PATH"; \
     npm install -g @xai-official/grok@0.2.93; \
     test -x "$NPM_CONFIG_PREFIX/bin/grok" || command -v grok
 USER root
 RUN set -eux; \
-    # Keep a real copy rather than a symlink: although NPM_CONFIG_PREFIX is
-    # outside the current auth mount at ~/.grok, /usr/local/bin must remain
-    # usable if a future runtime layer replaces the agent home directory.
-    cp -L "$NPM_CONFIG_PREFIX/bin/grok" /usr/local/bin/grok; \
+    # Keep the resolved ELF rather than npm's JavaScript shim: the runtime auth
+    # mount replaces ~/.grok, while /usr/local/bin must remain independently usable.
+    cp -L /home/agent/.grok/bin/grok /usr/local/bin/grok; \
     chmod 755 /usr/local/bin/grok; \
     # Placeholder so a file bind-mount of auth.json is never mistaken for a dir.
     # (agent's primary group is not named "agent" on this base image — chown
@@ -134,7 +133,10 @@ RUN set -eux; \
     touch /home/agent/.grok/auth.json; \
     chown agent /home/agent/.grok /home/agent/.grok/auth.json; \
     chmod 600 /home/agent/.grok/auth.json; \
-    grok --version | grep -F "0.2.93"
+    /usr/local/bin/grok --version | grep -F "0.2.93"
+# The base image exposes its npm-global bin first. Keep the copied executable
+# first at runtime so an auth bind mount can never replace the resolved grok.
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # ── codex sandbox / userns note (spike constraint #3) ────────────────────────
 # codex ships its own bwrap sandbox. In a NON-privileged container bwrap cannot
 # create a user namespace ("No permissions to create a new namespace ... the
