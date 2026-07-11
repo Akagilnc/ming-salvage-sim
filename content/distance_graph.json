@@ -65,7 +65,7 @@
     {"from": "jiangxi", "to": "guangxi", "cost": 0.5, "kind": "山道"},
     {"from": "fujian", "to": "guangdong", "cost": 0.4, "kind": "沿海官道"},
     {"from": "guangdong", "to": "guangxi", "cost": 0.5, "kind": "西江"},
-    {"from": "guangdong", "to": "dongjiang_area", "cost": 0.8, "kind": "东江渡海"},
+    {"from": "liaodong", "to": "dongjiang_area", "cost": 0.5, "kind": "辽东海路"},
     {"from": "guangdong", "to": "taiwan", "cost": 1.0, "kind": "海路"},
     {"from": "guangdong", "to": "southwest_frontier", "cost": 0.8, "kind": "海陆路"},
     {"from": "guangxi", "to": "yunnan", "cost": 0.5, "kind": "山道"},
