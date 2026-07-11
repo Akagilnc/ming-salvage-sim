@@ -232,10 +232,21 @@ def build_character_knowledge_brief(character: Character, context: CourtContext)
     for key, value in (knowledge.get("world") or {}).items():
         if value:
             lines.append(f"{key}：{value}")
-    recent_items = [
-        *(knowledge.get("public_events") or []),
-        *(knowledge.get("events") or []),
-    ][-20:]
+    # The projection can contain the same source through its public and
+    # participant rails (and chapter material can overlap a gazette).  Keep one
+    # chronologically latest copy per source before applying the 20-item cap so
+    # an old private event cannot crowd out newer public history.
+    by_source = {}
+    for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
+        source_id = str(item.get("source_id") or "")
+        key = source_id or (
+            int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
+        )
+        by_source[key] = item
+    recent_items = sorted(
+        by_source.values(),
+        key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
+    )[-20:]
     for item in recent_items:
         title = item.get("title") or "旧闻"
         body = item.get("body") or ""

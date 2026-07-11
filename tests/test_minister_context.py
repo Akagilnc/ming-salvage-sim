@@ -395,6 +395,49 @@ def test_minister_agent_uses_only_its_character_knowledge_projection(game, monke
     assert "不可知密报" not in second_rendered
 
 
+def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game):
+    """最终 instructions 从真实见闻账本组装，瞒某人的密令不靠 mock 过滤。"""
+    db, state, content = game
+    ministers = []
+    seen_offices = set()
+    for minister in content.characters.values():
+        if minister.office_type in ("后宫", "宗藩") or minister.office_type in seen_offices:
+            continue
+        if db.get_character_status(minister.name)[0] != "active":
+            continue
+        ministers.append(minister)
+        seen_offices.add(minister.office_type)
+    first, second = ministers[:2]
+    hidden = "全局独有密报标记-瞒二人"
+    db.record_public_knowledge_event(
+        state, "密查辽饷", hidden, source_id="test:hidden-secret",
+        excluded_names=[second.name],
+    )
+    db.save_chapter_memory(state, "本月朝局", "章节上游标记-两人可见")
+
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured[kwargs["name"]] = kwargs["instructions"]
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
+        create_minister_agent(first, cfg, _ctx(game), db)
+        create_minister_agent(second, cfg, _ctx(game), db)
+
+    first_rendered = "\n".join(captured[first.name])
+    second_rendered = "\n".join(captured[second.name])
+    assert hidden in first_rendered
+    assert hidden not in second_rendered
+    assert "章节上游标记-两人可见" in first_rendered
+    assert "章节上游标记-两人可见" in second_rendered
+
+    second_tools = {f.__name__: f for f in build_minister_tools(second, _ctx(game))}
+    assert hidden not in second_tools["search_memories"](keywords="密查辽饷")
+
+
 def test_final_minister_context_rejects_injected_abstract_values(game):
     """最终 instructions seam 不得把抽象分数重新带回上下文。"""
     db, _state, content = game
@@ -571,7 +614,7 @@ def test_minister_tools_characterize_region_army_and_issue_progress(game):
         stage_text="正在推进",
     )
     db.conn.commit()
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    minister = next(c for c in content.characters.values() if c.office_type == "兵部")
     tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game), use_army_tool=True)}
 
     region = tools["inspect_region"]("陕西")
@@ -591,7 +634,7 @@ def test_minister_tools_characterize_building_and_metric_outputs(game):
         "UPDATE buildings SET level=4, condition=22, risk=91, output_metric='民心', output_amount=37"
     )
     db.conn.commit()
-    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    minister = next(c for c in content.characters.values() if c.office_type == "工部")
     tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
 
     listing = tools["list_buildings"]()
