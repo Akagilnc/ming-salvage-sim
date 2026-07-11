@@ -95,6 +95,56 @@ def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]
     return {"world": dict(knowledge.get("world") or {}), "heard": heard[-20:]}
 
 
+def _infer_subtext(
+    minister_reply: str,
+    *,
+    identity: int,
+    loyalty: int,
+    seed_guilt: str,
+    reader_context: Mapping[str, object],
+) -> str:
+    """Turn the three truth sources into a small, deterministic soft reading.
+
+    This is deliberately a content seam rather than a truth calculator: the
+    durable axes only anchor the kind of suspicion, while the reply supplies
+    the observable cue and the reader's heard history supplies its point of
+    view.  The result is qualitative prose, never a score dump.
+    """
+    reply = str(minister_reply).strip()
+    if any(word in reply for word in ("推给", "归咎", "责任", "同僚")):
+        cue = "把责任往旁人身上移"
+    elif any(word in reply for word in ("奉公", "忠心", "效死", "担责")):
+        cue = "先把忠顺的话说满"
+    else:
+        cue = "话说得周全，却留着可转圜的余地"
+
+    guilt_hint = "底案暂未坐实"
+    if "无(" in seed_guilt or "污点" in seed_guilt or "合谋" in seed_guilt:
+        guilt_hint = "旧日品性上的阴影仍在"
+    elif seed_guilt and "无" not in seed_guilt:
+        guilt_hint = "旧案的阴影尚未散尽"
+
+    if identity < 40 and loyalty >= 60:
+        axis_hint = "党账淡而君臣账较真"
+    elif identity >= 60 and loyalty < 40:
+        axis_hint = "党账深而君臣账偏冷"
+    elif loyalty >= 60:
+        axis_hint = "对君尚有可托之处"
+    elif loyalty < 40:
+        axis_hint = "对君的真心不甚牢靠"
+    else:
+        axis_hint = "党君两面都还隔着一层"
+
+    heard = reader_context.get("heard") or []
+    if heard:
+        latest = heard[-1]
+        title = str(latest.get("title") or "旧闻") if isinstance(latest, Mapping) else "旧闻"
+        view_hint = f"近臣又想起听来的「{title}」"
+    else:
+        view_hint = "近臣眼下只凭当面这句话作判断"
+    return f"{cue}；{axis_hint}，{guilt_hint}。{view_hint}。"
+
+
 def build_mindreading_payload(
     db: Any,
     state: Any,
@@ -133,17 +183,24 @@ def build_mindreading_payload(
     else:
         relation = "党君两账未见明显分裂"
 
+    reader_context = _reader_context(db, state, reader)
     return {
         "reader": reader.name,
         "target": target.name,
         "source": "见闻",
         "precision": intelligence_precision(target_factor, channel_factor),
-        "reader_context": _reader_context(db, state, reader),
+        "reader_context": reader_context,
         "truths": {
             "党账": f"对本党的认同：{_band(identity, _IDENTITY_BANDS)}；{_seed_guilt_text(target)}",
             "君臣账": f"对君的真心：{_band(loyalty, _LOYALTY_BANDS)}。",
             "关系判断": relation,
-            "潜台词": str(minister_reply).strip(),
+            "潜台词": _infer_subtext(
+                minister_reply,
+                identity=identity,
+                loyalty=loyalty,
+                seed_guilt=str(getattr(target, "seed_guilt", "") or ""),
+                reader_context=reader_context,
+            ),
         },
         "reply_text": str(minister_reply).strip(),
     }
