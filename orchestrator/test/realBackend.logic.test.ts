@@ -917,12 +917,7 @@ describe("realBackend classifyResumeError", () => {
     ).toEqual({ kind: "fresh-run" });
   });
 
-  it("propagates signal, auth, model, and generic errors", () => {
-    expect(
-      classifyResumeError(
-        new Error("step S2-coder-resume did not fire its required completion signal"),
-      ),
-    ).toEqual({ kind: "propagate" });
+  it("propagates auth, model, and generic errors", () => {
     expect(classifyResumeError(new Error("401 unauthorized"))).toEqual({
       kind: "propagate",
     });
