@@ -240,6 +240,12 @@ export function fixerEnvelopeFixCommitSha(output: FixerResult): string | undefin
   return output.fixCommitSha;
 }
 
+/** Whether the fixer envelope carries a commit that permits commit side effects. */
+export function fixerHasFixCommit(output: FixerResult): boolean {
+  const fixCommitSha = fixerEnvelopeFixCommitSha(output);
+  return fixCommitSha !== undefined && fixCommitSha.length > 0;
+}
+
 export function fixerResultFromParsed(parsed: {
   readonly committed: boolean;
   readonly alreadySatisfied?: boolean;

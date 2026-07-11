@@ -46,6 +46,7 @@ import type {
 } from "./types.js";
 import {
   fixerEnvelopeFixCommitSha,
+  fixerHasFixCommit,
   fixerLedgerFixCommitSha,
   fixerLedgerOutputProceeds,
   fixerProceedsToVerify,
@@ -1765,9 +1766,13 @@ export async function runOnlineReviewLoopStage(
       }
       return decisionGateFromDispatchInfra(round, "fixer", err);
     }
-    if (fixerOutput !== undefined && fixerProceedsToVerify(fixerOutput)) {
+    if (
+      fixerOutput !== undefined &&
+      fixerProceedsToVerify(fixerOutput) &&
+      fixerHasFixCommit(fixerOutput)
+    ) {
       const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
-      if (envelopeFixSha !== undefined && envelopeFixSha.length > 0) {
+      if (envelopeFixSha !== undefined) {
         try {
           lastFixCommitSha = dispatch.resolveFixCommitSha
             ? await dispatch.resolveFixCommitSha(envelopeFixSha)

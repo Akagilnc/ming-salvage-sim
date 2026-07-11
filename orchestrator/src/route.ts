@@ -32,7 +32,6 @@ import {
 } from "./validate.js";
 import { MAX_ONLINE_REVIEW_ROUNDS } from "./onlineReviewLoop.js";
 import {
-  fixerProceedsToVerify,
   isValidCleanupResult,
   isValidDocReleaseResult,
   isValidFixerResult,
@@ -202,16 +201,8 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidFixerResult(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
-      // fixer.md: committed:false + alreadySatisfied → fresh verify; genuinely
-      // not fixed → decision gate (not S8(error)).
-      if (!fixerProceedsToVerify(ctx.output)) {
-        return {
-          kind: "handoff",
-          status: "escalate",
-          onlineReviewTerminal: "decision_gate_raised",
-        };
-      }
-      // ADR 0061: fixer → fresh verify re-check (never fixer → cleanup direct).
+      // Every valid fixer envelope, including committed:false, advances to a
+      // fresh S9 verification; findings there own any decision gate.
       return { kind: "next", step: "S9" };
     }
 

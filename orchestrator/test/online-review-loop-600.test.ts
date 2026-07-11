@@ -124,7 +124,10 @@ import {
 } from "../src/onlineReviewLoop.js";
 import { runOrchestrator } from "../src/runner.js";
 import { route } from "../src/route.js";
-import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
+import {
+  fixerHasFixCommit,
+  skeletonReviewLoopWorkerResult,
+} from "../src/reviewLoopOutcome.js";
 import {
   buildOnlineReviewLanding,
   clampVerifyConvergenceForCheckRuns,
@@ -868,6 +871,19 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     expect(
       route({ from: "S10", output: { kind: "fixer", committed: false } }),
     ).toEqual({ kind: "next", step: "S9" });
+  });
+
+  it("pin r41: only a fixer envelope with a non-empty SHA has commit side effects", () => {
+    expect(fixerHasFixCommit({ kind: "fixer", committed: false })).toBe(false);
+    expect(
+      fixerHasFixCommit({
+        kind: "fixer",
+        committed: false,
+        alreadySatisfied: true,
+        fixCommitSha: FIXER_ENVELOPE_SHA,
+      }),
+    ).toBe(true);
+    expect(fixerHasFixCommit(fixerCommitted())).toBe(true);
   });
 
   it("pin r33: S10 alreadySatisfied routes back to S9 (not decision_gate)", () => {
