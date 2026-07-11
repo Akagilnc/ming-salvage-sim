@@ -247,31 +247,20 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             )
         ]
         visible = [row for row in rows if not is_excluded(row)]
-        excluded = [row for row in rows if is_excluded(row)]
 
-        # The archive is a presentation aggregate, but it may still contain
-        # public prose that has no separate source row.  Keep that prose and
-        # remove only the exact source-scoped material that this character is
-        # not allowed to read.  New producers persist each item separately;
-        # this narrow redaction also keeps mixed aggregates from old saves
-        # useful without treating the whole aggregate as an authorization
-        # boundary.
-        projected = _qualitative(fallback)
-        for row in excluded:
-            restricted = _qualitative(row.get("body") or row.get("title") or "")
-            if restricted:
-                projected = projected.replace(restricted, "")
-        projected = projected.strip("；;，, \n")
-        if projected:
-            return projected
-        if visible:
+        # Once any source boundary exists, the aggregate is no longer an
+        # authorization boundary: chapter-memory/LLM rewriting can paraphrase
+        # a secret so that it is no longer an exact substring of the source.
+        # Project only independently persisted visible items.  The aggregate
+        # remains a compatibility fallback solely for old saves with no source
+        # rows at all; new settlement producers must persist public and
+        # restricted items through ``knowledge_items``.
+        if rows:
             return "\n".join(
                 _qualitative(row.get("body") or row.get("title") or "")
                 for row in visible
                 if row.get("body") or row.get("title")
             )
-        if rows:
-            return ""
         return _qualitative(fallback)
 
     # Keep the durable source rows, and add a character-specific projection of

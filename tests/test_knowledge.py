@@ -77,6 +77,9 @@ def test_knowledge_projects_gazette_and_chapter_sources_per_character(game):
         state, "密查", secret_marker, source_id="test:mixed-source",
         excluded_names=[excluded.name],
     )
+    db.record_public_knowledge_event(
+        state, "公开事项", public_marker, source_id="test:mixed-public",
+    )
     db.save_turn_report(state, f"{public_marker}；{secret_marker}")
     db.save_chapter_memory(state, "朝局", f"{public_marker}；{secret_marker}")
 
@@ -115,6 +118,9 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
         source_id="test:durable-secret",
         excluded_names=[excluded.name],
     )
+    db.record_public_knowledge_event(
+        state, "公开事项", public_marker, source_id="test:durable-public",
+    )
     db.save_turn_report(state, f"{public_marker}；{secret_marker}")
     db.save_chapter_memory(state, "朝局", f"{public_marker}；{secret_marker}")
 
@@ -130,6 +136,35 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
     assert public_marker in excluded_text
     assert secret_marker not in excluded_text
     assert secret_marker in knower_text
+
+
+def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
+    """章节改写不是来源边界；受限事项必须在改写后仍不可见。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": knower.name, "tier": "主办"}],
+        "secret_order",
+        "密查",
+        "原始密事",
+        source_id="test:rewritten-secret",
+        excluded_names=[excluded.name],
+    )
+    db.save_turn_report(state, "聚合邸报改写：有人暗中安排了不应知晓的事务。")
+    db.save_chapter_memory(state, "朝局", "章节改写：宫中另有暗流，未明言其由来。")
+
+    excluded_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
+    )
+    assert "有人暗中安排了不应知晓的事务" not in excluded_text
+    assert "宫中另有暗流" not in excluded_text
 
 
 def test_archive_write_materializes_unmirrored_source_scope(game):
