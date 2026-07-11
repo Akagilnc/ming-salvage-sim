@@ -215,16 +215,12 @@ describe("#767 Coder-Rec roster — pool separation", () => {
     expect(selected.id).toBe("grok-4.5");
   });
 
-  it("moves sol out of the CMR review collection when Coder-Rec assigns it as coder", () => {
+  it("rejects Sol as a Coder-Rec candidate because it occupies the review and gate seats", () => {
     for (const routeName of ["normal", "codex-cheap"] as const) {
       const base = resolveRouteModels(routeName, {});
-      const applied = applyCoderRecToRoute(base, "Coder-Rec: sol@med", 0, {});
-
-      expect(applied.entry?.id).toBe("sol@med");
-      expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
-      expect(applied.route.slots.reviewer).toBe("opus");
-      expect(applied.route.legCollections.cmrReview.map((leg) => leg.slug))
-        .not.toContain("gpt-5.6-sol");
+      expect(() => applyCoderRecToRoute(base, "Coder-Rec: sol@med", 0, {})).toThrow(
+        /no pool-separated coder roster entry/i,
+      );
     }
   });
 
@@ -265,10 +261,10 @@ describe("#767 Coder-Rec roster — pool separation", () => {
       0,
       {},
     );
-    // Terra is also the active completeness/verify gate on the live route,
-    // so pool separation skips it after the explicit Grok collision.
-    expect(applied.entry?.id).toBe("luna@med");
-    expect(applied.route.slots.coder).toBe("gpt-5.6-luna");
+    // Sol owns every default judging gate, leaving Terra available after the
+    // explicit Grok collision.
+    expect(applied.entry?.id).toBe("terra@med");
+    expect(applied.route.slots.coder).toBe("gpt-5.6-terra");
   });
 
   /**
@@ -428,8 +424,8 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
       CODER_REC_FALLBACK_AFTER_ROUNDS,
       {},
     );
-    expect(applied.entry?.id).toBe("luna@med");
-    expect(applied.route.slots.coder).toBe("gpt-5.6-luna");
+    expect(applied.entry?.id).toBe("terra@med");
+    expect(applied.route.slots.coder).toBe("gpt-5.6-terra");
   });
 
   it("leaves the route coder untouched when the issue has no Coder-Rec line", () => {
@@ -713,14 +709,14 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     expect(backend.coderModels).toEqual(["grok-4.5"]);
   });
 
-  it("runs Coder-Rec sol@med end-to-end on the default route without CMR leg env overrides", async () => {
+  it("runs Coder-Rec Terra end-to-end on the default route", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
-    const backend = new CoderRecBackend("Coder-Rec: sol@med");
+    const backend = new CoderRecBackend("Coder-Rec: terra@med");
 
     const result = await runOrchestrator({ issueNumber: 767, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.coderModels).toEqual(["gpt-5.6-sol"]);
+    expect(backend.coderModels).toEqual(["gpt-5.6-terra"]);
   });
 
   it("escalates at S0 instead of dispatching a Coder-Rec slug that violates a tight route", async () => {
@@ -767,9 +763,9 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const backend = new CoderRecResumeAfterS5Backend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    // 2 completed S6 rounds on the restored ledger → Terra is skipped because
-    // it is an active gate, so advance to Luna rather than the first entry.
-    expect(backend.coderModels[0]).toBe("gpt-5.6-luna");
+    // 2 completed S6 rounds on the restored ledger advance to Terra; Sol owns
+    // the active judging seats.
+    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
   });
 
   it("resume: fetchIssueMeta throw falls back to snapshot for Coder-Rec", async () => {
@@ -792,9 +788,8 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const backend = new MetaThrowSnapshotOkBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    // Snapshot body supplies Coder-Rec; 2 S6 rounds → Luna after Terra's
-    // active-gate collision.
-    expect(backend.coderModels[0]).toBe("gpt-5.6-luna");
+    // Snapshot body supplies Coder-Rec; 2 S6 rounds advance to Terra.
+    expect(backend.coderModels[0]).toBe("gpt-5.6-terra");
   });
 
   it("resume: both re-fetch throws degrade to route preset without error termination", async () => {
@@ -831,11 +826,11 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const backend = new CoderRecAdvanceBackend();
     const result = await runOrchestrator({ issueNumber: 767, backend });
     expect(result.status).toBe("success");
-    const lunaSmokeAt = backend.events.indexOf("smoke:gpt-5.6-luna");
-    const lunaDispatchAt = backend.events.indexOf("dispatch:gpt-5.6-luna");
-    expect(lunaSmokeAt).toBeGreaterThanOrEqual(0);
-    expect(lunaDispatchAt).toBeGreaterThanOrEqual(0);
-    expect(lunaSmokeAt).toBeLessThan(lunaDispatchAt);
+    const terraSmokeAt = backend.events.indexOf("smoke:gpt-5.6-terra");
+    const terraDispatchAt = backend.events.indexOf("dispatch:gpt-5.6-terra");
+    expect(terraSmokeAt).toBeGreaterThanOrEqual(0);
+    expect(terraDispatchAt).toBeGreaterThanOrEqual(0);
+    expect(terraSmokeAt).toBeLessThan(terraDispatchAt);
   });
 
   it("advances the DISPATCHED coder after 2 completed S6 rounds via ledger wiring", async () => {
@@ -847,14 +842,13 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     const s6Count = backend.ledgerWrites.filter((e) => e.step === "S6").length;
     expect(s6Count).toBeGreaterThanOrEqual(CODER_REC_FALLBACK_AFTER_ROUNDS);
 
-    // S2 + S5×2 stay on Grok; the S5 after 2 S6 rounds skips the active-gate
-    // Terra entry and advances to Luna.
+    // S2 + S5×2 stay on Grok; the S5 after 2 S6 rounds advances to Terra.
     expect(backend.coderModels[0]).toBe("grok-4.5");
     expect(
       backend.coderModels.filter((m) => m === "grok-4.5").length,
     ).toBeGreaterThanOrEqual(1 + CODER_REC_FALLBACK_AFTER_ROUNDS);
-    expect(backend.coderModels).toContain("gpt-5.6-luna");
-    const firstLuna = backend.coderModels.indexOf("gpt-5.6-luna");
-    expect(firstLuna).toBe(1 + CODER_REC_FALLBACK_AFTER_ROUNDS);
+    expect(backend.coderModels).toContain("gpt-5.6-terra");
+    const firstTerra = backend.coderModels.indexOf("gpt-5.6-terra");
+    expect(firstTerra).toBe(1 + CODER_REC_FALLBACK_AFTER_ROUNDS);
   });
 });

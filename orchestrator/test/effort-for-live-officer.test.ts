@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  REVIEWER_CODEX_SLUG,
+  CODER_CODEX_SLUG,
   VERIFY_CODEX_SLUG,
   effortForLiveOfficer,
 } from "../src/modelRegistry.js";
@@ -35,7 +35,7 @@ describe("effortForLiveOfficer — shared verify/CMR xhigh policy", () => {
 
   it("returns undefined for non-verify slug even with verify/cmr context", () => {
     expect(
-      effortForLiveOfficer(REVIEWER_CODEX_SLUG, { role: "verify", soul: "cmr" }),
+      effortForLiveOfficer(CODER_CODEX_SLUG, { role: "verify", soul: "cmr" }),
     ).toBeUndefined();
   });
 

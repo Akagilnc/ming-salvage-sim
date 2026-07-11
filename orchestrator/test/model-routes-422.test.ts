@@ -46,9 +46,9 @@ describe("#422 model route presets", () => {
       coderFix: "gpt-5.6-terra",
       ship: "sonnet",
       merger: "sonnet",
-      cmrCompleteness: "gpt-5.6-terra",
-      cmrCorrectness: "gpt-5.6-terra",
-      verify: "gpt-5.6-terra",
+      cmrCompleteness: "gpt-5.6-sol",
+      cmrCorrectness: "gpt-5.6-sol",
+      verify: "gpt-5.6-sol",
       fixer: "sonnet",
       cleanup: "sonnet",
       docRelease: "sonnet",
@@ -61,9 +61,9 @@ describe("#422 model route presets", () => {
         "coderFix=gpt-5.6-terra",
         "ship=sonnet",
         "merger=sonnet",
-        "cmrCompleteness=gpt-5.6-terra",
-        "cmrCorrectness=gpt-5.6-terra",
-        "verify=gpt-5.6-terra",
+        "cmrCompleteness=gpt-5.6-sol",
+        "cmrCorrectness=gpt-5.6-sol",
+        "verify=gpt-5.6-sol",
         "fixer=sonnet",
         "cleanup=sonnet",
         "docRelease=sonnet",
@@ -117,7 +117,7 @@ describe("#422 model route presets", () => {
 
     expect(codexCheap.slots.coder).toBe("gpt-5.6-terra");
     expect(codexCheap.slots.reviewer).toBe("gpt-5.6-sol");
-    expect(codexCheap.slots.verify).toBe("gpt-5.6-terra");
+    expect(codexCheap.slots.verify).toBe("gpt-5.6-sol");
     expect(codexCheap.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "opus",
       "agy",
@@ -127,6 +127,28 @@ describe("#422 model route presets", () => {
       "opus",
       "agy",
     ]);
+  });
+
+  it("assigns Sol to reviewer and every judging gate in every Codex-enabled preset", () => {
+    for (const routeName of ["normal", "codex-cheap", "claude-cheap", "claude-tight"] as const) {
+      const { slots } = resolveRouteModels(routeName, {});
+
+      expect(slots).toMatchObject({
+        coder: "gpt-5.6-terra",
+        coderFix: "gpt-5.6-terra",
+        reviewer: "gpt-5.6-sol",
+        cmrCompleteness: "gpt-5.6-sol",
+        cmrCorrectness: "gpt-5.6-sol",
+        verify: "gpt-5.6-sol",
+      });
+    }
+
+    expect(resolveRouteModels("codex-tight", {}).slots).toMatchObject({
+      reviewer: "opus",
+      cmrCompleteness: "opus",
+      cmrCorrectness: "opus",
+      verify: "opus",
+    });
   });
 
   it("fails closed for unknown routes, slots, and slugs", () => {
@@ -143,9 +165,9 @@ describe("#422 model route presets", () => {
     expect(() =>
       resolveRouteModels("normal", { verify: "does-not-exist" }),
     ).toThrow(/unknown model slug/i);
-    // default preset for verify on "normal" is the ratified xhigh terra officer.
+    // Default preset for verify on "normal" is the ratified xhigh Sol officer.
     const resolved = resolveRouteModels("normal", {});
-    expect(resolved.slots.verify).toBe("gpt-5.6-terra");
+    expect(resolved.slots.verify).toBe("gpt-5.6-sol");
     // bad explicit still caught above; the targeted proves verify slot participates in fail-closed
   });
 
@@ -340,8 +362,8 @@ describe("#422 model route presets", () => {
     expect(stepSpecs.S5.model).toBe("gpt-5.6-terra");
     expect(stepSpecs.S6.model).toBe("gpt-5.6-sol");
     expect(shipWorkerSpec().model).toBe("gpt-5.6-terra");
-    expect(cmrWorkerSpec("fresh", "completeness").model).toBe("gpt-5.6-terra");
-    expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.6-terra");
+    expect(cmrWorkerSpec("fresh", "completeness").model).toBe("gpt-5.6-sol");
+    expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.6-sol");
     expect(familyShipWorkerSpec().model).toBe("gpt-5.6-terra");
     expect(mergerModel()).toBe("gpt-5.6-terra");
   });

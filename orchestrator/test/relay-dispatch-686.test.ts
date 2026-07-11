@@ -1465,7 +1465,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       event: "relay_baton_handoff",
       trigger: "quota_wall",
       // S9 wall hits the verify slot (role-aware), not the coder.
-      fromModelId: "terra@med",
+      fromModelId: "sol@med",
       toModelId: "terra@med",
       toPool: "codex-5h",
       step: "S9",
@@ -1777,11 +1777,11 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     expect(handoff).toMatchObject({
       event: "relay_baton_handoff",
       trigger: "mechanical_retry_exhausted",
-      toModelId: "luna@med",
+      toModelId: "terra@med",
     });
     expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
-    // #767's final roster advance selected the Luna baton.
-    expect(coderModels).toContain("gpt-5.6-luna");
+    // #767's final roster advance selects the Terra coding baton.
+    expect(coderModels).toContain("gpt-5.6-terra");
     // The S2 relay belongs only to that coder step. The normal S3 reviewer must
     // select its own channel from its reviewer route, not inherit the coder's
     // billing pool or baton brief.
@@ -1791,7 +1791,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     expect(result.status).not.toBe("error");
   });
 
-  it("S2 quota relay on normal route selects sol and moves its reviewer to opus", async () => {
+  it("S2 quota relay on normal route selects Terra while Sol remains reviewer", async () => {
     tmp = mkdtempSync(join(tmpdir(), "relay-686-sol-normal-"));
     const worktree: WorktreeHandle = {
       branch: "feat/686-sol-normal",
@@ -1821,13 +1821,13 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           hasSubIssues: false,
           isClosed: false,
           openBlockedBy: [],
-          body: "Coder-Rec: grok-4.5 → sol@med",
+          body: "Coder-Rec: grok-4.5 → terra@med",
         };
       }
       async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
         return {
           number: n,
-          body: "Coder-Rec: grok-4.5 → sol@med",
+          body: "Coder-Rec: grok-4.5 → terra@med",
           comments: [],
           agentBrief: "",
         };
@@ -1900,7 +1900,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             id: "codex-5h",
             status: "live",
             parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-            models: ["sol@med"],
+            models: ["terra@med"],
           },
         ],
         now: () => NOW,
@@ -1909,12 +1909,12 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       expect(result.stepLedger).toContainEqual(expect.objectContaining({
         event: "relay_baton_handoff",
         trigger: "quota_wall",
-        toModelId: "sol@med",
+        toModelId: "terra@med",
         toPool: "codex-5h",
         step: "S2",
       }));
-      expect(coderModels).toEqual(["grok-4.5", "gpt-5.6-sol"]);
-      expect(reviewerModels).toContain("opus");
+      expect(coderModels).toEqual(["grok-4.5", "gpt-5.6-terra"]);
+      expect(reviewerModels).toContain("gpt-5.6-sol");
     } finally {
       if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
       else process.env.ORCHESTRATOR_ROUTE = previousRoute;
@@ -1925,7 +1925,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     }
   });
 
-  it("S3 reviewer quota relay rejects sol when sol already owns the coder slot", async () => {
+  it("S3 reviewer quota relay rejects Terra when Terra already owns the coder slot", async () => {
     tmp = mkdtempSync(join(tmpdir(), "relay-686-sol-reviewer-wall-"));
     const worktree: WorktreeHandle = {
       branch: "feat/686-sol-reviewer-wall",
@@ -1954,13 +1954,13 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           hasSubIssues: false,
           isClosed: false,
           openBlockedBy: [],
-          body: "Coder-Rec: grok-4.5 → sol@med",
+          body: "Coder-Rec: grok-4.5 → terra@med",
         };
       }
       async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
         return {
           number: n,
-          body: "Coder-Rec: grok-4.5 → sol@med",
+          body: "Coder-Rec: grok-4.5 → terra@med",
           comments: [],
           agentBrief: "",
         };
@@ -2019,7 +2019,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             id: "codex-5h",
             status: "live",
             parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-            models: ["sol@med"],
+            models: ["terra@med"],
           },
         ],
         now: () => NOW,
@@ -2034,7 +2034,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
         event: "relay_baton_handoff",
         step: "S3",
       }));
-      expect(reviewerModels).toEqual(["opus"]);
+      expect(reviewerModels).toEqual(["gpt-5.6-sol"]);
     } finally {
       if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
       else process.env.ORCHESTRATOR_ROUTE = previousRoute;
@@ -2045,7 +2045,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     }
   });
 
-  it("S3 reviewer quota relay admits sol when the coder slot is not sol", async () => {
+  it("S3 reviewer quota relay admits Terra when the coder slot is not Terra", async () => {
     tmp = mkdtempSync(join(tmpdir(), "relay-686-sol-reviewer-wall-positive-"));
     const worktree: WorktreeHandle = {
       branch: "feat/686-sol-reviewer-wall-positive",
@@ -2076,13 +2076,13 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           hasSubIssues: false,
           isClosed: false,
           openBlockedBy: [],
-          body: "Coder-Rec: grok-4.5 → sol@med",
+          body: "Coder-Rec: grok-4.5 → terra@med",
         };
       }
       async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
         return {
           number: n,
-          body: "Coder-Rec: grok-4.5 → sol@med",
+          body: "Coder-Rec: grok-4.5 → terra@med",
           comments: [],
           agentBrief: "",
         };
@@ -2152,7 +2152,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             id: "codex-5h",
             status: "live",
             parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
-            models: ["sol@med"],
+            models: ["terra@med"],
           },
         ],
         now: () => NOW,
@@ -2161,11 +2161,11 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       expect(result.status).toBe("success");
       expect(result.stepLedger).toContainEqual(expect.objectContaining({
         event: "relay_baton_handoff",
-        toModelId: "sol@med",
+        toModelId: "terra@med",
         toPool: "codex-5h",
         step: "S3",
       }));
-      expect(reviewerModels).toEqual(["opus", "gpt-5.6-sol"]);
+      expect(reviewerModels).toEqual(["opus", "gpt-5.6-terra"]);
     } finally {
       if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
       else process.env.ORCHESTRATOR_ROUTE = previousRoute;

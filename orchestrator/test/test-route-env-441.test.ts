@@ -11,8 +11,8 @@ describe("#441 test route isolation", () => {
         coderFix: "gpt-5.6-terra",
         ship: "sonnet",
         merger: "sonnet",
-        cmrCompleteness: "gpt-5.6-terra",
-        cmrCorrectness: "gpt-5.6-terra",
+        cmrCompleteness: "gpt-5.6-sol",
+        cmrCorrectness: "gpt-5.6-sol",
       },
       legCollections: {
         cmrReview: [
