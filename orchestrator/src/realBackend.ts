@@ -670,6 +670,13 @@ export function issueNumberFromBranch(branch: string): number {
 
 /** Where Sandcastle mounts the codex auth dir inside the container. */
 export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
+/**
+ * Where Sandcastle mounts the grok auth dir inside the container (#807).
+ * Grok CLI reads credentials from `~/.grok/auth.json` under this tree.
+ * The worker image installs a real `/usr/local/bin/grok` binary (not a
+ * symlink into this tree) so the bind-mount does not hide PATH.
+ */
+export const SANDBOX_GROK_DIR = "/home/agent/.grok";
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -804,6 +811,13 @@ export interface AuthPaths {
   readonly srcCodexAuth: string;
   /** Source codex config.toml on the host (best-effort copy). */
   readonly srcCodexConfig: string;
+  /**
+   * Per-issue host dir holding the grok auth.json copy (#807; under $HOME so
+   * colima can share it into the Docker VM — same constraint as codex).
+   */
+  readonly hostGrokAuthDir: string;
+  /** Source grok auth.json on the host (`~/.grok/auth.json`). */
+  readonly srcGrokAuth: string;
   /** Host file holding the durable claude OAuth token. */
   readonly claudeTokenFile: string;
 }
@@ -838,6 +852,8 @@ export function buildAuthPaths(
     hostCodexAuthDir: join(home, ".sc-orchestrator", `auth-${issueNumber}`),
     srcCodexAuth: join(home, ".codex", "auth.json"),
     srcCodexConfig: join(home, ".codex", "config.toml"),
+    hostGrokAuthDir: join(home, ".sc-orchestrator", `grok-auth-${issueNumber}`),
+    srcGrokAuth: join(home, ".grok", "auth.json"),
     claudeTokenFile: join(home, ".sc-claude-token"),
   };
 }
@@ -2378,6 +2394,7 @@ export class RealBackend implements Backend {
       ...REQUIRED_SOUL_FILES.map((file) => join(this.opts.soulsDir, file)),
       auth.srcCodexAuth,
       auth.srcCodexConfig,
+      auth.srcGrokAuth,
       auth.claudeTokenFile,
     ];
     for (const file of files) {
@@ -2871,6 +2888,8 @@ export class RealBackend implements Backend {
   protected mountAuth(issueNumber: number): {
     authDir: string;
     claudeToken?: string;
+    /** Per-issue host dir for grok auth, only when host `~/.grok/auth.json` exists. */
+    grokAuthDir?: string;
   } {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
     // production keeps the os.homedir() default when opts.home is omitted.
@@ -2899,6 +2918,21 @@ export class RealBackend implements Backend {
     // minimal container config instead of copying the host's (#378). Always written
     // so the dir is a valid mount even when codex auth was absent.
     writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
+    // #807: grok auth is BEST-EFFORT + fail-closed skip. Host missing
+    // `~/.grok/auth.json` ⇒ omit the mount entirely (unlike codex, which still
+    // mounts an empty-ish dir for config.toml). Presence gate = copy success.
+    let grokAuthDir: string | undefined;
+    rmSync(paths.hostGrokAuthDir, { recursive: true, force: true });
+    try {
+      mkdirSync(paths.hostGrokAuthDir, { recursive: true, mode: 0o700 });
+      copyFileSync(paths.srcGrokAuth, join(paths.hostGrokAuthDir, "auth.json"));
+      chmodSync(join(paths.hostGrokAuthDir, "auth.json"), 0o600);
+      grokAuthDir = paths.hostGrokAuthDir;
+    } catch {
+      // No host grok auth → skip mount; reclaim the half-built dir.
+      rmSync(paths.hostGrokAuthDir, { recursive: true, force: true });
+      grokAuthDir = undefined;
+    }
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
     // Codex (model gpt-5.6-terra), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
     // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
@@ -2911,7 +2945,7 @@ export class RealBackend implements Backend {
     } catch {
       claudeToken = undefined;
     }
-    return { authDir: paths.hostCodexAuthDir, claudeToken };
+    return { authDir: paths.hostCodexAuthDir, claudeToken, grokAuthDir };
   }
 
   private box(
@@ -3006,7 +3040,13 @@ export class RealBackend implements Backend {
    * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
    */
   protected boxConfig(
-    auth: { authDir: string; claudeToken?: string; ghToken?: string },
+    auth: {
+      authDir: string;
+      claudeToken?: string;
+      ghToken?: string;
+      /** #807: optional per-issue grok auth dir (omit when host auth absent). */
+      grokAuthDir?: string;
+    },
     spec: Pick<StepSpec, "role" | "soul">,
     issueNumber?: number,
     options?: AgentStepRunOptions,
@@ -3052,6 +3092,12 @@ export class RealBackend implements Backend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
     ];
+    // #807: mount grok auth only when host `~/.grok/auth.json` was present
+    // (fail-closed skip). Whole-dir mount at SANDBOX_GROK_DIR; image keeps
+    // `/usr/local/bin/grok` outside this tree so PATH survives the bind.
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
