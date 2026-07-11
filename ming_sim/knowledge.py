@@ -226,3 +226,40 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         "public_events": visible_public,
         "issues": visible_issues,
     }
+
+
+def build_character_treasury_ledger(
+    db: Any, state: Any, character_name: str, account: str, turns: int,
+) -> str:
+    """Render ledger history through the character's treasury projection.
+
+    This is intentionally part of the knowledge read model: callers must not
+    query ``economy_ledger`` before the office-domain gate has been applied.
+    Amounts and balances are qualitative in audience-facing text.
+    """
+    knowledge = build_character_knowledge(db, state, character_name)
+    if "treasury" not in (knowledge.get("world") or {}):
+        return ""
+    try:
+        window = max(1, min(24, int(turns)))
+    except (TypeError, ValueError):
+        window = 6
+    if not hasattr(db, "conn"):
+        return ""
+    start_turn = max(0, int(state.turn) - window + 1)
+    rows = db.conn.execute(
+        "SELECT year, period, delta, balance_after, category, reason "
+        "FROM economy_ledger WHERE account=? AND turn>=? AND turn<=? "
+        "ORDER BY turn DESC, id DESC",
+        (account, start_turn, int(state.turn)),
+    ).fetchall()
+    if not rows:
+        return f"见闻中未载{account}近{window}回合流水。"
+    lines = [f"【{account}近{window}回合流水】"]
+    for row in rows:
+        line = (
+            f"{row['year']}年{row['period']}月：{row['delta']:+d}（{row['reason'] or row['category']}；"
+            f"余额{row['balance_after']}）"
+        )
+        lines.append(_qualitative(line))
+    return "\n".join(lines)
