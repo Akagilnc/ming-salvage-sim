@@ -2176,6 +2176,58 @@ describe("#823 family ship malformed-output recovery", () => {
     );
   });
 
+  it("treats a blank ship branch as malformed output and redispatches within the bounded budget", async () => {
+    class MissingBranchShipBackend extends BareFamilyBackend {
+      readonly aborted: FamilyAbortedEvent[] = [];
+      readonly escalations: FamilyEscalation[] = [];
+      shipDispatches = 0;
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-after-cmr";
+      }
+      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+        this.aborted.push(event);
+      }
+      async escalateFamily(event: FamilyEscalation): Promise<void> {
+        this.escalations.push(event);
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              ...CMR_EVIDENCE,
+            },
+          };
+        }
+        this.shipDispatches += 1;
+        return {
+          kind: "completed",
+          output: { kind: "ship", status: "pr_opened", pr: "pr://family/823", branch: "  " },
+        };
+      }
+    }
+
+    const backend = new MissingBranchShipBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-cmr",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(backend.ledger.some((entry) => entry.status === "ship_completed")).toBe(false);
+    expect(backend.escalations[0]?.reason).toContain("branch");
+  });
+
   it("crash-resume spends only the remaining dispatch budget from the durable open ship streak", async () => {
     class ResumeAfterMalformedShipBackend extends BareFamilyBackend {
       shipDispatches = 0;

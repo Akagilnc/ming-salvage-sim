@@ -2998,8 +2998,8 @@ async function runVerifyCmrWithShipTruthAttempt(
           ? "worker returned a non-ship payload"
           : candidate.kind === "completed" &&
               candidate.output.kind === "ship" &&
-              !isFilledString(candidate.output.pr)
-            ? `worker did not provide a PR locator: ${describeShipPrState(candidate.output)}`
+              (!isFilledString(candidate.output.pr) || !isFilledString(candidate.output.branch))
+            ? `worker did not provide a PR locator or branch: ${describeShipPrState(candidate.output)}`
             : undefined;
     if (malformedReason === undefined) {
       shipResult = candidate;

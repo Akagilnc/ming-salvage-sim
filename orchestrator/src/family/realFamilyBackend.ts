@@ -589,7 +589,15 @@ export class RealFamilyBackend implements FamilyBackend {
         "pr", "list", "--repo", this.opts.repo, "--base", this.opts.base,
         "--head", input.familyBase, "--state", "open", "--json", "url,headRefOid",
       ], this.opts.workingRepo);
-      const matches = JSON.parse(raw) as readonly { readonly url?: unknown; readonly headRefOid?: unknown }[];
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return {
+          ok: false,
+          kind: "observation_failed",
+          reason: "could not discover family PR via gh pr list: host response was not an array",
+        };
+      }
+      const matches = parsed as readonly { readonly url?: unknown; readonly headRefOid?: unknown }[];
       if (matches.length === 0) {
         return { ok: false, kind: "pr_missing", reason: `host has no open family PR for branch "${input.familyBase}"` };
       }
