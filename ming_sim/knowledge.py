@@ -172,19 +172,10 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
                 if row.get("body") or row.get("title")
             )
         if rows:
-            # Legacy archives predate structured archive items.  They may
-            # still contain a public aggregate alongside a source row.  Keep
-            # that aggregate only when none of the excluded source payloads
-            # can be identified in it; otherwise omitting the whole archive
-            # is the only safe projection available to an old save.  New
-            # writers should persist each item as its own source row.
-            aggregate = str(fallback or "")
-            excluded_bodies = [
-                str(row.get("body") or "")
-                for row in rows if is_excluded(row) and row.get("body")
-            ]
-            if aggregate and not any(body in aggregate for body in excluded_bodies):
-                return _qualitative(aggregate)
+            # A rendered archive is not an authorization boundary.  Once a
+            # turn has structured source rows, only those rows may be
+            # projected; guessing which prose fragment came from which source
+            # would make paraphrased or summarised secrets visible.
             return ""
         return _qualitative(fallback)
 
