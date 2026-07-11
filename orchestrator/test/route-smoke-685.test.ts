@@ -111,9 +111,17 @@ const smokeFixtureDir = dirname(fileURLToPath(import.meta.url));
 const smokePromptsDir = join(smokeFixtureDir, "..", "prompts");
 const smokeSoulsDir = join(smokeFixtureDir, "..", "image", "souls");
 
-function productionSmokeBackend(home: string, promptsDir = smokePromptsDir): ProductionSmokeBackend {
+function productionSmokeBackend(
+  home: string,
+  promptsDir = smokePromptsDir,
+  includeGrokAuth = true,
+): ProductionSmokeBackend {
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
+  if (includeGrokAuth) {
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), "{}\n");
+  }
   writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
   return new ProductionSmokeBackend({
     sourceRepo: "/tmp/route-smoke-source",
@@ -538,7 +546,7 @@ describe("#685 route tool smoke", () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-no-auth-"));
     runSpy.mockImplementation(async (options) => successfulSmoke(options));
     try {
-      const backend = productionSmokeBackend(home);
+      const backend = productionSmokeBackend(home, smokePromptsDir, false);
       const smoked = await backend.smokeModelRoute(
         resolveRouteModels("normal", { coder: "grok-4.5" }),
         {},

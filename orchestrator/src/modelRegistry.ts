@@ -165,11 +165,10 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "opencode",
     strongLeg: true,
   },
-  // `agy` is retained as the route-facing family/slug for compatibility, but
-  // it is now backed by the real OpenCode executor instead of a non-runnable
-  // CMR-only label.
+  // `agy` remains the route-facing family/slug for compatibility, while the
+  // baked Grok CLI executes the same Grok 4.5 model in current images.
   agy: {
-    provider: "opencode",
+    provider: "grok",
     model: "grok-4.5",
     family: "agy",
   },
