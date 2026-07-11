@@ -139,7 +139,8 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             if hasattr(db, "knowledge_exclusion_targets_for_source")
             else {"people": [], "offices": []}
         )
-        return (character_name in targets.get("people", [])
+        return (character_name in excluded_names
+                or character_name in targets.get("people", [])
                 or office_type in targets.get("offices", [])
                 or office_name in targets.get("offices", []))
 
@@ -151,18 +152,40 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         for this character.  The aggregate is a compatibility fallback for old
         saves that predate the source projection and have no rows at all.
         """
+        # Only durable source rows are inputs here.  The synthetic
+        # ``turn_report:*``/``chapter:*`` rows below are read-model outputs;
+        # feeding one archive back into the next archive would duplicate
+        # material and make an already-rendered aggregate look like an
+        # unrestricted source.
         rows = [
             row for row in public_events
             if int(row.get("turn") or 0) == turn
-            and not str(row.get("source_id") or "").startswith(("opening:", "directive:"))
+            and not str(row.get("source_id") or "").startswith(
+                ("opening:", "directive:", "turn_report:", "chapter:")
+            )
         ]
         visible = [row for row in rows if not is_excluded(row)]
-        if rows:
+        if visible:
             return "\n".join(
                 _qualitative(row.get("body") or row.get("title") or "")
                 for row in visible
                 if row.get("body") or row.get("title")
             )
+        if rows:
+            # Legacy archives predate structured archive items.  They may
+            # still contain a public aggregate alongside a source row.  Keep
+            # that aggregate only when none of the excluded source payloads
+            # can be identified in it; otherwise omitting the whole archive
+            # is the only safe projection available to an old save.  New
+            # writers should persist each item as its own source row.
+            aggregate = str(fallback or "")
+            excluded_bodies = [
+                str(row.get("body") or "")
+                for row in rows if is_excluded(row) and row.get("body")
+            ]
+            if aggregate and not any(body in aggregate for body in excluded_bodies):
+                return _qualitative(aggregate)
+            return ""
         return _qualitative(fallback)
 
     # Keep the durable source rows, and add a character-specific projection of
