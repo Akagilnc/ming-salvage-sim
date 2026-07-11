@@ -288,7 +288,16 @@ def build_minister_tools(character: Character, context: CourtContext,
 
     def inspect_region(region_name: str) -> str:
         """查看某一地区人口、民心、动乱、天灾、人祸、田亩和税收。"""
-        return filter_domain("regional", region_name)
+        # The overview rail is intentionally capped for prompt size, but an
+        # office already authorized for the regional domain may inspect a
+        # named region.  Use the DB's qualitative presenter rather than its
+        # raw detail path so this on-demand read keeps the P4 boundary.
+        if not scoped_world("regional") or scoped_world("regional") == "本职见闻未载此项。":
+            return "本职见闻未载此项。"
+        try:
+            return context.db.region_detail(region_name, qualitative=True)
+        except ValueError:
+            return f"见闻中未载{str(region_name or '').strip()}。"
 
     def list_buildings() -> str:
         """查看全国在册建筑（火炮厂、矿厂、常平仓、边堡、织造局等）的等级、完好、维护费与产出。"""
@@ -341,6 +350,15 @@ def build_minister_tools(character: Character, context: CourtContext,
             target_year = int(year)
             target_month = int(month) if month else 1
             target_month = max(1, min(12, target_month))
+        # Unsafe legacy aggregate prose is never a fallback for the public
+        # projection.  Return the explicit P4 placeholder before compatible
+        # opening facts can make that rejection look like a successful read.
+        for report in context.db.list_turn_reports():
+            if int(report.get("year") or 0) != target_year or int(report.get("period") or 0) != target_month:
+                continue
+            safe = safe_historical_text(report.get("report") or "", "历史邸报")
+            if "已略去" in safe:
+                return f"【{target_year}年{target_month}月见闻】\n{safe}"
         knowledge = projection()
         rows = [
             item for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
@@ -383,7 +401,10 @@ def build_minister_tools(character: Character, context: CourtContext,
         lines = [f"【起居注检索：{label}】"]
         for c in sorted(hits, key=lambda item: int(item.get("turn") or 0))[-8:]:
             body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
-            lines.append(f"- {c['year']}年{c['period']}月：{body}")
+            if body:
+                lines.append(f"- {c['year']}年{c['period']}月：{body}")
+        if len(lines) == 1:
+            return "未见正式邸报记录。"
         return "\n".join(lines)
 
     def check_treasury() -> str:

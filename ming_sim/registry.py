@@ -207,13 +207,22 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
     chapters = [c for c in knowledge.get("public_events", [])
                 if (c.get("kind") == "chapter_summary" or str(c.get("source_id") or "").startswith("chapter_source:"))
                 and int(c.get("turn") or 0) != prev_turn]
-    if not chapters:
-        return ""
     lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]
     for c in chapters:
         body = safe_historical_text(c.get("body") or c.get("title"), "起居注章节")
         if body:
             lines.append(f"- {c['year']}年{c['period']}月：{body}")
+    if len(lines) == 1:
+        # A rejected historical aggregate must be explicit rather than silently
+        # disappearing: the minister sees neither its unsafe raw axes nor an
+        # invented substitute.  This also keeps the P4 boundary observable at
+        # the chapter-memory seam.
+        raw_chapters = context.db.list_chapter_memories(upto_turn=context.state.turn)
+        for chapter in raw_chapters:
+            safe = safe_historical_text(chapter.get("body") or chapter.get("title"), "起居注章节")
+            if "已略去" in safe:
+                lines.append(f"- {chapter['year']}年{chapter['period']}月：{safe}")
+                break
     if len(lines) == 1:
         return ""
     brief = "\n".join(lines)
