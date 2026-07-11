@@ -55,6 +55,54 @@ export interface PrMergedTerminalRecord {
   readonly convergedHeadOid: string;
 }
 
+export interface OpenPrObservation {
+  readonly present: boolean;
+  readonly prUrl?: string;
+}
+
+/** Host truth for the open PR currently associated with a pushed branch. */
+export function observeOpenPrForBranch(
+  sh: Sh,
+  repo: string,
+  branch: string,
+  reportedPr?: string,
+): OpenPrObservation {
+  if (reportedPr !== undefined && reportedPr.trim().length > 0) {
+    const live = fetchPrMergeLiveState(sh, repo, reportedPr);
+    return live.state === "OPEN"
+      ? { present: true, prUrl: live.prUrl }
+      : { present: false };
+  }
+  const raw = sh("gh", [
+    "pr",
+    "list",
+    "--repo",
+    repo,
+    "--head",
+    branch,
+    "--state",
+    "open",
+    "--limit",
+    "1",
+    "--json",
+    "url",
+  ]);
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    throw new Error(`autoMerge: malformed gh pr list payload for branch ${branch}`);
+  }
+  if (parsed.length === 0) return { present: false };
+  const first = parsed[0];
+  if (first === null || typeof first !== "object") {
+    throw new Error(`autoMerge: malformed gh pr list entry for branch ${branch}`);
+  }
+  const url = (first as Record<string, unknown>).url;
+  if (typeof url !== "string" || url.trim().length === 0) {
+    throw new Error(`autoMerge: gh pr list missing URL for branch ${branch}`);
+  }
+  return { present: true, prUrl: url.trim() };
+}
+
 export type AutoMergeTerminalState =
   | "merged"
   | "not_ready"

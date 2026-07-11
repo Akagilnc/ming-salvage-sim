@@ -124,6 +124,7 @@ import {
 } from "../src/onlineReviewLoop.js";
 import { runOrchestrator } from "../src/runner.js";
 import { route } from "../src/route.js";
+import { observeOpenPrForBranch } from "../src/autoMerge.js";
 import {
   fixerHasFixCommit,
   skeletonReviewLoopWorkerResult,
@@ -798,18 +799,44 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
 });
 
 describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => {
-  it("S7 pushed skips the online review loop → S8 success", () => {
-    expect(
-      route({ from: "S7", shipStatus: "pushed", output: { kind: "ship", branch: "b", status: "pushed" } }),
-    ).toEqual({ kind: "handoff", status: "success" });
+  it("observes an open PR for the shipped branch from GitHub host state", () => {
+    const calls: string[] = [];
+    const observation = observeOpenPrForBranch((file, args) => {
+      calls.push(`${file} ${args.join(" ")}`);
+      return JSON.stringify([{ url: "https://github.com/o/r/pull/42" }]);
+    }, "o/r", "fix/824-radius");
+
+    expect(observation).toEqual({
+      present: true,
+      prUrl: "https://github.com/o/r/pull/42",
+    });
+    expect(calls[0]).toContain("gh pr list --repo o/r --head fix/824-radius --state open");
   });
 
-  it("S7 pr_opened enters S9", () => {
+  it("observes no open PR from an empty GitHub host result", () => {
+    expect(
+      observeOpenPrForBranch(() => "[]", "o/r", "fix/824-radius"),
+    ).toEqual({ present: false });
+  });
+
+  it("S7 skips online review when host truth says no PR, regardless of worker shipStatus", () => {
     expect(
       route({
         from: "S7",
         shipStatus: "pr_opened",
+        hostPrPresent: false,
         output: { kind: "ship", branch: "b", status: "pr_opened", pr: "https://x" },
+      }),
+    ).toEqual({ kind: "handoff", status: "success" });
+  });
+
+  it("S7 enters S9 when host truth says a PR exists, regardless of worker shipStatus", () => {
+    expect(
+      route({
+        from: "S7",
+        shipStatus: "pushed",
+        hostPrPresent: true,
+        output: { kind: "ship", branch: "b", status: "pushed" },
       }),
     ).toEqual({ kind: "next", step: "S9" });
   });

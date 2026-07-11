@@ -71,11 +71,10 @@ export interface RouteContext {
    * were closure.
    */
   readonly pendingBlockingFindings?: ReadonlyArray<Finding>;
-  /**
-   * S7 ship output status — `pushed` skips the online review loop (#600 AC).
-   * When `pr_opened`, the runner enters S9+ after bot polling.
-   */
+  /** Worker-reported S7 status, retained as telemetry only. */
   readonly shipStatus?: string;
+  /** Host-observed truth: whether the shipped branch currently has an open PR. */
+  readonly hostPrPresent?: boolean;
   /** 1-based online review round for S9/S10 routing (#600 / ADR 0061). */
   readonly onlineReviewRound?: number;
 }
@@ -168,9 +167,9 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S7": {
-      // #600: a push-only delivery (`pushed`) does not engage the online review
-      // loop — only `pr_opened` with a PR URL enters S9+.
-      if (ctx.shipStatus === "pushed") {
+      // #824: the worker's shipStatus is telemetry, not routing authority. Only
+      // a fresh host-side GitHub observation decides whether S9+ is applicable.
+      if (ctx.hostPrPresent !== true) {
         return { kind: "handoff", status: "success" };
       }
       return { kind: "next", step: "S9" };
