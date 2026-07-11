@@ -147,6 +147,51 @@ describe("#685 route smoke hardening", () => {
     );
   });
 
+  it("invalidates the sandbox fingerprint when OpenCode auth or GLM_KEY availability changes", () => {
+    const home = tempHome("route-smoke-auth-");
+    const opencodeAuth = join(home, ".local", "share", "opencode", "auth.json");
+    const backend = {
+      opts: {
+        imageName: "test-image",
+        runKey: 850,
+        home,
+        promptsDir: join(home, "prompts"),
+        soulsDir: join(home, "souls"),
+      },
+      sh: (file: string) => file === "docker" ? "sha256:test-image" : "test-gh-token",
+    };
+    const fingerprint = (
+      RealBackend.prototype as unknown as {
+        routeSmokeSandboxFingerprint(this: typeof backend): string;
+      }
+    ).routeSmokeSandboxFingerprint.bind(backend);
+
+    vi.stubEnv("GLM_KEY", undefined);
+    const missing = fingerprint();
+    expect(fingerprint()).toBe(missing);
+
+    mkdirSync(dirname(opencodeAuth), { recursive: true });
+    writeFileSync(opencodeAuth, '{"token":"first-secret"}\n');
+    const appeared = fingerprint();
+    expect(appeared).not.toBe(missing);
+    expect(fingerprint()).toBe(appeared);
+
+    writeFileSync(opencodeAuth, '{"token":"rotated-secret"}\n');
+    const rotated = fingerprint();
+    expect(rotated).not.toBe(appeared);
+
+    rmSync(opencodeAuth);
+    expect(fingerprint()).toBe(missing);
+
+    vi.stubEnv("GLM_KEY", "secret-never-exposed");
+    const glmPresent = fingerprint();
+    expect(glmPresent).not.toBe(missing);
+    expect(fingerprint()).toBe(glmPresent);
+
+    vi.stubEnv("GLM_KEY", undefined);
+    expect(fingerprint()).toBe(missing);
+  });
+
   it("separates a relay pool from the default provider cache", () => {
     const route = resolveRouteModels("normal", { coder: "grok-4.5" });
 
