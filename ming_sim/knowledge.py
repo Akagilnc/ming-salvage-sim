@@ -292,8 +292,10 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             row for row in public_events
             if int(row.get("turn") or 0) == turn
             and not str(row.get("source_id") or "").startswith(
-                ("opening:", "directive:", "turn_report:", "chapter:")
+                ("opening:", "directive:", "turn_report:", "chapter:", "chapter_source:",
+                )
             )
+            and str(row.get("source_id") or "") != f"settlement:narrative:{turn}"
         ]
         visible = [
             row for row in rows
@@ -367,6 +369,15 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             for key, value in row.items() if key != "excluded_names"
         }
         for row in public_events
+        # Aggregate archive writers leave compatibility source rows behind.
+        # They are not authorization boundaries: when the turn contains a
+        # restricted source their prose may be a rewrite of that source.  The
+        # character-specific turn_report/chapter projection above is the only
+        # archive representation allowed into the audience view.
+        if not str(row.get("source_id") or "").startswith(
+            ("turn_report:", "chapter_source:")
+        )
+        and not re.fullmatch(r"settlement:narrative:\\d+", str(row.get("source_id") or ""))
         if knowledge_row_visible_to(
             db,
             {**row, "office_type": office_type, "office": office_name},

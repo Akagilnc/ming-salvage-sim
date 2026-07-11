@@ -52,7 +52,19 @@ def qualitative_bucket(
 
 def qualitative_band(value: object, words: tuple[str, ...], default: int = 0) -> str:
     """Return one of five ordered labels without exposing the source score."""
-    index = qualitative_bucket(value, (20, 40, 60, 80), default)
+    # Missing values are not measured values.  Keep their neutral fallback at
+    # the lower middle band instead of treating the conventional ``50``
+    # default as a real score and promoting it into the next band.
+    if value is None:
+        index = qualitative_bucket(default, (20, 40, 60, 80), 0) - (1 if default else 0)
+    else:
+        try:
+            int(value)
+        except (TypeError, ValueError):
+            index = qualitative_bucket(default, (20, 40, 60, 80), 0) - (1 if default else 0)
+        else:
+            index = qualitative_bucket(value, (20, 40, 60, 80), default)
+    index = max(0, index)
     index = min(index, len(words) - 1)
     return words[index]
 

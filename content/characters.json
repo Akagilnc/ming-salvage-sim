@@ -284,7 +284,12 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 45,
+      "seed_guilt": {
+        "crime": "户部尚书，依附内廷而守成取容，未见可坐实血债",
+        "severity": "轻"
+      }
     },
     {
       "name": "张缙彦",
@@ -309,7 +314,12 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 70,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "杨嗣昌",
@@ -640,7 +650,12 @@
       "birth_year": 1565,
       "historical_death_year": 1630,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 75,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "汤若望",
@@ -665,7 +680,12 @@
       "birth_year": 1592,
       "historical_death_year": 1666,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 72,
+      "seed_guilt": {
+        "crime": "无",
+        "severity": "无"
+      }
     },
     {
       "name": "袁可立",
@@ -1361,7 +1381,12 @@
       "historical_death_month": 0,
       "status": "dismissed",
       "status_reason": "延绥兵变弹压不力，革职候勘",
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 50,
+      "seed_guilt": {
+        "crime": "三边兵变弹压失机，已革职候勘；责任待勘，不预判为可坐重罪",
+        "severity": "轻"
+      }
     },
     {
       "name": "李从心",
@@ -1386,7 +1411,12 @@
       "birth_year": 0,
       "historical_death_year": 0,
       "historical_death_month": 0,
-      "power_id": "ming"
+      "power_id": "ming",
+      "identity": 42,
+      "seed_guilt": {
+        "crime": "陕西布政使，依附内廷并把持地方钱谷，未见可坐实血债",
+        "severity": "轻"
+      }
     },
     {
       "name": "卢象升",

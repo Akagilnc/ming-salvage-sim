@@ -158,7 +158,11 @@ def _record_settlement_narrative_sources(
         # A source-scoped public row must exist even when the whole narrative
         # was independently public.  Otherwise the presence of an unrelated
         # restricted source suppresses every public fact for excluded readers.
-        if projected:
+        # If no restricted fragment matched, the remaining aggregate is not a
+        # source projection.  Retain it only when the producer has explicitly
+        # marked it public; otherwise a paraphrased secret has no safe
+        # authorization boundary and must stay out of the excluded audience.
+        if projected and (projected != str(narrative or "") or "公开" in projected):
             db.record_public_knowledge_event(
                 state, "本回合公开事项", projected,
                 source_id=f"{source_id}:public", commit=commit,
