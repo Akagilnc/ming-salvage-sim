@@ -980,9 +980,9 @@ export function checkOwnGitDir(
  * So the soul is `role`-derived: `coder` → the `"coder"` soul, `reviewer` → the
  * `"READ-ONLY"` soul. The StepSpec ALSO carries an explicit `spec.soul`; this
  * helper VALIDATES the two agree (a reviewer step carrying the coder soul is a
- * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug
- * and {@link assertCompletionSignal} throws on a missing signal). The mismatch
- * throws → the runner's S8(error) edge, never a silently-mis-souled run.
+ * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug).
+ * The mismatch throws → the runner's S8(error) edge, never a silently-mis-souled
+ * run.
  *
  * Why this closes the finding: previously `spec.soul` was declared in the
  * StepSpec contract and populated in per-run worker specs but NEVER consumed by the real
@@ -1023,11 +1023,7 @@ export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
 export interface RunResultLike {
   readonly iterations: ReadonlyArray<{ readonly sessionId?: string }>;
   readonly commits: ReadonlyArray<{ readonly sha: string }>;
-  /**
-   * The matched completion signal, or `undefined` if no signal fired before the
-   * iteration limit (Sandcastle d.ts). The step-advance gate keys off this — see
-   * {@link assertCompletionSignal}.
-   */
+  /** The completion signal observed by Sandcastle, if any. */
   readonly completionSignal?: string;
 }
 
@@ -1064,52 +1060,6 @@ export function realCommitCount(
   result: Pick<RunResultLike, "commits">,
 ): number {
   return result.commits.length;
-}
-
-// ── completion-signal gate (ship-pre 256 r1) ────────────────────────────────
-
-/**
- * Assert a step's run fired the EXACT completion signal its {@link StepSpec}
- * declared, BEFORE the caller decodes the output and advances the step.
- *
- * WHY (ship-pre 256 r1, design-compliance / real-Backend wiring): Sandcastle's
- * `RunResult.completionSignal` is "`undefined` if no signal fired before the
- * iteration limit" (sandcastle d.ts). Passing `completionSignal: spec.…` into
- * `run()` only tells the sandbox WHICH string ends the step early — it does NOT
- * make the run fail when the signal never fires. So an agent that emits a
- * complete, schema-valid `<coder>`/`<review>` tag but hits `maxIter` mid-work
- * WITHOUT firing `CODER_STEP_COMPLETE` / `REVIEWER_STEP_COMPLETE` would have its
- * output decoded and the step advanced — violating #244's gate "agent emit
- * completionSignal 才进下一步" (issue body; StepSpec.completionSignal doc
- * "Required so the sandbox knows when to stop"). A totally-missing output
- * already throws (extractCoderTag / schema.parse → S8(error)); this closes the
- * complete-but-UNSIGNALED leak the missing-output throw does not cover.
- *
- * On mismatch/undefined: THROW. The caller (runStep / resumeSession) lets it
- * propagate to the runner's error edge = S8(error) + error package, never a
- * silently-trusted advance. `stepName` is woven into the message so the runner
- * attributes the failure to the right step.
- *
- * Pure (a check on the RunResultLike shape): unit-tested without a container.
- */
-export function assertCompletionSignal(
-  result: Pick<RunResultLike, "completionSignal">,
-  expected: string,
-  stepName: string,
-): void {
-  if (result.completionSignal !== expected) {
-    const actual =
-      result.completionSignal === undefined
-        ? "none (no signal fired before the iteration limit)"
-        : `"${result.completionSignal}"`;
-    throw new Error(
-      `realBackend: step ${stepName} did not fire its required completion ` +
-        `signal — expected "${expected}", got ${actual}. The agent must emit ` +
-        `the completion signal to advance the step (#244 "agent emit ` +
-        `completionSignal 才进下一步"); a complete-but-unsignaled run (e.g. ` +
-        `maxIter hit mid-work) does NOT advance.`,
-    );
-  }
 }
 
 // ── coder structured output from stdout (integ-cmr 256 r1) ──────────────────

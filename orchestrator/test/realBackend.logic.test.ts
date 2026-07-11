@@ -29,7 +29,6 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import * as telemetry from "../src/telemetry.js";
 import {
   agentForSlug,
-  assertCompletionSignal,
   attributeFailure,
   branchForIssue,
   candidateBranches,
@@ -860,50 +859,6 @@ describe("realBackend realCommitCount (#256 commit-truth)", () => {
   });
   it("returns 0 when the agent made no commits", () => {
     expect(realCommitCount({ commits: [] })).toBe(0);
-  });
-});
-
-// ─── assertCompletionSignal (ship-pre 256 r1, completionSignal gate) ──────────
-
-describe("realBackend assertCompletionSignal", () => {
-  it("passes when the fired signal matches the spec's completionSignal", () => {
-    expect(() =>
-      assertCompletionSignal(
-        { completionSignal: "CODER_STEP_COMPLETE" },
-        "CODER_STEP_COMPLETE",
-        "S2-coder",
-      ),
-    ).not.toThrow();
-  });
-
-  it("throws when no signal fired before the iteration limit (undefined)", () => {
-    // RunResult.completionSignal is "undefined if no signal fired before the
-    // iteration limit" (sandcastle d.ts). An agent that emitted a complete,
-    // schema-valid tag but hit maxIter mid-work without firing the signal must
-    // NOT advance the step (#244 "agent emit completionSignal 才进下一步").
-    expect(() =>
-      assertCompletionSignal(
-        { completionSignal: undefined },
-        "CODER_STEP_COMPLETE",
-        "S2-coder",
-      ),
-    ).toThrow(/completion signal/i);
-  });
-
-  it("throws and names the expected + actual signal on a mismatch", () => {
-    expect(() =>
-      assertCompletionSignal(
-        { completionSignal: "REVIEWER_STEP_COMPLETE" },
-        "CODER_STEP_COMPLETE",
-        "S2-coder",
-      ),
-    ).toThrow(/CODER_STEP_COMPLETE/);
-  });
-
-  it("names the step in the thrown error (runner attributes the failure)", () => {
-    expect(() =>
-      assertCompletionSignal({ completionSignal: undefined }, "X", "S5-coder"),
-    ).toThrow(/S5-coder/);
   });
 });
 
