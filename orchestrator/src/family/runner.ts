@@ -1436,6 +1436,7 @@ export async function runFamily(
         const mergeResult = await mergeChild(familyBackend, {
           childIssue: r.issue,
           childBranch: r.branch,
+          modelRoute: activeRoutePolicy.route,
         });
         familyHead = mergeResult.familyHead;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
