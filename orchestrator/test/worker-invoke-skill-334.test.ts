@@ -638,7 +638,12 @@ describe("#334 ADR 0030 worker routing", () => {
     const execMock = cp.execFileSync as unknown as ReturnType<typeof vi.fn>;
     execMock.mockImplementation((_file: string, args: string[]) =>
       args.slice(0, 2).join(" ") === "pr list"
-        ? JSON.stringify([{ url: "pr://slice/offline-824" }])
+        ? JSON.stringify([
+            {
+              url: "pr://slice/offline-824",
+              headRepositoryOwner: { login: "Akagilnc" },
+            },
+          ])
         : "",
     );
     vi.stubEnv("NODE_ENV", "production");

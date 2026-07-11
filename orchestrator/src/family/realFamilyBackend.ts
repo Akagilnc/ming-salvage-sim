@@ -495,7 +495,7 @@ export class RealFamilyBackend implements FamilyBackend {
           "--repo",
           this.opts.repo,
           "--json",
-          "baseRefName,headRefName,headRefOid,state",
+          "baseRefName,headRefName,headRefOid,headRepositoryOwner,state",
         ],
         this.opts.workingRepo,
       );
@@ -503,6 +503,7 @@ export class RealFamilyBackend implements FamilyBackend {
         readonly baseRefName?: unknown;
         readonly headRefName?: unknown;
         readonly headRefOid?: unknown;
+        readonly headRepositoryOwner?: { readonly login?: unknown } | null;
         readonly state?: unknown;
       };
       if (parsed.state !== "OPEN") {
@@ -521,6 +522,15 @@ export class RealFamilyBackend implements FamilyBackend {
         return {
           ok: false,
           reason: `family PR "${input.pr}" uses head "${String(parsed.headRefName)}" but expected "${input.familyBase}"`,
+        };
+      }
+      const expectedHeadOwner = this.opts.repo.split("/", 1)[0];
+      if (parsed.headRepositoryOwner?.login !== expectedHeadOwner) {
+        return {
+          ok: false,
+          reason:
+            `family PR "${input.pr}" has head repository owner ` +
+            `"${String(parsed.headRepositoryOwner?.login)}" but expected "${expectedHeadOwner}"`,
         };
       }
       if (typeof parsed.headRefOid !== "string" || parsed.headRefOid.trim().length === 0) {

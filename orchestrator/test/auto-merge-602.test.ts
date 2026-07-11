@@ -157,6 +157,38 @@ describe("#824 reported PR identity", () => {
 
     expect(observation).toEqual({ present: false });
   });
+
+  it("rejects a same-named fallback PR from another fork after discarding the reported PR", () => {
+    let listArgs: string[] | undefined;
+    const observation = observeOpenPrForBranch(
+      fakeSh({
+        "gh pr view": () => JSON.stringify({
+          number: 824,
+          url: "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
+          state: "OPEN",
+          headRefName: "fix/824-radius",
+          headRefOid: "reported-fork-head",
+          headRepositoryOwner: { login: "reported-fork" },
+          mergeStateStatus: "CLEAN",
+        }),
+        "gh pr list": (args) => {
+          listArgs = args;
+          return JSON.stringify([
+            {
+              url: "https://github.com/Akagilnc/ming-salvage-sim/pull/825",
+              headRepositoryOwner: { login: "another-fork" },
+            },
+          ]);
+        },
+      }),
+      REPO,
+      "fix/824-radius",
+      "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
+    );
+
+    expect(listArgs?.join(" ")).toContain("headRepositoryOwner");
+    expect(observation).toEqual({ present: false });
+  });
 });
 
 describe("#602 docReleasePathsFromCommit", () => {
