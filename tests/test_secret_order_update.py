@@ -57,6 +57,24 @@ def test_update_by_id_preserves_tags_when_none(game):
     assert _j.loads(row["tags"]) == ["辽东", "军饷"]   # 原标签保留
 
 
+def test_update_by_id_refreshes_durable_knowledge_source(game):
+    db, state, _ = game
+    oid = db.create_secret_order(state, "保签官", "旧标题", "旧内容", ["辽东"])
+    refreshed = []
+
+    assert db.update_secret_order_by_id(
+        state, oid, "新标题", "新内容",
+        registry=type("Registry", (), {"refresh": lambda _self, name: refreshed.append(name)})(),
+    )
+
+    source = db.conn.execute(
+        "SELECT title, body FROM character_knowledge_sources WHERE source_id=?",
+        (f"secret_order:{oid}",),
+    ).fetchone()
+    assert dict(source) == {"title": "新标题", "body": "新内容"}
+    assert refreshed == ["保签官"]
+
+
 def test_update_by_id_noop_on_non_active(game):
     """目标非 active(已结案)→ 不更新,返回 False。"""
     db, state, _ = game

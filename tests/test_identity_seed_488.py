@@ -47,6 +47,32 @@ def test_identity_and_seed_guilt_survive_restore(game):
     assert json.loads(content.characters["魏忠贤"].seed_guilt) == guilt
 
 
+def test_existing_save_migrates_seed_identity_and_inserts_missing_roster_member(tmp_path, content):
+    """旧档已有角色不能跳过后来批准的 roster identity seed。"""
+    from ming_sim.db import GameDB
+
+    path = tmp_path / "pre-family.db"
+    first = GameDB(str(path), content)
+    first.seed_static_data()
+    first.conn.execute("DELETE FROM characters WHERE name=?", ("王承恩",))
+    first.conn.execute("UPDATE characters SET identity=50, seed_guilt='' WHERE name=?", ("魏忠贤",))
+    first.conn.execute("DELETE FROM metrics WHERE key='__identity_seed_v1'")
+    first.conn.commit()
+    first.close()
+
+    restored = GameDB(str(path), content)
+    row = restored.conn.execute(
+        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("魏忠贤",)
+    ).fetchone()
+    inserted = restored.conn.execute(
+        "SELECT identity, seed_guilt FROM characters WHERE name=?", ("王承恩",)
+    ).fetchone()
+    assert row["identity"] == content.characters["魏忠贤"].identity
+    assert row["seed_guilt"] == content.characters["魏忠贤"].seed_guilt
+    assert inserted["identity"] == content.characters["王承恩"].identity
+    restored.close()
+
+
 _DIG_7_REQUIRED_SEED_NAMES = {
     "韩爌", "张瑞图", "来宗道", "施凤来", "黄立极", "王绍徽", "毕自严", "杨嗣昌",
     "温体仁", "钱龙锡", "刘鸿训", "钱谦益", "李标", "孙承宗", "崔呈秀", "王在晋",

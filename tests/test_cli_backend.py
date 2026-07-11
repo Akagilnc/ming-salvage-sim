@@ -617,6 +617,22 @@ def test_secret_extract_recovers_explicit_exclusion_when_backend_omits_it(monkey
     assert result["excluded_names"] == ["魏忠贤"]
 
 
+def test_secret_extract_recovers_office_exclusion_when_backend_fails(monkeypatch):
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ("{}", 1))
+
+    result = cb._extract_secret_order("密查账目，不走户部。", "臣领旨", "毕自严")
+
+    assert result["excluded_offices"] == ["户部"]
+
+
+def test_secret_extract_merges_office_exclusion_when_backend_omits_it(monkeypatch):
+    monkeypatch.setattr(cb, "_run_backend", lambda _p: ('{"标题":"密查","内容":"查账"}', 1))
+
+    result = cb._extract_secret_order("密查账目，勿经户部。", "臣领旨", "毕自严")
+
+    assert result["excluded_offices"] == ["户部"]
+
+
 # ── 底层流式不实现（高层 response_stream 委托非流式）──
 
 def test_clichat_low_level_stream_not_implemented():

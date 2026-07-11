@@ -336,6 +336,36 @@ def test_undo_chat_turn_removes_chat_derived_knowledge_from_context(game):
     assert not any(marker in item["body"] for item in db.get_character_knowledge(state, minister.name)["events"])
 
 
+def test_undo_chat_turn_removes_turn_scoped_near_minister_report(game):
+    db, state, content = game
+    minister = content.characters["王承恩"]
+    chat_turn_id = db.create_chat_turn(state, minister.name, "undo-report", 0)
+    db.persist_return_report(state, minister.name, "军情如何？", chat_turn_id=chat_turn_id)
+
+    db.undo_chat_turn(chat_turn_id)
+
+    assert not any(
+        item.get("source_id", "").startswith("near_minister:")
+        for item in db.get_character_knowledge(state, minister.name)["events"]
+    )
+
+
+def test_failed_chat_turn_removes_turn_scoped_near_minister_report_but_keeps_prior_one(game):
+    db, state, content = game
+    minister = content.characters["王承恩"]
+    db.persist_return_report(state, minister.name, "军情如何？")
+    chat_turn_id = db.create_chat_turn(state, minister.name, "failed-report", 0)
+    db.persist_return_report(state, minister.name, "陕西巡抚可有？", chat_turn_id=chat_turn_id)
+
+    db.fail_chat_turn(chat_turn_id)
+
+    sources = db.conn.execute(
+        "SELECT source_id FROM character_knowledge_sources WHERE source_id LIKE 'near_minister:%'"
+    ).fetchall()
+    assert len(sources) == 1
+    assert ":chat_turn:" not in sources[0]["source_id"]
+
+
 def test_delete_chat_messages_removes_chat_derived_knowledge_from_context(game):
     """删除聊天消息时也不能留下可投影的见闻来源。"""
     db, state, content = game

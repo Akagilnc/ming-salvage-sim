@@ -1533,7 +1533,10 @@ class WebGame:
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         try:
-            result = self.session.chat(minister_name, text)
+            try:
+                result = self.session.chat(minister_name, text, chat_turn_id=chat_turn_id)
+            except TypeError:
+                result = self.session.chat(minister_name, text)
             proposed = None
             if result.proposed_directive is not None:
                 d = result.proposed_directive
@@ -1584,7 +1587,7 @@ class WebGame:
             # The session audience seam is per-character: passing only the
             # message makes a web-streamed question bypass that perspective.
             try:
-                agent_prompt = prompt_builder(text, character)
+                agent_prompt = prompt_builder(text, character, chat_turn_id=chat_turn_id)
             except TypeError:
                 # Narrow compatibility for lightweight legacy test doubles;
                 # the production GameSession accepts the character argument.
