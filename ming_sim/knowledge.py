@@ -13,15 +13,13 @@ import re
 from typing import Any, Dict
 
 
-_DEFAULT_VISIBLE_DOMAINS = ("personnel",)
-
-
 def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
     """Return the validated content setting for this office's current-state rail."""
-    configured = getattr(getattr(db, "content", None), "office_knowledge_domains", {}).get(
-        office_type, _DEFAULT_VISIBLE_DOMAINS
-    )
-    return tuple(configured) or _DEFAULT_VISIBLE_DOMAINS
+    configured = getattr(getattr(db, "content", None), "office_knowledge_domains", {}).get(office_type, ())
+    # Unknown/malformed runtime roles get no private current-state rail.  The
+    # content loader validates every shipped office type, so silently assigning
+    # a hard-coded domain here would turn a missing setting into a data leak.
+    return tuple(configured)
 
 
 def _qualitative(text: object) -> str:

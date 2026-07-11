@@ -801,6 +801,19 @@ class GameContent:
             office_definitions,
             office_knowledge_domains,
         ) = load_skill_content()
+        missing_knowledge_domains = sorted(
+            {
+                character.office_type
+                for character in characters.values()
+                if character.office_type
+            }
+            - set(office_knowledge_domains)
+        )
+        if missing_knowledge_domains:
+            raise SystemExit(
+                "skills.json.office_knowledge_domains 缺少职位映射："
+                + ",".join(missing_knowledge_domains)
+            )
         return cls(
             factions=factions,
             characters=characters,

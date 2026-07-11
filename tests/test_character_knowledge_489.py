@@ -22,6 +22,18 @@ def test_every_supported_office_type_has_a_role_specific_current_world_slice(gam
         assert len(world) > 1, office_type
 
 
+def test_every_character_office_type_has_a_content_knowledge_mapping(game):
+    _db, _state, content = game
+
+    character_types = {
+        character.office_type
+        for character in content.characters.values()
+        if character.office_type
+    }
+
+    assert character_types <= set(content.office_knowledge_domains)
+
+
 def test_generic_offices_receive_distinct_current_world_slices(game):
     db, state, content = game
 
