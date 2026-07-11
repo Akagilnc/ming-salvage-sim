@@ -146,6 +146,12 @@ import type {
 } from "../types.js";
 import { findingIdentityKey } from "../findings.js";
 import {
+  buildReviewRoundStamp,
+  readTelemetryRecords,
+  tryAppendTelemetryRecord,
+  type TelemetryReviewRoundRecord,
+} from "../telemetry.js";
+import {
   cmrPassAlreadyPassed,
   recordAborted as recordDurableAbort,
   recordCmrFixCommitted,
@@ -2111,6 +2117,67 @@ async function rewriteOutcomeProtocolFailure(input: {
   };
 }
 
+/**
+ * #786 review-round dimension: observation only. This runs after the worker's
+ * terminal CMR payload is known and intentionally has no return value, so a
+ * telemetry read/write failure cannot change ADR 0062's gate decisions.
+ */
+function stampCmrReviewRound(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly ctx: DispatchContext;
+  readonly pass: IntegratedCmrPass;
+  readonly familyIssue?: number;
+  readonly result: WorkerResult;
+}): void {
+  try {
+    const ledgerDir = input.familyBackend.resolveTelemetryDir?.(input.ctx);
+    if (ledgerDir === undefined || ledgerDir.length === 0) return;
+    const priorReviewRecords = readTelemetryRecords(ledgerDir).filter(
+      (record): record is TelemetryReviewRoundRecord =>
+        record.phase === "review_round" && record.cmrPass === input.pass,
+    );
+    const output =
+      input.result.kind === "completed" && input.result.output.kind === "cmr"
+        ? input.result.output
+        : undefined;
+    const verdict =
+      input.result.kind === "escalated"
+        ? "escalated"
+        : input.result.kind === "failed"
+          ? "failed"
+          : input.result.kind === "malformed"
+            ? "malformed"
+            : input.result.kind === "outcome_protocol_failure"
+              ? "protocol_failure"
+              : output?.converged === true
+                ? "converged"
+                : (output?.findings?.length ?? 0) > 0
+                  ? "blocking"
+                  : "not_converged";
+    tryAppendTelemetryRecord(
+      ledgerDir,
+      buildReviewRoundStamp({
+        runId: input.ctx.runId,
+        issue: input.familyIssue ?? null,
+        cmrPass: input.pass,
+        reviewRound: priorReviewRecords.length + 1,
+        verdict,
+        ...(output?.findings !== undefined ? { findings: output.findings } : {}),
+        priorReviewRecords,
+        ...(output?.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: output.priorFindingDispositions }
+          : {}),
+      }),
+    );
+  } catch (err) {
+    console.warn(
+      `[orchestrator] review-round telemetry failed (fail-open): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
 async function runIntegratedCmrPass(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
@@ -2247,6 +2314,13 @@ async function runIntegratedCmrPass(input: {
       reason: `${cmrResult.reason} (after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts)`,
     };
   }
+  stampCmrReviewRound({
+    familyBackend,
+    ctx: dispatchCtx,
+    pass,
+    familyIssue,
+    result: cmrResult,
+  });
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
     familyBase,

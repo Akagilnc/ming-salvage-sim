@@ -24,6 +24,7 @@ import {
   buildCollectStamp,
   buildDispatchStamp,
   buildEnvironmentStamp,
+  buildReviewRoundStamp,
   categoryFromReason,
   classifyWorkerTerminal,
   clearTelemetryRunEnvironment,
@@ -42,7 +43,9 @@ import {
   type TelemetryCollectRecord,
   type TelemetryDispatchRecord,
   type TelemetryEnvironmentRecord,
+  type TelemetryReviewRoundRecord,
 } from "../src/telemetry.js";
+import type { Finding, PriorFindingDisposition } from "../src/types.js";
 import type {
   Backend,
   CliMonitorSpawnSpec,
@@ -122,9 +125,91 @@ function smokedRoute() {
   return resolveRouteModels("normal", {}, {}, smoke);
 }
 
+function finding(
+  overrides: Partial<Finding> = {},
+): Finding {
+  return {
+    severity: "high",
+    category: "correctness",
+    claim_quote: "the retry ignores the error",
+    location: "src/retry.ts:42",
+    suggested_fix: "preserve the error",
+    action: "fix_now",
+    ...overrides,
+  };
+}
+
 // ───────────────────────── pure unit tests ─────────────────────────
 
 describe("#786 telemetry pure helpers", () => {
+  it("builds a review-round row with required dimensions and nulls unavailable data", () => {
+    const record = buildReviewRoundStamp({
+      stampedAt: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      cmrPass: "completeness",
+      reviewRound: 1,
+      verdict: "not_converged",
+    });
+
+    expect(record).toEqual({
+      v: 1,
+      phase: "review_round",
+      stamped_at: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      cmrPass: "completeness",
+      reviewRound: 1,
+      verdict: "not_converged",
+      findingsBySeverity: null,
+      findingIdentityKeys: null,
+      newFindingIdentityKeys: null,
+      recurringFindingIdentityKeys: null,
+      priorFindingDispositions: null,
+    } satisfies TelemetryReviewRoundRecord);
+  });
+
+  it("separates new and recurring identity keys and maps next-round dispositions", () => {
+    const prior: TelemetryReviewRoundRecord = buildReviewRoundStamp({
+      stampedAt: "2026-07-10T00:00:00.000Z",
+      runId: "old-run",
+      issue: 786,
+      cmrPass: "completeness",
+      reviewRound: 1,
+      verdict: "blocking",
+      findings: [finding()],
+    });
+    const dispositions: PriorFindingDisposition[] = [
+      { identityKey: "correctness|src/retry.ts:42|the retry ignores the error", status: "verified-closed" },
+      { identityKey: "correctness|src/other.ts:1|new concern", status: "accepted_suppressed" },
+      { identityKey: "correctness|src/third.ts:9|uncertain", status: "unable-to-assess" },
+    ];
+
+    const record = buildReviewRoundStamp({
+      stampedAt: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      cmrPass: "completeness",
+      reviewRound: 2,
+      verdict: "blocking",
+      findings: [finding(), finding({ severity: "medium", location: "src/new.ts:8", claim_quote: "new concern" })],
+      priorReviewRecords: [prior],
+      priorFindingDispositions: dispositions,
+    });
+
+    expect(record.findingsBySeverity).toEqual({ critical: 0, high: 1, medium: 1, low: 0, clarity: 0 });
+    expect(record.recurringFindingIdentityKeys).toEqual([
+      "correctness|src/retry.ts:42|the retry ignores the error",
+    ]);
+    expect(record.newFindingIdentityKeys).toEqual([
+      "correctness|src/new.ts:8|new concern",
+    ]);
+    expect(record.priorFindingDispositions).toEqual([
+      { identityKey: "correctness|src/retry.ts:42|the retry ignores the error", disposition: "fixed" },
+      { identityKey: "correctness|src/other.ts:1|new concern", disposition: "refuted" },
+      { identityKey: "correctness|src/third.ts:9|uncertain", disposition: "deferred" },
+    ]);
+  });
   it("derives single-slice telemetry outside the Sandcastle worktrees", () => {
     const clone = "/home/agent/.sc-orchestrator/repo-iso-809";
     const stateDir = `${clone}/.sandcastle/worktrees/.ledger-809`;

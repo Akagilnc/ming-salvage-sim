@@ -22,6 +22,7 @@ import {
   type TelemetryCollectRecord,
   type TelemetryDispatchRecord,
   type TelemetryEnvironmentRecord,
+  type TelemetryReviewRoundRecord,
 } from "../../src/telemetry.js";
 import type {
   Backend,
@@ -291,6 +292,42 @@ describe("#786 family dispatch telemetry", () => {
     expect(records.filter((r) => r.phase === "collect").length).toBeGreaterThanOrEqual(2);
     expect(records.some((r) => r.phase === "dispatch" && r.runId === firstRunId)).toBe(true);
     expect(records.some((r) => r.phase === "dispatch" && r.runId === secondRunId)).toBe(true);
+    const reviewRounds = records.filter(
+      (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
+    );
+    expect(reviewRounds).toHaveLength(4);
+    expect(reviewRounds.map((record) => record.verdict)).toEqual([
+      "converged",
+      "converged",
+      "converged",
+      "converged",
+    ]);
+    expect(reviewRounds.map((record) => record.findingsBySeverity)).toEqual([
+      null,
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it("keeps the family flow green when review-round telemetry resolution throws", async () => {
+    class ThrowingTelemetryBackend extends FamilyTelemetryBackend {
+      override resolveTelemetryDir(): string {
+        throw new Error("telemetry directory unavailable");
+      }
+    }
+
+    const backend = new ThrowingTelemetryBackend(
+      join(tempDir("orch-786-review-round-failopen-"), ".ledger-809"),
+    );
+    const result = await runFamily({
+      epic: { issue: 809, children: [] },
+      familyBackend: backend,
+      singleSliceBackend: new SmokeOnlySingleSliceBackend(),
+      familyBase: "family/809-sidecar",
+    });
+
+    expect(result.status).toBe("success");
   });
 
   it.each([
