@@ -904,6 +904,49 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
   });
 });
 
+describe("#824 durable mechanical redispatch budget", () => {
+  it("continues the prior S2 attempt count after a crash instead of granting a fresh budget", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        {
+          ...entry("S2"),
+          event: "mechanical_redispatch_attempt",
+          mechanicalRedispatchAttempt: 1,
+        },
+        {
+          ...entry("S2"),
+          event: "mechanical_redispatch_attempt",
+          mechanicalRedispatchAttempt: 2,
+        },
+      ],
+    };
+    const backend = new ResumeBackend(resumeState);
+    backend.runStep = async (spec) => {
+      backend.runStepIds.push(spec.id);
+      return spec.role === "coder"
+        ? { kind: "coder", committed: false, commitsAdded: 0 }
+        : { kind: "reviewer", findings: [] };
+    };
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.runStepIds).toEqual(["S2"]);
+    expect(
+      backend.ledgerWrites.filter(
+        (written) => written.event === "mechanical_redispatch_attempt",
+      ).map((written) => written.mechanicalRedispatchAttempt),
+    ).toContain(3);
+    expect(result.stopSummary?.summary).toContain(
+      "after 3 dispatch attempts",
+    );
+  });
+});
+
 describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication", () => {
   function crashedAfterSecondEmptyStillActiveS6(): ResumeState {
     return {

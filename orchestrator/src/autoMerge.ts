@@ -69,9 +69,14 @@ export function observeOpenPrForBranch(
 ): OpenPrObservation {
   if (reportedPr !== undefined && reportedPr.trim().length > 0) {
     const live = fetchPrMergeLiveState(sh, repo, reportedPr);
-    return live.state === "OPEN"
-      ? { present: true, prUrl: live.prUrl }
-      : { present: false };
+    // A ship worker's URL is only an observation.  It is not authority to run
+    // S9 against an unrelated open PR: GitHub must confirm both liveness and
+    // the branch identity that S7 actually shipped.
+    if (live.state === "OPEN" && live.headRefName === branch) {
+      return { present: true, prUrl: live.prUrl };
+    }
+    // A mismatched report is not a judged ship failure.  Discard it and query
+    // the actual shipped branch below, which is the only routing authority.
   }
   const raw = sh("gh", [
     "pr",

@@ -2780,6 +2780,51 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const canRelayInProcess = (): boolean =>
     canRelayHandoff(mergeResumeLedgerHistory(resumeHistoryLedger, ledger));
 
+  // Attempt markers belong to the durable audit ledger, not the public
+  // step-result ledger. Keep the live-process delta separately so successful
+  // retries do not add duplicate worker rows to `RunResult.stepLedger`.
+  const mechanicalRedispatchAttempts = new Map<StepId, number>();
+
+  const mechanicalRedispatchAttemptsFor = (step: StepId): number =>
+    Math.max(
+      mechanicalRedispatchAttempts.get(step) ?? 0,
+      mergeResumeLedgerHistory(resumeHistoryLedger, ledger).reduce(
+        (count, entry) =>
+          entry.step === step && entry.event === "mechanical_redispatch_attempt"
+            ? Math.max(count, entry.mechanicalRedispatchAttempt ?? 0)
+            : count,
+        0,
+      ),
+    );
+
+  const durableMechanicalRetryOptions = (
+    step: StepId,
+    options: MechanicalRetryOptions = {},
+  ): MechanicalRetryOptions => ({
+    ...options,
+    attemptsAlreadyUsed: mechanicalRedispatchAttemptsFor(step),
+    onAttempt: async (attempt) => {
+      await options.onAttempt?.(attempt);
+      const marker: LedgerEntry = {
+        step,
+        event: "mechanical_redispatch_attempt",
+        mechanicalRedispatchAttempt: attempt,
+      };
+      mechanicalRedispatchAttempts.set(step, attempt);
+      if (stateDir === undefined) return;
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await hashPrompt(undefined, step, backend),
+          branchHEAD: await resolveBranchHEAD(),
+          ts: new Date().toISOString(),
+        },
+        stateDir,
+      );
+    },
+  });
+
   const modelRefForWallStep = (wallStep: StepId): string => {
     const slots = modelRoute.slots;
     return wallStep === "S3" || wallStep === "S6"
@@ -4501,6 +4546,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       rethrowOnExhaustion: true,
                     }
                   : {};
+              const durableRetryOpts = durableMechanicalRetryOptions(step, retryOpts);
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
@@ -4577,7 +4623,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   }
                   return dispatched;
                 },
-                retryOpts,
+                durableRetryOpts,
               );
             } catch (err) {
               if (
@@ -5132,9 +5178,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               await outcome.telemetryEnvironmentStamp;
               return outcome.result;
             },
-            {
+            durableMechanicalRetryOptions("S7", {
               callerOwns: (o) => "result" in o && o.result.kind === "failed",
-            },
+            }),
           );
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
           // S8(escalate) handoff, NOT an error — keep the escalate semantics so
@@ -5732,7 +5778,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 if (dispatchError !== undefined) throw dispatchError;
                 return workerResult!;
               },
-              reviewResetOpt,
+              durableMechanicalRetryOptions(reviewStep, reviewResetOpt),
             );
           } catch (err) {
             if (err instanceof VerifyWorkerHeadMovedError) {
