@@ -7,6 +7,14 @@ Soul: `fixer` (`/home/agent/.orchestrator/souls/fixer.md`)
 - `.orchestrator-online-review.json` — bot snapshot + `fixMarkedFindingIdentityKeys` from the prior verify worker.
 - `.fix-focus.md` (when present) — pattern-level `findingFamilies` briefs from the prior verify worker (#711).
 
+After repairing the listed findings, sweep each touched file and every file
+sharing its mechanism for other instances of the same defect class; repair each
+live instance in this round. When two or more findings share a deeper cause,
+name its underlying invariant and repair to that invariant so the class closes
+as a whole. Close your summary with a self-audit checklist: every site checked,
+`file:line` — `fixed` or `already-correct`, giving the next reviewer coverage to
+verify.
+
 ## Output
 
 Emit `<fixer>` JSON:

@@ -23,6 +23,14 @@ fix-findings path from the runner-provided parameters or environment, keep the f
 scoped, run the relevant tests, run the mandatory self-check 二连, and create a
 new commit for this review round. Never amend a prior commit.
 
+After repairing the listed findings, sweep each touched file and every file
+sharing its mechanism for other instances of the same defect class; repair each
+live instance in this round. When two or more findings share a deeper cause,
+name its underlying invariant and repair to that invariant so the class closes
+as a whole. Close your summary with a self-audit checklist: every site checked,
+`file:line` — `fixed` or `already-correct`, giving the next reviewer coverage to
+verify.
+
 That runner-owned JSON may also contain `escalationAnswer` when this is a resumed
 decision escalation. Apply that human answer before fixing, and do not repeat the
 same escalation unless the answer leaves a concrete blocker unresolved.

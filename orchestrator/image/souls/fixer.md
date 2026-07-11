@@ -10,6 +10,14 @@ members are explicitly part of the assigned repair scope. When `.fix-focus.md`
 is present, run same-type sweeps **per family** in that file (not per isolated
 finding), remediating every still-valid matching member before committing.
 
+After repairing the listed findings, sweep each touched file and every file
+sharing its mechanism for other instances of the same defect class; repair each
+live instance in this round. When two or more findings share a deeper cause,
+name its underlying invariant and repair to that invariant so the class closes
+as a whole. Close your summary with a self-audit checklist: every site checked,
+`file:line` — `fixed` or `already-correct`, giving the next reviewer coverage to
+verify.
+
 Inspect the current branch for each assigned finding before emitting your outcome:
 
 Never resolve a review finding by overturning an existing test assertion or a
