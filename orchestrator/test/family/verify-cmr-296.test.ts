@@ -1387,6 +1387,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyBase: "family/291-base",
       familyBackend: backend,
       familyHeadAfter: "head-before-correctness-fix",
+      runId: "run-786-correctness-reverify",
+      familyIssue: 786,
     });
 
     expect(result).toEqual({ ok: true, ran: true });
@@ -1394,6 +1396,20 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       "completeness",
       "correctness",
       "correctness",
+    ]);
+    expect(backend.verifyCalls).toEqual([
+      {
+        phase: "final",
+        familyBase: "family/291-base",
+        runId: "run-786-correctness-reverify",
+        issue: 786,
+      },
+      {
+        phase: "final",
+        familyBase: "family/291-base",
+        runId: "run-786-correctness-reverify",
+        issue: 786,
+      },
     ]);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_fix_committed",

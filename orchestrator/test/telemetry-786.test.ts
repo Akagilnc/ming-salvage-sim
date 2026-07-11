@@ -64,6 +64,7 @@ import {
   buildEnvironmentStamp,
   buildCommitStamp,
   buildReviewRoundStamp,
+  buildVerificationStamp,
   categoryFromReason,
   classifyWorkerTerminal,
   clearTelemetryRunEnvironment,
@@ -80,6 +81,7 @@ import {
   hashDirectoryContents,
   newLegId,
   readTelemetryRecords,
+  recordVerificationStamp,
   scheduleCommitTelemetry,
   TELEMETRY_FILENAME,
   tryAppendTelemetryRecord,
@@ -88,6 +90,7 @@ import {
   type TelemetryDispatchRecord,
   type TelemetryEnvironmentRecord,
   type TelemetryReviewRoundRecord,
+  type TelemetryVerificationRecord,
 } from "../src/telemetry.js";
 import type { Finding, PriorFindingDisposition } from "../src/types.js";
 import type {
@@ -189,6 +192,85 @@ function finding(
 // ───────────────────────── pure unit tests ─────────────────────────
 
 describe("#786 telemetry pure helpers", () => {
+  it("builds a per-verification row from the harness observation", () => {
+    const record = buildVerificationStamp({
+      stampedAt: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      verification: "unit",
+      passed: false,
+      count: 17,
+      durationMs: 321,
+    });
+
+    expect(record).toEqual({
+      v: 1,
+      phase: "verification",
+      stamped_at: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      verification: "unit",
+      passed: false,
+      count: 17,
+      duration_ms: 321,
+    } satisfies TelemetryVerificationRecord);
+  });
+
+  it("keeps unobtainable verification result counts and duration null", () => {
+    expect(buildVerificationStamp({ verification: "full" })).toEqual({
+      v: 1,
+      phase: "verification",
+      stamped_at: expect.any(String),
+      runId: null,
+      issue: null,
+      verification: "full",
+      passed: null,
+      count: null,
+      duration_ms: null,
+    } satisfies TelemetryVerificationRecord);
+  });
+
+  it("persists a verification JSONL line with every final-schema key without blocking the caller", async () => {
+    const ledgerDir = tempDir("orch-786-verification-raw-");
+    const stamp = recordVerificationStamp(ledgerDir, {
+      verification: "typecheck",
+      passed: true,
+      count: null,
+      durationMs: 12,
+    });
+
+    expect(existsSync(join(ledgerDir, TELEMETRY_FILENAME))).toBe(false);
+    await stamp;
+
+    const [line] = readFileSync(join(ledgerDir, TELEMETRY_FILENAME), "utf8")
+      .trim()
+      .split("\n");
+    expect(Object.keys(JSON.parse(line!) as Record<string, unknown>).sort()).toEqual([
+      "count",
+      "duration_ms",
+      "issue",
+      "passed",
+      "phase",
+      "runId",
+      "stamped_at",
+      "v",
+      "verification",
+    ]);
+  });
+
+  it("fails open when verification telemetry has no writable ledger", async () => {
+    const missingLedger = join(
+      tempDir("orch-786-verification-fail-open-"),
+      "missing",
+      "nested",
+    );
+    await expect(recordVerificationStamp(missingLedger, {
+      verification: "typecheck",
+      passed: true,
+      durationMs: 1,
+    })).resolves.toBe(false);
+  });
+
   it("builds a per-commit row with numstat dimensions and null unavailable diff dimensions", () => {
     const record = buildCommitStamp({
       stampedAt: "2026-07-11T00:00:00.000Z",

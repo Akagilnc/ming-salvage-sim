@@ -552,6 +552,31 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls.slice(1).every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
   });
 
+  it("never appends telemetry reporters or compiler flags to the project's declared verify commands (#786)", async () => {
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
+      }
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+
+    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run typecheck",
+      "npm test",
+    ]);
+  });
+
   it("#3 + #372 P2: ALWAYS runs installDeps (unconditional, by construction) even when node_modules EXISTS and manifest changed after a wave", async () => {
     // #372 P2: runVerifyCommands must not condition install on depsInstalled presence.
     // Freshness by construction: later waves in family can change package.json / package-lock.json
@@ -1944,6 +1969,155 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
 // ═══════════════════════════ 5. runFamilyVerify ═════════════════════════════
 
 describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
+  it("records unknown counts without rewriting the project's typecheck or wave-unit commands", async () => {
+    const commands: Array<{ file: string; args: string[] }> = [];
+    class ObservedVerifyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], _cwd?: string): string {
+        commands.push({ file, args });
+        if (args.includes("test")) {
+          return JSON.stringify({ numTotalTests: 507 });
+        }
+        return "";
+      }
+      protected override async installDeps(_cwd: string): Promise<void> {}
+      protected override isNodeProject(_cwd: string): boolean { return true; }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
+    }
+    const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
+    const backend = new ObservedVerifyBackend(options);
+
+    await expect(backend.runFamilyVerify({
+      phase: "wave",
+      familyBase: "family/293-base",
+      runId: "run-786",
+      issue: 786,
+    })).resolves.toEqual({ ok: true });
+    await backend.waitForStamps();
+
+    const rows = telemetry.readTelemetryRecords(options.ledgerDir).filter(
+      (record): record is telemetry.TelemetryVerificationRecord =>
+        record.phase === "verification",
+    );
+    expect(rows).toMatchObject([
+      { runId: "run-786", issue: 786, verification: "typecheck", passed: true, count: null },
+      { runId: "run-786", issue: 786, verification: "unit", passed: true, count: null },
+    ]);
+    expect(rows.every((row) => typeof row.duration_ms === "number")).toBe(true);
+    expect(commands).toContainEqual({
+      file: "npm",
+      args: ["run", "typecheck"],
+    });
+    expect(commands).toContainEqual({ file: "npm", args: ["test"] });
+  });
+
+  it("keeps later verification stamps flowing after one unexpected stamp failure", async () => {
+    class ObservedVerifyBackend extends RealFamilyBackend {
+      protected override sh(): string { return ""; }
+      protected override async installDeps(_cwd: string): Promise<void> {}
+      protected override isNodeProject(_cwd: string): boolean { return true; }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
+    }
+    const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
+    vi.spyOn(telemetry, "recordVerificationStamp").mockImplementationOnce(async () => {
+      throw new Error("unexpected verification telemetry failure");
+    });
+    const backend = new ObservedVerifyBackend(options);
+
+    await expect(backend.runFamilyVerify({
+      phase: "wave",
+      familyBase: "family/293-base",
+    })).resolves.toEqual({ ok: true });
+    await expect(backend.waitForStamps()).resolves.toBeUndefined();
+
+    expect(telemetry.recordVerificationStamp).toHaveBeenCalledTimes(2);
+    expect(telemetry.readTelemetryRecords(options.ledgerDir)).toContainEqual(expect.objectContaining({
+      phase: "verification",
+      verification: "unit",
+      passed: true,
+    }));
+  });
+
+  it("keeps a failed typecheck count unknown instead of parsing its diagnostic prose", async () => {
+    class FailedTypecheckBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], _cwd?: string): string {
+        if (file === "npm" && args.includes("typecheck")) {
+          const error = new Error("Command failed: npm run typecheck") as Error & {
+            stderr?: string;
+          };
+          error.stderr = [
+            "src/one.ts(1,1): error TS2322: first",
+            "src/two.ts(2,2): error TS2345: second",
+          ].join("\n");
+          throw error;
+        }
+        return "";
+      }
+      protected override async installDeps(_cwd: string): Promise<void> {}
+      protected override isNodeProject(_cwd: string): boolean { return true; }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
+    }
+    const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
+    const backend = new FailedTypecheckBackend(options);
+
+    await expect(backend.runFamilyVerify({
+      phase: "wave",
+      familyBase: "family/293-base",
+      runId: "run-786",
+      issue: 786,
+    })).resolves.toMatchObject({ ok: false });
+    await backend.waitForStamps();
+
+    expect(telemetry.readTelemetryRecords(options.ledgerDir)).toContainEqual(expect.objectContaining({
+      phase: "verification",
+      verification: "typecheck",
+      passed: false,
+      count: null,
+    }));
+  });
+
+  it("records a failed final observation and preserves the verification verdict", async () => {
+    class FailedObservedVerifyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], _cwd?: string): string {
+        if (file === "npm" && args[0] === "test") throw new Error("plain test output");
+        return "";
+      }
+      protected override async installDeps(_cwd: string): Promise<void> {}
+      protected override isNodeProject(_cwd: string): boolean { return true; }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
+    }
+    const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
+    const backend = new FailedObservedVerifyBackend(options);
+
+    await expect(backend.runFamilyVerify({
+      phase: "final",
+      familyBase: "family/293-base",
+      runId: "run-786",
+      issue: 786,
+    })).resolves.toMatchObject({ ok: false });
+    await backend.waitForStamps();
+
+    const rows = telemetry.readTelemetryRecords(options.ledgerDir).filter(
+      (record): record is telemetry.TelemetryVerificationRecord =>
+        record.phase === "verification",
+    );
+    expect(rows.map((row) => [row.verification, row.passed])).toEqual([
+      ["typecheck", true],
+      ["full", false],
+    ]);
+  });
+
   it("GREEN → {ok:true}; runs verify scoped to the phase against the family base", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.verifyOutcome = "green";
