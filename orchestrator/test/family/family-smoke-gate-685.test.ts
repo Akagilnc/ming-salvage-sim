@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { dispatchFamilyWorker, familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import { runFamily } from "../../src/family/runner.js";
 import type { Backend, DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
@@ -59,6 +59,72 @@ describe("family startup smoke gate (#685)", () => {
     expect(result.status).toBe("escalated");
     expect(result.escalation?.diagnosis).toMatch(/route smoke failed/i);
     expect(result.children).toEqual([{ issue: 687, status: "skipped" }]);
+  });
+
+  it("drops an optional smoke failure, records it durably, and echoes the effective lineup", async () => {
+    const entries: import("../../src/family/types.js").FamilyLedgerEntry[] = [];
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const backend: FamilyBackend = {
+      async mergeChildIntoFamilyBase() { throw new Error("must not merge"); },
+      async appendFamilyLedger(entry) { entries.push(entry); },
+      async readFamilyLedger() {
+        return [
+          ...entries,
+          { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" },
+        ];
+      },
+    };
+    try {
+      await runFamily({
+        epic: { issue: 846, children: [{ issue: 847, blockedBy: [] }] },
+        familyBackend: backend,
+        singleSliceBackend: singleSliceBackend({
+          smokeModelRoute: async (route) => smokeRouteModels(route, async ({ slug }) => {
+            if (slug === "agy") throw new Error("opencode unavailable");
+            return { cliVersion: "test" };
+          }),
+        }),
+        familyBase: "family/846-base",
+      });
+
+      expect(entries).toContainEqual(expect.objectContaining({
+        status: "route_degraded",
+        event: "route_degraded",
+        droppedLeg: "agy",
+        reason: "opencode unavailable",
+      }));
+      expect(error).toHaveBeenCalledWith(expect.stringMatching(/OPTIONAL CMR LEG DROPPED: agy.*opencode unavailable/));
+      expect(info).toHaveBeenCalledWith(expect.stringContaining("cmrReview=[codex:gpt-5.6-sol,claude:opus]"));
+    } finally {
+      info.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("does not duplicate a degraded-route ledger row across resumes", async () => {
+    const entries: import("../../src/family/types.js").FamilyLedgerEntry[] = [];
+    const backend: FamilyBackend = {
+      async mergeChildIntoFamilyBase() { throw new Error("must not merge"); },
+      async appendFamilyLedger(entry) { entries.push(entry); },
+      async readFamilyLedger() {
+        return [...entries, { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" }];
+      },
+    };
+    const input = {
+      epic: { issue: 846, children: [{ issue: 847, blockedBy: [] }] },
+      familyBackend: backend,
+      singleSliceBackend: singleSliceBackend({
+        smokeModelRoute: async (route: ReturnType<typeof resolveActiveModelRoute>) => smokeRouteModels(route, async ({ slug }) => {
+          if (slug === "agy") throw new Error("opencode unavailable");
+          return { cliVersion: "test" };
+        }),
+      }),
+      familyBase: "family/846-base",
+    };
+    await runFamily(input);
+    await runFamily(input);
+    expect(entries.filter((entry) => entry.event === "route_degraded")).toHaveLength(1);
   });
 });
 

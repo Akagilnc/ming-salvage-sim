@@ -1860,8 +1860,8 @@ module_scope:
         kind: "cmr",
         converged: false,
         reason: "only nonblocking family CMR findings remain",
-        successfulLegs: ["opus", "agy"],
-        skippedLegs: [{ slug: "gpt-5.6-sol", reason: "codex quota unavailable" }],
+        successfulLegs: ["opus", "gpt-5.6-sol"],
+        skippedLegs: [{ slug: "agy", reason: "agy quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
@@ -1920,8 +1920,8 @@ module_scope:
           ],
           providerDegraded: [
             expect.objectContaining({
-              leg: "gpt-5.6-sol",
-              reason: "codex quota unavailable",
+              leg: "agy",
+              reason: "agy quota unavailable",
               blocking: false,
             }),
           ],
