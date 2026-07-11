@@ -28,4 +28,4 @@ human only for a true top-dead / major product decision.
 - **Genuinely not fixed** — assigned finding(s) are still present and you made no
   new commit → `<fixer>{"committed":false}</fixer>`
 
-Emit the `<fixer>` JSON and fire `FIXER_STEP_COMPLETE`.
+Emit the `<fixer>` JSON. `FIXER_STEP_COMPLETE` is optional telemetry.

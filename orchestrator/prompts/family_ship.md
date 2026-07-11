@@ -55,4 +55,4 @@ Rules:
 - The JSON must match one of the shapes above exactly.
 - `status` is `pr_opened` and must include `pr`.
 - Emit the `<ship>` tag LAST; if you iterate, the LAST tag is the one that counts.
-- Always print `SHIP_STEP_COMPLETE` on its own line at the very end.
+- For optional telemetry, you may print `SHIP_STEP_COMPLETE` on its own final line.

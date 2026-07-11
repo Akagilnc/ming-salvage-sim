@@ -8,7 +8,7 @@ Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`)
 
 ## Output
 
-Emit `<verify>` JSON and fire `VERIFY_STEP_COMPLETE`. Shape:
+Emit `<verify>` JSON. `VERIFY_STEP_COMPLETE` is optional telemetry. Shape:
 
 ```json
 {"converged": true}

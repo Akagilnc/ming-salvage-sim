@@ -57,4 +57,4 @@ Rules:
 - No path-allowlist self-check is a success criterion (ADR 0123).
 - Tip / commit SHA is ledger `branchHEAD` on the S12 row — do not invent extra
   result fields (`docCommitSha`, `noop`, etc.).
-- Fire `DOCRELEASE_STEP_COMPLETE` only after the verdict is final.
+- Once the verdict is final, `DOCRELEASE_STEP_COMPLETE` is available as optional telemetry.
