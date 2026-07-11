@@ -1903,9 +1903,9 @@ export class RealFamilyBackend implements FamilyBackend {
    * Merge commits remain one reachable commit each, matching git's default
    * `rev-list --count` history-walk semantics.
    */
-  protected familyCoderGitCommitCount(headBefore: string | undefined): number {
+  protected familyCoderGitCommitCount(headBefore: string | undefined): number | undefined {
     if (headBefore === undefined || headBefore.trim().length === 0) {
-      throw new Error("family coder-fix headBefore is required to derive git commit truth");
+      return undefined;
     }
     const rawCount = this.sh(
       "git",

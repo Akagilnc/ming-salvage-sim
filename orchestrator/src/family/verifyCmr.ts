@@ -988,7 +988,13 @@ function familyRepairEvidenceGateFailureReason(input: {
   if (input.output.kind !== "coder") {
     return `integrated cmr ${input.pass} coder-fix returned non-coder output`;
   }
+  const gitCountUnknown = input.output.selfReportDiscrepancy?.gitCommitCount === null;
   const hasIndependentCommit = input.output.committed && input.output.commitsAdded >= 1;
+  if (gitCountUnknown) {
+    // No reconcile baseline means no reconcile verdict. A fresh reviewer, not
+    // this layer, mechanically judges whether the repair converged.
+    return undefined;
+  }
   if (!hasIndependentCommit && input.allowEvidenceOnlyRepair !== true) {
     return (
       `integrated cmr ${input.pass} coder-fix produced no independent fix commit: ` +
