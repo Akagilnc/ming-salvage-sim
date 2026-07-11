@@ -39,6 +39,14 @@ import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
  */
 export const MAX_DISPATCH_ATTEMPTS = 3;
 
+/** Seconds-scale pauses for the two retries: enough for brief provider/spawn recovery. */
+export const DISPATCH_RETRY_BACKOFF_MS = [5_000, 15_000] as const;
+
+const defaultRetrySleepMs = (ms: number): Promise<void> =>
+  process.env.VITEST === "true"
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 /** The `WorkerResult` kinds that are a process-level failure (retryable). */
 function isProcessFailure(result: WorkerResult): boolean {
   return (
@@ -78,6 +86,8 @@ export type DispatchOutcome =
  * counter, the generic layer firing only after those run").
  */
 export interface MechanicalRetryOptions {
+  /** Injectable retry wait so tests and callers with virtual clocks do not sleep. */
+  readonly sleepMs?: (ms: number) => Promise<void>;
   /**
    * Durable attempts already consumed for this step before the current runner
    * process started.  The retry budget is global to the durable step, not this
@@ -174,7 +184,9 @@ export async function withMechanicalRetry(
     // #686: only process-level retries reach here; resource failures throw above and
     // never invoke resetBeforeRetry.
     if (!firstAttemptThisInvocation) {
-      await new Promise<void>((resolve) => setTimeout(resolve, (attempt - 1) * 5));
+      const delayMs = DISPATCH_RETRY_BACKOFF_MS[attempt - 2];
+      const sleepMs = opts?.sleepMs ?? defaultRetrySleepMs;
+      await sleepMs(delayMs);
       try {
         await opts?.resetBeforeRetry?.();
       } catch (err) {

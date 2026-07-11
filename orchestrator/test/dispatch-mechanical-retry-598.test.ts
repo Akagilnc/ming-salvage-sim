@@ -79,6 +79,26 @@ function scripted(script: ReadonlyArray<WorkerResult | Error>): {
 }
 
 describe("#598 withMechanicalRetry", () => {
+  it("backs off for 5s then 15s before transient process-failure retries", async () => {
+    const delays: number[] = [];
+    let attempt = 0;
+    const dispatch = async () => {
+      attempt++;
+      if (attempt === 1) return { kind: "failed", reason: "provider blip" } as const;
+      if (attempt === 2) return { kind: "failed", reason: "spawn failure" } as const;
+      return COMPLETED;
+    };
+
+    const result = await withMechanicalRetry(coderSpec(), {}, dispatch, {
+      sleepMs: async (ms) => {
+        delays.push(ms);
+      },
+    });
+
+    expect(result).toEqual(COMPLETED);
+    expect(delays).toEqual([5_000, 15_000]);
+  });
+
   it("a returned `failed` on attempt 1 then `completed` on attempt 2 → completed, dispatched twice", async () => {
     const { dispatch, seen } = scripted([
       { kind: "failed", reason: "worker crashed mid-run" },
