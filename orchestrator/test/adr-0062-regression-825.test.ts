@@ -86,6 +86,15 @@ describe("#825 ADR 0062 completion-sentinel contract sweep", () => {
     const body = readFileSync(resolve(process.cwd(), file), "utf8");
     expect(hasUnframedCompletionSentinel(body)).toBe(false);
   });
+
+  it.each([
+    "image/souls/fixer.md",
+    "prompts/fixer.md",
+  ])("routes fixer self-audit evidence outside the strict outcome envelope in %s", (file) => {
+    const body = readFileSync(resolve(process.cwd(), file), "utf8");
+    expect(body).toContain("Record the self-audit checklist in the fixing commit message body");
+    expect(body).not.toContain("Close your summary with a self-audit checklist");
+  });
 });
 
 const WORKTREE: WorktreeHandle = {
