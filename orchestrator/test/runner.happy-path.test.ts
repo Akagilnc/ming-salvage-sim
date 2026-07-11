@@ -1,5 +1,11 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
+import * as telemetry from "../src/telemetry.js";
 import type {
   Backend,
   FindingDisposition,
@@ -251,6 +257,58 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     );
     expect(prepareCalls).toEqual(["prepareWorktree(247, main)"]);
     expect(result.branch).toBe(backend.worktree.branch);
+  });
+
+  it("returns from the real routing hop while commit telemetry collection is gated", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "runner-786-telemetry-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: repo });
+      execFileSync("git", ["config", "user.email", "runner@example.test"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Runner Test"], { cwd: repo });
+      writeFileSync(join(repo, "fixture.txt"), "before\n");
+      execFileSync("git", ["add", "fixture.txt"], { cwd: repo });
+      execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+
+      class TelemetryRoutingBackend extends HappyPathBackend {
+        override readonly worktree: WorktreeHandle = {
+          branch: "feat/orchestrator/issue-786",
+          base: "main",
+          path: repo,
+        };
+
+        override async runStep(spec: StepSpec): Promise<StepOutput> {
+          if (spec.role === "coder") {
+            writeFileSync(join(repo, "fixture.txt"), "after\n");
+            execFileSync("git", ["commit", "-am", "coder commit", "-q"], { cwd: repo });
+          }
+          return await super.runStep(spec);
+        }
+
+        resolveTelemetryDir(): string {
+          return join(repo, ".ledger-786");
+        }
+      }
+
+      let releaseCollection!: () => void;
+      const collectionGate = new Promise<void>((resolve) => { releaseCollection = resolve; });
+      const schedule = vi.spyOn(telemetry, "scheduleCommitTelemetry")
+        .mockImplementation(() => collectionGate);
+      const backend = new TelemetryRoutingBackend();
+
+      const result = await runOrchestrator({ issueNumber: 786, backend });
+
+      expect(result.status).toBe("success");
+      expect(backend.runStepIds).toContain("S3");
+      expect(schedule).toHaveBeenCalledOnce();
+      expect(schedule.mock.calls[0]?.[0]).toMatchObject({
+        repoPath: repo,
+        before: expect.any(String),
+      });
+      expect(schedule.mock.calls[0]?.[0]).not.toHaveProperty("after");
+      releaseCollection();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("does not turn rejected or wont_fix dispositions into accepted suppression metadata", async () => {
