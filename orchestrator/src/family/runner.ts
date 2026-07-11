@@ -28,6 +28,7 @@ import { mintRunId } from "../runId.js";
 import {
   applyRuntimeTightRoutePolicy,
   printableRouteLineup,
+  degradeOptionalRouteSmokeFailures,
   resolveActiveModelRoute,
   routeSmokeFailure,
   type ResolvedModelRoute,
@@ -872,6 +873,8 @@ export async function runFamily(
       children,
     };
   }
+  const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
+  modelRoute = degradation.route;
   const smokeFailure = routeSmokeFailure(modelRoute, Date.now(), undefined, currentCliVersions);
   if (smokeFailure !== undefined) {
     const children = input.epic.children.map((child) => ({
@@ -888,6 +891,18 @@ export async function runFamily(
       }),
       children,
     };
+  }
+  for (const dropped of degradation.dropped) {
+    console.error(
+      `[orchestrator:family] OPTIONAL CMR LEG DROPPED: ${dropped.slug}: ${dropped.reason}`,
+    );
+    await familyBackend.appendFamilyLedger({
+      status: "route_degraded",
+      event: "route_degraded",
+      droppedLeg: dropped.slug,
+      reason: dropped.reason,
+      ts: new Date().toISOString(),
+    });
   }
   const activeRoutePolicy = { ...routePolicy, route: modelRoute };
   console.info(

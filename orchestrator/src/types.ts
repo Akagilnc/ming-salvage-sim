@@ -666,6 +666,7 @@ export type WorkerContextRetention = "retain" | "clean";
 export interface WorkerCmrReviewLeg {
   readonly family: string;
   readonly slug: string;
+  readonly optional?: true;
 }
 
 /**

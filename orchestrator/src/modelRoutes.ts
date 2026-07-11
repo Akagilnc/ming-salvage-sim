@@ -71,6 +71,8 @@ export type ModelSlotMap = Readonly<Record<ModelRouteSlot, string>>;
 export interface ModelRouteLeg {
   readonly family: ModelFamily;
   readonly slug: string;
+  /** Best-effort preset leg. Env-declared legs intentionally omit this marker. */
+  readonly optional?: true;
 }
 export type ModelRouteLegCollectionMap = Readonly<
   Record<ModelRouteLegCollection, ReadonlyArray<ModelRouteLeg>>
@@ -138,7 +140,7 @@ const NORMAL_LEG_COLLECTIONS: ModelRouteLegCollectionMap = {
   cmrReview: [
     { family: "codex", slug: REVIEWER_CODEX_SLUG },
     { family: "claude", slug: "opus" },
-    { family: "agy", slug: "agy" },
+    { family: "agy", slug: "agy", optional: true },
   ],
 };
 
@@ -161,7 +163,7 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
     legCollections: {
       cmrReview: [
         { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy" },
+        { family: "agy", slug: "agy", optional: true },
         { family: "codex", slug: REVIEWER_CODEX_SLUG },
       ],
     },
@@ -184,7 +186,7 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
     legCollections: {
       cmrReview: [
         { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy" },
+        { family: "agy", slug: "agy", optional: true },
       ],
     },
   },
@@ -205,7 +207,7 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
     legCollections: {
       cmrReview: [
         { family: "codex", slug: REVIEWER_CODEX_SLUG },
-        { family: "agy", slug: "agy" },
+        { family: "agy", slug: "agy", optional: true },
         { family: "claude", slug: "opus" },
       ],
     },
@@ -228,7 +230,7 @@ const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
     legCollections: {
       cmrReview: [
         { family: "codex", slug: REVIEWER_CODEX_SLUG },
-        { family: "agy", slug: "agy" },
+        { family: "agy", slug: "agy", optional: true },
       ],
     },
   },
@@ -407,6 +409,41 @@ export function withRouteSmoke(
   return { ...route, smoke: { ...route.smoke, ...smoke } };
 }
 
+export interface DroppedOptionalRouteLeg {
+  readonly slug: string;
+  readonly reason: string;
+}
+
+/** Build the run-effective route after smoke, dropping only failed preset-optional legs. */
+export function degradeOptionalRouteSmokeFailures(route: ResolvedModelRoute): {
+  readonly route: ResolvedModelRoute;
+  readonly dropped: ReadonlyArray<DroppedOptionalRouteLeg>;
+} {
+  const dropped: DroppedOptionalRouteLeg[] = [];
+  const legCollections: ModelRouteLegCollectionMap = {
+    ...route.legCollections,
+    cmrReview: route.legCollections.cmrReview.filter((leg) => {
+      if (leg.optional !== true) return true;
+      const status = route.smoke[`cmrReview:${leg.slug}`];
+      if (status?.state !== "failed") return true;
+      dropped.push({ slug: leg.slug, reason: status.error });
+      return false;
+    }),
+  };
+  return {
+    route: {
+      ...route,
+      legCollections,
+      tightFamilyViolations: route.tightFamilyViolations.filter(
+        (violation) =>
+          violation.slot !== "cmrReview" ||
+          legCollections.cmrReview.some((leg) => leg.slug === violation.slug),
+      ),
+    },
+    dropped,
+  };
+}
+
 /**
  * Override the coder slot (and coderFix unless explicitly env-overridden) for
  * design-time Coder-Rec (#767). Sol's owner-ratified route also moves the
@@ -573,7 +610,7 @@ export function modelRouteFingerprint(route: ResolvedModelRoute): string {
     slots: MODEL_ROUTE_SLOTS.map((slot) => [slot, route.slots[slot]]),
     legCollections: MODEL_ROUTE_LEG_COLLECTIONS.map((collection) => [
       collection,
-      route.legCollections[collection].map((leg) => [leg.family, leg.slug]),
+      route.legCollections[collection].map((leg) => [leg.family, leg.slug, leg.optional === true]),
     ]),
   });
 }
@@ -882,4 +919,17 @@ export function cmrLegAccountingFailure(
     );
   }
   return undefined;
+}
+
+export function requiredCmrLegSkipFailure(
+  skippedLegs: readonly { readonly slug: string; readonly reason: string }[] | undefined,
+  route: ResolvedModelRoute,
+): string | undefined {
+  const skipped = new Set((skippedLegs ?? []).map((leg) => leg.slug));
+  const required = route.legCollections.cmrReview
+    .filter((leg) => leg.optional !== true && skipped.has(leg.slug))
+    .map((leg) => leg.slug);
+  return required.length > 0
+    ? `required CMR anchor leg(s) unavailable: ${required.join(", ")}`
+    : undefined;
 }
