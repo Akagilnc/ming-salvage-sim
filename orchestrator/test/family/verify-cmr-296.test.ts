@@ -1824,3 +1824,157 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }));
   });
 });
+
+describe("#823 family ship malformed-output recovery", () => {
+  it("re-dispatches malformed sidecar and wrong payload attempts before accepting the first valid ship result", async () => {
+    class RecoveringShipBackend extends BareFamilyBackend {
+      readonly aborted: FamilyAbortedEvent[] = [];
+      readonly escalations: FamilyEscalation[] = [];
+      shipDispatches = 0;
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-after-cmr";
+      }
+      async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+        return { ok: true };
+      }
+      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+        this.aborted.push(event);
+      }
+      async escalateFamily(event: FamilyEscalation): Promise<void> {
+        this.escalations.push(event);
+      }
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              ...CMR_EVIDENCE,
+            },
+          };
+        }
+        if (spec.kind === "verify") {
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true },
+          };
+        }
+        if (spec.kind === "docRelease") {
+          return {
+            kind: "completed",
+            output: { kind: "docRelease", released: true },
+          };
+        }
+        if (spec.kind === "cleanup") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cleanup",
+              terminal: true,
+              ok: true,
+              branchOutcome: "already_gone",
+            },
+          };
+        }
+        this.shipDispatches += 1;
+        if (this.shipDispatches === 1) {
+          return { kind: "malformed", reason: "ship outcome sidecar missing" };
+        }
+        if (this.shipDispatches === 2) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              ...CMR_EVIDENCE,
+            },
+          };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: ctx.familyBase ?? "",
+            status: "pr_opened",
+            pr: "pr://family/823",
+          },
+        };
+      }
+    }
+
+    const backend = new RecoveringShipBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-cmr",
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.shipDispatches).toBe(3);
+    expect(backend.aborted).toEqual([]);
+    expect(backend.escalations).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "shipped",
+      pr: "pr://family/823",
+    }));
+  });
+
+  it("escalates only after the bounded malformed-output redispatch budget exhausts", async () => {
+    class PersistentlyMalformedShipBackend extends BareFamilyBackend {
+      readonly aborted: FamilyAbortedEvent[] = [];
+      readonly escalations: FamilyEscalation[] = [];
+      shipDispatches = 0;
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-after-cmr";
+      }
+      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+        this.aborted.push(event);
+      }
+      async escalateFamily(event: FamilyEscalation): Promise<void> {
+        this.escalations.push(event);
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              ...CMR_EVIDENCE,
+            },
+          };
+        }
+        this.shipDispatches += 1;
+        return { kind: "malformed", reason: "ship outcome sidecar invalid" };
+      }
+    }
+
+    const backend = new PersistentlyMalformedShipBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-cmr",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.aborted).toHaveLength(1);
+    expect(backend.aborted[0]?.errorPackage.reason).toContain(
+      `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
+    );
+  });
+});

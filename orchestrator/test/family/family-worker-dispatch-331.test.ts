@@ -771,8 +771,8 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     expect(res).toEqual({ ok: false, ran: true });
     const aborts = backend.ledger.filter((e) => e.status === "aborted");
     expect(aborts).toHaveLength(1);
-    expect(aborts[0]?.reason).toMatch(/returned no valid result/i);
-    expect(aborts[0]?.stopSummary?.reason).toBe("contract_drift");
+    expect(aborts[0]?.reason).toMatch(/remained malformed after 3 dispatch attempts/i);
+    expect(aborts[0]?.stopSummary?.reason).toBe("infra_failure");
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
