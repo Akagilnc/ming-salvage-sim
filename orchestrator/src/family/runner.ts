@@ -1469,6 +1469,18 @@ export async function runFamily(
           });
           const escalationReason =
             `merger step for child #${r.issue} exhausted bounded still-conflicted retries`;
+          const stopSummary = familyStopSummary({
+            status: "escalated",
+            familyBase,
+            familyHead,
+            children,
+            escalationReason,
+          });
+          await familyBackend.escalateFamily?.({
+            reason: escalationReason,
+            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
+            stopSummary,
+          });
           return {
             status: "escalated" as const,
             familyBase,
@@ -1478,13 +1490,7 @@ export async function runFamily(
               diagnosis:
                 "Git still reports an unresolved merge after the bounded merger-step re-dispatch; repair the conflict and rerun the family.",
             },
-            stopSummary: familyStopSummary({
-              status: "escalated",
-              familyBase,
-              familyHead,
-              children,
-              escalationReason,
-            }),
+            stopSummary,
             children,
           };
         }

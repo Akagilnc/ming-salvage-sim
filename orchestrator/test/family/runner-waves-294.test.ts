@@ -120,6 +120,7 @@ class LandedWithoutMergerReportBackend extends FakeFamilyBackend {
 
 class PersistentlyConflictedFamilyBackend extends FakeFamilyBackend {
   readonly resolverCalls: number[] = [];
+  readonly escalationCalls: string[] = [];
 
   override async mergeChildIntoFamilyBase(child: MergeRequest) {
     this.mergeOrder.push(child.childIssue);
@@ -129,6 +130,10 @@ class PersistentlyConflictedFamilyBackend extends FakeFamilyBackend {
   async resolveMergeConflict(request: MergeRequest) {
     this.resolverCalls.push(request.childIssue);
     return { familyHead: `conflicted-${request.childIssue}`, conflicted: true };
+  }
+
+  async escalateFamily(escalation: { reason: string }): Promise<void> {
+    this.escalationCalls.push(escalation.reason);
   }
 }
 
@@ -176,6 +181,9 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
       Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => 10),
     );
     expect(familyBackend.mergeOrder).toEqual([10]);
+    expect(familyBackend.escalationCalls).toEqual([
+      "merger step for child #10 exhausted bounded still-conflicted retries",
+    ]);
     expect(familyBackend.ledger).toEqual([
       expect.objectContaining({
         status: "escalated",

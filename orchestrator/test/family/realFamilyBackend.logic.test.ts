@@ -914,6 +914,50 @@ class FakeSeamsBackend extends RealFamilyBackend {
 }
 
 describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () => {
+  it("rejects a two-parent merge commit that still contains conflict markers", async () => {
+    class MarkerLeavingMergerBackend extends RealFamilyBackend {
+      protected override async runMergerAgent(req: ConflictResolveRequest) {
+        writeFileSync(
+          join(this.opts.workingRepo, "shared.txt"),
+          "<<<<<<< HEAD\nFAMILY VERSION\n=======\nCHILD VERSION\n>>>>>>> child\n",
+          "utf8",
+        );
+        git(this.opts.workingRepo, "add", "shared.txt");
+        execFileSync("git", ["commit", "-q", "-m", `bad resolution ${req.childIssue}`], {
+          cwd: this.opts.workingRepo,
+        });
+        return { resolved: true };
+      }
+    }
+
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/293-base");
+    commitFile(repo, "shared.txt", "FAMILY VERSION");
+    const baseBefore = git(repo, "rev-parse", "HEAD");
+    git(repo, "checkout", "-q", "-b", "feat/child-24", "HEAD~1");
+    const childHead = commitFile(repo, "shared.txt", "CHILD VERSION");
+    git(repo, "checkout", "-q", "family/293-base");
+
+    const backend = new MarkerLeavingMergerBackend(opts(repo));
+    const deterministic = await backend.mergeChildIntoFamilyBase({
+      childIssue: 24,
+      childBranch: "feat/child-24",
+    });
+    expect(deterministic.conflicted).toBe(true);
+
+    const result = await backend.resolveMergeConflict({
+      childIssue: 24,
+      childBranch: "feat/child-24",
+    });
+
+    expect(result).toMatchObject({
+      familyHeadBefore: baseBefore,
+      childHead,
+      conflicted: true,
+    });
+    expect(() => git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD")).toThrow();
+  });
+
   it("resolved agent → returns the resolved head (NOT conflicted); runs ONE merger agent", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: true };
