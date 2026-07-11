@@ -88,13 +88,13 @@ describe("#451 dogfood replay fixture", () => {
         expect.objectContaining({
           id: "405-ship-worker-malformed-after-final-cmr",
           issue: 405,
-          classification: "contract_drift",
-          stopReason: "contract_drift",
+          classification: "infra_failure",
+          stopReason: "infra_failure",
           metadata: {
             ship: expect.objectContaining({
               latestVerifiedCmrHead: "family-head",
               currentFamilyHead: "family-head",
-              shipPrState: "not-written",
+              shipPrState: "malformed-worker-output",
             }),
             heads: expect.objectContaining({
               verifiedCmrHead: "family-head",
