@@ -10,6 +10,9 @@ export const CODER_CODEX_SLUG = "gpt-5.6-terra";
 const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "low";
 export const REVIEWER_CODEX_SLUG = "gpt-5.6-sol";
 export const VERIFY_CODEX_SLUG = "gpt-5.6-sol";
+const CLAUDE_HEADLESS_OPTIONS = {
+  permissionMode: "bypassPermissions",
+} as const satisfies sc.ClaudeCodeOptions;
 
 /**
  * Live-officer reasoning effort for verify / CMR workers on the verify Codex
@@ -145,17 +148,20 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     // #789: roster coder id `sonnet-5` → slug `sonnet` must resolve to Sonnet 5
     // (claude-sonnet-5), matching docs/CODER_ROSTER.md — not the prior 4.6 pin.
     model: "claude-sonnet-5",
+    options: CLAUDE_HEADLESS_OPTIONS,
     family: "claude",
   },
   // #789 Coder-Rec roster: Claude-pool small-fix backup (same claudeCode pipe).
   haiku: {
     provider: "claudeCode",
     model: "claude-haiku-4-5",
+    options: CLAUDE_HEADLESS_OPTIONS,
     family: "claude",
   },
   opus: {
     provider: "claudeCode",
     model: "claude-opus-4-8",
+    options: CLAUDE_HEADLESS_OPTIONS,
     family: "claude",
     strongLeg: true,
   },

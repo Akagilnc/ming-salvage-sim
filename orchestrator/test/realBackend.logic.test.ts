@@ -798,10 +798,17 @@ describe("realBackend resolveModelSlug", () => {
     expect(resolveModelSlug("sonnet")).toEqual({
       provider: "claudeCode",
       model: "claude-sonnet-5",
+      options: { permissionMode: "bypassPermissions" },
+    });
+    expect(resolveModelSlug("haiku")).toEqual({
+      provider: "claudeCode",
+      model: "claude-haiku-4-5",
+      options: { permissionMode: "bypassPermissions" },
     });
     expect(resolveModelSlug("opus")).toEqual({
       provider: "claudeCode",
       model: "claude-opus-4-8",
+      options: { permissionMode: "bypassPermissions" },
     });
     expect(modelFamilyForSlug("gpt-5.6-terra")).toBe("codex");
     expect(modelFamilyForSlug("sonnet")).toBe("claude");
