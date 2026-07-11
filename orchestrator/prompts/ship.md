@@ -20,10 +20,11 @@ rerun clears it.
 
 ## Required output
 
-Write the single JSON object to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
-set. Then, for compatibility with older runners, emit a single `<ship>` tag on its
-own line containing the same single JSON object, and print the completion signal
-on its own line as the final line.
+The real completion evidence is the single JSON object written to
+`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set, the typed `<ship>` outcome,
+and the actual branch/PR git state. For compatibility with older runners, emit a
+single `<ship>` tag on its own line containing the same single JSON object. The
+completion signal is optional telemetry and may be printed as an extra line.
 
 PR opened:
 

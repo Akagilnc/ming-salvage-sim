@@ -151,6 +151,7 @@ class DecisionEscalatingMergerBackend extends PersistentlyConflictedFamilyBacken
     this.resolverCalls.push(request.childIssue);
     return {
       familyHead: `conflicted-${request.childIssue}`,
+      conflicted: true,
       escalation: {
         reason: "choose the canonical migration",
         diagnosis: "both branches deliberately changed the same public contract",

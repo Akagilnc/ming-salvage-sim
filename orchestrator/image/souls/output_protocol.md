@@ -26,6 +26,6 @@ guard writes the raw sidecar JSON after JSON shape, role schema, required fields
 and referenced evidence paths pass validation. It may additionally print the
 compatibility tag plus completion signal as optional telemetry.
 
-When `ORCHESTRATOR_OUTCOME_PATH` is set, the guard may emit compatibility
-telemetry; workers do not need to print the compatibility tag or completion
-signal themselves.
+When `ORCHESTRATOR_OUTCOME_PATH` is set, completion is judged by the validated
+sidecar JSON and the worker's typed outcome. The guard may emit the compatibility
+tag and completion signal as optional telemetry.

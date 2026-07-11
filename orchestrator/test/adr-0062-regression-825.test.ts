@@ -35,8 +35,29 @@ const CONTRACT_FILES = [
 describe("#825 ADR 0062 completion-sentinel contract sweep", () => {
   it.each(CONTRACT_FILES)("treats completion sentinels as optional telemetry in %s", (file) => {
     const body = readFileSync(resolve(process.cwd(), file), "utf8");
+    const normalized = body.replace(/\s+/g, " ");
+    const requiredOutput = normalized.match(
+      /## Required output(.*?)(?=## |$)/i,
+    )?.[1] ?? normalized;
+    const requiredSignalSentence = requiredOutput
+      .split(/(?<=[.!?])\s+/)
+      .some(
+        (sentence) =>
+          /(?:print|emit|fire)\s+(?:the\s+)?(?:completion\s+signal|[`\w]*_STEP_COMPLETE)/i.test(
+            sentence,
+          ) &&
+          !/(?:optional telemetry|may\s+(?:print|emit|fire))/i.test(sentence),
+      );
 
-    expect(body).not.toMatch(/(?:always\s+)?(?:print|emit|fire)\s+[`\w]*_STEP_COMPLETE[^\n]*(?:must|only|required|at the very end)/i);
-    expect(body).not.toMatch(/(?:must|required to)\s+(?:emit|print|fire)[^\n]*_STEP_COMPLETE/i);
+    expect(requiredSignalSentence).toBe(false);
+    expect(normalized).not.toMatch(
+      /(?:always\s+)?(?:print|emit|fire)\s+[`\w]*_STEP_COMPLETE.{0,180}(?:must|only|required|at the very end)/i,
+    );
+    expect(normalized).not.toMatch(
+      /(?:must|required to)\s+(?:emit|print|fire).{0,180}_STEP_COMPLETE/i,
+    );
+    expect(normalized).not.toMatch(
+      /(?:need\s+not|do\s+not\s+need\s+to|does\s+not\s+need\s+to|do\s+not|don't)\s+(?:print|emit|fire)(?:\s+\w+){0,8}\s+(?:[A-Z][A-Z0-9_]*_STEP_COMPLETE|them|it)\b/i,
+    );
   });
 });

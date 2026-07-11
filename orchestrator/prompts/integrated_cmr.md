@@ -109,7 +109,8 @@ Rules:
   MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
   `action:"fix_now"` (that would silently turn the governance suppression into a
   blocker).
-- When `$ORCHESTRATOR_OUTCOME_PATH` is set, let `orchestrator-outcome-guard` emit
-  the `<cmr>` tag and `CMR_STEP_COMPLETE` as optional telemetry; workers need not print them.
+- When `$ORCHESTRATOR_OUTCOME_PATH` is set, completion is judged by the validated
+  sidecar JSON and typed CMR outcome; let `orchestrator-outcome-guard` emit the
+  `<cmr>` tag and `CMR_STEP_COMPLETE` as optional telemetry.
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,
   the LAST tag is the one that counts. `CMR_STEP_COMPLETE` remains optional telemetry.
