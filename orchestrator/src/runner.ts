@@ -66,6 +66,7 @@ import { monitorHandleFromLedger } from "./workerMonitor.js";
 import { routeSmokeFailure } from "./modelRoutes.js";
 import {
   fixerEnvelopeFixCommitSha,
+  fixerHasFixCommit,
   fixerProceedsToVerify,
   isValidCleanupResult,
   isValidDocReleaseResult,
@@ -6118,9 +6119,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           if (
             reviewStep === "S10" &&
             isValidFixerResult(result.output) &&
-            fixerProceedsToVerify(result.output)
+            fixerProceedsToVerify(result.output) &&
+            fixerHasFixCommit(result.output)
           ) {
-            lastOnlineReviewFixCommitSha = fixerEnvelopeFixCommitSha(result.output)!;
+            const envelopeFixSha = fixerEnvelopeFixCommitSha(result.output);
+            if (envelopeFixSha === undefined) {
+              throw new Error("fixer commit side effects require a fixCommitSha");
+            }
+            lastOnlineReviewFixCommitSha = envelopeFixSha;
             if (
               lastShipOutput.pr != null &&
               isLiveGithubReviewPollEnabled(lastShipOutput.pr, reviewCtx.repo!)
@@ -6147,7 +6153,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const fixCommittedMarker = {
                 step: "S10" as const,
                 event: "online_review_fix_committed" as const,
-                fixCommitSha: lastOnlineReviewFixCommitSha!,
+                fixCommitSha: lastOnlineReviewFixCommitSha,
                 onlineReviewRound,
                 ...(fixAuthKeys.length > 0
                   ? { fixMarkedFindingIdentityKeys: fixAuthKeys }
