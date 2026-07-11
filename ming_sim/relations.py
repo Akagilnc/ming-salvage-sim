@@ -19,11 +19,11 @@ EDGE_KINDS = MINISTER_EDGE_KINDS | CREDIT_EDGE_KINDS
 
 # 0079 的记录只有一个当事人；方向由事件语义决定，不能由自由文本猜。
 CREDIT_DIRECTION = {
-    "兑现所托": "emperor_to_person",
+    "兑现所托": "person_to_emperor",
     "撑腰": "emperor_to_person",
     "知遇": "emperor_to_person",
-    "辜负": "person_to_emperor",
-    "弃卒保车": "person_to_emperor",
+    "辜负": "emperor_to_person",
+    "弃卒保车": "emperor_to_person",
 }
 
 _ROUND_RE = re.compile(r"(?:^|[|/:; ])round[=: -](\d+)(?:$|[|/:; ])", re.I)
