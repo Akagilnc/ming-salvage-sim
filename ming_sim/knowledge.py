@@ -107,17 +107,28 @@ def _world(
     public = "\n".join(fact(r.get("report")) for r in reports)
     result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
 
-    facts = {
-        "treasury": db.treasury_report(state),
-        "military": db.army_report(limit=10),
-        "regional": db.region_report(limit=10),
-        "personnel": db.faction_report(),
-        "construction": db.buildings_report(),
-        "security": db.power_report(exclude_self=True),
-        "court": "\n".join((db.faction_report(), db.power_report(exclude_self=True))),
-        "role": _role_roster(db, office_type),
-    }
     visible_domains = _visible_domains(office_type)
+    # Build only the current-state rails that this office is entitled to read.
+    # Besides keeping the returned projection scoped, this prevents a future
+    # report implementation from leaking a sensitive cross-domain payload via
+    # an intermediate all-world snapshot.
+    report_builders = {
+        "treasury": lambda: db.treasury_report(state),
+        "military": lambda: db.army_report(limit=10),
+        "regional": lambda: db.region_report(limit=10),
+        "personnel": db.faction_report,
+        "construction": db.buildings_report,
+        "security": lambda: db.power_report(exclude_self=True),
+        "court": lambda: "\n".join((db.faction_report(), db.power_report(exclude_self=True))),
+        "role": lambda: _role_roster(db, office_type),
+    }
+    facts = {
+        domain: _qualitative(report_builders[domain]())
+        for domain in visible_domains
+        if domain in report_builders and domain != "role"
+    }
+    if "role" in visible_domains:
+        facts["role"] = report_builders["role"]()
     for domain in visible_domains:
         if domain == "public":
             # The public layer is already built from the turn reports above;
