@@ -8154,23 +8154,40 @@ class GameDB:
             faction = str(payload.get("faction") or "中立").strip() or "中立"
             reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
+            recommendation = payload.get("recommendation")
+            staged_candidate = recommendation.get("candidate") if isinstance(recommendation, dict) else None
+            recommender = str(recommendation.get("recommender") or pa["minister_name"]) if isinstance(recommendation, dict) else ""
+            if recommendation is not None and (
+                not isinstance(staged_candidate, dict)
+                or not recommender
+            ):
+                return False
+            if isinstance(staged_candidate, dict):
+                from ming_sim.recommendations import validate_recommendation_snapshot
+                if staged_candidate.get("name") != name or not validate_recommendation_snapshot(
+                    self, state, recommender, staged_candidate
+                ):
+                    return False
+            # A recommendation event is provenance for this exact staged
+            # candidate.  Keep the appointment and event in one transaction so
+            # a failure while recording cannot leave the appointment adopted
+            # without its auditable recommendation.
+            if isinstance(recommendation, dict):
+                with atomic(self):
+                    res = apply_office_appointment(
+                        self, state, content, registry, name, office,
+                        reason=reason, new_office_type=office_type,
+                        faction=faction, llm_config=self.llm_config, commit=False)
+                    accepted = not res.get("rejected")
+                    if accepted:
+                        self.record_recommendation(
+                            state, recommender, staged_candidate, office, reason,
+                        )
+                    return accepted
             res = apply_office_appointment(
                 self, state, content, registry, name, office,
                 reason=reason, new_office_type=office_type, faction=faction, llm_config=self.llm_config)
-            accepted = not res.get("rejected")
-            recommendation = payload.get("recommendation")
-            if accepted and isinstance(recommendation, dict):
-                candidate_rows = self.list_recommendation_candidates(
-                    state, str(recommendation.get("recommender") or pa["minister_name"])
-                )
-                candidate = next((row for row in candidate_rows if row["name"] == name), None)
-                if candidate is None:
-                    return False
-                self.record_recommendation(
-                    state, str(recommendation.get("recommender") or pa["minister_name"]),
-                    candidate, office, reason,
-                )
-            return accepted
+            return not res.get("rejected")
         if pa["action"] == "罢免":
             # 仅大明【在职】大臣可罢:_find_existing_minister 已 ming-guard + 解 alias;
             # 外藩(power_id≠ming)/后宫/不在册不接(无字面 fallback,免误黜皇太极,CMR R2);
