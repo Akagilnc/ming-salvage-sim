@@ -911,6 +911,9 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
+    async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+      return { ok: true };
+    }
     async escalateFamily(e: FamilyEscalation): Promise<void> {
       this.escalations.push(e);
     }
@@ -951,6 +954,9 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
       return this.ledger;
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+    async verifyFamilyShippedPr(): Promise<{ ok: true }> {
       return { ok: true };
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
