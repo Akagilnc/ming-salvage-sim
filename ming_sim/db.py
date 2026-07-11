@@ -7630,11 +7630,12 @@ class GameDB:
         # from an LLM aggregate: a paraphrase would evade that redaction.
         items = self.knowledge_items_for_turn(state.turn)
         has_restricted_source = any(item.get("excluded_names") for item in items)
+        source_snapshot_supplied = knowledge_items is not None
         if public_body is None:
             public_chapter = (
                 "\n".join(str(item.get("body") or item.get("title") or "")
                           for item in items if not item.get("excluded_names"))
-                if has_restricted_source else str(body or "")
+                if source_snapshot_supplied or has_restricted_source else str(body or "")
             )
         else:
             public_chapter = str(public_body or "")
