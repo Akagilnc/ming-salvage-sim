@@ -725,6 +725,10 @@ export interface FamilyVerifyRequest {
   readonly phase: "wave" | "final";
   /** The family base branch verify runs against. */
   readonly familyBase: string;
+  /** Invocation-scoped telemetry identity; omitted by legacy verify callers. */
+  readonly runId?: string;
+  /** Family issue number for a raw telemetry observation; optional for legacy callers. */
+  readonly issue?: number;
 }
 
 /** The family verify outcome (typecheck + tests). */
