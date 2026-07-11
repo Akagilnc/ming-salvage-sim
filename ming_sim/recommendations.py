@@ -6,33 +6,65 @@ import json
 from typing import Any, Dict, Iterable, List
 
 
+def _source_visible_to(row: Any, recommender: str) -> bool:
+    """Apply the #459 exclusion boundary before using a source's roster."""
+    try:
+        excluded = json.loads(row["excluded_names"] or "[]")
+    except (TypeError, ValueError, KeyError, IndexError):
+        excluded = []
+    if recommender in {str(name) for name in excluded}:
+        return False
+    try:
+        targets = json.loads(row["excluded_targets"] or "{}")
+    except (TypeError, ValueError, KeyError, IndexError):
+        targets = {}
+    people = targets.get("people", []) if isinstance(targets, dict) else []
+    return recommender not in {str(name) for name in people}
+
+
+def _roster_names(raw: object) -> set[str]:
+    try:
+        roster = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        roster = []
+    if not isinstance(roster, list):
+        return set()
+    return {
+        str(item.get("character_id") or item.get("name"))
+        for item in roster
+        if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
+    }
+
+
 def _known_names(db: Any, recommender: str) -> set[str]:
-    """Return people named in the recommender's durable participation/knowledge rows."""
+    """Return names in the recommender's visible private/public event rosters."""
     names: set[str] = set()
     conn = getattr(db, "conn", None)
     if conn is None:
         return names
     rows = conn.execute(
-        "SELECT source_id FROM character_knowledge_events WHERE character_name=?",
+        "SELECT source_id, excluded_names FROM character_knowledge_events WHERE character_name=?",
         (recommender,),
     ).fetchall()
     for row in rows:
+        if not _source_visible_to(row, recommender):
+            continue
         source = conn.execute(
-            "SELECT participant_roster FROM character_knowledge_sources WHERE source_id=?",
+            "SELECT participant_roster, excluded_names, excluded_targets "
+            "FROM character_knowledge_sources WHERE source_id=?",
             (row["source_id"],),
         ).fetchone()
-        if source is None:
-            continue
-        try:
-            roster = json.loads(source["participant_roster"] or "[]")
-        except (TypeError, ValueError):
-            roster = []
-        if isinstance(roster, list):
-            for item in roster:
-                if isinstance(item, dict):
-                    name = item.get("character_id") or item.get("name")
-                    if name:
-                        names.add(str(name))
+        if source is not None and _source_visible_to(source, recommender):
+            names.update(_roster_names(source["participant_roster"]))
+
+    # Public sources are visible without a direct participation row.  Their
+    # structured roster is the public-event side of the #459 read projection.
+    for source in conn.execute(
+        "SELECT participant_roster, excluded_names, excluded_targets "
+        "FROM character_knowledge_sources WHERE kind='public'"
+    ).fetchall():
+        if _source_visible_to(source, recommender):
+            names.update(_roster_names(source["participant_roster"]))
     return names
 
 

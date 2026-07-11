@@ -26,6 +26,71 @@ def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge
     assert hidden.name not in names
 
 
+def test_private_and_public_structured_hearing_exposes_cross_faction_candidate(game):
+    db, state, content = game
+    recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
+    candidates = [c for c in content.characters.values()
+                  if c.name != recommender.name
+                  and c.faction != recommender.faction
+                  and c.office_type not in ("后宫", "宗藩")][:2]
+    private_candidate, public_candidate = candidates
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', office='', reason_code='罢居' "
+        "WHERE name IN (?, ?)",
+        (private_candidate.name, public_candidate.name),
+    )
+    db.conn.commit()
+
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": recommender.name}, {"character_id": private_candidate.name}],
+        "audience",
+        "私下议事",
+        "大臣亲历",
+        source_id="test:private-hearing",
+    )
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": public_candidate.name}],
+        "public",
+        "公开议事",
+        "邸报所载",
+        source_id="test:public-hearing",
+    )
+
+    names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
+
+    assert private_candidate.name in names
+    assert public_candidate.name in names
+
+
+def test_public_structured_hearing_exclusion_hides_cross_faction_candidate(game):
+    db, state, content = game
+    recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
+    candidate = next(c for c in content.characters.values()
+                     if c.name != recommender.name
+                     and c.faction != recommender.faction
+                     and c.office_type not in ("后宫", "宗藩"))
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?",
+        (candidate.name,),
+    )
+    db.conn.commit()
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": candidate.name}],
+        "public",
+        "公开议事",
+        "邸报所载",
+        source_id="test:excluded-public-hearing",
+        excluded_names=[recommender.name],
+    )
+
+    names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
+
+    assert candidate.name not in names
+
+
 def test_same_faction_future_debut_is_not_recommendable(game):
     db, state, content = game
     recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
