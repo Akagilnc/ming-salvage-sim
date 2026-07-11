@@ -95,6 +95,24 @@ def test_update_by_id_refreshes_durable_knowledge_source_after_restore(game):
     restored.close()
 
 
+def test_update_by_id_keeps_knowledge_source_identical_to_persisted_order(game):
+    """知识源是密令的持久投影，须使用数据库接受后的标题。"""
+    db, state, _ = game
+    oid = db.create_secret_order(state, "保签官", "旧标题", "旧内容", ["辽东"])
+    requested_title = "超过密令数据库标题二十字上限的更新版本标题甲乙丙"
+
+    assert db.update_secret_order_by_id(state, oid, requested_title, "新内容")
+
+    order = db.conn.execute(
+        "SELECT title, content FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()
+    source = db.conn.execute(
+        "SELECT title, body FROM character_knowledge_sources WHERE source_id=?",
+        (f"secret_order:{oid}",),
+    ).fetchone()
+    assert dict(source) == {"title": order["title"], "body": order["content"]}
+
+
 def test_update_by_id_noop_on_non_active(game):
     """目标非 active(已结案)→ 不更新,返回 False。"""
     db, state, _ = game
