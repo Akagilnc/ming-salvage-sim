@@ -146,6 +146,57 @@ export interface CmrPassedRecord {
   readonly stopSummary?: StopSummary;
 }
 
+/** A durable, phase-level marker written immediately before a ship dispatch (#823). */
+export interface ShipDispatchAttemptRecord {
+  /** Ship retry streaks start only after a green correctness CMR pass. */
+  readonly phase: "final";
+}
+
+/**
+ * Count ship dispatches in the current retry streak.
+ *
+ * A fresh correctness CMR pass starts a fresh streak, so a legitimate later
+ * final-barrier round cannot inherit malformed-output budget from an earlier
+ * round. Conversely, a crash/re-feed that resume-skips CMR sees the markers
+ * after that same pass and spends only the remaining dispatches.
+ */
+export function shipDispatchAttemptsSinceLatestCorrectnessCmrPass(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): number {
+  let attempts = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "cmr_passed" &&
+      entry.event === "cmr_passed" &&
+      entry.phase === "final" &&
+      entry.cmrPass === "correctness"
+    ) {
+      return attempts;
+    }
+    if (
+      entry.status === "ship_dispatch_attempt" &&
+      entry.event === "ship_dispatch_attempt" &&
+      entry.phase === "final"
+    ) {
+      attempts += 1;
+    }
+  }
+  return 0;
+}
+
+/** Append a dedicated ship dispatch marker before invoking the ship worker (#823). */
+export async function recordShipDispatchAttempt(
+  backend: FamilyBackend,
+  record: ShipDispatchAttemptRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger({
+    status: "ship_dispatch_attempt",
+    event: "ship_dispatch_attempt",
+    phase: record.phase,
+  });
+}
+
 /** A red integrated CMR review outcome handed back to the runner before fix (#550). */
 export interface CmrReviewedRecord {
   readonly cmrPass: IntegratedCmrPass;
