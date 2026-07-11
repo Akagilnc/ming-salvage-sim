@@ -39,6 +39,9 @@ import { execFileSync } from "node:child_process";
 import { mintRunId } from "./runId.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import {
+  offlineSyntheticPollAdmissible,
+} from "./evidenceAdmissibility.js";
+import {
   reviewFixAssertionSignal,
   reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
@@ -91,6 +94,7 @@ import {
 import {
   docReleasePathsFromCommit,
   isPrMergedMarker,
+  observeOpenPrForBranch,
   offlineAutoMergeAllowUnverifiedDocPaths,
   runAutoMergeStage,
   slicePrMergedRecordFromLedger,
@@ -1484,13 +1488,13 @@ function isReviewLoopStep(step: StepId): boolean {
   return step === "S9" || step === "S10" || step === "S11" || step === "S12";
 }
 
-function shipStatusFromLedger(
+function lastShipFromLedger(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
-): string | undefined {
+): ShipResult | undefined {
   for (let i = ledger.length - 1; i >= 0; i--) {
     const entry = ledger[i]!;
     if (entry.step === "S7" && entry.output?.kind === "ship") {
-      return entry.output.status;
+      return entry.output;
     }
   }
   return undefined;
@@ -1881,6 +1885,7 @@ function adjudicatedBlockingFindingsForPersistedS4(
 function planResume(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
   repairIntent?: ContinueFixingEvent,
+  hostPrPresent?: boolean,
 ): ResumePlan {
   if (ledger.length === 0) {
     return { resumeStep: "S0", priorLedger: [] };
@@ -2182,10 +2187,6 @@ function planResume(
     isReviewLoopStep(routeFrom) && routeFrom === lastEntry.step
       ? lastEntry.output
       : agentEntry?.output;
-  const shipStatusForRoute =
-    routeFrom === "S7"
-      ? shipStatusFromLedger(executableLedger) ?? "pushed"
-      : undefined;
   const onlineReviewRoundForRoute =
     routeFrom === "S9" || routeFrom === "S10"
       ? onlineReviewRoundFromLedger(executableLedger)
@@ -2196,8 +2197,11 @@ function planResume(
     ...(pendingBlockingFindings !== undefined
       ? { pendingBlockingFindings }
       : {}),
-    ...(shipStatusForRoute !== undefined
-      ? { shipStatus: shipStatusForRoute }
+    ...(routeFrom === "S7"
+      ? {
+          shipStatus: lastShipFromLedger(executableLedger)?.status,
+          hostPrPresent,
+        }
       : {}),
     ...(onlineReviewRoundForRoute !== undefined
       ? { onlineReviewRound: onlineReviewRoundForRoute }
@@ -2913,6 +2917,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let refusedFindingIdentityKeysForReverify: readonly string[] = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
+  let hostPrPresent: boolean | undefined;
   let onlineReviewRound = 1;
   // Resume planning keeps a display-seeded ledger trimmed at S7. Preserve a
   // separate full ledger for S9's cross-round history extraction.
@@ -2947,6 +2952,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     } catch {
       return "Akagilnc/ming-salvage-sim";
     }
+  }
+
+  function observeShipPr(ship: ShipResult): {
+    readonly present: boolean;
+    readonly prUrl?: string;
+  } {
+    // Unit/dogfood backends intentionally have no GitHub host. Keep their
+    // synthetic handles inside the established test boundary; production must
+    // always execute the host query below.
+    if (process.env.NODE_ENV === "test") {
+      return isFilledString(ship.pr)
+        ? { present: true, prUrl: ship.pr }
+        : { present: false };
+    }
+    const repo = defaultRepo();
+    if (
+      ship.pr !== undefined &&
+      (offlineSyntheticPollAdmissible(ship.pr, repo) ||
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1")
+    ) {
+      return { present: true, prUrl: ship.pr };
+    }
+    return observeOpenPrForBranch(ghSh, repo, ship.branch, ship.pr);
   }
 
   async function pollMergeReadinessForShip(
@@ -3814,12 +3842,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       resumeLedger = [...resumeLedger, repairIntentEntry];
     }
+    const executableResumeLedger = executableLedgerEntries(resumeLedger);
+    const resumeTail = executableResumeLedger.at(-1);
+    const resumeRouteFrom =
+      resumeTail?.step === "S8" && resumeTail.handoffStatus === undefined
+        ? lastNonTerminalStep(executableResumeLedger)
+        : resumeTail?.step;
+    const resumedShip =
+      resumeRouteFrom === "S7" ? lastShipFromLedger(resumeLedger) : undefined;
+    const resumedHostPr =
+      resumedShip === undefined
+        ? undefined
+        : observeShipPr(resumedShip);
     const plan =
       (await planRecoveredLandedCoderProtocolFailure(
         resumeLedger,
         worktree,
         backend,
-      )) ?? planResume(resumeLedger);
+      )) ?? planResume(resumeLedger, undefined, resumedHostPr?.present);
     resumeHistoryLedger = resumeLedger;
 
     // #684 R2: production call site for monitorHandleFromLedger — rebuild any
@@ -5161,6 +5201,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // RealBackend ship envelope historically omits it; without it resume uses
           // "offline-review-head" → live poll re-anchors and stales timestamp-only bots.
           let shipWithHead = ship;
+          const hostPr = observeShipPr(ship);
+          hostPrPresent = hostPr.present;
+          if (hostPr.prUrl !== undefined && !isFilledString(shipWithHead.pr)) {
+            shipWithHead = { ...shipWithHead, pr: hostPr.prUrl };
+          }
           if (!isFilledString(ship.prHead)) {
             const headOid = await resolveBranchHEAD();
             if (isFilledString(headOid)) {
@@ -6659,6 +6704,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             shipStatus:
               lastShipOutput?.status ??
               (family?.noPush ? "pushed" : undefined),
+            hostPrPresent: family?.noPush ? false : hostPrPresent,
           }
         : {}),
       ...(step === "S9" || step === "S10"
