@@ -51,11 +51,31 @@ def test_mindreading_uses_three_truth_sources_without_naked_values(game):
     assert payload["reply_text"] == "臣口称奉公，字里却不断把责任推给同僚。"
     assert payload["truths"]["党账"]
     assert payload["truths"]["君臣账"]
-    assert payload["truths"]["潜台词"] == payload["reply_text"]
+    assert payload["truths"]["潜台词"] != payload["reply_text"]
     assert "identity" not in str(payload)
     assert "seed_guilt" not in str(payload)
     assert str(target.identity) not in str(payload)
     assert str(target.loyalty) not in str(payload)
+
+
+def test_same_reply_is_read_through_different_three_source_ledgers(game):
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    base = content.characters["温体仁"]
+    reply = "臣愿担责。"
+
+    loyal_but_not_party = replace(base, identity=15, loyalty=92)
+    party_but_not_loyal = replace(base, identity=92, loyalty=15)
+    first = build_mindreading_payload(db, state, reader, loyal_but_not_party, reply)
+    second = build_mindreading_payload(db, state, reader, party_but_not_loyal, reply)
+
+    assert first["truths"]["潜台词"] != second["truths"]["潜台词"]
+    assert "党账淡" in first["truths"]["潜台词"]
+    assert "党账深" in second["truths"]["潜台词"]
+
+    db.record_public_knowledge_event(state, "旧闻：有人替他遮掩", "内廷听闻此人旧日行止。")
+    with_heard = build_mindreading_payload(db, state, reader, loyal_but_not_party, reply)
+    assert with_heard["truths"]["潜台词"] != first["truths"]["潜台词"]
 
 
 def test_identity_loyalty_are_two_readable_axes(game):
