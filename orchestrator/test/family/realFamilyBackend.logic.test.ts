@@ -834,6 +834,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
     headRefOid: " pr-head-1 ",
     state: "OPEN",
   };
+  prListResponse: unknown = [];
   mergeInProgressFake = false;
   // STATEFUL fake of the family-base ref so the resolve postcondition (the family
   // base ref moved past familyHeadBefore + child is its ancestor) is exercised
@@ -893,6 +894,9 @@ class FakeSeamsBackend extends RealFamilyBackend {
     if (file === "gh" && args[0] === "pr" && args[1] === "view") {
       return JSON.stringify(this.prViewResponse);
     }
+    if (file === "gh" && args[0] === "pr" && args[1] === "list") {
+      return JSON.stringify(this.prListResponse);
+    }
     return "";
   }
 
@@ -918,6 +922,10 @@ class FakeSeamsBackend extends RealFamilyBackend {
 
   public verifyShipPr(pr: string, familyBase: string) {
     return this.verifyFamilyShipPr({ pr, familyBase });
+  }
+
+  public findFamilyPr(familyBase: string, expectedHead: string) {
+    return this.findFamilyShippedPr({ familyBase, expectedHead });
   }
 }
 
@@ -2042,6 +2050,34 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
     expect(view?.args).toContain("baseRefName,headRefName,headRefOid,state");
   });
 
+  it("separates host-confirmed PR absence from an unknown gh observation failure", () => {
+    class ThrowingPrViewBackend extends FakeSeamsBackend {
+      constructor(private readonly failure: string) {
+        super(opts(trackRepo()));
+      }
+
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        if (file === "gh" && args[0] === "pr" && args[1] === "view") {
+          throw new Error(this.failure);
+        }
+        return super.sh(file, args, cwd);
+      }
+    }
+
+    expect(
+      new ThrowingPrViewBackend("pull request not found").verifyShipPr(
+        "pr://missing",
+        "family/293-base",
+      ),
+    ).toMatchObject({ ok: false, kind: "pr_missing" });
+    expect(
+      new ThrowingPrViewBackend("network timeout contacting api.github.com").verifyShipPr(
+        "pr://unknown",
+        "family/293-base",
+      ),
+    ).toMatchObject({ ok: false, kind: "observation_failed" });
+  });
+
   it("rejects PR metadata when the PR is not OPEN or lacks a non-empty head OID", () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
 
@@ -2089,6 +2125,17 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
         expectedHead: "new-head",
       }),
     ).resolves.toMatchObject({ ok: false });
+  });
+
+  it("treats a non-array gh pr list response as an observation failure", async () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.prListResponse = { url: "https://example.test/pull/823" };
+
+    await expect(b.findFamilyPr("family/823-base", "head-823")).resolves.toMatchObject({
+      ok: false,
+      kind: "observation_failed",
+      reason: expect.stringMatching(/not an array/i),
+    });
   });
 });
 

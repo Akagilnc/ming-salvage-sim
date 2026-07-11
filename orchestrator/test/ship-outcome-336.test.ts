@@ -24,7 +24,6 @@ import { describe, expect, it } from "vitest";
 import {
   parseShipOutcome,
   shipOutcomeFromResult,
-  SHIP_COMPLETION_SIGNAL,
 } from "../src/shipOutcome.js";
 
 // ═══════════════════════ parseShipOutcome (pure tag parse) ═══════════════════════
@@ -272,9 +271,38 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
   });
 });
 
-// ═══════════════════ shipOutcomeFromResult (completion-signal gate) ═══════════════════
+// ═══════════════════ shipOutcomeFromResult (machine sidecar only) ═══════════════════
 
-describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr/merger gate)", () => {
+describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
+  it("accepts a valid machine sidecar without the worker SHIP_STEP_COMPLETE password", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ status: "pushed", branch: "worker-reported-wrong-branch" }) + "\n",
+      "utf8",
+    );
+
+    const o = shipOutcomeFromResult({
+      stdout: "ship completed without a sentinel",
+      outcomePath,
+    });
+
+    expect(o).toEqual({
+      kind: "shipped",
+      branch: "worker-reported-wrong-branch",
+      status: "pushed",
+    });
+  });
+
+  it("does not parse human-readable stdout as the machine outcome", () => {
+    const o = shipOutcomeFromResult({
+      stdout: '<ship>{"status":"pushed","branch":"feat/from-prose"}</ship>',
+    });
+
+    expect(o.kind).toBe("malformed");
+  });
+
   it("prefers a runner-owned outcome sidecar over malformed ship stdout", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-"));
     const outcomePath = join(dir, "outcome.json");
@@ -285,7 +313,7 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
     );
 
     const o = shipOutcomeFromResult({
-      completionSignal: SHIP_COMPLETION_SIGNAL,
+      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: "<ship>not json</ship>\nSHIP_STEP_COMPLETE",
       outcomePath,
     });
@@ -312,7 +340,7 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
     );
 
     const o = shipOutcomeFromResult({
-      completionSignal: SHIP_COMPLETION_SIGNAL,
+      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: "<ship>not json</ship>\nSHIP_STEP_COMPLETE",
       outcomePath,
     });
@@ -330,7 +358,7 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
     writeFileSync(outcomePath, "{not json", "utf8");
 
     const o = shipOutcomeFromResult({
-      completionSignal: SHIP_COMPLETION_SIGNAL,
+      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
       outcomePath,
     });
@@ -345,7 +373,7 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
     writeFileSync(outcomePath, "   \n", "utf8");
 
     const o = shipOutcomeFromResult({
-      completionSignal: SHIP_COMPLETION_SIGNAL,
+      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
       outcomePath,
     });
@@ -354,20 +382,16 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
     if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
   });
 
-  it("falls back to signaled ship stdout only when no outcome sidecar path exists", () => {
+  it("never falls back to signaled ship stdout when no outcome sidecar path exists", () => {
     const o = shipOutcomeFromResult({
-      completionSignal: SHIP_COMPLETION_SIGNAL,
+      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
     });
 
-    expect(o).toEqual({
-      kind: "shipped",
-      status: "pushed",
-      branch: "feat/fallback",
-    });
+    expect(o.kind).toBe("malformed");
   });
 
-  it("keeps malformed ship sidecar from masking a missing completion signal", () => {
+  it("reports a malformed sidecar independently of the obsolete completion signal", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-unsignaled-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -378,37 +402,37 @@ describe("#336 shipOutcomeFromResult — completion-signal gate (mirrors the cmr
       outcomePath,
     });
 
-    expect(o.kind).toBe("escalate");
-    if (o.kind === "escalate") expect(o.reason).toContain("completion signal");
+    expect(o.kind).toBe("malformed");
+    if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
   });
 
-  it("a signaled shipped run ⇒ a shipped outcome", () => {
+  it("a signaled stdout-only run is still malformed", () => {
     const o = shipOutcomeFromResult({
-      completionSignal: SHIP_COMPLETION_SIGNAL,
+      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
-    expect(o.kind).toBe("shipped");
+    expect(o.kind).toBe("malformed");
   });
 
-  it("an UNSIGNALED run ⇒ escalate (a complete-but-unsignaled run is NOT a success)", () => {
+  it("an unsignaled stdout-only run is malformed, not escalated", () => {
     const o = shipOutcomeFromResult({
       completionSignal: undefined,
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
-    expect(o.kind).toBe("escalate");
+    expect(o.kind).toBe("malformed");
   });
 
-  it("a wrong-signal run ⇒ escalate", () => {
+  it("a wrong-signal stdout-only run is malformed, not escalated", () => {
     const o = shipOutcomeFromResult({
       completionSignal: "SOME_OTHER_SIGNAL",
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
-    expect(o.kind).toBe("escalate");
+    expect(o.kind).toBe("malformed");
   });
 
-  it("a signaled but malformed run ⇒ malformed (signal alone is not a success)", () => {
+  it("a signal alone is not a machine outcome", () => {
     const o = shipOutcomeFromResult({
-      completionSignal: SHIP_COMPLETION_SIGNAL,
+      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: "no tag here",
     });
     expect(o.kind).toBe("malformed");
