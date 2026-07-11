@@ -4827,11 +4827,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (output.kind === "coder") {
           // #786: host-git commit observations are strictly sidecar-only.
           // A failed read/write cannot affect the step's ledger or route decision.
-          if (output.committed && output.commitsAdded >= 1 && coderHeadBeforeStep !== undefined && worktree !== undefined) {
+          // Collection is triggered only by host-git HEAD movement; worker output
+          // is a separate routing contract and must not gate this observation.
+          if (coderHeadBeforeStep !== undefined && worktree !== undefined) {
             try {
               const afterCommit = gitHead(worktree);
               const telemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
-              if (afterCommit !== undefined && telemetryDir !== undefined) {
+              if (
+                afterCommit !== undefined &&
+                afterCommit !== coderHeadBeforeStep &&
+                telemetryDir !== undefined
+              ) {
                 const commits = commitsBetween(worktree.path, coderHeadBeforeStep, afterCommit) ?? [afterCommit];
                 for (const commit of commits) {
                   const metrics = collectCommitMetrics(worktree.path, commit);

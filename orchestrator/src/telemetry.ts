@@ -560,7 +560,10 @@ export interface TelemetryCommitFileDistribution {
 /** #782 audit-pattern counts, kept separately for added and removed diff lines. */
 export interface TelemetryEscapeHatchCounts {
   readonly asAny: number;
+  readonly asNever: number;
   readonly asUnknownAs: number;
+  readonly tsIgnore: number;
+  readonly tsExpectError: number;
   readonly jsonParseStringify: number;
 }
 
@@ -1248,13 +1251,19 @@ export interface BuildCommitStampInput {
 
 const EMPTY_ESCAPE_HATCH_COUNTS: TelemetryEscapeHatchCounts = {
   asAny: 0,
+  asNever: 0,
   asUnknownAs: 0,
+  tsIgnore: 0,
+  tsExpectError: 0,
   jsonParseStringify: 0,
 };
 
 const ESCAPE_HATCH_PATTERNS = {
   asAny: /\bas\s+any\b/,
+  asNever: /\bas\s+never\b/,
   asUnknownAs: /\bas\s+unknown\s+as\b/,
+  tsIgnore: /@ts-ignore\b/,
+  tsExpectError: /@ts-expect-error\b/,
   jsonParseStringify: /\bJSON\s*\.\s*parse\s*\(\s*JSON\s*\.\s*stringify\s*\(/,
 } as const;
 
@@ -1269,9 +1278,12 @@ function auditableLine(line: string): string | undefined {
   const kind = changedLineKind(line);
   if (kind === undefined) return undefined;
   const content = line.slice(1).trimStart();
-  // Keep the audit mechanical while excluding the common comment-only false positive.
+  // TypeScript directives are necessarily comments and are themselves the audit
+  // target. Other comment-only examples must not synthesize escape hatches.
   if (content.startsWith("//") || content.startsWith("/*") || content.startsWith("*")) {
-    return undefined;
+    return /^(?:\/\/|\/\*|\*)\s*@ts-(?:ignore|expect-error)\b/.test(content)
+      ? content
+      : undefined;
   }
   // This is still regex-based auditing, but quoted examples must not turn into
   // synthetic escape hatches or weakened assertions.
@@ -1284,8 +1296,10 @@ function auditableLine(line: string): string | undefined {
  * Metrics omitted after a host-git error are null, never a control-flow error.
  */
 export function buildCommitStamp(input: BuildCommitStampInput): TelemetryCommitRecord {
-  let escapeHatches = input.metrics?.escapeHatches;
-  let assertions = input.metrics?.assertions;
+  // These dimensions come exclusively from the independent patch read. A
+  // successful numstat must not turn a failed diff read into synthetic zeroes.
+  let escapeHatches: TelemetryCommitRecord["escapeHatches"] = null;
+  let assertions: TelemetryCommitRecord["assertions"] = null;
   if (input.diffLines !== undefined) {
     const added = { ...EMPTY_ESCAPE_HATCH_COUNTS };
     const deleted = { ...EMPTY_ESCAPE_HATCH_COUNTS };
