@@ -215,13 +215,34 @@ describe("#767 Coder-Rec roster — pool separation", () => {
     expect(selected.id).toBe("grok-4.5");
   });
 
-  it("blocks sol from reviewing a slice that sol produced", () => {
+  it("lets sol win a relayed reviewer route and replaces that reviewer with opus", () => {
+    for (const routeName of ["normal", "codex-cheap"] as const) {
+      // This is the resolved route shape after an S3/S6 reviewer relay lands on
+      // sol; do not pre-filter sol out of the candidate list in the test.
+      const relayRoute = resolveRouteModels(routeName, {
+        reviewer: "gpt-5.6-sol",
+      });
+      const applied = applyCoderRecToRoute(
+        relayRoute,
+        "Coder-Rec: sol@med → terra@med",
+        0,
+        {},
+      );
+
+      expect(applied.entry?.id).toBe("sol@med");
+      expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
+      expect(applied.route.slots.reviewer).toBe("opus");
+      expect(applied.route.slots.coder).not.toBe(applied.route.slots.reviewer);
+    }
+  });
+
+  it("fails closed when every remaining coder would share a reviewer checkpoint", () => {
     const order = resolveCoderRecOrder("Coder-Rec: sol@med → terra@med");
-    const selected = selectCoderRecEntry(order, 0, {
-      reviewerSlugs: ["gpt-5.6-sol"],
-    });
-    expect(selected.id).toBe("terra@med");
-    expect(poolSeparationViolation(selected, ["gpt-5.6-sol"])).toBeUndefined();
+    expect(() =>
+      selectCoderRecEntry(order, 0, {
+        reviewerSlugs: ["gpt-5.6-sol", "gpt-5.6-terra"],
+      }),
+    ).toThrow(/no pool-separated coder roster entry/i);
   });
 
   it("collects cmrCompleteness / cmrCorrectness / verify gate slots as reviewer pool slugs", () => {
