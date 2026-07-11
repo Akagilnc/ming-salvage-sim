@@ -54,33 +54,16 @@ def _role_roster(db: Any, office_type: str) -> str:
     return f"{office_type}本职在册：{roster}。"
 
 
-def _report_is_excluded(
-    db: Any, report: Dict[str, object], character_name: str,
-    office_type: str, office_name: str,
-) -> bool:
-    """Apply the same-turn secrecy boundary to a derived gazette report."""
-    if not hasattr(db, "knowledge_exclusion_boundary_for_turn"):
-        return False
-    boundary = db.knowledge_exclusion_boundary_for_turn(int(report.get("turn") or 0))
-    return (
-        character_name in boundary.get("people", [])
-        or office_type in boundary.get("offices", [])
-        or office_name in boundary.get("offices", [])
-    )
-
-
 def _world(
-    db: Any, state: Any, office_type: str, character_name: str, office_name: str,
+    db: Any, state: Any, office_type: str,
 ) -> Dict[str, str]:
     reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
     def fact(text: object) -> str:
         return _qualitative(text)
 
-    public = "\n".join(
-        fact(r.get("report"))
-        for r in reports
-        if not _report_is_excluded(db, r, character_name, office_type, office_name)
-    )
+    # A turn report is a separately persisted public projection, not a secret
+    # source.  Do not apply another source's exclusion list to the whole report.
+    public = "\n".join(fact(r.get("report")) for r in reports)
     result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
 
     visible_domains = _visible_domains(db, office_type)
@@ -132,7 +115,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         (current["office"] if current is not None else getattr(character, "office", ""))
         or ""
     )
-    world = _world(db, state, office_type, character_name, office_name)
+    world = _world(db, state, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     # Issued directives are public by their nature.  Read them here so old
@@ -146,20 +129,12 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "source_id": f"directive:{directive['id']}",
         })
     for report in db.list_turn_reports():
-        boundary = (
-            db.knowledge_exclusion_boundary_for_turn(report["turn"])
-            if hasattr(db, "knowledge_exclusion_boundary_for_turn") else {}
-        )
         public_events.append({
             "turn": int(report["turn"]), "year": int(report["year"]),
             "period": int(report["period"]), "kind": "public",
             "title": "邸报", "body": _qualitative(report.get("report")),
             "source_id": f"turn_report:{report['turn']}",
-            "excluded_names": json.dumps(boundary.get("people", []), ensure_ascii=False),
-            "excluded_targets": {
-                "people": list(boundary.get("people", [])),
-                "offices": list(boundary.get("offices", [])),
-            },
+            "excluded_names": "[]",
         })
     # Chapter memories are narrative material produced by settlement.  They are
     # public upstream material for the same projection; the minister must never
@@ -167,19 +142,13 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     # the qualitative renderer above.
     for chapter in db.list_chapter_memories(upto_turn=state.turn):
         source_id = f"chapter:{chapter['turn']}"
-        boundary = (db.knowledge_exclusion_boundary_for_turn(chapter["turn"])
-                    if hasattr(db, "knowledge_exclusion_boundary_for_turn") else {})
-        inherited_exclusions = list(boundary.get("people", []))
-        inherited_targets = {"people": inherited_exclusions,
-                             "offices": list(boundary.get("offices", []))}
         public_events.append({
             "turn": int(chapter["turn"]), "year": int(chapter["year"]),
             "period": int(chapter["period"]), "kind": "chapter_summary",
             "title": chapter.get("title") or "朝局旧闻",
             "body": chapter.get("body") or "",
             "source_id": source_id,
-            "excluded_names": json.dumps(inherited_exclusions, ensure_ascii=False),
-            "excluded_targets": inherited_targets,
+            "excluded_names": "[]",
         })
     def is_excluded(row: Dict[str, object]) -> bool:
         try:

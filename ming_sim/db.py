@@ -9402,34 +9402,6 @@ class GameDB:
                 return []
         return []
 
-    def knowledge_exclusion_boundary_for_turn(self, turn: int) -> Dict[str, List[str]]:
-        """Aggregate secrecy boundaries for narrative material made this turn.
-
-        Chapter summaries are derived material rather than original knowledge
-        events.  When a summary is created from a turn containing a secret
-        source, its exclusion boundary must follow the material into the
-        summary; otherwise the chapter becomes an accidental public copy.
-        """
-        people: List[str] = []
-        offices: List[str] = []
-        rows = self.conn.execute(
-            "SELECT source_id, excluded_names FROM character_knowledge_events WHERE turn=? "
-            "UNION ALL SELECT source_id, excluded_names FROM character_knowledge_sources WHERE turn=?",
-            (int(turn), int(turn)),
-        ).fetchall()
-        for row in rows:
-            try:
-                people.extend(str(name) for name in json.loads(row["excluded_names"] or "[]"))
-            except (TypeError, ValueError):
-                pass
-            target = self.knowledge_exclusion_targets_for_source(str(row["source_id"] or ""))
-            people.extend(target.get("people", []))
-            offices.extend(target.get("offices", []))
-        return {
-            "people": list(dict.fromkeys(name for name in people if name)),
-            "offices": list(dict.fromkeys(name for name in offices if name)),
-        }
-
     def knowledge_exclusion_targets_for_source(self, source_id: str) -> Dict[str, List[str]]:
         source = str(source_id or "")
         order_id = None

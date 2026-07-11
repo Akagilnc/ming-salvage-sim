@@ -472,8 +472,8 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
     assert "密令转为明证" not in second_tools["search_memories"](keywords="军饷")
 
 
-def test_secret_source_boundary_survives_chapter_material_and_issue_tools(game):
-    """真实密令→公开确认→章节链不能旁路瞒某人边界。"""
+def test_secret_source_boundary_does_not_hide_unrelated_chapter_material(game):
+    """真实密令只约束自身来源，不能把同回合章节整份变成密件。"""
     db, state, content = game
     ministers = [c for c in content.characters.values()
                  if c.office_type not in ("后宫", "宗藩")
@@ -484,10 +484,10 @@ def test_secret_source_boundary_survives_chapter_material_and_issue_tools(game):
         excluded_names=[excluded.name],
     )
     db.record_public_knowledge_event(
-        state, "密令确认", "章节不得让被瞒者看见的标记",
+        state, "密令确认", "密令来源标记",
         source_id=f"secret_order:{order}",
     )
-    db.save_chapter_memory(state, "本月朝局", "章节不得让被瞒者看见的标记")
+    db.save_chapter_memory(state, "本月朝局", "同回合公开章节标记")
 
     excluded_knowledge = db.get_character_knowledge(state, excluded.name)
     knower_knowledge = db.get_character_knowledge(state, knower.name)
@@ -497,8 +497,9 @@ def test_secret_source_boundary_survives_chapter_material_and_issue_tools(game):
     knower_text = " ".join(
         item.get("body", "") for item in knower_knowledge["public_events"]
     )
-    assert "章节不得让被瞒者看见的标记" not in excluded_text
-    assert "章节不得让被瞒者看见的标记" in knower_text
+    assert "密令来源标记" not in excluded_text
+    assert "同回合公开章节标记" in excluded_text
+    assert "密令来源标记" in knower_text
 
     db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
     issue_id = db.insert_issue(
