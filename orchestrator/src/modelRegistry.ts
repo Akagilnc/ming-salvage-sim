@@ -1,4 +1,5 @@
 import * as sc from "@ai-hero/sandcastle";
+import { grokAgent, type GrokAgentOptions } from "./grokAgent.js";
 import type { BillingPoolId } from "./quotaPoolTable.js";
 
 /**
@@ -39,7 +40,9 @@ export type ModelProviderFactory =
   | "opencode"
   | "copilot"
   | "cursor"
-  | "pi";
+  | "pi"
+  /** #807: real SuperGrok CLI via custom AgentProvider (not sc.pi). */
+  | "grok";
 
 export const SUPPORTED_MODEL_PROVIDER_FACTORIES = [
   "claudeCode",
@@ -48,6 +51,7 @@ export const SUPPORTED_MODEL_PROVIDER_FACTORIES = [
   "copilot",
   "cursor",
   "pi",
+  "grok",
 ] as const satisfies ReadonlyArray<ModelProviderFactory>;
 
 type ModelProviderOptions =
@@ -56,7 +60,8 @@ type ModelProviderOptions =
   | sc.OpenCodeOptions
   | sc.CopilotOptions
   | sc.CursorOptions
-  | sc.PiOptions;
+  | sc.PiOptions
+  | GrokAgentOptions;
 
 export type ModelSlugRegistryEntry =
   | { readonly provider: "claudeCode"; readonly model: string; readonly options?: sc.ClaudeCodeOptions }
@@ -64,7 +69,8 @@ export type ModelSlugRegistryEntry =
   | { readonly provider: "opencode"; readonly model: string; readonly options?: sc.OpenCodeOptions }
   | { readonly provider: "copilot"; readonly model: string; readonly options?: sc.CopilotOptions }
   | { readonly provider: "cursor"; readonly model: string; readonly options?: sc.CursorOptions }
-  | { readonly provider: "pi"; readonly model: string; readonly options?: sc.PiOptions };
+  | { readonly provider: "pi"; readonly model: string; readonly options?: sc.PiOptions }
+  | { readonly provider: "grok"; readonly model: string; readonly options?: GrokAgentOptions };
 
 type ModelSlugRegistryRow = ModelSlugRegistryEntry & {
   readonly family: ModelFamily;
@@ -79,7 +85,10 @@ const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFa
   opencode: (model, options) => sc.opencode(model, options as sc.OpenCodeOptions | undefined),
   copilot: (model, options) => sc.copilot(model, options as sc.CopilotOptions | undefined),
   cursor: (model, options) => sc.cursor(model, options as sc.CursorOptions | undefined),
+  // Kept for sandcastle-native `pi` CLI (distinct product). grok-build pool does
+  // NOT use this — see POOL_DISPATCH_BINDINGS + grokAgent (#807 owner ruling).
   pi: (model, options) => sc.pi(model, options as sc.PiOptions | undefined),
+  grok: (model, options) => grokAgent(model, options as GrokAgentOptions | undefined),
 };
 
 const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
@@ -103,9 +112,20 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     options: { effort: "medium" },
     family: "codex",
   },
-  // #767 Coder-Rec roster: SuperGrok pool primary coder.
+  // #767 Coder-Rec roster: SuperGrok model id on the Cursor channel by default.
+  // Pool override (`grok-build` → provider `grok`) rewrites the factory via
+  // resolveModelSlugForPool / POOL_DISPATCH_BINDINGS (#807 / ADR 0124).
   "grok-4.5": {
     provider: "cursor",
+    model: "grok-4.5",
+    family: "other",
+    strongLeg: true,
+  },
+  // #807: explicit SuperGrok / grok-build pool slug (container `grok` CLI).
+  // Distinct from cursor-channel `grok-4.5` so routes can pin the build pool
+  // without a billingPool override.
+  "grok-4.5-build": {
+    provider: "grok",
     model: "grok-4.5",
     family: "other",
     strongLeg: true,
@@ -186,6 +206,8 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
     case "pi":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
+    case "grok":
+      return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
   }
 }
 
@@ -195,7 +217,9 @@ export type BillingPoolDispatchId = BillingPoolId;
 export const POOL_DISPATCH_BINDINGS: Readonly<
   Record<BillingPoolDispatchId, ModelProviderFactory>
 > = {
-  "grok-build": "pi",
+  // #807: SuperGrok pool runs the real `grok` CLI (custom AgentProvider), not
+  // sandcastle's `sc.pi()` (different product / flag contract / auth home).
+  "grok-build": "grok",
   cursor: "cursor",
   zai: "opencode",
   "codex-5h": "codex",
