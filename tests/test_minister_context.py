@@ -692,6 +692,24 @@ def test_final_minister_context_qualifies_unmocked_faction_and_power_reports(gam
     assert any(word in rendered for word in ("怨愤", "强盛", "极弱", "充足"))
 
 
+def test_audience_faction_and_power_reports_never_emit_raw_abstract_axes(game):
+    """The report-producing audience seam, not only its caller, keeps P4 axes qualitative."""
+    db, _state, _content = game
+    db.conn.execute("UPDATE factions SET satisfaction=17, leverage=83")
+    db.conn.execute(
+        "UPDATE powers SET leverage=19, military_strength=82, supply=67 WHERE id != 'ming'"
+    )
+    db.conn.commit()
+
+    rendered = "\n".join((
+        db.faction_report(audience=True),
+        db.power_report(exclude_self=True, audience=True),
+    ))
+
+    assert not re.search(r"(?:满意|势力|威望|实力|经济)\s*[:：]?\s*\d+", rendered)
+    assert any(word in rendered for word in ("怨愤", "强盛", "极弱", "充足"))
+
+
 def test_historical_context_rejects_injected_abstract_values_across_all_history_seams(game):
     """邸报、章节记忆和历史报告工具都必须守住最终上下文的 P4 边界。"""
     db, state, content = game

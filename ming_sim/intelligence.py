@@ -82,8 +82,10 @@ def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
         # power_report is the existing qualitative military-intelligence seam;
         # use its domain filter so a bandit question cannot receive every
         # foreign power's report.
-        return _safe_report_text(db.power_report(exclude_self=True, kinds={"bandit", "bandits"})), "powers"
-    return _safe_report_text(db.power_report(exclude_self=True)), "powers"
+        return _safe_report_text(db.power_report(
+            exclude_self=True, kinds={"bandit", "bandits"}, audience=True,
+        )), "powers"
+    return _safe_report_text(db.power_report(exclude_self=True, audience=True)), "powers"
 
 
 def _character_domain_statement(db: Any, state: Any, character_name: str, query: str) -> tuple[str, str]:

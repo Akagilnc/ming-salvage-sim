@@ -150,7 +150,7 @@ def test_current_state_facts_are_selected_by_content_domain_not_role_label(
 ):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
-    monkeypatch.setattr(db, "faction_report", lambda: "当前派系事实")
+    monkeypatch.setattr(db, "faction_report", lambda **_: "当前派系事实")
     monkeypatch.setattr(db, "army_report", lambda **_: "不应读取的军情")
     monkeypatch.setattr(db, "treasury_report", lambda *_args, **_: "不应读取的账目")
 
