@@ -15,6 +15,7 @@ import {
   type MergerAuth,
 } from "../../src/family/realFamilyBackend.js";
 import { resolveRouteModels, routeSmokeEntries } from "../../src/modelRoutes.js";
+import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import {
   clearTelemetryRunEnvironment,
   readTelemetryRecords,
@@ -24,8 +25,12 @@ import {
 } from "../../src/telemetry.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
 import type { Backend } from "../../src/types.js";
-import type { FamilyBackend } from "../../src/family/types.js";
-import type { VerifyCmrInput, VerifyCmrResult } from "../../src/family/verifyCmr.js";
+import type {
+  FamilyBackend,
+  FamilyLedgerEntry,
+  FamilyVerifyResult,
+  MergeRequest,
+} from "../../src/family/types.js";
 
 const tempDirs: string[] = [];
 const here = dirname(fileURLToPath(import.meta.url));
@@ -102,61 +107,131 @@ async function waitForEnvironment(ledgerDir: string): Promise<TelemetryEnvironme
   return undefined;
 }
 
+/** Strong-leg set so production final CMR floor admits the green verdict. */
+const COMPLETE_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
+const FAMILY_HEAD = "head-809-sidecar";
+
+/**
+ * Production-path family backend for the durable dual-run shape: records every
+ * DispatchContext the spine hands the unified seam (including runner-minted
+ * runId). Does not accept a caller-supplied runId — runFamily must mint it.
+ */
+class FamilyTelemetryBackend implements FamilyBackend {
+  readonly ctxs: DispatchContext[] = [];
+  readonly ledger: FamilyLedgerEntry[] = [];
+
+  constructor(private readonly durableTelemetryDir: string) {}
+
+  async mergeChildIntoFamilyBase(_child: MergeRequest): Promise<{ familyHead: string }> {
+    throw new Error("family telemetry dual-run uses an empty epic (no children)");
+  }
+
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+
+  async readFamilyHead(): Promise<string> {
+    return FAMILY_HEAD;
+  }
+
+  resolveTelemetryDir(): string {
+    return this.durableTelemetryDir;
+  }
+
+  async installTelemetryRunEnvironment(): Promise<void> {}
+
+  async runFamilyVerify(): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.ctxs.push(ctx);
+    if (spec.kind === "cmr") {
+      const cmrPass = ctx.cmrPass ?? "correctness";
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          cmrPass,
+          converged: true,
+          successfulLegs: [...COMPLETE_CMR_LEGS],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          evidencePaths: [`cmr/${cmrPass}.json`],
+        },
+      };
+    }
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase ?? "family/809-sidecar",
+          pr: "pr://family/809-sidecar",
+          prHead: FAMILY_HEAD,
+          status: "pr_opened",
+        },
+      };
+    }
+    const reviewLoop = skeletonReviewLoopWorkerResult(spec.kind);
+    if (reviewLoop !== undefined) return reviewLoop;
+    throw new Error(`unexpected family worker ${spec.kind}`);
+  }
+}
+
 describe("#786 family dispatch telemetry", () => {
-  it("keeps two full family invocations distinct in one durable telemetry sidecar", async () => {
+  it("keeps two full family runner invocations distinct in one durable telemetry sidecar", async () => {
     const durable = join(tempDir("orch-809-family-runner-sidecar-"), ".ledger-809");
-    const runIds: string[] = [];
-    const familyBackend = {
-      async appendFamilyLedger(): Promise<void> {},
-      async readFamilyLedger(): Promise<readonly []> {
-        return [];
-      },
-      resolveTelemetryDir: () => durable,
-      async installTelemetryRunEnvironment(): Promise<void> {},
-      async dispatchWorker(): Promise<WorkerResult> {
-        return {
-          kind: "completed",
-          output: { kind: "cmr", converged: true, findings: [] },
-        };
-      },
-    } as unknown as FamilyBackend;
+    // Separate backends share only the durable sidecar path: each invocation
+    // must mint its own run id through production runFamily → runVerifyCmr →
+    // dispatchFamilyWorkerWithMonitor. No manual runId is injected here.
+    const first = new FamilyTelemetryBackend(durable);
+    const second = new FamilyTelemetryBackend(durable);
     const singleSliceBackend = {
       async smokeModelRoute() {
         return smokedRoute();
       },
     } as unknown as Backend;
-    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
-      runIds.push(input.runId!);
-      await dispatchFamilyWorkerWithMonitor(familyBackend, familySpec("cmr"), {
-        familyBase: input.familyBase,
-        runId: input.runId,
-        modelRoute: input.modelRoute!,
-      });
-      return { ok: true, ran: true };
-    };
 
     await runFamily({
       epic: { issue: 809, children: [] },
-      familyBackend,
+      familyBackend: first,
       singleSliceBackend,
       familyBase: "family/809-sidecar",
-      verifyCmr,
     });
     await runFamily({
       epic: { issue: 809, children: [] },
-      familyBackend,
+      familyBackend: second,
       singleSliceBackend,
       familyBase: "family/809-sidecar",
-      verifyCmr,
     });
     await new Promise((resolve) => setImmediate(resolve));
 
-    const environments = readTelemetryRecords(durable).filter(
+    const firstRunId = first.ctxs[0]?.runId;
+    const secondRunId = second.ctxs[0]?.runId;
+    expect(first.ctxs.length).toBeGreaterThan(0);
+    expect(second.ctxs.length).toBeGreaterThan(0);
+    expect(firstRunId).toEqual(expect.any(String));
+    expect(secondRunId).toEqual(expect.any(String));
+    expect(firstRunId).not.toBe(secondRunId);
+    expect(first.ctxs.every((ctx) => ctx.runId === firstRunId)).toBe(true);
+    expect(second.ctxs.every((ctx) => ctx.runId === secondRunId)).toBe(true);
+
+    const records = readTelemetryRecords(durable);
+    const environments = records.filter(
       (record): record is TelemetryEnvironmentRecord => record.phase === "environment",
     );
-    expect(runIds).toHaveLength(2);
-    expect(environments.map((record) => record.runId)).toEqual(runIds);
-    expect(runIds[0]).not.toBe(runIds[1]);
+    expect(environments.map((record) => record.runId)).toEqual([firstRunId, secondRunId]);
+    // Both runs leave more than just the environment stamp — dispatch/collect
+    // half-rows must stay readable after the second invocation starts.
+    expect(records.filter((r) => r.phase === "dispatch").length).toBeGreaterThanOrEqual(2);
+    expect(records.filter((r) => r.phase === "collect").length).toBeGreaterThanOrEqual(2);
+    expect(records.some((r) => r.phase === "dispatch" && r.runId === firstRunId)).toBe(true);
+    expect(records.some((r) => r.phase === "dispatch" && r.runId === secondRunId)).toBe(true);
   });
 
   it.each([
