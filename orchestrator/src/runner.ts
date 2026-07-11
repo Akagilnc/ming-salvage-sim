@@ -174,6 +174,7 @@ import {
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
   tryStageRelayFocusFile,
+  isCapacityRelayError,
   isHangWithLivePoolError,
   isSelfReportedRelayError,
   RELAY_FOCUS_FILENAME,
@@ -4588,10 +4589,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             applyRelayBaton(outcome.nextBaton, step);
             continue orchestratorStepLoop;
           }
-          // #686: hang-with-live-pool / self-reported blocked → resource relay
+          // #686/#787: resource failures relay without retry; capacity keeps its
+          // pool live so the capacity selector can change checkpoints in-pool.
           // (never mechanical-retry / never reset).
           if (
-            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            (isHangWithLivePoolError(err) ||
+              isSelfReportedRelayError(err) ||
+              isCapacityRelayError(err)) &&
             canRelayInProcess()
           ) {
             const currentPool =
@@ -4602,16 +4606,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   : poolForModelRef(modelRoute.slots.coder),
               );
             const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id === currentPool ? { ...p, status: "dead" as const } : p,
+              p.id !== currentPool
+                ? p
+                : isCapacityRelayError(err)
+                  ? { ...p, status: "live" as const }
+                  : { ...p, status: "dead" as const },
             );
-            const trigger = isHangWithLivePoolError(err)
+            const trigger = isCapacityRelayError(err)
+              ? ("capacity" as const)
+              : isHangWithLivePoolError(err)
               ? ("hang_with_live_pool" as const)
               : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
                 ? ("self_reported_blocked" as const)
                 : ("phase_complete" as const);
             const stateSummary = isSelfReportedRelayError(err)
               ? err.tag.state_summary
-              : "worker hang with live pool; pid tree killed; drift preserved";
+              : isCapacityRelayError(err)
+                ? "model checkpoint at capacity; drift preserved"
+                : "worker hang with live pool; pid tree killed; drift preserved";
             const remaining =
               isSelfReportedRelayError(err) && "remaining" in err.tag
                 ? err.tag.remaining
@@ -4980,7 +4992,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // resource failure on ship too. Preserve the current scene and hand
           // the S7 slot to the next baton; never fall through to S8.
           if (
-            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            (isHangWithLivePoolError(err) ||
+              isSelfReportedRelayError(err) ||
+              isCapacityRelayError(err)) &&
             canRelayInProcess()
           ) {
             const currentPool =
@@ -4991,16 +5005,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   : poolForModelRef(modelRoute.slots.ship),
               );
             const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id === currentPool ? { ...p, status: "dead" as const } : p,
+              p.id !== currentPool
+                ? p
+                : isCapacityRelayError(err)
+                  ? { ...p, status: "live" as const }
+                  : { ...p, status: "dead" as const },
             );
-            const trigger = isHangWithLivePoolError(err)
+            const trigger = isCapacityRelayError(err)
+              ? ("capacity" as const)
+              : isHangWithLivePoolError(err)
               ? ("hang_with_live_pool" as const)
               : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
                 ? ("self_reported_blocked" as const)
                 : ("phase_complete" as const);
             const stateSummary = isSelfReportedRelayError(err)
               ? err.tag.state_summary
-              : "worker hang with live pool; pid tree killed; drift preserved";
+              : isCapacityRelayError(err)
+                ? "model checkpoint at capacity; drift preserved"
+                : "worker hang with live pool; pid tree killed; drift preserved";
             const remaining =
               isSelfReportedRelayError(err) && "remaining" in err.tag
                 ? err.tag.remaining
@@ -6147,7 +6169,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // #686: S9–S12 must treat the other two resource-failure signals
           // exactly like S2/S3/S5/S6: hand off on the current scene, not S8.
           if (
-            (isHangWithLivePoolError(err) || isSelfReportedRelayError(err)) &&
+            (isHangWithLivePoolError(err) ||
+              isSelfReportedRelayError(err) ||
+              isCapacityRelayError(err)) &&
             canRelayInProcess()
           ) {
             const currentPool =
@@ -6166,16 +6190,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     ),
               );
             const pools = resolveRelayPools(currentPool, undefined).map((p) =>
-              p.id === currentPool ? { ...p, status: "dead" as const } : p,
+              p.id !== currentPool
+                ? p
+                : isCapacityRelayError(err)
+                  ? { ...p, status: "live" as const }
+                  : { ...p, status: "dead" as const },
             );
-            const trigger = isHangWithLivePoolError(err)
+            const trigger = isCapacityRelayError(err)
+              ? ("capacity" as const)
+              : isHangWithLivePoolError(err)
               ? ("hang_with_live_pool" as const)
               : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
                 ? ("self_reported_blocked" as const)
                 : ("phase_complete" as const);
             const stateSummary = isSelfReportedRelayError(err)
               ? err.tag.state_summary
-              : "worker hang with live pool; pid tree killed; drift preserved";
+              : isCapacityRelayError(err)
+                ? "model checkpoint at capacity; drift preserved"
+                : "worker hang with live pool; pid tree killed; drift preserved";
             const remaining =
               isSelfReportedRelayError(err) && "remaining" in err.tag
                 ? err.tag.remaining

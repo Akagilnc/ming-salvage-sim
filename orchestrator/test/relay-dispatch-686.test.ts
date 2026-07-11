@@ -29,6 +29,7 @@ import {
   buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
+  selectCapacityRelayBaton,
   selectNextRelayBaton,
   type BillingPoolEntry,
   type BillingPoolId,
@@ -41,12 +42,14 @@ import {
   buildRelayFocusFile,
   buildRelayHandoffLedgerEntry,
   canRelayHandoff,
+  CapacityRelayError,
   classifyFailureForRetryOrRelay,
   countRelayHandoffsInLedger,
   decideRelayAfterIdle,
   forkQuotaWallAt683Point,
   HangWithLivePoolError,
   isHangWithLivePoolError,
+  isCapacityRelayError,
   isRelayChainReadyForReviewGate,
   parseRelayTag,
   resumeRelayFromLedger,
@@ -453,6 +456,66 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
   });
 });
 
+describe("#787 capacity relay", () => {
+  const now = new Date("2026-07-11T12:00:00.000Z");
+
+  it("at-capacity relays to the next checkpoint in the same live pool and records capacity", async () => {
+    const order = resolveCoderRecOrder(
+      "Coder-Rec: grok-4.5 → terra@med → luna@med",
+    );
+    const pools = [
+      {
+        id: "codex-5h" as const,
+        status: "live" as const,
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        models: ["terra@med", "luna@med"],
+      },
+      {
+        id: "grok-build" as const,
+        status: "live" as const,
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        models: ["grok-4.5"],
+      },
+    ];
+
+    expect(
+      selectCapacityRelayBaton({
+        currentModelId: "terra@med",
+        currentPool: "codex-5h",
+        rosterOrder: order,
+        pools,
+      }),
+    ).toMatchObject({ modelId: "luna@med", pool: "codex-5h" });
+
+    const handoff = await applyResourceFailureHandoff({
+      trigger: "capacity",
+      state_summary: "worker stopped at model capacity; drift preserved",
+      reason: "Selected model is at capacity",
+      currentModelId: "terra@med",
+      currentPool: "codex-5h",
+      rosterOrder: order,
+      pools,
+      now,
+      step: "S2",
+    });
+
+    expect(handoff.kind).toBe("relay");
+    if (handoff.kind !== "relay") return;
+    expect(handoff.nextBaton).toMatchObject({
+      modelId: "luna@med",
+      pool: "codex-5h",
+    });
+    expect(handoff.ledgerEntry?.trigger).toBe("capacity");
+  });
+
+  it("recognizes capacity congestion but keeps 429 quota out of the capacity path", () => {
+    const capacity = new CapacityRelayError("Selected model is at capacity");
+    expect(isCapacityRelayError(capacity)).toBe(true);
+    expect(isCapacityRelayError(new Error("HTTP 429 rate limit exceeded"))).toBe(false);
+    expect(isCapacityRelayError(new Error("HTTP 503 service overloaded"))).toBe(true);
+  });
+});
+
 describe("#686 three handoff triggers", () => {
   const now = new Date("2026-07-10T12:00:00.000Z");
 
@@ -573,7 +636,7 @@ describe("#686 three handoff triggers", () => {
 });
 
 describe("#686 resource failure NEVER resets worktree (#661 boundary)", () => {
-  it("classifies quota/pool-dead/hang-with-live-pool as resource failure", () => {
+  it("classifies quota/pool-dead/hang-with-live-pool/capacity as resource failure", () => {
     expect(classifyFailureForRetryOrRelay({ kind: "quota_wall" })).toBe(
       "resource",
     );
@@ -586,6 +649,9 @@ describe("#686 resource failure NEVER resets worktree (#661 boundary)", () => {
     expect(
       classifyFailureForRetryOrRelay({ kind: "self_reported_blocked" }),
     ).toBe("resource");
+    expect(classifyFailureForRetryOrRelay({ kind: "capacity" })).toBe(
+      "resource",
+    );
   });
 
   it("classifies process-level failed/malformed as mechanical retry", () => {
