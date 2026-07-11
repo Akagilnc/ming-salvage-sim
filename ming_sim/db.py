@@ -10095,6 +10095,7 @@ class GameDB:
         ).fetchone()
         if row is None or row["status"] != "active":
             return False
+        persisted_title = title[:20]
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
         with atomic(self):
@@ -10102,13 +10103,13 @@ class GameDB:
                 self.conn.execute(
                     "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, "
                     "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (title[:20], content, tags_json, int(state.turn) + deadline, int(order_id)),
+                    (persisted_title, content, tags_json, int(state.turn) + deadline, int(order_id)),
                 )
             else:
                 self.conn.execute(
                     "UPDATE secret_orders SET title=?, content=?, tags=?, "
                     "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (title[:20], content, tags_json, int(order_id)),
+                    (persisted_title, content, tags_json, int(order_id)),
                 )
             try:
                 excluded_names = json.loads(row["excluded_names"] or "[]")
@@ -10117,7 +10118,7 @@ class GameDB:
                 excluded_names, excluded_targets = [], {}
             self.register_character_knowledge_source(
                 state, [{"character_id": row["minister_name"], "tier": "主办"}], "secret_order",
-                title, content, f"secret_order:{int(order_id)}", excluded_names=excluded_names,
+                persisted_title, content, f"secret_order:{int(order_id)}", excluded_names=excluded_names,
                 excluded_targets=excluded_targets if isinstance(excluded_targets, dict) else {}, commit=False,
             )
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
