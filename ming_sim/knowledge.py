@@ -54,62 +54,14 @@ def _role_roster(db: Any, office_type: str) -> str:
     return f"{office_type}本职在册：{roster}。"
 
 
-def _hidden_fragments(
-    db: Any, character_name: str, office_type: str, office_name: str,
-) -> tuple[str, ...]:
-    """Return source text that must be removed from aggregate narratives."""
-    if not hasattr(db, "_character_knowledge_events"):
-        return ()
-    hidden = []
-    for event in db._character_knowledge_events("", include_exclusions=True):
-        try:
-            excluded_names = json.loads(str(event.get("excluded_names") or "[]"))
-        except (TypeError, ValueError):
-            excluded_names = []
-        source_id = str(event.get("source_id") or "")
-        targets = event.get("excluded_targets") or (
-            db.knowledge_exclusion_targets_for_source(source_id)
-            if hasattr(db, "knowledge_exclusion_targets_for_source")
-            else {"people": [], "offices": []}
-        )
-        if (character_name in excluded_names
-                or character_name in targets.get("people", [])
-                or office_type in targets.get("offices", [])
-                or office_name in targets.get("offices", [])):
-            for key in ("body", "title"):
-                fragment = str(event.get(key) or "").strip()
-                if fragment:
-                    hidden.append(fragment)
-    return tuple(sorted(set(hidden), key=len, reverse=True))
-
-
-def _project_narrative(text: object, hidden_fragments: tuple[str, ...]) -> str:
-    """Project aggregate prose without excluded source events."""
-    rendered = str(text or "")
-    for fragment in hidden_fragments:
-        rendered = rendered.replace(fragment, "（密事未向此人公开）")
-    return _qualitative(rendered)
-
-
 def _world(
-    db: Any, state: Any, office_type: str, character_name: str, office_name: str,
+    db: Any, state: Any, office_type: str,
 ) -> Dict[str, str]:
-    reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
-
-    # A gazette is a rendered aggregation, so its text has no row-level
-    # exclusion metadata of its own.  Redact the bodies of source events that
-    # this character cannot hear before using the aggregation as context.  The
-    # public portions of the same report remain available.
-    hidden_fragments = _hidden_fragments(db, character_name, office_type, office_name)
-
-    def fact(text: object) -> str:
-        return _qualitative(text)
-
-    def report_for_character(report: object) -> str:
-        return _project_narrative(report, hidden_fragments)
-
-    public = "\n".join(report_for_character(r.get("report")) for r in reports)
-    result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
+    # ``turn_reports`` is a rendered aggregate.  It has no item/source
+    # boundary, so reading it here would make a secret-bearing report a public
+    # event.  ``public`` is filled from the source-scoped event projection in
+    # build_character_knowledge after exclusions have been applied.
+    result: Dict[str, str] = {"public": "登基伊始，朝廷暂无已公开的前回合见闻。"}
 
     visible_domains = _visible_domains(db, office_type)
     # Build only the current-state rails that this office is entitled to read.
@@ -160,8 +112,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         (current["office"] if current is not None else getattr(character, "office", ""))
         or ""
     )
-    world = _world(db, state, office_type, character_name, office_name)
-    hidden_fragments = _hidden_fragments(db, character_name, office_type, office_name)
+    world = _world(db, state, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     # Issued directives are public by their nature.  Read them here so old
@@ -174,28 +125,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "body": _qualitative(directive.get("text") or ""),
             "source_id": f"directive:{directive['id']}",
         })
-    for report in db.list_turn_reports():
-        public_events.append({
-            "turn": int(report["turn"]), "year": int(report["year"]),
-            "period": int(report["period"]), "kind": "public",
-            "title": "邸报", "body": _project_narrative(report.get("report"), hidden_fragments),
-            "source_id": f"turn_report:{report['turn']}",
-            "excluded_names": "[]",
-        })
-    # Chapter memories are narrative material produced by settlement.  They are
-    # public upstream material for the same projection; the minister must never
-    # read the chapter table directly because that would bypass exclusions and
-    # the qualitative renderer above.
-    for chapter in db.list_chapter_memories(upto_turn=state.turn):
-        source_id = f"chapter:{chapter['turn']}"
-        public_events.append({
-            "turn": int(chapter["turn"]), "year": int(chapter["year"]),
-            "period": int(chapter["period"]), "kind": "chapter_summary",
-            "title": chapter.get("title") or "朝局旧闻",
-            "body": _project_narrative(chapter.get("body"), hidden_fragments),
-            "source_id": source_id,
-            "excluded_names": "[]",
-        })
+
     def is_excluded(row: Dict[str, object]) -> bool:
         try:
             excluded_names = json.loads(str(row.get("excluded_names") or "[]"))
@@ -228,6 +158,12 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         }
         for row in public_events if not is_excluded(row)
     ]
+    public_bodies = [
+        _qualitative(item.get("body") or item.get("title") or "")
+        for item in visible_public
+        if item.get("body") or item.get("title")
+    ]
+    world["public"] = "\n".join(public_bodies) or world["public"]
     known_source_ids = {
         str(row.get("source_id") or "")
         for row in [*events, *public_events]
