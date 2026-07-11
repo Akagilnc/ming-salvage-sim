@@ -40,6 +40,7 @@ import type {
   VerifyCmrResult,
 } from "./verifyCmr.js";
 import type { StopSummary } from "../stopSummary.js";
+import type { ResolvedModelRoute } from "../modelRoutes.js";
 
 /** The two runner-visible integrated CMR gates (#419). */
 export type IntegratedCmrPass = "completeness" | "correctness";
@@ -553,6 +554,12 @@ export interface FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /**
+   * #786: reinstall this backend's image / souls / prompts fingerprints before
+   * its first sidecar environment row. Family and single-slice dispatch share
+   * the same lazy, fail-open telemetry provider contract.
+   */
+  installTelemetryRunEnvironment?(): void | Promise<void>;
+  /**
    * #684 optional: host-side CLI spawn for the family monitored-dispatch path
    * (parallel to {@link Backend.resolveCliMonitorDispatch}). RealFamilyBackend
    * implements this so family cmr/ship/coder-fix take the monitored branch.
@@ -813,6 +820,8 @@ export interface MergeRequest {
   readonly childIssue: number;
   /** The child slice branch to merge (the reviewed, locally-committed branch). */
   readonly childBranch: string;
+  /** Startup-smoked route for any conflict resolver spawned during this merge. */
+  readonly modelRoute?: ResolvedModelRoute;
 }
 
 /**
@@ -827,6 +836,8 @@ export interface ConflictResolveRequest {
   readonly childIssue: number;
   /** The child slice branch whose merge into the family base conflicted. */
   readonly childBranch: string;
+  /** Startup-smoked family route, retained by the merger telemetry environment row. */
+  readonly modelRoute?: ResolvedModelRoute;
 }
 
 /** The merger's result for one child merge. */

@@ -27,8 +27,13 @@ import type { ChildProcess } from "node:child_process";
 
 import { workerHostForModel } from "../dispatchWorker.js";
 import {
+  createTelemetryLegStamper,
+  scheduleTelemetryEnvironmentStamp,
+} from "../telemetry.js";
+import {
   dispatchMonitoredCliWorker,
   killWorkerTree,
+  readLogActivity,
   type MonitoredCliDispatchInput,
 } from "../workerMonitor.js";
 import type {
@@ -188,6 +193,8 @@ export async function dispatchFamilyWorker(
 export interface DispatchFamilyWorkerWithMonitorOutcome {
   readonly result: WorkerResult;
   readonly monitorHandle?: WorkerMonitorHandle;
+  /** Completion handle for this run's fail-open environment telemetry stamp. */
+  readonly telemetryEnvironmentStamp: Promise<void>;
 }
 
 export interface DispatchFamilyWorkerWithMonitorOptions {
@@ -220,68 +227,146 @@ export async function dispatchFamilyWorkerWithMonitor(
   landing?: WorkerLandingPayload,
   opts?: DispatchFamilyWorkerWithMonitorOptions,
 ): Promise<DispatchFamilyWorkerWithMonitorOutcome> {
-  const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, ctx, landing);
-  if (cliSpec !== undefined) {
-    const input: MonitoredCliDispatchInput = {
-      command: cliSpec.command,
-      args: cliSpec.args,
-      logDir: cliSpec.logDir,
-      poolId: cliSpec.poolId,
-      completionSignal: cliSpec.completionSignal,
-      stepId: cliSpec.stepId,
-      ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
-      ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
-      ...(cliSpec.logBasename !== undefined
-        ? { logBasename: cliSpec.logBasename }
-        : {}),
-      ...(cliSpec.readInstanceId !== undefined
-        ? { readInstanceId: cliSpec.readInstanceId }
-        : {}),
-      ...(cliSpec.resultPath !== undefined
-        ? { resultPath: cliSpec.resultPath }
-        : {}),
-    };
-    const { handle, child } = await dispatchMonitoredCliWorker(input);
-    const exitPromise = waitForChildExit(child);
-    if (opts?.onMonitorHandleSpawned !== undefined) {
-      try {
-        await opts.onMonitorHandleSpawned(handle);
-      } catch (error) {
-        // Cleanup remains scoped to the verified monitor handle; never signal
-        // an unverified PID or process group on callback failure.
-        await killWorkerTree(handle);
-        try {
-          await exitPromise;
-        } catch {
-          // Preserve the original spawn-persist error if child cleanup fails.
-        }
-        throw error;
-      }
+  const ledgerDir = ctx.stateDir;
+  const telemetry = createTelemetryLegStamper({ ledgerDir, spec, ctx });
+  let firstOutputAt: string | null = null;
+  let logPath: string | null = null;
+  let logStartOffset: number | undefined;
+  let monitorHandle: WorkerMonitorHandle | undefined;
+  let firstOutputBaseline: number | undefined;
+  let telemetryEnvironmentStamp = Promise.resolve();
+
+  const reconcileFirstOutputAt = (): void => {
+    if (firstOutputAt !== null || monitorHandle === undefined || firstOutputBaseline === undefined) {
+      return;
     }
-    const exitCode = await exitPromise;
-    if (familyBackend.awaitMonitoredCliWorker === undefined) {
-      return {
-        result: {
+    const activity = readLogActivity(monitorHandle);
+    if (activity !== undefined && activity.sizeBytes > firstOutputBaseline) {
+      firstOutputAt = new Date().toISOString();
+    }
+  };
+
+  try {
+    const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+    if (cliSpec !== undefined) {
+      const input: MonitoredCliDispatchInput = {
+        command: cliSpec.command,
+        args: cliSpec.args,
+        logDir: cliSpec.logDir,
+        poolId: cliSpec.poolId,
+        completionSignal: cliSpec.completionSignal,
+        stepId: cliSpec.stepId,
+        ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
+        ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
+        ...(cliSpec.logBasename !== undefined
+          ? { logBasename: cliSpec.logBasename }
+          : {}),
+        ...(cliSpec.readInstanceId !== undefined
+          ? { readInstanceId: cliSpec.readInstanceId }
+          : {}),
+        ...(cliSpec.resultPath !== undefined
+          ? { resultPath: cliSpec.resultPath }
+          : {}),
+      };
+      const { handle, child } = await dispatchMonitoredCliWorker(input);
+      monitorHandle = handle;
+      logPath = handle.logPath;
+      logStartOffset = handle.logStartOffset;
+      firstOutputBaseline = firstOutputBaselineBytes(handle);
+      reconcileFirstOutputAt();
+      telemetry.stampDispatch(handle.dispatchedAt, cliSpec.poolId);
+      const exitPromise = waitForChildExit(child);
+      // Environment collection is intentionally lazy and non-blocking. It must
+      // start before the persistence callback so a callback throw cannot erase
+      // this run's environment row.
+      telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
+        ledgerDir,
+        ctx,
+        familyBackend,
+      );
+      if (opts?.onMonitorHandleSpawned !== undefined) {
+        try {
+          await opts.onMonitorHandleSpawned(handle);
+        } catch (error) {
+          // Cleanup remains scoped to the verified monitor handle; never signal
+          // an unverified PID or process group on callback failure.
+          await killWorkerTree(handle);
+          try {
+            await exitPromise;
+          } catch {
+            // Preserve the original spawn-persist error if child cleanup fails.
+          }
+          throw error;
+        }
+      }
+      const exitCode = await exitPromise;
+      reconcileFirstOutputAt();
+      if (familyBackend.awaitMonitoredCliWorker === undefined) {
+        const result: WorkerResult = {
           kind: "failed",
           reason:
             `family CLI worker ${spec.id} finished (exit ${exitCode}) but backend ` +
             `has no awaitMonitoredCliWorker to map the process into a WorkerResult`,
-        },
-        monitorHandle: handle,
-      };
+        };
+        telemetry.stampCollect(
+          { kind: "result", result },
+          { logPath, logStartOffset, firstOutputAt },
+        );
+        return { result, monitorHandle: handle, telemetryEnvironmentStamp };
+      }
+      const result = await familyBackend.awaitMonitoredCliWorker(
+        handle,
+        exitCode,
+        spec,
+        ctx,
+        landing,
+      );
+      reconcileFirstOutputAt();
+      telemetry.stampCollect(
+        { kind: "result", result },
+        { logPath, logStartOffset, firstOutputAt },
+      );
+      return { result, monitorHandle: handle, telemetryEnvironmentStamp };
     }
-    const result = await familyBackend.awaitMonitoredCliWorker(
-      handle,
-      exitCode,
-      spec,
-      ctx,
-      landing,
+    telemetry.stampDispatch(
+      new Date().toISOString(),
+      ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
-    return { result, monitorHandle: handle };
+    telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
+      ledgerDir,
+      ctx,
+      familyBackend,
+    );
+    const result = await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
+    telemetry.stampCollect({ kind: "result", result });
+    return { result, telemetryEnvironmentStamp };
+  } catch (error) {
+    reconcileFirstOutputAt();
+    telemetry.stampCollect(
+      { kind: "thrown", error },
+      { logPath, logStartOffset, firstOutputAt },
+    );
+    await telemetryEnvironmentStamp;
+    throw error;
   }
-  return {
-    result: await dispatchFamilyWorker(familyBackend, spec, ctx, landing),
-  };
+}
+
+/**
+ * Byte offset after the pre-dispatch log prefix plus the orchestrator's spawn
+ * marker. This mirrors the single-slice baseline: only later growth is worker
+ * output, not the marker written by `dispatchMonitoredCliWorker` itself.
+ */
+function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
+  const offset =
+    typeof handle.logStartOffset === "number" &&
+    Number.isFinite(handle.logStartOffset) &&
+    handle.logStartOffset >= 0
+      ? handle.logStartOffset
+      : 0;
+  const marker =
+    `[orchestrator] dispatched ${handle.stepId} pid=${handle.pid} ` +
+    `pool=${handle.poolId} instance=${handle.instanceId} at ${handle.dispatchedAt}\n`;
+  return offset + Buffer.byteLength(marker, "utf8");
 }
 
 /**
