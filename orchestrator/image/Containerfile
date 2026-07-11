@@ -126,9 +126,11 @@ RUN set -eux; \
     cp -L /home/agent/.grok/bin/grok /usr/local/bin/grok; \
     chmod 755 /usr/local/bin/grok; \
     # Placeholder so a file bind-mount of auth.json is never mistaken for a dir.
-    install -d -o agent -g agent /home/agent/.grok; \
+    # (agent's primary group is not named "agent" on this base image — chown
+    # by user only.)
+    mkdir -p /home/agent/.grok; \
     touch /home/agent/.grok/auth.json; \
-    chown agent:agent /home/agent/.grok/auth.json; \
+    chown agent /home/agent/.grok /home/agent/.grok/auth.json; \
     chmod 600 /home/agent/.grok/auth.json; \
     grok --version
 # ── codex sandbox / userns note (spike constraint #3) ────────────────────────
