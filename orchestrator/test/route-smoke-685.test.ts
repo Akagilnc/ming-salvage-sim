@@ -1,9 +1,10 @@
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type * as sc from "@ai-hero/sandcastle";
+import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import { runOrchestrator } from "../src/runner.js";
 import {
   resolveRouteModels,
@@ -110,7 +111,7 @@ const smokeFixtureDir = dirname(fileURLToPath(import.meta.url));
 const smokePromptsDir = join(smokeFixtureDir, "..", "prompts");
 const smokeSoulsDir = join(smokeFixtureDir, "..", "image", "souls");
 
-function productionSmokeBackend(home: string): ProductionSmokeBackend {
+function productionSmokeBackend(home: string, promptsDir = smokePromptsDir): ProductionSmokeBackend {
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
   writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
@@ -120,16 +121,76 @@ function productionSmokeBackend(home: string): ProductionSmokeBackend {
     runKey: 685,
     repo: "owner/route-smoke",
     imageName: "route-smoke-test-image",
-    promptsDir: smokePromptsDir,
+    promptsDir,
     soulsDir: smokeSoulsDir,
     home,
   });
 }
 
-function successfulSmoke(options: Parameters<typeof sc.run>[0]) {
-  const args = options.promptArgs as { readonly NONCE: string; readonly NONCE_FILE: string };
-  mkdirSync(options.cwd!, { recursive: true });
-  writeFileSync(join(options.cwd!, args.NONCE_FILE), `${args.NONCE}\n`);
+/**
+ * Deliberately execute Sandcastle's own promptFile + promptArgs rendering path.
+ * The scripted smoke worker receives only the resulting text; it never gets the
+ * dispatch options, so it cannot accidentally certify a prompt it could not obey.
+ */
+async function renderPromptForScriptedSmoke(options: Parameters<typeof sc.run>[0]): Promise<string> {
+  const sandcastle = await vi.importActual<typeof import("@ai-hero/sandcastle")>(
+    "@ai-hero/sandcastle",
+  );
+  let renderedPrompt: string | undefined;
+  const sandboxHome = mkdtempSync(join(tmpdir(), "route-smoke-render-home-"));
+  try {
+    await sandcastle.run({
+      agent: {
+        name: "prompt-capture",
+        env: {},
+        captureSessions: false,
+        buildPrintCommand: ({ prompt }) => {
+          renderedPrompt = prompt;
+          return { command: "printf 'ROUTE_SMOKE_COMPLETE\\n'" };
+        },
+        parseStreamLine: (line) => [{ type: "text", text: line }],
+      },
+      sandbox: noSandbox({ env: { HOME: sandboxHome } }),
+      cwd: process.cwd(),
+      promptFile: options.promptFile,
+      promptArgs: options.promptArgs,
+      maxIterations: 1,
+      completionSignal: "ROUTE_SMOKE_COMPLETE",
+      logging: { type: "file", path: join(sandboxHome, "render.log") },
+    });
+  } finally {
+    rmSync(sandboxHome, { recursive: true, force: true });
+  }
+  if (renderedPrompt === undefined) throw new Error("scripted smoke did not receive a rendered prompt");
+  return renderedPrompt;
+}
+
+function evidenceInstructionFromRenderedPrompt(prompt: string):
+  | { readonly nonceFile: string; readonly nonce: string }
+  | undefined {
+  const match = /create the nonce evidence file at\s+(\S+)\s+\(relative\s+to\s+your\s+working\s+directory\)\s+containing\s+exactly\s+(\S+),\s+then\s+emit/i.exec(prompt);
+  if (match === null) return undefined;
+  const [, nonceFile, nonce] = match;
+  if (nonceFile.includes("{{") || nonce.includes("{{")) return undefined;
+  return { nonceFile, nonce };
+}
+
+async function successfulSmoke(
+  options: Parameters<typeof sc.run>[0],
+  onRenderedPrompt?: (prompt: string) => void,
+) {
+  let renderedPrompt: string;
+  try {
+    renderedPrompt = await renderPromptForScriptedSmoke(options);
+  } catch (error) {
+    throw new Error(`rendered prompt capture failed: ${String(error)}`);
+  }
+  onRenderedPrompt?.(renderedPrompt);
+  const instruction = evidenceInstructionFromRenderedPrompt(renderedPrompt);
+  if (instruction !== undefined) {
+    mkdirSync(options.cwd!, { recursive: true });
+    writeFileSync(join(options.cwd!, instruction.nonceFile), `${instruction.nonce}\n`);
+  }
   return { completionSignal: "ROUTE_SMOKE_COMPLETE" } as Awaited<ReturnType<typeof sc.run>>;
 }
 
@@ -139,6 +200,59 @@ describe("#685 route tool smoke", () => {
 
     expect(prompt).toContain("{{NONCE}}");
     expect(prompt).toContain("{{NONCE_FILE}}");
+  });
+
+  it("passes only when a text-only smoke agent can obey the rendered nonce evidence contract", async () => {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-rendered-pass-"));
+    const renderedPrompts: string[] = [];
+    runSpy.mockImplementation(async (options: Parameters<typeof sc.run>[0]) =>
+      successfulSmoke(options, (prompt) => renderedPrompts.push(prompt)),
+    );
+    try {
+      const backend = productionSmokeBackend(home);
+      const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
+
+      expect(renderedPrompts).not.toHaveLength(0);
+      expect(Object.values(smoked.smoke).every((status) => status.state === "passed")).toBe(true);
+      for (const prompt of renderedPrompts) {
+        expect(prompt).not.toContain("{{");
+        expect(evidenceInstructionFromRenderedPrompt(prompt)).toEqual({
+          nonceFile: expect.stringMatching(/^\.route-smoke-[\w-]+\.nonce$/),
+          nonce: expect.stringMatching(/^[\w-]+$/),
+        });
+      }
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when the dispatched prompt has no values for a text-only smoke agent to obey", async () => {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-rendered-missing-"));
+    const promptsDir = join(home, "prompts");
+    const renderedPrompts: string[] = [];
+    cpSync(smokePromptsDir, promptsDir, { recursive: true });
+    writeFileSync(
+      join(promptsDir, "route-smoke.md"),
+      "Create the nonce evidence file at the configured evidence path containing the configured nonce, then emit ROUTE_SMOKE_COMPLETE.\n",
+    );
+    runSpy.mockImplementation(async (options: Parameters<typeof sc.run>[0]) =>
+      successfulSmoke(options, (prompt) => renderedPrompts.push(prompt)),
+    );
+    try {
+      const smoked = await productionSmokeBackend(home, promptsDir).smokeModelRoute(
+        resolveRouteModels("normal", {}),
+      );
+
+      expect(Object.values(smoked.smoke).every((status) => status.state === "failed")).toBe(true);
+      expect(routeSmokeFailure(smoked)).toMatch(/route smoke failed/i);
+      expect(renderedPrompts).not.toHaveLength(0);
+      expect(renderedPrompts.every((prompt) => !prompt.includes("{{"))).toBe(true);
+      expect(renderedPrompts.every((prompt) => evidenceInstructionFromRenderedPrompt(prompt) === undefined)).toBe(true);
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("rejects a route before its model×pipe entries have been smoked", () => {
