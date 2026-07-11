@@ -2409,6 +2409,14 @@ class GameDB:
             self, query, source_kind=source_kind, source_ref=source_ref
         )
 
+    def persist_return_report(
+        self, state: GameState, character_name: str, query: str,
+    ) -> Dict[str, str]:
+        """Persist a role-scoped near-minister report (#492)."""
+        from ming_sim.intelligence import persist_return_report
+
+        return persist_return_report(self, state, character_name, query)
+
     def is_army_pay_source_cutover_enabled(self) -> bool:
         row = self.conn.execute(
             "SELECT value FROM fiscal_config WHERE key = ?",

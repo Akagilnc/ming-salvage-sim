@@ -1067,15 +1067,14 @@ class GameSession:
             events = knowledge.get("events") or []
             public_events = knowledge.get("public_events") or []
             if any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情")):
-                from ming_sim.intelligence import source_kind_for_query
-                report = self.db.build_return_report(
-                    message, source_kind=source_kind_for_query(message), source_ref=None
-                )
-                events = [*events, {
-                    "title": f"近臣{report['subject']}（{report['source_ref']}）",
-                    "body": report["statement"],
-                    "source_id": report["source_ref"],
-                }]
+                # The report is written to the durable, character-scoped
+                # knowledge source before rebuilding the projection.  This
+                # prevents a keyword hit from injecting a global snapshot into
+                # every minister's prompt and leaves restore with the same
+                # source/audience boundary.
+                self.db.persist_return_report(self.state, character.name, message)
+                knowledge = self.db.get_character_knowledge(self.state, character.name)
+                events = knowledge.get("events") or []
             lines = [f"【{character.name}此刻所知】"]
             for key, value in world.items():
                 lines.append(f"{key}：{value}")
