@@ -741,9 +741,29 @@ export function appendOpenCodeAuthMount(
   }
 }
 
+/** Reject credentials that need refresh writes before binding auth.json read-only. */
+export function assertOpenCodeReadonlyCredential(authFile: string, model: string): void {
+  const provider = model.split("/", 1)[0];
+  const parsed = JSON.parse(readFileSync(authFile, "utf8")) as Record<string, unknown>;
+  const credential = parsed[provider];
+  if (credential === null || typeof credential !== "object") return;
+  const type = (credential as { type?: unknown }).type;
+  if (type === "oauth") {
+    throw new Error(
+      `OpenCode provider ${provider} uses an OAuth/refresh-type credential; ` +
+        "the read-only auth.json mount is forbidden and requires a writable per-container copy",
+    );
+  }
+}
+
 /** Pass the optional Z.ai credential through at dispatch time; never persist it. */
-export function appendGlmKeyEnv(env: Record<string, string>): void {
-  if (process.env.GLM_KEY !== undefined) env.GLM_KEY = process.env.GLM_KEY;
+export function appendGlmKeyEnv(
+  env: Record<string, string>,
+  provider?: ModelProviderFactory,
+): void {
+  if (provider === "opencode" && process.env.GLM_KEY !== undefined) {
+    env.GLM_KEY = process.env.GLM_KEY;
+  }
 }
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
@@ -2322,7 +2342,7 @@ export class RealBackend implements Backend {
         rmSync(noncePath, { force: true });
         const result = await sc.run({
           agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key }), entryPool),
-          sandbox: this.routeSmokeSandbox(auth),
+          sandbox: this.routeSmokeSandbox(auth, entry.slug, entryPool),
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
           promptArgs: { NONCE: nonce, NONCE_FILE: nonceFile },
@@ -2463,11 +2483,18 @@ export class RealBackend implements Backend {
   }
 
   /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
-  private routeSmokeSandbox(auth: ReturnType<RealBackend["mountAuth"]>): sc.SandboxProvider {
+  private routeSmokeSandbox(
+    auth: ReturnType<RealBackend["mountAuth"]>,
+    model: string,
+    pool?: BillingPoolDispatchId,
+  ): sc.SandboxProvider {
     return docker(
       this.boxConfig(
         { ...auth, ghToken: this.readGhToken() },
-        { role: "reviewer", soul: "READ-ONLY" },
+        { role: "reviewer", soul: "READ-ONLY", model },
+        undefined,
+        undefined,
+        pool,
       ),
     );
   }
@@ -3035,7 +3062,7 @@ export class RealBackend implements Backend {
 
   private box(
     issueNumber: number,
-    spec: Pick<StepSpec, "role" | "soul">,
+    spec: Pick<StepSpec, "role" | "soul" | "model">,
     options?: AgentStepRunOptions,
   ): { sandbox: sc.SandboxProvider; providerAuth: ProviderAuthAvailability; cleanup: () => void } {
     const auth = this.mountAuth(issueNumber);
@@ -3137,9 +3164,10 @@ export class RealBackend implements Backend {
       grokAuthDir?: string;
       opencodeAuthFile?: string;
     },
-    spec: Pick<StepSpec, "role" | "soul">,
+    spec: Pick<StepSpec, "role" | "soul"> & { model?: string },
     issueNumber?: number,
     options?: AgentStepRunOptions,
+    pool?: BillingPoolDispatchId,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -3151,7 +3179,11 @@ export class RealBackend implements Backend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    appendGlmKeyEnv(env);
+    const resolved = spec.model === undefined ? undefined : resolveModelSlugForPool(spec.model, pool);
+    if (resolved?.provider === "opencode" && auth.opencodeAuthFile !== undefined) {
+      assertOpenCodeReadonlyCredential(auth.opencodeAuthFile, resolved.model);
+    }
+    if (resolved !== undefined) appendGlmKeyEnv(env, resolved.provider);
     // Inject the Claude token only when present: a Codex coder (model gpt-5.6-terra)
     // needs no CLAUDE_CODE_OAUTH_TOKEN, and an empty/undefined value would defeat
     // the in-container Claude auth on a Codex-only host (#384 codex P2).
@@ -4384,7 +4416,6 @@ export class RealBackend implements Backend {
       [SANDBOX_SOUL_ENV]: "ship",
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    appendGlmKeyEnv(env);
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
     // authenticates from GH_TOKEN. Set only when present (the pure seam stays

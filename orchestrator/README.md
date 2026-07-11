@@ -306,7 +306,13 @@ ship, not after.
 OpenCode is baked into the worker image and the route-selectable `glm-5.2`
 slug resolves to `opencode-go/glm-5.2`. Its Go-subscription credential remains
 on the host at `~/.local/share/opencode/auth.json` and is mounted read-only at
-runtime. Only that file is shared: OpenCode's SQLite database, WAL, logs, and
+runtime. This is safe only because `opencode-go` uses a static `type: "api"`
+credential with no refresh write. **OpenCode providers backed by OAuth or any
+refresh-type credential must not be routed in-container with this read-only
+mount.** They first require a writable, per-container credential copy, following
+the grok/codex isolation pattern; dispatch fails fast when selected auth metadata
+has `type: "oauth"`. Only credential `type` metadata is inspected—secret values
+are never read into an error or log. Only that file is shared: OpenCode's SQLite database, WAL, logs, and
 other writable state live in each container's isolated ephemeral home, avoiding
 the CLI's concurrent shared-data-dir lock crash. If a direct Z.ai route is used,
 the dispatcher passes an existing host `GLM_KEY` environment variable through;
