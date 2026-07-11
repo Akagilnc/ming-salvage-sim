@@ -343,6 +343,58 @@ def test_characterized_court_brief_scopes_faction_dossier_to_current_identity(ga
     assert f"【党派认同】" in rendered
 
 
+def test_minister_agent_uses_only_its_character_knowledge_projection(game, monkeypatch):
+    """召对上下文按人物切片，不能再从 registry 拼全知盘面。"""
+    db, state, content = game
+    ministers = [
+        c for c in content.characters.values()
+        if c.office_type not in ("后宫", "宗藩")
+    ]
+    first, second = ministers[:2]
+    projections = {
+        first.name: {
+            "world": {"role": f"只给{first.name}的职位事实", "secret": "不可知密报"},
+            "events": [{"title": "参与事项", "body": "只给本人"}],
+            "public_events": [],
+        },
+        second.name: {
+            "world": {"role": f"只给{second.name}的职位事实"},
+            "events": [],
+            "public_events": [],
+        },
+    }
+    monkeypatch.setattr(db, "get_character_knowledge", lambda _state, name: projections[name])
+
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured[kwargs["name"]] = kwargs["instructions"]
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry._ctx", return_value=content), \
+         patch("ming_sim.registry._skills_for", return_value=None), \
+         patch("ming_sim.registry.build_minister_tools", return_value=[]), \
+         patch("ming_sim.registry.build_court_brief", side_effect=AssertionError("全知 court_brief 残留")), \
+         patch("ming_sim.registry.build_court_roster", side_effect=AssertionError("全知 court_roster 残留")), \
+         patch("ming_sim.registry.build_last_gazette_brief", side_effect=AssertionError("全知 gazette 残留")), \
+         patch("ming_sim.registry.build_region_brief", side_effect=AssertionError("全知 region 残留")), \
+         patch("ming_sim.registry.build_building_brief", side_effect=AssertionError("全知 building 残留")):
+        create_minister_agent(first, cfg, _ctx(game), db)
+        create_minister_agent(second, cfg, _ctx(game), db)
+
+    first_rendered = "\n".join(captured[first.name])
+    second_rendered = "\n".join(captured[second.name])
+    assert f"只给{first.name}的职位事实" in first_rendered
+    assert "参与事项" in first_rendered
+    assert f"只给{second.name}的职位事实" not in first_rendered
+    assert "不可知密报" in first_rendered
+    assert f"只给{first.name}的职位事实" not in second_rendered
+    assert "不可知密报" not in second_rendered
+
+
 def test_final_minister_context_rejects_injected_abstract_values(game):
     """最终 instructions seam 不得把抽象分数重新带回上下文。"""
     db, _state, content = game
