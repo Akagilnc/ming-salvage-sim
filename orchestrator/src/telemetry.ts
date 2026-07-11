@@ -24,7 +24,7 @@
  * `orchestrator/README.md` § first_output_at.
  */
 
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
@@ -34,8 +34,10 @@ import {
   readFileSync,
   statSync,
 } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
+
+import ts from "typescript";
 
 import {
   resolveCoderRecOrder,
@@ -69,6 +71,9 @@ import { poolIdForWorker } from "./workerMonitor.js";
  * telemetry stays free of the heavy driver/backend import graph.
  */
 const TELEMETRY_DEFAULT_IMAGE_TAG = "ming-orchestrator-coder:latest";
+/** Bound every best-effort telemetry subprocess so a stuck textconv/filesystem
+ * cannot strand the per-ledger collection queue. */
+const TELEMETRY_SUBPROCESS_TIMEOUT_MS = 5_000;
 
 /**
  * Once-per-process run environment for telemetry (image / fast / content hashes).
@@ -171,21 +176,6 @@ function resolveDockerImageDigestAsync(imageTag: string): Promise<string | null>
   });
 }
 
-/** Best-effort docker image Id for an image tag; null when docker/image absent. */
-export function resolveDockerImageDigest(imageTag: string): string | null {
-  if (imageTag.trim().length === 0) return null;
-  try {
-    const out = execFileSync(
-      "docker",
-      ["image", "inspect", "--format", "{{.Id}}", imageTag],
-      { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
-    return out.length > 0 ? out : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Stable SHA-256 over files under `dir` (sorted relative paths).
  * Returns null when dir is missing or unreadable.
@@ -245,27 +235,6 @@ async function hashDirectoryContentsAsync(dir: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/** Lightweight sandbox fingerprint: image + souls + prompts content (no auth). */
-export function computeSandboxFingerprint(input: {
-  readonly imageTag: string;
-  readonly imageDigest?: string | null;
-  readonly soulsDir?: string;
-  readonly promptsDir?: string;
-}): string {
-  return computeSandboxFingerprintFromHashes({
-    imageTag: input.imageTag,
-    imageDigest: input.imageDigest,
-    soulsHash:
-      input.soulsDir !== undefined
-        ? hashDirectoryContents(input.soulsDir)
-        : undefined,
-    promptHash:
-      input.promptsDir !== undefined
-        ? hashDirectoryContents(input.promptsDir)
-        : undefined,
-  });
 }
 
 function computeSandboxFingerprintFromHashes(input: {
@@ -549,11 +518,71 @@ export interface TelemetryReviewRoundRecord extends TelemetryRecordBase {
   }> | null;
 }
 
+/** Raw changed-line counts for one source/test bucket in a commit. */
+export interface TelemetryCommitFileDistribution {
+  readonly files: number;
+  readonly insertions: number;
+  readonly deletions: number;
+}
+
+/** #782 audit-pattern counts, kept separately for added and removed diff lines. */
+export interface TelemetryEscapeHatchCounts {
+  readonly asAny: number;
+  readonly asNever: number;
+  readonly asUnknownAs: number;
+  readonly tsIgnore: number;
+  readonly tsExpectError: number;
+  readonly jsonParseStringify: number;
+}
+
+export interface TelemetryCommitMetrics {
+  readonly files: number;
+  readonly insertions: number;
+  readonly deletions: number;
+  readonly source: TelemetryCommitFileDistribution;
+  readonly test: TelemetryCommitFileDistribution;
+  readonly escapeHatches: {
+    readonly added: TelemetryEscapeHatchCounts;
+    readonly deleted: TelemetryEscapeHatchCounts;
+  };
+  /** Approximation: added/removed diff lines matching expect( or assert. */
+  readonly assertions: { readonly added: number; readonly deleted: number };
+}
+
+/** Dispatch identity frozen when the runner schedules a commit collection. */
+export interface TelemetryCommitWorkerIdentity {
+  /** Orchestrator step / worker leg that produced the observed commit. */
+  readonly stepId: string | null;
+  /** Exact dispatched model or checkpoint slug; never inferred after the fact. */
+  readonly modelSlug: string | null;
+}
+
+/** Per host-git commit observation. Telemetry only; never read for routing. */
+export interface TelemetryCommitRecord extends TelemetryRecordBase {
+  readonly phase: "commit";
+  readonly runId: string | null;
+  readonly issue: number | null;
+  readonly commit: string;
+  readonly worker: TelemetryCommitWorkerIdentity;
+  readonly files: number | null;
+  readonly insertions: number | null;
+  readonly deletions: number | null;
+  readonly source: TelemetryCommitFileDistribution | null;
+  readonly test: TelemetryCommitFileDistribution | null;
+  readonly escapeHatches: {
+    readonly added: TelemetryEscapeHatchCounts;
+    readonly deleted: TelemetryEscapeHatchCounts;
+  } | null;
+  /** Approximate `expect(`/`assert` changed-line delta; see builder. */
+  readonly assertions: { readonly added: number; readonly deleted: number } | null;
+}
+
 export type TelemetryRecord =
   | TelemetryEnvironmentRecord
   | TelemetryDispatchRecord
   | TelemetryCollectRecord
-  | TelemetryReviewRoundRecord;
+  | TelemetryReviewRoundRecord
+  | TelemetryCommitRecord;
 
 // ───────────────────────── pure helpers ─────────────────────────
 
@@ -582,11 +611,7 @@ export function scheduleTelemetryEnvironmentStamp(
   // Joinable Promise: callers can await completion without blocking dispatch.
   const runId = runIdFromContext(ctx);
   const pendingKey = `${ledgerDir ?? ""}\0${runId ?? ""}`;
-  if (
-    ledgerDir === undefined ||
-    ledgerDir.length === 0 ||
-    hasEnvironmentStamp(ledgerDir, runId)
-  ) {
+  if (ledgerDir === undefined || ledgerDir.length === 0) {
     return Promise.resolve();
   }
   const pending = pendingTelemetryEnvironmentStamps.get(pendingKey);
@@ -600,9 +625,14 @@ export function scheduleTelemetryEnvironmentStamp(
   queueMicrotask(() => {
     void (async () => {
       try {
-        if (!hasEnvironmentStamp(ledgerDir, runId)) {
+        if (!(await hasEnvironmentStampAsync(ledgerDir, runId))) {
           await backend.installTelemetryRunEnvironment?.();
-          ensureEnvironmentStamp(ledgerDir, ctx);
+          if (!(await hasEnvironmentStampAsync(ledgerDir, runId))) {
+            await tryAppendTelemetryRecordAsync(
+              ledgerDir,
+              buildEnvironmentStamp({ ctx }),
+            );
+          }
         }
       } catch (err) {
         console.warn(
@@ -1180,6 +1210,391 @@ export interface BuildReviewRoundStampInput {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
 }
 
+export interface BuildCommitStampInput {
+  readonly stampedAt?: string;
+  readonly runId?: string | null;
+  readonly issue?: number | null;
+  readonly commit: string;
+  /** Dispatch identity frozen by the runner when collection was scheduled. */
+  readonly worker?: TelemetryCommitWorkerIdentity;
+  /** Host-git numstat result. Omit when collection failed: all metrics become null. */
+  readonly metrics?: TelemetryCommitMetrics;
+  /** Changed lines from host `git show --unified=0`, for #782 / assertion auditing. */
+  readonly diffLines?: readonly string[];
+  /** TypeScript-scanned comment/string spans mapped from the relevant diff image. */
+  readonly triviaByDiffIndex?: ReadonlyMap<number, readonly TriviaSpan[]>;
+  /** Whether the corresponding changed line belongs to a supported code file. */
+  readonly codeByDiffIndex?: ReadonlyMap<number, boolean>;
+}
+
+const EMPTY_ESCAPE_HATCH_COUNTS: TelemetryEscapeHatchCounts = {
+  asAny: 0,
+  asNever: 0,
+  asUnknownAs: 0,
+  tsIgnore: 0,
+  tsExpectError: 0,
+  jsonParseStringify: 0,
+};
+
+const ESCAPE_HATCH_PATTERNS = {
+  asAny: /\bas\s+any\b/,
+  asNever: /\bas\s+never\b/,
+  asUnknownAs: /\bas\s+unknown\s+as\b/,
+  tsIgnore: /@ts-ignore\b/,
+  tsExpectError: /@ts-expect-error\b/,
+  jsonParseStringify: /\bJSON\s*\.\s*parse\s*\(\s*JSON\s*\.\s*stringify\s*\(/,
+} as const;
+
+function changedLineKind(line: string): "added" | "deleted" | undefined {
+  if (line.startsWith("+++") || line.startsWith("---")) return undefined;
+  if (line.startsWith("+")) return "added";
+  if (line.startsWith("-")) return "deleted";
+  return undefined;
+}
+
+type TriviaKind = "comment" | "string";
+
+export interface TriviaSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly kind: TriviaKind;
+}
+
+function triviaKindForToken(kind: ts.SyntaxKind): TriviaKind | undefined {
+  if (kind === ts.SyntaxKind.SingleLineCommentTrivia || kind === ts.SyntaxKind.MultiLineCommentTrivia) {
+    return "comment";
+  }
+  if (
+    kind === ts.SyntaxKind.StringLiteral ||
+    kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral ||
+    kind === ts.SyntaxKind.TemplateHead ||
+    kind === ts.SyntaxKind.TemplateMiddle ||
+    kind === ts.SyntaxKind.LastTemplateToken
+  ) {
+    return "string";
+  }
+  return undefined;
+}
+
+/**
+ * Use TypeScript's scanner for language-level trivia/string boundaries. Template
+ * substitutions are scanned as ordinary code; only their literal segments are
+ * masked. This deliberately replaces the former hand-written quote/comment state
+ * machine.
+ */
+function scriptKindForPath(path: string | undefined): ts.ScriptKind | undefined {
+  // Diff fallbacks have no path; retain TSX there so hand-built JSX diff tests
+  // are still recognised. Real git image scans always provide a file path.
+  if (path === undefined) return ts.ScriptKind.TSX;
+  if (/\.(?:tsx|jsx)$/i.test(path)) return ts.ScriptKind.TSX;
+  return /\.(?:ts|mts|cts|js)$/i.test(path) ? ts.ScriptKind.TS : undefined;
+}
+
+function triviaSpansByLine(
+  source: string,
+  path?: string,
+): ReadonlyMap<number, readonly TriviaSpan[]> {
+  const result = new Map<number, TriviaSpan[]>();
+  const lineStarts = [0];
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === "\n") lineStarts.push(index + 1);
+  }
+  const lineForOffset = (offset: number): number => {
+    let low = 0;
+    let high = lineStarts.length;
+    while (low + 1 < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (lineStarts[middle]! <= offset) low = middle;
+      else high = middle;
+    }
+    return low + 1;
+  };
+  const addTriviaSpan = (start: number, end: number, kind: TriviaKind): void => {
+    const firstLine = lineForOffset(start);
+    const lastLine = lineForOffset(Math.max(start, end - 1));
+    for (let line = firstLine; line <= lastLine; line += 1) {
+      const lineStart = lineStarts[line - 1]!;
+      const lineEnd = lineStarts[line] === undefined ? source.length : lineStarts[line]! - 1;
+      const spans = result.get(line) ?? [];
+      spans.push({ start: Math.max(start, lineStart) - lineStart, end: Math.min(end, lineEnd) - lineStart, kind });
+      result.set(line, spans);
+    }
+  };
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source);
+  const templateExpressionDepths: number[] = [];
+  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+    const kind = triviaKindForToken(token);
+    if (kind !== undefined) {
+      addTriviaSpan(scanner.getTokenStart(), scanner.getTokenEnd(), kind);
+    }
+    if (token === ts.SyntaxKind.TemplateHead || token === ts.SyntaxKind.TemplateMiddle) {
+      templateExpressionDepths.push(0);
+    } else if (token === ts.SyntaxKind.FirstPunctuation && templateExpressionDepths.length > 0) {
+      templateExpressionDepths[templateExpressionDepths.length - 1]! += 1;
+    } else if (token === ts.SyntaxKind.CloseBraceToken && templateExpressionDepths.length > 0) {
+      const top = templateExpressionDepths.length - 1;
+      if (templateExpressionDepths[top]! > 0) {
+        templateExpressionDepths[top]! -= 1;
+      } else {
+        const templateToken = scanner.reScanTemplateToken(false);
+        const templateKind = triviaKindForToken(templateToken);
+        if (templateKind !== undefined) {
+          addTriviaSpan(scanner.getTokenStart(), scanner.getTokenEnd(), templateKind);
+        }
+        if (templateToken !== ts.SyntaxKind.TemplateMiddle) templateExpressionDepths.pop();
+      }
+    }
+  }
+  // The scanner's normal token stream intentionally does not enter JSX-text
+  // mode. Parse only JSX-bearing files as TSX to obtain those spans; parsing a
+  // .ts generic arrow as TSX can otherwise turn its body into JsxText and hide
+  // a real escape hatch. TypeScript source offsets remain UTF-16 code-unit
+  // offsets just like the scanner offsets above.
+  const sourceFile = ts.createSourceFile(
+    path ?? "telemetry.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindForPath(path) ?? ts.ScriptKind.TS,
+  );
+  const visit = (node: ts.Node): void => {
+    if (node.kind === ts.SyntaxKind.JsxText) {
+      addTriviaSpan(node.getStart(sourceFile), node.getEnd(), "string");
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return result;
+}
+
+function fallbackTriviaByDiffIndex(diffLines: readonly string[]): ReadonlyMap<number, readonly TriviaSpan[]> {
+  const result = new Map<number, readonly TriviaSpan[]>();
+  for (const kind of ["added", "deleted"] as const) {
+    const indexes = diffLines.flatMap((line, index) => changedLineKind(line) === kind ? [index] : []);
+    const source = indexes.map((index) => diffLines[index]!.slice(1)).join("\n");
+    const byLine = triviaSpansByLine(source);
+    for (const [offset, index] of indexes.entries()) result.set(index, byLine.get(offset + 1) ?? []);
+  }
+  return result;
+}
+
+function auditableLine(line: string, spans: readonly TriviaSpan[]): string | undefined {
+  const kind = changedLineKind(line);
+  if (kind === undefined) return undefined;
+  const content = line.slice(1);
+  const directive = spans.find((span) =>
+    span.kind === "comment" &&
+    /^\s*(?:\/\/|\/\*|\*)\s*@ts-(?:ignore|expect-error)\b/.test(content.slice(span.start, span.end)),
+  );
+  if (directive !== undefined) return content.slice(directive.start, directive.end);
+  // TypeScript scanner offsets index UTF-16 code units, so this must not use
+  // a code-point iterator (`[...content]`): astral characters occupy two
+  // scanner offsets but one code point.
+  const characters = content.split("");
+  for (const span of spans) characters.fill(" ", span.start, span.end);
+  const code = characters.join("").trim();
+  return code === "" ? undefined : code;
+}
+
+/**
+ * Build one raw per-commit observation. Assertion counts are intentionally
+ * approximate: changed, non-comment lines matching `expect(` or `assert`.
+ * Metrics omitted after a host-git error are null, never a control-flow error.
+ */
+export function buildCommitStamp(input: BuildCommitStampInput): TelemetryCommitRecord {
+  // These dimensions come exclusively from the independent patch read. A
+  // successful numstat must not turn a failed diff read into synthetic zeroes.
+  let escapeHatches: TelemetryCommitRecord["escapeHatches"] = null;
+  let assertions: TelemetryCommitRecord["assertions"] = null;
+  if (input.diffLines !== undefined) {
+    const added = { ...EMPTY_ESCAPE_HATCH_COUNTS };
+    const deleted = { ...EMPTY_ESCAPE_HATCH_COUNTS };
+    let addedAssertions = 0;
+    let deletedAssertions = 0;
+    const triviaByDiffIndex = input.triviaByDiffIndex ?? fallbackTriviaByDiffIndex(input.diffLines);
+    for (const [index, line] of input.diffLines.entries()) {
+      const kind = changedLineKind(line);
+      if (input.codeByDiffIndex?.get(index) === false) continue;
+      const content = auditableLine(line, triviaByDiffIndex.get(index) ?? []);
+      if (kind === undefined || content === undefined) continue;
+      const counts = kind === "added" ? added : deleted;
+      for (const [name, pattern] of Object.entries(ESCAPE_HATCH_PATTERNS) as Array<
+        [keyof TelemetryEscapeHatchCounts, RegExp]
+      >) {
+        if (pattern.test(content)) counts[name] += 1;
+      }
+      if (/\bexpect\s*\(|\bassert(?:\s*\(|\s*\.)/.test(content)) {
+        if (kind === "added") addedAssertions += 1;
+        else deletedAssertions += 1;
+      }
+    }
+    escapeHatches = { added, deleted };
+    assertions = { added: addedAssertions, deleted: deletedAssertions };
+  }
+  const metrics = input.metrics;
+  return {
+    v: TELEMETRY_SCHEMA_VERSION,
+    phase: "commit",
+    stamped_at: input.stampedAt ?? new Date().toISOString(),
+    runId: input.runId ?? null,
+    issue: input.issue ?? null,
+    commit: input.commit,
+    worker: input.worker ?? { stepId: null, modelSlug: null },
+    files: metrics?.files ?? null,
+    insertions: metrics?.insertions ?? null,
+    deletions: metrics?.deletions ?? null,
+    source: metrics?.source ?? null,
+    test: metrics?.test ?? null,
+    escapeHatches: escapeHatches ?? null,
+    assertions: assertions ?? null,
+  };
+}
+
+function emptyCommitDistribution(): TelemetryCommitFileDistribution {
+  return { files: 0, insertions: 0, deletions: 0 };
+}
+
+function addCommitDistribution(
+  distribution: TelemetryCommitFileDistribution,
+  insertions: number,
+  deletions: number,
+): TelemetryCommitFileDistribution {
+  return {
+    files: distribution.files + 1,
+    insertions: distribution.insertions + insertions,
+    deletions: distribution.deletions + deletions,
+  };
+}
+
+function isTestPath(path: string): boolean {
+  return /(?:^|\/)(?:test|tests)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path);
+}
+
+function isSourcePath(path: string): boolean {
+  return /(?:^|\/)src(?:\/|$)/.test(path);
+}
+
+async function gitOutput(
+  repoPath: string,
+  args: readonly string[],
+): Promise<string | undefined> {
+  return await new Promise((resolve) => {
+    execFile("git", [...args], {
+      cwd: repoPath,
+      encoding: "utf8",
+      timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
+      killSignal: "SIGTERM",
+    }, (err, stdout) => {
+      resolve(err === null ? String(stdout) : undefined);
+    });
+  });
+}
+
+export async function collectCommitMetricsAsync(
+  repoPath: string,
+  commit: string,
+): Promise<TelemetryCommitMetrics | undefined> {
+  const output = await gitOutput(repoPath, ["show", "--format=", "--numstat", commit]);
+  if (output === undefined) return undefined;
+  return parseCommitMetrics(output);
+}
+
+function parseCommitMetrics(output: string): TelemetryCommitMetrics | undefined {
+  let files = 0;
+  let insertions = 0;
+  let deletions = 0;
+  let source = emptyCommitDistribution();
+  let test = emptyCommitDistribution();
+  for (const line of output.split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    const [addedRaw, deletedRaw, path] = line.split("\t", 3);
+    // git --numstat uses "-" for both counts of a binary file. Keep the
+    // commit-level telemetry available and represent its uncountable line
+    // changes as zero; the file still contributes to the file/path totals.
+    const binary = addedRaw === "-" && deletedRaw === "-";
+    const added = binary ? 0 : Number(addedRaw);
+    const deleted = binary ? 0 : Number(deletedRaw);
+    if (path === undefined || !Number.isInteger(added) || !Number.isInteger(deleted)) return undefined;
+    files += 1;
+    insertions += added;
+    deletions += deleted;
+    if (isTestPath(path)) test = addCommitDistribution(test, added, deleted);
+    else if (isSourcePath(path)) source = addCommitDistribution(source, added, deleted);
+  }
+  return {
+    files, insertions, deletions, source, test,
+    escapeHatches: { added: { ...EMPTY_ESCAPE_HATCH_COUNTS }, deleted: { ...EMPTY_ESCAPE_HATCH_COUNTS } },
+    assertions: { added: 0, deleted: 0 },
+  };
+}
+
+export interface CommitDiffAudit {
+  readonly diffLines: readonly string[];
+  readonly triviaByDiffIndex: ReadonlyMap<number, readonly TriviaSpan[]>;
+  /** Code-file gate for line-pattern metrics; non-code files retain numstat only. */
+  readonly codeByDiffIndex: ReadonlyMap<number, boolean>;
+}
+
+export async function collectCommitDiffAuditAsync(
+  repoPath: string,
+  commit: string,
+): Promise<CommitDiffAudit | undefined> {
+  const diff = await gitOutput(repoPath, ["show", "--format=", "--unified=0", commit]);
+  if (diff === undefined) return undefined;
+  const diffLines = diff.split(/\r?\n/);
+  try {
+    const postImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
+    const preImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
+    const triviaByDiffIndex = new Map<number, readonly TriviaSpan[]>();
+    const codeByDiffIndex = new Map<number, boolean>();
+    let prePath: string | undefined;
+    let postPath: string | undefined;
+    let preImageLine: number | undefined;
+    let postImageLine: number | undefined;
+    for (const [index, line] of diffLines.entries()) {
+      if (line.startsWith("--- ")) { const raw = line.slice(4); prePath = raw.startsWith("a/") ? raw.slice(2) : undefined; continue; }
+      if (line.startsWith("+++ ")) { const raw = line.slice(4); postPath = raw.startsWith("b/") ? raw.slice(2) : undefined; continue; }
+      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (hunk !== null) { preImageLine = Number(hunk[1]); postImageLine = Number(hunk[2]); continue; }
+      if (line.startsWith("+") && !line.startsWith("+++")) {
+        if (postPath === undefined || postImageLine === undefined) return undefined;
+        const scriptKind = scriptKindForPath(postPath);
+        codeByDiffIndex.set(index, scriptKind !== undefined);
+        if (scriptKind === undefined) { postImageLine += 1; continue; }
+        let spans = postImageTriviaByPath.get(postPath);
+        if (spans === undefined) {
+          const image = await gitOutput(repoPath, ["show", `${commit}:${postPath}`]);
+          if (image === undefined) return undefined;
+          spans = triviaSpansByLine(image, postPath);
+          postImageTriviaByPath.set(postPath, spans);
+        }
+        triviaByDiffIndex.set(index, spans.get(postImageLine) ?? []);
+        postImageLine += 1;
+      } else if (line.startsWith("-") && !line.startsWith("---")) {
+        if (prePath === undefined || preImageLine === undefined) return undefined;
+        const scriptKind = scriptKindForPath(prePath);
+        codeByDiffIndex.set(index, scriptKind !== undefined);
+        if (scriptKind === undefined) { preImageLine += 1; continue; }
+        let spans = preImageTriviaByPath.get(prePath);
+        if (spans === undefined) {
+          const image = await gitOutput(repoPath, ["show", `${commit}^:${prePath}`]);
+          if (image === undefined) return undefined;
+          spans = triviaSpansByLine(image, prePath);
+          preImageTriviaByPath.set(prePath, spans);
+        }
+        triviaByDiffIndex.set(index, spans.get(preImageLine) ?? []);
+        preImageLine += 1;
+      } else { preImageLine = preImageLine === undefined ? undefined : preImageLine + 1; postImageLine = postImageLine === undefined ? undefined : postImageLine + 1; }
+    }
+    return { diffLines, triviaByDiffIndex, codeByDiffIndex };
+  } catch { return undefined; }
+}
+
+export async function commitsBetweenAsync(repoPath: string, before: string, after: string): Promise<readonly string[] | undefined> {
+  const output = await gitOutput(repoPath, ["rev-list", "--reverse", `${before}..${after}`]);
+  return output?.split(/\r?\n/).map((value) => value.trim()).filter((value) => value.length > 0);
+}
+
 /**
  * Build one raw review-round observation. It deliberately only derives
  * observability fields: nothing here may influence review/fix control flow.
@@ -1506,6 +1921,118 @@ export function tryAppendTelemetryRecord(
   }
 }
 
+async function tryAppendTelemetryRecordAsync(
+  ledgerDir: string | undefined,
+  record: TelemetryRecord,
+): Promise<void> {
+  if (ledgerDir === undefined || ledgerDir.length === 0) return;
+  try {
+    try {
+      await stat(ledgerDir);
+    } catch {
+      const parent = dirname(ledgerDir);
+      if (parent === ledgerDir || parent.length === 0) return;
+      try {
+        await stat(parent);
+      } catch {
+        return;
+      }
+      await mkdir(ledgerDir, { recursive: true });
+    }
+    await appendFile(telemetryPath(ledgerDir), `${JSON.stringify(record)}\n`, {
+      encoding: "utf8",
+      flag: "a",
+    });
+  } catch (err) {
+    console.warn(`[orchestrator] telemetry append failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+export interface CommitTelemetryScheduleInput {
+  readonly ledgerDir: string | undefined;
+  readonly repoPath: string;
+  readonly runId?: string;
+  readonly issue?: number | null;
+  /** Worker identity captured at the scheduling seam, before deferred collection. */
+  readonly worker?: TelemetryCommitWorkerIdentity;
+  readonly before: CommitTelemetryBoundary;
+  readonly after: CommitTelemetryHeldBoundary;
+}
+
+/** A boundary captured synchronously before telemetry enters its deferred queue. */
+export type CommitTelemetryHeldBoundary =
+  | string
+  | { readonly kind: "held"; readonly oid: string };
+
+/** Before may be derived from the frozen after oid when no prior oid is held. */
+export type CommitTelemetryBoundary =
+  | CommitTelemetryHeldBoundary
+  | { readonly kind: "resolve-before-head"; readonly commitsAdded: number };
+
+interface CommitTelemetryCollectInput extends Omit<CommitTelemetryScheduleInput, "before" | "after"> {
+  readonly before: string;
+  readonly after: string;
+}
+
+/** One deferred collection chain per sidecar, preserving observation order. */
+const telemetryCollectionQueues = new Map<string, Promise<void>>();
+
+/**
+ * Defer best-effort commit observation until after the caller has yielded its
+ * routing decision. Its commit range is frozen at scheduling time; collection
+ * uses only async subprocess and file I/O.
+ */
+export function scheduleCommitTelemetry(
+  input: CommitTelemetryScheduleInput,
+  collect: (input: CommitTelemetryCollectInput) => Promise<void> = collectCommitTelemetry,
+): Promise<void> {
+  let settle!: () => void;
+  const completion = new Promise<void>((resolve) => { settle = resolve; });
+  const prior = input.ledgerDir === undefined
+    ? undefined
+    : telemetryCollectionQueues.get(input.ledgerDir);
+  const queued = (prior ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const after = typeof input.after === "string" ? input.after : input.after.oid;
+    const before = typeof input.before === "string" ? input.before
+      : input.before.kind === "held" ? input.before.oid
+      : input.before.kind === "resolve-before-head" && after !== undefined
+        ? await gitOutput(input.repoPath, ["rev-parse", `${after}~${input.before.commitsAdded}`]).then((oid) => oid?.trim() || undefined)
+        : undefined;
+    if (before === undefined || after === undefined || before === after) return;
+    await collect({ ...input, before, after });
+  });
+  if (input.ledgerDir !== undefined) telemetryCollectionQueues.set(input.ledgerDir, queued);
+  void queued.catch((err: unknown) => {
+    console.warn(`[orchestrator] commit telemetry failed (fail-open): ${err instanceof Error ? err.message : String(err)}`);
+  }).finally(() => {
+    if (input.ledgerDir !== undefined && telemetryCollectionQueues.get(input.ledgerDir) === queued) {
+      telemetryCollectionQueues.delete(input.ledgerDir);
+    }
+    settle();
+  });
+  return completion;
+}
+
+async function collectCommitTelemetry(input: CommitTelemetryCollectInput): Promise<void> {
+  if (input.before === input.after) return;
+  const commits = await commitsBetweenAsync(input.repoPath, input.before, input.after) ?? [input.after];
+  for (const commit of commits) {
+    const [metrics, diffAudit] = await Promise.all([
+      collectCommitMetricsAsync(input.repoPath, commit),
+      collectCommitDiffAuditAsync(input.repoPath, commit),
+    ]);
+    await tryAppendTelemetryRecordAsync(input.ledgerDir, buildCommitStamp({
+      runId: input.runId,
+      issue: input.issue ?? null,
+      commit,
+      ...(input.worker !== undefined ? { worker: input.worker } : {}),
+      ...(metrics !== undefined ? { metrics } : {}),
+      ...(diffAudit !== undefined ? diffAudit : {}),
+    }));
+  }
+}
+
 /**
  * Ensure a single environment stamp exists for this ledgerDir and run.
  * Idempotent: skips when an environment phase line for the current run is
@@ -1572,6 +2099,27 @@ export function hasEnvironmentStamp(
           return false;
         }
       });
+  } catch {
+    return false;
+  }
+}
+
+async function hasEnvironmentStampAsync(
+  ledgerDir: string | undefined,
+  runId: string | null = null,
+): Promise<boolean> {
+  if (ledgerDir === undefined || ledgerDir.length === 0) return false;
+  try {
+    const content = await readFile(telemetryPath(ledgerDir), "utf8");
+    return content.split("\n").some((line) => {
+      if (line.trim().length === 0) return false;
+      try {
+        const record = JSON.parse(line) as TelemetryRecord;
+        return record.phase === "environment" && record.runId === runId;
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return false;
   }
