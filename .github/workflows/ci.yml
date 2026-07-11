@@ -51,3 +51,25 @@ jobs:
       - run: npm ci
       # build = `tsc -b && vite build`:类型检查 + 构建一并把关(web 无单测)。
       - run: npm run build
+
+  orchestrator:
+    name: 编排器测试 (npm test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GIT_AUTHOR_NAME: ci
+      GIT_AUTHOR_EMAIL: ci@invalid
+      GIT_COMMITTER_NAME: ci
+      GIT_COMMITTER_EMAIL: ci@invalid
+    defaults:
+      run:
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: orchestrator/package-lock.json
+      - run: npm ci
+      - run: npm test
