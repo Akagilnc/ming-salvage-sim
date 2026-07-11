@@ -1322,10 +1322,15 @@ export class RealFamilyBackend implements FamilyBackend {
         durationMs,
       };
       // Keep JSONL order deterministic without awaiting the side effect on the
-      // verify path. recordVerificationStamp catches its own I/O failures.
-      this.verificationStampTail = this.verificationStampTail.then(async () => {
-        await recordVerificationStamp(this.opts.ledgerDir, stampInput);
-      });
+      // verify path. recordVerificationStamp catches its own I/O failures, but
+      // an unexpected throw must not poison the tail and block later stamps.
+      this.verificationStampTail = this.verificationStampTail
+        .then(async () => {
+          await recordVerificationStamp(this.opts.ledgerDir, stampInput);
+        })
+        .catch((error: unknown) => {
+          console.warn("verification telemetry stamp failed; continuing", error);
+        });
     }
   }
 

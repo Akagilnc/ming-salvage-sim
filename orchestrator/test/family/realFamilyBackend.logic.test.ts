@@ -2004,6 +2004,36 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
     expect(commands).toContainEqual({ file: "npm", args: ["test"] });
   });
 
+  it("keeps later verification stamps flowing after one unexpected stamp failure", async () => {
+    class ObservedVerifyBackend extends RealFamilyBackend {
+      protected override sh(): string { return ""; }
+      protected override async installDeps(_cwd: string): Promise<void> {}
+      protected override isNodeProject(_cwd: string): boolean { return true; }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
+    }
+    const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
+    vi.spyOn(telemetry, "recordVerificationStamp").mockImplementationOnce(async () => {
+      throw new Error("unexpected verification telemetry failure");
+    });
+    const backend = new ObservedVerifyBackend(options);
+
+    await expect(backend.runFamilyVerify({
+      phase: "wave",
+      familyBase: "family/293-base",
+    })).resolves.toEqual({ ok: true });
+    await expect(backend.waitForStamps()).resolves.toBeUndefined();
+
+    expect(telemetry.recordVerificationStamp).toHaveBeenCalledTimes(2);
+    expect(telemetry.readTelemetryRecords(options.ledgerDir)).toContainEqual(expect.objectContaining({
+      phase: "verification",
+      verification: "unit",
+      passed: true,
+    }));
+  });
+
   it("keeps a failed typecheck count unknown instead of parsing its diagnostic prose", async () => {
     class FailedTypecheckBackend extends RealFamilyBackend {
       protected override sh(file: string, args: string[], _cwd?: string): string {
