@@ -1317,40 +1317,43 @@ export interface SelfReportedCoder {
  *   - committed   ← realCommitCount > 0
  *   - commitsAdded ← realCommitCount
  *
- * The self-report is advisory once git has observed work: an under-count is
- * retained as a discrepancy record but does not interrupt the run. A claim that
- * git cannot support remains fail-closed: reporting any commits when git observed
- * none, or reporting more commits than git observed, throws to S8(error).
+ * The self-report is always advisory. Any disagreement is retained as durable
+ * discrepancy telemetry, but never interrupts or routes the run. When no
+ * trustworthy git baseline is available, the count is explicitly recorded as
+ * unknown rather than inventing a failure signal.
  *
  * `escalate` is a MODEL signal (not derivable from git), so it is preserved from
- * the self-report verbatim — but it does NOT suppress a commit-count
- * contradiction (an escalating coder that miscounts its commits still throws).
+ * the self-report verbatim.
  *
  * Pure (no I/O): the caller supplies the real commit count from `result.commits`,
  * so the reconciliation is unit-tested without a container.
  */
 export function reconcileCoderCommits(
   selfReported: SelfReportedCoder,
-  gitCommitCount: number,
+  gitCommitCount: number | undefined,
 ): SelfReportedCoder {
-  const committed = gitCommitCount > 0;
-  const selfReportClaimsMoreCommits =
-    selfReported.commitsAdded > gitCommitCount ||
-    (selfReported.committed && gitCommitCount === 0);
-  if (selfReportClaimsMoreCommits) {
-    throw new Error(
-      `realBackend: coder self-report {committed:${selfReported.committed}, ` +
-        `commitsAdded:${selfReported.commitsAdded}} contradicts git ` +
-        `(${gitCommitCount} real commit${gitCommitCount === 1 ? "" : "s"} on ` +
-        `the resident branch). The self-report claims commits git did not ` +
-        `observe, so this is a contract violation → S8(error).`,
-    );
+  if (gitCommitCount === undefined) {
+    return {
+      committed: selfReported.committed,
+      commitsAdded: selfReported.commitsAdded,
+      selfReportDiscrepancy: {
+        code: "coder_git_commit_count_unknown",
+        selfReportedCommitted: selfReported.committed,
+        selfReportedCommitsAdded: selfReported.commitsAdded,
+        gitCommitCount: null,
+      },
+      ...(selfReported.repairEvidence !== undefined
+        ? { repairEvidence: selfReported.repairEvidence }
+        : {}),
+      ...(selfReported.escalate !== undefined ? { escalate: selfReported.escalate } : {}),
+    };
   }
+  const committed = gitCommitCount > 0;
   const selfReportDiscrepancy =
     selfReported.committed !== committed ||
     selfReported.commitsAdded !== gitCommitCount
       ? {
-          code: "coder_self_report_understated_git_commits" as const,
+          code: "coder_self_report_disagrees_with_git_commits" as const,
           selfReportedCommitted: selfReported.committed,
           selfReportedCommitsAdded: selfReported.commitsAdded,
           gitCommitCount,
@@ -1422,12 +1425,7 @@ export function reconcileResumeCoderCommits(
   selfReported: SelfReportedCoder,
   cumulativeGitCommitCount: number,
 ): SelfReportedCoder {
-  try {
-    return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`resume coder commit truth mismatch: ${reason}`);
-  }
+  return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
 }
 
 /** A git SHA / abbreviation: only lower-case hex, length 7–40. */

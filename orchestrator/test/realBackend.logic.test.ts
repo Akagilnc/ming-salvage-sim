@@ -2390,21 +2390,30 @@ describe("realBackend reconcileCoderCommits", () => {
     });
   });
 
-  it("throws when the coder self-reports committed:true,commitsAdded:1 but git made ZERO commits", () => {
-    // The exact truthification bug #256 targets: a coder claims a commit it never
-    // made. Without git-derivation this routed to S2/S5 success, bypassing the
-    // #252 0-commit edge. Now it is a loud contradiction → S8(error) at the runner.
-    expect(() =>
-      reconcileCoderCommits({ committed: true, commitsAdded: 1 }, 0),
-    ).toThrow(/self-report/i);
+  it("continues with git truth and ledger-visible telemetry when the coder reports commits git lacks", () => {
+    expect(reconcileCoderCommits({ committed: true, commitsAdded: 1 }, 0)).toEqual({
+      committed: false,
+      commitsAdded: 0,
+      selfReportDiscrepancy: {
+          code: "coder_self_report_disagrees_with_git_commits",
+        selfReportedCommitted: true,
+        selfReportedCommitsAdded: 1,
+        gitCommitCount: 0,
+      },
+    });
   });
 
-  it("throws when the coder reports more commits than a nonzero git count", () => {
-    // Keep the fail-closed rule broad: a real single final commit must not make
-    // an inflated self-report acceptable merely because git is nonzero.
-    expect(() =>
-      reconcileCoderCommits({ committed: true, commitsAdded: 3 }, 1),
-    ).toThrow(/self-report/i);
+  it("continues with git truth and telemetry when the coder over-reports a nonzero git count", () => {
+    expect(reconcileCoderCommits({ committed: true, commitsAdded: 3 }, 1)).toMatchObject({
+      committed: true,
+      commitsAdded: 1,
+      selfReportDiscrepancy: {
+        code: "coder_self_report_disagrees_with_git_commits",
+        selfReportedCommitted: true,
+        selfReportedCommitsAdded: 3,
+        gitCommitCount: 1,
+      },
+    });
   });
 
   it("continues with a discrepancy when git has more commits than the coder reported", () => {
@@ -2417,7 +2426,7 @@ describe("realBackend reconcileCoderCommits", () => {
       committed: true,
       commitsAdded: 2,
       selfReportDiscrepancy: {
-        code: "coder_self_report_understated_git_commits",
+        code: "coder_self_report_disagrees_with_git_commits",
         selfReportedCommitted: true,
         selfReportedCommitsAdded: 1,
         gitCommitCount: 2,
@@ -2436,7 +2445,7 @@ describe("realBackend reconcileCoderCommits", () => {
         committed: true,
         commitsAdded: 1,
         selfReportDiscrepancy: {
-          code: "coder_self_report_understated_git_commits",
+          code: "coder_self_report_disagrees_with_git_commits",
           selfReportedCommitted: false,
           selfReportedCommitsAdded: 0,
           gitCommitCount: 1,
@@ -2444,10 +2453,8 @@ describe("realBackend reconcileCoderCommits", () => {
       });
   });
 
-  it("escalate does not suppress a commit-count contradiction", () => {
-    // An escalate is orthogonal to commit truth: a self-report that escalates yet
-    // miscounts its commits is still a contradiction.
-    expect(() =>
+  it("preserves escalate alongside mismatch telemetry without producing a reconcile failure", () => {
+    expect(
       reconcileCoderCommits(
         {
           committed: true,
@@ -2456,7 +2463,25 @@ describe("realBackend reconcileCoderCommits", () => {
         },
         0,
       ),
-    ).toThrow(/self-report/i);
+    ).toMatchObject({
+      committed: false,
+      commitsAdded: 0,
+      selfReportDiscrepancy: { gitCommitCount: 0 },
+      escalate: { reason: "blocked", diagnosis: "design gap" },
+    });
+  });
+
+  it("records an unknown baseline as telemetry and leaves the worker path usable", () => {
+    expect(reconcileCoderCommits({ committed: true, commitsAdded: 1 }, undefined)).toEqual({
+      committed: true,
+      commitsAdded: 1,
+      selfReportDiscrepancy: {
+        code: "coder_git_commit_count_unknown",
+        selfReportedCommitted: true,
+        selfReportedCommitsAdded: 1,
+        gitCommitCount: null,
+      },
+    });
   });
 });
 
@@ -2499,13 +2524,17 @@ describe("realBackend resume coder commit truth", () => {
     ).toEqual({ committed: true, commitsAdded: 1 });
   });
 
-  it("rejects a resumed coder self-report that claims commits git does not have", () => {
-    expect(() =>
+  it("continues a resumed coder with git truth when its self-report disagrees", () => {
+    expect(
       reconcileResumeCoderCommits(
         { committed: true, commitsAdded: 1 },
         /*cumulativeGitCommitCount*/ 0,
       ),
-    ).toThrow(/resume/i);
+    ).toMatchObject({
+      committed: false,
+      commitsAdded: 0,
+      selfReportDiscrepancy: { gitCommitCount: 0 },
+    });
   });
 
   it("fails closed when a prior commit-count fallback has no before-resume HEAD", () => {

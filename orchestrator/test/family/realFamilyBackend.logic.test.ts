@@ -180,7 +180,7 @@ describe("RealFamilyBackend telemetry construction", () => {
 
 describe("RealFamilyBackend family coder-fix commit truth (#818)", () => {
   class Probe extends RealFamilyBackend {
-    public finalCommitCountSince(headBefore: string | undefined): number {
+    public finalCommitCountSince(headBefore: string | undefined): number | undefined {
       return this.familyCoderGitCommitCount(headBefore);
     }
   }
@@ -203,10 +203,10 @@ describe("RealFamilyBackend family coder-fix commit truth (#818)", () => {
     expect(backend.finalCommitCountSince(headBefore)).toBe(1);
   });
 
-  it("fails closed when the family coder-fix baseline HEAD is unavailable", () => {
+  it("reports an unknown count when the family coder-fix baseline HEAD is unavailable", () => {
     const backend = new Probe(opts(trackRepo()));
 
-    expect(() => backend.finalCommitCountSince(undefined)).toThrow(/headBefore/i);
+    expect(backend.finalCommitCountSince(undefined)).toBeUndefined();
   });
 });
 

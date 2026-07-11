@@ -264,9 +264,8 @@ export interface CoderOutput {
   readonly committed: boolean;
   readonly commitsAdded: number;
   /**
-   * Git observed more commits than the worker reported. This is advisory-only:
-   * git-derived commit truth remains authoritative, while the durable ledger
-   * retains the discrepancy for diagnosis.
+   * A reconciliation observation retained in the durable ledger for diagnosis.
+   * It is telemetry only: reconciliation never decides the worker's route.
    */
   readonly selfReportDiscrepancy?: CoderSelfReportDiscrepancy;
   /**
@@ -286,12 +285,15 @@ export interface CoderOutput {
   readonly escalate?: Escalation;
 }
 
-/** Advisory record emitted when a coder under-reports commits that git observed. */
+/** Advisory reconciliation telemetry, persisted with the coder output. */
 export interface CoderSelfReportDiscrepancy {
-  readonly code: "coder_self_report_understated_git_commits";
+  readonly code:
+    | "coder_self_report_disagrees_with_git_commits"
+    | "coder_git_commit_count_unknown";
   readonly selfReportedCommitted: boolean;
   readonly selfReportedCommitsAdded: number;
-  readonly gitCommitCount: number;
+  /** Null when no trustworthy git baseline was available. */
+  readonly gitCommitCount: number | null;
 }
 
 /** Output of a reviewer step (S3/S6). Empty findings ⇒ approve only when no prior finding needs adjudication. */
