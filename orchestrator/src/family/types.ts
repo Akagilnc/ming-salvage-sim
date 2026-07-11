@@ -199,7 +199,8 @@ export interface FamilyLedgerEntry {
     | "ship_streak_closed"
     | "ship_dispatch_reserved"
     | "ship_dispatch_attempt"
-    | "ship_completed";
+    | "ship_completed"
+    | "route_degraded";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -262,7 +263,8 @@ export interface FamilyLedgerEntry {
     | "ship_streak_closed"
     | "ship_dispatch_reserved"
     | "ship_dispatch_attempt"
-    | "ship_completed";
+    | "ship_completed"
+    | "route_degraded";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
   /**
@@ -278,6 +280,8 @@ export interface FamilyLedgerEntry {
    * failures; `escalated` rows use it for answerable family decision pauses.
    */
   readonly reason?: string;
+  /** Optional route leg removed from this run after a failed startup smoke. */
+  readonly droppedLeg?: string;
   /** Admission-skip diagnostic message, when status/event is admission_skipped. */
   readonly message?: string;
   /** The child branch that was merged (full schema, #298). */
