@@ -115,6 +115,9 @@ class FakeFamilyBackend implements FamilyBackend {
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return this.ledger;
   }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
 }
 
 function epicWith(...issues: number[]): FamilyEpic {

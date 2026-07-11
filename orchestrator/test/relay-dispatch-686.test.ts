@@ -62,7 +62,7 @@ import {
 } from "../src/relayDispatch.js";
 import { decideIdleAfterProbe, QuotaWaitForResetError } from "../src/quotaProbe.js";
 import { buildCliMonitorSpawnSpec } from "../src/cliMonitorHooks.js";
-import { legacyDispatchWorker } from "../src/dispatchWorker.js";
+import { dispatchWorkerWithMonitor, legacyDispatchWorker } from "../src/dispatchWorker.js";
 import { relayCandidateConflictSlugs, runOrchestrator } from "../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
@@ -72,6 +72,7 @@ import type {
   IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
+  StepSpec,
   StepOutput,
   WorkerResult,
   WorkerSpec,
@@ -80,6 +81,22 @@ import type {
 } from "../src/types.js";
 
 describe("#686 relay tag contract (fail-closed)", () => {
+  it("uses explicit resource and decision-gate signal bits without reading prose", () => {
+    expect(
+      parseRelayTag(
+        `<relay>{"resource":true,"phase":"build","state_summary":"partial","remaining":"continue"}</relay>`,
+      ),
+    ).toMatchObject({ kind: "phase_complete", phase: "build" });
+    expect(
+      parseRelayTag(
+        `<relay>{"decision_gate":true,"state_summary":"need a ruling"}</relay>`,
+      ),
+    ).toEqual({
+      kind: "decision_gate",
+      state_summary: "need a ruling",
+    });
+  });
+
   it("accepts phase_complete build|clear with state_summary + remaining", () => {
     const stdout = [
       "建造完成，待清障。",
@@ -2432,10 +2449,10 @@ describe("#686 R2 production seams", () => {
       resolveModelSlugForPool,
       POOL_DISPATCH_BINDINGS,
     } = await import("../src/modelRegistry.js");
-    expect(POOL_DISPATCH_BINDINGS["grok-build"]).toBe("pi");
+    expect(POOL_DISPATCH_BINDINGS["grok-build"]).toBe("grok");
     expect(POOL_DISPATCH_BINDINGS.cursor).toBe("cursor");
     expect(resolveModelSlugForPool("grok-4.5", "grok-build").provider).toBe(
-      "pi",
+      "grok",
     );
     expect(resolveModelSlugForPool("grok-4.5", "cursor").provider).toBe(
       "cursor",
@@ -2581,6 +2598,157 @@ describe("#686 R2 production seams", () => {
       state_summary: "half wired",
     });
     expect(tryParseActionableRelayTag("no tag")).toBeUndefined();
+  });
+
+  it("P1: a worker-log decision_gate tag durably parks, then an appended answer re-enters the original step", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "relay-826-decision-gate-"));
+    const worktree: WorktreeHandle = {
+      branch: "fix/826-decision-gate",
+      base: "main",
+      path: tmp,
+    };
+    const workerLog = `<relay>{"decision_gate":true,"state_summary":"need product ruling","remaining":"choose policy"}</relay>`;
+    const WORKER_SESSION_ID = "relay-826-worker-session";
+    const persisted: PersistentLedgerEntry[] = [];
+    const resumed: Array<{ step: string; sessionId: string }> = [];
+    let monitorPass = 0;
+    const backend = {
+      async smokeModelRoute(route: any): Promise<any> {
+        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      },
+      async findResumeState(): Promise<ResumeState | undefined> {
+        if (persisted.length === 0) return undefined;
+        return { worktree, stateDir: tmp, ledger: persisted };
+      },
+      async cleanResidue(): Promise<void> {},
+      async resumeSession(spec: StepSpec, _worktree: WorktreeHandle, sessionId: string): Promise<StepOutput> {
+        resumed.push({ step: spec.id, sessionId });
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5",
+        };
+      },
+      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+        return { number: n, body: "Coder-Rec: grok-4.5", comments: [], agentBrief: "" };
+      },
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      },
+      async writeSnapshot(): Promise<void> {},
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "reviewer") return { kind: "reviewer", findings: [] };
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async push(): Promise<void> {},
+      async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        persisted.push(entry);
+      },
+      resolveCliMonitorDispatch: () => {
+        monitorPass += 1;
+        if (monitorPass > 1) return undefined;
+        return {
+        command: process.execPath,
+        args: ["-e", `console.log(${JSON.stringify(workerLog)})`],
+        logDir: tmp,
+        poolId: "grok-build",
+        completionSignal: "STEP_COMPLETE",
+        stepId: "S2",
+        readInstanceId: () => "relay-826-test",
+        };
+      },
+      async awaitMonitoredCliWorker(): Promise<WorkerResult> {
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+          sessionId: WORKER_SESSION_ID,
+        };
+      },
+    } as unknown as Backend;
+    const spec: WorkerSpec = {
+      id: "S2",
+      kind: "coder",
+      role: "coder",
+      host: "codex",
+      session: "fresh",
+      contextRetention: "retain",
+      promptFile: "coder.md",
+      completionSignal: "STEP_COMPLETE",
+      maxIter: 1,
+      model: "grok-4.5",
+      soul: "coder",
+      toolchain: [],
+    };
+    try {
+      await expect(
+        dispatchWorkerWithMonitor(backend, spec, {}, undefined, {
+          idleThresholdMs: 60_000,
+          pollIntervalMs: 5,
+          monitorDeps: { readInstanceId: () => "relay-826-test" },
+        }),
+      ).rejects.toMatchObject({
+        name: "SelfReportedRelayError",
+        tag: { kind: "decision_gate", state_summary: "need product ruling" },
+        sessionId: WORKER_SESSION_ID,
+      });
+
+      monitorPass = 0;
+
+      const first = await runOrchestrator({
+        issueNumber: 826,
+        backend,
+        now: () => NOW,
+      });
+      expect(first.status).toBe("escalate");
+      expect(first.stopSummary).toMatchObject({
+        reason: "decision_gate_park",
+        summary: expect.stringContaining("need product ruling"),
+      });
+      expect(
+        first.stepLedger.find(
+          (entry) => entry.step === "S2" && entry.output?.kind === "coder",
+        ),
+      ).toMatchObject({ sessionId: WORKER_SESSION_ID });
+      expect(persisted.at(-1)).toMatchObject({
+        step: "S8",
+        handoffStatus: "escalate",
+        escalationKind: "decision",
+      });
+      // The decision park must retain the worker's actual provider session,
+      // never this orchestration run's fallback UUID.
+      expect(
+        persisted.filter((entry) => entry.step === "S2").at(-1)?.sessionId,
+      ).toBe(WORKER_SESSION_ID);
+
+      persisted.push({
+        step: "S2",
+        event: "escalation_answered",
+        forStep: "S2",
+        answer: "choose policy A",
+        source: "human",
+        sessionId: "human-answer",
+        prompt_hash: "answer",
+        branchHEAD: "head",
+        ts: NOW.toISOString(),
+      });
+
+      const second = await runOrchestrator({
+        issueNumber: 826,
+        backend,
+        now: () => NOW,
+      });
+      expect(second.status).toBe("success");
+      expect(resumed).toContainEqual({ step: "S2", sessionId: WORKER_SESSION_ID });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("P3: no-baton park repairHint is byte-identical to #683", async () => {

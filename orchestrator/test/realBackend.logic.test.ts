@@ -60,7 +60,6 @@ import {
   promptsDirError,
   soulsDirError,
   REQUIRED_SOUL_FILES,
-  realCommitCount,
   reconcileCoderCommits,
   reconcileResumeCoderCommits,
   resumeCoderCommitBasis,
@@ -71,6 +70,7 @@ import {
   routeSmokeCacheKey,
   routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GROK_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
@@ -144,6 +144,14 @@ describe("#685 route smoke hardening", () => {
     );
   });
 
+  it("separates a relay pool from the default provider cache", () => {
+    const route = resolveRouteModels("normal", { coder: "grok-4.5" });
+
+    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
+      routeSmokeCacheKey(route, "image-a", "grok-build"),
+    );
+  });
+
   it("turns a missing host CLI into an unknown version instead of throwing", () => {
     const backend = {
       sh: () => {
@@ -157,6 +165,24 @@ describe("#685 route smoke hardening", () => {
     ).cliVersionForSlug;
 
     expect(cliVersionForSlug.call(backend, "sonnet")).toBe("unknown");
+  });
+
+  it("looks up the CLI for the relay pool's final provider", () => {
+    const calls: string[] = [];
+    const backend = {
+      sh: (file: string) => {
+        calls.push(file);
+        return "test-version";
+      },
+    };
+    const cliVersionForSlug = (
+      RealBackend.prototype as unknown as {
+        cliVersionForSlug(this: typeof backend, slug: string, billingPool?: string): string;
+      }
+    ).cliVersionForSlug;
+
+    expect(cliVersionForSlug.call(backend, "grok-4.5", "grok-build")).toBe("test-version");
+    expect(calls).toEqual(["grok"]);
   });
 });
 
@@ -628,18 +654,25 @@ describe("realBackend auth mount paths", () => {
     expect(p.hostCodexAuthDir).toBe("/home/dev/.sc-orchestrator/auth-256");
     expect(p.srcCodexAuth).toBe("/home/dev/.codex/auth.json");
     expect(p.srcCodexConfig).toBe("/home/dev/.codex/config.toml");
+    expect(p.hostGrokAuthDir).toBe("/home/dev/.sc-orchestrator/grok-auth-256");
+    expect(p.srcGrokAuth).toBe("/home/dev/.grok/auth.json");
     expect(p.claudeTokenFile).toBe("/home/dev/.sc-claude-token");
   });
 
   it("the sandbox mount targets match the spike contract", () => {
-    // codex auth → /home/agent/.codex ; dev skills → /home/agent/.claude/skills
+    // codex auth → /home/agent/.codex ; grok auth → /home/agent/.grok ;
+    // dev skills → /home/agent/.claude/skills
     expect(SANDBOX_CODEX_DIR).toBe("/home/agent/.codex");
+    expect(SANDBOX_GROK_DIR).toBe("/home/agent/.grok");
     expect(SANDBOX_SKILLS_DIR).toBe("/home/agent/.claude/skills");
   });
 
   it("per-issue dirs are distinct so concurrent issues never collide", () => {
     expect(buildAuthPaths(256, "/h").hostCodexAuthDir).not.toBe(
       buildAuthPaths(257, "/h").hostCodexAuthDir,
+    );
+    expect(buildAuthPaths(256, "/h").hostGrokAuthDir).not.toBe(
+      buildAuthPaths(257, "/h").hostGrokAuthDir,
     );
   });
 
@@ -739,7 +772,7 @@ describe("realBackend resolveModelSlug", () => {
     });
   });
 
-  it("declares the six Sandcastle-native provider factories the registry can target", () => {
+  it("declares the provider factories the registry can target (incl. #807 grok)", () => {
     expect(SUPPORTED_MODEL_PROVIDER_FACTORIES).toEqual([
       "claudeCode",
       "codex",
@@ -747,6 +780,7 @@ describe("realBackend resolveModelSlug", () => {
       "copilot",
       "cursor",
       "pi",
+      "grok",
     ]);
   });
 
@@ -849,17 +883,6 @@ describe("realBackend lastSessionId", () => {
   it("returns undefined when no iteration carries a sessionId", () => {
     expect(lastSessionId({ iterations: [{}, {}] })).toBeUndefined();
     expect(lastSessionId({ iterations: [] })).toBeUndefined();
-  });
-});
-
-describe("realBackend realCommitCount (#256 commit-truth)", () => {
-  it("reads the real commit count from result.commits.length", () => {
-    expect(
-      realCommitCount({ commits: [{ sha: "a1" }, { sha: "b2" }] }),
-    ).toBe(2);
-  });
-  it("returns 0 when the agent made no commits", () => {
-    expect(realCommitCount({ commits: [] })).toBe(0);
   });
 });
 
@@ -1690,6 +1713,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     public lastAgentOptions?: Parameters<typeof sc.run>[0];
     public preflightResults = new Map<string, boolean>();
     public preflightHook?: (tool: string) => Promise<void>;
+    /** Final reachable commits after the fresh worker's pinned baseline. */
+    public finalGraphCommitCount = 0;
 
     protected override cloneDirExists(): boolean {
       return true;
@@ -1698,6 +1723,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     protected override sh(file: string, args: string[]): string {
       if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
         return ".git";
+      }
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "a".repeat(40);
+      }
+      if (file === "git" && args[0] === "rev-list" && args[1] === "--count") {
+        return String(this.finalGraphCommitCount);
       }
       return "";
     }
@@ -1719,7 +1750,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     }
   }
 
-  function makeBackend(): PreflightBackend {
+  function makeBackend(home = tempHome("rb-home-286-")): PreflightBackend {
     return new PreflightBackend({
       sourceRepo: "/tmp/source",
       remote: "https://github.com/owner/name.git",
@@ -1729,7 +1760,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       // #748: runStep → box → mountAuth must not touch real ~/.sc-orchestrator.
-      home: tempHome("rb-home-286-"),
+      home,
     });
   }
 
@@ -1769,8 +1800,34 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("reclaims the temporary Grok OAuth copy after a worker container exits", async () => {
+    const home = tempHome("rb-home-grok-auth-");
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
+    const backend = makeBackend(home);
+    backend.agentResult = agentRunResult({
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
+      commits: [],
+      sessionId: "sess-grok-auth-cleanup",
+    });
+
+    await backend.runStep(coderSpec, {
+      branch: "feat/issue-286",
+      base: "main",
+      path: "/tmp/worktree/issue-286",
+    });
+
+    expect(
+      readdirSync(join(home, ".sc-orchestrator")).filter((name) =>
+        name.startsWith("grok-auth-286-"),
+      ),
+    ).toEqual([]);
+  });
+
   it("prefers a runner-owned outcome sidecar over malformed coder stdout", async () => {
     const backend = makeBackend();
+    backend.finalGraphCommitCount = 1;
     const dir = mkdtempSync(join(tmpdir(), "worker-outcome-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -1806,8 +1863,44 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("routes a fresh coder with only unreachable observed commits to the 0-commit edge", async () => {
+    const backend = makeBackend();
+    // Sandcastle observed a now-unreachable commit. Final HEAD is still the
+    // pre-worker baseline, so graph truth must override both observations and
+    // the worker's self-report without turning the mismatch into a failure.
+    backend.finalGraphCommitCount = 0;
+    backend.agentResult = agentRunResult({
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed":true,"commitsAdded":1}</coder>',
+      commits: [{ sha: "unreachable-after-reset" }],
+      sessionId: "sess-final-graph-truth",
+    });
+
+    await expect(
+      backend.runStep(coderSpec, {
+        branch: "feat/issue-818",
+        base: "main",
+        path: "/tmp/worktree/issue-818",
+      }),
+    ).resolves.toEqual({
+      output: {
+        kind: "coder",
+        committed: false,
+        commitsAdded: 0,
+        selfReportDiscrepancy: {
+          code: "coder_self_report_disagrees_with_git_commits",
+          selfReportedCommitted: true,
+          selfReportedCommitsAdded: 1,
+          gitCommitCount: 0,
+        },
+      },
+      sessionId: "sess-final-graph-truth",
+    });
+  });
+
   it("falls back to signaled coder stdout when the outcome sidecar path is an empty directory", async () => {
     const backend = makeBackend();
+    backend.finalGraphCommitCount = 1;
     const dir = mkdtempSync(join(tmpdir(), "worker-outcome-empty-dir-"));
     const outcomePath = join(dir, "outcome.json");
     mkdirSync(outcomePath);
@@ -2390,32 +2483,71 @@ describe("realBackend reconcileCoderCommits", () => {
     });
   });
 
-  it("throws when the coder self-reports committed:true,commitsAdded:1 but git made ZERO commits", () => {
-    // The exact truthification bug #256 targets: a coder claims a commit it never
-    // made. Without git-derivation this routed to S2/S5 success, bypassing the
-    // #252 0-commit edge. Now it is a loud contradiction → S8(error) at the runner.
-    expect(() =>
-      reconcileCoderCommits({ committed: true, commitsAdded: 1 }, 0),
-    ).toThrow(/self-report/i);
+  it("continues with git truth and ledger-visible telemetry when the coder reports commits git lacks", () => {
+    expect(reconcileCoderCommits({ committed: true, commitsAdded: 1 }, 0)).toEqual({
+      committed: false,
+      commitsAdded: 0,
+      selfReportDiscrepancy: {
+          code: "coder_self_report_disagrees_with_git_commits",
+        selfReportedCommitted: true,
+        selfReportedCommitsAdded: 1,
+        gitCommitCount: 0,
+      },
+    });
   });
 
-  it("throws when the self-reported commitsAdded count disagrees with git", () => {
-    // Self-report says 3 commits; git made 1. A miscount is a contract violation.
-    expect(() =>
-      reconcileCoderCommits({ committed: true, commitsAdded: 3 }, 1),
-    ).toThrow(/git/i);
+  it("continues with git truth and telemetry when the coder over-reports a nonzero git count", () => {
+    expect(reconcileCoderCommits({ committed: true, commitsAdded: 3 }, 1)).toMatchObject({
+      committed: true,
+      commitsAdded: 1,
+      selfReportDiscrepancy: {
+        code: "coder_self_report_disagrees_with_git_commits",
+        selfReportedCommitted: true,
+        selfReportedCommitsAdded: 3,
+        gitCommitCount: 1,
+      },
+    });
   });
 
-  it("throws when the coder self-reports committed:false but git DID make commits", () => {
-    expect(() =>
-      reconcileCoderCommits({ committed: false, commitsAdded: 0 }, 1),
-    ).toThrow(/self-report/i);
+  it("continues with a discrepancy when git has more commits than the coder reported", () => {
+    const out = reconcileCoderCommits(
+      { committed: true, commitsAdded: 1 },
+      2,
+    );
+
+    expect(out).toMatchObject({
+      committed: true,
+      commitsAdded: 2,
+      selfReportDiscrepancy: {
+        code: "coder_self_report_disagrees_with_git_commits",
+        selfReportedCommitted: true,
+        selfReportedCommitsAdded: 1,
+        gitCommitCount: 2,
+      },
+    });
   });
 
-  it("escalate does not suppress a commit-count contradiction", () => {
-    // An escalate is orthogonal to commit truth: a self-report that escalates yet
-    // miscounts its commits is still a contradiction.
-    expect(() =>
+  it("emits no discrepancy when the self-report matches git truth", () => {
+    expect(reconcileCoderCommits({ committed: true, commitsAdded: 1 }, 1))
+      .not.toHaveProperty("selfReportDiscrepancy");
+  });
+
+  it("records an advisory discrepancy when the coder reports no commit but git has one", () => {
+    expect(reconcileCoderCommits({ committed: false, commitsAdded: 0 }, 1))
+      .toMatchObject({
+        committed: true,
+        commitsAdded: 1,
+        selfReportDiscrepancy: {
+          code: "coder_self_report_disagrees_with_git_commits",
+          selfReportedCommitted: false,
+          selfReportedCommitsAdded: 0,
+          gitCommitCount: 1,
+        },
+      });
+  });
+
+  it("preserves escalate alongside mismatch telemetry without producing a reconcile failure", () => {
+    expect(
       reconcileCoderCommits(
         {
           committed: true,
@@ -2424,7 +2556,25 @@ describe("realBackend reconcileCoderCommits", () => {
         },
         0,
       ),
-    ).toThrow(/self-report/i);
+    ).toMatchObject({
+      committed: false,
+      commitsAdded: 0,
+      selfReportDiscrepancy: { gitCommitCount: 0 },
+      escalate: { reason: "blocked", diagnosis: "design gap" },
+    });
+  });
+
+  it("records an unknown baseline as telemetry and leaves the worker path usable", () => {
+    expect(reconcileCoderCommits({ committed: true, commitsAdded: 1 }, undefined)).toEqual({
+      committed: true,
+      commitsAdded: 1,
+      selfReportDiscrepancy: {
+        code: "coder_git_commit_count_unknown",
+        selfReportedCommitted: true,
+        selfReportedCommitsAdded: 1,
+        gitCommitCount: null,
+      },
+    });
   });
 });
 
@@ -2467,16 +2617,20 @@ describe("realBackend resume coder commit truth", () => {
     ).toEqual({ committed: true, commitsAdded: 1 });
   });
 
-  it("rejects a resumed coder self-report that claims commits git does not have", () => {
-    expect(() =>
+  it("continues a resumed coder with git truth when its self-report disagrees", () => {
+    expect(
       reconcileResumeCoderCommits(
         { committed: true, commitsAdded: 1 },
         /*cumulativeGitCommitCount*/ 0,
       ),
-    ).toThrow(/resume/i);
+    ).toMatchObject({
+      committed: false,
+      commitsAdded: 0,
+      selfReportDiscrepancy: { gitCommitCount: 0 },
+    });
   });
 
-  it("fails closed when a prior commit-count fallback has no before-resume HEAD", () => {
+  it("reports unknown when a prior commit-count fallback has no before-resume HEAD", () => {
     class ResumeCommitBackend extends RealBackend {
       protected override cloneDirExists(): boolean {
         return true;
@@ -2514,21 +2668,21 @@ describe("realBackend resume coder commit truth", () => {
       home: tempHome("rb-home-285-"),
     });
 
-    expect(() =>
+    expect(
       (
         backend as unknown as {
           resumeCoderCommitCount(
             worktree: { branch: string; base: string; path: string },
             sessionId: string,
             beforeResumeHead: string | undefined,
-          ): number;
+          ): number | undefined;
         }
       ).resumeCoderCommitCount(
         { branch: "feat/issue-256", base: "main", path: worktreePath },
         "sess-coder",
         undefined,
       ),
-    ).toThrow(/before-resume HEAD/i);
+    ).toBeUndefined();
   });
 
   it("dead-session fallback does not route resumed coders through normal runStep commit truth", () => {

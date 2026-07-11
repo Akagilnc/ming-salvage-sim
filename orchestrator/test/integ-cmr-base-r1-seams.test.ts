@@ -147,6 +147,23 @@ function stepReturning(stepId: "S2", out: StepOutput): SpyBackend {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("F1: escalate shape validation (guards)", () => {
+  it("treats coder commit self-reports as advisory shape, not a consistency gate", () => {
+    expect(
+      isValidCoderOutput({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isValidCoderOutput({
+        kind: "coder",
+        committed: false,
+        commitsAdded: 3,
+      }),
+    ).toBe(true);
+  });
+
   it("isValidCoderOutput rejects a coder output with escalate:{} (empty)", () => {
     const out = {
       kind: "coder",
