@@ -104,6 +104,49 @@ def test_settle_with_delta_includes_inertia_person_changes_in_chapter_brief(game
         content.characters[name].office = old_office
 
 
+def test_settle_persists_public_and_restricted_sources_before_archive_projection(game):
+    """生产结算先落逐 source 事项，聚合邸报不能成为泄密边界。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    db.register_character_knowledge_source(
+        state,
+        [{"character_id": knower.name, "tier": "主办"}],
+        "secret_order",
+        "生产链密查",
+        "生产链受限事项",
+        source_id="test:settle-restricted",
+        excluded_names=[excluded.name],
+    )
+    db.record_public_knowledge_event(
+        state, "生产链公开事项", "生产链公开事项", source_id="test:settle-public"
+    )
+
+    before_turn = state.turn
+    settle_with_delta(state, db, {}, before_turn=before_turn, content=content)
+
+    rows = db.conn.execute(
+        "SELECT source_id, excluded_names FROM character_knowledge_events "
+        "WHERE character_name='' AND turn=? ORDER BY source_id",
+        (before_turn,),
+    ).fetchall()
+    by_source = {row["source_id"]: row for row in rows}
+    assert "test:settle-public" in by_source
+    assert "test:settle-restricted" in by_source
+    assert excluded.name in by_source["test:settle-restricted"]["excluded_names"]
+
+    excluded_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
+    )
+    assert "生产链公开事项" in excluded_text
+    assert "生产链受限事项" not in excluded_text
+
+
 def test_pre_settle_runs_fixed_fiscal_tick(game):
     """pre_settle 跑固定月度财政 tick（落 economy_ledger 行）+ 返回 auto_triggered 清单。"""
     db, state, content = game

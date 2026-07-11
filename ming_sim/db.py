@@ -7391,17 +7391,7 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
         )
-        items = knowledge_items
-        if items is None:
-            items = self.knowledge_items_for_turn(state.turn)
-        for item in items:
-            self.record_public_knowledge_event(
-                state,
-                str(item.get("title") or "邸报事项"),
-                str(item.get("body") or ""),
-                source_id=str(item.get("source_id") or ""),
-                excluded_names=item.get("excluded_names") or (),
-            )
+        self.persist_knowledge_items_for_turn(state, knowledge_items)
         self.conn.commit()
 
     def get_turn_report(self, turn: int) -> str:
@@ -7458,18 +7448,36 @@ class GameDB:
                 (str(body or ""), memory_id),
             )
             self.conn.commit()
+        self.persist_knowledge_items_for_turn(state, knowledge_items, default_title=title)
+        return memory_id
+
+    def persist_knowledge_items_for_turn(
+        self,
+        state: GameState,
+        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
+        *,
+        default_title: str = "邸报事项",
+    ) -> None:
+        """Materialize every turn source before any aggregate archive is read.
+
+        The gazette and chapter are derived prose, not authorization boundaries.
+        Persisting the public projection of both unscoped and participant-scoped
+        source rows first gives the read model an independent item boundary.  The
+        operation is idempotent by ``(character_name, kind, source_id)`` and is
+        deliberately callable from the real settlement transaction before the
+        aggregate writers run.
+        """
         items = knowledge_items
         if items is None:
             items = self.knowledge_items_for_turn(state.turn)
         for item in items:
             self.record_public_knowledge_event(
                 state,
-                str(item.get("title") or title or "朝局事项"),
+                str(item.get("title") or default_title),
                 str(item.get("body") or ""),
                 source_id=str(item.get("source_id") or ""),
                 excluded_names=item.get("excluded_names") or (),
             )
-        return memory_id
 
     def knowledge_items_for_turn(self, turn: int) -> List[Dict[str, object]]:
         """Return source-scoped public material for archive projection.
