@@ -31,6 +31,7 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label,
 )
+from ming_sim.intelligence import OFFICE_SLOTS
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
@@ -615,6 +616,30 @@ class GameDB:
                 FOREIGN KEY(character_name) REFERENCES characters(name),
                 FOREIGN KEY(office_type) REFERENCES offices(office_type)
             );
+
+            CREATE TABLE IF NOT EXISTS office_slots (
+                office_title TEXT PRIMARY KEY,
+                office_type TEXT NOT NULL,
+                region_id TEXT NOT NULL DEFAULT '',
+                jurisdiction TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE VIEW IF NOT EXISTS office_vacancies AS
+            SELECT
+                s.office_title,
+                s.office_type,
+                s.region_id,
+                s.jurisdiction,
+                s.sort_order,
+                c.name AS holder_name,
+                c.office AS holder_office,
+                c.status AS holder_status
+            FROM office_slots AS s
+            LEFT JOIN characters AS c
+              ON c.status = 'active'
+             AND (',' || replace(replace(c.office, '，', ','), ' ', '') || ',')
+                 LIKE '%,' || s.office_title || ',%';
 
             CREATE TABLE IF NOT EXISTS person_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2119,6 +2144,16 @@ class GameDB:
                     ),
                 )
 
+        if not self.table_has_rows("office_slots"):
+            self.conn.executemany(
+                """
+                INSERT INTO office_slots
+                    (office_title, office_type, region_id, jurisdiction, sort_order)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [(*slot, index) for index, slot in enumerate(OFFICE_SLOTS)],
+            )
+
         if not self.table_has_rows("characters"):
             for character in self.content.characters.values():
                 office = normalize_office(character.office)
@@ -2351,6 +2386,28 @@ class GameDB:
             is_fresh_factions_seed, getattr(self, "_leverage_offset_col_added", False)
         )
         self.conn.commit()
+
+    def list_office_vacancies(self) -> List[Dict[str, object]]:
+        """Return the static督抚职位 view with current holders from characters."""
+        rows = self.conn.execute(
+            """
+            SELECT office_title, office_type, region_id, jurisdiction,
+                   holder_name, holder_office, holder_status
+            FROM office_vacancies
+            ORDER BY sort_order, office_title
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def build_return_report(
+        self, query: str, *, source_kind: str, source_ref: str
+    ) -> Dict[str, str]:
+        """Convenience seam for the near-minister channel (#492)."""
+        from ming_sim.intelligence import build_return_report
+
+        return build_return_report(
+            self, query, source_kind=source_kind, source_ref=source_ref
+        )
 
     def is_army_pay_source_cutover_enabled(self) -> bool:
         row = self.conn.execute(
