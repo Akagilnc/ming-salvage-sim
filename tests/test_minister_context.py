@@ -608,9 +608,25 @@ def test_minister_prompt_is_characterization_not_formal_constraint(game):
 
 
 def test_final_minister_context_teaches_heard_for_selection_as_recovery_candidate(game):
-    """荐起复提示必须覆盖人才池中的听用候铨对象。"""
+    """荐人两型切片由 registry 预组装进 system，而非候选查询 tool。"""
     db, _state, content = game
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    offstage = next(c for c in content.characters.values()
+                    if c.name != minister.name and c.faction == minister.faction
+                    and c.office_type not in ("后宫", "宗藩"))
+    active = next(c for c in content.characters.values()
+                  if c.name not in {minister.name, offstage.name}
+                  and c.faction == minister.faction
+                  and c.office_type not in ("后宫", "宗藩"))
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?",
+        (offstage.name,),
+    )
+    db.conn.execute(
+        "UPDATE characters SET status='active', office='翰林院编修', reason_code='' WHERE name=?",
+        (active.name,),
+    )
+    db.conn.commit()
     captured = {}
 
     def fake_agent(**kwargs):
@@ -627,4 +643,7 @@ def test_final_minister_context_teaches_heard_for_selection_as_recovery_candidat
 
     rendered = "\n".join(captured["instructions"])
     assert "荐起复" in rendered
+    assert offstage.name in rendered
+    assert active.name in rendered
+    assert "荐在职作破格差遣" in rendered
     assert "居家、致仕、削籍或听用候铨" in rendered

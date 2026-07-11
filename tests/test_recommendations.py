@@ -63,15 +63,14 @@ def test_adopted_recommendation_is_an_auditable_event_after_restore(game):
     assert events[0]["target_office"] == "巡盐御史"
 
 
-def test_minister_recommend_tool_preassembles_two_candidate_types(game):
+def test_minister_tools_only_submit_recommendations(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
     tools = {tool.__name__: tool for tool in build_minister_tools(
         minister, type("Context", (), {"db": db, "state": state})()
     )}
-    listing = tools["list_recommendable_persons"]()
-    assert "起复" in listing
-    assert "破格差遣" in listing
+    assert "list_recommendable_persons" not in tools
+    assert "recommend_person" in tools
 
 
 def test_recommendation_appointment_preserves_kind_and_restores_both_types(game):
