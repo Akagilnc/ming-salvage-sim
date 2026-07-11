@@ -422,6 +422,7 @@
   ],
   "office_knowledge_domains": {
     "内阁": ["court", "treasury", "personnel"],
+    "吏部": ["personnel"],
     "户部": ["treasury"],
     "兵部": ["military", "regional"],
     "工部": ["construction"],
