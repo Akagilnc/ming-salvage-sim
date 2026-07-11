@@ -1049,7 +1049,10 @@ class GameSession:
         augmented = message
         try:
             knowledge = self.db.get_character_knowledge(self.state, character.name)
-            if any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情", "查访")):
+            if (
+                is_inner_court_attendant(character)
+                and any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情", "查访"))
+            ):
                 # The report is written to the durable, character-scoped
                 # knowledge source before rebuilding the projection.  This
                 # prevents a keyword hit from injecting a global snapshot into

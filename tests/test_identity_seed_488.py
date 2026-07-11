@@ -47,12 +47,30 @@ def test_identity_and_seed_guilt_survive_restore(game):
     assert json.loads(content.characters["魏忠贤"].seed_guilt) == guilt
 
 
-def test_all_74_seed_roster_entries_are_persisted(game):
+_DIG_7_REQUIRED_SEED_NAMES = {
+    "韩爌", "张瑞图", "来宗道", "施凤来", "黄立极", "王绍徽", "毕自严", "杨嗣昌",
+    "温体仁", "钱龙锡", "刘鸿训", "钱谦益", "李标", "孙承宗", "崔呈秀", "王在晋",
+    "徐光启", "袁可立", "周延儒", "倪元璐", "黄道周", "曹化淳", "王体乾", "王承恩",
+    "魏忠贤", "田尔耕", "许显纯", "李若琏", "客氏", "袁崇焕", "曹文诏", "祖大寿",
+    "满桂", "赵率教", "王之臣", "毛文龙", "阎鸣泰", "洪承畴", "孙传庭", "卢象升",
+    "史可法", "吴三桂", "左良玉", "高起潜", "孙元化", "陈新甲", "傅宗龙", "丁启睿",
+    "朱常洵", "朱常瀛", "朱由崧", "懿安皇后", "张延登", "吴甡", "吴昌时", "张凤翼",
+    "朱燮元", "邹维琏", "练国事", "李待问", "焦源溥", "曾樱", "余大成", "王尊德",
+    "郑芝龙", "何腾蛟", "瞿式耜", "郑成功", "张煌言", "孔有德", "耿仲明", "尚可喜",
+    "朱由榔", "朱术桂",
+}
+
+
+def test_required_dig_7_seed_roster_entries_are_persisted(game):
     db, state, content = game
     roster = load_json_asset("characters.json")["characters"]
     seeded = [raw for raw in roster if "identity" in raw]
-    assert len(seeded) == 74
-    for raw in seeded:
+    seeded_by_name = {raw["name"]: raw for raw in seeded}
+    # dig-7's 74-person substrate remains mandatory; later approved roster
+    # additions may also carry identity rather than weakening that baseline.
+    assert _DIG_7_REQUIRED_SEED_NAMES <= seeded_by_name.keys()
+    for name in _DIG_7_REQUIRED_SEED_NAMES:
+        raw = seeded_by_name[name]
         character = content.characters[raw["name"]]
         row = db.conn.execute(
             "SELECT identity, seed_guilt FROM characters WHERE name=?", (character.name,)

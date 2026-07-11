@@ -37,6 +37,45 @@ def safe_historical_text(text: object, kind: str = "历史记录") -> str:
     return rendered
 
 
+_AUDIENCE_ABSTRACT_BANDS = {
+    "民心": ("堪忧", "堪忧", "尚可", "稳固", "拥戴"),
+    "动乱": ("低", "渐起", "中等", "高", "已炽"),
+    "皇威": ("低迷", "不足", "尚可", "隆重", "极盛"),
+    "忠诚": ("疏离", "可疑", "平常", "可靠", "深厚"),
+    "能力": ("欠熟", "平常", "能任", "干练", "卓异"),
+    "操守": ("不堪", "可议", "平常", "端谨", "清正"),
+    "清廉": ("不堪", "可议", "平常", "端谨", "清正"),
+    "胆略": ("怯弱", "谨慎", "平常", "果敢", "雄健"),
+    "满意度": ("不满", "冷淡", "平常", "顺应", "拥戴"),
+    "朝势": ("低", "偏低", "平常", "偏高", "强盛"),
+    "军力": ("低", "偏低", "平常", "偏高", "强盛"),
+    "财力": ("低", "偏低", "平常", "偏高", "充裕"),
+    "士气": ("低迷", "不足", "平常", "振作", "高涨"),
+    "训练": ("生疏", "不足", "平常", "纯熟", "精练"),
+    "装备": ("匮乏", "短缺", "尚可", "精良", "充足"),
+    "火器": ("匮乏", "短缺", "尚可", "精良", "充足"),
+    "补给": ("断绝", "吃紧", "尚可", "充足", "丰裕"),
+    "进度": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
+    "进展": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
+}
+
+
+def qualitative_audience_text(text: object, kind: str = "见闻记录") -> str:
+    """Translate labeled abstract axes before applying the shared P4 rejector."""
+    rendered = str(text or "")
+    names = "|".join(re.escape(name) for name in _AUDIENCE_ABSTRACT_BANDS)
+    pattern = re.compile(
+        rf"({names})\s*(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
+        r"(?:[:：=]\s*|(?:由|为|达|至|是|从)\s*|(?=[-+]?\d))"
+        r"([-+]?\d+(?:\.\d+)?)(?:\s*/\s*100|\s*%)?",
+        re.IGNORECASE,
+    )
+    def replace(match: re.Match[str]) -> str:
+        name, value = match.groups()
+        return f"{name}{qualitative_band(value, _AUDIENCE_ABSTRACT_BANDS[name])}"
+    return safe_historical_text(pattern.sub(replace, rendered), kind)
+
+
 def qualitative_bucket(
     value: object,
     cutoffs: tuple[int, ...],

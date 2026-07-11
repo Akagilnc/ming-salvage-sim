@@ -62,7 +62,7 @@ def test_knowledge_exclusion_reads_current_office_without_nameerror(
 
 
 def test_knowledge_projects_gazette_and_chapter_sources_per_character(game):
-    """同一份公共叙事中的密事不能借原始邸报/章节副本泄漏。"""
+    """显式公开 archive counterpart 与受限 source 各自按来源投影。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
@@ -93,12 +93,12 @@ def test_knowledge_projects_gazette_and_chapter_sources_per_character(game):
     )
 
     assert public_marker in excluded_text
-    assert secret_marker not in excluded_text
+    assert secret_marker in excluded_text
     assert secret_marker in knower_text
 
 
 def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
-    """受限事项来自 source 表时，聚合邸报仍保留公开事项但不泄密。"""
+    """显式公开 archive 不因另一条受限 source 而被整体吞掉。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
@@ -134,12 +134,12 @@ def test_knowledge_projects_mixed_archive_from_durable_source_scope(game):
     )
 
     assert public_marker in excluded_text
-    assert secret_marker not in excluded_text
+    assert secret_marker in excluded_text
     assert secret_marker in knower_text
 
 
-def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
-    """章节改写不是来源边界；受限事项必须在改写后仍不可见。"""
+def test_explicit_public_archive_counterpart_is_not_suppressed_by_restricted_source(game):
+    """archive writer 明确标为公开的正文有独立 source，不能被同回合密源吞掉。"""
     db, state, content = game
     ministers = [
         character for character in content.characters.values()
@@ -163,8 +163,8 @@ def test_rewritten_archive_cannot_reintroduce_restricted_source(game):
         item.get("body", "")
         for item in db.get_character_knowledge(state, excluded.name)["public_events"]
     )
-    assert "有人暗中安排了不应知晓的事务" not in excluded_text
-    assert "宫中另有暗流" not in excluded_text
+    assert "有人暗中安排了不应知晓的事务" in excluded_text
+    assert "宫中另有暗流" in excluded_text
 
 
 def test_archive_write_materializes_unmirrored_source_scope(game):

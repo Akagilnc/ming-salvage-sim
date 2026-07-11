@@ -1578,7 +1578,17 @@ class WebGame:
         action_intent_future = self.session._start_cli_action_intent(character, text)
         run_output = None
         prompt_builder = getattr(self.session, "_audience_prompt_for_message", None)
-        agent_prompt = prompt_builder(text) if prompt_builder is not None else text
+        if prompt_builder is None:
+            agent_prompt = text
+        else:
+            # The session audience seam is per-character: passing only the
+            # message makes a web-streamed question bypass that perspective.
+            try:
+                agent_prompt = prompt_builder(text, character)
+            except TypeError:
+                # Narrow compatibility for lightweight legacy test doubles;
+                # the production GameSession accepts the character argument.
+                agent_prompt = prompt_builder(text)
         stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
         for event in stream:
             content = getattr(event, "content", None)
@@ -1647,10 +1657,15 @@ class WebGame:
                             self.state.turn, character.name,
                             payload={"text": draft_text, "actor": character.name},
                         )
-                elif tool_name == "propose_appointment" or res.startswith("__pending_appointment__"):
+                elif (
+                    tool_name == "propose_appointment"
+                    or res.startswith("__pending_appointment__")
+                    or res.startswith("__pending_recommendation__")
+                ):
                     if confirmation_turn or explicit_draft_prefix or explicit_secret_prefix:
                         continue
-                    payload_json = res.removeprefix("__pending_appointment__").strip()
+                    payload_json = res.removeprefix("__pending_recommendation__")
+                    payload_json = payload_json.removeprefix("__pending_appointment__").strip()
                     if not payload_json:
                         args = getattr(tool_exec, "arguments", {}) or getattr(tool_exec, "tool_args", {}) or {}
                         payload_json = json.dumps(args, ensure_ascii=False)
