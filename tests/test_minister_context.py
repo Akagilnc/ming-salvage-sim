@@ -537,6 +537,25 @@ def test_inspect_treasury_ledger_honors_account_and_turn_window(game):
     assert "过期流水" not in rendered
 
 
+def test_inspect_treasury_ledger_respects_treasury_knowledge_domain(game):
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.conn.execute(
+        "INSERT INTO economy_ledger "
+        "(turn,year,period,account,delta,balance_after,category,reason) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (1, 1627, 10, "国库", 987654, 1234567, "test", "不得越权见到的全局流水"),
+    )
+    db.conn.commit()
+
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+    rendered = tools["inspect_treasury_ledger"](account="国库", turns=24)
+
+    assert rendered == "本职见闻未载此项。"
+    assert "不得越权见到的全局流水" not in rendered
+    assert "1234567" not in rendered
+
+
 def test_final_minister_context_rejects_injected_abstract_values(game):
     """最终 instructions seam 不得把抽象分数重新带回上下文。"""
     db, _state, content = game

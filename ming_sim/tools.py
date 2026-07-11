@@ -385,35 +385,22 @@ def build_minister_tools(character: Character, context: CourtContext,
         return scoped_world("treasury")
 
     def inspect_treasury_ledger(account: str = "内库", turns: int = 6) -> str:
-        """查国库或内库的历史流水明细（每笔收支原因、金额、余额）。
+        """查本职见闻中的国库或内库流水摘要。
         涉及内库/国库调动来源、历史拨款、查抄收益、赏赐开销时调用。
         account: "国库" 或 "内库"；turns: 查最近几回合（默认6）。
         """
         acc = (account or "内库").strip()
         if acc not in {"国库", "内库"}:
             return "account 须为「国库」或「内库」。"
-        try:
-            t = max(1, min(24, int(turns)))
-        except (TypeError, ValueError):
-            t = 6
-        if not hasattr(context.db, "conn"):
-            return filter_domain("treasury", acc)
-        start_turn = max(0, int(context.state.turn) - t + 1)
-        rows = context.db.conn.execute(
-            "SELECT turn, year, period, delta, balance_after, category, reason "
-            "FROM economy_ledger WHERE account=? AND turn>=? AND turn<=? "
-            "ORDER BY turn DESC, id DESC",
-            (acc, start_turn, int(context.state.turn)),
-        ).fetchall()
-        if not rows:
-            return f"见闻中未载{acc}近{t}回合流水。"
-        lines = [f"【{acc}近{t}回合流水】"]
-        for row in rows:
-            lines.append(
-                f"{row['year']}年{row['period']}月：{row['delta']:+d}（{row['reason'] or row['category']}；"
-                f"余额{row['balance_after']}）"
-            )
-        return "\n".join(lines)
+        # The ledger read is owned by the role-scoped knowledge projection.
+        # Never reopen economy_ledger here: doing so bypasses the office gate.
+        from ming_sim.knowledge import build_character_treasury_ledger
+        rendered = build_character_treasury_ledger(
+            context.db, context.state, character.name, acc, turns,
+        )
+        if not rendered:
+            return "本职见闻未载此项。"
+        return rendered
 
     def audit_tax_arrears(target: str = "各省积欠") -> str:
         """清查积欠、估算可追收入库。"""
