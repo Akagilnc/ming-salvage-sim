@@ -53,6 +53,8 @@ import {
   modelIdForSlug,
   modelFamilyForSlug,
   modelIsStrongLeg,
+  opencodeAuthMount,
+  appendGlmKeyEnv,
   parseBlockedBy,
   parseCoderSelfReport,
   parseSubIssueCount,
@@ -70,6 +72,7 @@ import {
   routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
+  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
@@ -770,6 +773,10 @@ describe("realBackend resolveModelSlug", () => {
       provider: "opencode",
       model: "grok-4.5",
     });
+    expect(resolveModelSlug("glm-5.2")).toEqual({
+      provider: "opencode",
+      model: "opencode-go/glm-5.2",
+    });
   });
 
   it("declares the provider factories the registry can target (incl. #807 grok)", () => {
@@ -814,6 +821,23 @@ describe("realBackend resolveModelSlug", () => {
 
   it("fails closed for unknown model slugs", () => {
     expect(() => resolveModelSlug("gpt")).toThrow(/unknown model slug/);
+  });
+});
+
+describe("#420 OpenCode runtime auth", () => {
+  it("mounts only auth.json read-only, leaving SQLite state container-local", () => {
+    expect(opencodeAuthMount("/home/dev")).toEqual({
+      hostPath: "/home/dev/.local/share/opencode/auth.json",
+      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+      readonly: true,
+    });
+  });
+
+  it("passes GLM_KEY only from the dispatch environment", () => {
+    vi.stubEnv("GLM_KEY", "test-secret-never-logged");
+    const env: Record<string, string> = {};
+    appendGlmKeyEnv(env);
+    expect(env.GLM_KEY).toBe("test-secret-never-logged");
   });
 });
 

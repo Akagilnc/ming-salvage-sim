@@ -165,6 +165,12 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "opencode",
     strongLeg: true,
   },
+  "glm-5.2": {
+    provider: "opencode",
+    model: "opencode-go/glm-5.2",
+    family: "opencode",
+    strongLeg: true,
+  },
   // `agy` is retained as the route-facing family/slug for compatibility, but
   // it is now backed by the real OpenCode executor instead of a non-runnable
   // CMR-only label.
