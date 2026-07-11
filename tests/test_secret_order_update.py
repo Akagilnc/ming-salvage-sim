@@ -57,7 +57,7 @@ def test_update_by_id_preserves_tags_when_none(game):
     assert _j.loads(row["tags"]) == ["辽东", "军饷"]   # 原标签保留
 
 
-def test_update_by_id_refreshes_durable_knowledge_source(game):
+def test_update_by_id_refreshes_durable_knowledge_source_after_restore(game):
     db, state, _ = game
     oid = db.create_secret_order(state, "保签官", "旧标题", "旧内容", ["辽东"])
     refreshed = []
@@ -73,6 +73,26 @@ def test_update_by_id_refreshes_durable_knowledge_source(game):
     ).fetchone()
     assert dict(source) == {"title": "新标题", "body": "新内容"}
     assert refreshed == ["保签官"]
+
+    # The durable source, rather than a live registry cache, is the restore
+    # boundary.  A reopened save must project the revised order to its assignee.
+    path = db.path
+    content = db.content
+    db.close()
+    from ming_sim.db import GameDB
+    restored = GameDB(path, content)
+    restored_state = restored.load_state()
+    knowledge = restored.get_character_knowledge(restored_state, "保签官")
+    source = restored.conn.execute(
+        "SELECT title, body FROM character_knowledge_sources WHERE source_id=?",
+        (f"secret_order:{oid}",),
+    ).fetchone()
+    assert dict(source) == {"title": "新标题", "body": "新内容"}
+    assert any(
+        item["title"] == "新标题" and item["body"] == "新内容"
+        for item in knowledge["events"]
+    )
+    restored.close()
 
 
 def test_update_by_id_noop_on_non_active(game):
