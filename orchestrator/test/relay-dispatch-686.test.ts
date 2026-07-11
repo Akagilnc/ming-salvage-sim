@@ -928,7 +928,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
   }
 
   function quotaWaitError(
-    step: "S9" | "S2",
+    step: "S9" | "S3" | "S2",
     resetAt: Date,
     pool = "grok",
   ): QuotaWaitForResetError {
@@ -1549,6 +1549,122 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       }));
       expect(coderModels).toEqual(["grok-4.5", "gpt-5.6-sol"]);
       expect(reviewerModels).toContain("opus");
+    } finally {
+      if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
+      else process.env.ORCHESTRATOR_ROUTE = previousRoute;
+      if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
+      else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
+    }
+  });
+
+  it("S3 reviewer quota relay rejects sol when sol already owns the coder slot", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-sol-reviewer-wall-"));
+    const worktree: WorktreeHandle = {
+      branch: "feat/686-sol-reviewer-wall",
+      base: "main",
+      path: tmp,
+    };
+    const resetAt = new Date(NOW.getTime() + 45 * 60 * 1000);
+    const reviewerModels: string[] = [];
+
+    class SolReviewerWallBackend implements Backend {
+      async smokeModelRoute(route: any): Promise<any> {
+        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async cleanResidue(): Promise<void> {}
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5 → sol@med",
+        };
+      }
+      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+        return {
+          number: n,
+          body: "Coder-Rec: grok-4.5 → sol@med",
+          comments: [],
+          agentBrief: "",
+        };
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      }
+      async writeSnapshot(): Promise<void> {}
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async push(): Promise<void> {}
+      async writeLedger(): Promise<void> {}
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "coder" && spec.id === "S2") {
+          if (spec.model === "grok-4.5") {
+            throw quotaWaitError("S2", resetAt);
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer" && spec.id === "S3") {
+          reviewerModels.push(spec.model);
+          throw quotaWaitError("S3", resetAt);
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+    }
+
+    const previousRoute = process.env.ORCHESTRATOR_ROUTE;
+    const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
+    process.env.ORCHESTRATOR_ROUTE = "normal";
+    process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+    try {
+      const result = await runOrchestrator({
+        issueNumber: 686,
+        backend: new SolReviewerWallBackend(),
+        relayPools: [
+          {
+            id: "grok-build",
+            status: "limited",
+            resetAt,
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["grok-4.5"],
+          },
+          {
+            id: "codex-5h",
+            status: "live",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["sol@med"],
+          },
+        ],
+        now: () => NOW,
+      });
+
+      expect(result.status).toBe("escalate");
+      expect(result.stepLedger).toContainEqual(expect.objectContaining({
+        event: "quota_wait_for_reset",
+        step: "S3",
+      }));
+      expect(result.stepLedger).not.toContainEqual(expect.objectContaining({
+        event: "relay_baton_handoff",
+        step: "S3",
+      }));
+      expect(reviewerModels).toEqual(["opus"]);
     } finally {
       if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
       else process.env.ORCHESTRATOR_ROUTE = previousRoute;
