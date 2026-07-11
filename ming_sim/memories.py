@@ -274,6 +274,9 @@ def record_chapter_memory(
         head = _short(narrative, 100)
         body = f"本月：{effect}。{head}".strip("。") + "。"
 
-    memory_id = db.save_chapter_memory(state, title=title, body=body, tags=tags)
+    memory_id = db.save_chapter_memory(
+        state, title=title, body=body, tags=tags,
+        knowledge_items=db.knowledge_items_for_turn(state.turn),
+    )
     tlog(f"[chapter-memory] saved id={memory_id} turn={state.turn}")
     return memory_id

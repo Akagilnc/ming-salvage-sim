@@ -30,6 +30,37 @@ def _qualitative(text: object) -> str:
     return re.sub(r"[-+]?\d+(?:\.\d+)?%?", "若干", value)
 
 
+def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:
+    """Render one character's projected knowledge for an audience prompt.
+
+    This is the single presentation seam for both live session prompts and
+    minister-agent prompts.  The projection has already enforced access
+    control; this function only de-duplicates sources, orders them, and caps
+    the prompt material.
+    """
+    lines = [f"【{character_name}此刻所知的天下（仅此人物见闻）】"]
+    for key, value in (knowledge.get("world") or {}).items():
+        if value:
+            lines.append(f"{key}：{value}")
+    by_source = {}
+    for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
+        source_id = str(item.get("source_id") or "")
+        key = source_id or (
+            int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
+        )
+        by_source[key] = item
+    recent_items = sorted(
+        by_source.values(),
+        key=lambda item: (int(item.get("turn") or 0), str(item.get("source_id") or "")),
+    )[-20:]
+    for item in recent_items:
+        title = item.get("title") or "旧闻"
+        body = item.get("body") or ""
+        if body:
+            lines.append(f"- {title}：{body}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def _role_roster(db: Any, office_type: str) -> str:
     """Return only the current roster for this office type.
 

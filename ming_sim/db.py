@@ -7391,7 +7391,10 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
         )
-        for item in knowledge_items or ():
+        items = knowledge_items
+        if items is None:
+            items = self.knowledge_items_for_turn(state.turn)
+        for item in items:
             self.record_public_knowledge_event(
                 state,
                 str(item.get("title") or "邸报事项"),
@@ -7455,7 +7458,10 @@ class GameDB:
                 (str(body or ""), memory_id),
             )
             self.conn.commit()
-        for item in knowledge_items or ():
+        items = knowledge_items
+        if items is None:
+            items = self.knowledge_items_for_turn(state.turn)
+        for item in items:
             self.record_public_knowledge_event(
                 state,
                 str(item.get("title") or title or "朝局事项"),
@@ -7464,6 +7470,33 @@ class GameDB:
                 excluded_names=item.get("excluded_names") or (),
             )
         return memory_id
+
+    def knowledge_items_for_turn(self, turn: int) -> List[Dict[str, object]]:
+        """Return source-scoped public material for archive projection.
+
+        Aggregate archives are presentation artifacts.  Replaying the durable
+        public rows here keeps source_id and explicit exclusions attached to
+        each item when a turn report or chapter is saved.
+        """
+        rows = self.conn.execute(
+            "SELECT turn, year, period, title, body, source_id, excluded_names "
+            "FROM character_knowledge_events WHERE character_name='' AND turn=? "
+            "ORDER BY id",
+            (int(turn),),
+        ).fetchall()
+        items: List[Dict[str, object]] = []
+        for row in rows:
+            try:
+                excluded_names = json.loads(row["excluded_names"] or "[]")
+            except (TypeError, ValueError):
+                excluded_names = []
+            if not isinstance(excluded_names, list):
+                excluded_names = []
+            items.append({
+                "title": row["title"], "body": row["body"],
+                "source_id": row["source_id"], "excluded_names": excluded_names,
+            })
+        return items
 
     def list_chapter_memories(
         self, upto_turn: Optional[int] = None, recent: Optional[int] = None
