@@ -10,6 +10,7 @@ from ming_sim.constants import TURN_UNIT
 from ming_sim.context import _ctx as _content_ctx, state_context
 from ming_sim.models import FRONT_HALF_DONE_PHASES, Character, CourtContext
 from ming_sim.qualitative import qualitative_band, safe_historical_text
+from ming_sim.token_stats import tlog
 
 _STATUS_CN = {
     "active": "在朝",
@@ -81,7 +82,6 @@ _ABSTRACT_STOP_FIELDS = {
     "training": "训练",
     "equipment": "装备",
     "firearm_equipment": "火器",
-    "military_strength": "军力",
     "corruption": "贪腐",
     "grain_security": "粮情",
     "city_level": "城防",
@@ -184,7 +184,13 @@ def _commitment_tool_fields(db, state, row) -> str:
     from ming_sim.issues import commitment_display_text, commitment_progress_payload
 
     progress = commitment_progress_payload(db, state, row) or {}
-    progress_text = commitment_display_text(progress, row) if progress else "（暂无进展）"
+    # Keep the durable elapsed-month marker in the tool contract; deadline
+    # prose alone cannot tell a minister whether an undertaking has begun.
+    try:
+        elapsed = max(0, int(state.turn) - int(row["turn"]))
+    except (KeyError, TypeError, ValueError):
+        elapsed = 0
+    progress_text = f"已履行{elapsed}月"
     stop_condition = _qualitative_stop_condition(row["stop_condition"] if "stop_condition" in keys else "")
     try:
         end_turn = int(row["end_turn"] if "end_turn" in keys else 0)

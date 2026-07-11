@@ -19,6 +19,7 @@ from ming_sim.context import _faction_band, _identity_band, _identity_bucket
 from ming_sim.registry import (
     build_building_brief,
     build_court_brief,
+    build_last_gazette_brief,
     build_memory_brief,
     build_region_brief,
     create_minister_agent,

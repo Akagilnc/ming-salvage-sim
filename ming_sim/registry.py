@@ -205,7 +205,8 @@ def build_memory_brief(character: Character, context: CourtContext) -> str:
     prev_turn = int(context.state.turn) - 1
     knowledge = context.db.get_character_knowledge(context.state, character.name)
     chapters = [c for c in knowledge.get("public_events", [])
-                if c.get("kind") == "chapter_summary" and int(c.get("turn") or 0) != prev_turn]
+                if (c.get("kind") == "chapter_summary" or str(c.get("source_id") or "").startswith("chapter_source:"))
+                and int(c.get("turn") or 0) != prev_turn]
     if not chapters:
         return ""
     lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]
@@ -292,6 +293,7 @@ def build_building_brief(context: CourtContext) -> str:
             "SELECT b.name AS name, b.category AS category, "
             "COALESCE(r.name, b.region_id) AS region_name, "
             "b.level AS level, b.condition AS condition, "
+            "b.risk AS risk, "
             "b.output_metric AS output_metric, b.output_amount AS output_amount "
             "FROM buildings b LEFT JOIN regions r ON r.id = b.region_id "
             "ORDER BY b.region_id, b.category"
@@ -485,7 +487,10 @@ def create_minister_agent(
     # game_world / minister_agent prompt、character 档案 跨月完全相同 → DeepSeek 前缀缓存命中。
     # 每月动态上下文（钱粮、奏报、地区、军队、派系）由 MinisterRegistry 在 agent 创建后通过首轮
     # user message 喂入，不污染 system prompt。
-    c = _ctx()
+    # The caller owns the live content/state pair.  Requiring the module-level
+    # registry binding here makes this public construction seam fail in fresh
+    # sessions (and lets a stale binding win over a restored context).
+    c = context.db.content or _ctx()
     is_consort = character.office_type == "后宫"
     if is_consort:
         # 从 DB 取调教记录
@@ -512,7 +517,7 @@ def create_minister_agent(
         # minister_agent / character 静态段仍命中前缀缓存。旧 registry 全知 builders
         # 保留给其他调用方，但不能从此处绕过角色见闻边界。
         active_char_count = sum(
-            1 for ch in _ctx().characters.values()
+            1 for ch in c.characters.values()
             # 排除后宫+宗藩：本计数是 build_court_roster↔index 切换阈值，须与两 builder 同口径
             # （都跳宗藩），否则宗藩多时虚高、误切索引路丢全名册上下文（CodeRabbit PR#130 R2 Minor）。
             if ch.office_type not in ("后宫", "宗藩")
@@ -582,7 +587,7 @@ class MinisterRegistry:
         self.agno_db = agno_db
         self.context = context
         self.agents: Dict[str, Agent] = {}
-        characters = _ctx().characters
+        characters = c.characters
         self.session_ids: Dict[str, str] = {
             name: f"minister-{name}-turn-{context.state.turn}"
             for name in characters
@@ -618,7 +623,7 @@ class MinisterRegistry:
         return agent
 
     def refresh(self, character_name: str) -> None:
-        character = _ctx().characters.get(character_name)
+        character = c.characters.get(character_name)
         if character is None:
             return
         self.agents[character.name] = self._create(character)
