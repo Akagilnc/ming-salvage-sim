@@ -198,6 +198,25 @@ describe("#684 worker monitor handles", () => {
     }
   });
 
+  it("exit 0 without a usable sidecar is retry telemetry, not malformed terminal input", () => {
+    const dir = mkdtempSync(join(tmpdir(), "orch-826-sidecar-"));
+    try {
+      const result = workerResultFromMonitorSidecar(
+        baseHandle({
+          pid: process.pid,
+          logPath: join(dir, "S2.log"),
+          resultPath: join(dir, "S2.result.json"),
+        }),
+        0,
+      );
+
+      expect(result).toMatchObject({ kind: "failed" });
+      expect(isMissingMonitorSidecarResult(result)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("dispatchMonitoredCliWorker atomically returns pid/log/pool/signal/instance handle", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-684-dispatch-"));
     try {

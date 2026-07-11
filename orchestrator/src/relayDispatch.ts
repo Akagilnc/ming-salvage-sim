@@ -59,6 +59,23 @@ const blockedSchema = z
   })
   .strict();
 
+const resourceSignalSchema = z
+  .object({
+    resource: z.literal(true),
+    phase: z.enum(["build", "clear"]),
+    state_summary: nonEmpty,
+    remaining: nonEmpty,
+  })
+  .strict();
+
+const decisionGateSignalSchema = z
+  .object({
+    decision_gate: z.literal(true),
+    state_summary: nonEmpty,
+    remaining: nonEmpty.optional(),
+  })
+  .strict();
+
 export type RelayTagOutcome =
   | {
       readonly kind: "phase_complete";
@@ -72,11 +89,17 @@ export type RelayTagOutcome =
       readonly state_summary: string;
       readonly remaining?: string;
     }
+  | {
+      readonly kind: "decision_gate";
+      readonly state_summary: string;
+      readonly remaining?: string;
+    }
   | { readonly kind: "malformed"; readonly reason: string };
 
 /**
- * Parse the worker's `<relay>{…}</relay>` terminal. Shape-validated and
- * fail-closed: malformed ≠ phase_complete. Only the LAST tag is read.
+ * Parse the worker's `<relay>{…}</relay>` terminal. Resource relay and human
+ * decision are explicit signal bits; their prose is opaque context. Legacy
+ * #686 shapes remain readable during the rollout. Malformed tags are ignored.
  */
 export function parseRelayTag(stdout: string): RelayTagOutcome {
   const re = /<relay>([\s\S]*?)<\/relay>/g;
@@ -93,6 +116,25 @@ export function parseRelayTag(stdout: string): RelayTagOutcome {
   }
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "relay tag was not a JSON object" };
+  }
+  const resource = resourceSignalSchema.safeParse(parsed);
+  if (resource.success) {
+    return {
+      kind: "phase_complete",
+      phase: resource.data.phase,
+      state_summary: resource.data.state_summary,
+      remaining: resource.data.remaining,
+    };
+  }
+  const decisionGate = decisionGateSignalSchema.safeParse(parsed);
+  if (decisionGate.success) {
+    return {
+      kind: "decision_gate",
+      state_summary: decisionGate.data.state_summary,
+      ...(decisionGate.data.remaining !== undefined
+        ? { remaining: decisionGate.data.remaining }
+        : {}),
+    };
   }
   const blocked = blockedSchema.safeParse(parsed);
   if (blocked.success) {

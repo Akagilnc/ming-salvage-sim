@@ -392,18 +392,7 @@ export function isBlockingFinding(f: Finding): boolean {
   );
 }
 
-/**
- * A coder step output is valid iff it is `{kind:'coder', committed:boolean,
- * commitsAdded:number}` AND `commitsAdded` is a non-negative integer CONSISTENT
- * with `committed`:
- *   - committed === true  ⇒ commitsAdded >= 1
- *   - committed === false ⇒ commitsAdded === 0
- *
- * (integ-cmr base r2, finding B: the old guard only checked `committed` was a
- * boolean, so `{committed:true, commitsAdded:0}` or a missing/garbage
- * commitsAdded slipped through. v0.1 validates the field contract; deriving the
- * real count from git is #256.)
- */
+/** Validate coder envelope shape without adjudicating its self-reported commit fields. */
 export function isValidCoderOutput(o: StepOutput | undefined): o is CoderOutput {
   if (o == null || typeof o !== "object") return false;
   if (o.kind !== "coder") return false;
@@ -412,14 +401,6 @@ export function isValidCoderOutput(o: StepOutput | undefined): o is CoderOutput 
   // both non-empty strings). A garbage escalate is a contract violation even if
   // the happy-path fields are present.
   if (!isValidEscalation(c.escalate)) return false;
-  if (typeof c.committed !== "boolean") return false;
-  if (
-    typeof c.commitsAdded !== "number" ||
-    !Number.isInteger(c.commitsAdded) ||
-    c.commitsAdded < 0
-  ) {
-    return false;
-  }
   if (
     c.repairEvidence !== undefined &&
     !isValidRepairEvidence(c.repairEvidence)
@@ -427,8 +408,7 @@ export function isValidCoderOutput(o: StepOutput | undefined): o is CoderOutput 
     return false;
   }
   if (!isValidLegalRefuseFields(c)) return false;
-  // Consistency: committed iff at least one commit was added.
-  return c.committed ? c.commitsAdded >= 1 : c.commitsAdded === 0;
+  return true;
 }
 
 function isValidRefuseRecord(r: unknown): r is ReviewFixRefuseRecord {

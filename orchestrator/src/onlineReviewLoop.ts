@@ -49,6 +49,7 @@ import {
   fixerLedgerFixCommitSha,
   fixerLedgerOutputProceeds,
   fixerProceedsToVerify,
+  isValidFixerResult,
 } from "./reviewLoopOutcome.js";
 import {
   applyVerifySideEffects,
@@ -1076,13 +1077,13 @@ export function reconstructOnlineReviewLandingForResume(input: {
   };
 }
 
-/** Stop summary when fixer reports committed:false (nothing to fix) (#600 r22). */
+/** Stop summary for the verifier's explicit decision-gate signal. */
 export function onlineReviewFixerNothingToFixStopSummary(): StopSummary {
   return decisionGateParkStopSummary({
     summary:
-      "online review fixer reported nothing to fix (committed:false) while verify still has remaining findings",
+      "online review verifier raised an explicit decision-gate signal",
     repairHint:
-      "answer the decision gate or resolve remaining findings manually, then rerun the online review loop",
+      "answer the decision gate, then rerun the online review loop",
   });
 }
 
@@ -1615,6 +1616,14 @@ export async function runOnlineReviewLoopStage(
       };
     }
     verify = recheckOutcome;
+    if (verify.terminalState === "decision_gate_raised") {
+      return {
+        ok: false,
+        terminalState: "decision_gate_raised",
+        round,
+        stopSummary: onlineReviewFixerNothingToFixStopSummary(),
+      };
+    }
     if (!recheckConvergenceConfirmsFixMarkedKeys(verify, landing)) {
       return {
         ok: false,
@@ -1737,60 +1746,52 @@ export async function runOnlineReviewLoopStage(
     recheckFixMarkedFindingIdentityKeys = fixKeys;
     recheckFixMarkedFindingThreads = fixMarkedFindingThreads;
 
-    let fixerOutput: FixerResult;
+    let fixerOutput: FixerResult | undefined;
     try {
       fixerOutput = await dispatch.dispatchFixer(landing);
+      if (!isValidFixerResult(fixerOutput)) {
+        // A malformed envelope is not a decision. Reassign this one fixer step
+        // once, then let a fresh verifier report the durable findings state.
+        console.warn("telemetry: malformed fixer envelope; re-dispatching fixer once");
+        fixerOutput = await dispatch.dispatchFixer(landing);
+        if (!isValidFixerResult(fixerOutput)) {
+          console.warn("telemetry: fixer envelope remained malformed after one re-dispatch");
+          fixerOutput = undefined;
+        }
+      }
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;
       }
       return decisionGateFromDispatchInfra(round, "fixer", err);
     }
-    if (!fixerProceedsToVerify(fixerOutput)) {
-      return {
-        ok: false,
-        terminalState: "decision_gate_raised",
-        round,
-        stopSummary: onlineReviewFixerNothingToFixStopSummary(),
-      };
-    }
-    const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
-    if (envelopeFixSha === undefined || envelopeFixSha.length === 0) {
-      return {
-        ok: false,
-        terminalState: "decision_gate_raised",
-        round,
-        stopSummary: {
-          reason: "infra_failure",
-          summary:
-            "fixer envelope missing fixCommitSha despite proceeding to verify",
-          repairHint:
-            "emit fixCommitSha on committed:true and alreadySatisfied fixer outcomes",
-        },
-      };
-    }
-    try {
-      lastFixCommitSha = dispatch.resolveFixCommitSha
-        ? await dispatch.resolveFixCommitSha(envelopeFixSha)
-        : envelopeFixSha;
-    } catch (err) {
-      if (err instanceof OnlineReviewLoopTerminal) {
-        throw err;
+    if (fixerOutput !== undefined && fixerProceedsToVerify(fixerOutput)) {
+      const envelopeFixSha = fixerEnvelopeFixCommitSha(fixerOutput);
+      if (envelopeFixSha !== undefined && envelopeFixSha.length > 0) {
+        try {
+          lastFixCommitSha = dispatch.resolveFixCommitSha
+            ? await dispatch.resolveFixCommitSha(envelopeFixSha)
+            : envelopeFixSha;
+        } catch (err) {
+          if (err instanceof OnlineReviewLoopTerminal) {
+            throw err;
+          }
+          return decisionGateFromDispatchInfra(round, "fixer", err);
+        }
+        try {
+          await dispatch.retriggerAfterFix();
+        } catch (err) {
+          if (err instanceof OnlineReviewLoopTerminal) {
+            throw err;
+          }
+          return {
+            ok: false,
+            terminalState: "decision_gate_raised",
+            round,
+            stopSummary: verifySideEffectFailureStopSummary(err),
+          };
+        }
       }
-      return decisionGateFromDispatchInfra(round, "fixer", err);
-    }
-    try {
-      await dispatch.retriggerAfterFix();
-    } catch (err) {
-      if (err instanceof OnlineReviewLoopTerminal) {
-        throw err;
-      }
-      return {
-        ok: false,
-        terminalState: "decision_gate_raised",
-        round,
-        stopSummary: verifySideEffectFailureStopSummary(err),
-      };
     }
     // #711: record this round's fix-marked keys for the next verify's priorRoundFindings.
     priorRoundFindingsAccum.push({
