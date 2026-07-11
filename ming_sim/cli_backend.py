@@ -1842,11 +1842,17 @@ def _extract_secret_order(
     # The prose fallback has no GameContent instance, so classify the stable
     # institutional vocabulary here before it becomes an explicit person key.
     # DB issuance then resolves the office target to its actual incumbents.
-    recovered_named_offices = [name for name in recovered_names if _is_secret_office_target(name)]
-    recovered_names = [name for name in recovered_names if name not in recovered_named_offices]
+    recovered_targets = [
+        (name, _canonical_secret_office_target(name)) for name in recovered_names
+    ]
+    recovered_named_offices = [office for _, office in recovered_targets if office]
+    recovered_names = [name for name, office in recovered_targets if not office]
     if recovered_names:
         excluded_names = list(dict.fromkeys([*excluded_names, *recovered_names]))
-    recovered_offices = _secret_excluded_offices_from_command(player_command)
+    recovered_offices = [
+        _canonical_secret_office_target(office) or office
+        for office in _secret_excluded_offices_from_command(player_command)
+    ]
     recovered_offices = list(dict.fromkeys([*recovered_offices, *recovered_named_offices]))
     if recovered_offices:
         excluded_offices = list(dict.fromkeys([*excluded_offices, *recovered_offices]))
@@ -1884,12 +1890,24 @@ def _secret_excluded_offices_from_command(text: str) -> List[str]:
     return offices
 
 
-def _is_secret_office_target(value: str) -> bool:
-    """Recognise canonical institutional targets in secrecy wording."""
-    return bool(re.fullmatch(
-        r"(?:吏部|户部|礼部|兵部|刑部|工部|都察院|大理寺|通政司|司礼监|内阁|东厂|锦衣卫|[\u4e00-\u9fff]{2,8}(?:尚书|侍郎|巡抚|总督|总兵))",
-        value.strip(),
-    ))
+def _canonical_secret_office_target(value: str) -> str:
+    """Return the institutional lookup key for a secrecy target, if any.
+
+    The CLI fallback has no content registry to resolve a name or alias.  It
+    therefore recognises only stable institution vocabulary, normalising
+    collective wording (``户部诸官``) to the canonical office type while
+    preserving specific office titles for the DB's issuance-time lookup.
+    """
+    target = value.strip()
+    office_types = "吏部|户部|礼部|兵部|刑部|工部|都察院|大理寺|通政司|司礼监|内阁|东厂|锦衣卫"
+    match = re.fullmatch(
+        rf"(?P<office>{office_types})(?P<collective>诸官|官员|诸司|诸人|上下|众人)?", target,
+    )
+    if match:
+        return match.group("office")
+    if re.fullmatch(r"[\u4e00-\u9fff]{2,8}(?:尚书|侍郎|郎中|员外郎|主事|巡抚|总督|总兵)", target):
+        return target
+    return ""
 
 
 def _secret_excluded_people_from_command(command: str) -> List[str]:
