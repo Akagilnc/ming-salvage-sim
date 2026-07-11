@@ -68,6 +68,9 @@ ad-hoc runner prompt text.
 4. Run the project's typecheck + the full test suite; both must be clean.
 5. Do the mandatory self-check 二连: same-pattern check + fix-introduced-bug check.
 6. Commit one coherent implementation commit on the current resident branch.
+   In your terminal coder report, set `commitsAdded` to the exact number of
+   `git commit` commands made in this worker run; report every commit when more
+   than one was necessary.
 
 When dispatched as a **coder-fix** worker, apply the INTENT gate (step 2) to every
 behaviour-changing edit before patching. Do not redesign the slice. Read the

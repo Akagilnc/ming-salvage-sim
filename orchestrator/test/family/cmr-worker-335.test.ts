@@ -779,6 +779,9 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
       protected override sh(file: string, args: string[], cwd?: string): string {
         if (file === "git" && args[0] === "checkout") return "";
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+          return "family-head-before-coder-fix";
+        }
         return super.sh(file, args, cwd);
       }
     }
