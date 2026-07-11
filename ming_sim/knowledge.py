@@ -134,6 +134,19 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "source_id": f"turn_report:{report['turn']}",
             "excluded_names": "[]",
         })
+    # Chapter memories are narrative material produced by settlement.  They are
+    # public upstream material for the same projection; the minister must never
+    # read the chapter table directly because that would bypass exclusions and
+    # the qualitative renderer above.
+    for chapter in db.list_chapter_memories(upto_turn=state.turn):
+        public_events.append({
+            "turn": int(chapter["turn"]), "year": int(chapter["year"]),
+            "period": int(chapter["period"]), "kind": "chapter_summary",
+            "title": chapter.get("title") or "朝局旧闻",
+            "body": chapter.get("body") or "",
+            "source_id": f"chapter:{chapter['turn']}",
+            "excluded_names": "[]",
+        })
     def is_excluded(row: Dict[str, object]) -> bool:
         try:
             excluded_names = json.loads(str(row.get("excluded_names") or "[]"))
