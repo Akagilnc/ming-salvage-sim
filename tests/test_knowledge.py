@@ -224,3 +224,30 @@ def test_chapter_public_counterpart_keeps_only_independent_public_sources(game):
 
     assert "公开来源标记" in counterpart
     assert "受限来源标记" not in counterpart
+
+
+def test_chapter_counterpart_never_uses_aggregate_when_sources_exist(game):
+    """已有来源边界时，章节聚合正文不能自行成为公开来源。"""
+    db, state, content = game
+    reader = next(
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    )
+    public_marker = "已立来源的公开事项"
+    unscoped_marker = "无来源的章节改写"
+    db.record_public_knowledge_event(
+        state, "公开事项", public_marker, source_id="test:source-bound-public",
+    )
+
+    db.save_chapter_memory(
+        state, "朝局", f"{public_marker}；{unscoped_marker}",
+        knowledge_items=db.knowledge_items_for_turn(state.turn),
+    )
+
+    projected = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, reader.name)["public_events"]
+    )
+    assert public_marker in projected
+    assert unscoped_marker not in projected
