@@ -1,5 +1,6 @@
 /**
- * #807 — grok-build pool provider: custom AgentProvider + registry wiring.
+ * #807 — grok-build pool provider: custom AgentProvider + registry wiring +
+ * route-smoke bash evidence (streaming-json omits tool_call events).
  */
 
 import { describe, expect, it } from "vitest";
@@ -15,6 +16,12 @@ import {
   resolveModelSlug,
   resolveModelSlugForPool,
 } from "../src/modelRegistry.js";
+import {
+  routeSmokeBashEvidenceSatisfied,
+  routeSmokeGrokTextEvidence,
+  routeSmokeToolCallIsEchoOk,
+} from "../src/realBackend.js";
+import { routeSmokeEntries, resolveRouteModels } from "../src/modelRoutes.js";
 
 describe("#807 grokAgent AgentProvider", () => {
   it("builds a headless grok command with stdin prompt (not sc.pi)", () => {
@@ -82,5 +89,60 @@ describe("#807 modelRegistry grok-build wiring", () => {
   it("agentForSlug(pool=grok-build) yields the grok CLI provider", () => {
     const agent = agentForSlug("grok-4.5", undefined, "grok-build");
     expect(agent.name).toBe("grok");
+  });
+});
+
+describe("#807 route smoke bash evidence for grok", () => {
+  it("accepts standard toolCall(bash, echo OK) for any provider", () => {
+    expect(
+      routeSmokeToolCallIsEchoOk({
+        type: "toolCall",
+        name: "bash",
+        formattedArgs: "echo OK",
+      }),
+    ).toBe(true);
+    expect(
+      routeSmokeBashEvidenceSatisfied({
+        provider: "codex",
+        sawToolCallEchoOk: true,
+        sawGrokOkText: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts grok text OK when tool_call events are absent", () => {
+    expect(routeSmokeGrokTextEvidence({ type: "text", message: "OK" })).toBe(
+      true,
+    );
+    expect(
+      routeSmokeGrokTextEvidence({ type: "text", message: "```\nOK\n```" }),
+    ).toBe(true);
+    expect(
+      routeSmokeBashEvidenceSatisfied({
+        provider: "grok",
+        sawToolCallEchoOk: false,
+        sawGrokOkText: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not let non-grok providers pass on text-only OK", () => {
+    expect(
+      routeSmokeBashEvidenceSatisfied({
+        provider: "codex",
+        sawToolCallEchoOk: false,
+        sawGrokOkText: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("routeSmokeEntries covers a route that pins the grok-4.5-build slug", () => {
+    // Force coder slot onto the explicit SuperGrok slug so smoke keys include it.
+    const route = resolveRouteModels("normal", {
+      coder: "grok-4.5-build",
+    });
+    const keys = routeSmokeEntries(route).map((e) => e.key);
+    expect(keys.some((k) => k.includes("grok-4.5-build"))).toBe(true);
+    expect(resolveModelSlug("grok-4.5-build").provider).toBe("grok");
   });
 });
