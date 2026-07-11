@@ -525,11 +525,20 @@ export interface TelemetryReviewRoundRecord extends TelemetryRecordBase {
     | "escalated"
     | "failed"
     | "malformed"
-    | "protocol_failure";
+    | "protocol_failure"
+    | "rejected";
+  /** Whether the runner accepted this review result after every terminal gate. */
+  readonly finalDisposition: "accepted" | "rejected";
   readonly findingsBySeverity: Readonly<Record<Finding["severity"], number>> | null;
-  readonly findingIdentityKeys: readonly string[] | null;
-  readonly newFindingIdentityKeys: readonly string[] | null;
-  readonly recurringFindingIdentityKeys: readonly string[] | null;
+  /**
+   * Identity recurrence is an exact match on category + location + normalized
+   * claim_quote. It is not semantic deduplication: wording or line drift makes
+   * the finding look new.
+   */
+  readonly identityMatch: "exact_identity_match";
+  readonly exactIdentityMatchKeys: readonly string[] | null;
+  readonly newExactIdentityMatchKeys: readonly string[] | null;
+  readonly recurringExactIdentityMatchKeys: readonly string[] | null;
   /** Fresh re-review's disposition of the preceding round's claimed findings. */
   readonly priorFindingDispositions: ReadonlyArray<{
     readonly identityKey: string;
@@ -1167,6 +1176,7 @@ export interface BuildReviewRoundStampInput {
   readonly cmrPass?: "completeness" | "correctness" | null;
   readonly reviewRound?: number | null;
   readonly verdict: TelemetryReviewRoundRecord["verdict"];
+  readonly finalDisposition: TelemetryReviewRoundRecord["finalDisposition"];
   /** Omit when the reviewer produced no parseable CMR result. */
   readonly findings?: readonly Finding[];
   readonly priorReviewRecords?: readonly TelemetryReviewRoundRecord[];
@@ -1181,13 +1191,13 @@ export function buildReviewRoundStamp(
   input: BuildReviewRoundStampInput,
 ): TelemetryReviewRoundRecord {
   const findings = input.findings;
-  const findingIdentityKeys =
+  const exactIdentityMatchKeys =
     findings === undefined
       ? null
       : [...new Set(findings.map(findingIdentityKey))];
   const priorKeys = new Set(
     (input.priorReviewRecords ?? []).flatMap(
-      (record) => record.findingIdentityKeys ?? [],
+      (record) => record.exactIdentityMatchKeys ?? [],
     ),
   );
   const findingsBySeverity =
@@ -1215,16 +1225,18 @@ export function buildReviewRoundStamp(
     cmrPass: input.cmrPass ?? null,
     reviewRound: input.reviewRound ?? null,
     verdict: input.verdict,
+    finalDisposition: input.finalDisposition,
     findingsBySeverity,
-    findingIdentityKeys,
-    newFindingIdentityKeys:
-      findingIdentityKeys === null
+    identityMatch: "exact_identity_match",
+    exactIdentityMatchKeys,
+    newExactIdentityMatchKeys:
+      exactIdentityMatchKeys === null
         ? null
-        : findingIdentityKeys.filter((key) => !priorKeys.has(key)),
-    recurringFindingIdentityKeys:
-      findingIdentityKeys === null
+        : exactIdentityMatchKeys.filter((key) => !priorKeys.has(key)),
+    recurringExactIdentityMatchKeys:
+      exactIdentityMatchKeys === null
         ? null
-        : findingIdentityKeys.filter((key) => priorKeys.has(key)),
+        : exactIdentityMatchKeys.filter((key) => priorKeys.has(key)),
     priorFindingDispositions:
       input.priorFindingDispositions === undefined
         ? null
