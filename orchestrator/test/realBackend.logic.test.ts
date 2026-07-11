@@ -747,7 +747,7 @@ describe("realBackend resolveModelSlug", () => {
     });
   });
 
-  it("declares the six Sandcastle-native provider factories the registry can target", () => {
+  it("declares the provider factories the registry can target (incl. #807 grok)", () => {
     expect(SUPPORTED_MODEL_PROVIDER_FACTORIES).toEqual([
       "claudeCode",
       "codex",
@@ -755,6 +755,7 @@ describe("realBackend resolveModelSlug", () => {
       "copilot",
       "cursor",
       "pi",
+      "grok",
     ]);
   });
 
