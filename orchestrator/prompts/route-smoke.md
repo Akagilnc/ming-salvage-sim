@@ -1,7 +1,7 @@
 Use the bash tool exactly once with this command:
 
 ```bash
-echo OK
+printf '%s\n' '{{NONCE}}' > '{{NONCE_FILE}}'
 ```
 
 After the tool returns successfully, emit `ROUTE_SMOKE_COMPLETE`.

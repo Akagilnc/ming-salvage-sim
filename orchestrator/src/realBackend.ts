@@ -46,7 +46,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
@@ -96,7 +96,9 @@ import {
   modelIdForSlug,
   modelIsStrongLeg,
   resolveModelSlug,
+  resolveModelSlugForPool,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
+  type BillingPoolDispatchId,
   type ModelFamily,
   type ModelProviderFactory,
   type ModelSlugRegistryEntry,
@@ -133,34 +135,27 @@ export function routeSmokeToolCallIsEchoOk(event: {
 }
 
 /**
- * #807: grok headless `streaming-json` does not emit `tool_call` stream events
- * even when tools run (host probe 2026-07-11, grok 0.2.93). The route-smoke
- * prompt still asks for `echo OK` + `ROUTE_SMOKE_COMPLETE`; we observe the OK
- * token in text deltas as the bash-leg evidence when the provider is `grok`.
+ * A nonce must be read back from the worktree after the agent returns. Text in
+ * the agent stream is never execution evidence: a model can merely repeat it.
  */
-export function routeSmokeGrokTextEvidence(event: {
-  readonly type?: unknown;
-  readonly message?: unknown;
-}): boolean {
-  return (
-    event.type === "text" &&
-    typeof event.message === "string" &&
-    /(?:^|[^A-Za-z0-9_])OK(?:[^A-Za-z0-9_]|$)/.test(event.message)
-  );
+export function routeSmokeNonceFileEvidence(
+  fileContents: string | undefined,
+  nonce: string,
+): boolean {
+  return fileContents?.trim() === nonce;
 }
 
 /**
- * Whether a smoke run produced observable bash evidence for the given provider.
- * Standard path: toolCall(bash/shell, echo OK). Grok path: text OK token (see
- * {@link routeSmokeGrokTextEvidence}).
+ * Whether a smoke run produced observable bash evidence. The checked nonce file
+ * is a filesystem side effect, so this is provider-independent and does not
+ * trust model text or provider-specific stream formatting.
  */
 export function routeSmokeBashEvidenceSatisfied(input: {
   readonly provider: string;
   readonly sawToolCallEchoOk: boolean;
-  readonly sawGrokOkText: boolean;
+  readonly sawNonceFile: boolean;
 }): boolean {
-  if (input.sawToolCallEchoOk) return true;
-  return input.provider === "grok" && input.sawGrokOkText;
+  return input.sawNonceFile;
 }
 export {
   agentForSlug,
@@ -2311,7 +2306,9 @@ export class RealBackend implements Backend {
   async smokeModelRoute(
     route: ResolvedModelRoute,
     currentCliVersions: Readonly<Record<string, string | undefined>> = {},
+    billingPool?: string,
   ): Promise<ResolvedModelRoute> {
+    const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
     const persisted = this.readRouteSmokeState(route, sandboxFingerprint);
     if (persisted !== undefined) {
@@ -2325,15 +2322,24 @@ export class RealBackend implements Backend {
     );
     const smoked = await smokeRouteModels(route, async (entry) => {
       let sawToolCallEchoOk = false;
-      let sawGrokOkText = false;
-      const provider = resolveModelSlug(entry.slug).provider;
+      const resolved = resolveModelSlugForPool(entry.slug, dispatchPool);
+      const provider = resolved.provider;
+      const nonce = randomUUID();
+      const nonceFile = `.route-smoke-${nonce}.nonce`;
+      const noncePath = join(this.workingRepo, nonceFile);
       const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
       try {
+        rmSync(noncePath, { force: true });
         const result = await sc.run({
-          agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key })),
+          agent: agentForSlug(
+            entry.slug,
+            effortForLiveOfficer(entry.slug, { smokeKey: entry.key }),
+            dispatchPool,
+          ),
           sandbox: this.routeSmokeSandbox(),
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
+          promptArgs: { NONCE: nonce, NONCE_FILE: nonceFile },
           maxIterations: 1,
           idleTimeoutSeconds,
           completionSignal: "ROUTE_SMOKE_COMPLETE",
@@ -2344,17 +2350,19 @@ export class RealBackend implements Backend {
               if (routeSmokeToolCallIsEchoOk(event)) {
                 sawToolCallEchoOk = true;
               }
-              // #807: grok streaming-json omits tool_call; text OK is the stand-in.
-              if (provider === "grok" && routeSmokeGrokTextEvidence(event)) {
-                sawGrokOkText = true;
-              }
             },
           },
         });
+        let nonceContents: string | undefined;
+        try {
+          nonceContents = readFileSync(noncePath, "utf8");
+        } catch {
+          nonceContents = undefined;
+        }
         const bashOk = routeSmokeBashEvidenceSatisfied({
           provider,
           sawToolCallEchoOk,
-          sawGrokOkText,
+          sawNonceFile: routeSmokeNonceFileEvidence(nonceContents, nonce),
         });
         if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !bashOk) {
           throw new Error(
@@ -2363,6 +2371,7 @@ export class RealBackend implements Backend {
         }
         return { cliVersion: this.cliVersionForSlug(entry.slug) };
       } finally {
+        rmSync(noncePath, { force: true });
         rmSync(logDir, { recursive: true, force: true });
       }
     });
@@ -2961,16 +2970,14 @@ export class RealBackend implements Backend {
     // #807: grok auth is BEST-EFFORT + fail-closed skip. Host missing
     // `~/.grok/auth.json` ⇒ omit the mount entirely (unlike codex, which still
     // mounts an empty-ish dir for config.toml). Presence gate = copy success.
-    let grokAuthDir: string | undefined;
-    rmSync(paths.hostGrokAuthDir, { recursive: true, force: true });
+    let grokAuthDir: string | undefined = mkdtempSync(`${paths.hostGrokAuthDir}-`);
     try {
-      mkdirSync(paths.hostGrokAuthDir, { recursive: true, mode: 0o700 });
-      copyFileSync(paths.srcGrokAuth, join(paths.hostGrokAuthDir, "auth.json"));
-      chmodSync(join(paths.hostGrokAuthDir, "auth.json"), 0o600);
-      grokAuthDir = paths.hostGrokAuthDir;
+      chmodSync(grokAuthDir, 0o700);
+      copyFileSync(paths.srcGrokAuth, join(grokAuthDir, "auth.json"));
+      chmodSync(join(grokAuthDir, "auth.json"), 0o600);
     } catch {
       // No host grok auth → skip mount; reclaim the half-built dir.
-      rmSync(paths.hostGrokAuthDir, { recursive: true, force: true });
+      rmSync(grokAuthDir, { recursive: true, force: true });
       grokAuthDir = undefined;
     }
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs

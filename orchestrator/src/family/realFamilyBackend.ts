@@ -71,7 +71,7 @@ import {
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
-import { effortForLiveOfficer } from "../modelRegistry.js";
+import { effortForLiveOfficer, isBillingPoolDispatchId } from "../modelRegistry.js";
 import {
   agentForSlug,
   assertCompletionSignal,
@@ -567,8 +567,12 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` + pure (no container/I/O) so a unit test asserts the resolved model
    * without spinning a real `sc.run`.
    */
-  protected agentForSpec(spec: WorkerSpec): sc.AgentProvider {
-    return agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec));
+  protected agentForSpec(spec: WorkerSpec, ctx?: Pick<DispatchContext, "billingPool">): sc.AgentProvider {
+    return agentForSlug(
+      spec.model,
+      effortForLiveOfficer(spec.model, spec),
+      isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
+    );
   }
 
   // ─────────────────────────── family ledger ───────────────────────────
@@ -1545,7 +1549,7 @@ export class RealFamilyBackend implements FamilyBackend {
           // symmetry): resolve the worker's slug through the same registry as the
           // single-slice + family ship paths — no constant that could silently drift
           // from the spec the runner declares.
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
           // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
           // sequencing and accounting.
@@ -1622,7 +1626,7 @@ export class RealFamilyBackend implements FamilyBackend {
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: this.opts.workingRepo,
           sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           maxIterations: 1,
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
@@ -1713,7 +1717,7 @@ export class RealFamilyBackend implements FamilyBackend {
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
             sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding, fixFocusLanding),
-            agent: this.agentForSpec(spec),
+            agent: this.agentForSpec(spec, ctx),
             maxIterations: spec.maxIter,
             completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
@@ -1951,7 +1955,7 @@ export class RealFamilyBackend implements FamilyBackend {
             onlineReviewLanding,
             fixFocusLanding,
           ),
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           maxIterations: spec.maxIter,
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },

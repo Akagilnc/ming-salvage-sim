@@ -740,8 +740,20 @@ describe("#807 mountAuth grok auth copy (fail-closed skip when host absent)", ()
     const home = mkHome(true);
     const be = backend(home);
     const auth = be.agentAuth(807);
-    expect(auth.grokAuthDir).toBe(join(home, ".sc-orchestrator", "grok-auth-807"));
+    expect(auth.grokAuthDir).toMatch(new RegExp(`${join(home, ".sc-orchestrator", "grok-auth-807-")}.+`));
     expect(readFileSync(join(auth.grokAuthDir!, "auth.json"), "utf8")).toContain("auth.x.ai");
+  });
+
+  it("allocates isolated Grok auth copies for concurrent same-issue launches", () => {
+    const home = mkHome(true);
+    const be = backend(home);
+    const first = be.agentAuth(807);
+    const second = be.agentAuth(807);
+    expect(first.grokAuthDir).toBeDefined();
+    expect(second.grokAuthDir).toBeDefined();
+    expect(first.grokAuthDir).not.toBe(second.grokAuthDir);
+    expect(readFileSync(join(first.grokAuthDir!, "auth.json"), "utf8")).toContain("auth.x.ai");
+    expect(readFileSync(join(second.grokAuthDir!, "auth.json"), "utf8")).toContain("auth.x.ai");
   });
 
   it("skips grokAuthDir (and the sandbox mount) when host auth is absent", () => {

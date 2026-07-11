@@ -121,15 +121,6 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "other",
     strongLeg: true,
   },
-  // #807: explicit SuperGrok / grok-build pool slug (container `grok` CLI).
-  // Distinct from cursor-channel `grok-4.5` so routes can pin the build pool
-  // without a billingPool override.
-  "grok-4.5-build": {
-    provider: "grok",
-    model: "grok-4.5",
-    family: "other",
-    strongLeg: true,
-  },
   sonnet: {
     provider: "claudeCode",
     // #789: roster coder id `sonnet-5` → slug `sonnet` must resolve to Sonnet 5
