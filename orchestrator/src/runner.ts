@@ -2416,6 +2416,23 @@ export function stepSpecsForRoute(
   };
 }
 
+/** The relay pool belongs to one wall-hit route entry, never the whole lineup. */
+function activeRelaySmokeEntryKey(
+  step: StepId | undefined,
+  route: Pick<ResolvedModelRoute, "slots">,
+): string | undefined {
+  const slot =
+    step === "S2" ? "coder" :
+    step === "S3" || step === "S6" ? "reviewer" :
+    step === "S5" ? "coderFix" :
+    step === "S7" ? "ship" :
+    step === "S9" ? "verify" :
+    step === "S10" ? "fixer" :
+    step === "S11" ? "cleanup" :
+    step === "S12" ? "docRelease" : undefined;
+  return slot === undefined ? undefined : `${slot}:${route.slots[slot]}`;
+}
+
 export function stepSpecsForEnv(
   env: ModelRouteEnv = process.env,
 ): Readonly<Record<WorkerStepId, StepSpec>> {
@@ -3718,12 +3735,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         ? await backend.currentCliVersions(
             modelRoute,
             activeRelayStep === undefined ? undefined : currentBillingPool,
+            activeRelaySmokeEntryKey(activeRelayStep, modelRoute),
           )
         : {};
       modelRoute = await backend.smokeModelRoute(
         modelRoute,
         currentCliVersions,
         activeRelayStep === undefined ? undefined : currentBillingPool,
+        activeRelaySmokeEntryKey(activeRelayStep, modelRoute),
       );
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);

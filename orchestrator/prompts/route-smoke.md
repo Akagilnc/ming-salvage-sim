@@ -1,7 +1,4 @@
-Use the bash tool exactly once with this command:
+Use the baked route-smoke skill parameters `NONCE` and `NONCE_FILE`.
 
-```bash
-printf '%s\n' '{{NONCE}}' > '{{NONCE_FILE}}'
-```
-
-After the tool returns successfully, emit `ROUTE_SMOKE_COMPLETE`.
+The output contract is: create the nonce evidence file at `NONCE_FILE` containing
+exactly `NONCE`, then emit `ROUTE_SMOKE_COMPLETE`.

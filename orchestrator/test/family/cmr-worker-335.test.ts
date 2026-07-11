@@ -1659,8 +1659,10 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
     expect(auth).toEqual({
       codexAuthDir: undefined,
       agyDir: undefined,
+      grokAuthDir: undefined,
       claudeToken: undefined,
       ghToken: undefined,
+      providerAuth: { claude: false, grok: false },
     });
   });
 

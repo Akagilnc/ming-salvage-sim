@@ -97,10 +97,12 @@ import {
   modelIsStrongLeg,
   resolveModelSlug,
   resolveModelSlugForPool,
+  unavailableProviderAuth,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
   type BillingPoolDispatchId,
   type ModelFamily,
   type ModelProviderFactory,
+  type ProviderAuthAvailability,
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
 import {
@@ -117,10 +119,11 @@ export function routeSmokeCacheKey(
   route: ResolvedModelRoute,
   sandboxFingerprint: string,
   billingPool?: string,
+  relaySmokeEntryKey?: string,
 ): string {
   const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
   const providerFingerprint = routeSmokeEntries(route)
-    .map(({ key, slug }) => `${key}:${resolveModelSlugForPool(slug, dispatchPool).provider}`)
+    .map(({ key, slug }) => `${key}:${resolveModelSlugForPool(slug, key === relaySmokeEntryKey ? dispatchPool : undefined).provider}`)
     .join("|");
   return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}\0${dispatchPool ?? "default"}\0${providerFingerprint}`;
 }
@@ -875,6 +878,8 @@ export interface ShipAuth {
    * `runShipWorker` preflights it and escalates when absent (cmr S336 r10).
    */
   readonly ghToken?: string;
+  /** Typed launch preflight; mounts alone are not an availability contract. */
+  readonly providerAuth?: ProviderAuthAvailability;
 }
 
 export function buildAuthPaths(
@@ -2301,12 +2306,16 @@ export class RealBackend implements Backend {
   async currentCliVersions(
     route: ResolvedModelRoute,
     billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Promise<Readonly<Record<string, string | undefined>>> {
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const versions: Record<string, string | undefined> = {};
     for (const entry of routeSmokeEntries(route)) {
       if (versions[entry.slug] === undefined) {
-        versions[entry.slug] = this.cliVersionForSlug(entry.slug, dispatchPool);
+        versions[entry.slug] = this.cliVersionForSlug(
+          entry.slug,
+          entry.key === relaySmokeEntryKey ? dispatchPool : undefined,
+        );
       }
     }
     return versions;
@@ -2316,10 +2325,11 @@ export class RealBackend implements Backend {
     route: ResolvedModelRoute,
     currentCliVersions: Readonly<Record<string, string | undefined>> = {},
     billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Promise<ResolvedModelRoute> {
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
-    const persisted = this.readRouteSmokeState(route, sandboxFingerprint, dispatchPool);
+    const persisted = this.readRouteSmokeState(route, sandboxFingerprint, dispatchPool, relaySmokeEntryKey);
     if (persisted !== undefined) {
       const hydrated = withRouteSmoke(route, persisted);
       if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
@@ -2331,7 +2341,8 @@ export class RealBackend implements Backend {
     );
     const smoked = await smokeRouteModels(route, async (entry) => {
       let sawToolCallEchoOk = false;
-      const resolved = resolveModelSlugForPool(entry.slug, dispatchPool);
+      const entryPool = entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
+      const resolved = resolveModelSlugForPool(entry.slug, entryPool);
       const provider = resolved.provider;
       const auth = this.mountAuth(this.opts.runKey);
       const nonce = randomUUID();
@@ -2339,13 +2350,10 @@ export class RealBackend implements Backend {
       const noncePath = join(this.workingRepo, nonceFile);
       const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
       try {
+        this.assertProviderAuth(entry.slug, entryPool, auth.providerAuth);
         rmSync(noncePath, { force: true });
         const result = await sc.run({
-          agent: agentForSlug(
-            entry.slug,
-            effortForLiveOfficer(entry.slug, { smokeKey: entry.key }),
-            dispatchPool,
-          ),
+          agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key }), entryPool),
           sandbox: this.routeSmokeSandbox(auth),
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
@@ -2379,14 +2387,14 @@ export class RealBackend implements Backend {
             `model did not complete an observable bash smoke for ${entry.slug}`,
           );
         }
-        return { cliVersion: this.cliVersionForSlug(entry.slug, dispatchPool) };
+        return { cliVersion: this.cliVersionForSlug(entry.slug, entryPool) };
       } finally {
         rmSync(noncePath, { force: true });
         rmSync(logDir, { recursive: true, force: true });
         this.cleanupTempAuthDirs([auth.grokAuthDir]);
       }
     });
-    this.writeRouteSmokeState(smoked, sandboxFingerprint, dispatchPool);
+    this.writeRouteSmokeState(smoked, sandboxFingerprint, dispatchPool, relaySmokeEntryKey);
     return smoked;
   }
 
@@ -2398,11 +2406,12 @@ export class RealBackend implements Backend {
     route: ResolvedModelRoute,
     sandboxFingerprint: string,
     billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
     try {
       const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
       if (raw === null || typeof raw !== "object") return undefined;
-      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint, billingPool)];
+      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint, billingPool, relaySmokeEntryKey)];
       if (state === null || typeof state !== "object") return undefined;
       return state as Readonly<Record<string, RouteSmokeStatus>>;
     } catch {
@@ -2414,6 +2423,7 @@ export class RealBackend implements Backend {
     route: ResolvedModelRoute,
     sandboxFingerprint: string,
     billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): void {
     const path = this.routeSmokeStatePath();
     let all: Record<string, unknown> = {};
@@ -2424,7 +2434,7 @@ export class RealBackend implements Backend {
       // Missing or malformed state is treated as empty; the fresh smoke result
       // below becomes the new durable source of truth.
     }
-    all[routeSmokeCacheKey(route, sandboxFingerprint, billingPool)] = route.smoke;
+    all[routeSmokeCacheKey(route, sandboxFingerprint, billingPool, relaySmokeEntryKey)] = route.smoke;
     mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
     const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     try {
@@ -2957,6 +2967,7 @@ export class RealBackend implements Backend {
     claudeToken?: string;
     /** Per-issue host dir for grok auth, only when host `~/.grok/auth.json` exists. */
     grokAuthDir?: string;
+    providerAuth: ProviderAuthAvailability;
   } {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
     // production keeps the os.homedir() default when opts.home is omitted.
@@ -3010,7 +3021,12 @@ export class RealBackend implements Backend {
     } catch {
       claudeToken = undefined;
     }
-    return { authDir: paths.hostCodexAuthDir, claudeToken, grokAuthDir };
+    return {
+      authDir: paths.hostCodexAuthDir,
+      claudeToken,
+      grokAuthDir,
+      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+    };
   }
 
   /**
@@ -3029,11 +3045,26 @@ export class RealBackend implements Backend {
     }
   }
 
+  /** Fail before `sc.run`: a missing mount is not permission to launch unauthenticated. */
+  private assertProviderAuth(
+    slug: string,
+    pool: BillingPoolDispatchId | undefined,
+    availability: ProviderAuthAvailability,
+  ): void {
+    const resolved = resolveModelSlugForPool(slug, pool);
+    const missing = unavailableProviderAuth(resolved.provider, availability);
+    if (missing !== undefined) {
+      throw new Error(
+        `no ${missing} auth for selected ${resolved.provider} provider (${slug}) — refusing to launch`,
+      );
+    }
+  }
+
   private box(
     issueNumber: number,
     spec: Pick<StepSpec, "role" | "soul">,
     options?: AgentStepRunOptions,
-  ): { sandbox: sc.SandboxProvider; cleanup: () => void } {
+  ): { sandbox: sc.SandboxProvider; providerAuth: ProviderAuthAvailability; cleanup: () => void } {
     const auth = this.mountAuth(issueNumber);
     return {
       sandbox: docker(
@@ -3044,6 +3075,7 @@ export class RealBackend implements Backend {
           options,
         ),
       ),
+      providerAuth: auth.providerAuth,
       cleanup: () => this.cleanupTempAuthDirs([auth.grokAuthDir]),
     };
   }
@@ -3535,6 +3567,8 @@ export class RealBackend implements Backend {
       spec.maxIter === 1 && options?.outcomeLanding === undefined;
     const box = this.box(issueNumber, spec, options);
     try {
+    const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
+    this.assertProviderAuth(spec.model, pool, box.providerAuth);
     const result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -3547,9 +3581,7 @@ export class RealBackend implements Backend {
       agent: agentForSlug(
         spec.model,
         effortForLiveOfficer(spec.model, spec),
-        isBillingPoolDispatchId(options?.billingPool)
-          ? options.billingPool
-          : undefined,
+        pool,
       ),
       // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
       // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
@@ -3612,6 +3644,8 @@ export class RealBackend implements Backend {
     await this.preflightToolchain(spec);
     const box = this.box(issueNumber, spec, options);
     try {
+      const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
+      this.assertProviderAuth(spec.model, pool, box.providerAuth);
       const typedOutputUsed = options?.outcomeLanding === undefined;
       const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
@@ -3624,9 +3658,7 @@ export class RealBackend implements Backend {
         agent: agentForSlug(
           spec.model,
           effortForLiveOfficer(spec.model, spec),
-          isBillingPoolDispatchId(options?.billingPool)
-            ? options.billingPool
-            : undefined,
+          pool,
         ),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
@@ -4049,6 +4081,19 @@ export class RealBackend implements Backend {
     // leaked temp dirs accumulating under the codex-auth root).
     const auth = this.mountShipAuth(this.issueOf(worktree));
     try {
+      const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
+      const missingProvider = unavailableProviderAuth(
+        resolveModelSlugForPool(spec.model, pool).provider,
+        auth.providerAuth ?? { claude: auth.claudeToken !== undefined, grok: auth.grokAuthDir !== undefined },
+      );
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalate",
+          reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
+          diagnosis:
+            "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; provider availability preflight rejected the ship launch before sc.run",
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
@@ -4281,7 +4326,13 @@ export class RealBackend implements Backend {
       // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
       // route slots simply run without this env var.
     }
-    return { codexAuthDir, grokAuthDir, claudeToken, ghToken: this.readGhToken() };
+    return {
+      codexAuthDir,
+      grokAuthDir,
+      claudeToken,
+      ghToken: this.readGhToken(),
+      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+    };
   }
 
   /**

@@ -44,6 +44,25 @@ export type ModelProviderFactory =
   /** #807: real SuperGrok CLI via custom AgentProvider (not sc.pi). */
   | "grok";
 
+/** Typed host credential availability consumed before a provider is launched. */
+export interface ProviderAuthAvailability {
+  readonly claude: boolean;
+  readonly grok: boolean;
+}
+
+/**
+ * Returns the provider-owned missing credential, if any.  This is deliberately
+ * derived from the selected provider, never from worker prose or a model slug.
+ */
+export function unavailableProviderAuth(
+  provider: ModelProviderFactory,
+  availability: ProviderAuthAvailability,
+): "claude" | "grok" | undefined {
+  if (provider === "claudeCode" && !availability.claude) return "claude";
+  if (provider === "grok" && !availability.grok) return "grok";
+  return undefined;
+}
+
 export const SUPPORTED_MODEL_PROVIDER_FACTORIES = [
   "claudeCode",
   "codex",
