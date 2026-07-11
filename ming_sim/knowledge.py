@@ -32,18 +32,18 @@ _OFFICE_VISIBLE_DOMAINS = {
     # Tuples make prompt field order stable; every entry deliberately contains
     # its _OFFICE_BUCKETS rail, so adding a role cannot silently produce a
     # public-only or unrelated current-state view.
-    "户部": ("treasury",), "兵部": ("military", "regional"),
-    "吏部": ("personnel",), "工部": ("construction",),
-    "礼部": ("personnel",), "刑部": ("security",),
-    "翰林院": ("personnel",), "都察院": ("personnel", "security"),
-    "内阁": ("court", "treasury", "personnel"), "督抚": ("regional",),
-    "司礼监": ("court", "treasury", "personnel"), "内臣": ("court", "treasury", "personnel"),
-    "锦衣卫": ("security",), "东厂": ("security",),
-    "边镇": ("military", "regional"), "地方": ("regional",),
-    "外臣": ("regional",), "内廷": ("court", "treasury", "personnel"),
-    "后宫": ("personnel",), "宗藩": ("regional",), "未仕": ("personnel",),
-    "生员": ("personnel",), "乡绅": ("regional",), "富商": ("treasury",),
-    "布衣": ("regional",), "流寇": ("military", "regional"), "待铨": ("personnel",),
+    "户部": ("treasury", "role"), "兵部": ("military", "regional", "role"),
+    "吏部": ("personnel", "role"), "工部": ("construction", "role"),
+    "礼部": ("personnel", "role"), "刑部": ("security", "role"),
+    "翰林院": ("personnel", "role"), "都察院": ("personnel", "security", "role"),
+    "内阁": ("court", "treasury", "personnel", "role"), "督抚": ("regional", "role"),
+    "司礼监": ("court", "treasury", "personnel", "role"), "内臣": ("court", "treasury", "personnel", "role"),
+    "锦衣卫": ("security", "role"), "东厂": ("security", "role"),
+    "边镇": ("military", "regional", "role"), "地方": ("regional", "role"),
+    "外臣": ("regional", "role"), "内廷": ("court", "treasury", "personnel", "role"),
+    "后宫": ("personnel", "role"), "宗藩": ("regional", "role"), "未仕": ("personnel", "role"),
+    "生员": ("personnel", "role"), "乡绅": ("regional", "role"), "富商": ("treasury", "role"),
+    "布衣": ("regional", "role"), "流寇": ("military", "regional", "role"), "待铨": ("personnel", "role"),
 }
 
 # A persisted character can temporarily carry a newly introduced or malformed
@@ -73,6 +73,30 @@ def _qualitative(text: object) -> str:
     return re.sub(r"[-+]?\d+(?:\.\d+)?%?", "若干", value)
 
 
+def _role_roster(db: Any, office_type: str) -> str:
+    """Return only the current roster for this office type.
+
+    The role rail is intentionally queried from the current DB rather than
+    copied from the character's event history.  It is therefore a real
+    position-scoped fact set and updates automatically after appointments or
+    restore, while the qualitative rendering keeps machine values out of the
+    audience prompt.
+    """
+    if not hasattr(db, "conn"):
+        return f"{office_type}本职在册：暂无。"
+    rows = db.conn.execute(
+        "SELECT name, office FROM characters WHERE office_type = ? ORDER BY name",
+        (office_type,),
+    ).fetchall()
+    if not rows:
+        return f"{office_type}本职在册：暂无。"
+    roster = "、".join(
+        f"{row['name']}（{row['office']}）" if row['office'] else str(row['name'])
+        for row in rows
+    )
+    return f"{office_type}本职在册：{roster}。"
+
+
 def _world(
     db: Any, state: Any, office_type: str,
 ) -> Dict[str, str]:
@@ -91,6 +115,7 @@ def _world(
         "construction": db.buildings_report(),
         "security": db.power_report(exclude_self=True),
         "court": "\n".join((db.faction_report(), db.power_report(exclude_self=True))),
+        "role": _role_roster(db, office_type),
     }
     visible_domains = _visible_domains(office_type)
     for domain in visible_domains:
