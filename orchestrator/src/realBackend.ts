@@ -2428,6 +2428,7 @@ export class RealBackend implements Backend {
 
   private routeSmokeSandboxFingerprint(): string {
     const hash = createHash("sha256");
+    const home = this.opts.home ?? homedir();
     hash.update(`image:${this.opts.imageName}\n`);
     try {
       hash.update(`image-id:${this.sh("docker", ["image", "inspect", "--format", "{{.Id}}", this.opts.imageName]).trim()}\n`);
@@ -2442,6 +2443,7 @@ export class RealBackend implements Backend {
       auth.srcCodexConfig,
       auth.srcGrokAuth,
       auth.claudeTokenFile,
+      opencodeAuthMount(home).hostPath,
     ];
     for (const file of files) {
       hash.update(`file:${file}\0`);
@@ -2456,6 +2458,7 @@ export class RealBackend implements Backend {
     } catch {
       hash.update("gh:missing\n");
     }
+    hash.update(`glm-key:${process.env.GLM_KEY === undefined ? "missing" : "present"}\n`);
     return hash.digest("hex");
   }
 
