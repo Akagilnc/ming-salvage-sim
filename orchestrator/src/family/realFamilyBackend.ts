@@ -392,6 +392,7 @@ export function mergerModel(): string {
 export const MERGER_SOUL = "merger";
 
 export class RealFamilyBackend implements FamilyBackend {
+  private verificationStampTail: Promise<void> = Promise.resolve();
   protected readonly opts: RealFamilyBackendOptions;
 
   constructor(opts: RealFamilyBackendOptions) {
@@ -1139,27 +1140,21 @@ export class RealFamilyBackend implements FamilyBackend {
     // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
     // real type-checking build) > nothing. So types are NEVER silently skipped.
     if (scripts.includes("typecheck")) {
-      const typecheckIsTsc = this.packageScriptUses(cwd, "typecheck", "tsc");
       this.runObservedVerification(
         _request,
         "typecheck",
-        typecheckIsTsc
-          ? ["run", "typecheck", "--", "--pretty", "false"]
-          : ["run", "typecheck"],
+        ["run", "typecheck"],
         cwd,
-        typecheckIsTsc ? "tsc-diagnostics" : undefined,
       );
     } else if (scripts.includes("build")) {
       this.runObservedVerification(_request, "typecheck", ["run", "build"], cwd);
     }
     if (scripts.includes("test")) {
-      const testIsVitest = this.packageScriptUses(cwd, "test", "vitest");
       this.runObservedVerification(
         _request,
         _request.phase === "wave" ? "unit" : "full",
-        testIsVitest ? ["test", "--", "--reporter=json"] : ["test"],
+        ["test"],
         cwd,
-        testIsVitest ? "vitest-json" : undefined,
       );
     }
   }
@@ -1167,38 +1162,47 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Narrow verification-result seam: observe the harness exit and monotonic
    * duration, then append a raw sidecar row. Counts come only from an explicitly
-   * selected machine-readable reporter / compiler diagnostic stream; otherwise
-   * they stay null. The write is telemetry-only and cannot affect a verify result.
+   * side channel. The project's declared command is never rewritten just to get
+   * telemetry, so this path currently records an explicitly unknown count. The
+   * write is telemetry-only and cannot affect a verify result.
    */
   protected runObservedVerification(
     request: FamilyVerifyRequest,
     verification: "typecheck" | "unit" | "full",
     args: string[],
     cwd: string,
-    countSource?: "tsc-diagnostics" | "vitest-json",
   ): string {
     const startedAt = process.hrtime.bigint();
     let passed = false;
-    let output: string | undefined;
-    let commandError: unknown;
     try {
-      output = this.sh("npm", args, cwd);
+      const output = this.sh("npm", args, cwd);
       passed = true;
       return output;
-    } catch (err) {
-      commandError = err;
-      throw err;
     } finally {
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-      recordVerificationStamp(this.opts.ledgerDir, {
+      // Intentionally detached: a slow/full telemetry filesystem must not delay
+      // or change the project's verify verdict.
+      const stampInput = {
         ...(request.runId !== undefined ? { runId: request.runId } : {}),
         ...(request.issue !== undefined ? { issue: request.issue } : {}),
         verification,
         passed,
-        count: structuredVerificationCount(countSource, passed, output, commandError),
+        // No structured side channel is available without changing the declared
+        // project command. `null` is an honest unknown, never a prose-derived 0.
+        count: null,
         durationMs,
+      };
+      // Keep JSONL order deterministic without awaiting the side effect on the
+      // verify path. recordVerificationStamp catches its own I/O failures.
+      this.verificationStampTail = this.verificationStampTail.then(async () => {
+        await recordVerificationStamp(this.opts.ledgerDir, stampInput);
       });
     }
+  }
+
+  /** Test/offline consumer seam for detached verification telemetry writes. */
+  protected async waitForVerificationStamps(): Promise<void> {
+    await this.verificationStampTail;
   }
 
   /**
@@ -1226,18 +1230,6 @@ export class RealFamilyBackend implements FamilyBackend {
       return Object.keys(pkg.scripts ?? {});
     } catch {
       return [];
-    }
-  }
-
-  /** Whether a declared script invokes the named harness directly. */
-  protected packageScriptUses(cwd: string, script: string, harness: string): boolean {
-    try {
-      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
-        scripts?: Record<string, unknown>;
-      };
-      return typeof pkg.scripts?.[script] === "string" && pkg.scripts[script].includes(harness);
-    } catch {
-      return false;
     }
   }
 
@@ -3902,43 +3894,6 @@ function decodeChildOutput(v: unknown): string {
   if (typeof v === "string") return v.trim();
   if (v instanceof Buffer) return v.toString("utf8").trim();
   return "";
-}
-
-/** Count only explicitly selected machine-readable verification outputs. */
-function structuredVerificationCount(
-  source: "tsc-diagnostics" | "vitest-json" | undefined,
-  passed: boolean,
-  output: string | undefined,
-  commandError: unknown,
-): number | null {
-  if (source === undefined) return null;
-  if (source === "tsc-diagnostics") {
-    if (passed) return 0;
-    const text = output ?? childErrorOutput(commandError);
-    return [...text.matchAll(/^.+\(\d+,\d+\): error TS\d+:/gm)].length;
-  }
-  const text = output ?? childErrorOutput(commandError);
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (
-      parsed !== null &&
-      typeof parsed === "object" &&
-      typeof (parsed as { numTotalTests?: unknown }).numTotalTests === "number" &&
-      Number.isSafeInteger((parsed as { numTotalTests: number }).numTotalTests) &&
-      (parsed as { numTotalTests: number }).numTotalTests >= 0
-    ) {
-      return (parsed as { numTotalTests: number }).numTotalTests;
-    }
-  } catch {
-    // A reporter that did not yield its JSON payload is unobtainable, not prose.
-  }
-  return null;
-}
-
-function childErrorOutput(err: unknown): string {
-  if (err === null || typeof err !== "object") return "";
-  const e = err as { stdout?: unknown; stderr?: unknown };
-  return [decodeChildOutput(e.stdout), decodeChildOutput(e.stderr)].filter(Boolean).join("\n");
 }
 
 /**
