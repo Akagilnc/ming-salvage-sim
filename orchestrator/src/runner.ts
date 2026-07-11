@@ -2708,23 +2708,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const canRelayInProcess = (): boolean =>
     canRelayHandoff(mergeResumeLedgerHistory(resumeHistoryLedger, ledger));
 
-  const modelIdForWallStep = (wallStep: StepId): string => {
+  const modelRefForWallStep = (wallStep: StepId): string => {
     const slots = modelRoute.slots;
-    const slug =
-      wallStep === "S3" || wallStep === "S6"
-        ? slots.reviewer
-        : wallStep === "S7"
-          ? slots.ship
-          : wallStep === "S9"
-            ? slots.verify
-            : wallStep === "S10"
-              ? slots.fixer
-              : wallStep === "S11"
-                ? slots.cleanup
-                : wallStep === "S12"
-                  ? slots.docRelease
-                  : slots.coder;
-    return lookupCoderRosterEntry(slug)?.id ?? slug;
+    return wallStep === "S3" || wallStep === "S6"
+      ? slots.reviewer
+      : wallStep === "S7"
+        ? slots.ship
+        : wallStep === "S9"
+          ? slots.verify
+          : wallStep === "S10"
+            ? slots.fixer
+            : wallStep === "S11"
+              ? slots.cleanup
+              : wallStep === "S12"
+                ? slots.docRelease
+                : slots.coder;
+  };
+
+  const modelIdForWallStep = (wallStep: StepId): string => {
+    const modelRef = modelRefForWallStep(wallStep);
+    return lookupCoderRosterEntry(modelRef)?.id ?? modelRef;
   };
 
   const resolveRelayPools = (
@@ -4640,7 +4643,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             canRelayInProcess()
           ) {
             const { currentPool, pools } = resolveResourceFailurePool({
-              modelRef: modelRoute.slots.coder,
+              modelRef: modelRefForWallStep(step),
               ...(isHangWithLivePoolError(err)
                 ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
                 : {}),
