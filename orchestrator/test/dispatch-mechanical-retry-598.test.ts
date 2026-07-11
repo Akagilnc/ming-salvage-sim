@@ -20,6 +20,7 @@
 
 import { describe, expect, it } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
+import { isCapacityRelayError } from "../src/relayDispatch.js";
 import { runOrchestrator } from "../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
@@ -114,6 +115,17 @@ describe("#598 withMechanicalRetry", () => {
     const result = await withMechanicalRetry(coderSpec(), {}, dispatch);
     expect(result.kind).toBe("completed");
     expect(seen).toHaveLength(2);
+  });
+
+  it("an at-capacity failure bypasses mechanical retry so relay can change checkpoints", async () => {
+    const { dispatch, seen } = scripted([
+      { kind: "failed", reason: "Selected model is at capacity" },
+      COMPLETED,
+    ]);
+    await expect(withMechanicalRetry(coderSpec(), {}, dispatch)).rejects.toSatisfy(
+      isCapacityRelayError,
+    );
+    expect(seen).toHaveLength(1);
   });
 
   it("persistent process failure → durably returns the failure after the bounded attempts, naming the attempt count", async () => {

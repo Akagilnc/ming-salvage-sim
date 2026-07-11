@@ -275,6 +275,45 @@ export function selectNextRelayBaton(
   return undefined;
 }
 
+/**
+ * #787: capacity is checkpoint-local, not a billing-pool quota wall. Prefer
+ * the next Coder-Rec checkpoint that the current live pool can serve; only
+ * then fall back to the ordinary pool-orthogonal relay order.
+ */
+export function selectCapacityRelayBaton(
+  input: SelectNextRelayBatonInput,
+): NextRelayBaton | undefined {
+  const current =
+    lookupCoderRosterEntry(input.currentModelId) ??
+    input.rosterOrder.find((entry) => entry.id === input.currentModelId);
+  const startIdx = input.rosterOrder.findIndex(
+    (entry) =>
+      entry.id === input.currentModelId ||
+      entry.slug === input.currentModelId ||
+      (current !== undefined && entry.id === current.id),
+  );
+  const currentPool = input.pools.find(
+    (pool) => pool.id === input.currentPool && pool.status === "live",
+  );
+  if (currentPool !== undefined) {
+    const from = startIdx >= 0 ? startIdx + 1 : 0;
+    for (let i = from; i < input.rosterOrder.length; i++) {
+      const candidate = input.rosterOrder[i]!;
+      if (poolSeparationViolation(candidate, input.reviewerSlugs ?? []) !== undefined) {
+        continue;
+      }
+      if (poolServesModel(currentPool, candidate.id, candidate.slug)) {
+        return {
+          modelId: candidate.id,
+          slug: candidate.slug,
+          pool: currentPool.id,
+        };
+      }
+    }
+  }
+  return selectNextRelayBaton(input);
+}
+
 /** True when {@link selectNextRelayBaton} would return a baton. */
 export function hasLiveRelayBaton(
   input: SelectNextRelayBatonInput,
