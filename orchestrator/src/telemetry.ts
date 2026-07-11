@@ -525,8 +525,7 @@ export interface TelemetryReviewRoundRecord extends TelemetryRecordBase {
     | "escalated"
     | "failed"
     | "malformed"
-    | "protocol_failure"
-    | "rejected";
+    | "protocol_failure";
   /**
    * Whether the runner accepted this review result after every terminal gate.
    * `unknown` means runner-side durable persistence threw before the terminal
