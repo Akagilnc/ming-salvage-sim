@@ -964,6 +964,23 @@ class GameDB:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS recommendation_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                recommender TEXT NOT NULL,
+                candidate TEXT NOT NULL,
+                candidate_kind TEXT NOT NULL,
+                target_office TEXT NOT NULL DEFAULT '',
+                basis TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'adopted',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_recommendation_events_recommender
+                ON recommendation_events(recommender, turn, id);
+
             -- 召对聊天记录持久化，每条消息一行，进程重启不丢。
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8350,6 +8367,36 @@ class GameDB:
             faction = str(payload.get("faction") or "中立").strip() or "中立"
             reason = str(payload.get("reason") or "奉旨任免").strip() or "奉旨任免"
             office_type = str(payload.get("office_type") or "").strip()
+            recommendation = payload.get("recommendation")
+            staged_candidate = recommendation.get("candidate") if isinstance(recommendation, dict) else None
+            recommender = str(recommendation.get("recommender") or pa["minister_name"]) if isinstance(recommendation, dict) else ""
+            if recommendation is not None and (
+                not isinstance(staged_candidate, dict)
+                or not recommender
+            ):
+                return False
+            if isinstance(staged_candidate, dict):
+                from ming_sim.recommendations import validate_recommendation_snapshot
+                if staged_candidate.get("name") != name or not validate_recommendation_snapshot(
+                    self, state, recommender, staged_candidate
+                ):
+                    return False
+            # A recommendation event is provenance for this exact staged
+            # candidate.  Keep the appointment and event in one transaction so
+            # a failure while recording cannot leave the appointment adopted
+            # without its auditable recommendation.
+            if isinstance(recommendation, dict):
+                with atomic(self):
+                    res = apply_office_appointment(
+                        self, state, content, registry, name, office,
+                        reason=reason, new_office_type=office_type,
+                        faction=faction, llm_config=self.llm_config, commit=False)
+                    accepted = not res.get("rejected")
+                    if accepted:
+                        self.record_recommendation(
+                            state, recommender, staged_candidate, office, reason,
+                        )
+                    return accepted
             res = apply_office_appointment(
                 self, state, content, registry, name, office,
                 reason=reason, new_office_type=office_type, faction=faction, llm_config=self.llm_config)
@@ -9751,6 +9798,28 @@ class GameDB:
     def get_character_knowledge(self, state: GameState, character_name: str) -> Dict[str, object]:
         from ming_sim.knowledge import build_character_knowledge
         return build_character_knowledge(self, state, character_name)
+
+    def list_recommendation_candidates(self, state: GameState, recommender: str) -> List[Dict[str, object]]:
+        from ming_sim.recommendations import list_recommendation_candidates
+        return list_recommendation_candidates(self, state, recommender)
+
+    def record_recommendation(
+        self, state: GameState, recommender: str, candidate: Dict[str, object],
+        target_office: str, reason: str = "",
+    ) -> int:
+        from ming_sim.recommendations import record_recommendation
+        event_id = record_recommendation(self, state, recommender, candidate, target_office, reason)
+        if not bool(getattr(self.conn, "_commit_suspended", False)) and int(
+            getattr(self.conn, "_atomic_depth", 0) or 0
+        ) <= 0:
+            self.conn.commit()
+        return event_id
+
+    def list_recommendation_events(
+        self, state: GameState, recommender: Optional[str] = None,
+    ) -> List[Dict[str, object]]:
+        from ming_sim.recommendations import list_recommendation_events
+        return list_recommendation_events(self, state, recommender)
 
     def create_secret_order(
         self,

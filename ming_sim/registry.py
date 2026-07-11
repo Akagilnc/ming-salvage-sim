@@ -18,6 +18,7 @@ from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import character_context, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
+from ming_sim.recommendations import build_recommendation_brief
 from ming_sim.llm_model import create_chat_model
 from ming_sim.knowledge import render_character_knowledge
 from ming_sim.qualitative import (
@@ -524,6 +525,7 @@ def create_minister_agent(
         use_army_tool = army_count > 30
         knowledge_brief = build_character_knowledge_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)
+        recommendation_brief = build_recommendation_brief(context.db, context.state, character.name)
         monthly_block_parts = [
             f"当前为 {context.state.year} 年 {context.state.period} 月（第 {context.state.turn} 回合）。"
             "作答涉及时序（某事多久前、某人是否已亡、某限期是否到）时以此为准。",
@@ -532,6 +534,7 @@ def create_minister_agent(
             monthly_block_parts.append(knowledge_brief)
         if secret_brief:
             monthly_block_parts.append(secret_brief)
+        monthly_block_parts.append(recommendation_brief)
         instructions = [
             _minister_game_world_prompt(c.game_world_prompt),
             c.minister_agent_prompt,

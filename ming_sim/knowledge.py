@@ -22,6 +22,51 @@ def _visible_domains(db: Any, office_type: str) -> tuple[str, ...]:
     return tuple(configured)
 
 
+def knowledge_row_visible_to(
+    db: Any, row: Any, character_name: str, *, target: Any = None,
+) -> bool:
+    """Apply one source's person and current-position secrecy boundary.
+
+    ``target`` is the person whose visibility is being tested.  When omitted,
+    the subject is the reader, which is the projection's normal use case.
+    Recommendation reads pass each roster candidate explicitly so an excluded
+    office cannot be reintroduced by a name-only roster projection.
+    """
+    target = target or row
+    def target_value(key: str) -> object:
+        try:
+            return target[key]
+        except (KeyError, IndexError, TypeError):
+            return None
+
+    target_name = str(target_value("name") or target_value("character_id") or character_name)
+    target_office_type = str(target_value("office_type") or "")
+    target_office = str(target_value("office") or "")
+    try:
+        excluded_names = json.loads(row["excluded_names"] or "[]")
+    except (TypeError, ValueError, KeyError, IndexError):
+        excluded_names = []
+    if target_name in {str(name) for name in excluded_names}:
+        return False
+    targets: object = {}
+    try:
+        raw_targets = row["excluded_targets"]
+    except (KeyError, IndexError, TypeError):
+        raw_targets = None
+    if raw_targets:
+        try:
+            targets = json.loads(raw_targets or "{}")
+        except (TypeError, ValueError):
+            targets = {}
+    if not isinstance(targets, dict) or not targets:
+        source_id = str(row["source_id"] or "")
+        if hasattr(db, "knowledge_exclusion_targets_for_source"):
+            targets = db.knowledge_exclusion_targets_for_source(source_id)
+    people = {str(name) for name in (targets.get("people", []) if isinstance(targets, dict) else [])}
+    offices = {str(name) for name in (targets.get("offices", []) if isinstance(targets, dict) else [])}
+    return target_name not in people and target_office_type not in offices and target_office not in offices
+
+
 def _qualitative(text: object) -> str:
     """Render an engine report for a minister without exposing machine values."""
     value = str(text or "")
@@ -207,25 +252,6 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "body": _qualitative(directive.get("text") or ""),
             "source_id": f"directive:{directive['id']}",
         })
-
-    def is_excluded(row: Dict[str, object]) -> bool:
-        try:
-            excluded_names = json.loads(str(row.get("excluded_names") or "[]"))
-        except (TypeError, ValueError):
-            excluded_names = []
-        if character_name in excluded_names:
-            return True
-        source_id = str(row.get("source_id") or "")
-        targets = row.get("excluded_targets") or (
-            db.knowledge_exclusion_targets_for_source(source_id)
-            if hasattr(db, "knowledge_exclusion_targets_for_source")
-            else {"people": [], "offices": []}
-        )
-        return (character_name in excluded_names
-                or character_name in targets.get("people", [])
-                or office_type in targets.get("offices", [])
-                or office_name in targets.get("offices", []))
-
     def source_projection(turn: int, fallback: object) -> str:
         """Project aggregate narrative from source rows, never from redaction.
 
@@ -246,7 +272,12 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
                 ("opening:", "directive:", "turn_report:", "chapter:")
             )
         ]
-        visible = [row for row in rows if not is_excluded(row)]
+        visible = [
+            row for row in rows
+            if knowledge_row_visible_to(
+                db, {**row, "office_type": office_type, "office": office_name}, character_name,
+            )
+        ]
 
         # Once any source boundary exists, the aggregate is no longer an
         # authorization boundary: chapter-memory/LLM rewriting can paraphrase
@@ -295,14 +326,24 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             key: (_qualitative(value) if key == "body" else value)
             for key, value in row.items() if key != "excluded_names"
         }
-        for row in events if not is_excluded(row)
+        for row in events
+        if knowledge_row_visible_to(
+            db,
+            {**row, "office_type": office_type, "office": office_name},
+            character_name,
+        )
     ]
     visible_public = [
         {
             key: (_qualitative(value) if key == "body" else value)
             for key, value in row.items() if key != "excluded_names"
         }
-        for row in public_events if not is_excluded(row)
+        for row in public_events
+        if knowledge_row_visible_to(
+            db,
+            {**row, "office_type": office_type, "office": office_name},
+            character_name,
+        )
     ]
     public_bodies = [
         _qualitative(item.get("body") or item.get("title") or "")
@@ -326,7 +367,11 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         # this character entered the durable source projection.
         if roster and source_id not in known_source_ids:
             continue
-        if is_excluded({"source_id": source_id, "excluded_names": "[]"}):
+        if not knowledge_row_visible_to(
+            db,
+            {"source_id": source_id, "excluded_names": "[]", "office_type": office_type, "office": office_name},
+            character_name,
+        ):
             continue
         visible_issues.append({
             "id": int(issue["id"]), "kind": issue["kind"],
