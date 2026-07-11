@@ -535,6 +535,12 @@ export interface MechanicalRedispatchAttemptEvent {
   readonly mechanicalRedispatchAttempt: number;
 }
 
+export interface RouteDegradedEvent {
+  readonly event: "route_degraded";
+  readonly droppedLeg: string;
+  readonly reason: string;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -547,7 +553,8 @@ export type LedgerBookkeepingEvent =
   | QuotaWaitForResetEvent
   | RelayBatonHandoffEvent
   | WorkerMonitorSpawnedEvent
-  | MechanicalRedispatchAttemptEvent;
+  | MechanicalRedispatchAttemptEvent
+  | RouteDegradedEvent;
 
 /**
  * The structured output of any worker step.
@@ -1391,6 +1398,8 @@ export interface LedgerEntry {
   readonly ts?: string;
   /** Optional reason for a bookkeeping event. */
   readonly reason?: string;
+  /** Optional CMR route leg removed after smoke failure. */
+  readonly droppedLeg?: string;
   /**
    * ADR0030 finding dispositions persisted at the S4 review/fix boundary.
    *

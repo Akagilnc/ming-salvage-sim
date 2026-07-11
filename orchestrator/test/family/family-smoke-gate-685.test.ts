@@ -101,6 +101,31 @@ describe("family startup smoke gate (#685)", () => {
       error.mockRestore();
     }
   });
+
+  it("does not duplicate a degraded-route ledger row across resumes", async () => {
+    const entries: import("../../src/family/types.js").FamilyLedgerEntry[] = [];
+    const backend: FamilyBackend = {
+      async mergeChildIntoFamilyBase() { throw new Error("must not merge"); },
+      async appendFamilyLedger(entry) { entries.push(entry); },
+      async readFamilyLedger() {
+        return [...entries, { status: "escalated", event: "escalated", escalationKind: "failure", reason: "test stop" }];
+      },
+    };
+    const input = {
+      epic: { issue: 846, children: [{ issue: 847, blockedBy: [] }] },
+      familyBackend: backend,
+      singleSliceBackend: singleSliceBackend({
+        smokeModelRoute: async (route: ReturnType<typeof resolveActiveModelRoute>) => smokeRouteModels(route, async ({ slug }) => {
+          if (slug === "agy") throw new Error("opencode unavailable");
+          return { cliVersion: "test" };
+        }),
+      }),
+      familyBase: "family/846-base",
+    };
+    await runFamily(input);
+    await runFamily(input);
+    expect(entries.filter((entry) => entry.event === "route_degraded")).toHaveLength(1);
+  });
 });
 
 describe("family worker smoke route envelope (#685)", () => {
