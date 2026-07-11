@@ -168,9 +168,9 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
-   *   - `"ship_dispatch_attempt"` — a dedicated final-barrier retry marker. It
-   *     belongs to the streak after the latest green correctness CMR pass; no
-   *     existing merge/CMR/ship consumer treats it as delivery or unblock truth.
+   *   - `"ship_dispatch_reserved"` / `"ship_dispatch_attempt"` — the two-phase
+   *     final-barrier launch marker. Reservation is written before launch; attempt
+   *     confirms physical launch. Neither is delivery or unblock truth.
    *   - `"ship_completed"` — the ship worker reported a PR locator and branch,
    *     before host observation verified either. This is advisory observation input
    *     only; it is deliberately not delivery, unblock, or review-loop truth.
@@ -192,6 +192,7 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
+    | "ship_dispatch_reserved"
     | "ship_dispatch_attempt"
     | "ship_completed";
   /**
@@ -228,9 +229,9 @@ export interface FamilyLedgerEntry {
    *     carries a `childIssue` it answers a `child_decision_parked` row (#604 slice 5).
    *   - `"admission_skipped"` — paired with `status:"admission_skipped"`; records
    *     production admission skips before scheduling.
-   *   - `"ship_dispatch_attempt"` — paired with `status:"ship_dispatch_attempt"`;
-   *     written before each ship-worker dispatch so crash/resume preserves the
-   *     malformed-output budget without reusing a worker step id.
+   *   - `"ship_dispatch_reserved"` — paired with the same status and written
+   *     before launch; `"ship_dispatch_attempt"` confirms successful spawn. Only
+   *     confirmed attempts consume the mutating budget.
    *   - `"ship_completed"` — paired with `status:"ship_completed"`; a worker-
    *     reported PR locator plus branch persisted before host observation (#823).
    * Not the unblock truth (that is `status`); the tag is for observability.
@@ -252,6 +253,7 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
+    | "ship_dispatch_reserved"
     | "ship_dispatch_attempt"
     | "ship_completed";
   /** Monitor handle persisted at family-worker spawn time (#684). */
@@ -332,6 +334,8 @@ export interface FamilyLedgerEntry {
   readonly pr?: string;
   /** Worker-reported branch on a `ship_completed` observation-input row (#823). */
   readonly shipBranch?: string;
+  /** Correlates a pre-launch reservation with its confirmed physical launch. */
+  readonly shipDispatchId?: string;
   /** PR number on `status:"pr_merged"` terminal entries (#602). */
   readonly prNumber?: number;
   /** Remote branch name on `status:"pr_merged"` terminal entries (#602). */

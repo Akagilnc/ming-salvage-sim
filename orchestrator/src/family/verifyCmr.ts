@@ -155,10 +155,12 @@ import {
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
   familyShipCompletedRecord,
+  recordShipDispatchReservation,
   recordShipDispatchAttempt,
   recordShipCompleted,
   recordShipped,
   shipDispatchAttemptsSinceLatestCorrectnessCmrPass,
+  unconfirmedShipReservationsSinceLatestCorrectnessCmrPass,
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   mergedSet,
@@ -1947,7 +1949,12 @@ async function dispatchShipOnce(
   familyBackend: FamilyBackend,
   spec: Parameters<typeof dispatchFamilyWorker>[1],
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
-): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>> | undefined> {
+  shipDispatchId: string,
+): Promise<{
+  readonly result?: Awaited<ReturnType<typeof dispatchFamilyWorker>>;
+  readonly launchConfirmed: boolean;
+}> {
+  let launchConfirmed = false;
   try {
     const monitored = await dispatchFamilyWorkerWithMonitor(
       familyBackend,
@@ -1955,6 +1962,13 @@ async function dispatchShipOnce(
       ctx,
       undefined,
       {
+        onDispatchConfirmed: async () => {
+          await recordShipDispatchAttempt(familyBackend, {
+            phase: "final",
+            shipDispatchId,
+          });
+          launchConfirmed = true;
+        },
         onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
           try {
             await familyBackend.appendFamilyLedger({
@@ -1969,9 +1983,9 @@ async function dispatchShipOnce(
       },
     );
     await monitored.telemetryEnvironmentStamp;
-    return monitored.result;
+    return { result: monitored.result, launchConfirmed };
   } catch {
-    return undefined;
+    return { launchConfirmed };
   }
 }
 
@@ -2877,8 +2891,8 @@ async function runVerifyCmrWithShipTruthAttempt(
   };
   // #823: a worker-reported completion is deliberately only an observation input,
   // not shipped truth. On a fresh re-entry, verify that exact locator before any
-  // new mutating dispatch. A host-confirmed absence/mismatch recurses with attempt
-  // >1, which intentionally bypasses this record and may dispatch a replacement.
+  // new mutating dispatch. Only a host-confirmed absence recurses with attempt >1;
+  // a mismatch is observed-but-unexpected state and must be escalated in place.
   const completedShip =
     shipTruthAttempt === 1
       ? familyShipCompletedRecord(await familyBackend.readFamilyLedger())
@@ -2900,16 +2914,31 @@ async function runVerifyCmrWithShipTruthAttempt(
   let usedShipAttempts = shipDispatchAttemptsSinceLatestCorrectnessCmrPass(
     await familyBackend.readFamilyLedger(),
   );
-  while (shipResult === undefined && usedShipAttempts < MAX_DISPATCH_ATTEMPTS) {
-    // Persist BEFORE dispatch: a crash after the worker starts must still consume
-    // this streak's budget when the final barrier resume-skips CMR and re-enters.
-    await recordShipDispatchAttempt(familyBackend, { phase: "final" });
-    usedShipAttempts += 1;
-    let candidate = await dispatchShipOnce(
+  let usedInfraAttempts = unconfirmedShipReservationsSinceLatestCorrectnessCmrPass(
+    await familyBackend.readFamilyLedger(),
+  );
+  while (
+    shipResult === undefined &&
+    usedShipAttempts < MAX_DISPATCH_ATTEMPTS &&
+    usedInfraAttempts < MAX_DISPATCH_ATTEMPTS
+  ) {
+    const shipDispatchId = `ship-${Date.now()}-${usedShipAttempts}-${usedInfraAttempts}`;
+    await recordShipDispatchReservation(familyBackend, {
+      phase: "final",
+      shipDispatchId,
+    });
+    const dispatched = await dispatchShipOnce(
       familyBackend,
       shipSpec,
       shipContext,
+      shipDispatchId,
     );
+    if (!dispatched.launchConfirmed) {
+      usedInfraAttempts += 1;
+      continue;
+    }
+    usedShipAttempts += 1;
+    let candidate = dispatched.result;
     if (candidate === undefined) {
       const expectedHead = await readRequiredFamilyHead(familyBackend, familyBase);
       const observed =
@@ -3032,9 +3061,10 @@ async function runVerifyCmrWithShipTruthAttempt(
     // The durable count was already exhausted before this resume could dispatch
     // (for example, a process crashed after the third marker). Do not reset the
     // budget or send a fourth ship worker; make the protocol failure visible.
-    const reason =
-      `family ship worker output remained malformed after ${MAX_DISPATCH_ATTEMPTS} ` +
-      `dispatch attempts: durable ship dispatch budget exhausted before resume`;
+    const infraBudgetExhausted = usedInfraAttempts >= MAX_DISPATCH_ATTEMPTS;
+    const reason = infraBudgetExhausted
+      ? `family ship worker failed before physical launch after ${MAX_DISPATCH_ATTEMPTS} infrastructure attempts; confirmed ship dispatch budget remains ${usedShipAttempts}/${MAX_DISPATCH_ATTEMPTS}`
+      : `family ship worker output remained malformed after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts: durable ship dispatch budget exhausted before resume`;
     const postShipFamilyHead = await readPostCmrFamilyHead(
       familyBackend,
       familyBase,
@@ -3051,7 +3081,9 @@ async function runVerifyCmrWithShipTruthAttempt(
         ...(postShipFamilyHead !== undefined
           ? { currentFamilyHead: postShipFamilyHead }
           : {}),
-        shipPrState: "durable-ship-dispatch-budget-exhausted",
+        shipPrState: infraBudgetExhausted
+          ? "pre-spawn-infrastructure-budget-exhausted"
+          : "durable-ship-dispatch-budget-exhausted",
       },
       heads: {
         ...(postShipFamilyHead !== undefined
@@ -3296,19 +3328,21 @@ async function runVerifyCmrWithShipTruthAttempt(
   }
   if (!shippedPrVerification.ok) {
     if (
-      shippedPrVerification.kind !== "observation_failed" &&
+      shippedPrVerification.kind === "pr_missing" &&
       shipTruthAttempt < MAX_DISPATCH_ATTEMPTS
     ) {
       return runVerifyCmrWithShipTruthAttempt(input, shipTruthAttempt + 1);
     }
     const reason =
       `family ship PR failed host verification after ${MAX_DISPATCH_ATTEMPTS} ` +
-      `${shippedPrVerification.kind === "observation_failed" ? "observation" : "dispatch"} attempts: ` +
+      `${shippedPrVerification.kind === "observation_failed" ? "observation" : shippedPrVerification.kind === "pr_missing" ? "dispatch" : "decision"} attempts: ` +
       shippedPrVerification.reason;
     const stopSummary = infraFailureStopSummary({
       summary: reason,
       repairHint:
-        "repair the family ship PR on the host or its locator, then rerun the final family barrier",
+        shippedPrVerification.kind === "mismatch"
+          ? "inspect the observed PR base/head and decide whether to repair or accept it; never re-run the mutating ship blindly"
+          : "repair the family ship PR on the host or its locator, then rerun the final family barrier",
       ship: {
         ...(cmrPassedFamilyHeadAfter !== undefined
           ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }

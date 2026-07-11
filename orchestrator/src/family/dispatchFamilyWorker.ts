@@ -201,6 +201,11 @@ export interface DispatchFamilyWorkerWithMonitorOptions {
   readonly onMonitorHandleSpawned?: (
     handle: WorkerMonitorHandle,
   ) => void | Promise<void>;
+  /**
+   * Called after a physical CLI spawn, or immediately before the legacy dispatch
+   * seam. The callback must complete before the worker is allowed to continue.
+   */
+  readonly onDispatchConfirmed?: () => void | Promise<void>;
 }
 
 function waitForChildExit(child: ChildProcess): Promise<number | null> {
@@ -305,9 +310,13 @@ export async function dispatchFamilyWorkerWithMonitor(
         telemetryCtx,
         familyBackend,
       );
-      if (opts?.onMonitorHandleSpawned !== undefined) {
+      if (
+        opts?.onDispatchConfirmed !== undefined ||
+        opts?.onMonitorHandleSpawned !== undefined
+      ) {
         try {
-          await opts.onMonitorHandleSpawned(handle);
+          await opts.onDispatchConfirmed?.();
+          await opts.onMonitorHandleSpawned?.(handle);
         } catch (error) {
           // Cleanup remains scoped to the verified monitor handle; never signal
           // an unverified PID or process group on callback failure.
@@ -358,6 +367,7 @@ export async function dispatchFamilyWorkerWithMonitor(
       telemetryCtx,
       familyBackend,
     );
+    await opts?.onDispatchConfirmed?.();
     const result = await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
     telemetry.stampCollect({ kind: "result", result });
     return { result, telemetryEnvironmentStamp };

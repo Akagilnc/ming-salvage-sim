@@ -150,7 +150,10 @@ export interface CmrPassedRecord {
 export interface ShipDispatchAttemptRecord {
   /** Ship retry streaks start only after a green correctness CMR pass. */
   readonly phase: "final";
+  readonly shipDispatchId: string;
 }
+
+export type ShipDispatchReservationRecord = ShipDispatchAttemptRecord;
 
 /**
  * Advisory ship-worker completion, durable before host PR observation (#823).
@@ -196,7 +199,52 @@ export function shipDispatchAttemptsSinceLatestCorrectnessCmrPass(
   return 0;
 }
 
-/** Append a dedicated ship dispatch marker before invoking the ship worker (#823). */
+/** Count unconfirmed reservations in the current CMR streak (infra retry lane). */
+export function unconfirmedShipReservationsSinceLatestCorrectnessCmrPass(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): number {
+  const confirmed = new Set<string>();
+  let reservations = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "cmr_passed" &&
+      entry.event === "cmr_passed" &&
+      entry.phase === "final" &&
+      entry.cmrPass === "correctness"
+    ) {
+      break;
+    }
+    if (
+      entry.status === "ship_dispatch_attempt" &&
+      entry.shipDispatchId !== undefined
+    ) {
+      confirmed.add(entry.shipDispatchId);
+    }
+    if (
+      entry.status === "ship_dispatch_reserved" &&
+      entry.shipDispatchId !== undefined &&
+      !confirmed.has(entry.shipDispatchId)
+    ) {
+      reservations += 1;
+    }
+  }
+  return reservations;
+}
+
+export async function recordShipDispatchReservation(
+  backend: FamilyBackend,
+  record: ShipDispatchReservationRecord,
+): Promise<void> {
+  await backend.appendFamilyLedger({
+    status: "ship_dispatch_reserved",
+    event: "ship_dispatch_reserved",
+    phase: record.phase,
+    shipDispatchId: record.shipDispatchId,
+  });
+}
+
+/** Append the confirmed-launch half of a ship dispatch marker (#823). */
 export async function recordShipDispatchAttempt(
   backend: FamilyBackend,
   record: ShipDispatchAttemptRecord,
@@ -205,6 +253,7 @@ export async function recordShipDispatchAttempt(
     status: "ship_dispatch_attempt",
     event: "ship_dispatch_attempt",
     phase: record.phase,
+    shipDispatchId: record.shipDispatchId,
   });
 }
 
