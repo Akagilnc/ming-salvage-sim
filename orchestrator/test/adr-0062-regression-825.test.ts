@@ -9,7 +9,7 @@
  */
 
 import { globSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
@@ -40,8 +40,11 @@ import type {
 
 const CONTRACT_FILES = globSync(
   ["prompts/*.md", "image/souls/*.md"],
-  { cwd: process.cwd(), nodir: true },
-).sort();
+  { cwd: process.cwd(), withFileTypes: true },
+)
+  .filter((entry) => entry.isFile())
+  .map((entry) => relative(process.cwd(), resolve(entry.parentPath, entry.name)))
+  .sort();
 
 const COMPLETION_SENTINEL = "[A-Z][A-Z0-9_]*_STEP_COMPLETE";
 const CANONICAL_OPTIONAL_TELEMETRY_SENTENCES = [
