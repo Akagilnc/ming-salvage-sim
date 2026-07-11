@@ -184,6 +184,13 @@ export function route(ctx: RouteContext): RouteDecision {
           step: "S12",
         };
       }
+      if (ctx.output.terminalState === "decision_gate_raised") {
+        return {
+          kind: "handoff",
+          status: "escalate",
+          onlineReviewTerminal: "decision_gate_raised",
+        };
+      }
       const round = ctx.onlineReviewRound ?? 1;
       // AC5: round 3 remaining P2/nits are attempted by default — only exhaust
       // after the final (round > cap) verify still has findings.

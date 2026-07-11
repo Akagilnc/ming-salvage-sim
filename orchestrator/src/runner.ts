@@ -62,6 +62,7 @@ import {
   verifyWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
+import { isMissingMonitorSidecarResult } from "./cliMonitorHooks.js";
 import { monitorHandleFromLedger } from "./workerMonitor.js";
 import { routeSmokeFailure } from "./modelRoutes.js";
 import {
@@ -81,7 +82,11 @@ import {
   pollPrReviewState,
   type PrReviewSnapshot,
 } from "./botPolling.js";
-import { withMechanicalRetry, type MechanicalRetryOptions } from "./dispatchRetry.js";
+import {
+  withMechanicalRetry,
+  type DispatchOutcome,
+  type MechanicalRetryOptions,
+} from "./dispatchRetry.js";
 import {
   isQuotaWaitForResetError,
   QuotaWaitForResetError,
@@ -467,6 +472,21 @@ interface ResumePlan {
   readonly continueFixingRepair?: ContinueFixingRepair;
   readonly lastOutput?: StepOutput;
   readonly priorLedger: ReadonlyArray<LedgerEntry>;
+}
+
+/**
+ * S7 owns only parsed delivery verdicts. A monitor bridge fallback means the
+ * observation channel lost its sidecar, so the bounded mechanical layer must
+ * redispatch it instead of treating it as a judged ship failure.
+ */
+export function isJudgedShipDeliveryFailure(
+  outcome: DispatchOutcome,
+): boolean {
+  return (
+    "result" in outcome &&
+    outcome.result.kind === "failed" &&
+    !isMissingMonitorSidecarResult(outcome.result)
+  );
 }
 
 interface LandedCoderProtocolFailure {
@@ -1999,8 +2019,13 @@ function planResume(
       while (reopenIdx >= 0 && executableLedger[reopenIdx]!.step === "S8") {
         reopenIdx--;
       }
+      const parkedEntry = executableLedger[reopenIdx];
       return {
         resumeStep: decisionStep,
+        resumeSessionId:
+          typeof parkedEntry?.sessionId === "string"
+            ? parkedEntry.sessionId
+            : undefined,
         escalationAnswer: answer,
         lastOutput: agentEntry?.output,
         priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
@@ -5025,7 +5050,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               return outcome.result;
             },
             {
-              callerOwns: (o) => "result" in o && o.result.kind === "failed",
+              callerOwns: isJudgedShipDeliveryFailure,
             },
           );
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
@@ -5341,6 +5366,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ? cleanupWorkerSpec(modelRoute, billingPool)
                 : docReleaseWorkerSpec(modelRoute, billingPool);
         promptFile = reviewLoopSpec.promptFile;
+        let resumeSessionId: string | undefined;
+        if (
+          resumeFor !== undefined &&
+          resumeFor.step === reviewStep &&
+          typeof resumeFor.sessionId === "string"
+        ) {
+          resumeSessionId = resumeFor.sessionId;
+          resumeFor = undefined;
+        }
         try {
           if (reviewStep === "S9") {
             let recheckFixMarkedFindingIdentityKeys =
@@ -5408,6 +5442,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             prHead:
               onlineReviewLanding?.shipDelivery?.prHead ?? lastShipOutput.prHead,
             onlineReviewRound,
+            ...(typeof resumeSessionId === "string" ? { resumeSessionId } : {}),
             ...(billingPool !== undefined
               ? { billingPool }
               : {}),
