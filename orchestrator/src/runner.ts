@@ -2876,7 +2876,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       activeRelayStep !== completedStep ||
       completed === undefined ||
       escalateOf(completed) !== undefined ||
-      (completed.kind === "coder" && !completed.committed)
+      (completed.kind === "coder" &&
+        !completed.committed &&
+        completed.selfReportDiscrepancy === undefined)
     ) return;
     currentBillingPool = undefined;
     activeRelayFocusPath = undefined;

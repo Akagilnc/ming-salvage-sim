@@ -264,6 +264,11 @@ export interface CoderOutput {
   readonly committed: boolean;
   readonly commitsAdded: number;
   /**
+   * A reconciliation observation retained in the durable ledger for diagnosis.
+   * It is telemetry only: reconciliation never decides the worker's route.
+   */
+  readonly selfReportDiscrepancy?: CoderSelfReportDiscrepancy;
+  /**
    * Optional scoped proof that the fix worker changed implementation, tests, or
    * fixtures for an active finding. Generic "I tried" is not progress.
    */
@@ -278,6 +283,17 @@ export interface CoderOutput {
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
+}
+
+/** Advisory reconciliation telemetry, persisted with the coder output. */
+export interface CoderSelfReportDiscrepancy {
+  readonly code:
+    | "coder_self_report_disagrees_with_git_commits"
+    | "coder_git_commit_count_unknown";
+  readonly selfReportedCommitted: boolean;
+  readonly selfReportedCommitsAdded: number;
+  /** Null when no trustworthy git baseline was available. */
+  readonly gitCommitCount: number | null;
 }
 
 /** Output of a reviewer step (S3/S6). Empty findings ⇒ approve only when no prior finding needs adjudication. */

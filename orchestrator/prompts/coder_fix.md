@@ -59,6 +59,8 @@ identity keys and locations from the fix-findings JSON when available:
   how it was checked.
 - `sameClassBugScan`: command/log/artifact showing the required same-class bug scan.
 - `introducedRegressionCheck`: command/log/artifact showing the required regression check.
+- `commitsAdded` must equal the number of actual `git commit` commands you made in
+  this worker run; if you made multiple commits, report the full count.
 
 Escalation:
 

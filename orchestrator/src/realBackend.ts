@@ -110,6 +110,7 @@ import {
   type ResolvedModelRoute,
   type RouteSmokeStatus,
 } from "./modelRoutes.js";
+import type { CoderSelfReportDiscrepancy } from "./types.js";
 
 export function routeSmokeCacheKey(
   route: ResolvedModelRoute,
@@ -1295,6 +1296,7 @@ export function stripJsonFence(s: string): string {
 export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
+  readonly selfReportDiscrepancy?: CoderSelfReportDiscrepancy;
   readonly escalate?: { readonly reason: string; readonly diagnosis: string };
   readonly repairEvidence?: RepairEvidence;
 }
@@ -1315,41 +1317,52 @@ export interface SelfReportedCoder {
  *   - committed   ← realCommitCount > 0
  *   - commitsAdded ← realCommitCount
  *
- * The self-report is kept only as a CROSS-CHECK: a self-report that contradicts
- * git (claims a commit git did not see, or miscounts) is a contract violation →
- * THROW. The caller (runStep / resumeSession) lets that propagate to the runner's
- * error edge = S8(error) + error package, never a silently-trusted success.
+ * The self-report is always advisory. Any disagreement is retained as durable
+ * discrepancy telemetry, but never interrupts or routes the run. When no
+ * trustworthy git baseline is available, the count is explicitly recorded as
+ * unknown rather than inventing a failure signal.
  *
  * `escalate` is a MODEL signal (not derivable from git), so it is preserved from
- * the self-report verbatim — but it does NOT suppress a commit-count
- * contradiction (an escalating coder that miscounts its commits still throws).
+ * the self-report verbatim.
  *
  * Pure (no I/O): the caller supplies the real commit count from `result.commits`,
  * so the reconciliation is unit-tested without a container.
  */
 export function reconcileCoderCommits(
   selfReported: SelfReportedCoder,
-  gitCommitCount: number,
+  gitCommitCount: number | undefined,
 ): SelfReportedCoder {
+  if (gitCommitCount === undefined) {
+    return {
+      committed: selfReported.committed,
+      commitsAdded: selfReported.commitsAdded,
+      selfReportDiscrepancy: {
+        code: "coder_git_commit_count_unknown",
+        selfReportedCommitted: selfReported.committed,
+        selfReportedCommitsAdded: selfReported.commitsAdded,
+        gitCommitCount: null,
+      },
+      ...(selfReported.repairEvidence !== undefined
+        ? { repairEvidence: selfReported.repairEvidence }
+        : {}),
+      ...(selfReported.escalate !== undefined ? { escalate: selfReported.escalate } : {}),
+    };
+  }
   const committed = gitCommitCount > 0;
-  // Cross-check the self-report against git truth; a contradiction is a contract
-  // violation (the model claimed a commit count git does not back).
-  if (
+  const selfReportDiscrepancy =
     selfReported.committed !== committed ||
     selfReported.commitsAdded !== gitCommitCount
-  ) {
-    throw new Error(
-      `realBackend: coder self-report {committed:${selfReported.committed}, ` +
-        `commitsAdded:${selfReported.commitsAdded}} contradicts git ` +
-        `(${gitCommitCount} real commit${gitCommitCount === 1 ? "" : "s"} on ` +
-        `the resident branch). The commit count is derived from git, not the ` +
-        `model's claim (#256 truthification); a divergent self-report is a ` +
-        `contract violation → S8(error).`,
-    );
-  }
+      ? {
+          code: "coder_self_report_disagrees_with_git_commits" as const,
+          selfReportedCommitted: selfReported.committed,
+          selfReportedCommitsAdded: selfReported.commitsAdded,
+          gitCommitCount,
+        }
+      : undefined;
   const base = {
     committed,
     commitsAdded: gitCommitCount,
+    ...(selfReportDiscrepancy !== undefined ? { selfReportDiscrepancy } : {}),
     ...(selfReported.repairEvidence !== undefined
       ? { repairEvidence: selfReported.repairEvidence }
       : {}),
@@ -1412,12 +1425,7 @@ export function reconcileResumeCoderCommits(
   selfReported: SelfReportedCoder,
   cumulativeGitCommitCount: number,
 ): SelfReportedCoder {
-  try {
-    return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`resume coder commit truth mismatch: ${reason}`);
-  }
+  return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
 }
 
 /** A git SHA / abbreviation: only lower-case hex, length 7–40. */
@@ -3199,22 +3207,19 @@ export class RealBackend implements Backend {
         ...(r.escalate ? { escalate: r.escalate } : {}),
       };
     }
-    // Coder: parse the self-report for shape, then TRUTH the commit count from
-    // git. Fresh runs use result.commits.length; resumed runs pass a cumulative
-    // ledger-baseline count. A contradiction throws → S8(error) at the runner.
+    // Coder: parse the self-report for shape, then attach the git observation.
+    // Fresh runs use result.commits.length; resumed runs pass a cumulative
+    // ledger-baseline count. Mismatch/unknown remains advisory for fresh review.
     if (spec.role === "coder") {
       const c = coderOutputSchema.parse(raw);
-      if (gitCommitCount === undefined) {
-        throw new Error(
-          "realBackend: coder output decoded without git commit truth. " +
-            "Fresh and resumed coder steps must reconcile committed/commitsAdded " +
-            "against git; trusting the model self-report would bypass S8(error).",
-        );
-      }
       const out = reconcileCoderCommits(c, gitCommitCount);
       const repairEvidence =
         out.repairEvidence !== undefined
           ? { repairEvidence: out.repairEvidence }
+          : {};
+      const selfReportDiscrepancy =
+        out.selfReportDiscrepancy !== undefined
+          ? { selfReportDiscrepancy: out.selfReportDiscrepancy }
           : {};
       return out.escalate
         ? {
@@ -3222,6 +3227,7 @@ export class RealBackend implements Backend {
             committed: out.committed,
             commitsAdded: out.commitsAdded,
             ...repairEvidence,
+            ...selfReportDiscrepancy,
             escalate: out.escalate,
           }
         : {
@@ -3229,6 +3235,7 @@ export class RealBackend implements Backend {
             committed: out.committed,
             commitsAdded: out.commitsAdded,
             ...repairEvidence,
+            ...selfReportDiscrepancy,
           };
     }
 
@@ -3333,32 +3340,31 @@ export class RealBackend implements Backend {
     worktree: WorktreeHandle,
     sessionId: string,
     beforeResumeHead: string | undefined,
-  ): number {
+  ): number | undefined {
     const stateDir = this.stateDirFor(worktree.path, this.issueOf(worktree));
     const ledger = this.readLedger(stateDir);
     const basis =
       ledger === undefined ? {} : resumeCoderCommitBasis(ledger, sessionId);
     if (basis.baselineHead !== undefined) {
-      return this.countCommitsSince(worktree, basis.baselineHead);
+      try {
+        return this.countCommitsSince(worktree, basis.baselineHead);
+      } catch {
+        return undefined;
+      }
     }
     if (basis.priorCommitsAdded !== undefined) {
       if (beforeResumeHead === undefined) {
-        throw new Error(
-          `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
-            "the persisted ledger only has a prior commit count fallback, but " +
-            "the before-resume HEAD could not be read. Refusing to count " +
-            "resume-only commits as zero.",
-        );
+        return undefined;
       }
-      const resumeOnlyCommits =
-        this.countCommitsSince(worktree, beforeResumeHead);
-      return basis.priorCommitsAdded + resumeOnlyCommits;
+      try {
+        const resumeOnlyCommits =
+          this.countCommitsSince(worktree, beforeResumeHead);
+        return basis.priorCommitsAdded + resumeOnlyCommits;
+      } catch {
+        return undefined;
+      }
     }
-    throw new Error(
-      `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
-        "the persisted ledger has no matching coder entry with a baseline HEAD " +
-        "or prior commit count. Refusing to trust the resumed <coder> self-report.",
-    );
+    return undefined;
   }
 
   async countCommitsBetween(
@@ -3397,7 +3403,7 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     options?: AgentStepRunOptions,
-    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number,
+    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number | undefined,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
@@ -3450,7 +3456,9 @@ export class RealBackend implements Backend {
     // REAL commits Sandcastle observed (result.commits), not the self-report.
     const gitCommitCount =
       spec.role === "coder"
-        ? (coderCommitCount?.(result) ?? realCommitCount(result))
+        ? coderCommitCount !== undefined
+          ? coderCommitCount(result)
+          : realCommitCount(result)
         : undefined;
     const output = this.decodeOutput(spec, raw, gitCommitCount);
     return { output, sessionId: lastSessionId(result) };
