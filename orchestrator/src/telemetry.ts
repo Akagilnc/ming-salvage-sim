@@ -1499,8 +1499,12 @@ function parseCommitMetrics(output: string): TelemetryCommitMetrics | undefined 
   for (const line of output.split(/\r?\n/)) {
     if (line.length === 0) continue;
     const [addedRaw, deletedRaw, path] = line.split("\t", 3);
-    const added = Number(addedRaw);
-    const deleted = Number(deletedRaw);
+    // git --numstat uses "-" for both counts of a binary file. Keep the
+    // commit-level telemetry available and represent its uncountable line
+    // changes as zero; the file still contributes to the file/path totals.
+    const binary = addedRaw === "-" && deletedRaw === "-";
+    const added = binary ? 0 : Number(addedRaw);
+    const deleted = binary ? 0 : Number(deletedRaw);
     if (path === undefined || !Number.isInteger(added) || !Number.isInteger(deleted)) return undefined;
     files += 1;
     insertions += added;

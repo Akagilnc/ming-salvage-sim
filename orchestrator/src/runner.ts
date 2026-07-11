@@ -3279,7 +3279,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // from an issue. Telemetry therefore needs a separate per-invocation key:
   // same-issue restarts must append a fresh environment row, never dedupe it.
   const runId = mintRunId();
-  let lastResolvedBranchHEAD: string | undefined;
 
   /**
    * Resolve the ledger's `branchHEAD` value (#256).
@@ -3296,14 +3295,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       try {
         const sha = await backend.worktreeHead(worktree);
         if (sha !== undefined && sha.length > 0) {
-          lastResolvedBranchHEAD = sha;
           return sha;
         }
       } catch {
         // fall through to the branch-name fallback
       }
     }
-    lastResolvedBranchHEAD = worktree.branch;
     return worktree.branch;
   }
 
