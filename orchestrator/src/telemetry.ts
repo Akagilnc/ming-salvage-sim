@@ -4,7 +4,10 @@
  * Parallel to the step ledger (`steps.jsonl`): raw per-leg stamps only.
  * Aggregation / stats are out of scope for this ticket.
  *
- * Layout: `<ledgerDir>/telemetry.jsonl` — one JSON object per line.
+ * Layout: durable `<ledgerDir>/telemetry.jsonl` — one JSON object per line.
+ * Single-slice runs use `<dedicated-clone>/.ledger-<issue>/`; family runs use
+ * their existing durable family ledger directory. The legacy
+ * `.sandcastle/worktrees/.ledger-<issue>/` location is read-only fallback only.
  * Phases:
  *   - `environment` — once per run (image / route lineup / CLI versions)
  *   - `dispatch`    — half-row at spawn (identity / model / pool / time)
@@ -336,6 +339,21 @@ function listFilesRecursive(root: string, base = ""): string[] {
 
 /** Sidecar filename under the ledger/state directory. */
 export const TELEMETRY_FILENAME = "telemetry.jsonl";
+
+/**
+ * Durable single-slice telemetry location. `stateDir` is the legacy sibling
+ * under `.sandcastle/worktrees`; the dedicated clone root survives Sandcastle
+ * worktree pruning and has the same lifetime as the resume ledger.
+ */
+export function durableTelemetryDirForSingleSlice(
+  workingRepo: string,
+  stateDir: string | undefined,
+): string | undefined {
+  if (workingRepo.length === 0 || stateDir === undefined) return undefined;
+  const match = /(?:^|[/\\])\.ledger-(\d+)(?:[/\\]|$)/.exec(stateDir);
+  const issue = match?.[1];
+  return issue === undefined ? undefined : join(workingRepo, `.ledger-${issue}`);
+}
 
 /** Schema version for forward-compatible consumers. */
 export const TELEMETRY_SCHEMA_VERSION = 1 as const;
@@ -1416,10 +1434,18 @@ export function hasEnvironmentStamp(ledgerDir: string | undefined): boolean {
  * Read and parse all telemetry lines (test / offline consumers).
  * Blank lines skipped; malformed lines throw (fail-closed for tools).
  */
-export function readTelemetryRecords(ledgerDir: string): TelemetryRecord[] {
+export function readTelemetryRecords(
+  ledgerDir: string,
+  legacyLedgerDir?: string,
+): TelemetryRecord[] {
   const path = telemetryPath(ledgerDir);
-  if (!existsSync(path)) return [];
-  const raw = readFileSync(path, "utf8");
+  const readPath = existsSync(path)
+    ? path
+    : legacyLedgerDir === undefined
+      ? undefined
+      : telemetryPath(legacyLedgerDir);
+  if (readPath === undefined || !existsSync(readPath)) return [];
+  const raw = readFileSync(readPath, "utf8");
   const out: TelemetryRecord[] = [];
   for (const line of raw.split(/\r?\n/)) {
     if (line.trim().length === 0) continue;

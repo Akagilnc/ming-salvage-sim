@@ -848,11 +848,18 @@ export async function dispatchWorkerWithMonitor(
 ): Promise<DispatchWorkerWithMonitorOutcome> {
   // #786 — per-leg telemetry sidecar (dispatch + collect half-rows).
   // Best-effort only: never changes worker semantics or resume contracts.
-  const ledgerDir = ctx.stateDir;
+  const telemetryDir =
+    ctx.telemetryDir ?? backend.resolveTelemetryDir?.(ctx) ?? ctx.stateDir;
+  const telemetryCtx =
+    telemetryDir === undefined ? ctx : { ...ctx, telemetryDir };
   let firstOutputAt: string | null = null;
   let logPath: string | null = null;
   let logStartOffset: number | undefined;
-  const telemetry = createTelemetryLegStamper({ ledgerDir, spec, ctx });
+  const telemetry = createTelemetryLegStamper({
+    ledgerDir: telemetryDir,
+    spec,
+    ctx: telemetryCtx,
+  });
 
   /**
    * #786 first_output_at — first *observed* log growth past the post-spawn
@@ -886,7 +893,7 @@ export async function dispatchWorkerWithMonitor(
   };
 
   try {
-    const cliSpec = backend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+    const cliSpec = backend.resolveCliMonitorDispatch?.(spec, telemetryCtx, landing);
 
     if (cliSpec !== undefined) {
       const input: MonitoredCliDispatchInput = {
@@ -917,7 +924,7 @@ export async function dispatchWorkerWithMonitor(
       const exitPromise = waitForChildExit(child);
       // Schedule before the caller callback. A failed durable-handle write still
       // leaves the asynchronous, best-effort environment row for this run.
-      scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, backend);
+      scheduleTelemetryEnvironmentStamp(telemetryDir, telemetryCtx, backend);
       // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
       // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
       if (opts?.onMonitorHandleSpawned !== undefined) {
@@ -1114,7 +1121,7 @@ export async function dispatchWorkerWithMonitor(
       new Date().toISOString(),
       ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
-    scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, backend);
+    scheduleTelemetryEnvironmentStamp(telemetryDir, telemetryCtx, backend);
     const result = await dispatchWorker(backend, spec, ctx, landing);
     telemetry.stampCollect({ kind: "result", result });
     return { result };

@@ -465,6 +465,8 @@ export interface ReconcilePlan {
  * only for the family-LEVEL actions the merger / verify-cmr modules perform.
  */
 export interface FamilyBackend {
+  /** Resolve the durable sidecar directory for a family worker dispatch. */
+  resolveTelemetryDir?(ctx: DispatchContext): string | undefined;
   /**
    * merger seam (ADR 0022 decision 3②, #295 extends): serially merge a reviewed
    * child branch into the family base with `git merge --no-ff`. #293 handles

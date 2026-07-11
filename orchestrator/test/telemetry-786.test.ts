@@ -29,6 +29,7 @@ import {
   clearTelemetryRunEnvironment,
   configureTelemetryFromWorkerImage,
   configureTelemetryRunEnvironment,
+  durableTelemetryDirForSingleSlice,
   ensureEnvironmentStamp,
   extractClaudeTokens,
   extractCodexTokens,
@@ -124,6 +125,28 @@ function smokedRoute() {
 // ───────────────────────── pure unit tests ─────────────────────────
 
 describe("#786 telemetry pure helpers", () => {
+  it("derives single-slice telemetry outside the Sandcastle worktrees", () => {
+    const clone = "/home/agent/.sc-orchestrator/repo-iso-809";
+    const stateDir = `${clone}/.sandcastle/worktrees/.ledger-809`;
+    expect(durableTelemetryDirForSingleSlice(clone, stateDir)).toBe(
+      `${clone}/.ledger-809`,
+    );
+    expect(durableTelemetryDirForSingleSlice(clone, "/tmp/no-ledger"))
+      .toBeUndefined();
+  });
+
+  it("reads the old sidecar location only when the durable sidecar is absent", () => {
+    const root = tempDir("orch-809-legacy-read-");
+    const durable = join(root, ".ledger-809");
+    const legacy = join(root, ".sandcastle", "worktrees", ".ledger-809");
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(legacy + "/" + TELEMETRY_FILENAME, `${JSON.stringify(envRecordStub({ imageTag: "legacy" }))}\n`);
+    expect(readTelemetryRecords(durable, legacy)[0]).toMatchObject({ imageTag: "legacy" });
+
+    mkdirSync(durable, { recursive: true });
+    writeFileSync(durable + "/" + TELEMETRY_FILENAME, `${JSON.stringify(envRecordStub({ imageTag: "durable" }))}\n`);
+    expect(readTelemetryRecords(durable, legacy)[0]).toMatchObject({ imageTag: "durable" });
+  });
   it("extractCodexTokens parses `tokens used\\nN` and `tokens used: N`", () => {
     expect(extractCodexTokens("noise\ntokens used\n27,290\nmore")).toEqual({
       input: null,
@@ -645,6 +668,47 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(backend.opts.installs).toBe(0);
   });
 
+  it("keeps the first run sidecar readable after a second run starts", async () => {
+    const root = tempDir("orch-809-two-runs-");
+    const durable = join(root, ".ledger-809");
+    const backend = Object.assign(
+      quickExitBackend("run output\n"),
+      { resolveTelemetryDir: () => durable },
+    ) as Backend;
+    const route = smokedRoute();
+    const dispatchOptions = {
+      idleThresholdMs: 60_000,
+      pollIntervalMs: 20,
+      monitorDeps: {
+        readInstanceId: () => "test-instance-809",
+        sleepMs: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.min(ms, 20))),
+      },
+    };
+
+    await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809"), modelRoute: route },
+      undefined,
+      dispatchOptions,
+    );
+    const afterFirstRun = readTelemetryRecords(durable);
+    expect(afterFirstRun.filter((record) => record.phase === "collect")).toHaveLength(1);
+
+    await dispatchWorkerWithMonitor(
+      backend,
+      workerSpec(),
+      { stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809"), modelRoute: route },
+      undefined,
+      dispatchOptions,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const afterSecondRun = readTelemetryRecords(durable);
+    expect(afterSecondRun.filter((record) => record.phase === "collect")).toHaveLength(2);
+    expect(afterSecondRun).toEqual(expect.arrayContaining(afterFirstRun));
+  });
+
   it("calls a receiver-bound backend installer asynchronously and writes the missing environment stamp", async () => {
     const dir = tempDir("orch-786-receiver-bound-env-");
     const ledgerDir = join(dir, ".ledger-786");
@@ -1094,9 +1158,15 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       stateDir: ledgerDir,
     });
 
-    const env = readTelemetryRecords(ledgerDir).find(
-      (r) => r.phase === "environment",
-    ) as TelemetryEnvironmentRecord | undefined;
+    let env: TelemetryEnvironmentRecord | undefined;
+    for (let attempt = 0; attempt < 100 && env === undefined; attempt += 1) {
+      env = readTelemetryRecords(ledgerDir).find(
+        (r) => r.phase === "environment",
+      ) as TelemetryEnvironmentRecord | undefined;
+      if (env === undefined) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
+    }
     expect(env).toBeDefined();
     expect(env?.promptHash).toBe(childHash);
   });

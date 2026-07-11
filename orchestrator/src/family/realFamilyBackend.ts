@@ -1316,6 +1316,10 @@ export class RealFamilyBackend implements FamilyBackend {
     });
   }
 
+  resolveTelemetryDir(_ctx: DispatchContext): string {
+    return this.opts.ledgerDir;
+  }
+
   /**
    * #684: map a finished monitored family CLI bridge child into a WorkerResult.
    */
