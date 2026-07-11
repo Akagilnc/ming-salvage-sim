@@ -32,10 +32,6 @@ def _known_names(db: Any, recommender: str) -> set[str]:
     conn = getattr(db, "conn", None)
     if conn is None:
         return names
-    rows = conn.execute(
-        "SELECT source_id, excluded_names FROM character_knowledge_events WHERE character_name=?",
-        (recommender,),
-    ).fetchall()
     def add_visible_roster(source: Any, event: Any = None) -> None:
         if source is None:
             return
@@ -51,13 +47,25 @@ def _known_names(db: Any, recommender: str) -> set[str]:
                 if event is None or _source_visible_to(event, recommender, target=target, db=db):
                     names.add(name)
 
+    for source, event in _visible_sources(db, recommender):
+        add_visible_roster(source, event)
+    return names
+
+
+def _visible_sources(db: Any, recommender: str) -> Iterable[tuple[Any, Any]]:
+    """Yield sources the recommender may read, with their participation event."""
+    conn = db.conn
+    rows = conn.execute(
+        "SELECT source_id, excluded_names FROM character_knowledge_events WHERE character_name=?",
+        (recommender,),
+    ).fetchall()
     for row in rows:
         source = conn.execute(
             "SELECT participant_roster, excluded_names, excluded_targets "
             "FROM character_knowledge_sources WHERE source_id=?",
             (row["source_id"],),
         ).fetchone()
-        add_visible_roster(source, row)
+        yield source, row
 
     # Public sources are visible without a direct participation row.  Their
     # structured roster is the public-event side of the #459 read projection.
@@ -65,8 +73,21 @@ def _known_names(db: Any, recommender: str) -> set[str]:
         "SELECT participant_roster, excluded_names, excluded_targets "
         "FROM character_knowledge_sources WHERE kind='public'"
     ).fetchall():
-        add_visible_roster(source)
-    return names
+        yield source, None
+
+
+def _excluded_from_visible_source(db: Any, recommender: str, target: Any) -> bool:
+    """Return whether a visible source explicitly excludes this target."""
+    for source, event in _visible_sources(db, recommender):
+        if source is None or not _source_visible_to(source, recommender, db=db):
+            continue
+        if event is not None and not _source_visible_to(event, recommender, db=db):
+            continue
+        if not _source_visible_to(source, recommender, target=target, db=db):
+            return True
+        if event is not None and not _source_visible_to(event, recommender, target=target, db=db):
+            return True
+    return False
 
 
 def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> List[Dict[str, object]]:
@@ -98,6 +119,8 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     ).fetchall()
     result: List[Dict[str, object]] = []
     for row in rows:
+        if _excluded_from_visible_source(db, recommender, row):
+            continue
         if str(row["faction"] or "") != faction and str(row["name"]) not in known:
             continue
         status = str(row["status"] or "")
