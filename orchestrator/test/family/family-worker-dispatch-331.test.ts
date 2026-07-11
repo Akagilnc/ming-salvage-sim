@@ -443,6 +443,9 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     async readFamilyHead(): Promise<string> {
       return "head-1";
     }
+    async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+      return { ok: true };
+    }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
@@ -516,15 +519,21 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     expect(res).toEqual({ ok: false, ran: true });
   });
 
-  it("a completed ship on the WRONG branch (≠ familyBase) ⇒ INCOMPLETE_GATE", async () => {
+  it("a completed ship that reports the wrong branch follows host-verified PR truth", async () => {
     const res = await gate({
       kind: "completed",
-      output: { kind: "ship", branch: "main", status: "pr_opened", pr: "u" },
+      output: {
+        kind: "ship",
+        branch: "worker-reported-wrong-branch",
+        status: "pr_opened",
+        pr: "pr://feat/330",
+        prHead: "worker-reported-stale-head",
+      },
     });
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toEqual({ ok: true, ran: true });
   });
 
-  it("a completed pr_opened ship missing its verified PR head ⇒ INCOMPLETE_GATE", async () => {
+  it("ignores a missing worker-reported PR head", async () => {
     const res = await gate({
       kind: "completed",
       output: {
@@ -534,10 +543,10 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         pr: "pr://feat/330",
       },
     });
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toEqual({ ok: true, ran: true });
   });
 
-  it("a completed pr_opened ship with a blank verified PR head ⇒ INCOMPLETE_GATE", async () => {
+  it("ignores a blank worker-reported PR head", async () => {
     const res = await gate({
       kind: "completed",
       output: {
@@ -548,7 +557,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         prHead: "   ",
       },
     });
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toEqual({ ok: true, ran: true });
   });
 
   it("a completed pr_opened ship on familyBase with a real pr ⇒ ok (the contract holds)", async () => {
@@ -565,7 +574,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     expect(res).toEqual({ ok: true, ran: true });
   });
 
-  it("a completed pr_opened ship whose PR head does not match the current family HEAD ⇒ INCOMPLETE_GATE", async () => {
+  it("ignores a stale worker-reported PR head", async () => {
     const res = await gate({
       kind: "completed",
       output: {
@@ -576,7 +585,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
         prHead: "stale-head",
       },
     });
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toEqual({ ok: true, ran: true });
   });
 });
 
@@ -779,7 +788,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     const aborts = backend.ledger.filter((e) => e.status === "aborted");
     expect(aborts).toHaveLength(1);
     expect(aborts[0]?.phase).toBe("final");
-    expect(aborts[0]?.reason).toMatch(/did not open a valid family PR/i);
+    expect(aborts[0]?.reason).toMatch(/did not provide a PR locator/i);
     expect(aborts[0]?.familyHeadAfter).toBe("head-1");
     expect(aborts[0]?.stopSummary?.reason).toBe("infra_failure");
     expect(aborts[0]?.stopSummary?.repairHint).toMatch(/rerun/i);
@@ -792,7 +801,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
       actualFamilyHead: "head-1",
       verifiedCmrHead: "head-1",
       sources: {
-        actualFamilyHead: "family head after ship contract failure",
+        actualFamilyHead: "family head after missing PR locator",
         verifiedCmrHead: "latest cmr_passed ledger row",
       },
     });
@@ -819,7 +828,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
-  it("PR-head mismatch records latest verified CMR head separately from post-ship head", async () => {
+  it("worker-reported PR-head mismatch cannot block the host family head from being shipped", async () => {
     const backend = new PrHeadMismatchRecordingBackend();
 
     const res = await runVerifyCmr({
@@ -828,22 +837,13 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
       familyBackend: backend,
     });
 
+    // This minimal backend returns a ship payload to the later online-review
+    // worker too, so that unrelated stage remains incomplete. The ship gate itself
+    // must nevertheless have persisted host HEAD truth before reaching it.
     expect(res).toEqual({ ok: false, ran: true });
-    const abort = backend.ledger.find((e) => e.status === "aborted");
-    expect(abort?.stopSummary?.metadata?.ship).toEqual({
-      latestVerifiedCmrHead: "cmr-head",
-      currentFamilyHead: "post-ship-head",
-      reportedFamilyHead: "stale-pr-head",
-      shipPrState: "pr-head-mismatch",
-    });
-    expect(abort?.stopSummary?.metadata?.heads).toEqual({
-      actualFamilyHead: "post-ship-head",
-      verifiedCmrHead: "cmr-head",
-      sources: {
-        actualFamilyHead: "family head after ship worker",
-        verifiedCmrHead: "latest cmr_passed ledger row",
-      },
-    });
+    const shipped = backend.ledger.find((e) => e.status === "shipped");
+    expect(shipped?.familyHeadAfter).toBe("post-ship-head");
+    expect(shipped).toMatchObject({ status: "shipped" });
   });
 });
 
