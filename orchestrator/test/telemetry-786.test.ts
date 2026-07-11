@@ -433,7 +433,7 @@ describe("#786 telemetry pure helpers", () => {
     expect(collect.first_output_at).toBe("2026-07-11T00:00:02.000Z");
   });
 
-  it("ensureEnvironmentStamp is idempotent (one environment line per ledger)", () => {
+  it("ensureEnvironmentStamp is idempotent (one environment line per run)", () => {
     const dir = tempDir("orch-786-env-");
     expect(ensureEnvironmentStamp(dir, {}, { imageTag: "img:a" })).toBe(true);
     expect(ensureEnvironmentStamp(dir, {}, { imageTag: "img:b" })).toBe(false);
@@ -643,7 +643,7 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     mkdirSync(ledgerDir, { recursive: true });
     writeFileSync(
       join(ledgerDir, TELEMETRY_FILENAME),
-      JSON.stringify(envRecordStub()) + "\n",
+      JSON.stringify(envRecordStub({ runId: ledgerDir })) + "\n",
     );
     const backend = Object.assign(
       new ReceiverBoundTelemetryBackend({ installs: 0 }),
@@ -688,17 +688,28 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     await dispatchWorkerWithMonitor(
       backend,
       workerSpec(),
-      { stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809"), modelRoute: route },
+      {
+        stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809-run-1"),
+        modelRoute: route,
+      },
       undefined,
       dispatchOptions,
     );
     const afterFirstRun = readTelemetryRecords(durable);
     expect(afterFirstRun.filter((record) => record.phase === "collect")).toHaveLength(1);
+    expect(afterFirstRun.filter((record) => record.phase === "environment")).toHaveLength(1);
+    expect(
+      (afterFirstRun.find((record) => record.phase === "environment") as TelemetryEnvironmentRecord)
+        .runId,
+    ).toBe(join(root, ".sandcastle", "worktrees", ".ledger-809-run-1"));
 
     await dispatchWorkerWithMonitor(
       backend,
       workerSpec(),
-      { stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809"), modelRoute: route },
+      {
+        stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809-run-2"),
+        modelRoute: route,
+      },
       undefined,
       dispatchOptions,
     );
@@ -706,6 +717,14 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
 
     const afterSecondRun = readTelemetryRecords(durable);
     expect(afterSecondRun.filter((record) => record.phase === "collect")).toHaveLength(2);
+    const environmentRecords = afterSecondRun.filter(
+      (record): record is TelemetryEnvironmentRecord => record.phase === "environment",
+    );
+    expect(environmentRecords).toHaveLength(2);
+    expect(environmentRecords.map((record) => record.runId)).toEqual([
+      join(root, ".sandcastle", "worktrees", ".ledger-809-run-1"),
+      join(root, ".sandcastle", "worktrees", ".ledger-809-run-2"),
+    ]);
     expect(afterSecondRun).toEqual(expect.arrayContaining(afterFirstRun));
   });
 
