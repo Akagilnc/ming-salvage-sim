@@ -193,6 +193,7 @@ import type {
   ReconcileGit,
   VerifyFamilyShippedPrRequest,
   VerifyFamilyShippedPrResult,
+  FindFamilyShippedPrResult,
 } from "./types.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
@@ -577,6 +578,35 @@ export class RealFamilyBackend implements FamilyBackend {
       };
     }
     return { ok: true };
+  }
+
+  async findFamilyShippedPr(input: {
+    readonly familyBase: string;
+    readonly expectedHead: string;
+  }): Promise<FindFamilyShippedPrResult> {
+    try {
+      const raw = this.sh("gh", [
+        "pr", "list", "--repo", this.opts.repo, "--base", this.opts.base,
+        "--head", input.familyBase, "--state", "open", "--json", "url,headRefOid",
+      ], this.opts.workingRepo);
+      const matches = JSON.parse(raw) as readonly { readonly url?: unknown; readonly headRefOid?: unknown }[];
+      if (matches.length === 0) {
+        return { ok: false, kind: "pr_missing", reason: `host has no open family PR for branch "${input.familyBase}"` };
+      }
+      if (matches.length !== 1) {
+        return { ok: false, kind: "mismatch", reason: `host found ${matches.length} open family PRs for branch "${input.familyBase}"` };
+      }
+      const match = matches[0]!;
+      if (typeof match.url !== "string" || match.url.trim().length === 0) {
+        return { ok: false, kind: "mismatch", reason: "host family PR has no URL" };
+      }
+      if (match.headRefOid !== input.expectedHead) {
+        return { ok: false, kind: "mismatch", reason: `host family PR head ${String(match.headRefOid)} does not match current family HEAD ${input.expectedHead}` };
+      }
+      return { ok: true, pr: match.url.trim() };
+    } catch (err) {
+      return { ok: false, kind: "observation_failed", reason: `could not discover family PR via gh pr list: ${err instanceof Error ? err.message : String(err)}` };
+    }
   }
 
   /**
