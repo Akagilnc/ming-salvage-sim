@@ -30,6 +30,19 @@ class _FakeAgent:
         yield RunCompletedEvent()
 
 
+class _SecretOrderAgent:
+    """A streamed tool result, matching the WebGame tool-result boundary."""
+
+    def __init__(self, result: str):
+        self.result = result
+
+    def run(self, *args, **kwargs):
+        yield _RunContent("臣已领密旨。")
+        completed = RunCompletedEvent()
+        completed.tools = [SimpleNamespace(tool_name="secret_order", result=self.result)]
+        yield completed
+
+
 class _FakeRegistry:
     session_ids = {}
 
@@ -59,7 +72,15 @@ class _FakeSession:
         return None
 
     def apply_cli_conversation_actions(self, *args, **kwargs):
-        return {"directive": None, "secret_order_id": 0, "pending_action_id": 0}
+        return {
+            "directive": None,
+            "secret_order_id": 0,
+            "pending_action_id": 0,
+            "pending_action_failures": [],
+        }
+
+    def _merge_staged_new_secret_order_content(self, *args, **kwargs):
+        return None
 
     def pending_count(self):
         return 0
@@ -178,3 +199,44 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
 
     assert events == ["tick", "stream"]
     assert "event: done" in first
+
+
+def test_streamed_secret_order_preserves_blacklist_through_commit_restore_transfer_and_disclosure(game):
+    """Web tool capture must keep explicit secrecy exclusions through the full durable path."""
+    db, state, content = game
+    assignee = next(c for c in content.characters.values() if c.office_type == "兵部")
+    excluded = next(c for c in content.characters.values() if c.office_type == "户部")
+    agent = _SecretOrderAgent(
+        '__secret_order__{"title":"密查亏空","content":"查户部旧账","assignee":"%s",'
+        '"excluded_names":["%s"],"excluded_offices":["户部"]}'
+        % (assignee.name, excluded.name)
+    )
+    runtime = object.__new__(web_app.WebGame)
+    runtime.session = _FakeSession(assignee, agent, state, db)
+    runtime.chat_history = {assignee.name: []}
+    runtime.directive_rows = lambda: []
+    runtime.directive_payload = lambda row: row
+    runtime.suggestions_for = lambda character: []
+    runtime.can_undo_last_chat = lambda minister_name: False
+
+    payload = runtime._chat_stream_payload(
+        assignee.name, "密令如下：查户部旧账", 0, {}, state.turn, lambda _delta: None,
+    )
+
+    assert payload["pending_action_id"] > 0
+    pending = db.list_pending_actions(state.turn, minister_name=assignee.name)
+    assert len(pending) == 1
+    assert db.commit_pending_actions(state, minister_name=assignee.name)
+
+    order = db.list_secret_orders()[0]
+    assert order["excluded_targets"] == {
+        "people": [excluded.name], "offices": ["户部"],
+    }
+    restored = db.load_state()
+    db.set_character_office(excluded.name, "礼部尚书", office_type="礼部")
+    db.record_public_knowledge_event(
+        restored, "密查公开", "密查户部旧账已奉明发", source_id=f"secret_order:{order['id']}",
+    )
+    knowledge = db.get_character_knowledge(restored, excluded.name)
+    assert not any(item["source_id"] == f"secret_order:{order['id']}" for item in knowledge["events"])
+    assert not any(item["source_id"] == f"secret_order:{order['id']}" for item in knowledge["public_events"])
