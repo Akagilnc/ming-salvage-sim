@@ -66,8 +66,8 @@ describe("#451 dogfood replay fixture", () => {
           metadata: expect.objectContaining({
             providerDegraded: [
               expect.objectContaining({
-                provider: "claude",
-                leg: "opus",
+                provider: "agy",
+                leg: "agy",
                 blocking: false,
               }),
             ],
@@ -452,8 +452,8 @@ describe("#451 dogfood replay fixture", () => {
       seam: "family_verify_cmr",
       helperSeam: "family_cmr_accounting",
       routeName: "claude-tight",
-      declaredLegs: ["gpt-5.6-sol", "opus"],
-      rejectedDefaultLeg: "agy",
+      declaredLegs: ["gpt-5.6-sol", "agy"],
+      rejectedDefaultLeg: "opus",
       dispatches: ["cmr:completeness"],
     });
     expect(rowsById.get("376-route-env-format-mismatch")).toMatchObject({
@@ -540,8 +540,8 @@ describe("#451 dogfood replay fixture", () => {
         metadata: expect.objectContaining({
           providerDegraded: [
             expect.objectContaining({
-              provider: "claude",
-              leg: "opus",
+              provider: "agy",
+              leg: "agy",
               blocking: true,
             }),
           ],
@@ -549,7 +549,7 @@ describe("#451 dogfood replay fixture", () => {
       }),
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr_provider_worker_failure",
-        failedLeg: "opus",
+        failedLeg: "agy",
         status: "aborted",
         dispatches: ["cmr:completeness"],
       }),

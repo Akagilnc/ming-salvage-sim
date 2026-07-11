@@ -253,7 +253,7 @@ describe("#825 Group A family roles", () => {
           if (this.cmrCalls === 1) {
             throw new Error("bad JSON sidecar parser failure");
           }
-          return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.6-sol"], skippedLegs: [], evidencePaths: ["cmr/review-summary.json"] } };
+          return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"], skippedLegs: [], evidencePaths: ["cmr/review-summary.json"] } };
         }
         this.shipCalls += 1;
         return { kind: "completed", output: { kind: "ship", branch: "family/825", status: "pr_opened", pr: "pr://825", prHead: "head" } };

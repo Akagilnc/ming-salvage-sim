@@ -73,10 +73,11 @@ import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
 const realSoulsDir = join(here, "..", "..", "image", "souls");
-const DEFAULT_CMR_LEGS = ["opus", "gpt-5.6-sol"] as const;
+const DEFAULT_CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
 const FROZEN_NORMAL_CMR_REVIEW_LEGS = [
   { family: "codex", slug: "gpt-5.6-sol" },
   { family: "claude", slug: "opus" },
+  { family: "agy", slug: "agy" },
 ] as const;
 const STRONG_LEGS = ["opus", "gpt-5.6-sol"] as const;
 const EMPTY_CMR_CLOSURE = {
@@ -150,6 +151,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         ...VALID_CMR_VERDICT_FIELDS,
         skippedLegs: [
           { slug: "opus", reason: "auth unavailable" },
+          { slug: "agy", reason: "quota exhausted" },
         ],
       })}</cmr>`,
     );
@@ -424,7 +426,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       const o = parseCmrOutcome(
         `<cmr>${JSON.stringify({
           converged: true,
-          successfulLegs: ["gpt-5.6-sol", "opus"],
+          successfulLegs: ["gpt-5.6-sol", "agy"],
           ...VALID_CMR_VERDICT_FIELDS,
         })}</cmr>`,
       );
@@ -432,7 +434,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       expect(o).toEqual({
         kind: "verdict",
         converged: true,
-        successfulLegs: ["gpt-5.6-sol", "opus"],
+        successfulLegs: ["gpt-5.6-sol", "agy"],
         ...EMPTY_CMR_CLOSURE,
         ...CMR_EVIDENCE,
       });
@@ -476,6 +478,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           ...VALID_CMR_VERDICT_FIELDS,
           skippedLegs: [
             { slug: "gpt-5.6-sol", reason: "auth unavailable" },
+            { slug: "agy", reason: "quota exhausted" },
           ],
         })}</cmr>`,
       );
@@ -484,6 +487,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         expect(o.successfulLegs).toEqual(["opus"]);
         expect(o.skippedLegs).toEqual([
           { slug: "gpt-5.6-sol", reason: "auth unavailable" },
+          { slug: "agy", reason: "quota exhausted" },
         ]);
       }
     });
@@ -495,7 +499,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
             converged: true,
             successfulLegs: DEFAULT_CMR_LEGS,
             ...VALID_CMR_VERDICT_FIELDS,
-            skippedLegs: [{ slug: "opus", reason: "quota exhausted" }],
+            skippedLegs: [{ slug: "agy", reason: "quota exhausted" }],
           })}</cmr>`,
         ).kind,
       ).toBe("malformed");
@@ -520,6 +524,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
             ...VALID_CMR_VERDICT_FIELDS,
             skippedLegs: [
               { slug: "opus", reason: "auth unavailable" },
+              { slug: "agy", reason: "quota exhausted" },
             ],
           })}</cmr>`,
         ).kind,
@@ -1501,6 +1506,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(legs).toEqual([
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
     ]);
   });
 
@@ -1514,6 +1520,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(legs).toEqual([
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
     ]);
   });
 
@@ -1524,6 +1531,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const solLegs = [
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
     ] as const;
     const spec = {
       ...cmrWorkerSpec("fresh", "correctness"),
@@ -1982,6 +1990,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       reviewLegs: [
         { family: "codex", slug: "gpt-5.6-sol" },
         { family: "claude", slug: "opus" },
+        { family: "agy", slug: "agy" },
       ],
     });
     const exclude = readFileSync(join(repo, ".git", "info", "exclude"), "utf8");
@@ -2013,6 +2022,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     expect(route.reviewLegs).toEqual([
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
     ]);
   });
 

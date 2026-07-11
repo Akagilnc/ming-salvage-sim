@@ -18,6 +18,7 @@ describe("#441 test route isolation", () => {
         cmrReview: [
           { family: "codex", slug: "gpt-5.6-sol" },
           { family: "claude", slug: "opus" },
+          { family: "agy", slug: "agy" },
         ],
       },
     });
@@ -28,13 +29,13 @@ describe("#441 test route isolation", () => {
 
     expect(activeModelRoute().legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "gpt-5.6-sol",
-      "opus",
+      "agy",
     ]);
     expect(
-      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.6-sol", "opus"] }),
+      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.6-sol", "agy"] }),
     ).toBeUndefined();
     expect(
-      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.6-sol", "opus", "agy"] }),
-    ).toMatch(/not declared.*agy/i);
+      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.6-sol", "agy", "opus"] }),
+    ).toMatch(/not declared.*opus/i);
   });
 });

@@ -163,7 +163,7 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
           "fixer=sonnet",
           "cleanup=sonnet",
           "docRelease=sonnet",
-          "cmrReview=[codex:gpt-5.6-sol,claude:opus]",
+          "cmrReview=[codex:gpt-5.6-sol,claude:opus,agy:agy]",
         ].join("\n"),
     );
     expect(familyLineupCallIndex).toBeGreaterThanOrEqual(0);
