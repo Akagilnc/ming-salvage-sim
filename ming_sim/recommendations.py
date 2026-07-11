@@ -6,6 +6,12 @@ import json
 from typing import Any, Dict, Iterable, List
 
 from .knowledge import knowledge_row_visible_to
+from .qualitative import qualitative_bucket
+
+
+def _identity_bucket(value: object) -> int:
+    """Use the same low/middle/high identity cuts as minister context."""
+    return qualitative_bucket(value, (40, 80), default=50)
 
 def _source_visible_to(row: Any, recommender: str, *, target: Any = None, db: Any) -> bool:
     """Apply the #459 exclusion boundary before using a source's roster."""
@@ -101,14 +107,15 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     if conn is None:
         return []
     source = conn.execute(
-        "SELECT faction FROM characters WHERE name=?", (recommender,)
+        "SELECT faction, identity FROM characters WHERE name=?", (recommender,)
     ).fetchone()
     if source is None:
         return []
     faction = str(source["faction"] or "")
+    recommender_identity_bucket = _identity_bucket(source["identity"])
     known = _known_names(db, recommender)
     rows = conn.execute(
-        "SELECT name, office, office_type, faction, status, reason_code, status_reason "
+        "SELECT name, office, office_type, faction, identity, status, reason_code, status_reason "
         "FROM characters WHERE name != ? AND power_id='ming' "
         "AND faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') "
         "AND status IN ('active','offstage','retired','dismissed') "
@@ -121,7 +128,14 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     for row in rows:
         if _excluded_from_visible_source(db, recommender, row):
             continue
-        if str(row["faction"] or "") != faction and str(row["name"]) not in known:
+        same_faction = str(row["faction"] or "") == faction
+        if (
+            same_faction
+            and str(row["name"]) not in known
+            and _identity_bucket(row["identity"]) > recommender_identity_bucket
+        ):
+            continue
+        if not same_faction and str(row["name"]) not in known:
             continue
         status = str(row["status"] or "")
         # ADR 0009 决定 10 的 active 人才池分支锚定「听用候铨」及
