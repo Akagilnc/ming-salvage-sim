@@ -77,16 +77,62 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     return result
 
 
+def build_recommendation_brief(db: Any, state: Any, recommender: str) -> str:
+    """Render the minister's already-filtered recommendation slice for context."""
+    rows = list_recommendation_candidates(db, state, recommender)
+    if not rows:
+        return "【可荐人切片】本大臣眼下没有可据以具名荐人的人选。"
+    lines = ["【可荐人切片】（已按本大臣派系网络与见闻过滤）"]
+    for row in rows:
+        status = row["status_reason"] or row["reason_code"] or row["status"]
+        if row["candidate_kind"] == "荐起复":
+            lines.append(
+                f"{row['name']}：荐起复；原职/身份={row['office'] or '居家'}；"
+                f"来历={status}；依据={row['basis']}。"
+            )
+        else:
+            lines.append(
+                f"{row['name']}：荐在职作破格差遣；现职={row['office'] or '在朝'}；"
+                f"依据={row['basis']}。"
+            )
+    return "\n".join(lines)
+
+
+def validate_recommendation_snapshot(
+    db: Any, state: Any, recommender: str, snapshot: Dict[str, object],
+) -> bool:
+    """Check a staged recommendation before appointment mutates its candidate."""
+    name = str(snapshot.get("name") or "").strip()
+    if not name:
+        return False
+    current = next(
+        (row for row in list_recommendation_candidates(db, state, recommender)
+         if row["name"] == name),
+        None,
+    )
+    if current is None:
+        return False
+    return all(
+        current.get(key) == snapshot.get(key)
+        for key in ("candidate_kind", "basis", "status", "office", "faction")
+    )
+
+
 def record_recommendation(db: Any, state: Any, recommender: str,
                           candidate: Dict[str, object], target_office: str,
                           reason: str = "") -> int:
     """Persist one adopted recommendation and its provenance."""
+    # Event consumers use the stable semantic kind; the UI/tool slice keeps the
+    # action-oriented labels 荐起复/荐在职.
+    event_kind = {"荐起复": "起复", "荐在职": "在职"}.get(
+        str(candidate.get("candidate_kind") or ""), str(candidate.get("candidate_kind") or "")
+    )
     cur = db.conn.execute(
         """INSERT INTO recommendation_events
            (turn,year,period,recommender,candidate,candidate_kind,target_office,basis,reason,status)
            VALUES (?,?,?,?,?,?,?,?,?,'adopted')""",
         (int(state.turn), int(state.year), int(state.period), recommender,
-         str(candidate.get("name") or ""), str(candidate.get("candidate_kind") or ""),
+         str(candidate.get("name") or ""), event_kind,
          target_office, str(candidate.get("basis") or ""), reason),
     )
     return int(cur.lastrowid)

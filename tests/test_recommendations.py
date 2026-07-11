@@ -54,3 +54,44 @@ def test_minister_recommend_tool_preassembles_two_candidate_types(game):
     assert "起复" in listing
     assert "破格差遣" in listing
 
+
+def test_recommendation_appointment_preserves_kind_and_restores_both_types(game):
+    db, state, content = game
+    recommender = next(c for c in content.characters.values()
+                       if c.office_type not in ("后宫", "宗藩"))
+    candidates = db.list_recommendation_candidates(state, recommender.name)
+    offstage = next(row for row in candidates if row["candidate_kind"] == "荐起复")
+    active = next(row for row in candidates if row["candidate_kind"] == "荐在职")
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', office='', reason_code='罢居' WHERE name=?",
+        (offstage["name"],),
+    )
+    db.conn.commit()
+    # The staged payload carries the original candidate snapshot; commit must
+    # use it instead of reclassifying the candidate after appointment.
+    for row, office in ((offstage, "巡盐御史"), (active, "河道总督")):
+        action_id = db.stage_pending_action(
+            state.turn,
+            kind="office",
+            action="任命",
+            minister_name=recommender.name,
+            target_id=None,
+            payload={
+                "name": row["name"], "office": office,
+                "faction": row["faction"], "reason": "荐人采纳",
+                "recommendation": {
+                    "candidate": row,
+                    "recommender": recommender.name,
+                },
+            },
+        )
+        result = db.commit_pending_actions(
+            state, content=content, registry=None, action_ids=[action_id]
+        )
+        assert result and result[0]["id"] == action_id
+
+    restored = db.load_state()
+    events = db.list_recommendation_events(restored, recommender.name)
+    by_candidate = {event["candidate"]: event for event in events}
+    assert by_candidate[offstage["name"]]["candidate_kind"] == "起复"
+    assert by_candidate[active["name"]]["candidate_kind"] == "在职"

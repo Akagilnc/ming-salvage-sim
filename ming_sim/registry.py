@@ -18,6 +18,7 @@ from ming_sim.constants import TURN_UNIT
 from ming_sim.content import GameContent
 from ming_sim.context import character_context, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
+from ming_sim.recommendations import build_recommendation_brief
 from ming_sim.llm_model import create_chat_model
 from ming_sim.qualitative import (
     building_output_effect,
@@ -518,6 +519,7 @@ def create_minister_agent(
         last_gazette = build_last_gazette_brief(context)
         memory_brief = build_memory_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)
+        recommendation_brief = build_recommendation_brief(context.db, context.state, character.name)
         region_brief = build_region_brief(context)
         building_brief = build_building_brief(context)
         monthly_block_parts = [
@@ -539,6 +541,7 @@ def create_minister_agent(
             monthly_block_parts.append(memory_brief)
         if secret_brief:
             monthly_block_parts.append(secret_brief)
+        monthly_block_parts.append(recommendation_brief)
         instructions = [
             _minister_game_world_prompt(c.game_world_prompt),
             c.minister_agent_prompt,

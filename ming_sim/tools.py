@@ -795,23 +795,8 @@ def build_board_query_tools(context: CourtContext):
 
     def list_recommendable_persons() -> str:
         """查本大臣派系网络与亲身见闻可及的荐人切片（起复/破格差遣）。"""
-        rows = context.db.list_recommendation_candidates(context.state, character.name)
-        if not rows:
-            return "本大臣眼下没有可据以具名荐人的人选。"
-        lines = ["【可荐人切片】"]
-        for row in rows:
-            status = row["status_reason"] or row["reason_code"] or row["status"]
-            if row["candidate_kind"] == "荐起复":
-                lines.append(
-                    f"{row['name']}：荐起复；原职/身份={row['office'] or '居家'}；"
-                    f"来历={status}；依据={row['basis']}。"
-                )
-            else:
-                lines.append(
-                    f"{row['name']}：荐在职作破格差遣；现职={row['office'] or '在朝'}；"
-                    f"依据={row['basis']}。"
-                )
-        return "\n".join(lines)
+        from ming_sim.recommendations import build_recommendation_brief
+        return build_recommendation_brief(context.db, context.state, character.name)
 
     def recommend_person(name: str, target_office: str, reason: str = "") -> str:
         """具名荐人并交给皇帝确认；不绕过任命确认闸门。"""
@@ -829,6 +814,7 @@ def build_board_query_tools(context: CourtContext):
             "recommendation": {
                 "candidate_kind": row["candidate_kind"],
                 "basis": row["basis"], "recommender": character.name,
+                "candidate": row,
             },
         }, ensure_ascii=False)
         return f"__pending_recommendation__{payload}"
