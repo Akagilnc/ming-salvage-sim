@@ -2697,12 +2697,19 @@ export class RealFamilyBackend implements FamilyBackend {
       pr: outcome.pr,
       familyBase: ctx.familyBase,
     });
-    // A host-confirmed metadata mismatch is a malformed ship claim. Missing PRs
-    // and unknown observations are lifecycle outcomes owned by verifyCmr: return
-    // the locator so it can respectively re-ship or retry observation within the
-    // shared bound instead of dying here on the first host check.
+    // A host-confirmed metadata mismatch is observed-but-unexpected state, not a
+    // malformed worker response. Escalate it durably so verifyCmr never maps a
+    // deliberately closed or otherwise mismatched claimed PR into another
+    // mutating ship dispatch. Missing PRs and unknown observations remain
+    // lifecycle outcomes owned by verifyCmr.
     if (!verifiedPr.ok && verifiedPr.kind === "mismatch") {
-      return { kind: "malformed", reason: verifiedPr.reason };
+      return {
+        kind: "escalated",
+        escalation: {
+          reason: verifiedPr.reason,
+          diagnosis: "claimed family PR metadata was observed but did not match the delivery contract",
+        },
+      };
     }
     return {
       kind: "completed",

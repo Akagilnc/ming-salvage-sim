@@ -174,6 +174,9 @@ export interface FamilyLedgerEntry {
    *   - `"ship_completed"` — the ship worker reported a PR locator and branch,
    *     before host observation verified either. This is advisory observation input
    *     only; it is deliberately not delivery, unblock, or review-loop truth.
+   *   - `"ship_streak_opened"` / `"ship_streak_closed"` — durable boundaries for
+   *     the exactly-once mutating ship budget. CMR rows and HEAD movement do not
+   *     split an open streak.
    */
   readonly status:
     | "merged"
@@ -192,6 +195,8 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
+    | "ship_streak_opened"
+    | "ship_streak_closed"
     | "ship_dispatch_reserved"
     | "ship_dispatch_attempt"
     | "ship_completed";
@@ -253,6 +258,8 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
+    | "ship_streak_opened"
+    | "ship_streak_closed"
     | "ship_dispatch_reserved"
     | "ship_dispatch_attempt"
     | "ship_completed";
@@ -336,6 +343,14 @@ export interface FamilyLedgerEntry {
   readonly shipBranch?: string;
   /** Correlates a pre-launch reservation with its confirmed physical launch. */
   readonly shipDispatchId?: string;
+  /** Stable identity shared by the open/close rows of one ship streak. */
+  readonly shipStreakId?: string;
+  /** Legacy confirmed attempts carried into a newly materialized streak anchor. */
+  readonly shipAttemptsAtOpen?: number;
+  /** Legacy unconfirmed reservations carried into a newly materialized streak anchor. */
+  readonly shipInfraAttemptsAtOpen?: number;
+  /** Why an open ship streak became terminal. */
+  readonly shipStreakOutcome?: "shipped" | "exhausted";
   /** PR number on `status:"pr_merged"` terminal entries (#602). */
   readonly prNumber?: number;
   /** Remote branch name on `status:"pr_merged"` terminal entries (#602). */

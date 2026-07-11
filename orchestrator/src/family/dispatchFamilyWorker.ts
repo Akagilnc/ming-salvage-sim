@@ -202,8 +202,8 @@ export interface DispatchFamilyWorkerWithMonitorOptions {
     handle: WorkerMonitorHandle,
   ) => void | Promise<void>;
   /**
-   * Called after a physical CLI spawn, or immediately before the legacy dispatch
-   * seam. The callback must complete before the worker is allowed to continue.
+   * Called after a physical worker launch on both the CLI and legacy seams.
+   * The callback must complete before the worker is allowed to continue.
    */
   readonly onDispatchConfirmed?: () => void | Promise<void>;
 }
@@ -367,8 +367,9 @@ export async function dispatchFamilyWorkerWithMonitor(
       telemetryCtx,
       familyBackend,
     );
+    const resultPromise = dispatchFamilyWorker(familyBackend, spec, ctx, landing);
     await opts?.onDispatchConfirmed?.();
-    const result = await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
+    const result = await resultPromise;
     telemetry.stampCollect({ kind: "result", result });
     return { result, telemetryEnvironmentStamp };
   } catch (error) {

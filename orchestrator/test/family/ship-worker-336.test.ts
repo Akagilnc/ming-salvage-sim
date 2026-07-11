@@ -235,17 +235,17 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(res.kind).toBe("completed");
   });
 
-  it("a pr_opened ship whose host PR metadata targets the wrong base ⇒ malformed", async () => {
+  it("a pr_opened ship whose claimed host PR is CLOSED ⇒ durable escalation, never malformed re-ship", async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
     be.verifiedPr = {
       ok: false,
       kind: "mismatch",
-      reason: "family PR targets base main but expected integ",
+      reason: 'family PR "u" is CLOSED but must be OPEN',
     };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("malformed");
-    if (res.kind === "malformed") expect(res.reason).toMatch(/targets base|expected/);
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") expect(res.escalation.reason).toMatch(/CLOSED.*OPEN/);
   });
 
   it("the cmr worker is still routed to its own (cmr) path, NOT the ship seam", async () => {

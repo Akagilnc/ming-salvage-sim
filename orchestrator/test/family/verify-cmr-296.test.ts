@@ -2176,7 +2176,7 @@ describe("#823 family ship malformed-output recovery", () => {
     );
   });
 
-  it("resume spends only the remaining malformed-ship dispatch budget recorded after the current CMR streak", async () => {
+  it("crash-resume spends only the remaining dispatch budget from the durable open ship streak", async () => {
     class ResumeAfterMalformedShipBackend extends BareFamilyBackend {
       shipDispatches = 0;
       readonly aborted: FamilyAbortedEvent[] = [];
@@ -2218,6 +2218,12 @@ describe("#823 family ship malformed-output recovery", () => {
         familyHeadAfter: "head-after-cmr",
         routeFingerprint: currentRouteFingerprint(),
       },
+      {
+        status: "ship_streak_opened",
+        event: "ship_streak_opened",
+        phase: "final",
+        shipStreakId: "streak-crash-resume",
+      },
       { status: "ship_dispatch_attempt", event: "ship_dispatch_attempt", phase: "final" },
       { status: "ship_dispatch_attempt", event: "ship_dispatch_attempt", phase: "final" },
     );
@@ -2246,6 +2252,68 @@ describe("#823 family ship malformed-output recovery", () => {
     expect(refeed).toEqual({ ok: false, ran: true });
     expect(backend.shipDispatches).toBe(1);
     expect(backend.escalations).toHaveLength(2);
+  });
+
+  it("keeps the open ship streak budget when a failed ship advances HEAD and a fresh CMR pass is appended", async () => {
+    class MovedHeadShipBackend extends BareFamilyBackend {
+      shipDispatches = 0;
+      readonly escalations: FamilyEscalation[] = [];
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-after-version-bump";
+      }
+      async escalateFamily(event: FamilyEscalation): Promise<void> {
+        this.escalations.push(event);
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind !== "ship") {
+          throw new Error(`unexpected ${spec.kind} dispatch: fresh moved-head CMR should resume-skip`);
+        }
+        this.shipDispatches += 1;
+        return { kind: "malformed", reason: "ship outcome sidecar invalid" };
+      }
+    }
+
+    const backend = new MovedHeadShipBackend();
+    backend.ledger.push(
+      {
+        status: "ship_streak_opened",
+        event: "ship_streak_opened",
+        phase: "final",
+        shipStreakId: "streak-moved-head",
+      },
+      { status: "ship_dispatch_attempt", event: "ship_dispatch_attempt", phase: "final" },
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-after-version-bump",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-after-version-bump",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-version-bump",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS - 1);
+    expect(backend.escalations).toHaveLength(1);
   });
 
   it("a later CMR pass starts a fresh malformed-ship retry streak", async () => {
