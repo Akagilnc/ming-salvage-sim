@@ -798,7 +798,37 @@ type ChildExit =
 type MonitorRace = ChildExit;
 
 const DEFAULT_MONITOR_IDLE_THRESHOLD_MS = 10 * 60 * 1000;
+const CLAUDE_MONITOR_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
+const MAX_MONITOR_IDLE_SECONDS = 2_147_483;
 const DEFAULT_MONITOR_POLL_INTERVAL_MS = 250;
+
+/**
+ * #808 productive-worker idle monitor budget. The general 10-minute tier keeps
+ * genuinely silent workers killable, while Claude's thinking-heavy CLI gets a
+ * 30-minute default: W1 telemetry recorded six Sonnet S5 legs being killed by
+ * the former threshold before first output under three-container concurrency.
+ *
+ * `ORCHESTRATOR_WORKER_IDLE_SECONDS` is deliberately resolved for every
+ * dispatch, like the route-smoke override, so an in-process operator change
+ * applies without reloading this module. Invalid values fall back to the
+ * provider tier; the upper bound keeps a seconds-to-milliseconds conversion
+ * within a signed 32-bit timer should a caller reuse the value as a delay.
+ */
+export function resolveWorkerMonitorIdleThresholdMs(
+  spec: Pick<WorkerSpec, "host">,
+  envValue: string | undefined,
+): number {
+  const defaultMs =
+    spec.host === "claude"
+      ? CLAUDE_MONITOR_IDLE_THRESHOLD_MS
+      : DEFAULT_MONITOR_IDLE_THRESHOLD_MS;
+  if (envValue === undefined || envValue.trim() === "") return defaultMs;
+  const parsed = Number(envValue.trim());
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_MONITOR_IDLE_SECONDS) {
+    return defaultMs;
+  }
+  return parsed * 1000;
+}
 
 /**
  * Wait for a monitored child to leave the process table.
@@ -946,7 +976,8 @@ export async function dispatchWorkerWithMonitor(
       }
       const monitorDeps = opts?.monitorDeps;
       const idleThresholdMs =
-        opts?.idleThresholdMs ?? DEFAULT_MONITOR_IDLE_THRESHOLD_MS;
+        opts?.idleThresholdMs ??
+        resolveWorkerMonitorIdleThresholdMs(spec, process.env.ORCHESTRATOR_WORKER_IDLE_SECONDS);
       const pollIntervalMs =
         opts?.pollIntervalMs ?? DEFAULT_MONITOR_POLL_INTERVAL_MS;
       // Baseline = pre-dispatch size + orchestrator marker line. Growth past this
