@@ -72,6 +72,7 @@ import type {
   IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
+  StepSpec,
   StepOutput,
   WorkerResult,
   WorkerSpec,
@@ -2599,7 +2600,7 @@ describe("#686 R2 production seams", () => {
     expect(tryParseActionableRelayTag("no tag")).toBeUndefined();
   });
 
-  it("P1: a worker-log decision_gate tag parks the production dispatch path for a human ruling", async () => {
+  it("P1: a worker-log decision_gate tag durably parks, then an appended answer re-enters the original step", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "relay-826-decision-gate-"));
     const worktree: WorktreeHandle = {
       branch: "fix/826-decision-gate",
@@ -2607,16 +2608,21 @@ describe("#686 R2 production seams", () => {
       path: tmp,
     };
     const workerLog = `<relay>{"decision_gate":true,"state_summary":"need product ruling","remaining":"choose policy"}</relay>`;
+    const persisted: PersistentLedgerEntry[] = [];
+    const resumed: Array<{ step: string; sessionId: string }> = [];
+    let monitorPass = 0;
     const backend = {
       async smokeModelRoute(route: any): Promise<any> {
         const { smokeRouteModels } = await import("../src/modelRoutes.js");
         return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
       },
-      async findResumeState(): Promise<undefined> {
-        return undefined;
+      async findResumeState(): Promise<ResumeState | undefined> {
+        if (persisted.length === 0) return undefined;
+        return { worktree, stateDir: tmp, ledger: persisted };
       },
       async cleanResidue(): Promise<void> {},
-      async resumeSession(): Promise<StepOutput> {
+      async resumeSession(spec: StepSpec, _worktree: WorktreeHandle, sessionId: string): Promise<StepOutput> {
+        resumed.push({ step: spec.id, sessionId });
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async fetchIssueMeta(n: number): Promise<IssueMeta> {
@@ -2636,12 +2642,18 @@ describe("#686 R2 production seams", () => {
         return worktree;
       },
       async writeSnapshot(): Promise<void> {},
-      async runStep(): Promise<StepOutput> {
+      async runStep(spec: StepSpec): Promise<StepOutput> {
+        if (spec.role === "reviewer") return { kind: "reviewer", findings: [] };
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async push(): Promise<void> {},
-      async writeLedger(): Promise<void> {},
-      resolveCliMonitorDispatch: () => ({
+      async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
+        persisted.push(entry);
+      },
+      resolveCliMonitorDispatch: () => {
+        monitorPass += 1;
+        if (monitorPass > 1) return undefined;
+        return {
         command: process.execPath,
         args: ["-e", `console.log(${JSON.stringify(workerLog)})`],
         logDir: tmp,
@@ -2649,7 +2661,8 @@ describe("#686 R2 production seams", () => {
         completionSignal: "STEP_COMPLETE",
         stepId: "S2",
         readInstanceId: () => "relay-826-test",
-      }),
+        };
+      },
       async awaitMonitoredCliWorker(): Promise<WorkerResult> {
         return {
           kind: "completed",
@@ -2683,16 +2696,43 @@ describe("#686 R2 production seams", () => {
         tag: { kind: "decision_gate", state_summary: "need product ruling" },
       });
 
-      const result = await runOrchestrator({
+      monitorPass = 0;
+
+      const first = await runOrchestrator({
         issueNumber: 826,
         backend,
         now: () => NOW,
       });
-      expect(result.status).toBe("error");
-      expect(result.stopSummary).toMatchObject({
+      expect(first.status).toBe("escalate");
+      expect(first.stopSummary).toMatchObject({
         reason: "decision_gate_park",
         summary: expect.stringContaining("need product ruling"),
       });
+      expect(persisted.at(-1)).toMatchObject({
+        step: "S8",
+        handoffStatus: "escalate",
+        escalationKind: "decision",
+      });
+
+      persisted.push({
+        step: "S2",
+        event: "escalation_answered",
+        forStep: "S2",
+        answer: "choose policy A",
+        source: "human",
+        sessionId: "human-answer",
+        prompt_hash: "answer",
+        branchHEAD: "head",
+        ts: NOW.toISOString(),
+      });
+
+      const second = await runOrchestrator({
+        issueNumber: 826,
+        backend,
+        now: () => NOW,
+      });
+      expect(second.status).toBe("success");
+      expect(resumed).toContainEqual({ step: "S2", sessionId: expect.any(String) });
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

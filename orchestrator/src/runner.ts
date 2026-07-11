@@ -1984,6 +1984,28 @@ function planResume(
       };
     }
 
+    // Online-review worker steps are runner actions, not StepOutput-carrying
+    // agent edges. Re-open their durable decision park exactly like S7: drop
+    // the superseded step/S8 boundary and dispatch the same step with the
+    // append-only human answer.
+    if (
+      decisionStep === "S9" ||
+      decisionStep === "S10" ||
+      decisionStep === "S11" ||
+      decisionStep === "S12"
+    ) {
+      let reopenIdx = executableLedger.length - 1;
+      while (reopenIdx >= 0 && executableLedger[reopenIdx]!.step === "S8") {
+        reopenIdx--;
+      }
+      return {
+        resumeStep: decisionStep,
+        escalationAnswer: answer,
+        lastOutput: agentEntry?.output,
+        priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
+      };
+    }
+
     if (
       agentEntry !== undefined &&
       agentEntry.step === decisionStep &&
@@ -3609,10 +3631,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     escalation: Escalation,
     sessionId?: string,
     escalationKind: EscalationKind = "decision",
+    output?: StepOutput,
+    stopSummaryOverride?: StopSummary,
   ): Promise<RunResult> {
-    const stopSummary = stopSummaryForEscalation(escalation);
+    const stopSummary = stopSummaryOverride ?? stopSummaryForEscalation(escalation);
     if (failedStep !== "S8") {
-      ledger.push({ step: failedStep });
+      ledger.push({ step: failedStep, ...(output !== undefined ? { output } : {}) });
       // Persist the failing step carrying its REAL worker session id (5th arg —
       // NOT the promptFile slot; codex cmr R6 finding), so a re-feed reading the
       // persisted ledger has the true session id for the human-answer resume.
@@ -3626,7 +3650,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // unchanged (promptFile undefined → step-name hash, as before).
       const failedPromptFile =
         failedStep === "S7" ? SHIP_PROMPT_FILE : undefined;
-      await persistBestEffort(failedStep, undefined, failedPromptFile, undefined, sessionId);
+      await persistBestEffort(failedStep, output, failedPromptFile, undefined, sessionId);
     }
     ledger.push({ step: "S8", stopSummary });
     await persistBestEffort(
@@ -4655,13 +4679,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
         } catch (err) {
           if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
-            return await errorTermination(step, err, {
-              stopSummary: decisionGateParkStopSummary({
+            const escalation: Escalation = {
+              reason: `${step} worker raised a decision gate`,
+              diagnosis: err.tag.state_summary,
+            };
+            const decisionOutput: StepOutput =
+              expectedKind === "coder"
+                ? { kind: "coder", committed: false, commitsAdded: 0, escalate: escalation }
+                : { kind: "reviewer", findings: [], escalate: escalation };
+            return await escalateTermination(
+              step,
+              escalation,
+              undefined,
+              "decision",
+              decisionOutput,
+              decisionGateParkStopSummary({
                 summary: `${step} worker raised a decision gate: ${err.tag.state_summary}`,
                 repairHint:
                   "answer the decision gate, then re-feed to resume the parked worker step",
               }),
-            });
+            );
           }
           // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
           // with a live baton (write handoff + focus, apply next baton, re-enter).
@@ -5062,13 +5099,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           stepSessionId = shipResult.sessionId;
         } catch (err) {
           if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
-            return await errorTermination("S7", err, {
-              stopSummary: decisionGateParkStopSummary({
+            const escalation: Escalation = {
+              reason: "S7 worker raised a decision gate",
+              diagnosis: err.tag.state_summary,
+            };
+            return await escalateTermination(
+              "S7",
+              escalation,
+              undefined,
+              "decision",
+              undefined,
+              decisionGateParkStopSummary({
                 summary: `S7 worker raised a decision gate: ${err.tag.state_summary}`,
                 repairHint:
                   "answer the decision gate, then re-feed to resume the parked worker step",
               }),
-            });
+            );
           }
           // #683/#686: ship idle 429 → park or relay (same family as agent-step).
           if (isQuotaWaitForResetError(err)) {
@@ -5340,6 +5386,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 : {}),
             };
           }
+          const escalationAnswerForReviewStep =
+            resumedEscalationAnswer?.forStep === reviewStep
+              ? resumedEscalationAnswer
+              : undefined;
+          if (escalationAnswerForReviewStep !== undefined) {
+            resumedEscalationAnswer = undefined;
+          }
           const reviewCtx = {
             runId,
             worktree,
@@ -5355,6 +5408,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               : {}),
             ...(relayFocusForDispatch(reviewStep) !== undefined
               ? { relayFocusPath: relayFocusForDispatch(reviewStep) }
+              : {}),
+            ...(escalationAnswerForReviewStep !== undefined
+              ? { escalationAnswer: escalationAnswerForReviewStep }
               : {}),
           };
           const headBefore =
@@ -5584,13 +5640,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             // escalated payload as decision_gate_park, not a bare process error.
             if (result.kind === "escalated") {
               const summary = `${reviewStep} worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
-              return await errorTermination(reviewStep, new Error(summary), {
-                stopSummary: decisionGateParkStopSummary({
+              return await escalateTermination(
+                reviewStep,
+                result.escalation,
+                result.sessionId,
+                "decision",
+                undefined,
+                decisionGateParkStopSummary({
                   summary,
                   repairHint:
                     "answer the decision gate / unstick the worker, then resume the online review loop",
                 }),
-              });
+              );
             }
             return await errorTermination(
               reviewStep,
@@ -6247,13 +6308,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           lastOutput = output;
         } catch (err) {
           if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
-            return await errorTermination(reviewStep, err, {
-              stopSummary: decisionGateParkStopSummary({
+            const escalation: Escalation = {
+              reason: `${reviewStep} worker raised a decision gate`,
+              diagnosis: err.tag.state_summary,
+            };
+            return await escalateTermination(
+              reviewStep,
+              escalation,
+              undefined,
+              "decision",
+              undefined,
+              decisionGateParkStopSummary({
                 summary: `${reviewStep} worker raised a decision gate: ${err.tag.state_summary}`,
                 repairHint:
                   "answer the decision gate, then re-feed to resume the parked worker step",
               }),
-            });
+            );
           }
           // #683/#686: S9–S12 online-review legs hit the same park/relay fork as
           // S2/S7 — do NOT fall into errorTermination (would sticky-fail a
