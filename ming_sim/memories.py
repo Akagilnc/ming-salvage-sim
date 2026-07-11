@@ -277,6 +277,7 @@ def record_chapter_memory(
     memory_id = db.save_chapter_memory(
         state, title=title, body=body, tags=tags,
         knowledge_items=db.knowledge_items_for_turn(state.turn),
+        commit=False,
     )
     tlog(f"[chapter-memory] saved id={memory_id} turn={state.turn}")
     return memory_id

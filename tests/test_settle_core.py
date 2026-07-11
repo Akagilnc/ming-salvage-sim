@@ -113,16 +113,20 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
         and db.get_character_status(character.name)[0] == "active"
     ]
     knower, excluded = ministers[:2]
-    db.register_character_knowledge_source(
+    order = db.create_secret_order(
         state,
-        [{"character_id": knower.name, "tier": "主办"}],
-        "secret_order",
+        knower.name,
         "生产链密查",
         "生产链受限事项",
-        source_id="test:settle-restricted",
+        [],
         excluded_names=[excluded.name],
     )
     before_turn = state.turn
+    source_id = f"secret_order:{order}"
+    assert db.conn.execute(
+        "SELECT 1 FROM character_knowledge_events WHERE source_id=?",
+        (source_id,),
+    ).fetchone() is None
     settle_with_delta(
         state,
         db,
@@ -139,8 +143,8 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
     ).fetchall()
     by_source = {row["source_id"]: row for row in rows}
     assert f"settlement:narrative:{before_turn}" in by_source
-    assert "test:settle-restricted" in by_source
-    assert excluded.name in by_source["test:settle-restricted"]["excluded_names"]
+    assert source_id in by_source
+    assert excluded.name in by_source[source_id]["excluded_names"]
 
     excluded_text = " ".join(
         item.get("body", "")
@@ -148,6 +152,33 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
     )
     assert "生产链公开事项" in excluded_text
     assert "生产链受限事项" not in excluded_text
+
+
+def test_settlement_archive_writes_rollback_on_later_failure(game, monkeypatch):
+    """真实结算在归档后续故障时不能留下 source/event/chapter/report 半写。"""
+    db, state, _content = game
+    turn = state.turn
+
+    def fail_after_archive(*_args, **_kwargs):
+        raise RuntimeError("archive failure")
+
+    monkeypatch.setattr(db, "save_turn_extraction", fail_after_archive)
+    with pytest.raises(decree.SettlementAbort):
+        settle_with_delta(
+            state, db, {}, before_turn=turn, narrative="归档公开事项"
+        )
+
+    assert db.conn.execute(
+        "SELECT 1 FROM character_knowledge_events WHERE source_id=?",
+        (f"settlement:narrative:{turn}",),
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM turn_reports WHERE turn=?", (turn,)
+    ).fetchone() is None
+    assert db.conn.execute(
+        "SELECT 1 FROM event_memories WHERE turn=? AND event_type='chapter_summary'",
+        (turn,),
+    ).fetchone() is None
 
 
 def test_pre_settle_runs_fixed_fiscal_tick(game):

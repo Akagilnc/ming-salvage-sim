@@ -356,9 +356,9 @@ def resolve_directives(
                 source_id=f"settlement:narrative:{state.turn}",
                 commit=False,
             )
-            db.persist_knowledge_items_for_turn(state)
+            db.persist_knowledge_items_for_turn(state, commit=False)
             db.save_turn_report(
-                state, narrative, knowledge_items=[]
+                state, narrative, knowledge_items=[], commit=False
             )
             db.save_turn_extraction(
                 state, decree_text=decree_text, narrative=narrative,
@@ -1294,9 +1294,9 @@ def _settle_after_extract_body(
     # Persist the per-source public projection before either aggregate archive
     # is written.  turn_report/chapter are derived prose and cannot provide an
     # authorization boundary when they mix public and restricted matters.
-    db.persist_knowledge_items_for_turn(state)
+    db.persist_knowledge_items_for_turn(state, commit=False)
     db.save_turn_report(
-        state, narrative, knowledge_items=[]
+        state, narrative, knowledge_items=[], commit=False
     )
 
     # 推演链留痕：extractor_input 保留输入；extractor_output 存最终 applied 结果,
