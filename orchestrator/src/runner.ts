@@ -3931,10 +3931,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         : resumeTail?.step;
     const resumedShip =
       resumeRouteFrom === "S7" ? lastShipFromLedger(resumeLedger) : undefined;
-    const resumedHostPr =
-      resumedShip === undefined
-        ? undefined
-        : observeShipPr(resumedShip);
+    let resumedHostPr: ReturnType<typeof observeShipPr> | undefined;
+    if (resumedShip !== undefined) {
+      try {
+        resumedHostPr = observeShipPr(resumedShip);
+      } catch (err) {
+        return await errorTermination("S7", err);
+      }
+    }
     const plan =
       (await planRecoveredLandedCoderProtocolFailure(
         resumeLedger,
