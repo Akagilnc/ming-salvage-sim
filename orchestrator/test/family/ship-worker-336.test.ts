@@ -209,17 +209,14 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     await expect(be.dispatchWorker(familyShipWorkerSpec(), {})).rejects.toThrow(/familyBase/);
   });
 
-  // ── cmr S336 r3 F1 (branch-identity check): the family worker self-reports `branch`,
-  // and the consumer trusted it. family_ship.md pins the family base (the worker `git
-  // checkout`s ctx.familyBase, branchStrategy:{type:"head"}) and asks it to report THE
-  // family base branch — no legitimate rename path. A worker that ships some other
-  // branch (e.g. the PR target base) but reports a success must NOT be read as a family
-  // delivery (verifyCmr would return ok:true on a PR for the wrong branch).
-  it("a shipped outcome with a different self-reported branch is not a gate", async () => {
+  it("a shipped outcome whose branch differs from familyBase remains a worker outcome", async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: "main", status: "pr_opened", pr: "u" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("completed");
+    expect(res).toMatchObject({
+      kind: "completed",
+      output: { kind: "ship", branch: "main", status: "pr_opened", pr: "u" },
+    });
   });
 
   it("a shipped pr_opened on the correct family base ⇒ completed (identity holds)", async () => {

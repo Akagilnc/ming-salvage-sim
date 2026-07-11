@@ -93,7 +93,7 @@ function agentRunResult({
   commits = [],
   sessionId,
 }: {
-  readonly completionSignal: string;
+  readonly completionSignal?: string;
   readonly stdout: string;
   readonly commits?: ReadonlyArray<{ sha: string }>;
   readonly sessionId: string;
@@ -1769,6 +1769,28 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("continues with commit observation and telemetry when a worker exits without signal or tag", async () => {
+    const backend = makeBackend();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    backend.agentResult = agentRunResult({
+      stdout: "worker completed its changes",
+      commits: [{ sha: "abc123" }],
+      sessionId: "sess-advisory-exit",
+    });
+
+    const result = await backend.runStep(coderSpec, {
+      branch: "feat/issue-286",
+      base: "main",
+      path: "/tmp/worktree/issue-286",
+    });
+
+    expect(result).toEqual({
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      sessionId: "sess-advisory-exit",
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("telemetry:"));
+  });
+
   it("prefers a runner-owned outcome sidecar over malformed coder stdout", async () => {
     const backend = makeBackend();
     const dir = mkdtempSync(join(tmpdir(), "worker-outcome-"));
@@ -2327,10 +2349,8 @@ describe("realBackend extractCoderTag", () => {
     });
   });
 
-  it("throws a clear error when no <coder> tag is present", () => {
-    expect(() => extractCoderTag("no tag here\nCODER_STEP_COMPLETE")).toThrow(
-      /<coder>/,
-    );
+  it("treats a missing coder tag as an advisory compatibility miss", () => {
+    expect(extractCoderTag("worker finished without a legacy tag")).toBeUndefined();
   });
 
   it("throws when the tag body is not valid JSON", () => {
