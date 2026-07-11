@@ -27,6 +27,7 @@ import type { StepId } from "./types.js";
 import {
   decideParkOrRelay,
   hasLiveRelayBaton,
+  selectCapacityRelayBaton,
   selectNextRelayBaton,
   type BillingPoolEntry,
   type BillingPoolId,
@@ -122,6 +123,7 @@ export function parseRelayTag(stdout: string): RelayTagOutcome {
 
 export type FailureClassKind =
   | "quota_wall"
+  | "capacity"
   | "pool_dead"
   | "hang_with_live_pool"
   | "self_reported_blocked"
@@ -140,6 +142,7 @@ export function classifyFailureForRetryOrRelay(input: {
 }): RetryOrRelayClass {
   switch (input.kind) {
     case "quota_wall":
+    case "capacity":
     case "pool_dead":
     case "hang_with_live_pool":
     case "self_reported_blocked":
@@ -182,6 +185,7 @@ function excludeRelayFocusFromGit(worktreePath: string): void {
 
 export type RelayHandoffTrigger =
   | "quota_wall"
+  | "capacity"
   | "hang_with_live_pool"
   | "self_reported_blocked"
   | "phase_complete"
@@ -400,6 +404,34 @@ export class HangWithLivePoolError extends Error {
   }
 }
 
+/** #787 checkpoint-local service congestion; relay without quota parking. */
+export class CapacityRelayError extends Error {
+  readonly capacity = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "CapacityRelayError";
+  }
+}
+
+/**
+ * Capacity is deliberately narrower than generic 5xx failure and never absorbs
+ * a quota 429. This is the provider's model-specific CLI fingerprint, not the
+ * broader telemetry taxonomy (which is intentionally descriptive).
+ */
+export function isCapacityRelayError(err: unknown): err is CapacityRelayError {
+  if (err instanceof CapacityRelayError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  const lower = message.toLowerCase();
+  if (/\b(?:http\s*(?:status|code)?\s*)?429\b/.test(lower)) return false;
+  return lower.includes("selected model is at capacity");
+}
+
+export function capacityRelayErrorFrom(err: unknown): CapacityRelayError | undefined {
+  if (!isCapacityRelayError(err)) return undefined;
+  return new CapacityRelayError(err instanceof Error ? err.message : String(err));
+}
+
 export function isHangWithLivePoolError(
   err: unknown,
 ): err is HangWithLivePoolError {
@@ -524,6 +556,9 @@ export interface DecideRelayAfterIdleInput {
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
   readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string>;
   readonly workerPid: number;
   readonly killPidTree: (pid: number) => void | Promise<void>;
   readonly state_summary?: string;
@@ -546,6 +581,9 @@ export function forkQuotaWallAt683Point(input: {
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
   readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string>;
   readonly state_summary?: string;
   readonly remaining?: string;
   readonly step?: StepId;
@@ -560,6 +598,7 @@ export function forkQuotaWallAt683Point(input: {
     rosterOrder: input.rosterOrder,
     pools: input.pools,
     reviewerSlugs: input.reviewerSlugs,
+    reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
   };
   const live = hasLiveRelayBaton(batonInput);
   const tier = decideParkOrRelay({
@@ -609,6 +648,7 @@ export async function decideRelayAfterIdle(
     rosterOrder: input.rosterOrder,
     pools: input.pools,
     reviewerSlugs: input.reviewerSlugs,
+    reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
   };
 
   if (input.probeKind === "quota_limited") {
@@ -627,6 +667,7 @@ export async function decideRelayAfterIdle(
       rosterOrder: input.rosterOrder,
       pools: input.pools,
       reviewerSlugs: input.reviewerSlugs,
+      reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
       state_summary: input.state_summary,
       remaining: input.remaining,
       step: input.step,
@@ -718,6 +759,9 @@ export interface ApplyResourceFailureHandoffInput {
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
   readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string>;
   readonly resetBeforeRetry?: () => void | Promise<void>;
   readonly now: Date;
   readonly step?: StepId;
@@ -733,13 +777,18 @@ export async function applyResourceFailureHandoff(
   // Deliberate: do NOT await/call input.resetBeforeRetry.
   void input.resetBeforeRetry;
 
-  const next = selectNextRelayBaton({
+  const batonInput = {
     currentModelId: input.currentModelId,
     currentPool: input.currentPool,
     rosterOrder: input.rosterOrder,
     pools: input.pools,
     reviewerSlugs: input.reviewerSlugs,
-  });
+    reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
+  };
+  const next =
+    input.trigger === "capacity"
+      ? selectCapacityRelayBaton(batonInput)
+      : selectNextRelayBaton(batonInput);
   if (next === undefined) {
     return {
       kind: "park_fallback",

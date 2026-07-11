@@ -84,7 +84,7 @@ export interface TelemetryRunEnvironment {
 }
 
 let telemetryRunEnvironment: TelemetryRunEnvironment = {};
-const pendingTelemetryEnvironmentStamps = new Set<string>();
+const pendingTelemetryEnvironmentStamps = new Map<string, Promise<void>>();
 
 /** Install / merge the process-level run environment used by stamp builders. */
 export function configureTelemetryRunEnvironment(
@@ -534,34 +534,48 @@ export function scheduleTelemetryEnvironmentStamp(
   ledgerDir: string | undefined,
   ctx: DispatchContext,
   backend: TelemetryEnvironmentProvider,
-): void {
+): Promise<void> {
+  // Per-run key (ledgerDir + runId): same durable ledger may host multiple runs.
+  // Joinable Promise: callers can await completion without blocking dispatch.
   const runId = runIdFromContext(ctx);
   const pendingKey = `${ledgerDir ?? ""}\0${runId ?? ""}`;
   if (
     ledgerDir === undefined ||
     ledgerDir.length === 0 ||
-    hasEnvironmentStamp(ledgerDir, runId) ||
-    pendingTelemetryEnvironmentStamps.has(pendingKey)
+    hasEnvironmentStamp(ledgerDir, runId)
   ) {
-    return;
+    return Promise.resolve();
   }
-  pendingTelemetryEnvironmentStamps.add(pendingKey);
-  queueMicrotask(async () => {
-    try {
-      if (!hasEnvironmentStamp(ledgerDir, runId)) {
-        await backend.installTelemetryRunEnvironment?.();
-        ensureEnvironmentStamp(ledgerDir, ctx);
-      }
-    } catch (err) {
-      console.warn(
-        `[orchestrator] telemetry environment stamp failed (fail-open): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    } finally {
-      pendingTelemetryEnvironmentStamps.delete(pendingKey);
-    }
+  const pending = pendingTelemetryEnvironmentStamps.get(pendingKey);
+  if (pending !== undefined) return pending;
+
+  let complete: () => void;
+  const completion = new Promise<void>((resolve) => {
+    complete = resolve;
   });
+  pendingTelemetryEnvironmentStamps.set(pendingKey, completion);
+  queueMicrotask(() => {
+    void (async () => {
+      try {
+        if (!hasEnvironmentStamp(ledgerDir, runId)) {
+          await backend.installTelemetryRunEnvironment?.();
+          ensureEnvironmentStamp(ledgerDir, ctx);
+        }
+      } catch (err) {
+        console.warn(
+          `[orchestrator] telemetry environment stamp failed (fail-open): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      } finally {
+        if (pendingTelemetryEnvironmentStamps.get(pendingKey) === completion) {
+          pendingTelemetryEnvironmentStamps.delete(pendingKey);
+        }
+        complete();
+      }
+    })();
+  });
+  return completion;
 }
 
 export type TelemetryWorkerOutcome =

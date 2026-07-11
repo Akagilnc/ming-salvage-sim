@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sc from "@ai-hero/sandcastle";
 
 import { dispatchFamilyWorkerWithMonitor } from "../../src/family/dispatchFamilyWorker.js";
@@ -335,6 +335,46 @@ describe("#786 family dispatch telemetry", () => {
     },
   );
 
+  it("joins the environment stamp before rethrowing a failed family dispatch", async () => {
+    const ledgerDir = join(tempDir("orch-786-family-env-on-throw-"), ".ledger");
+    let releaseFingerprint!: () => void;
+    const fingerprintReleased = new Promise<void>((resolve) => {
+      releaseFingerprint = resolve;
+    });
+    let fingerprintStarted = false;
+    let dispatchSettled = false;
+    const backend = {
+      dispatchWorker: async (): Promise<WorkerResult> => {
+        throw new Error("family worker boom");
+      },
+      installTelemetryRunEnvironment: async () => {
+        fingerprintStarted = true;
+        await fingerprintReleased;
+      },
+    } as unknown as FamilyBackend;
+
+    const dispatch = dispatchFamilyWorkerWithMonitor(
+      backend,
+      familySpec("cmr"),
+      { familyBase: "feat/family-786", stateDir: ledgerDir, modelRoute: smokedRoute() },
+    );
+    void dispatch.then(
+      () => {
+        dispatchSettled = true;
+      },
+      () => {
+        dispatchSettled = true;
+      },
+    );
+
+    await vi.waitFor(() => expect(fingerprintStarted).toBe(true));
+    expect(dispatchSettled).toBe(false);
+
+    releaseFingerprint();
+    await expect(dispatch).rejects.toThrow("family worker boom");
+    expect(readTelemetryRecords(ledgerDir).some((record) => record.phase === "environment")).toBe(true);
+  });
+
   it("writes telemetry when the real merger-agent sandbox path runs", async () => {
     const ledgerDir = join(tempDir("orch-786-real-merger-"), ".ledger");
     let outcomePath: string | undefined;
@@ -468,5 +508,40 @@ describe("#786 family dispatch telemetry", () => {
       (record): record is TelemetryCollectRecord => record.phase === "collect",
     );
     expect(collect?.first_output_at).not.toBeNull();
+  });
+
+  it("keeps family dispatch alive when resolveTelemetryDir throws", async () => {
+    // Symmetric to single-slice telemetry-786 "keeps dispatch alive when
+    // resolveTelemetryDir throws" (CodeRabbit #815 / #809): optional chaining
+    // only guards missing methods; a throwing family resolveTelemetryDir must
+    // degrade telemetry (fallback stateDir), not abort dispatch.
+    const ledgerDir = join(tempDir("orch-809-family-resolve-throw-"), ".ledger");
+    const backend = {
+      dispatchWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+        sessionId: "family-809-resolve-throw-session",
+      }),
+      installTelemetryRunEnvironment: async () => {},
+      resolveTelemetryDir: (): string => {
+        throw new Error("resolveTelemetryDir boom");
+      },
+    } as unknown as FamilyBackend;
+
+    const outcome = await dispatchFamilyWorkerWithMonitor(
+      backend,
+      familySpec("cmr"),
+      {
+        familyBase: "feat/family-809",
+        stateDir: ledgerDir,
+        modelRoute: smokedRoute(),
+      },
+    );
+
+    expect(outcome.result.kind).toBe("completed");
+    // Fail-open falls back to stateDir; sidecar may still write there.
+    const records = readTelemetryRecords(ledgerDir);
+    expect(records.filter((r) => r.phase === "dispatch")).toHaveLength(1);
+    expect(records.filter((r) => r.phase === "collect")).toHaveLength(1);
   });
 });

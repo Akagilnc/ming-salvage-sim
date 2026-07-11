@@ -24,7 +24,7 @@ export interface CoderRosterEntry {
 }
 
 /** Roster table version — bump when #424 bench updates the eligible set. */
-export const CODER_ROSTER_VERSION = "2026-07-11";
+export const CODER_ROSTER_VERSION = "2026-07-11.1";
 
 /**
  * Eligible coder models (model × pool × aliases). Keep in sync with
@@ -51,6 +51,12 @@ export const CODER_ROSTER: ReadonlyArray<CoderRosterEntry> = [
     slug: "gpt-5.6-luna",
     pool: "codex",
     aliases: ["luna@med+fast", "gpt-5.6-luna"],
+  },
+  {
+    id: "sol@med",
+    slug: "gpt-5.6-sol",
+    pool: "codex",
+    aliases: ["sol@med+fast", "gpt-5.6-sol"],
   },
   {
     id: "sonnet-5",
@@ -171,8 +177,25 @@ export function resolveCoderRecOrder(
 export interface SelectCoderRecOptions {
   /** Active reviewer / CMR leg slugs — used for pool-separation filtering. */
   readonly reviewerSlugs?: ReadonlyArray<string> | ReadonlySet<string>;
+  /**
+   * Reviewer / CMR slugs on the route that would result from this candidate.
+   * A candidate may intentionally replace the per-slice reviewer before the
+   * pool-separation invariant is checked.
+   */
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string> | ReadonlySet<string>;
   /** Override the default fallback threshold (tests). */
   readonly fallbackAfterRounds?: number;
+}
+
+/**
+ * Owner-ratified exception: a sol-produced slice is reviewed by Opus. This
+ * preserves a fresh reviewer at the same checkpoint while allowing sol to win
+ * its Coder-Rec position.
+ */
+export function reviewerOverrideForCoderSlug(coderSlug: string): string | undefined {
+  return lookupCoderRosterEntry(coderSlug)?.id === "sol@med" ? "opus" : undefined;
 }
 
 function indexForRounds(
@@ -213,8 +236,8 @@ export function poolSeparationViolation(
 /**
  * Select the coder for the current non-converging-round count.
  * Advances one roster step every {@link CODER_REC_FALLBACK_AFTER_ROUNDS} rounds.
- * Skips entries that violate pool separation when a later entry is available;
- * if every remaining entry collides, returns the indexed entry (degraded).
+ * Skips entries that violate pool separation. If every remaining entry
+ * collides, fails closed rather than dispatching a self-reviewing pair.
  */
 export function selectCoderRecEntry(
   order: ReadonlyArray<CoderRosterEntry>,
@@ -237,12 +260,16 @@ export function selectCoderRecEntry(
 
   for (let i = start; i < order.length; i++) {
     const candidate = order[i]!;
-    if (poolSeparationViolation(candidate, reviewerSlugs) === undefined) {
+    const candidateReviewerSlugs =
+      opts.reviewerSlugsForCandidate?.(candidate) ?? reviewerSlugs;
+    if (poolSeparationViolation(candidate, candidateReviewerSlugs) === undefined) {
       return candidate;
     }
   }
-  // Degraded: every remaining entry collides with a reviewer leg.
-  return order[start]!;
+  throw new Error(
+    "no pool-separated coder roster entry available; every remaining candidate " +
+      "would share an active reviewer checkpoint",
+  );
 }
 
 /**

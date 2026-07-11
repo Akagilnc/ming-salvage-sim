@@ -18,6 +18,7 @@
 
 import { isQuotaWaitForResetError } from "./quotaProbe.js";
 import {
+  capacityRelayErrorFrom,
   isHangWithLivePoolError,
   isSelfReportedRelayError,
 } from "./relayDispatch.js";
@@ -165,6 +166,8 @@ export async function withMechanicalRetry(
       // #683/#686: resource failures park/relay — never mechanical-retry
       // (would thrash the same pool / destroy uncommitted drift via reset).
       if (isQuotaWaitForResetError(err)) throw err;
+      const capacityError = capacityRelayErrorFrom(err);
+      if (capacityError !== undefined) throw capacityError;
       if (isHangWithLivePoolError(err)) throw err;
       if (isSelfReportedRelayError(err)) throw err;
       // A thrown error the caller's semantic layer owns is re-thrown untouched —
@@ -178,6 +181,9 @@ export async function withMechanicalRetry(
       };
       continue;
     }
+    const capacityError =
+      result.kind === "failed" ? capacityRelayErrorFrom(new Error(result.reason)) : undefined;
+    if (capacityError !== undefined) throw capacityError;
     if (!isProcessFailure(result)) return result;
     // A process-level failure the caller's semantic layer owns is returned as-is so
     // the caller's own bounded loop retries it with its own counter (#598 sequential

@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   dispatchWorkerWithMonitor,
+  resolveWorkerMonitorIdleThresholdMs,
 } from "../src/dispatchWorker.js";
 import {
   buildCliMonitorSpawnSpec,
@@ -98,6 +99,85 @@ function baseHandle(
 }
 
 describe("#684 worker monitor handles", () => {
+  it("uses a higher default idle tier for Claude workers and a valid env override", () => {
+    const codex = {
+      id: "S5",
+      kind: "coder",
+      role: "coder",
+      host: "codex",
+      session: "fresh",
+      contextRetention: "retain",
+      skill: "/tdd",
+      promptFile: "coder.md",
+      completionSignal: "CODER_STEP_COMPLETE",
+      maxIter: 1,
+      model: "gpt-5.6-terra",
+      soul: "coder",
+      toolchain: [],
+    } satisfies WorkerSpec;
+    const claude = { ...codex, host: "claude", model: "sonnet" } satisfies WorkerSpec;
+
+    expect(resolveWorkerMonitorIdleThresholdMs(codex, undefined)).toBe(10 * 60 * 1000);
+    expect(resolveWorkerMonitorIdleThresholdMs(claude, undefined)).toBe(30 * 60 * 1000);
+    expect(resolveWorkerMonitorIdleThresholdMs(claude, "45")).toBe(45 * 1000);
+    expect(resolveWorkerMonitorIdleThresholdMs(codex, "0")).toBe(10 * 60 * 1000);
+    expect(resolveWorkerMonitorIdleThresholdMs(claude, "not-a-number")).toBe(30 * 60 * 1000);
+  });
+
+  it("still kills a worker that exceeds the env-overridden idle tier", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orch-808-idle-kill-"));
+    vi.stubEnv("ORCHESTRATOR_WORKER_IDLE_SECONDS", "1");
+    try {
+      const spec = {
+        id: "S5",
+        kind: "coder",
+        role: "coder",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "retain",
+        skill: "/tdd",
+        promptFile: "coder.md",
+        completionSignal: "CODER_STEP_COMPLETE",
+        maxIter: 1,
+        model: "sonnet",
+        soul: "coder",
+        toolchain: [],
+      } satisfies WorkerSpec;
+      const backend = {
+        resolveCliMonitorDispatch: () => ({
+          command: "sleep",
+          args: ["600"],
+          logDir: dir,
+          poolId: poolIdForWorker(spec),
+          completionSignal: spec.completionSignal,
+          stepId: spec.id,
+          readInstanceId: () => "orch-808-test-instance",
+        }),
+        awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        }),
+        handleMonitoredWorkerIdle: async () => "hang" as const,
+      } as unknown as Backend;
+
+      await expect(
+        dispatchWorkerWithMonitor(backend, spec, {}, undefined, {
+          pollIntervalMs: 1,
+          monitorDeps: {
+            readInstanceId: () => "orch-808-test-instance",
+            listChildPids: () => [],
+            readParentPid: () => undefined,
+            statLog: () => ({ sizeBytes: 0, mtimeMs: Date.now() - 1_001 }),
+            sleepMs: async () => {},
+          },
+        }),
+      ).rejects.toThrow("monitored worker idle hang: S5");
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a failed sidecar whose error mentions the old fallback prose", () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-684-sidecar-collision-"));
     try {
