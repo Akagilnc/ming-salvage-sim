@@ -1094,9 +1094,18 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       stateDir: ledgerDir,
     });
 
-    const env = readTelemetryRecords(ledgerDir).find(
-      (r) => r.phase === "environment",
-    ) as TelemetryEnvironmentRecord | undefined;
+    // Environment fingerprints are intentionally scheduled after the monitor
+    // handle and must not delay a quick worker exit. Wait for that eventual
+    // telemetry side effect instead of assuming dispatch completion joins it.
+    let env: TelemetryEnvironmentRecord | undefined;
+    for (let attempt = 0; attempt < 100 && env === undefined; attempt += 1) {
+      env = readTelemetryRecords(ledgerDir).find(
+        (r) => r.phase === "environment",
+      ) as TelemetryEnvironmentRecord | undefined;
+      if (env === undefined) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      }
+    }
     expect(env).toBeDefined();
     expect(env?.promptHash).toBe(childHash);
   });
