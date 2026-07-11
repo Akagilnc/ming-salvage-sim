@@ -65,7 +65,9 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
         if str(row["faction"] or "") != faction and str(row["name"]) not in known:
             continue
         status = str(row["status"] or "")
-        kind = "荐在职" if status == "active" else "荐起复"
+        # Active 的听用候铨仍在人才池中，属于被顶替后的起复对象，不能
+        # 因为 status 尚为 active 就误送进在职破格差遣流程。
+        kind = "荐起复" if status != "active" or row["office"] == "听用候铨" else "荐在职"
         basis = "本派系网络" if str(row["faction"] or "") == faction else "见闻中有其人"
         result.append({
             "name": row["name"], "office": row["office"] or "",
