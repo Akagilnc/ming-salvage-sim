@@ -100,16 +100,18 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     public config(
       spec: StepSpec,
       options?: Parameters<RealBackend["runStep"]>[2],
+      opencodeAuthFile?: string,
     ): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.boxConfig(
-        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test" },
+        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test", opencodeAuthFile },
         spec,
         334,
         options,
+        options?.billingPool === "zai" ? "zai" : options?.billingPool === "codex-5h" ? "codex-5h" : undefined,
       );
     }
   }
@@ -155,6 +157,21 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
       cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR),
     ).toBe(true);
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("coder");
+  });
+
+  it("uses the billing pool for OpenCode env and readonly-credential preflight", () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    const dir = mkdtempSync(join(tmpdir(), "pool-auth-"));
+    const authFile = join(dir, "auth.json");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
+
+    expect(() => makeBackend().config(coderSpec, { billingPool: "zai" }, authFile)).toThrow(
+      /OAuth\/refresh-type.*writable per-container copy/i,
+    );
+
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "api", key: "x" } }));
+    expect(makeBackend().config(coderSpec, { billingPool: "zai" }, authFile).env.GLM_KEY).toBe("glm-secret");
+    expect(makeBackend().config(coderSpec, { billingPool: "codex-5h" }, authFile).env).not.toHaveProperty("GLM_KEY");
   });
 
   it("boxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) at this site (#372)", () => {

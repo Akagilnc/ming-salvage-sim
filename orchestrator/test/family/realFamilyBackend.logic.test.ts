@@ -941,8 +941,8 @@ class FakeSeamsBackend extends RealFamilyBackend {
 
   // Expose the protected sandbox-config seam so the merger soul injection +
   // skills-mount path are unit-testable without a real container.
-  public sandboxConfig() {
-    return this.mergerSandboxConfig({});
+  public sandboxConfig(auth: any = {}) {
+    return this.mergerSandboxConfig(auth);
   }
 
   // Expose for family-coder souls mount assertion (#372).
@@ -1183,6 +1183,16 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
 });
 
 describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)", () => {
+  it("rejects an OAuth OpenCode credential on the family merger path", () => {
+    vi.stubEnv("ORCHESTRATOR_MERGER_MODEL", "glm-5.2");
+    const dir = mkdtempSync(join(tmpdir(), "family-opencode-oauth-"));
+    const authFile = join(dir, "auth.json");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    expect(() => b.sandboxConfig({ opencodeAuthFile: authFile })).toThrow(
+      /opencode-go.*OAuth\/refresh-type.*writable per-container copy/i,
+    );
+  });
   // F28: the merger conflict fallback follows the "one mirror new soul" model —
   // the merger soul must be selected the SAME way coder/reviewer are: activated
   // via the ORCHESTRATOR_SOUL env (RealBackend.box), NOT a prompt-only role.
