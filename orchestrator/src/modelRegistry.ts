@@ -9,7 +9,7 @@ import type { BillingPoolId } from "./quotaPoolTable.js";
 export const CODER_CODEX_SLUG = "gpt-5.6-terra";
 const CODER_CODEX_EFFORT: NonNullable<sc.CodexOptions["effort"]> = "low";
 export const REVIEWER_CODEX_SLUG = "gpt-5.6-sol";
-export const VERIFY_CODEX_SLUG = "gpt-5.6-terra";
+export const VERIFY_CODEX_SLUG = "gpt-5.6-sol";
 
 /**
  * Live-officer reasoning effort for verify / CMR workers on the verify Codex
