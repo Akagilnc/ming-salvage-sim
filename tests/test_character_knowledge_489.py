@@ -214,6 +214,21 @@ def test_public_directive_is_seen_by_uninvolved_minister_but_secret_exclusion_wi
     assert not any(item.get("source_id") == f"secret_order:{order}" for item in view["events"])
 
 
+def test_turn_report_honors_same_turn_secret_exclusion_boundary(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    db.create_secret_order(
+        state, "毕自严", "暗查亏空", "邸报不得告知礼部", [], excluded_names=[minister.name]
+    )
+    marker = "TURN_REPORT_SECRET_MARKER_490"
+    db.save_turn_report(state, f"朝廷常务；{marker}")
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert marker not in view["world"]["public"]
+    assert not any(marker in item.get("body", "") for item in view["public_events"])
+
+
 def test_participation_survives_restore(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "内阁")

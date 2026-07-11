@@ -54,14 +54,33 @@ def _role_roster(db: Any, office_type: str) -> str:
     return f"{office_type}本职在册：{roster}。"
 
 
+def _report_is_excluded(
+    db: Any, report: Dict[str, object], character_name: str,
+    office_type: str, office_name: str,
+) -> bool:
+    """Apply the same-turn secrecy boundary to a derived gazette report."""
+    if not hasattr(db, "knowledge_exclusion_boundary_for_turn"):
+        return False
+    boundary = db.knowledge_exclusion_boundary_for_turn(int(report.get("turn") or 0))
+    return (
+        character_name in boundary.get("people", [])
+        or office_type in boundary.get("offices", [])
+        or office_name in boundary.get("offices", [])
+    )
+
+
 def _world(
-    db: Any, state: Any, office_type: str,
+    db: Any, state: Any, office_type: str, character_name: str, office_name: str,
 ) -> Dict[str, str]:
     reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
     def fact(text: object) -> str:
         return _qualitative(text)
 
-    public = "\n".join(fact(r.get("report")) for r in reports)
+    public = "\n".join(
+        fact(r.get("report"))
+        for r in reports
+        if not _report_is_excluded(db, r, character_name, office_type, office_name)
+    )
     result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
 
     visible_domains = _visible_domains(db, office_type)
@@ -113,7 +132,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         (current["office"] if current is not None else getattr(character, "office", ""))
         or ""
     )
-    world = _world(db, state, office_type)
+    world = _world(db, state, office_type, character_name, office_name)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     # Issued directives are public by their nature.  Read them here so old
@@ -127,12 +146,20 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "source_id": f"directive:{directive['id']}",
         })
     for report in db.list_turn_reports():
+        boundary = (
+            db.knowledge_exclusion_boundary_for_turn(report["turn"])
+            if hasattr(db, "knowledge_exclusion_boundary_for_turn") else {}
+        )
         public_events.append({
             "turn": int(report["turn"]), "year": int(report["year"]),
             "period": int(report["period"]), "kind": "public",
             "title": "邸报", "body": _qualitative(report.get("report")),
             "source_id": f"turn_report:{report['turn']}",
-            "excluded_names": "[]",
+            "excluded_names": json.dumps(boundary.get("people", []), ensure_ascii=False),
+            "excluded_targets": {
+                "people": list(boundary.get("people", [])),
+                "offices": list(boundary.get("offices", [])),
+            },
         })
     # Chapter memories are narrative material produced by settlement.  They are
     # public upstream material for the same projection; the minister must never
