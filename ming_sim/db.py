@@ -6626,6 +6626,10 @@ class GameDB:
                 "DELETE FROM character_knowledge_events WHERE source_id = ?",
                 [(f"chat_message:{mid}",) for mid in ids],
             )
+            self.conn.executemany(
+                "DELETE FROM character_knowledge_sources WHERE source_id = ?",
+                [(f"chat_message:{mid}",) for mid in ids],
+            )
 
     def load_all_chat_history(self) -> Dict[str, List[Dict[str, str]]]:
         """读出全部召对记录，按大臣分组，供进程启动时恢复内存缓存。"""
@@ -6788,6 +6792,15 @@ class GameDB:
                 self.conn.execute(
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
+                )
+                knowledge_source_ids = [f"chat_message:{message_id}" for message_id in message_ids]
+                self.conn.executemany(
+                    "DELETE FROM character_knowledge_events WHERE source_id = ?",
+                    [(source_id,) for source_id in knowledge_source_ids],
+                )
+                self.conn.executemany(
+                    "DELETE FROM character_knowledge_sources WHERE source_id = ?",
+                    [(source_id,) for source_id in knowledge_source_ids],
                 )
             self.conn.execute(
                 "UPDATE chat_turns SET status = 'failed' WHERE id = ?",
@@ -7062,6 +7075,15 @@ class GameDB:
                 self.conn.execute(
                     f"DELETE FROM chat_messages WHERE id IN ({placeholders})",
                     message_ids,
+                )
+                knowledge_source_ids = [f"chat_message:{message_id}" for message_id in message_ids]
+                self.conn.executemany(
+                    "DELETE FROM character_knowledge_events WHERE source_id = ?",
+                    [(source_id,) for source_id in knowledge_source_ids],
+                )
+                self.conn.executemany(
+                    "DELETE FROM character_knowledge_sources WHERE source_id = ?",
+                    [(source_id,) for source_id in knowledge_source_ids],
                 )
             self.conn.execute(
                 """
