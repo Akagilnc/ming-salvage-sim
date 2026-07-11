@@ -173,6 +173,7 @@ def build_mindreading_payload(
         raise ValueError("读心 payload 只能由御前近臣位生成")
     if not str(minister_reply or "").strip():
         raise ValueError("读心 payload 需要显式的大臣回话正文")
+    safe_reply = safe_historical_text(minister_reply, "大臣回话")
 
     identity = int(getattr(target, "identity", 50) or 0)
     loyalty = int(getattr(target, "loyalty", 50) or 0)
@@ -195,12 +196,12 @@ def build_mindreading_payload(
             "君臣账": f"对君的真心：{_band(loyalty, _LOYALTY_BANDS)}。",
             "关系判断": relation,
             "潜台词": _infer_subtext(
-                minister_reply,
+                safe_reply,
                 identity=identity,
                 loyalty=loyalty,
                 seed_guilt=str(getattr(target, "seed_guilt", "") or ""),
                 reader_context=reader_context,
             ),
         },
-        "reply_text": safe_historical_text(minister_reply, "大臣回话"),
+        "reply_text": safe_reply,
     }
