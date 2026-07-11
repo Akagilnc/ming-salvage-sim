@@ -344,8 +344,11 @@ def resolve_directives(
             db.commit_pending_actions(state, content=content, registry=registry)
             # 跳过 extractor，避免连锁失败
             db.record_log(state, narrative[:1200])
-            # Keep the degraded settlement path on the same source-first
-            # archive contract as the normal extractor path.
+            apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
+            # Inertia/ongoing effects may create participant-scoped sources.
+            # Materialize the complete source set only after those writes and
+            # before either aggregate archive is saved, matching the normal
+            # settlement path's source-first authorization boundary.
             db.persist_knowledge_items_for_turn(state)
             db.save_turn_report(
                 state, narrative, knowledge_items=[]
@@ -354,7 +357,6 @@ def resolve_directives(
                 state, decree_text=decree_text, narrative=narrative,
                 extractor_output=f"[推演 agent 失败] {exc}；本回合跳过 extractor。",
             )
-            apply_issue_inertia_and_ongoing(db, state, touched_ids=set())
             # #9 线上 R6（codex P2）：fallback 路同样须在 clear_gated_legacies 之前 reconcile——
             # commit_pending_actions / inertia 可能经绕 hook 的路径改 faction 成员，否则 legacy gate
             # （如「阉党专权」读 faction.阉党.leverage）读陈旧值、帝国修正多挂一回合。幂等、可整体回滚。
