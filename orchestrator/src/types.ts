@@ -512,6 +512,16 @@ export interface WorkerMonitorSpawnedEvent {
   readonly event: "worker_monitor_spawned";
 }
 
+/**
+ * #824 — durable mechanical-dispatch budget.  Written immediately before a
+ * worker dispatch so a process crash cannot reset the bounded retry lifecycle
+ * when the resident worktree is re-fed.
+ */
+export interface MechanicalRedispatchAttemptEvent {
+  readonly event: "mechanical_redispatch_attempt";
+  readonly mechanicalRedispatchAttempt: number;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -523,7 +533,8 @@ export type LedgerBookkeepingEvent =
   | OnlineReviewCiPendingEvent
   | QuotaWaitForResetEvent
   | RelayBatonHandoffEvent
-  | WorkerMonitorSpawnedEvent;
+  | WorkerMonitorSpawnedEvent
+  | MechanicalRedispatchAttemptEvent;
 
 /**
  * The structured output of any worker step.
@@ -1325,6 +1336,8 @@ export interface LedgerEntry {
   readonly sessionId?: string;
   /** Append-only event marker for non-step ledger facts (#439 / #446 / #683). */
   readonly event?: LedgerBookkeepingEvent["event"];
+  /** #824 — absolute per-step mechanical dispatch attempt number. */
+  readonly mechanicalRedispatchAttempt?: number;
   /**
    * #683 — quota pool id on `quota_wait_for_reset` rows (ledger-visible).
    * Typed as string so JSONL round-trips stay schema-light; see

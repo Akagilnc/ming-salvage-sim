@@ -819,6 +819,30 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toEqual({ present: false });
   });
 
+  it("discards a reported open PR on another branch and routes from the shipped branch host truth", () => {
+    const observation = observeOpenPrForBranch(
+      (_file, args) =>
+        args[1] === "view"
+          ? JSON.stringify({
+              number: 99,
+              url: "https://github.com/o/r/pull/99",
+              state: "OPEN",
+              headRefName: "other-open-branch",
+              headRefOid: "deadbeef",
+              mergeStateStatus: "CLEAN",
+            })
+          : JSON.stringify([{ url: "https://github.com/o/r/pull/100" }]),
+      "o/r",
+      "fix/824-radius",
+      "https://github.com/o/r/pull/99",
+    );
+
+    expect(observation).toEqual({
+      present: true,
+      prUrl: "https://github.com/o/r/pull/100",
+    });
+  });
+
   it("S7 skips online review when host truth says no PR, regardless of worker shipStatus", () => {
     expect(
       route({

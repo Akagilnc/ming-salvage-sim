@@ -79,6 +79,14 @@ export type DispatchOutcome =
  */
 export interface MechanicalRetryOptions {
   /**
+   * Durable attempts already consumed for this step before the current runner
+   * process started.  The retry budget is global to the durable step, not this
+   * one invocation of `withMechanicalRetry`.
+   */
+  readonly attemptsAlreadyUsed?: number;
+  /** Called immediately before each real worker dispatch with its absolute attempt number. */
+  readonly onAttempt?: (attempt: number) => Promise<void>;
+  /**
    * Return `true` when THIS failure is owned by the caller's semantic-retry layer
    * (e.g. the reviewer's invalid-output rerun, or CMR's same-worker outcome
    * rewrite) and must NOT be retried here — the generic layer defers it to the
@@ -128,12 +136,31 @@ export async function withMechanicalRetry(
   dispatch: (spec: WorkerSpec, ctx: DispatchContext) => Promise<WorkerResult>,
   opts?: MechanicalRetryOptions,
 ): Promise<WorkerResult> {
+  const attemptsAlreadyUsed = opts?.attemptsAlreadyUsed ?? 0;
+  if (!Number.isInteger(attemptsAlreadyUsed) || attemptsAlreadyUsed < 0) {
+    throw new Error(
+      `withMechanicalRetry: attemptsAlreadyUsed must be a non-negative integer (received ${attemptsAlreadyUsed})`,
+    );
+  }
+  if (attemptsAlreadyUsed >= MAX_DISPATCH_ATTEMPTS) {
+    return {
+      kind: "failed",
+      reason:
+        `mechanical redispatch budget already exhausted ` +
+        `(after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts; relay candidate)`,
+    };
+  }
   let last: WorkerResult | undefined;
   let lastError: unknown;
   let lastAttemptThrew = false;
-  for (let attempt = 1; attempt <= MAX_DISPATCH_ATTEMPTS; attempt++) {
-    const useSpec = attempt === 1 ? spec : forceFreshSpec(spec);
-    const useCtx = attempt === 1 ? ctx : stripResume(ctx);
+  for (
+    let attempt = attemptsAlreadyUsed + 1;
+    attempt <= MAX_DISPATCH_ATTEMPTS;
+    attempt++
+  ) {
+    const firstAttemptThisInvocation = attempt === attemptsAlreadyUsed + 1;
+    const useSpec = firstAttemptThisInvocation ? spec : forceFreshSpec(spec);
+    const useCtx = firstAttemptThisInvocation ? ctx : stripResume(ctx);
     // Idempotency: before a RETRY, reset local git residue the crashed attempt may
     // have left, so the fresh re-dispatch starts from the pre-attempt state.
     // #598 r4 (codexB): if the reset FAILS (git lock / permissions), the worktree is
@@ -144,7 +171,7 @@ export async function withMechanicalRetry(
     // exhausts into the durable abort below — the worker never runs on a dirty state).
     // #686: only process-level retries reach here; resource failures throw above and
     // never invoke resetBeforeRetry.
-    if (attempt > 1) {
+    if (!firstAttemptThisInvocation) {
       try {
         await opts?.resetBeforeRetry?.();
       } catch (err) {
@@ -158,6 +185,7 @@ export async function withMechanicalRetry(
         continue;
       }
     }
+    await opts?.onAttempt?.(attempt);
     let result: WorkerResult;
     try {
       result = await dispatch(useSpec, useCtx);
