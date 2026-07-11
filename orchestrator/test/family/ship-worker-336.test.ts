@@ -760,13 +760,13 @@ describe("#336 family workers — model id is spec-derived via modelIdForSlug (c
   // Symmetry: the family CMR worker (the OTHER family WorkerSpec-driven sc.run in this
   // class) must likewise derive its model from the spec via the same seam — not a
   // standalone constant that could drift from `cmrWorkerSpec().model`.
-  it("the family CMR worker resolves to gpt-5.6-terra via the same seam", () => {
+  it("the family CMR worker resolves to gpt-5.6-sol via the same seam", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const spec = cmrWorkerSpec();
-    expect(spec.model).toBe("gpt-5.6-terra");
+    expect(spec.model).toBe("gpt-5.6-sol");
     const model = modelOfAgent(seam().agent(spec));
-    expect(model).toBe(modelIdForSlug("gpt-5.6-terra"));
-    expect(model).toBe("gpt-5.6-terra");
+    expect(model).toBe(modelIdForSlug("gpt-5.6-sol"));
+    expect(model).toBe("gpt-5.6-sol");
   });
 });
 

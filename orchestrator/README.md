@@ -241,11 +241,11 @@ Presets (`src/modelRoutes.ts` `ROUTE_PRESETS`):
 
 | preset | coder/coderFix | reviewer | verify + cmr gates | ship/merger/fixer/cleanup/docRelease | cmrReview legs |
 | --- | --- | --- | --- | --- | --- |
-| `normal` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | sonnet | codex sol + claude opus (+agy) |
-| `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | sonnet | opus + agy + codex sol |
+| `normal` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | sonnet | codex sol + claude opus (+agy) |
+| `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | sonnet | opus + agy + codex sol |
 | `codex-tight` | sonnet | opus | opus | sonnet | opus + agy (codex family excluded) |
-| `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-terra | codex-side legs |
-| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-terra | codex sol + agy (claude family excluded) |
+| `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | gpt-5.6-terra | codex-side legs |
+| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | gpt-5.6-terra | codex sol + agy (claude family excluded) |
 
 `*-tight` presets declare `tightFamilies` — the family whose quota is scarce is
 kept off every slot and leg. Pick the preset whose scarce pool matches

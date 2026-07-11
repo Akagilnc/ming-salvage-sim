@@ -127,7 +127,7 @@ describe("RealFamilyBackend live officer effort", () => {
     promptFile: "integrated_cmr_completeness.md",
     completionSignal: "CMR_STEP_COMPLETE",
     maxIter: 1,
-    model: "gpt-5.6-terra",
+    model: "gpt-5.6-sol",
     soul: "cmr",
     toolchain: [],
     ...overrides,
