@@ -88,6 +88,18 @@ def bake_distance_matrix(graph: Mapping[str, object]) -> dict[str, dict[str, flo
             row[destination] = distances[destination] + node_weights[destination] / 2
         matrix[source] = row
 
+    # Dijkstra is run once per source, so mathematically identical routes can
+    # still accumulate binary floating-point values in a different order.  The
+    # asset models an undirected graph: choose one canonical calculation for
+    # each pair, normalize it for JSON, then mirror that exact value.
+    for source in sorted(node_weights):
+        for destination in sorted(node_weights):
+            if source >= destination:
+                continue
+            distance = round(float(matrix[source][destination]), 10)
+            matrix[source][destination] = distance
+            matrix[destination][source] = distance
+
     return matrix
 
 
@@ -113,4 +125,3 @@ class DistanceMatrix:
             return self._matrix[origin][destination]
         except KeyError as error:
             raise KeyError(f"no baked travel time for {origin!r} -> {destination!r}") from error
-
