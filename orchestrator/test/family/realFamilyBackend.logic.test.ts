@@ -1470,7 +1470,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
 
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
-      stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
+      stdout: "<cmr>not json</cmr>\nfindings = 0\nCMR_STEP_COMPLETE",
       outcomePath,
       cmrReviewLegs: [
         { slug: "opus" },
@@ -1519,6 +1519,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       completionSignal: undefined,
       stdout:
         "CMR correctness gate completed through the outcome guard.\n" +
+        "findings = 1\n" +
         "Reached max iterations (1).\n",
       outcomePath,
       cmrReviewLegs: [

@@ -275,16 +275,6 @@ cp "$HERE/hooks/commit-msg" "$STAGE/hooks/commit-msg"
 chmod +x "$STAGE/hooks/commit-msg"
 
 # ── 3c. Outcome guard binary ─────────────────────────────────────────────────
-# Versioned worker/image infrastructure: workers write a draft and let this guard
-# validate + emit the runner-compatible sidecar/tag/signal. Keep it in image/bin
-# so validation lives in the baked profile, not in copied prompt prose.
-if [ ! -f "$HERE/bin/orchestrator-outcome-guard" ]; then
-  echo "[build] ERROR: outcome guard not found at $HERE/bin/orchestrator-outcome-guard" >&2
-  exit 1
-fi
-cp "$HERE/bin/orchestrator-outcome-guard" "$STAGE/bin/orchestrator-outcome-guard"
-chmod +x "$STAGE/bin/orchestrator-outcome-guard"
-
 # ── 4. Containerfile into the staging context ────────────────────────────────
 cp "$HERE/Containerfile" "$STAGE/Containerfile"
 

@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -33,8 +32,6 @@ import type {
 } from "../src/types.js";
 import type { PrReviewSnapshot } from "../src/botPolling.js";
 import { fixerWorkerSpec } from "../src/dispatchWorker.js";
-
-const GUARD = resolve(process.cwd(), "image/bin/orchestrator-outcome-guard");
 
 const silenceFamily = (
   members: string[],
@@ -320,70 +317,6 @@ describe("#711 findingFamilies contract", () => {
         },
       ],
     });
-  });
-});
-
-describe("#711 outcome-guard allowlist", () => {
-  it("accepts legal findingFamilies on a CMR draft", () => {
-    const dir = mkdtempSync(join(tmpdir(), "outcome-guard-711-families-"));
-    try {
-      mkdirSync(join(dir, "cmr"), { recursive: true });
-      writeFileSync(join(dir, "cmr", "review.json"), '{"ok":true}\n', "utf8");
-
-      const outcome = {
-        converged: false,
-        reason: "blocking findings remain",
-        successfulLegs: ["gpt-5.6-sol"],
-        claimedFixedFindingIdentityKeys: [],
-        priorFindingDispositions: [],
-        findings: [
-          {
-            severity: "medium",
-            category: "correctness",
-            claim_quote: "silence treated as green",
-            location: "src/a.ts",
-            suggested_fix: "fail closed on silence",
-            action: "fix_now",
-          },
-        ],
-        findingFamilies: [
-          {
-            family: "silence-not-green",
-            members: ["standards|src/a.ts|silence treated as green"],
-            recurringFromRounds: [1, 2],
-            brief: "Silence must not count as green across sites.",
-          },
-        ],
-        evidencePaths: ["cmr/review.json"],
-      };
-      const draftPath = join(dir, "draft.json");
-      const sidecarPath = join(dir, "outcome.json");
-      writeFileSync(draftPath, JSON.stringify(outcome), "utf8");
-      writeFileSync(sidecarPath, "", "utf8");
-
-      const stdout = execFileSync(
-        GUARD,
-        [
-          "--role",
-          "cmr",
-          "--draft",
-          draftPath,
-          "--outcome",
-          sidecarPath,
-          "--evidence-root",
-          dir,
-          "--completion-signal",
-          "CMR_STEP_COMPLETE",
-        ],
-        { encoding: "utf8" },
-      );
-
-      expect(JSON.parse(readFileSync(sidecarPath, "utf8"))).toEqual(outcome);
-      expect(stdout).toContain("findingFamilies");
-      expect(stdout).toContain("CMR_STEP_COMPLETE");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });
 

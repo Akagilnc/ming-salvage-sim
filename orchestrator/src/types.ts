@@ -1057,6 +1057,8 @@ export interface CmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured CMR findings for family-level suppression classification. */
   readonly findings?: readonly Finding[];
+  /** Canonical reviewer count parsed from its required `findings = x` fragment. */
+  readonly findingsCount?: number;
   /** Cross-round grouped findings + recurring-class markers (#711). */
   readonly findingFamilies?: readonly FindingFamily[];
   /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
@@ -1246,6 +1248,8 @@ export type WorkerResult =
       readonly kind: "malformed";
       readonly reason: string;
       readonly sessionId?: string;
+      /** Semantic verdict retained while the same reviewer supplements its count fragment. */
+      readonly cmrPriorOutput?: CmrResult;
       readonly cmrLegAccountingPayload?: {
         readonly successfulLegs?: readonly string[];
         readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
