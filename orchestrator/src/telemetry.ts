@@ -527,8 +527,12 @@ export interface TelemetryReviewRoundRecord extends TelemetryRecordBase {
     | "malformed"
     | "protocol_failure"
     | "rejected";
-  /** Whether the runner accepted this review result after every terminal gate. */
-  readonly finalDisposition: "accepted" | "rejected";
+  /**
+   * Whether the runner accepted this review result after every terminal gate.
+   * `unknown` means runner-side durable persistence threw before the terminal
+   * classification completed; the observation must still be retained.
+   */
+  readonly finalDisposition: "accepted" | "rejected" | "unknown";
   readonly findingsBySeverity: Readonly<Record<Finding["severity"], number>> | null;
   /**
    * Identity recurrence is an exact match on category + location + normalized
