@@ -1104,7 +1104,7 @@ export class RealFamilyBackend implements FamilyBackend {
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
-    appendGlmKeyEnv(env);
+    appendGlmKeyEnv(env, resolveModelSlugForPool(mergerModel(), undefined).provider);
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
@@ -2032,7 +2032,7 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
     };
-    appendGlmKeyEnv(env);
+    appendGlmKeyEnv(env, resolveModelSlugForPool(modelForSlot("coderFix"), undefined).provider);
     if (fixFocusLanding !== undefined) {
       env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
     }
@@ -2297,7 +2297,7 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    appendGlmKeyEnv(env);
+    appendGlmKeyEnv(env, resolveModelSlugForPool(spec.model, undefined).provider);
     if (onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
     }
@@ -2791,7 +2791,9 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_REPO_ENV]: this.opts.repo,
       ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(reviewLegs),
     };
-    appendGlmKeyEnv(env);
+    if (reviewLegs.some((leg) => resolveModelSlugForPool(leg.slug, undefined).provider === "opencode")) {
+      appendGlmKeyEnv(env, "opencode");
+    }
     const codexReviewLeg = reviewLegs.find((leg) => leg.family === "codex");
     if (codexReviewLeg !== undefined) {
       env.CMR_CODEX_MODEL = codexReviewLeg.slug;
@@ -3233,7 +3235,7 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: SHIP_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    appendGlmKeyEnv(env);
+    appendGlmKeyEnv(env, resolveModelSlugForPool(modelForSlot("ship"), undefined).provider);
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh

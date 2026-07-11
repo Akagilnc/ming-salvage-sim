@@ -55,6 +55,7 @@ import {
   modelIsStrongLeg,
   opencodeAuthMount,
   appendGlmKeyEnv,
+  assertOpenCodeReadonlyCredential,
   parseBlockedBy,
   parseCoderSelfReport,
   parseSubIssueCount,
@@ -878,11 +879,33 @@ describe("#420 OpenCode runtime auth", () => {
     });
   });
 
-  it("passes GLM_KEY only from the dispatch environment", () => {
+  it("passes GLM_KEY only to OpenCode-family dispatches", () => {
     vi.stubEnv("GLM_KEY", "test-secret-never-logged");
-    const env: Record<string, string> = {};
-    appendGlmKeyEnv(env);
-    expect(env.GLM_KEY).toBe("test-secret-never-logged");
+    const opencodeEnv: Record<string, string> = {};
+    const codexEnv: Record<string, string> = {};
+    const claudeEnv: Record<string, string> = {};
+    appendGlmKeyEnv(opencodeEnv, "opencode");
+    appendGlmKeyEnv(codexEnv, "codex");
+    appendGlmKeyEnv(claudeEnv, "claudeCode");
+    expect(opencodeEnv.GLM_KEY).toBe("test-secret-never-logged");
+    expect(codexEnv).not.toHaveProperty("GLM_KEY");
+    expect(claudeEnv).not.toHaveProperty("GLM_KEY");
+  });
+
+  it("allows static API credentials under the read-only auth mount", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-static-auth-"));
+    const authFile = join(dir, "auth.json");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "api", key: "secret" } }));
+    expect(() => assertOpenCodeReadonlyCredential(authFile, "opencode-go/glm-5.2")).not.toThrow();
+  });
+
+  it("rejects refresh-type credentials before mounting them read-only", () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-oauth-auth-"));
+    const authFile = join(dir, "auth.json");
+    writeFileSync(authFile, JSON.stringify({ xai: { type: "oauth", refresh: "secret" } }));
+    expect(() => assertOpenCodeReadonlyCredential(authFile, "xai/grok-4")).toThrow(
+      /xai.*OAuth\/refresh-type.*writable per-container copy/i,
+    );
   });
 });
 
