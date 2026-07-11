@@ -226,10 +226,13 @@ def _world(
         "treasury": lambda: db.treasury_report(state),
         "military": lambda: db.army_report(limit=10),
         "regional": lambda: db.region_report(limit=10),
-        "personnel": db.faction_report,
+        "personnel": lambda: db.faction_report(audience=True),
         "construction": db.buildings_report,
-        "security": lambda: db.power_report(exclude_self=True),
-        "court": lambda: "\n".join((db.faction_report(), db.power_report(exclude_self=True))),
+        "security": lambda: db.power_report(exclude_self=True, audience=True),
+        "court": lambda: "\n".join((
+            db.faction_report(audience=True),
+            db.power_report(exclude_self=True, audience=True),
+        )),
     }
     facts = {
         domain: _qualitative(report_builders[domain]())

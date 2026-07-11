@@ -4565,12 +4565,24 @@ class GameDB:
         row = self.conn.execute("SELECT leverage FROM factions WHERE name = ?", (faction,)).fetchone()
         return int(row["leverage"]) if row else 50
 
-    def faction_report(self) -> str:
+    def faction_report(self, *, audience: bool = False) -> str:
+        """Render faction state for engine consumers or a minister-facing audience.
+
+        The engine still needs the exact axes for settlement and simulation.
+        A minister-facing report is a separate presentation contract: its
+        satisfaction and leverage values are qualitative, never prompt data.
+        """
         rows = self.conn.execute(
             "SELECT name, satisfaction, leverage, agenda FROM factions ORDER BY name"
         ).fetchall()
         if not rows:
             return "派系未建档。"
+        if audience:
+            return "；".join(
+                f"{row['name']}满意{qualitative_band(row['satisfaction'], ('怨愤', '不满', '平常', '顺应', '拥戴'))}、"
+                f"势力{qualitative_band(row['leverage'], ('极弱', '偏弱', '中等', '偏强', '强盛'))}，所求：{row['agenda']}"
+                for row in rows
+            )
         return "；".join(
             f"{row['name']}满意{row['satisfaction']}、势力{row['leverage']}，所求：{row['agenda']}"
             for row in rows
@@ -4696,6 +4708,7 @@ class GameDB:
 
     def power_report(
         self, exclude_self: bool = True, kinds: Optional[Iterable[str]] = None,
+        *, audience: bool = False,
     ) -> str:
         rows = self.power_rows(exclude_self=exclude_self)
         if kinds is not None:
@@ -4703,6 +4716,15 @@ class GameDB:
             rows = [row for row in rows if str(row["kind"] or "").strip().lower() in allowed]
         if not rows:
             return "势力未建档。"
+        if audience:
+            return "；".join(
+                f"{row['name']}（{row['leader']}）：{row['stance']}，"
+                f"威望{qualitative_band(row['leverage'], ('极弱', '偏弱', '中等', '偏强', '强盛'))}、"
+                f"实力{qualitative_band(row['military_strength'], ('极弱', '偏弱', '中等', '偏强', '强盛'))}、"
+                f"经济{qualitative_band(row['supply'], ('匮乏', '吃紧', '尚可', '充足', '丰裕'))}，"
+                f"{row['status']}；近动：{row['last_action'] or '尚无新动'}"
+                for row in rows
+            )
         return "；".join(
             f"{row['name']}（{row['leader']}）：{row['stance']}，威望{row['leverage']}、"
             f"实力{row['military_strength']}、经济{row['supply']}，"
