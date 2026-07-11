@@ -2,7 +2,7 @@
 
 import inspect
 
-from ming_sim.intelligence import build_return_report
+from ming_sim.intelligence import build_return_report, source_kind_for_query
 
 
 def test_frontier_vacancies_are_seeded_and_restore_from_characters(game):
@@ -40,6 +40,31 @@ def test_return_report_records_source_without_bare_values(game):
     assert "陕西巡抚" in report["statement"]
     assert all(isinstance(value, str) for value in report.values())
     assert not any(char.isdigit() for value in report.values() for char in value)
+
+
+def test_report_source_is_derived_from_query_not_caller_label(game):
+    db, _state, _content = game
+
+    report = build_return_report(db, "军情如何？", source_ref="伪造来源")
+
+    assert source_kind_for_query("军情如何？") == "firsthand"
+    assert report["source_kind"] == "firsthand"
+    assert report["source_ref"] == "见闻/powers"
+    assert "伪造来源" not in report["source_ref"]
+
+
+def test_domain_reports_reuse_existing_qualitative_readers(game, monkeypatch):
+    db, _state, _content = game
+    calls = []
+    monkeypatch.setattr(db, "army_report", lambda **kwargs: calls.append("army") or "军镇欠饷若干")
+    monkeypatch.setattr(db, "power_report", lambda **kwargs: calls.append("power") or "流寇势弱")
+
+    arrears = build_return_report(db, "各镇欠饷如何？")
+    bandits = build_return_report(db, "流寇势如何？")
+
+    assert calls == ["army", "power"]
+    assert arrears["statement"] == "军镇欠饷若干"
+    assert bandits["statement"] == "流寇势弱"
 
 
 def test_return_report_interface_does_not_depend_on_minister_reply():
