@@ -31,6 +31,7 @@ import {
   buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
+  selectCapacityRelayBaton,
   selectNextRelayBaton,
   type BillingPoolEntry,
   type BillingPoolId,
@@ -43,12 +44,14 @@ import {
   buildRelayFocusFile,
   buildRelayHandoffLedgerEntry,
   canRelayHandoff,
+  CapacityRelayError,
   classifyFailureForRetryOrRelay,
   countRelayHandoffsInLedger,
   decideRelayAfterIdle,
   forkQuotaWallAt683Point,
   HangWithLivePoolError,
   isHangWithLivePoolError,
+  isCapacityRelayError,
   isRelayChainReadyForReviewGate,
   parseRelayTag,
   resumeRelayFromLedger,
@@ -455,6 +458,345 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
   });
 });
 
+describe("#787 capacity relay", () => {
+  const now = new Date("2026-07-11T12:00:00.000Z");
+
+  it("at-capacity relays to the next checkpoint in the same live pool and records capacity", async () => {
+    const order = resolveCoderRecOrder(
+      "Coder-Rec: grok-4.5 → terra@med → luna@med",
+    );
+    const pools = [
+      {
+        id: "codex-5h" as const,
+        status: "live" as const,
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        models: ["terra@med", "luna@med"],
+      },
+      {
+        id: "grok-build" as const,
+        status: "live" as const,
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        models: ["grok-4.5"],
+      },
+    ];
+
+    expect(
+      selectCapacityRelayBaton({
+        currentModelId: "terra@med",
+        currentPool: "codex-5h",
+        rosterOrder: order,
+        pools,
+      }),
+    ).toMatchObject({ modelId: "luna@med", pool: "codex-5h" });
+
+    const handoff = await applyResourceFailureHandoff({
+      trigger: "capacity",
+      state_summary: "worker stopped at model capacity; drift preserved",
+      reason: "Selected model is at capacity",
+      currentModelId: "terra@med",
+      currentPool: "codex-5h",
+      rosterOrder: order,
+      pools,
+      now,
+      step: "S2",
+    });
+
+    expect(handoff.kind).toBe("relay");
+    if (handoff.kind !== "relay") return;
+    expect(handoff.nextBaton).toMatchObject({
+      modelId: "luna@med",
+      pool: "codex-5h",
+    });
+    expect(handoff.ledgerEntry?.trigger).toBe("capacity");
+  });
+
+  it("uses each capacity candidate's landed-route conflict set", () => {
+    const order = resolveCoderRecOrder(
+      "Coder-Rec: terra@med → luna@med",
+    );
+    const pools = [
+      {
+        id: "codex-5h" as const,
+        status: "live" as const,
+        parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+        models: ["terra@med", "luna@med"],
+      },
+    ];
+
+    expect(
+      selectCapacityRelayBaton({
+        currentModelId: "terra@med",
+        currentPool: "codex-5h",
+        rosterOrder: order,
+        pools,
+        reviewerSlugsForCandidate: (candidate) =>
+          candidate.id === "luna@med" ? ["gpt-5.6-luna"] : [],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("recognizes only model-capacity fingerprints and leaves quota plus ordinary 5xx to retry", () => {
+    const capacity = new CapacityRelayError("Selected model is at capacity");
+    expect(isCapacityRelayError(capacity)).toBe(true);
+    expect(isCapacityRelayError(new Error("Selected model is at capacity"))).toBe(true);
+    expect(isCapacityRelayError(new Error("HTTP 429 rate limit exceeded"))).toBe(false);
+    expect(isCapacityRelayError(new Error("HTTP 503 service overloaded"))).toBe(false);
+    expect(isCapacityRelayError(new Error("gateway returned 503"))).toBe(false);
+    expect(isCapacityRelayError(new Error("worker queue is at capacity"))).toBe(false);
+  });
+
+  it("wires a first-leg capacity failure through the production family call shape to the next same-pool checkpoint", async () => {
+    async function runCapacityCase(): Promise<{ readonly coderModels: readonly string[]; readonly handoff: unknown }> {
+      const worktree: WorktreeHandle = {
+        branch: "feat/787-capacity-relay-test",
+        base: "main",
+        path: mkdtempSync(join(tmpdir(), "relay-787-capacity-")),
+      };
+      const coderModels: string[] = [];
+      class CapacityBackend implements Backend {
+        async smokeModelRoute(route: any): Promise<any> {
+          const { smokeRouteModels } = await import("../src/modelRoutes.js");
+          return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+        }
+        async findResumeState(): Promise<undefined> { return undefined; }
+        async cleanResidue(): Promise<void> {}
+        async resumeSession(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async fetchIssueMeta(n: number): Promise<IssueMeta> {
+          return {
+            number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false,
+            openBlockedBy: [], body: "Coder-Rec: terra@med → luna@med",
+          };
+        }
+        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+          return { number: n, body: "Coder-Rec: terra@med → luna@med", comments: [], agentBrief: "" };
+        }
+        async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
+        async writeSnapshot(): Promise<void> {}
+        async runStep(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async push(): Promise<void> {}
+        async writeLedger(): Promise<void> {}
+        async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+          if (spec.kind === "coder" && spec.id === "S2") {
+            coderModels.push(spec.model);
+            if (spec.model === "gpt-5.6-terra") {
+              return { kind: "failed", reason: "Selected model is at capacity" };
+            }
+            return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+          }
+          if (spec.kind === "reviewer") {
+            return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+          }
+          if (spec.kind === "ship") {
+            return { kind: "completed", output: { kind: "ship", branch: worktree.branch, status: "pushed" } };
+          }
+          const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+          if (skeleton !== undefined) return skeleton;
+          return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
+        }
+      }
+
+      const previous = process.env.ORCHESTRATOR_CODER_MODEL;
+      process.env.ORCHESTRATOR_CODER_MODEL = "gpt-5.6-terra";
+      try {
+        const result = await runOrchestrator({
+          issueNumber: 787,
+          backend: new CapacityBackend(),
+          now: () => now,
+          family: {
+            parentIssue: 686,
+            familyBase: "feat/686-family-base",
+            noPush: true,
+            mergedBlockers: [],
+          },
+        });
+        expect(result.status, JSON.stringify(result, null, 2)).not.toBe("error");
+        return {
+          coderModels,
+          handoff: result.stepLedger.find((entry) => entry.event === "relay_baton_handoff"),
+        };
+      } finally {
+        if (previous === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
+        else process.env.ORCHESTRATOR_CODER_MODEL = previous;
+        rmSync(worktree.path, { recursive: true, force: true });
+      }
+    }
+
+    const firstLeg = await runCapacityCase();
+    expect(firstLeg.coderModels).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
+    expect(firstLeg.handoff).toMatchObject({
+      trigger: "capacity",
+      toModelId: "luna@med",
+      toPool: "codex-5h",
+    });
+  });
+
+  it.each(["S3", "S6"] as const)(
+    "uses the reviewer pool and next reviewer baton for first-leg %s capacity",
+    async (capacityStep) => {
+      const worktree: WorktreeHandle = {
+        branch: `feat/787-${capacityStep.toLowerCase()}-capacity-test`,
+        base: "main",
+        path: mkdtempSync(join(tmpdir(), "relay-787-reviewer-capacity-")),
+      };
+      const reviewerModels: string[] = [];
+      const blockingFinding = {
+        severity: "medium" as const,
+        category: "correctness",
+        claim_quote: "needs one repair pass",
+        location: "runner.ts:1",
+        suggested_fix: "repair it",
+        action: "fix_now" as const,
+      };
+      class ReviewerCapacityBackend implements Backend {
+        async smokeModelRoute(route: any): Promise<any> {
+          const { smokeRouteModels } = await import("../src/modelRoutes.js");
+          return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+        }
+        async findResumeState(): Promise<undefined> { return undefined; }
+        async cleanResidue(): Promise<void> {}
+        async resumeSession(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async fetchIssueMeta(n: number): Promise<IssueMeta> {
+          return {
+            number: n,
+            isReadyForAgent: true,
+            hasSubIssues: false,
+            isClosed: false,
+            openBlockedBy: [],
+            body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+          };
+        }
+        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+          return {
+            number: n,
+            body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+            comments: [],
+            agentBrief: "",
+          };
+        }
+        async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
+        async writeSnapshot(): Promise<void> {}
+        async runStep(): Promise<StepOutput> {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        async push(): Promise<void> {}
+        async writeLedger(): Promise<void> {}
+        async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+          if (spec.kind === "reviewer") {
+            reviewerModels.push(`${spec.id}:${spec.model}`);
+            if (spec.id === capacityStep && spec.model === "gpt-5.6-terra") {
+              return { kind: "failed", reason: "Selected model is at capacity" };
+            }
+            if (spec.id === "S3" && capacityStep === "S6") {
+              return {
+                kind: "completed",
+                output: { kind: "reviewer", findings: [blockingFinding] },
+              };
+            }
+            if (spec.id === "S6" && capacityStep === "S6") {
+              return {
+                kind: "completed",
+                output: {
+                  kind: "reviewer",
+                  findings: [],
+                  priorFindingDispositions: [
+                    {
+                      identityKey: "correctness|runner.ts:1|needs one repair pass",
+                      status: "verified-closed",
+                    },
+                  ],
+                },
+              };
+            }
+            return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+          }
+          if (spec.kind === "coder") {
+            return {
+              kind: "completed",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            };
+          }
+          if (spec.kind === "ship") {
+            return {
+              kind: "completed",
+              output: { kind: "ship", branch: worktree.branch, status: "pushed" },
+            };
+          }
+          const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+          if (skeleton !== undefined) return skeleton;
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+      }
+
+      const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
+      const previousReviewer = process.env.ORCHESTRATOR_REVIEWER_MODEL;
+      process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+      process.env.ORCHESTRATOR_REVIEWER_MODEL = "gpt-5.6-terra";
+      try {
+        const result = await runOrchestrator({
+          issueNumber: 787,
+          backend: new ReviewerCapacityBackend(),
+          now: () => now,
+          family: {
+            parentIssue: 686,
+            familyBase: "feat/686-family-base",
+            noPush: true,
+            mergedBlockers: [],
+          },
+        });
+
+        expect(result.status, JSON.stringify(result, null, 2)).not.toBe("error");
+        expect(reviewerModels).toContain(`${capacityStep}:gpt-5.6-luna`);
+        expect(
+          result.stepLedger.find(
+            (entry) =>
+              entry.event === "relay_baton_handoff" && entry.step === capacityStep,
+          ),
+        ).toMatchObject({
+          trigger: "capacity",
+          fromModelId: "terra@med",
+          fromPool: "codex-5h",
+          toModelId: "luna@med",
+          toPool: "codex-5h",
+        });
+      } finally {
+        if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
+        else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
+        if (previousReviewer === undefined) delete process.env.ORCHESTRATOR_REVIEWER_MODEL;
+        else process.env.ORCHESTRATOR_REVIEWER_MODEL = previousReviewer;
+        rmSync(worktree.path, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("keeps pre-capacity trigger rows readable when resuming a relay", () => {
+    const legacyQuotaWall = {
+      event: "relay_baton_handoff" as const,
+      trigger: "quota_wall" as const,
+      state_summary: "legacy baton state",
+      fromModelId: "grok-4.5",
+      fromPool: "grok-build" as const,
+      toModelId: "terra@med",
+      toPool: "codex-5h" as const,
+      step: "S2" as const,
+      ts: now.toISOString(),
+    };
+    expect(resumeRelayFromLedger([legacyQuotaWall], "S2")).toMatchObject({
+      trigger: "quota_wall",
+      state_summary: "legacy baton state",
+      toModelId: "terra@med",
+    });
+  });
+});
+
 describe("#686 three handoff triggers", () => {
   const now = new Date("2026-07-10T12:00:00.000Z");
 
@@ -575,7 +917,7 @@ describe("#686 three handoff triggers", () => {
 });
 
 describe("#686 resource failure NEVER resets worktree (#661 boundary)", () => {
-  it("classifies quota/pool-dead/hang-with-live-pool as resource failure", () => {
+  it("classifies quota/pool-dead/hang-with-live-pool/capacity as resource failure", () => {
     expect(classifyFailureForRetryOrRelay({ kind: "quota_wall" })).toBe(
       "resource",
     );
@@ -588,6 +930,9 @@ describe("#686 resource failure NEVER resets worktree (#661 boundary)", () => {
     expect(
       classifyFailureForRetryOrRelay({ kind: "self_reported_blocked" }),
     ).toBe("resource");
+    expect(classifyFailureForRetryOrRelay({ kind: "capacity" })).toBe(
+      "resource",
+    );
   });
 
   it("classifies process-level failed/malformed as mechanical retry", () => {

@@ -134,6 +134,26 @@ export const DEFAULT_POOL_MODELS: Readonly<
 };
 
 /**
+ * Resolve a known roster model to its default billing boundary. This is
+ * distinct from quota probing: codex and Claude have no #683 probe-pool id,
+ * but their dispatched slugs still identify a billing pool for capacity relay.
+ */
+export function billingPoolForModelRef(
+  modelRef: string,
+): BillingPoolId | undefined {
+  switch (lookupCoderRosterEntry(modelRef)?.pool) {
+    case "supergrok":
+      return "grok-build";
+    case "codex":
+      return "codex-5h";
+    case "claude":
+      return "claude";
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Build a route pool table for a quota-wall disposition: the wall-hit pool is
  * `limited` (with resetAt). Every other billing pool defaults to **not-live**
  * (`dead`) unless the caller supplies a probed/override table via
@@ -225,6 +245,21 @@ function livePoolsForModel(
 }
 
 /**
+ * Return a pool whose liveness is confirmed by the relay table and which can
+ * serve the dispatched model. A model slug alone is not evidence that its
+ * quota/billing pool is live.
+ */
+export function findLiveBillingPoolForModel(
+  pools: ReadonlyArray<BillingPoolEntry>,
+  modelRef: string,
+): BillingPoolId | undefined {
+  const rosterEntry = lookupCoderRosterEntry(modelRef);
+  const modelId = rosterEntry?.id ?? modelRef;
+  const slug = rosterEntry?.slug ?? modelRef;
+  return livePoolsForModel(pools, modelId, slug)[0]?.id;
+}
+
+/**
  * ADR 0126: next baton from the SAME #767 Coder-Rec roster, with one extra
  * pool-orthogonal step for resource triggers:
  *   1. same model on a different live pool (换马甲)
@@ -286,6 +321,51 @@ export function selectNextRelayBaton(
     }
   }
   return undefined;
+}
+
+/**
+ * #787: capacity is checkpoint-local, not a billing-pool quota wall. Prefer
+ * the next Coder-Rec checkpoint that the current live pool can serve; only
+ * then fall back to the ordinary pool-orthogonal relay order.
+ */
+export function selectCapacityRelayBaton(
+  input: SelectNextRelayBatonInput,
+): NextRelayBaton | undefined {
+  const current =
+    lookupCoderRosterEntry(input.currentModelId) ??
+    input.rosterOrder.find((entry) => entry.id === input.currentModelId);
+  const startIdx = input.rosterOrder.findIndex(
+    (entry) =>
+      entry.id === input.currentModelId ||
+      entry.slug === input.currentModelId ||
+      (current !== undefined && entry.id === current.id),
+  );
+  const currentPool = input.pools.find(
+    (pool) => pool.id === input.currentPool && pool.status === "live",
+  );
+  if (currentPool !== undefined) {
+    const from = startIdx >= 0 ? startIdx + 1 : 0;
+    for (let i = from; i < input.rosterOrder.length; i++) {
+      const candidate = input.rosterOrder[i]!;
+      const candidateReviewerSlugs =
+        input.reviewerSlugsForCandidate?.(candidate) ??
+        input.reviewerSlugs ??
+        [];
+      if (
+        poolSeparationViolation(candidate, candidateReviewerSlugs) !== undefined
+      ) {
+        continue;
+      }
+      if (poolServesModel(currentPool, candidate.id, candidate.slug)) {
+        return {
+          modelId: candidate.id,
+          slug: candidate.slug,
+          pool: currentPool.id,
+        };
+      }
+    }
+  }
+  return selectNextRelayBaton(input);
 }
 
 /** True when {@link selectNextRelayBaton} would return a baton. */

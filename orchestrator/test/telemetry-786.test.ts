@@ -1326,4 +1326,44 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       [],
     );
   });
+
+  it("schedules the lazy environment stamp before a throwing spawn callback", async () => {
+    const dir = tempDir("orch-786-env-callback-throw-");
+    const ledgerDir = join(dir, ".ledger-786");
+    const backend = {
+      resolveCliMonitorDispatch: (): CliMonitorSpawnSpec => ({
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => process.exit(0), 50)"],
+        logDir: dir,
+        poolId: "codex-5h",
+        completionSignal: "<coder>",
+        stepId: "S2",
+        readInstanceId: () => "test-instance-env-callback-throw",
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+      installTelemetryRunEnvironment: async () => {},
+    } as unknown as Backend;
+
+    await expect(
+      dispatchWorkerWithMonitor(backend, workerSpec(), { stateDir: ledgerDir }, undefined, {
+        onMonitorHandleSpawned: async () => {
+          throw new Error("ledger persistence failed");
+        },
+      }),
+    ).rejects.toThrow(/ledger persistence failed/);
+
+    let environment: TelemetryEnvironmentRecord | undefined;
+    for (let attempt = 0; attempt < 100 && environment === undefined; attempt += 1) {
+      environment = readTelemetryRecords(ledgerDir).find(
+        (record): record is TelemetryEnvironmentRecord => record.phase === "environment",
+      );
+      if (environment === undefined) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    expect(environment).toBeDefined();
+  });
 });
