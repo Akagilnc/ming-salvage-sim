@@ -836,6 +836,12 @@ export interface WorkerLandingPayload {
  * (human answer, runner-observed gate failures) — never finding free-text content.
  */
 export interface DispatchContext {
+  /**
+   * Ephemeral identity for one invocation of the orchestrator runner. Unlike
+   * `stateDir`, this is freshly minted on every run, including a same-issue
+   * resume against the same durable ledger.
+   */
+  readonly runId?: string;
   /** The immutable route selected for this run, including its smoke records. */
   readonly modelRoute?: ResolvedModelRoute;
   /**
@@ -855,6 +861,8 @@ export interface DispatchContext {
   readonly familyBase?: string;
   /** The sibling state directory holding the persisted ledger (ADR 0018 §3). */
   readonly stateDir?: string;
+  /** Durable telemetry/log directory, outside Sandcastle's ephemeral worktrees. */
+  readonly telemetryDir?: string;
   /**
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
    * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
@@ -1464,6 +1472,8 @@ export type MonitoredWorkerIdleDisposition =
  * sibling state directory (outside the worktree so `git clean -fd` cannot remove it).
  */
 export interface PersistentLedgerEntry extends LedgerEntry {
+  /** Runner invocation identity; shared by this run's ledger rows. */
+  readonly runId?: string;
   /**
    * Sandbox session identifier (resume truth).
    *
@@ -1553,6 +1563,8 @@ export interface ResumeState {
  * separately. Keep this minimal and stable — 9 slices layer on it.
  */
 export interface Backend {
+  /** Resolve the durable sidecar directory for a worker dispatch, when available. */
+  resolveTelemetryDir?(ctx: DispatchContext): string | undefined;
   /** Run the real model×pipe bash smoke and return the route with fresh records. */
   smokeModelRoute(
     route: ResolvedModelRoute,

@@ -4,7 +4,10 @@
  * Parallel to the step ledger (`steps.jsonl`): raw per-leg stamps only.
  * Aggregation / stats are out of scope for this ticket.
  *
- * Layout: `<ledgerDir>/telemetry.jsonl` — one JSON object per line.
+ * Layout: durable `<ledgerDir>/telemetry.jsonl` — one JSON object per line.
+ * Single-slice runs use `<dedicated-clone>/.ledger-<issue>/`; family runs use
+ * their existing durable family ledger directory. The legacy
+ * `.sandcastle/worktrees/.ledger-<issue>/` location is read-only fallback only.
  * Phases:
  *   - `environment` — once per run (image / route lineup / CLI versions)
  *   - `dispatch`    — half-row at spawn (identity / model / pool / time)
@@ -337,6 +340,21 @@ function listFilesRecursive(root: string, base = ""): string[] {
 /** Sidecar filename under the ledger/state directory. */
 export const TELEMETRY_FILENAME = "telemetry.jsonl";
 
+/**
+ * Durable single-slice telemetry location. `stateDir` is the legacy sibling
+ * under `.sandcastle/worktrees`; the dedicated clone root survives Sandcastle
+ * worktree pruning and has the same lifetime as the resume ledger.
+ */
+export function durableTelemetryDirForSingleSlice(
+  workingRepo: string,
+  stateDir: string | undefined,
+): string | undefined {
+  if (workingRepo.length === 0 || stateDir === undefined) return undefined;
+  const match = /(?:^|[/\\])\.ledger-(\d+)(?:[/\\]|$)/.exec(stateDir);
+  const issue = match?.[1];
+  return issue === undefined ? undefined : join(workingRepo, `.ledger-${issue}`);
+}
+
 /** Schema version for forward-compatible consumers. */
 export const TELEMETRY_SCHEMA_VERSION = 1 as const;
 
@@ -517,25 +535,29 @@ export function scheduleTelemetryEnvironmentStamp(
   ctx: DispatchContext,
   backend: TelemetryEnvironmentProvider,
 ): Promise<void> {
+  // Per-run key (ledgerDir + runId): same durable ledger may host multiple runs.
+  // Joinable Promise: callers can await completion without blocking dispatch.
+  const runId = runIdFromContext(ctx);
+  const pendingKey = `${ledgerDir ?? ""}\0${runId ?? ""}`;
   if (
     ledgerDir === undefined ||
     ledgerDir.length === 0 ||
-    hasEnvironmentStamp(ledgerDir)
+    hasEnvironmentStamp(ledgerDir, runId)
   ) {
     return Promise.resolve();
   }
-  const pending = pendingTelemetryEnvironmentStamps.get(ledgerDir);
+  const pending = pendingTelemetryEnvironmentStamps.get(pendingKey);
   if (pending !== undefined) return pending;
 
   let complete: () => void;
   const completion = new Promise<void>((resolve) => {
     complete = resolve;
   });
-  pendingTelemetryEnvironmentStamps.set(ledgerDir, completion);
+  pendingTelemetryEnvironmentStamps.set(pendingKey, completion);
   queueMicrotask(() => {
     void (async () => {
       try {
-        if (!hasEnvironmentStamp(ledgerDir)) {
+        if (!hasEnvironmentStamp(ledgerDir, runId)) {
           await backend.installTelemetryRunEnvironment?.();
           ensureEnvironmentStamp(ledgerDir, ctx);
         }
@@ -546,8 +568,8 @@ export function scheduleTelemetryEnvironmentStamp(
           }`,
         );
       } finally {
-        if (pendingTelemetryEnvironmentStamps.get(ledgerDir) === completion) {
-          pendingTelemetryEnvironmentStamps.delete(ledgerDir);
+        if (pendingTelemetryEnvironmentStamps.get(pendingKey) === completion) {
+          pendingTelemetryEnvironmentStamps.delete(pendingKey);
         }
         complete();
       }
@@ -1268,8 +1290,7 @@ function issueFromContext(ctx: DispatchContext): number | null {
 }
 
 function runIdFromContext(ctx: DispatchContext): string | null {
-  // No dedicated run UUID on DispatchContext yet — use stateDir as a stable proxy.
-  return ctx.stateDir ?? null;
+  return ctx.runId ?? null;
 }
 
 function cliVersionForSlug(
@@ -1371,8 +1392,9 @@ export function tryAppendTelemetryRecord(
 }
 
 /**
- * Ensure a single environment stamp exists for this ledgerDir.
- * Idempotent: skips when an environment phase line is already present.
+ * Ensure a single environment stamp exists for this ledgerDir and run.
+ * Idempotent: skips when an environment phase line for the current run is
+ * already present.
  */
 export function ensureEnvironmentStamp(
   ledgerDir: string | undefined,
@@ -1388,7 +1410,8 @@ export function ensureEnvironmentStamp(
 ): boolean {
   if (ledgerDir === undefined || ledgerDir.length === 0) return false;
   try {
-    if (hasEnvironmentStamp(ledgerDir)) return false;
+    const runId = opts?.runId ?? runIdFromContext(ctx);
+    if (hasEnvironmentStamp(ledgerDir, runId)) return false;
     return tryAppendTelemetryRecord(
       ledgerDir,
       buildEnvironmentStamp({
@@ -1411,14 +1434,29 @@ export function ensureEnvironmentStamp(
   }
 }
 
-/** Cheap, synchronous existence check used before scheduling expensive setup. */
-export function hasEnvironmentStamp(ledgerDir: string | undefined): boolean {
+/** Cheap, synchronous existence check for one run before expensive setup. */
+export function hasEnvironmentStamp(
+  ledgerDir: string | undefined,
+  runId: string | null = null,
+): boolean {
   if (ledgerDir === undefined || ledgerDir.length === 0) return false;
   try {
     const path = telemetryPath(ledgerDir);
-    return existsSync(path)
-      ? readFileSync(path, "utf8").includes('"phase":"environment"')
-      : false;
+    if (!existsSync(path)) return false;
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .some((line) => {
+        if (line.trim().length === 0) return false;
+        try {
+          const record = JSON.parse(line) as {
+            readonly phase?: unknown;
+            readonly runId?: unknown;
+          };
+          return record.phase === "environment" && record.runId === runId;
+        } catch {
+          return false;
+        }
+      });
   } catch {
     return false;
   }
@@ -1428,10 +1466,18 @@ export function hasEnvironmentStamp(ledgerDir: string | undefined): boolean {
  * Read and parse all telemetry lines (test / offline consumers).
  * Blank lines skipped; malformed lines throw (fail-closed for tools).
  */
-export function readTelemetryRecords(ledgerDir: string): TelemetryRecord[] {
+export function readTelemetryRecords(
+  ledgerDir: string,
+  legacyLedgerDir?: string,
+): TelemetryRecord[] {
   const path = telemetryPath(ledgerDir);
-  if (!existsSync(path)) return [];
-  const raw = readFileSync(path, "utf8");
+  const readPath = existsSync(path)
+    ? path
+    : legacyLedgerDir === undefined
+      ? undefined
+      : telemetryPath(legacyLedgerDir);
+  if (readPath === undefined || !existsSync(readPath)) return [];
+  const raw = readFileSync(readPath, "utf8");
   const out: TelemetryRecord[] = [];
   for (const line of raw.split(/\r?\n/)) {
     if (line.trim().length === 0) continue;

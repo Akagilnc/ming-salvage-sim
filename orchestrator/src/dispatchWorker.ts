@@ -884,12 +884,32 @@ export async function dispatchWorkerWithMonitor(
 ): Promise<DispatchWorkerWithMonitorOutcome> {
   // #786 — per-leg telemetry sidecar (dispatch + collect half-rows).
   // Best-effort only: never changes worker semantics or resume contracts.
-  const ledgerDir = ctx.stateDir;
+  // Optional chaining only guards missing methods; a throwing implementation
+  // must not abort dispatch (CodeRabbit #815 / fail-open).
+  let telemetryDir = ctx.telemetryDir;
+  if (telemetryDir === undefined) {
+    try {
+      telemetryDir = backend.resolveTelemetryDir?.(ctx);
+    } catch (err) {
+      console.warn(
+        `[orchestrator] resolveTelemetryDir failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    telemetryDir = telemetryDir ?? ctx.stateDir;
+  }
+  const telemetryCtx =
+    telemetryDir === undefined ? ctx : { ...ctx, telemetryDir };
   let firstOutputAt: string | null = null;
   let logPath: string | null = null;
   let logStartOffset: number | undefined;
   let telemetryEnvironmentStamp = Promise.resolve();
-  const telemetry = createTelemetryLegStamper({ ledgerDir, spec, ctx });
+  const telemetry = createTelemetryLegStamper({
+    ledgerDir: telemetryDir,
+    spec,
+    ctx: telemetryCtx,
+  });
 
   /**
    * #786 first_output_at — first *observed* log growth past the post-spawn
@@ -923,7 +943,7 @@ export async function dispatchWorkerWithMonitor(
   };
 
   try {
-    const cliSpec = backend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+    const cliSpec = backend.resolveCliMonitorDispatch?.(spec, telemetryCtx, landing);
 
     if (cliSpec !== undefined) {
       const input: MonitoredCliDispatchInput = {
@@ -955,8 +975,8 @@ export async function dispatchWorkerWithMonitor(
       // Schedule before the caller callback. A failed durable-handle write still
       // leaves the asynchronous, best-effort environment row for this run.
       telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
-        ledgerDir,
-        ctx,
+        telemetryDir,
+        telemetryCtx,
         backend,
       );
       // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
@@ -1157,8 +1177,8 @@ export async function dispatchWorkerWithMonitor(
       ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
     telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
-      ledgerDir,
-      ctx,
+      telemetryDir,
+      telemetryCtx,
       backend,
     );
     const result = await dispatchWorker(backend, spec, ctx, landing);

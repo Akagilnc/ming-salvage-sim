@@ -52,6 +52,7 @@ export {
   computeSandboxFingerprint,
   configureTelemetryFromWorkerImage,
   configureTelemetryRunEnvironment,
+  durableTelemetryDirForSingleSlice,
   ensureEnvironmentStamp,
   mentionsHttp429,
   extractClaudeTokens,

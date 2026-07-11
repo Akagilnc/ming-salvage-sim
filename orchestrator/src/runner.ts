@@ -369,6 +369,7 @@ async function hashPrompt(
 function buildPersistentEntry(opts: {
   step: StepId;
   output: StepOutput | undefined;
+  runId: string;
   sessionId: string;
   prompt_hash: string;
   branchHEAD: string;
@@ -390,6 +391,7 @@ function buildPersistentEntry(opts: {
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
+    runId: opts.runId,
     sessionId: opts.sessionId,
     prompt_hash: opts.prompt_hash,
     branchHEAD: opts.branchHEAD,
@@ -3269,6 +3271,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // zero-container fake path — which carry no per-step sandbox session — fall
   // back to this run-level id.
   const sessionId = globalThis.crypto.randomUUID();
+  // State directories deliberately survive and are deterministically derived
+  // from an issue. Telemetry therefore needs a separate per-invocation key:
+  // same-issue restarts must append a fresh environment row, never dedupe it.
+  const runId = `${new Date().toISOString()}-${globalThis.crypto.randomUUID()}`;
 
   /**
    * Resolve the ledger's `branchHEAD` value (#256).
@@ -3330,6 +3336,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const entry = buildPersistentEntry({
       step: s,
       output,
+      runId,
       sessionId: stepSessionId ?? sessionId,
       prompt_hash: ph,
       branchHEAD,
@@ -3395,6 +3402,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const entry: PersistentLedgerEntry = {
       step: s,
       event: "worker_monitor_spawned",
+      runId,
       sessionId,
       prompt_hash: ph,
       branchHEAD,
@@ -4341,6 +4349,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
               const focusPath = relayFocusForDispatch(step);
               const dispatchCtx = {
+                runId,
                 worktree,
                 stateDir,
                 modelRoute,
@@ -4909,6 +4918,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumedEscalationAnswer = undefined;
           }
           const shipCtx = {
+            runId,
             worktree,
             stateDir,
             modelRoute,
@@ -5312,6 +5322,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             };
           }
           const reviewCtx = {
+            runId,
             worktree,
             stateDir,
             modelRoute,
