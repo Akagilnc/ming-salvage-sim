@@ -1501,8 +1501,9 @@ export function isLikelySha(s: string): boolean {
  */
 /**
  * Valid step ids (S0–S12). A persisted ledger record must carry one of these in
- * `step`: {@link planResume} dereferences `lastEntry.step` to route the resume,
- * so a record whose `step` is missing / non-string / out-of-range is unusable.
+ * `step`: {@link planResume} dereferences canonical steps to route the resume;
+ * a retry marker has its own validated shape and is retained as durable retry
+ * accounting rather than treated as a route target.
  */
 const STEP_IDS: ReadonlySet<string> = new Set([
   "S0",
@@ -1520,10 +1521,13 @@ const STEP_IDS: ReadonlySet<string> = new Set([
   "S12",
 ]);
 
+const MECHANICAL_REDISPATCH_ATTEMPT = "mechanical_redispatch_attempt";
+
 /**
  * A parsed JSONL record is a usable ledger entry only if it is a non-null object
- * whose `step` is a valid {@link StepId}. (`output` / `handoffStatus` are
- * optional, so the minimal valid entry is `{step}`.)
+ * whose `step` is a valid {@link StepId}, or a well-formed #824 mechanical
+ * redispatch marker. (`output` / `handoffStatus` are optional, so the minimal
+ * canonical entry is `{step}`.)
  *
  * sessionId (when present) must be string — explicit null / non-string is
  * corrupt. This is the parse-boundary guard that prevents raw JSON null from
@@ -1551,7 +1555,26 @@ function isLedgerEntryShape(
     return false;
   }
   const step = (value as { step?: unknown }).step;
-  if (typeof step !== "string" || !STEP_IDS.has(step)) return false;
+  if (typeof step !== "string") return false;
+  if (step === MECHANICAL_REDISPATCH_ATTEMPT) {
+    const marker = value as {
+      event?: unknown;
+      forStep?: unknown;
+      mechanicalRedispatchAttempt?: unknown;
+    };
+    if (
+      marker.event !== MECHANICAL_REDISPATCH_ATTEMPT ||
+      typeof marker.forStep !== "string" ||
+      !STEP_IDS.has(marker.forStep) ||
+      typeof marker.mechanicalRedispatchAttempt !== "number" ||
+      !Number.isSafeInteger(marker.mechanicalRedispatchAttempt) ||
+      marker.mechanicalRedispatchAttempt < 1
+    ) {
+      return false;
+    }
+  } else if (!STEP_IDS.has(step)) {
+    return false;
+  }
   const sid = (value as { sessionId?: unknown }).sessionId;
   if (sid !== undefined && typeof sid !== "string") return false;
   const ek = (value as { escalationKind?: unknown }).escalationKind;

@@ -57,6 +57,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 import { runOrchestrator } from "../src/runner.js";
+import { parseLedgerJsonl } from "../src/realBackend.js";
 import { buildRoundTrigger } from "../src/evidenceAdmissibility.js";
 import {
   ONLINE_REVIEW_SNAPSHOT_FILE,
@@ -929,20 +930,24 @@ describe("#824 durable mechanical redispatch budget", () => {
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
-      ledger: [
+      ledger: parseLedgerJsonl([
         entry("S0"),
         entry("S1"),
         {
           ...entry("S2"),
+          step: "mechanical_redispatch_attempt",
           event: "mechanical_redispatch_attempt",
+          forStep: "S2",
           mechanicalRedispatchAttempt: 1,
         },
         {
           ...entry("S2"),
+          step: "mechanical_redispatch_attempt",
           event: "mechanical_redispatch_attempt",
+          forStep: "S2",
           mechanicalRedispatchAttempt: 2,
         },
-      ],
+      ].map((row) => JSON.stringify(row)).join("\n")),
     };
     const backend = new ResumeBackend(resumeState);
     backend.runStep = async (spec) => {
