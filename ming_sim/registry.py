@@ -76,7 +76,13 @@ def build_court_brief(context: CourtContext, character: Optional[Character] = No
         f"国库{metrics.get('国库', 0)}万两，内库{metrics.get('内库', 0)}万两。"
     )
     score_line = "民情与君威见于各地奏报和行事反应。"
-    issues = context.db.list_active_issues()
+    if character:
+        # Characterized callers must use the same perspectival issue rail as
+        # the agent prompt; the uncharacterized board brief remains an engine
+        # overview for non-minister callers.
+        issues = context.db.get_character_knowledge(context.state, character.name).get("issues", [])
+    else:
+        issues = context.db.list_active_issues()
     issue_lines: List[str] = []
     for row in issues[:10]:
         kind_tag = "系统" if row["kind"] == "situation" else "玩家"
@@ -193,13 +199,11 @@ def build_last_gazette_brief(context: CourtContext) -> str:
 
 
 def build_memory_brief(character: Character, context: CourtContext) -> str:
-    """更早朝局的章节记忆。上月（turn-1）整体动静已由 build_last_gazette_brief 喂全文，
-    此处跳过 turn-1，只留 turn-2 及更早数月的章节，避免与邸报重叠。"""
+    """从人物见闻投影渲染更早朝局；章节表不是人物读取端。"""
     prev_turn = int(context.state.turn) - 1
-    chapters = [
-        c for c in context.db.list_chapter_memories(upto_turn=context.state.turn, recent=4)
-        if int(c["turn"]) != prev_turn  # 上月已由邸报全文覆盖
-    ]
+    knowledge = context.db.get_character_knowledge(context.state, character.name)
+    chapters = [c for c in knowledge.get("public_events", [])
+                if c.get("kind") == "chapter_summary" and int(c.get("turn") or 0) != prev_turn]
     if not chapters:
         return ""
     lines = ["【更早朝局（起居注章节，上月详情见上方邸报）】"]

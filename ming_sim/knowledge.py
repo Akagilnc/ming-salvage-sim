@@ -139,13 +139,15 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     # read the chapter table directly because that would bypass exclusions and
     # the qualitative renderer above.
     for chapter in db.list_chapter_memories(upto_turn=state.turn):
+        source_id = f"chapter:{chapter['turn']}"
+        inherited_exclusions = db.knowledge_exclusions_for_source(source_id) if hasattr(db, "knowledge_exclusions_for_source") else []
         public_events.append({
             "turn": int(chapter["turn"]), "year": int(chapter["year"]),
             "period": int(chapter["period"]), "kind": "chapter_summary",
             "title": chapter.get("title") or "朝局旧闻",
             "body": chapter.get("body") or "",
-            "source_id": f"chapter:{chapter['turn']}",
-            "excluded_names": "[]",
+            "source_id": source_id,
+            "excluded_names": json.dumps(inherited_exclusions, ensure_ascii=False),
         })
     def is_excluded(row: Dict[str, object]) -> bool:
         try:
@@ -175,6 +177,19 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         }
         for row in public_events if not is_excluded(row)
     ]
+    visible_issues = []
+    for issue in db.list_active_issues() if hasattr(db, "list_active_issues") else []:
+        source_id = f"issue:{issue['id']}"
+        if is_excluded({"source_id": source_id, "excluded_names": "[]"}):
+            continue
+        visible_issues.append({
+            "id": int(issue["id"]), "kind": issue["kind"],
+            "title": issue["title"], "bar_value": issue["bar_value"],
+            "bar_good_meaning": issue["bar_good_meaning"],
+            "bar_bad_meaning": issue["bar_bad_meaning"],
+            "stage_text": issue["stage_text"], "faction_hint": issue["faction_hint"],
+            "severity": issue["severity"], "source_id": source_id,
+        })
     return {
         "character_name": character_name,
         "office_type": office_type,
@@ -182,4 +197,5 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         "world": world,
         "events": visible_events,
         "public_events": visible_public,
+        "issues": visible_issues,
     }

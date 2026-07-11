@@ -438,6 +438,40 @@ def test_minister_context_uses_real_db_projection_and_hides_excluded_secret(game
     assert hidden not in second_tools["search_memories"](keywords="密查辽饷")
 
 
+def test_minister_context_secret_order_chain_filters_final_tools_and_instructions(game):
+    """密令真实建档后，排除名单同时约束 instructions 与事项/记忆工具。"""
+    db, state, content = game
+    ministers = [c for c in content.characters.values()
+                 if c.office_type not in ("后宫", "宗藩")
+                 and db.get_character_status(c.name)[0] == "active"]
+    first, second = ministers[:2]
+    order = db.create_secret_order(
+        state, first.name, "暗查军饷", "查验边镇欠饷", [],
+        excluded_names=[second.name],
+    )
+    db.record_public_knowledge_event(
+        state, "密令转为明证", "密查军饷已获确认", source_id=f"secret_order:{order}"
+    )
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured[kwargs["name"]] = kwargs
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()):
+        create_minister_agent(first, cfg, _ctx(game), db)
+        create_minister_agent(second, cfg, _ctx(game), db)
+
+    first_text = "\n".join(captured[first.name]["instructions"])
+    second_text = "\n".join(captured[second.name]["instructions"])
+    assert "密令转为明证" in first_text
+    assert "密令转为明证" not in second_text
+    second_tools = {f.__name__: f for f in build_minister_tools(second, _ctx(game))}
+    assert "密令转为明证" not in second_tools["search_memories"](keywords="军饷")
+
+
 def test_final_minister_context_rejects_injected_abstract_values(game):
     """最终 instructions seam 不得把抽象分数重新带回上下文。"""
     db, _state, content = game
