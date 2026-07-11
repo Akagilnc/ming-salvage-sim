@@ -113,10 +113,29 @@ def _canonical_source_ref(source_kind: str, source_ref: Optional[str], domain_re
     return f"{provider}/{domain_ref}"
 
 
-def _persisted_firsthand_exists(db: Any, state: Any, character_name: str) -> bool:
+def _domain_terms(domain: str) -> tuple[str, ...]:
+    return {
+        "arrears": ("欠饷", "欠薪", "军饷", "饷银"),
+        "bandits": ("流寇", "流贼", "贼情", "匪情", "贼势"),
+        "military": ("军情", "敌情", "边情", "兵势", "战事", "边地"),
+        "office": ("官缺", "巡抚", "总督", "督抚"),
+    }.get(domain, ())
+
+
+def _persisted_firsthand_exists(
+    db: Any, state: Any, character_name: str, query: str,
+) -> bool:
+    """Return whether this character has a durable witness for this domain.
+
+    A witness in another domain cannot be promoted to a source for an
+    unrelated question.  The ledger predates a dedicated domain column, so
+    the durable title/body vocabulary is the compatibility discriminator.
+    """
+    terms = _domain_terms(_query_domain(query))
     knowledge = db.get_character_knowledge(state, character_name)
     return any(
         str(item.get("kind") or "") in {"witness", "scout", "firsthand"}
+        and any(term in f"{item.get('title') or ''}{item.get('body') or ''}" for term in terms)
         for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
     )
 
@@ -152,11 +171,10 @@ def persist_return_report(
     projection.
     """
     # An emperor's question opens the inquiry channel by default.  Firsthand
-    # is allowed only when a durable witness/scout record already exists (or
-    # the caller explicitly asks for the witness channel); wording alone may
-    # not manufacture provenance.
+    # is allowed only when a durable witness/scout record for this domain
+    # already exists; wording alone may not manufacture provenance.
     source_kind = (
-        "firsthand" if ("见闻" in str(query) or _persisted_firsthand_exists(db, state, character_name))
+        "firsthand" if _persisted_firsthand_exists(db, state, character_name, query)
         else "inquiry"
     )
     if source_kind == "firsthand":

@@ -100,3 +100,26 @@ def test_firsthand_requires_a_persisted_witness_record(game):
     report = persist_return_report(db, state, minister, "军情如何？")
 
     assert report["source_kind"] == "firsthand"
+
+
+def test_firsthand_witness_must_match_questioned_domain(game):
+    db, state, _content = game
+    minister = next(iter(db.content.characters))
+    db.register_character_knowledge_source(
+        state, [{"character_id": minister}], "witness", "河工见闻", "河道有报",
+        source_id="witness:492:unrelated",
+    )
+
+    report = persist_return_report(db, state, minister, "军情如何？")
+
+    assert report["source_kind"] == "inquiry"
+    assert report["source_ref"].startswith("查访/")
+
+
+def test_question_wording_cannot_create_firsthand_provenance(game):
+    db, state, _content = game
+    minister = next(iter(db.content.characters))
+
+    report = persist_return_report(db, state, minister, "请据见闻说说军情。")
+
+    assert report["source_kind"] == "inquiry"
