@@ -632,6 +632,32 @@ describe("#334 ADR 0030 worker routing", () => {
       "S7:ship:gstack-ship",
     ]);
   });
+
+  it("#824: worker pushed + host PR observation carries the PR locator into S9", async () => {
+    const cp = await import("node:child_process");
+    const execMock = cp.execFileSync as unknown as ReturnType<typeof vi.fn>;
+    execMock.mockImplementation((_file: string, args: string[]) =>
+      args.slice(0, 2).join(" ") === "pr list"
+        ? JSON.stringify([{ url: "pr://slice/offline-824" }])
+        : "",
+    );
+    vi.stubEnv("NODE_ENV", "production");
+
+    class HostObservedPrBackend extends ReviewWorkerBackend {
+      async worktreeHead(): Promise<string> {
+        return "host-confirmed-head";
+      }
+    }
+
+    const backend = new HostObservedPrBackend();
+    const result = await runOrchestrator({ issueNumber: 824, backend });
+    const s9Index = backend.specs.findIndex((spec) => spec.id === "S9");
+    const s9 = backend.ctxs[s9Index];
+
+    expect(result.status).toBe("success");
+    expect(s9Index).toBeGreaterThanOrEqual(0);
+    expect(s9?.prUrl).toBe("pr://slice/offline-824");
+  });
 });
 
 describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the ship contract", () => {
