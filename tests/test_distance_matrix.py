@@ -69,9 +69,14 @@ def test_baked_content_covers_all_regions_and_three_golden_anchors():
     assert all(set(row) == region_ids for row in matrix.values())
     assert bake_distance_matrix(graph) == matrix
     assert matrix["beizhili"]["beizhili"] == 0
-    assert 2 <= matrix["guangdong"]["beizhili"] <= 3
+    assert matrix["guangdong"]["beizhili"] == 2.9
     assert matrix["guangdong"]["beizhili"] > matrix["nanzhili"]["beizhili"] > matrix["henan"]["beizhili"]
     assert matrix["dongjiang_area"]["guangdong"] == 1.4
+    assert next(
+        edge["cost"]
+        for edge in graph["edges"]
+        if edge["from"] == "guangdong" and edge["to"] == "dongjiang_area" and edge["kind"] == "东江渡海"
+    ) == 0.8
     for origin, row in matrix.items():
         for destination, value in row.items():
             assert value == matrix[destination][origin]
