@@ -184,6 +184,10 @@ export interface SelectNextRelayBatonInput {
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
   readonly reviewerSlugs?: ReadonlyArray<string>;
+  /** Reviewer legs after this candidate becomes the coder baton. */
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string>;
 }
 
 function poolServesModel(
@@ -263,7 +267,9 @@ export function selectNextRelayBaton(
   const from = startIdx >= 0 ? startIdx + 1 : 0;
   for (let i = from; i < input.rosterOrder.length; i++) {
     const candidate = input.rosterOrder[i]!;
-    if (poolSeparationViolation(candidate, reviewerSlugs) !== undefined) {
+    const candidateReviewerSlugs =
+      input.reviewerSlugsForCandidate?.(candidate) ?? reviewerSlugs;
+    if (poolSeparationViolation(candidate, candidateReviewerSlugs) !== undefined) {
       continue;
     }
     const lives = livePoolsForModel(

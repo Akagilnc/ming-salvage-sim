@@ -304,27 +304,6 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
     });
   });
 
-  it("can relay to the sol baton when its reviewer leg is not active", () => {
-    const order = resolveCoderRecOrder(
-      "Coder-Rec: grok-4.5 → sol@med → luna@med",
-    );
-    const next = selectNextRelayBaton({
-      currentModelId: "grok-4.5",
-      currentPool: "grok-build",
-      rosterOrder: order,
-      pools: [
-        deadPool("grok-build", ["grok-4.5"]),
-        livePool("codex-5h", ["sol@med"]),
-      ],
-      reviewerSlugs: ["opus", "agy"],
-    });
-    expect(next).toEqual({
-      modelId: "sol@med",
-      slug: "gpt-5.6-sol",
-      pool: "codex-5h",
-    });
-  });
-
   it("preserves pool-separation filter (skip reviewer-colliding slug)", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
@@ -1446,6 +1425,136 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     expect(reviewerDispatches[0]?.ctx.billingPool).toBeUndefined();
     expect(reviewerDispatches[0]?.ctx.relayFocusPath).toBeUndefined();
     expect(result.status).not.toBe("error");
+  });
+
+  it("S2 quota relay on normal route selects sol and moves its reviewer to opus", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "relay-686-sol-normal-"));
+    const worktree: WorktreeHandle = {
+      branch: "feat/686-sol-normal",
+      base: "main",
+      path: tmp,
+    };
+    const resetAt = new Date(NOW.getTime() + 45 * 60 * 1000);
+    const coderModels: string[] = [];
+    const reviewerModels: string[] = [];
+
+    class SolRelayBackend implements Backend {
+      async smokeModelRoute(route: any): Promise<any> {
+        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      }
+      async cleanResidue(): Promise<void> {}
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5 → sol@med",
+        };
+      }
+      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+        return {
+          number: n,
+          body: "Coder-Rec: grok-4.5 → sol@med",
+          comments: [],
+          agentBrief: "",
+        };
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      }
+      async writeSnapshot(): Promise<void> {}
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async push(): Promise<void> {}
+      async writeLedger(): Promise<void> {}
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "coder" && spec.id === "S2") {
+          coderModels.push(spec.model);
+          if (spec.model === "grok-4.5") {
+            throw quotaWaitError("S2", resetAt);
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          reviewerModels.push(spec.model);
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [] },
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: worktree.branch,
+              status: "pushed",
+            },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+    }
+
+    const previousRoute = process.env.ORCHESTRATOR_ROUTE;
+    const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
+    process.env.ORCHESTRATOR_ROUTE = "normal";
+    process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+    try {
+      const result = await runOrchestrator({
+        issueNumber: 686,
+        backend: new SolRelayBackend(),
+        relayPools: [
+          {
+            id: "grok-build",
+            status: "limited",
+            resetAt,
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["grok-4.5"],
+          },
+          {
+            id: "codex-5h",
+            status: "live",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["sol@med"],
+          },
+        ],
+        now: () => NOW,
+      });
+
+      expect(result.stepLedger).toContainEqual(expect.objectContaining({
+        event: "relay_baton_handoff",
+        trigger: "quota_wall",
+        toModelId: "sol@med",
+        toPool: "codex-5h",
+        step: "S2",
+      }));
+      expect(coderModels).toEqual(["grok-4.5", "gpt-5.6-sol"]);
+      expect(reviewerModels).toContain("opus");
+    } finally {
+      if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
+      else process.env.ORCHESTRATOR_ROUTE = previousRoute;
+      if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
+      else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
+    }
   });
 });
 

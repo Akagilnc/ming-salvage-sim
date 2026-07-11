@@ -524,6 +524,9 @@ export interface DecideRelayAfterIdleInput {
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
   readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string>;
   readonly workerPid: number;
   readonly killPidTree: (pid: number) => void | Promise<void>;
   readonly state_summary?: string;
@@ -546,6 +549,9 @@ export function forkQuotaWallAt683Point(input: {
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
   readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string>;
   readonly state_summary?: string;
   readonly remaining?: string;
   readonly step?: StepId;
@@ -560,6 +566,7 @@ export function forkQuotaWallAt683Point(input: {
     rosterOrder: input.rosterOrder,
     pools: input.pools,
     reviewerSlugs: input.reviewerSlugs,
+    reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
   };
   const live = hasLiveRelayBaton(batonInput);
   const tier = decideParkOrRelay({
@@ -609,6 +616,7 @@ export async function decideRelayAfterIdle(
     rosterOrder: input.rosterOrder,
     pools: input.pools,
     reviewerSlugs: input.reviewerSlugs,
+    reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
   };
 
   if (input.probeKind === "quota_limited") {
@@ -627,6 +635,7 @@ export async function decideRelayAfterIdle(
       rosterOrder: input.rosterOrder,
       pools: input.pools,
       reviewerSlugs: input.reviewerSlugs,
+      reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
       state_summary: input.state_summary,
       remaining: input.remaining,
       step: input.step,
@@ -718,6 +727,9 @@ export interface ApplyResourceFailureHandoffInput {
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
   readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string>;
   readonly resetBeforeRetry?: () => void | Promise<void>;
   readonly now: Date;
   readonly step?: StepId;
@@ -739,6 +751,7 @@ export async function applyResourceFailureHandoff(
     rosterOrder: input.rosterOrder,
     pools: input.pools,
     reviewerSlugs: input.reviewerSlugs,
+    reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
   });
   if (next === undefined) {
     return {

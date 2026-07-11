@@ -158,6 +158,7 @@ import {
   reviewerSlugsFromRoute,
   lookupCoderRosterEntry,
   CODER_REC_FALLBACK_AFTER_ROUNDS,
+  type CoderRosterEntry,
 } from "./coderRoster.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
@@ -569,6 +570,9 @@ async function parkOrRelayQuotaWall(opts: {
   >;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
   readonly reviewerSlugs?: ReadonlyArray<string>;
+  readonly reviewerSlugsForCandidate?: (
+    candidate: CoderRosterEntry,
+  ) => ReadonlyArray<string>;
   readonly parkThresholdMs?: number;
   readonly now: Date;
   readonly state_summary?: string;
@@ -618,6 +622,7 @@ async function parkOrRelayQuotaWall(opts: {
     rosterOrder: opts.rosterOrder,
     pools: opts.pools,
     reviewerSlugs: opts.reviewerSlugs,
+    reviewerSlugsForCandidate: opts.reviewerSlugsForCandidate,
     state_summary:
       opts.state_summary ??
       `quota wall on ${opts.currentPool}; uncommitted drift preserved`,
@@ -2744,6 +2749,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const slug = modelRoute.slots.coder;
     return lookupCoderRosterEntry(slug)?.id ?? slug;
   };
+  const reviewerSlugsForRelayCandidate = (
+    candidate: CoderRosterEntry,
+  ): ReadonlyArray<string> => {
+    const candidateRoute = withCoderSlot(modelRoute, candidate.slug);
+    // Sol's owner-ratified landing route replaces the per-slice Sol reviewer
+    // with Opus. Its normal CMR collection may still include Sol, but that is
+    // not the reviewer checkpoint that this coder relay will enter.
+    return candidate.id === "sol@med"
+      ? [candidateRoute.slots.reviewer]
+      : reviewerSlugsFromRoute(candidateRoute);
+  };
 
   const relayBillingPoolForDispatch = (
     dispatchStep: StepId,
@@ -4461,7 +4477,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   currentPool,
                   rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
                   pools,
-                  reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+                  reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
                   now: relayNow(),
                   step,
                 });
@@ -4578,7 +4594,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools: resolveRelayPools(currentPool, err.disposition.resetAt),
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
@@ -4625,7 +4641,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools,
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
               now: relayNow(),
               step,
             });
@@ -4966,7 +4982,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools: resolveRelayPools(currentPool, err.disposition.resetAt),
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
@@ -5014,7 +5030,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools,
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
               now: relayNow(),
               step: "S7",
             });
@@ -6133,7 +6149,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools: resolveRelayPools(currentPool, err.disposition.resetAt),
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
@@ -6189,7 +6205,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools,
-              reviewerSlugs: reviewerSlugsFromRoute(modelRoute),
+              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
               now: relayNow(),
               step: reviewStep,
             });
