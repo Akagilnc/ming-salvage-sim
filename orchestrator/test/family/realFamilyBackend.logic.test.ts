@@ -824,6 +824,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
     baseRefName: "main",
     headRefName: "family/293-base",
     headRefOid: " pr-head-1 ",
+    headRepositoryOwner: { login: "Akagilnc" },
     state: "OPEN",
   };
   mergeInProgressFake = false;
@@ -1905,6 +1906,7 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
       baseRefName: "integ/291-wave3",
       headRefName: "family/293-base",
       headRefOid: "pr-head-777",
+      headRepositoryOwner: { login: "Akagilnc" },
       state: "OPEN",
     };
     const res = await b.openFamilyPr({ familyBase: "family/293-base" });
@@ -1927,6 +1929,7 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
       baseRefName: "integ/291-wave3",
       headRefName: "family/293-base",
       headRefOid: " pr-head-777 ",
+      headRepositoryOwner: { login: "Akagilnc" },
       state: "OPEN",
     };
 
@@ -1935,7 +1938,23 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
       headOid: "pr-head-777",
     });
     const view = b.shCalls.find((c) => c.file === "gh" && c.args[0] === "pr" && c.args[1] === "view");
-    expect(view?.args).toContain("baseRefName,headRefName,headRefOid,state");
+    expect(view?.args).toContain("baseRefName,headRefName,headRefOid,headRepositoryOwner,state");
+  });
+
+  it("rejects a same-named family branch when its PR head belongs to another fork", () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.prViewResponse = {
+      baseRefName: "main",
+      headRefName: "family/293-base",
+      headRefOid: "fork-head",
+      headRepositoryOwner: { login: "other-fork" },
+      state: "OPEN",
+    };
+
+    expect(b.verifyShipPr("pr://foreign-head", "family/293-base")).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/head repository owner/i),
+    });
   });
 
   it("rejects PR metadata when the PR is not OPEN or lacks a non-empty head OID", () => {
@@ -1945,6 +1964,7 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
       baseRefName: "main",
       headRefName: "family/293-base",
       headRefOid: "pr-head-1",
+      headRepositoryOwner: { login: "Akagilnc" },
       state: "MERGED",
     };
     expect(b.verifyShipPr("pr://closed", "family/293-base")).toMatchObject({
@@ -1955,6 +1975,7 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
       baseRefName: "main",
       headRefName: "family/293-base",
       headRefOid: "   ",
+      headRepositoryOwner: { login: "Akagilnc" },
       state: "OPEN",
     };
     expect(b.verifyShipPr("pr://blank-head", "family/293-base")).toMatchObject({
@@ -1968,6 +1989,7 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
       baseRefName: "main",
       headRefName: "family/293-base",
       headRefOid: "pr-head-1",
+      headRepositoryOwner: { login: "Akagilnc" },
       state: "OPEN",
     };
 

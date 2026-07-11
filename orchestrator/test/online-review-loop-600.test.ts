@@ -803,7 +803,12 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     const calls: string[] = [];
     const observation = observeOpenPrForBranch((file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
-      return JSON.stringify([{ url: "https://github.com/o/r/pull/42" }]);
+      return JSON.stringify([
+        {
+          url: "https://github.com/o/r/pull/42",
+          headRepositoryOwner: { login: "o" },
+        },
+      ]);
     }, "o/r", "fix/824-radius");
 
     expect(observation).toEqual({
@@ -831,7 +836,12 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
               headRefOid: "deadbeef",
               mergeStateStatus: "CLEAN",
             })
-          : JSON.stringify([{ url: "https://github.com/o/r/pull/100" }]),
+          : JSON.stringify([
+              {
+                url: "https://github.com/o/r/pull/100",
+                headRepositoryOwner: { login: "o" },
+              },
+            ]),
       "o/r",
       "fix/824-radius",
       "https://github.com/o/r/pull/99",
@@ -6425,6 +6435,61 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
           line: 42,
         }),
       );
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("retries a clean-exit verify worker whose completed envelope is invalid", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      class InvalidVerifyThenConvergeBackend extends HookPollBackend {
+        verifyDispatches = 0;
+
+        override async pollOnlineReviewState(
+          _input: { repo: string; prUrl: string; pollCount: number },
+        ): Promise<OnlineReviewLandingSnapshot> {
+          return { ...greenHookSnapshot(), prUrl: offlinePr };
+        }
+
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          if (spec.kind === "ship") {
+            return {
+              kind: "completed",
+              output: {
+                kind: "ship",
+                branch: worktree.branch,
+                status: "pr_opened",
+                pr: offlinePr,
+              },
+            };
+          }
+          if (spec.kind === "verify") {
+            this.verifyDispatches += 1;
+            if (this.verifyDispatches === 1) {
+              return {
+                kind: "completed",
+                output: { kind: "verify", converged: "bad" },
+              } as WorkerResult;
+            }
+          }
+          return super.dispatchWorker(spec, ctx, landing);
+        }
+      }
+
+      const backend = new InvalidVerifyThenConvergeBackend();
+      const result = await runOrchestrator({ issueNumber: 600, backend });
+      expect(result.status).toBe("success");
+      expect(backend.verifyDispatches).toBe(2);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

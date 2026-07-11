@@ -297,6 +297,36 @@ class ShipStructuralMalformedThenConvergeBackend extends RoleRetryBackend {
 }
 
 describe("#601 AC#2 — a ship worker returning 'no valid result (crash/malformed)' retries and converges", () => {
+  it.each([
+    ["a non-ship completed output", { kind: "verify", converged: true }],
+    [
+      "a ship envelope with an off-contract status",
+      { kind: "ship", branch: ROLE_WORKTREE.branch, status: "bad" },
+    ],
+  ] as const)("retries %s before accepting a valid ship envelope", async (_label, badOutput) => {
+    class ShipInvalidEnvelopeThenConvergeBackend extends RoleRetryBackend {
+      shipDispatches = 0;
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "ship") {
+          this.shipDispatches += 1;
+          if (this.shipDispatches === 1) {
+            return { kind: "completed", output: badOutput } as WorkerResult;
+          }
+          return {
+            kind: "completed",
+            output: { kind: "ship", branch: ROLE_WORKTREE.branch, status: "pushed" },
+          };
+        }
+        return cleanSuccessTail(spec);
+      }
+    }
+
+    const backend = new ShipInvalidEnvelopeThenConvergeBackend();
+    const result = await runOrchestrator({ issueNumber: 601, backend });
+    expect(result.status).not.toBe("error");
+    expect(backend.shipDispatches).toBe(2);
+  });
+
   it("a ship (S7) whose worker emits no parseable <ship> tag retries through the shared path and reaches shipped", async () => {
     const backend = new ShipStructuralMalformedThenConvergeBackend(1);
     const result = await runOrchestrator({ issueNumber: 601, backend });
@@ -397,15 +427,15 @@ describe("#601 AC#2 carve-out — JUDGED ship verdicts are NOT retried (decided 
     expect(backend.shipDispatches).toBe(1);
   });
 
-  it("a ship branch-identity mismatch (reported the wrong branch) passes through with ZERO retry", async () => {
+  it("a ship branch-identity mismatch retries through the shared bound before failing", async () => {
     class ShipBranchMismatchBackend extends RoleRetryBackend {
       shipDispatches = 0;
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
         if (spec.kind === "ship") {
           this.shipDispatches += 1;
           // The worker successfully parsed AND shipped, but reported a DIFFERENT branch
-          // than the resident slice branch — a judged off-contract delivery, not a
-          // transient process failure. Must NOT retry.
+          // than the resident slice branch. A completed-but-invalid envelope is
+          // malformed for the shared mechanical retry lifecycle.
           return {
             kind: "completed",
             output: {
@@ -421,7 +451,7 @@ describe("#601 AC#2 carve-out — JUDGED ship verdicts are NOT retried (decided 
     const backend = new ShipBranchMismatchBackend();
     const result = await runOrchestrator({ issueNumber: 601, backend });
     expect(result.status).toBe("error");
-    expect(backend.shipDispatches).toBe(1);
+    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 
   it("persistent structural malformed exhausts the shared bound and durably aborts (no infinite retry)", async () => {

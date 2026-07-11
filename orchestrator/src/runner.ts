@@ -5221,13 +5221,36 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               // Join only at result collection, never on the spawn path.
               await outcome.telemetryEnvironmentStamp;
-              return outcome.result;
+              const result = outcome.result;
+              // A clean worker exit is not a successful S7 delivery until its
+              // typed envelope passes the resident-branch contract.  Classify a
+              // completed-but-invalid envelope here, inside the shared retry
+              // predicate, so it consumes the bounded redispatch lifecycle
+              // instead of clearing S7's durable attempt marker below.
+              if (result.kind !== "completed") return result;
+              const candidate = result.output;
+              if (
+                candidate.kind !== "ship" ||
+                candidate.branch !== worktree?.branch ||
+                (candidate.status !== "pushed" && candidate.status !== "pr_opened") ||
+                (candidate.status === "pr_opened" && !isFilledString(candidate.pr))
+              ) {
+                return {
+                  kind: "malformed",
+                  reason:
+                    `ship worker completed with an invalid delivery envelope ` +
+                    `(kind="${candidate.kind}", branch="${
+                      candidate.kind === "ship" ? candidate.branch : "n/a"
+                    }")`,
+                  ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
+                };
+              }
+              return result;
             },
             durableMechanicalRetryOptions("S7", {
               callerOwns: (o) => "result" in o && o.result.kind === "failed",
             }),
           );
-          if (shipResult.kind === "completed") completeMechanicalRetryInvocation("S7");
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
           // S8(escalate) handoff, NOT an error — keep the escalate semantics so
           // the human-answer resume re-opens it (codex cmr R4 finding). #331's
@@ -5281,6 +5304,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
             );
           }
+          completeMechanicalRetryInvocation("S7");
           // Persist the validated SHIP payload + the worker's session id into the S7
           // ledger entry (online review r1, 3 bots): the shared record/emitLedger
           // path below writes `output`/`stepSessionId`, but S7 previously left both
@@ -5823,11 +5847,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 // surface contract_drift, not mechanical-retry on a dirty tree.
                 await assertVerifyReadOnlyContract();
                 if (dispatchError !== undefined) throw dispatchError;
-                return workerResult!;
+                const result = workerResult!;
+                // Completed is only mechanically successful when the envelope
+                // expected by this review-loop role is valid.  Reclassifying an
+                // invalid clean exit before withMechanicalRetry evaluates it keeps
+                // the durable marker until a valid envelope is returned.
+                if (result.kind !== "completed") return result;
+                const outputValid =
+                  (reviewStep === "S9" && isValidVerifyResult(result.output)) ||
+                  (reviewStep === "S10" && isValidFixerResult(result.output)) ||
+                  (reviewStep === "S11" && isValidCleanupResult(result.output)) ||
+                  (reviewStep === "S12" && isValidDocReleaseResult(result.output));
+                if (outputValid) return result;
+                const badKind = (result.output as { kind?: unknown } | undefined | null)?.kind;
+                return {
+                  kind: "malformed",
+                  reason:
+                    `${reviewStep} worker completed with invalid ${reviewStep} envelope ` +
+                    `(output kind '${String(badKind)}')`,
+                  ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
+                };
               },
               durableMechanicalRetryOptions(reviewStep, reviewResetOpt),
             );
-            if (result.kind === "completed") completeMechanicalRetryInvocation(reviewStep);
           } catch (err) {
             if (err instanceof VerifyWorkerHeadMovedError) {
               const stopSummary = verifyReviewerHeadMovedStopSummary({
@@ -5887,6 +5929,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
             );
           }
+          completeMechanicalRetryInvocation(reviewStep);
           if (
             reviewStep === "S11" &&
             isValidCleanupResult(result.output) &&

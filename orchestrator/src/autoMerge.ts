@@ -97,7 +97,7 @@ export function observeOpenPrForBranch(
     "--limit",
     "1",
     "--json",
-    "url",
+    "url,headRepositoryOwner",
   ]);
   const parsed: unknown = JSON.parse(raw);
   if (!Array.isArray(parsed)) {
@@ -111,6 +111,15 @@ export function observeOpenPrForBranch(
   const url = (first as Record<string, unknown>).url;
   if (typeof url !== "string" || url.trim().length === 0) {
     throw new Error(`autoMerge: gh pr list missing URL for branch ${branch}`);
+  }
+  const headRepositoryOwner = (first as Record<string, unknown>).headRepositoryOwner;
+  const ownerLogin =
+    headRepositoryOwner !== null && typeof headRepositoryOwner === "object"
+      ? (headRepositoryOwner as Record<string, unknown>).login
+      : undefined;
+  const expectedOwner = repo.split("/", 1)[0];
+  if (typeof ownerLogin !== "string" || ownerLogin.trim() !== expectedOwner) {
+    return { present: false };
   }
   return { present: true, prUrl: url.trim() };
 }
