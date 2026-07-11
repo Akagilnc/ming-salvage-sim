@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as sc from "@ai-hero/sandcastle";
 
 import { dispatchFamilyWorkerWithMonitor } from "../../src/family/dispatchFamilyWorker.js";
+import { runFamily } from "../../src/family/runner.js";
 import {
   RealFamilyBackend,
   type MergerAuth,
@@ -22,7 +23,9 @@ import {
   type TelemetryEnvironmentRecord,
 } from "../../src/telemetry.js";
 import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
+import type { Backend } from "../../src/types.js";
 import type { FamilyBackend } from "../../src/family/types.js";
+import type { VerifyCmrInput, VerifyCmrResult } from "../../src/family/verifyCmr.js";
 
 const tempDirs: string[] = [];
 const here = dirname(fileURLToPath(import.meta.url));
@@ -100,6 +103,62 @@ async function waitForEnvironment(ledgerDir: string): Promise<TelemetryEnvironme
 }
 
 describe("#786 family dispatch telemetry", () => {
+  it("keeps two full family invocations distinct in one durable telemetry sidecar", async () => {
+    const durable = join(tempDir("orch-809-family-runner-sidecar-"), ".ledger-809");
+    const runIds: string[] = [];
+    const familyBackend = {
+      async appendFamilyLedger(): Promise<void> {},
+      async readFamilyLedger(): Promise<readonly []> {
+        return [];
+      },
+      resolveTelemetryDir: () => durable,
+      async installTelemetryRunEnvironment(): Promise<void> {},
+      async dispatchWorker(): Promise<WorkerResult> {
+        return {
+          kind: "completed",
+          output: { kind: "cmr", converged: true, findings: [] },
+        };
+      },
+    } as unknown as FamilyBackend;
+    const singleSliceBackend = {
+      async smokeModelRoute() {
+        return smokedRoute();
+      },
+    } as unknown as Backend;
+    const verifyCmr = async (input: VerifyCmrInput): Promise<VerifyCmrResult> => {
+      runIds.push(input.runId!);
+      await dispatchFamilyWorkerWithMonitor(familyBackend, familySpec("cmr"), {
+        familyBase: input.familyBase,
+        runId: input.runId,
+        modelRoute: input.modelRoute!,
+      });
+      return { ok: true, ran: true };
+    };
+
+    await runFamily({
+      epic: { issue: 809, children: [] },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/809-sidecar",
+      verifyCmr,
+    });
+    await runFamily({
+      epic: { issue: 809, children: [] },
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/809-sidecar",
+      verifyCmr,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const environments = readTelemetryRecords(durable).filter(
+      (record): record is TelemetryEnvironmentRecord => record.phase === "environment",
+    );
+    expect(runIds).toHaveLength(2);
+    expect(environments.map((record) => record.runId)).toEqual(runIds);
+    expect(runIds[0]).not.toBe(runIds[1]);
+  });
+
   it.each([
     ["family CMR", "cmr", "failed", "429-quota"],
     ["family verify", "verify", "thrown", "stream-disconnect"],

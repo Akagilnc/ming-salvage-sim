@@ -204,6 +204,8 @@ export interface VerifyCmrInput {
    * `recordAborted` / `escalateFamily`.
    */
   readonly familyBackend: FamilyBackend;
+  /** Invocation-scoped telemetry identity minted by runFamily. */
+  readonly runId?: string;
   /** The family-startup-smoked route carried into every family worker dispatch. */
   readonly modelRoute?: ResolvedModelRoute;
   /**
@@ -1064,6 +1066,7 @@ async function runCmrCoderFix(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
+  readonly runId?: string;
   readonly classification: CmrEnvelope;
   readonly blockingFindingIdentityKeys: readonly string[];
   readonly findingFamilies?: ReadonlyArray<FindingFamily>;
@@ -1076,6 +1079,7 @@ async function runCmrCoderFix(input: {
     pass,
     familyBackend,
     familyBase,
+    runId,
     classification,
     blockingFindingIdentityKeys,
     findingFamilies,
@@ -1101,6 +1105,7 @@ async function runCmrCoderFix(input: {
       familyCoderFixWorkerSpec(resolvedRoute),
       {
         familyBase,
+        ...(runId !== undefined ? { runId } : {}),
         modelRoute: resolvedRoute,
         // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
         // rich finding content travels in the separate landing payload below.
@@ -1558,6 +1563,7 @@ async function dispatchFamilyReviewWorker(
 export async function runFamilyOnlineReviewLoop(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
+  readonly runId?: string;
   readonly ship: ShipResult;
   readonly resolvedRoute?: ResolvedModelRoute;
   readonly escalationAnswer?: EscalationAnswerPayload;
@@ -1595,6 +1601,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   }
   const baseCtx: DispatchContext = {
     familyBase: input.familyBase,
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
     modelRoute,
     repo,
     prUrl,
@@ -2107,6 +2114,7 @@ async function runIntegratedCmrPass(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
+  readonly runId?: string;
   readonly llmResolvedChildren?: readonly number[];
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyHeadAfter?: string;
@@ -2123,6 +2131,7 @@ async function runIntegratedCmrPass(input: {
     pass,
     familyBackend,
     familyBase,
+    runId,
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter,
@@ -2156,6 +2165,7 @@ async function runIntegratedCmrPass(input: {
   const priorRoundFindings = priorCmrFindingsFromFamilyLedger(familyLedger, pass);
   const dispatchCtx: DispatchContext = {
     familyBase,
+    ...(runId !== undefined ? { runId } : {}),
     modelRoute: resolvedRoute,
     cmrPass: pass,
     ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
@@ -2573,6 +2583,7 @@ async function runIntegratedCmrPass(input: {
           pass,
           familyBackend,
           familyBase,
+          ...(runId !== undefined ? { runId } : {}),
           classification: cmrFindingClassification,
           blockingFindingIdentityKeys,
           ...(cmrResult.output.findingFamilies !== undefined
@@ -2703,6 +2714,7 @@ export async function runVerifyCmr(
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
     modelRoute,
+    runId,
   } = input;
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
@@ -2799,6 +2811,7 @@ export async function runVerifyCmr(
     pass: "completeness",
     familyBackend,
     familyBase,
+    ...(runId !== undefined ? { runId } : {}),
     llmResolvedChildren,
     escalationAnswer,
     familyHeadAfter,
@@ -2815,6 +2828,7 @@ export async function runVerifyCmr(
       phase: "final",
       familyBackend,
       familyBase,
+      runId,
       modelRoute,
       llmResolvedChildren,
       escalationAnswer,
@@ -2833,6 +2847,7 @@ export async function runVerifyCmr(
       pass: "correctness",
       familyBackend,
       familyBase,
+      ...(runId !== undefined ? { runId } : {}),
       llmResolvedChildren,
       escalationAnswer,
       familyHeadAfter: correctnessFamilyHeadAfter,
@@ -2924,6 +2939,7 @@ export async function runVerifyCmr(
     familyShipWorkerSpec(resolvedRoute),
     {
       familyBase,
+      ...(runId !== undefined ? { runId } : {}),
       modelRoute: resolvedRoute,
       ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
     },
@@ -3222,6 +3238,7 @@ export async function runVerifyCmr(
   const reviewLoop = await runFamilyOnlineReviewLoop({
     familyBackend,
     familyBase,
+    ...(runId !== undefined ? { runId } : {}),
     ship: {
       kind: "ship",
       branch: familyBase,
@@ -3308,6 +3325,7 @@ export async function runVerifyCmr(
   const cleanupGate = await ensureFamilyPostMergeCleanup({
     familyBackend,
     familyBase,
+    ...(runId !== undefined ? { runId } : {}),
     familyHeadAfter: convergedFamilyHead,
     prUrl: shipPr,
     ...(familyIssue !== undefined ? { familyIssue } : {}),
@@ -3328,6 +3346,7 @@ export async function runVerifyCmr(
 export async function ensureFamilyPostMergeCleanup(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
+  readonly runId?: string;
   readonly familyHeadAfter: string;
   readonly prUrl: string;
   readonly familyIssue?: number;
@@ -3379,6 +3398,7 @@ export async function ensureFamilyPostMergeCleanup(input: {
     cleanupWorkerSpec(resolvedRoute),
     {
       familyBase,
+      ...(input.runId !== undefined ? { runId: input.runId } : {}),
       modelRoute: resolvedRoute,
       repo: familyRepo,
       prUrl,

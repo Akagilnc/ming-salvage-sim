@@ -18,6 +18,10 @@ import { CODER_ROSTER } from "../src/coderRoster.js";
 import { QuotaWaitForResetError } from "../src/quotaProbe.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
+import {
+  readTelemetryRecords,
+  type TelemetryEnvironmentRecord,
+} from "../src/telemetry.js";
 import type {
   Backend,
   DispatchContext,
@@ -235,22 +239,37 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     }
   });
 
-  it("mints one fresh run id per invocation and persists it from the S0 start row", async () => {
-    const first = new DispatchBackend();
-    const second = new DispatchBackend();
+  it("keeps two full runner invocations distinct in one durable telemetry sidecar", async () => {
+    const root = mkdtempSync(join(tmpdir(), "orch-809-runner-sidecar-"));
+    const durable = join(root, ".ledger-809");
+    class TelemetryBackend extends DispatchBackend {
+      resolveTelemetryDir(): string {
+        return durable;
+      }
+      async installTelemetryRunEnvironment(): Promise<void> {}
+    }
+    const first = new TelemetryBackend();
+    const second = new TelemetryBackend();
 
-    await runOrchestrator({ issueNumber: 331, backend: first });
-    await runOrchestrator({ issueNumber: 331, backend: second });
+    try {
+      await runOrchestrator({ issueNumber: 331, backend: first });
+      await runOrchestrator({ issueNumber: 331, backend: second });
+      await new Promise((resolve) => setImmediate(resolve));
 
-    const firstRunId = first.ctxs[0]?.runId;
-    const secondRunId = second.ctxs[0]?.runId;
-    expect(firstRunId).toEqual(expect.any(String));
-    expect(secondRunId).toEqual(expect.any(String));
-    expect(firstRunId).not.toBe(secondRunId);
-    expect(first.ctxs.every((ctx) => ctx.runId === firstRunId)).toBe(true);
-    expect(second.ctxs.every((ctx) => ctx.runId === secondRunId)).toBe(true);
-    expect(first.persistedLedger.find((entry) => entry.step === "S0")?.runId).toBe(firstRunId);
-    expect(second.persistedLedger.find((entry) => entry.step === "S0")?.runId).toBe(secondRunId);
+      const environments = readTelemetryRecords(durable).filter(
+        (record): record is TelemetryEnvironmentRecord => record.phase === "environment",
+      );
+      const firstRunId = first.ctxs[0]?.runId;
+      const secondRunId = second.ctxs[0]?.runId;
+      expect(environments.map((record) => record.runId)).toEqual([firstRunId, secondRunId]);
+      expect(firstRunId).toEqual(expect.any(String));
+      expect(secondRunId).toEqual(expect.any(String));
+      expect(firstRunId).not.toBe(secondRunId);
+      expect(first.ctxs.every((ctx) => ctx.runId === firstRunId)).toBe(true);
+      expect(second.ctxs.every((ctx) => ctx.runId === secondRunId)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

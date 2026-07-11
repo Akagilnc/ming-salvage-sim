@@ -87,6 +87,7 @@ export async function mergeChild(
     const resolved = await backend.resolveMergeConflict({
       childIssue: request.childIssue,
       childBranch: request.childBranch,
+      ...(request.runId !== undefined ? { runId: request.runId } : {}),
       ...(request.modelRoute !== undefined ? { modelRoute: request.modelRoute } : {}),
     });
     // The resolver returned WITHOUT throwing, but it may not have actually
