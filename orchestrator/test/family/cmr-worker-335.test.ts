@@ -709,7 +709,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    protected override verifyFamilyShipPr(): { ok: true; headOid: string } | { ok: false; reason: string } {
+    protected override verifyFamilyShipPr(): { ok: true; headOid: string } {
       return { ok: true, headOid: "head-1" };
     }
   }

@@ -3016,23 +3016,41 @@ async function runVerifyCmrWithShipTruthAttempt(
     });
     return INCOMPLETE_GATE;
   }
-  const shippedPrVerification =
+  const verifyShippedPr = async () =>
     familyBackend.verifyFamilyShippedPr === undefined
       ? {
           ok: false as const,
+          kind: "observation_failed" as const,
           reason: "backend has no host PR verification capability",
         }
-      : await familyBackend.verifyFamilyShippedPr({
-          pr: ship.pr,
+      : familyBackend.verifyFamilyShippedPr({
+          pr: ship.pr!,
           familyBase,
           expectedHead: exactPostShipFamilyHead,
         });
+  let shippedPrVerification = await verifyShippedPr();
+  // Unknown host truth must not re-run a mutating ship worker. Retry the
+  // observation itself within the shared #824 bound; only host-confirmed absence
+  // or mismatch re-dispatches ship below.
+  for (
+    let observationAttempt = 1;
+    !shippedPrVerification.ok &&
+    shippedPrVerification.kind === "observation_failed" &&
+    observationAttempt < MAX_DISPATCH_ATTEMPTS;
+    observationAttempt += 1
+  ) {
+    shippedPrVerification = await verifyShippedPr();
+  }
   if (!shippedPrVerification.ok) {
-    if (shipTruthAttempt < MAX_DISPATCH_ATTEMPTS) {
+    if (
+      shippedPrVerification.kind !== "observation_failed" &&
+      shipTruthAttempt < MAX_DISPATCH_ATTEMPTS
+    ) {
       return runVerifyCmrWithShipTruthAttempt(input, shipTruthAttempt + 1);
     }
     const reason =
-      `family ship PR failed host verification after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts: ` +
+      `family ship PR failed host verification after ${MAX_DISPATCH_ATTEMPTS} ` +
+      `${shippedPrVerification.kind === "observation_failed" ? "observation" : "dispatch"} attempts: ` +
       shippedPrVerification.reason;
     const stopSummary = infraFailureStopSummary({
       summary: reason,

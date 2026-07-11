@@ -651,7 +651,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
       pr: () => ({ url: "pr://fake-locator", prHead: "head-1" }),
-      verifyShippedPr: () => ({ ok: false, reason: "gh pr view: PR not found" }),
+      verifyShippedPr: () => ({
+        ok: false,
+        kind: "pr_missing",
+        reason: "gh pr view: PR not found",
+      }),
     });
 
     const result = await runVerifyCmr({
@@ -669,6 +673,32 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.escalations[0]?.reason).toContain("gh pr view: PR not found");
   });
 
+  it("retries an unknown host observation without re-dispatching ship, then escalates", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      verifyShippedPr: () => ({
+        ok: false,
+        kind: "observation_failed",
+        reason: "gh pr view: network timeout",
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.prCalls).toHaveLength(1);
+    expect(backend.verifyShippedPrCalls).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]?.reason).toContain("network timeout");
+    expect(backend.ledger.some((entry) => entry.status === "shipped")).toBe(false);
+  });
+
   it("re-dispatches after one host-verification miss and ships only after host truth succeeds", async () => {
     let verificationAttempt = 0;
     const backend = new CapableFamilyBackend({
@@ -677,7 +707,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       verifyShippedPr: () => {
         verificationAttempt += 1;
         return verificationAttempt === 1
-          ? { ok: false, reason: "gh pr view: eventual consistency" }
+          ? { ok: false, kind: "pr_missing", reason: "gh pr view: PR not found" }
           : { ok: true };
       },
     });

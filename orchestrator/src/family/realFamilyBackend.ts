@@ -484,7 +484,13 @@ export class RealFamilyBackend implements FamilyBackend {
   protected verifyFamilyShipPr(input: {
     readonly pr: string;
     readonly familyBase: string;
-  }): { ok: true; headOid: string } | { ok: false; reason: string } {
+  }):
+    | { ok: true; headOid: string }
+    | {
+        ok: false;
+        kind: "pr_missing" | "observation_failed" | "mismatch";
+        reason: string;
+      } {
     try {
       const raw = this.sh(
         "gh",
@@ -508,32 +514,47 @@ export class RealFamilyBackend implements FamilyBackend {
       if (parsed.state !== "OPEN") {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" is ${String(parsed.state)} but must be OPEN`,
         };
       }
       if (parsed.baseRefName !== this.opts.base) {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" targets base "${String(parsed.baseRefName)}" but expected "${this.opts.base}"`,
         };
       }
       if (parsed.headRefName !== input.familyBase) {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" uses head "${String(parsed.headRefName)}" but expected "${input.familyBase}"`,
         };
       }
       if (typeof parsed.headRefOid !== "string" || parsed.headRefOid.trim().length === 0) {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" did not expose a non-empty headRefOid`,
         };
       }
       return { ok: true, headOid: parsed.headRefOid.trim() };
     } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      // Only an explicit host/gh not-found answer proves absence. Authentication,
+      // transport, rate-limit, JSON, and every unknown CLI failure mean merely
+      // that host truth could not be observed.
+      const kind =
+        /(?:pull request|pr).*(?:not found|does not exist)|no pull requests found|could not resolve to a pullrequest/i.test(
+          detail,
+        )
+        ? "pr_missing"
+        : "observation_failed";
       return {
         ok: false,
-        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${err instanceof Error ? err.message : String(err)}`,
+        kind,
+        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${detail}`,
       };
     }
   }
@@ -549,6 +570,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (verifiedPr.headOid !== request.expectedHead) {
       return {
         ok: false,
+        kind: "mismatch",
         reason:
           `family PR "${request.pr}" head ${verifiedPr.headOid} ` +
           `does not match current family HEAD ${request.expectedHead}`,
@@ -2645,7 +2667,11 @@ export class RealFamilyBackend implements FamilyBackend {
       pr: outcome.pr,
       familyBase: ctx.familyBase,
     });
-    if (!verifiedPr.ok) {
+    // A host-confirmed metadata mismatch is a malformed ship claim. Missing PRs
+    // and unknown observations are lifecycle outcomes owned by verifyCmr: return
+    // the locator so it can respectively re-ship or retry observation within the
+    // shared bound instead of dying here on the first host check.
+    if (!verifiedPr.ok && verifiedPr.kind === "mismatch") {
       return { kind: "malformed", reason: verifiedPr.reason };
     }
     return {
@@ -2655,7 +2681,7 @@ export class RealFamilyBackend implements FamilyBackend {
         branch: outcome.branch,
         status: outcome.status,
         pr: outcome.pr,
-        prHead: verifiedPr.headOid,
+        ...(verifiedPr.ok ? { prHead: verifiedPr.headOid } : {}),
       },
     };
   }

@@ -92,7 +92,10 @@ class FixturedShipBackend extends RealFamilyBackend {
   openFamilyPrCount = 0;
   verifiedPr:
     | { ok: true; headOid: string }
-    | { ok: false; reason: string } = { ok: true, headOid: "head-1" };
+    | { ok: false; kind: "pr_missing" | "observation_failed" | "mismatch"; reason: string } = {
+      ok: true,
+      headOid: "head-1",
+    };
   protected override async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -105,7 +108,9 @@ class FixturedShipBackend extends RealFamilyBackend {
     this.openFamilyPrCount += 1;
     throw new Error("openFamilyPr must not be reached — family ship via gstack-ship (#336)");
   }
-  protected override verifyFamilyShipPr(): { ok: true; headOid: string } | { ok: false; reason: string } {
+  protected override verifyFamilyShipPr():
+    | { ok: true; headOid: string }
+    | { ok: false; kind: "pr_missing" | "observation_failed" | "mismatch"; reason: string } {
     return this.verifiedPr;
   }
 }
@@ -233,7 +238,11 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
   it("a pr_opened ship whose host PR metadata targets the wrong base ⇒ malformed", async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
-    be.verifiedPr = { ok: false, reason: "family PR targets base main but expected integ" };
+    be.verifiedPr = {
+      ok: false,
+      kind: "mismatch",
+      reason: "family PR targets base main but expected integ",
+    };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res.kind).toBe("malformed");
     if (res.kind === "malformed") expect(res.reason).toMatch(/targets base|expected/);
