@@ -7697,10 +7697,15 @@ class GameDB:
                     [*(str(name) for name in excluded_names),
                      *(sorted(character_names - participants))]
                 ))
-            by_source[str(row["source_id"] or "")] = {
+            # An explicit public event can describe a source after it becomes
+            # public (for example, a disclosed secret order).  It is more
+            # specific than the source's original private payload, so never
+            # let archive materialization overwrite it merely because both
+            # share provenance.
+            by_source.setdefault(str(row["source_id"] or ""), {
                 "title": row["title"], "body": row["body"],
                 "source_id": row["source_id"], "excluded_names": excluded_names,
-            }
+            })
         return list(by_source.values())
 
     def list_chapter_memories(

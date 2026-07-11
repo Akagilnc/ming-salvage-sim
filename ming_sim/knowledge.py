@@ -93,9 +93,9 @@ def _qualitative(text: object) -> str:
     pattern = re.compile(r"(" + "|".join(labels) + r")\s*[:：]?\s*(-?\d+)(?:\s*/\s*100|%)?")
     def replace(match: re.Match[str]) -> str:
         label, raw = match.groups()
-        return label + qualitative_band(raw, labels[label])
+        return label + "：" + qualitative_band(raw, labels[label])
     rendered = pattern.sub(replace, rendered)
-    return rendered.replace("民心低迷", "民心堪忧").replace("动乱升高", "动乱已炽")
+    return rendered
 
 
 def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:
@@ -113,7 +113,7 @@ def render_character_knowledge(knowledge: Dict[str, object], character_name: str
     by_source = {}
     for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
         source_id = str(item.get("source_id") or "")
-        key = source_id or (
+        key = (source_id, item.get("title") or "", item.get("body") or "") if source_id else (
             int(item.get("turn") or 0), item.get("title") or "", item.get("body") or ""
         )
         by_source[key] = item
@@ -210,7 +210,7 @@ def _world(
     # boundary, so reading it here would make a secret-bearing report a public
     # event.  ``public`` is filled from the source-scoped event projection in
     # build_character_knowledge after exclusions have been applied.
-    result: Dict[str, str] = {"public": "登基伊始，朝廷暂无已公开的前回合见闻。"}
+    result: Dict[str, str] = {"public": "登基伊始，朝廷暂无前回合奏报。"}
 
     visible_domains = _visible_domains(db, office_type)
     # Build only the current-state rails that this office is entitled to read.
@@ -323,6 +323,11 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     # available to the character.
     if hasattr(db, "list_turn_reports"):
         for report in db.list_turn_reports():
+            # The opening gazette is seed material, not a prior played turn.
+            # Its separately persisted opening facts remain visible without
+            # turning the turn-zero aggregate into every role's public rail.
+            if int(report["turn"]) <= 0:
+                continue
             body = source_projection(int(report["turn"]), report.get("report"))
             if body:
                 public_events.append({
@@ -389,8 +394,14 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             roster = []
         # Unassigned issues are public; assigned issues are visible only when
         # this character entered the durable source projection.
-        if roster and source_id not in known_source_ids:
-            continue
+        if roster:
+            participants = {
+                str(item.get("character_id") or item.get("name"))
+                for item in roster
+                if isinstance(item, dict) and (item.get("character_id") or item.get("name"))
+            }
+            if character_name not in participants or source_id not in known_source_ids:
+                continue
         if not knowledge_row_visible_to(
             db,
             {"source_id": source_id, "excluded_names": "[]", "office_type": office_type, "office": office_name},
