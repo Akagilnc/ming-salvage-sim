@@ -565,6 +565,8 @@ describe("#291 cutFamilyBase (real local clone)", () => {
     cleanups.push(clone);
     const dir = join(clone, "repo");
     git(clone, "clone", "-q", src, dir);
+    git(dir, "config", "user.email", "t@t.t");
+    git(dir, "config", "user.name", "t");
     return dir;
   }
   function makeLedgerDir(): string {
