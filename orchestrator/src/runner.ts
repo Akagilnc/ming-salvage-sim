@@ -2760,9 +2760,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         ...modelRoute,
         slots: { ...modelRoute.slots, reviewer: candidate.slug },
       };
+      // The candidate owns this reviewer slot after the relay, so it is not
+      // a separation peer. Keep comparing against the coder it will review.
       return candidate.id === "sol@med"
-        ? [candidateRoute.slots.reviewer]
-        : reviewerSlugsFromRoute(candidateRoute);
+        ? [candidateRoute.slots.coder]
+        : [
+            candidateRoute.slots.coder,
+            ...reviewerSlugsFromRoute(candidateRoute).filter(
+              (slug) => slug !== candidateRoute.slots.reviewer,
+            ),
+          ];
     }
     if (wallStep === "S2" || wallStep === "S5") {
       // S2/S5/default: the candidate becomes the coder, so Sol's landing
