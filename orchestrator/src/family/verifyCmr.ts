@@ -2827,17 +2827,104 @@ async function runVerifyCmrWithShipTruthAttempt(
     });
     return INCOMPLETE_GATE;
   }
-  const shipResult = await dispatchOrAbort(
-    familyBackend,
-    familyShipWorkerSpec(resolvedRoute),
-    {
+  const shipSpec = familyShipWorkerSpec(resolvedRoute);
+  const shipContext = {
+    familyBase,
+    ...(runId !== undefined ? { runId } : {}),
+    modelRoute: resolvedRoute,
+    ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+  };
+  let shipResult: WorkerResult | undefined;
+  for (let shipAttempt = 1; shipAttempt <= MAX_DISPATCH_ATTEMPTS; shipAttempt++) {
+    const candidate = await dispatchOrAbort(
+      familyBackend,
+      shipSpec,
+      shipContext,
+      undefined,
+    );
+    const malformedReason =
+      candidate.kind === "malformed"
+        ? candidate.reason
+        : candidate.kind === "completed" && candidate.output?.kind !== "ship"
+          ? "worker returned a non-ship payload"
+          : candidate.kind === "completed" &&
+              candidate.output.kind === "ship" &&
+              !isFilledString(candidate.output.pr)
+            ? `worker did not provide a PR locator: ${describeShipPrState(candidate.output)}`
+            : undefined;
+    if (malformedReason === undefined) {
+      shipResult = candidate;
+      break;
+    }
+    if (shipAttempt < MAX_DISPATCH_ATTEMPTS) continue;
+
+    // ADR 0062: a malformed control envelope is a process/protocol failure, not
+    // a ship verdict. Re-dispatch this terminal step mechanically; only an
+    // exhausted bounded retry may raise the legal infrastructure escalation.
+    const reason =
+      `family ship worker output remained malformed after ${MAX_DISPATCH_ATTEMPTS} ` +
+      `dispatch attempts: ${malformedReason}`;
+    const shipPrState =
+      candidate.kind === "completed" && candidate.output?.kind === "ship"
+        ? describeShipPrState(candidate.output)
+        : "malformed-worker-output";
+    const actualFamilyHeadSource =
+      candidate.kind === "completed" && candidate.output?.kind === "ship"
+        ? "family head after missing PR locator"
+        : "family head after malformed ship worker output";
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
       familyBase,
-      ...(runId !== undefined ? { runId } : {}),
-      modelRoute: resolvedRoute,
-      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
-    },
-    undefined,
-  );
+      cmrPassedFamilyHeadAfter,
+    );
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        "repair the family ship worker outcome sidecar/payload, then rerun the final family barrier",
+      ship: {
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        ...(postShipFamilyHead !== undefined
+          ? { currentFamilyHead: postShipFamilyHead }
+          : {}),
+        shipPrState,
+      },
+      heads: {
+        ...(postShipFamilyHead !== undefined
+          ? { actualFamilyHead: postShipFamilyHead }
+          : {}),
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        sources: {
+          actualFamilyHead: actualFamilyHeadSource,
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary,
+    });
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary,
+    });
+    return { ok: false, ran: true };
+  }
+  if (shipResult === undefined) {
+    throw new Error("family ship dispatch loop ended without a result");
+  }
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
   // finding: keep escalate semantics). A `completed` non-ship payload / crash /
