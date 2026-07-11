@@ -5,21 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterable, List
 
+from .knowledge import knowledge_row_visible_to
 
-def _source_visible_to(row: Any, recommender: str) -> bool:
+def _source_visible_to(row: Any, recommender: str, *, target: Any = None, db: Any) -> bool:
     """Apply the #459 exclusion boundary before using a source's roster."""
-    try:
-        excluded = json.loads(row["excluded_names"] or "[]")
-    except (TypeError, ValueError, KeyError, IndexError):
-        excluded = []
-    if recommender in {str(name) for name in excluded}:
-        return False
-    try:
-        targets = json.loads(row["excluded_targets"] or "{}")
-    except (TypeError, ValueError, KeyError, IndexError):
-        targets = {}
-    people = targets.get("people", []) if isinstance(targets, dict) else []
-    return recommender not in {str(name) for name in people}
+    return knowledge_row_visible_to(db, row, recommender, target=target)
 
 
 def _roster_names(raw: object) -> set[str]:
@@ -46,16 +36,28 @@ def _known_names(db: Any, recommender: str) -> set[str]:
         "SELECT source_id, excluded_names FROM character_knowledge_events WHERE character_name=?",
         (recommender,),
     ).fetchall()
+    def add_visible_roster(source: Any, event: Any = None) -> None:
+        if source is None:
+            return
+        if event is not None and not _source_visible_to(event, recommender, db=db):
+            return
+        if not _source_visible_to(source, recommender, db=db):
+            return
+        for name in _roster_names(source["participant_roster"]):
+            target = conn.execute(
+                "SELECT name, office, office_type FROM characters WHERE name=?", (name,)
+            ).fetchone()
+            if target is not None and _source_visible_to(source, recommender, target=target, db=db):
+                if event is None or _source_visible_to(event, recommender, target=target, db=db):
+                    names.add(name)
+
     for row in rows:
-        if not _source_visible_to(row, recommender):
-            continue
         source = conn.execute(
             "SELECT participant_roster, excluded_names, excluded_targets "
             "FROM character_knowledge_sources WHERE source_id=?",
             (row["source_id"],),
         ).fetchone()
-        if source is not None and _source_visible_to(source, recommender):
-            names.update(_roster_names(source["participant_roster"]))
+        add_visible_roster(source, row)
 
     # Public sources are visible without a direct participation row.  Their
     # structured roster is the public-event side of the #459 read projection.
@@ -63,8 +65,7 @@ def _known_names(db: Any, recommender: str) -> set[str]:
         "SELECT participant_roster, excluded_names, excluded_targets "
         "FROM character_knowledge_sources WHERE kind='public'"
     ).fetchall():
-        if _source_visible_to(source, recommender):
-            names.update(_roster_names(source["participant_roster"]))
+        add_visible_roster(source)
     return names
 
 
