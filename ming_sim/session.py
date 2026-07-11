@@ -38,6 +38,7 @@ from ming_sim.decree import (
 )
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
+from ming_sim.knowledge import render_character_knowledge
 from ming_sim.llm_model import create_agno_db, extract_agent_text, verify_llm_available
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince
 from ming_sim.paths import user_data_path
@@ -1044,15 +1045,9 @@ class GameSession:
         augmented = message
         try:
             knowledge = self.db.get_character_knowledge(self.state, character.name)
-            world = knowledge.get("world") or {}
-            events = knowledge.get("events") or []
-            public_events = knowledge.get("public_events") or []
-            lines = [f"【{character.name}此刻所知】"]
-            for key, value in world.items():
-                lines.append(f"{key}：{value}")
-            for item in [*public_events, *events][-20:]:
-                lines.append(f"- {item.get('title')}: {item.get('body')}")
-            augmented = "\n".join(lines) + "\n\n" + augmented
+            brief = render_character_knowledge(knowledge, character.name)
+            if brief:
+                augmented = brief + "\n\n" + augmented
         except Exception:
             # A corrupt legacy save must not prevent ordinary audience chat.
             pass
