@@ -131,6 +131,37 @@ export function routeSmokeToolCallIsEchoOk(event: {
     /echo\s+(?:"OK"|'OK'|OK)/i.test(event.formattedArgs)
   );
 }
+
+/**
+ * #807: grok headless `streaming-json` does not emit `tool_call` stream events
+ * even when tools run (host probe 2026-07-11, grok 0.2.93). The route-smoke
+ * prompt still asks for `echo OK` + `ROUTE_SMOKE_COMPLETE`; we observe the OK
+ * token in text deltas as the bash-leg evidence when the provider is `grok`.
+ */
+export function routeSmokeGrokTextEvidence(event: {
+  readonly type?: unknown;
+  readonly message?: unknown;
+}): boolean {
+  return (
+    event.type === "text" &&
+    typeof event.message === "string" &&
+    /(?:^|[^A-Za-z0-9_])OK(?:[^A-Za-z0-9_]|$)/.test(event.message)
+  );
+}
+
+/**
+ * Whether a smoke run produced observable bash evidence for the given provider.
+ * Standard path: toolCall(bash/shell, echo OK). Grok path: text OK token (see
+ * {@link routeSmokeGrokTextEvidence}).
+ */
+export function routeSmokeBashEvidenceSatisfied(input: {
+  readonly provider: string;
+  readonly sawToolCallEchoOk: boolean;
+  readonly sawGrokOkText: boolean;
+}): boolean {
+  if (input.sawToolCallEchoOk) return true;
+  return input.provider === "grok" && input.sawGrokOkText;
+}
 export {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -2293,7 +2324,9 @@ export class RealBackend implements Backend {
       process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
     );
     const smoked = await smokeRouteModels(route, async (entry) => {
-      let sawBash = false;
+      let sawToolCallEchoOk = false;
+      let sawGrokOkText = false;
+      const provider = resolveModelSlug(entry.slug).provider;
       const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
       try {
         const result = await sc.run({
@@ -2308,15 +2341,22 @@ export class RealBackend implements Backend {
             type: "file",
             path: join(logDir, "run.log"),
             onAgentStreamEvent: (event) => {
-              if (
-                routeSmokeToolCallIsEchoOk(event)
-              ) {
-                sawBash = true;
+              if (routeSmokeToolCallIsEchoOk(event)) {
+                sawToolCallEchoOk = true;
+              }
+              // #807: grok streaming-json omits tool_call; text OK is the stand-in.
+              if (provider === "grok" && routeSmokeGrokTextEvidence(event)) {
+                sawGrokOkText = true;
               }
             },
           },
         });
-        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !sawBash) {
+        const bashOk = routeSmokeBashEvidenceSatisfied({
+          provider,
+          sawToolCallEchoOk,
+          sawGrokOkText,
+        });
+        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !bashOk) {
           throw new Error(
             `model did not complete an observable bash smoke for ${entry.slug}`,
           );
