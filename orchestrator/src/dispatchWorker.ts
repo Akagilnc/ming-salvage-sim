@@ -763,6 +763,12 @@ export async function dispatchWorker(
 export interface DispatchWorkerWithMonitorOutcome {
   readonly result: WorkerResult;
   readonly monitorHandle?: WorkerMonitorHandle;
+  /**
+   * Resolves after this ledger's first-run telemetry environment stamp finishes
+   * (including fail-open handling). Dispatch never awaits it; callers that are
+   * about to exit or read telemetry can join it explicitly.
+   */
+  readonly telemetryEnvironmentStamp: Promise<void>;
 }
 
 /**
@@ -852,6 +858,7 @@ export async function dispatchWorkerWithMonitor(
   let firstOutputAt: string | null = null;
   let logPath: string | null = null;
   let logStartOffset: number | undefined;
+  let telemetryEnvironmentStamp = Promise.resolve();
   const telemetry = createTelemetryLegStamper({ ledgerDir, spec, ctx });
 
   /**
@@ -917,7 +924,11 @@ export async function dispatchWorkerWithMonitor(
       const exitPromise = waitForChildExit(child);
       // Schedule before the caller callback. A failed durable-handle write still
       // leaves the asynchronous, best-effort environment row for this run.
-      scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, backend);
+      telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
+        ledgerDir,
+        ctx,
+        backend,
+      );
       // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
       // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
       if (opts?.onMonitorHandleSpawned !== undefined) {
@@ -1062,7 +1073,7 @@ export async function dispatchWorkerWithMonitor(
           { kind: "result", result },
           { logPath, logStartOffset, firstOutputAt },
         );
-        return { result, monitorHandle: handle };
+        return { result, monitorHandle: handle, telemetryEnvironmentStamp };
       }
       let result = await backend.awaitMonitoredCliWorker(
         handle,
@@ -1106,7 +1117,7 @@ export async function dispatchWorkerWithMonitor(
         { kind: "result", result },
         { logPath, logStartOffset, firstOutputAt },
       );
-      return { result, monitorHandle: handle };
+      return { result, monitorHandle: handle, telemetryEnvironmentStamp };
     }
     // Container / legacy path: stamp dispatch at the moment we hand off to the
     // backend (no monitor handle.dispatchedAt available).
@@ -1114,15 +1125,22 @@ export async function dispatchWorkerWithMonitor(
       new Date().toISOString(),
       ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
-    scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, backend);
+    telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
+      ledgerDir,
+      ctx,
+      backend,
+    );
     const result = await dispatchWorker(backend, spec, ctx, landing);
     telemetry.stampCollect({ kind: "result", result });
-    return { result };
+    return { result, telemetryEnvironmentStamp };
   } catch (err) {
     telemetry.stampCollect(
       { kind: "thrown", error: err },
       { logPath, logStartOffset, firstOutputAt },
     );
+    // Error propagation is a terminal boundary: give the first-run environment
+    // stamp its fail-open completion opportunity before callers retry or relay.
+    await telemetryEnvironmentStamp;
     throw err;
   }
 }
