@@ -1868,11 +1868,18 @@ def _normalize_secret_exclusions(value: object, *, legacy: object = None) -> Tup
 def _secret_excluded_people_from_command(command: str) -> List[str]:
     """Recover explicit named secrecy targets when the extractor omits them."""
     patterns = (
-        r"(?:瞒住|瞒着|不可令|不得让|勿使|不要让)([^，。；、\s]{2,8})(?:知晓|知道|得知)?",
+        r"(?:瞒住|瞒着|不可令|不得让|勿使|不要让)([^，。；\s]{2,20}?)(?=(?:知晓|知道|得知|过问|插手|，|。|；|\s|$))",
     )
     names = []
     for pattern in patterns:
-        names.extend(match.strip("，。；、 ") for match in re.findall(pattern, str(command or "")))
+        for match in re.findall(pattern, str(command or "")):
+            names.extend(
+                item.strip("，。；、 ")
+                for item in re.split(r"[、，,和与及]", match)
+            )
+    # A later secrecy clause can say only "勿使他们知晓".  It reinforces the
+    # preceding named exclusion but must never manufacture a fake person key.
+    names = [name for name in names if name and name not in {"他们", "他", "她", "此人", "诸人"}]
     return list(dict.fromkeys(name for name in names if name))
 
 
