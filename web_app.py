@@ -1759,6 +1759,8 @@ class WebGame:
                                     "assignee": str(payload.get("assignee") or character.name).strip(),
                                     "tags": payload.get("tags") if isinstance(payload.get("tags"), list) else [],
                                     "deadline_months": payload.get("deadline_months") or 0,
+                                    "excluded_names": payload.get("excluded_names") if isinstance(payload.get("excluded_names"), list) else [],
+                                    "excluded_offices": payload.get("excluded_offices") if isinstance(payload.get("excluded_offices"), list) else [],
                                 },
                             )
                             tool_pending_action_id = pending_action_id
