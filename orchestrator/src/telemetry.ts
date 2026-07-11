@@ -56,9 +56,12 @@ import {
 } from "./relayDispatch.js";
 import type {
   DispatchContext,
+  Finding,
+  PriorFindingDisposition,
   WorkerResult,
   WorkerSpec,
 } from "./types.js";
+import { findingIdentityKey } from "./findings.js";
 import { poolIdForWorker } from "./workerMonitor.js";
 
 /**
@@ -507,10 +510,38 @@ export interface TelemetryCollectRecord extends TelemetryRecordBase {
   readonly logPath: string | null;
 }
 
+/** Per integrated-CMR review round, recorded only and never consumed for routing. */
+export interface TelemetryReviewRoundRecord extends TelemetryRecordBase {
+  readonly phase: "review_round";
+  readonly runId: string | null;
+  readonly issue: number | null;
+  readonly cmrPass: "completeness" | "correctness" | null;
+  /** 1-based within a CMR pass in the durable sidecar; null when unavailable. */
+  readonly reviewRound: number | null;
+  readonly verdict:
+    | "converged"
+    | "blocking"
+    | "not_converged"
+    | "escalated"
+    | "failed"
+    | "malformed"
+    | "protocol_failure";
+  readonly findingsBySeverity: Readonly<Record<Finding["severity"], number>> | null;
+  readonly findingIdentityKeys: readonly string[] | null;
+  readonly newFindingIdentityKeys: readonly string[] | null;
+  readonly recurringFindingIdentityKeys: readonly string[] | null;
+  /** Fresh re-review's disposition of the preceding round's claimed findings. */
+  readonly priorFindingDispositions: ReadonlyArray<{
+    readonly identityKey: string;
+    readonly disposition: "fixed" | "refuted" | "deferred";
+  }> | null;
+}
+
 export type TelemetryRecord =
   | TelemetryEnvironmentRecord
   | TelemetryDispatchRecord
-  | TelemetryCollectRecord;
+  | TelemetryCollectRecord
+  | TelemetryReviewRoundRecord;
 
 // ───────────────────────── pure helpers ─────────────────────────
 
@@ -1127,6 +1158,81 @@ export interface BuildEnvironmentStampInput {
   readonly promptHash?: string | null;
   readonly runId?: string | null;
   readonly now?: () => string;
+}
+
+export interface BuildReviewRoundStampInput {
+  readonly stampedAt?: string;
+  readonly runId?: string | null;
+  readonly issue?: number | null;
+  readonly cmrPass?: "completeness" | "correctness" | null;
+  readonly reviewRound?: number | null;
+  readonly verdict: TelemetryReviewRoundRecord["verdict"];
+  /** Omit when the reviewer produced no parseable CMR result. */
+  readonly findings?: readonly Finding[];
+  readonly priorReviewRecords?: readonly TelemetryReviewRoundRecord[];
+  readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+}
+
+/**
+ * Build one raw review-round observation. It deliberately only derives
+ * observability fields: nothing here may influence review/fix control flow.
+ */
+export function buildReviewRoundStamp(
+  input: BuildReviewRoundStampInput,
+): TelemetryReviewRoundRecord {
+  const findings = input.findings;
+  const findingIdentityKeys =
+    findings === undefined
+      ? null
+      : [...new Set(findings.map(findingIdentityKey))];
+  const priorKeys = new Set(
+    (input.priorReviewRecords ?? []).flatMap(
+      (record) => record.findingIdentityKeys ?? [],
+    ),
+  );
+  const findingsBySeverity =
+    findings === undefined
+      ? null
+      : findings.reduce<Record<Finding["severity"], number>>(
+          (counts, finding) => {
+            counts[finding.severity] += 1;
+            return counts;
+          },
+          { critical: 0, high: 0, medium: 0, low: 0, clarity: 0 },
+        );
+  const disposition = (status: PriorFindingDisposition["status"]): "fixed" | "refuted" | "deferred" =>
+    status === "verified-closed"
+      ? "fixed"
+      : status === "accepted_suppressed"
+        ? "refuted"
+        : "deferred";
+  return {
+    v: TELEMETRY_SCHEMA_VERSION,
+    phase: "review_round",
+    stamped_at: input.stampedAt ?? new Date().toISOString(),
+    runId: input.runId ?? null,
+    issue: input.issue ?? null,
+    cmrPass: input.cmrPass ?? null,
+    reviewRound: input.reviewRound ?? null,
+    verdict: input.verdict,
+    findingsBySeverity,
+    findingIdentityKeys,
+    newFindingIdentityKeys:
+      findingIdentityKeys === null
+        ? null
+        : findingIdentityKeys.filter((key) => !priorKeys.has(key)),
+    recurringFindingIdentityKeys:
+      findingIdentityKeys === null
+        ? null
+        : findingIdentityKeys.filter((key) => priorKeys.has(key)),
+    priorFindingDispositions:
+      input.priorFindingDispositions === undefined
+        ? null
+        : input.priorFindingDispositions.map((item) => ({
+            identityKey: item.identityKey,
+            disposition: disposition(item.status),
+          })),
+  };
 }
 
 /** Build the once-per-run environment stamp. */
