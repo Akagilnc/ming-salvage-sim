@@ -86,6 +86,8 @@ export interface MechanicalRetryOptions {
   readonly attemptsAlreadyUsed?: number;
   /** Called immediately before each real worker dispatch with its absolute attempt number. */
   readonly onAttempt?: (attempt: number) => Promise<void>;
+  /** Persist/observe a failed attempt before the same step is retried. */
+  readonly onFailure?: (outcome: DispatchOutcome, attempt: number) => Promise<void>;
   /**
    * Return `true` when THIS failure is owned by the caller's semantic-retry layer
    * (e.g. the reviewer's invalid-output rerun, or CMR's same-worker outcome
@@ -172,6 +174,7 @@ export async function withMechanicalRetry(
     // #686: only process-level retries reach here; resource failures throw above and
     // never invoke resetBeforeRetry.
     if (!firstAttemptThisInvocation) {
+      await new Promise<void>((resolve) => setTimeout(resolve, (attempt - 1) * 5));
       try {
         await opts?.resetBeforeRetry?.();
       } catch (err) {
@@ -207,6 +210,7 @@ export async function withMechanicalRetry(
         kind: "failed",
         reason: `dispatch threw: ${err instanceof Error ? err.message : String(err)}`,
       };
+      await opts?.onFailure?.({ kind: "thrown", error: err }, attempt);
       continue;
     }
     const capacityError =
@@ -218,6 +222,7 @@ export async function withMechanicalRetry(
     // composition — the generic layer fires only for failures nobody else owns).
     if (opts?.callerOwns?.({ result }) === true) return result;
     last = result;
+    await opts?.onFailure?.({ result }, attempt);
   }
   // Exhausted. If the last attempt threw and the caller owns the throw→result
   // conversion, re-throw so its domain converter surfaces the failure.

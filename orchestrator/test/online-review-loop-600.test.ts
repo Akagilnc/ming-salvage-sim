@@ -6710,7 +6710,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r32: family verify that dirties tracked worktree terminates contract_drift", async () => {
+  it("#853 family verify tracked changes stay in the normal review flow", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -6734,15 +6734,11 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
-      expect(result).toEqual({
-        ok: false,
-        terminalState: "contract_drift",
-        round: 1,
-        stopSummary: expect.objectContaining({
-          reason: "contract_drift",
-          summary: expect.stringContaining("tracked worktree changes"),
-        }),
-      });
+      expect(result).toEqual(expect.objectContaining({ ok: true, round: 1 }));
+      expect(backend.ledger).toContainEqual(expect.objectContaining({
+        workerStep: "online-verify:1",
+        reason: expect.stringContaining("left tracked changes"),
+      }));
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
@@ -6863,16 +6859,13 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
-      expect(attempts).toBe(1);
-      expect(result).toEqual({
-        ok: false,
-        terminalState: "contract_drift",
-        round: 1,
-        stopSummary: expect.objectContaining({
-          reason: "contract_drift",
-          summary: expect.stringContaining("tracked worktree changes"),
-        }),
-      });
+      expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
+      expect(result).toEqual(expect.objectContaining({ ok: false, round: 1 }));
+      expect(backend.ledger).toContainEqual(expect.objectContaining({
+        workerStep: "verify",
+        mechanicalRedispatchAttempt: 1,
+        reason: expect.stringContaining("verify worker threw on startup"),
+      }));
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

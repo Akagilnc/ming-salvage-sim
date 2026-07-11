@@ -277,7 +277,7 @@ describe("#825 Group A family roles", () => {
     expect(result.ran).toBe(true);
     expect(backend.cmrCalls).toBeGreaterThanOrEqual(2);
     expect(backend.shipCalls).toBeGreaterThanOrEqual(1);
-    expect(backend.ledger.some((row) => row.reason?.includes("bad JSON"))).toBe(false);
+    expect(backend.ledger.some((row) => row.reason?.includes("bad JSON"))).toBe(true);
   });
 
   it("Group A fixer wrong/missing report: committed:false continues to a fresh verify baton", async () => {

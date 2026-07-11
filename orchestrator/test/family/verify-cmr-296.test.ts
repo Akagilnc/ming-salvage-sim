@@ -364,6 +364,64 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     ).toBe(false);
   });
 
+  it("#853 retries only the failed CMR step in-process and records the failed attempt", async () => {
+    class FailedOnceCmrBackend extends BareFamilyBackend {
+      cmrDispatches = 0;
+      currentFamilyHead = "head-before-worker";
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async readFamilyHead(): Promise<string> {
+        return this.currentFamilyHead;
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.cmrDispatches += 1;
+          if (this.cmrDispatches === 1) {
+            return { kind: "failed", reason: "provider connection died" };
+          }
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              ...CMR_EVIDENCE,
+            },
+          };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: "family/291-base",
+            status: "pr_opened",
+            pr: "pr://family/291-base",
+            prHead: this.currentFamilyHead,
+          },
+        };
+      }
+    }
+
+    const backend = new FailedOnceCmrBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+
+    expect(result.ran).toBe(true);
+    expect(backend.cmrDispatches).toBe(3); // completeness retry + correctness once
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: "cmr:completeness",
+      mechanicalRedispatchAttempt: 1,
+      reason: "provider connection died",
+    }));
+    expect(backend.ledger.filter((row) => row.status === "cmr_passed")).toHaveLength(2);
+  });
+
   it("checks CMR leg floor before routing fix_now findings to coder-fix", async () => {
     const weakLegFinding: Finding = {
       severity: "medium",

@@ -153,7 +153,7 @@ describe("#604 r2 C2 — closure guard runs before blocking→coder-fix on resta
     // The runner reached the coder-fix dispatch (normal blocking path), NOT a
     // closure fail-closed. The ledger records the coder-fix routing, and there
     // is NO "were not explicitly claimed fixed" closure abort.
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(
       backend.ledger.some(
         (entry) =>
