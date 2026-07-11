@@ -64,4 +64,4 @@ Rules:
   NOT `committed:false, commitsAdded:0`. `escalate` is orthogonal to the count.
 - `escalate`, when present, contains `reason` and `diagnosis`.
 - Emit the `<coder>` tag LAST; if you iterate, the LAST tag is the one that counts.
-- Always print `CODER_STEP_COMPLETE` on its own line at the very end.
+- For optional telemetry, you may print `CODER_STEP_COMPLETE` on its own final line.

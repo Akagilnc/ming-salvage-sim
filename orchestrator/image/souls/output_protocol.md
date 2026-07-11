@@ -22,9 +22,10 @@ fi
 ```
 
 If the command fails, read its error, fix the draft, and rerun the guard. The
-guard writes the raw sidecar JSON and prints the compatibility tag plus completion
-signal only after JSON shape, role schema, required fields, and referenced
-evidence paths pass validation.
+guard writes the raw sidecar JSON after JSON shape, role schema, required fields,
+and referenced evidence paths pass validation. It may additionally print the
+compatibility tag plus completion signal as optional telemetry.
 
-Do not print the compatibility tag or completion signal yourself when
-`ORCHESTRATOR_OUTCOME_PATH` is set; let the guard emit them.
+When `ORCHESTRATOR_OUTCOME_PATH` is set, the guard may emit compatibility
+telemetry; workers do not need to print the compatibility tag or completion
+signal themselves.

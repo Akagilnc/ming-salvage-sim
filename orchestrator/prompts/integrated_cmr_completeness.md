@@ -32,9 +32,9 @@ orchestrator-outcome-guard \
   --completion-signal "CMR_STEP_COMPLETE"
 ```
 
-The guard emits the compatibility `<cmr>` tag and completion signal only after
-validation passes. If `$ORCHESTRATOR_OUTCOME_PATH` is not set, use the same JSON
-shape in the legacy tag/signal output.
+After validation, the guard may emit the compatibility `<cmr>` tag and completion
+signal as optional telemetry. If `$ORCHESTRATOR_OUTCOME_PATH` is not set, use the
+same JSON shape in the legacy tag/signal output.
 
 Converged:
 
@@ -117,7 +117,6 @@ Rules:
   `action:"fix_now"` (that would silently turn the governance suppression into a
   blocker).
 - When `$ORCHESTRATOR_OUTCOME_PATH` is set, let `orchestrator-outcome-guard` emit
-  the `<cmr>` tag and `CMR_STEP_COMPLETE`; do not print them yourself.
+  the `<cmr>` tag and `CMR_STEP_COMPLETE` as optional telemetry; workers need not print them.
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,
-  the LAST tag is the one that counts, then print `CMR_STEP_COMPLETE` on its own
-  line at the very end.
+  the LAST tag is the one that counts. `CMR_STEP_COMPLETE` remains optional telemetry.

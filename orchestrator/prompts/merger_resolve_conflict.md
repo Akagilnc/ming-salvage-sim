@@ -43,5 +43,5 @@ MERGER_STEP_COMPLETE
 Rules:
 
 - The JSON must be valid and match one of the shapes above exactly.
-- Emit the `<merger>` tag LAST, then `MERGER_STEP_COMPLETE` on its own final line.
+- Emit the `<merger>` tag LAST. `MERGER_STEP_COMPLETE` is optional telemetry and may follow it on its own line.
 - Never `git merge --abort`. Never invent behaviour. Resolve or escalate.
