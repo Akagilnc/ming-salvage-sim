@@ -144,6 +144,7 @@ import {
   DOCRELEASE_PROMPT_FILE,
   FIXER_PROMPT_FILE,
   VERIFY_PROMPT_FILE,
+  workerHostForModel,
 } from "../dispatchWorker.js";
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
 import type { Sh } from "../familyDriver.js";
@@ -153,7 +154,11 @@ import {
   shipOutcomeFromResult,
   type ShipWorkerOutcome,
 } from "../shipOutcome.js";
-import { configureTelemetryFromWorkerImage } from "../telemetry.js";
+import {
+  configureTelemetryFromWorkerImage,
+  createTelemetryLegStamper,
+  scheduleTelemetryEnvironmentStamp,
+} from "../telemetry.js";
 
 import type {
   CleanupResult,
@@ -853,18 +858,59 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       const outcomeLanding = this.prepareMergerOutcomeLanding();
       try {
-        const result = await this.runAgentSandbox({
-          name: `merger-resolve-${req.childIssue}`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: this.opts.workingRepo,
-          sandbox: this.mergerSandbox(auth, outcomeLanding),
-          agent: agentForSlug(mergerModel()),
-          maxIterations: 1,
+        const model = mergerModel();
+        const telemetrySpec: WorkerSpec = {
+          id: "S1",
+          kind: "merge",
+          role: "coder",
+          host: workerHostForModel(model),
+          session: "fresh",
+          contextRetention: "clean",
+          skill: "resolving-merge-conflicts",
+          promptFile: MERGER_CONFLICT_PROMPT,
           completionSignal: MERGER_COMPLETION_SIGNAL,
-          branchStrategy: { type: "head" }, // commit the resolved merge in place
-          promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+          maxIter: 1,
+          model,
+          soul: "coder",
+          toolchain: [],
+        };
+        const telemetryCtx: DispatchContext = {
+          familyBase: this.opts.familyBase,
+          familyIssue: req.childIssue,
+          stateDir: this.opts.ledgerDir,
+          ...(req.modelRoute !== undefined ? { modelRoute: req.modelRoute } : {}),
+        };
+        const telemetry = createTelemetryLegStamper({
+          ledgerDir: this.opts.ledgerDir,
+          spec: telemetrySpec,
+          ctx: telemetryCtx,
         });
-        return mergerOutcomeFromResult({ ...result, outcomePath: outcomeLanding.path });
+        scheduleTelemetryEnvironmentStamp(this.opts.ledgerDir, telemetryCtx, this);
+        telemetry.stampDispatch(new Date().toISOString());
+        try {
+          const result = await this.runAgentSandbox({
+            name: `merger-resolve-${req.childIssue}`,
+            idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+            cwd: this.opts.workingRepo,
+            sandbox: this.mergerSandbox(auth, outcomeLanding),
+            agent: agentForSlug(model),
+            maxIterations: 1,
+            completionSignal: MERGER_COMPLETION_SIGNAL,
+            branchStrategy: { type: "head" }, // commit the resolved merge in place
+            promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+          });
+          const outcome = mergerOutcomeFromResult({ ...result, outcomePath: outcomeLanding.path });
+          telemetry.stampCollect({
+            kind: "result",
+            result: outcome.resolved
+              ? { kind: "completed", output: { kind: "merge", familyHead: this.opts.familyBase } }
+              : { kind: "failed", reason: outcome.reason ?? "merger agent did not resolve" },
+          });
+          return outcome;
+        } catch (error) {
+          telemetry.stampCollect({ kind: "thrown", error });
+          throw error;
+        }
       } finally {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
