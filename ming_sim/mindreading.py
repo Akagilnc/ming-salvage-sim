@@ -12,6 +12,7 @@ import json
 from typing import Any, Dict, Mapping
 
 from ming_sim.models import Character
+from ming_sim.qualitative import safe_historical_text
 
 
 _IDENTITY_BANDS = ("几乎不染党色", "党色较淡", "党色不显", "党色较深", "党色极深")
@@ -26,9 +27,18 @@ def _band(value: object, words: tuple[str, ...]) -> str:
     return words[min(score // 20, len(words) - 1)]
 
 
+def _character_field(character: object, field: str) -> object:
+    if isinstance(character, Mapping) or hasattr(character, "keys"):
+        try:
+            return character[field]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError):
+            return ""
+    return getattr(character, field, "")
+
+
 def _inner_role_text(character: object) -> str:
     return " ".join(
-        str(getattr(character, field, "") or "")
+        str(_character_field(character, field) or "")
         for field in ("office", "office_type")
     )
 
@@ -36,7 +46,7 @@ def _inner_role_text(character: object) -> str:
 def is_inner_court_attendant(character: object) -> bool:
     """按御前近臣的职位识别读心者，不把王承恩姓名写死。"""
     text = _inner_role_text(character)
-    office_type = str(getattr(character, "office_type", "") or "")
+    office_type = str(_character_field(character, "office_type") or "")
     role_tokens = ("随驾", "内官", "内侍", "太监", "大总管", "御前")
     if office_type in {"司礼监", "内廷"}:
         return True
@@ -78,7 +88,10 @@ def _reader_context(db: Any, state: Any, reader: Character) -> Dict[str, object]
     # 去掉 turn/kind/source 等机面元数据，只传读心者自己的世界与听闻正文。
     heard = []
     for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
-        heard.append({"title": str(item.get("title") or ""), "body": str(item.get("body") or "")})
+        heard.append({
+            "title": safe_historical_text(item.get("title"), "见闻标题"),
+            "body": safe_historical_text(item.get("body"), "见闻正文"),
+        })
     return {"world": dict(knowledge.get("world") or {}), "heard": heard[-20:]}
 
 
@@ -98,7 +111,15 @@ def build_mindreading_payload(
     再把同一正文传入本函数。目标侧 identity/seed_guilt 与君臣 loyalty
     分开读，identity/loyalty 的机器值只在此处转成定性词。
     """
-    if not is_inner_court_attendant(reader):
+    current_reader: object = reader
+    if hasattr(db, "conn"):
+        row = db.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name=?",
+            (reader.name,),
+        ).fetchone()
+        if row is not None:
+            current_reader = row
+    if not is_inner_court_attendant(current_reader):
         raise ValueError("读心 payload 只能由御前近臣位生成")
     if not str(minister_reply or "").strip():
         raise ValueError("读心 payload 需要显式的大臣回话正文")
