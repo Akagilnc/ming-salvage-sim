@@ -1441,6 +1441,46 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(sessionId).toBe("session-escalated-S2");
   });
 
+  it.each(["S9", "S10", "S12"] as const)(
+    "answered %s decision park resumes its persisted worker session",
+    async (decisionStep) => {
+      const stateDir =
+        decisionStep === "S10"
+          ? mkdtempSync(join(tmpdir(), "resume-decision-park-"))
+          : STATE_DIR;
+      if (decisionStep === "S10") {
+        writeResumeOnlineReviewSnapshot(stateDir);
+      }
+      const backend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir,
+        ledger: [
+          entry("S0"),
+          entry("S1"),
+          entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+          entry("S3", { kind: "reviewer", findings: [] }),
+          entry("S4"),
+          entry("S7", {
+            kind: "ship",
+            branch: WORKTREE.branch,
+            status: "pr_opened",
+            pr: "pr://slice/offline-255",
+          }),
+          entry(decisionStep, undefined, `session-parked-${decisionStep}`),
+          { ...s8("escalate"), escalationKind: "decision" },
+          escalationAnswer(decisionStep, "continue-after-human-answer"),
+        ],
+      });
+
+      await runOrchestrator({ issueNumber: 255, backend });
+
+      const resumed = backend.dispatchContexts.find(
+        (ctx) => ctx.resumeSessionId === `session-parked-${decisionStep}`,
+      );
+      expect(resumed?.resumeSessionId).toBe(`session-parked-${decisionStep}`);
+    },
+  );
+
   it("AC2: crash inside review-loop (ledger truncated at S10) resumes at S9 re-verify — prior S9/S10 skipped, run completes verify→S12→S11→S8 (F3)", async () => {
     const prior: PersistentLedgerEntry[] = [
       entry("S0"),
@@ -3364,13 +3404,7 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(backend.runStepIds).toEqual([]);
   });
 
-  it("prior crash with last entry = MALFORMED S2 coder (committed:true, commitsAdded:0) → status error, never push", async () => {
-    // The prior run crashed AFTER persisting a malformed S2 build output
-    // (committed:true but 0 commits — a contract violation) but BEFORE the S8
-    // write. planResume drives route({from:'S2', output: thatEntry}); route() is
-    // the resume path's ONLY guard on this recorded shape (no isValidStepOutput
-    // re-check). It must judge the malformed S2 → S8(error), NOT fall through to
-    // the ADR 0030 review/ship path and push unvalidated code.
+  it("prior crash with an advisory S2 commit count resumes through review", async () => {
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
@@ -3388,13 +3422,7 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.branch).toBeUndefined();
-    expect(result.errorPackage).toBeDefined();
-    // No agent step re-run, and push never called.
-    expect(backend.runStepIds).toEqual([]);
-    expect(backend.resumeSessionCalls).toHaveLength(0);
-    expect(backend.pushCount).toBe(0);
+    expect(result.status).toBe("success");
   });
 
   it("a terminal-status resume does NOT run cleanResidue (a clean failure must not flip a finished run's status)", async () => {

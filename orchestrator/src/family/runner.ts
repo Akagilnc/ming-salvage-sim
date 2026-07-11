@@ -242,9 +242,8 @@ function familyStopSummary(input: {
  * agent step → answerable, parkable) from the FAILURE bucket (an
  * infra/retries-exhausted escalate with no valid Escalation → returns undefined,
  * so the caller keeps the CURRENT `"failed"` behaviour — A/B分家). The reason /
- * diagnosis come from the escalated agent step's Escalation payload; the sessionId
- * (for 原地 resume, ADR 0062) is read from the persisted child ledger by the
- * caller — the lean in-memory RunResult ledger carries no session id.
+ * diagnosis and sessionId come from the escalated agent step's in-memory ledger
+ * entry; the durable child ledger independently retains the same resume truth.
  *
  * NOTE: `escalationKindForHandoff` in runner.ts (single-slice) mirrors this exact
  * decision-vs-failure split (a valid Escalation ⇒ "decision", else "failure"); this
@@ -322,9 +321,18 @@ async function runChild(
     const forStep =
       resumeState !== undefined ? escalatedChildStep(resumeState.ledger) : undefined;
     if (resumeState !== undefined && forStep !== undefined) {
+      const parkedSessionId = [...resumeState.ledger]
+        .reverse()
+        .find((entry) => entry.step === forStep)?.sessionId;
+      if (parkedSessionId === undefined) {
+        return { issue: child.issue, status: "failed" };
+      }
       const answerEntry: PersistentLedgerEntry = {
         step: forStep,
-        sessionId: `family-answer-${child.issue}`,
+        // Keep the answer row in the same session lineage as the parked worker.
+        // The durable child step is the fallback truth for legacy family answer
+        // rows that predate sessionId forwarding.
+        sessionId: escalationAnswer.sessionId ?? parkedSessionId,
         prompt_hash: "family-answer",
         branchHEAD: resumeState.worktree.branch,
         ts: new Date().toISOString(),
@@ -1445,6 +1453,89 @@ export async function runFamily(
           modelRoute: activeRoutePolicy.route,
           runId,
         });
+        if (mergeResult.escalation !== undefined) {
+          familyHead = mergeResult.familyHead;
+          childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
+          const ledgerMerged = await currentMerged(familyBackend);
+          const children = epic.children.map((child) => {
+            const recorded = childResults.find((entry) => entry.issue === child.issue);
+            if (recorded !== undefined) return recorded;
+            return ledgerMerged.has(child.issue)
+              ? { issue: child.issue, status: "already_done" as const }
+              : { issue: child.issue, status: "skipped" as const };
+          });
+          const escalation = mergeResult.escalation;
+          const stopSummary = familyStopSummary({
+            status: "escalated",
+            familyBase,
+            familyHead,
+            children,
+            escalationReason: escalation.reason,
+          });
+          await familyBackend.escalateFamily?.({
+            ...escalation,
+            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
+            stopSummary,
+            escalationKind: "decision",
+            phase: "wave",
+          });
+          return {
+            status: "escalated" as const,
+            familyBase,
+            familyHead,
+            escalation: {
+              reason: escalation.reason,
+              diagnosis: escalation.diagnosis ?? escalation.reason,
+            },
+            stopSummary,
+            children,
+          };
+        }
+        if (mergeResult.conflicted === true) {
+          // A merger step that exhausted its bounded mechanical re-dispatch is
+          // a family-level escalation boundary, not an uncaught run exception.
+          // The merge result is intentionally not ledger-recorded by merger.ts;
+          // preserve the Git-observed head and stop before scheduling another
+          // wave on an unresolved MERGE_HEAD/conflict state.
+          familyHead = mergeResult.familyHead;
+          childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
+          const ledgerMerged = await currentMerged(familyBackend);
+          const children = epic.children.map((child) => {
+            const recorded = childResults.find((entry) => entry.issue === child.issue);
+            if (recorded !== undefined) return recorded;
+            return ledgerMerged.has(child.issue)
+              ? { issue: child.issue, status: "already_done" as const }
+              : { issue: child.issue, status: "skipped" as const };
+          });
+          const escalationReason =
+            `merger step for child #${r.issue} exhausted bounded still-conflicted retries`;
+          const stopSummary = familyStopSummary({
+            status: "escalated",
+            familyBase,
+            familyHead,
+            children,
+            escalationReason,
+          });
+          await familyBackend.escalateFamily?.({
+            reason: escalationReason,
+            ...(familyHead !== undefined ? { familyHeadAfter: familyHead } : {}),
+            stopSummary,
+            escalationKind: "failure",
+            phase: "wave",
+          });
+          return {
+            status: "escalated" as const,
+            familyBase,
+            familyHead,
+            escalation: {
+              reason: escalationReason,
+              diagnosis:
+                "Git still reports an unresolved merge after the bounded merger-step re-dispatch; repair the conflict and rerun the family.",
+            },
+            stopSummary,
+            children,
+          };
+        }
         familyHead = mergeResult.familyHead;
         childResults.push({ issue: r.issue, status: "merged", branch: r.branch });
       } else {

@@ -146,12 +146,9 @@ import type {
 } from "../types.js";
 import { findingIdentityKey } from "../findings.js";
 import {
-  buildCommitStamp,
   buildReviewRoundStamp,
-  collectCommitDiffLines,
-  collectCommitMetrics,
-  commitsBetween,
   readTelemetryRecords,
+  scheduleCommitTelemetry,
   tryAppendTelemetryRecord,
   type TelemetryReviewRoundRecord,
 } from "../telemetry.js";
@@ -164,14 +161,22 @@ import {
   recordOnlineReviewFixCommitted,
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
+  familyShipCompletedRecord,
+  recordShipDispatchReservation,
+  recordShipDispatchAttempt,
+  activeShipStreakId,
+  recordShipStreakOpened,
+  recordShipStreakClosed,
+  recordShipCompleted,
   recordShipped,
+  shipDispatchAttemptsSinceLatestCorrectnessCmrPass,
+  unconfirmedShipReservationsSinceLatestCorrectnessCmrPass,
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   mergedSet,
   recordPostMergeCleanup,
 } from "./ledger.js";
 import { isFilledString } from "../shipOutcome.js";
-import { isCompleteRepairEvidence } from "../validate.js";
 import {
   contractDriftStopSummary,
   decisionGateParkStopSummary,
@@ -964,8 +969,6 @@ interface IntegratedCmrPassOutcome {
   };
 }
 
-const MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS = 3;
-
 function coderFixFailureStopSummary(input: {
   readonly pass: IntegratedCmrPass;
   readonly reason: string;
@@ -989,55 +992,6 @@ function coderFixFailureStopSummary(input: {
       },
     },
   });
-}
-
-function familyRepairEvidenceGateFailureReason(input: {
-  readonly pass: IntegratedCmrPass;
-  readonly output: Extract<WorkerResult, { kind: "completed" }>["output"];
-  readonly blockingFindingIdentityKeys: readonly string[];
-  readonly familyHeadBefore?: string;
-  readonly familyHeadAfter?: string;
-  readonly allowEvidenceOnlyRepair?: boolean;
-}): string | undefined {
-  if (input.output.kind !== "coder") {
-    return `integrated cmr ${input.pass} coder-fix returned non-coder output`;
-  }
-  const hasIndependentCommit = input.output.committed && input.output.commitsAdded >= 1;
-  if (!hasIndependentCommit && input.allowEvidenceOnlyRepair !== true) {
-    return (
-      `integrated cmr ${input.pass} coder-fix produced no independent fix commit: ` +
-      `committed=${input.output.committed} commitsAdded=${input.output.commitsAdded}`
-    );
-  }
-  if (
-    input.familyHeadBefore === undefined ||
-    input.familyHeadAfter === undefined ||
-    input.familyHeadBefore === input.familyHeadAfter
-  ) {
-    return (
-      `integrated cmr ${input.pass} coder-fix produced no verifiable family HEAD movement: ` +
-      `${input.familyHeadBefore ?? "unknown"} -> ${input.familyHeadAfter ?? "unknown"}`
-    );
-  }
-  if (!isCompleteRepairEvidence(input.output.repairEvidence)) {
-    return (
-      `integrated cmr ${input.pass} coder-fix repairEvidence missing required ` +
-      `finding scope, tests, same-class bug scan, or introduced-regression check`
-    );
-  }
-  const evidenceKeys = new Set(
-    input.output.repairEvidence.findingScope.identityKeys ?? [],
-  );
-  const missingKeys = input.blockingFindingIdentityKeys.filter(
-    (key) => !evidenceKeys.has(key),
-  );
-  if (missingKeys.length > 0) {
-    return (
-      `integrated cmr ${input.pass} coder-fix repairEvidence did not map to ` +
-      `blocking finding scope: ${missingKeys.join(", ")}`
-    );
-  }
-  return undefined;
 }
 
 function cmrReviewerHeadMovedStopSummary(input: {
@@ -1106,17 +1060,12 @@ async function runCmrCoderFix(input: {
     `integrated cmr ${pass} coder-fix for ` +
     blockingFindingIdentityKeys.join(", ");
 
-  let currentFamilyHeadBefore = familyHeadBefore;
-  let attempt = 1;
-  let evidenceOnlyFamilyHeadAfter: string | undefined;
-  let repairAttemptFailures: NonNullable<
-    DispatchContext["repairAttemptFailures"]
-  > = [];
-
-  while (true) {
-    const fixResult = await dispatchOrAbort(
-      familyBackend,
-      familyCoderFixWorkerSpec(resolvedRoute),
+  const currentFamilyHeadBefore = familyHeadBefore;
+  let telemetryFamilyHeadBefore = familyHeadBefore;
+  const coderFixSpec = familyCoderFixWorkerSpec(resolvedRoute);
+  const fixResult = await dispatchOrAbort(
+    familyBackend,
+    coderFixSpec,
       {
         familyBase,
         ...(runId !== undefined ? { runId } : {}),
@@ -1125,9 +1074,6 @@ async function runCmrCoderFix(input: {
         // rich finding content travels in the separate landing payload below.
         blockingFindingIdentityKeys,
         blockingFindingCount: classification.blocking.length,
-        ...(repairAttemptFailures.length > 0
-          ? { repairAttemptFailures }
-          : {}),
         ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         ...(familyIssue !== undefined ? { familyIssue } : {}),
       },
@@ -1139,24 +1085,26 @@ async function runCmrCoderFix(input: {
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
       familyBase,
-      currentFamilyHeadBefore,
-    );
+    currentFamilyHeadBefore,
+  );
 
     // Commit telemetry follows the independently observed family HEAD, never
     // the coder's self-report. The report remains for the repair gate below.
     if (
-      currentFamilyHeadBefore !== undefined &&
+      telemetryFamilyHeadBefore !== undefined &&
       familyHeadAfter !== undefined &&
-      familyHeadAfter !== currentFamilyHeadBefore
+      familyHeadAfter !== telemetryFamilyHeadBefore
     ) {
       stampCmrCoderFixCommits({
         familyBackend,
         familyBase,
         runId,
         familyIssue,
-        before: currentFamilyHeadBefore,
+        worker: { stepId: coderFixSpec.id, modelSlug: coderFixSpec.model },
+        before: telemetryFamilyHeadBefore,
         after: familyHeadAfter,
       });
+      telemetryFamilyHeadBefore = familyHeadAfter;
     }
 
     if (fixResult.kind === "escalated") {
@@ -1182,7 +1130,7 @@ async function runCmrCoderFix(input: {
       return { result: { ok: false, ran: true }, familyHeadAfter };
     }
 
-    if (fixResult.kind !== "completed" || fixResult.output.kind !== "coder") {
+  if (fixResult.kind !== "completed" || fixResult.output.kind !== "coder") {
       const reason =
         fixResult.kind === "failed"
           ? `${reasonPrefix} failed: ${fixResult.reason}`
@@ -1204,9 +1152,9 @@ async function runCmrCoderFix(input: {
         }),
       });
       return { result: { ok: false, ran: true }, familyHeadAfter };
-    }
+  }
 
-    if (fixResult.output.escalate !== undefined) {
+  if (fixResult.output.escalate !== undefined) {
       const reason =
         `${reasonPrefix} escalated: ${fixResult.output.escalate.reason} — ` +
         fixResult.output.escalate.diagnosis;
@@ -1229,98 +1177,48 @@ async function runCmrCoderFix(input: {
         stopSummary,
       });
       return { result: { ok: false, ran: true }, familyHeadAfter };
-    }
-
-    const repairGateFailure = familyRepairEvidenceGateFailureReason({
-      pass,
-      output: fixResult.output,
-      blockingFindingIdentityKeys,
-      familyHeadBefore: currentFamilyHeadBefore,
-      familyHeadAfter,
-      allowEvidenceOnlyRepair:
-        evidenceOnlyFamilyHeadAfter !== undefined &&
-        familyHeadAfter === evidenceOnlyFamilyHeadAfter,
-    });
-    if (repairGateFailure !== undefined) {
-      if (attempt < MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS) {
-        repairAttemptFailures = [
-          ...repairAttemptFailures,
-          {
-            attempt,
-            reason: repairGateFailure,
-            ...(currentFamilyHeadBefore !== undefined
-              ? { familyHeadBefore: currentFamilyHeadBefore }
-              : {}),
-            ...(familyHeadAfter !== undefined ? { familyHeadAfter } : {}),
-          },
-        ];
-        if (
-          fixResult.output.kind === "coder" &&
-          fixResult.output.committed &&
-          fixResult.output.commitsAdded >= 1 &&
-          currentFamilyHeadBefore !== undefined &&
-          familyHeadAfter !== undefined &&
-          currentFamilyHeadBefore !== familyHeadAfter
-        ) {
-          evidenceOnlyFamilyHeadAfter = familyHeadAfter;
-        } else if (
-          evidenceOnlyFamilyHeadAfter !== undefined &&
-          familyHeadAfter === evidenceOnlyFamilyHeadAfter
-        ) {
-          // Keep the original pre-fix head and committed repair head across
-          // repeated evidence-only retries. Later attempts still need to prove
-          // the same already-landed commit, not add another commit.
-        } else {
-          currentFamilyHeadBefore = familyHeadAfter;
-          evidenceOnlyFamilyHeadAfter = undefined;
-        }
-        attempt += 1;
-        continue;
-      }
-      const reason =
-        `${reasonPrefix} repair evidence gate failed after ${attempt} attempts: ` +
-        repairGateFailure;
-      await recordDurableAbort(familyBackend, {
-        phase: "final",
-        cmrPass: pass,
-        reason,
-        familyHeadAfter,
-        stopSummary: coderFixFailureStopSummary({
-          pass,
-          reason,
-          familyHeadBefore: currentFamilyHeadBefore,
-          familyHeadAfter,
-        }),
-      });
-      return { result: { ok: false, ran: true }, familyHeadAfter };
-    }
-
-    await recordCmrFixCommitted(familyBackend, {
-      cmrPass: pass,
-      familyHeadBefore: currentFamilyHeadBefore,
-      familyHeadAfter,
-      blockingFindingIdentityKeys,
-      reason:
-        fixResult.output.committed && fixResult.output.commitsAdded >= 1
-          ? `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
-            `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`
-          : `${reasonPrefix}: coder-fix commit already landed; retry repaired required evidence only`,
-    });
-    return { result: { ok: true, ran: true }, familyHeadAfter };
   }
+
+  const repairObservationAdvisory =
+    fixResult.output.selfReportDiscrepancy !== undefined ||
+    currentFamilyHeadBefore === undefined ||
+    familyHeadAfter === undefined;
+
+  await recordCmrFixCommitted(familyBackend, {
+    cmrPass: pass,
+    familyHeadBefore: currentFamilyHeadBefore,
+    familyHeadAfter,
+    blockingFindingIdentityKeys,
+    reason:
+      repairObservationAdvisory
+        ? `${reasonPrefix}: coder-fix attempted; telemetry family/git observation advisory` +
+          (fixResult.output.selfReportDiscrepancy !== undefined
+            ? `; warning ${fixResult.output.selfReportDiscrepancy.code} ` +
+              `(reported ${fixResult.output.selfReportDiscrepancy.selfReportedCommitsAdded}, ` +
+              `git observed ${fixResult.output.selfReportDiscrepancy.gitCommitCount})`
+            : "")
+        : fixResult.output.committed && fixResult.output.commitsAdded >= 1
+        ? `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
+          `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`
+        : `${reasonPrefix}: coder-fix reported no commit; fresh reviewer will judge findings`,
+  });
+  return { result: { ok: true, ran: true }, familyHeadAfter };
 }
 
 async function readPostCmrFamilyHead(
   familyBackend: FamilyBackend,
   familyBase: string,
   fallbackHead: string | undefined,
+  onObservationFailure: "fallback" | "unknown" = "fallback",
 ): Promise<string | undefined> {
-  if (familyBackend.readFamilyHead === undefined) return fallbackHead;
+  const unavailable = (): string | undefined =>
+    onObservationFailure === "fallback" ? fallbackHead : undefined;
+  if (familyBackend.readFamilyHead === undefined) return unavailable();
   try {
     const liveHead = (await familyBackend.readFamilyHead(familyBase)).trim();
-    return liveHead.length > 0 ? liveHead : fallbackHead;
+    return liveHead.length > 0 ? liveHead : unavailable();
   } catch {
-    return fallbackHead;
+    return unavailable();
   }
 }
 
@@ -2080,6 +1978,55 @@ async function dispatchOrAbort(
   }
 }
 
+/**
+ * Ship mutates remote state, so it deliberately bypasses `withMechanicalRetry`.
+ * The caller writes its durable attempt marker first and observes host truth after
+ * any thrown return path before deciding whether a replacement is safe.
+ */
+async function dispatchShipOnce(
+  familyBackend: FamilyBackend,
+  spec: Parameters<typeof dispatchFamilyWorker>[1],
+  ctx: Parameters<typeof dispatchFamilyWorker>[2],
+  shipDispatchId: string,
+): Promise<{
+  readonly result?: Awaited<ReturnType<typeof dispatchFamilyWorker>>;
+  readonly launchConfirmed: boolean;
+}> {
+  let launchConfirmed = false;
+  try {
+    const monitored = await dispatchFamilyWorkerWithMonitor(
+      familyBackend,
+      spec,
+      ctx,
+      undefined,
+      {
+        onDispatchConfirmed: async () => {
+          await recordShipDispatchAttempt(familyBackend, {
+            phase: "final",
+            shipDispatchId,
+          });
+          launchConfirmed = true;
+        },
+        onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
+          try {
+            await familyBackend.appendFamilyLedger({
+              status: "worker_dispatched",
+              event: "worker_dispatched",
+              monitorHandle: handle,
+            });
+          } catch {
+            // Best effort, matching the generic family dispatch path.
+          }
+        },
+      },
+    );
+    await monitored.telemetryEnvironmentStamp;
+    return { result: monitored.result, launchConfirmed };
+  } catch {
+    return { launchConfirmed };
+  }
+}
+
 async function rewriteOutcomeProtocolFailure(input: {
   readonly familyBackend: FamilyBackend;
   readonly spec: WorkerSpec;
@@ -2188,8 +2135,7 @@ function stampCmrReviewRound(input: {
         issue: input.familyIssue ?? null,
         cmrPass: input.pass,
         reviewRound: priorReviewRecords.length + 1,
-        verdict:
-          input.finalDisposition === "rejected" ? "rejected" : workerVerdict,
+        verdict: workerVerdict,
         finalDisposition: input.finalDisposition,
         ...(output?.findings !== undefined ? { findings: output.findings } : {}),
         priorReviewRecords,
@@ -2217,6 +2163,7 @@ function stampCmrCoderFixCommits(input: {
   readonly familyBase: string;
   readonly runId?: string;
   readonly familyIssue?: number;
+  readonly worker: { readonly stepId: string; readonly modelSlug: string };
   readonly before?: string;
   readonly after?: string;
 }): void {
@@ -2231,23 +2178,17 @@ function stampCmrCoderFixCommits(input: {
     };
     const ledgerDir = input.familyBackend.resolveTelemetryDir?.(ctx);
     if (ledgerDir === undefined || ledgerDir.length === 0) return;
-    // The post-fix HEAD is known even if `rev-list` fails; preserve that raw
-    // observation with null dimensions rather than dropping the telemetry row.
-    const commits = commitsBetween(repoPath, input.before, input.after) ?? [input.after];
-    for (const commit of commits) {
-      const metrics = collectCommitMetrics(repoPath, commit);
-      const diffLines = collectCommitDiffLines(repoPath, commit);
-      tryAppendTelemetryRecord(
-        ledgerDir,
-        buildCommitStamp({
-          runId: input.runId,
-          issue: input.familyIssue ?? null,
-          commit,
-          ...(metrics !== undefined ? { metrics } : {}),
-          ...(diffLines !== undefined ? { diffLines } : {}),
-        }),
-      );
-    }
+    // Commit observation is strictly sidecar-only. Its git reads, full-file
+    // scans, and JSONL append run after routing yields, through async I/O.
+    void scheduleCommitTelemetry({
+      ledgerDir,
+      repoPath,
+      runId: input.runId,
+      issue: input.familyIssue ?? null,
+      worker: input.worker,
+      before: input.before,
+      after: input.after,
+    });
   } catch (err) {
     console.warn(
       `[orchestrator] commit telemetry failed (fail-open): ${
@@ -2903,6 +2844,13 @@ async function runIntegratedCmrPass(input: {
 export async function runVerifyCmr(
   input: VerifyCmrInput,
 ): Promise<VerifyCmrResult> {
+  return runVerifyCmrWithShipTruthAttempt(input, 1);
+}
+
+async function runVerifyCmrWithShipTruthAttempt(
+  input: VerifyCmrInput,
+  shipTruthAttempt: number,
+): Promise<VerifyCmrResult> {
   const {
     phase,
     familyBase,
@@ -3092,7 +3040,10 @@ export async function runVerifyCmr(
   // runnable via EITHER the new unified `dispatchWorker` seam OR the legacy
   // `openFamilyPr`; neither ⇒ INCOMPLETE_GATE (the PR cannot open; never a false
   // success). #331 prefactor: dispatchFamilyWorker forwards to `openFamilyPr`; #336
-  // makes it invoke `gstack-ship`.
+  // makes it invoke `gstack-ship`. Host PR verification is also a preflight
+  // requirement: dispatch is mutating, and without that seam a legacy
+  // `openFamilyPr` backend could open a real PR then be unable to establish the
+  // shipped truth needed to finish this barrier.
   if (
     familyBackend.dispatchWorker === undefined &&
     familyBackend.openFamilyPr === undefined
@@ -3139,17 +3090,301 @@ export async function runVerifyCmr(
     });
     return INCOMPLETE_GATE;
   }
-  const shipResult = await dispatchOrAbort(
-    familyBackend,
-    familyShipWorkerSpec(resolvedRoute),
-    {
+  if (familyBackend.verifyFamilyShippedPr === undefined) {
+    const reason =
+      "family ship worker unavailable before mutation: backend has no host PR verification capability";
+    const postCmrFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
       familyBase,
-      ...(runId !== undefined ? { runId } : {}),
-      modelRoute: resolvedRoute,
-      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
-    },
-    undefined,
-  );
+      cmrPassedFamilyHeadAfter,
+    );
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postCmrFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postCmrFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: `${reason}; the terminal PR gate cannot verify a dispatched PR`,
+        repairHint:
+          "provide verifyFamilyShippedPr before dispatching the family ship worker, then rerun the final family barrier",
+        ship: {
+          latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+          currentFamilyHead: postCmrFamilyHead,
+          shipPrState: "ship-verification-capability-missing",
+        },
+        heads: {
+          ...(postCmrFamilyHead !== undefined
+            ? { actualFamilyHead: postCmrFamilyHead }
+            : {}),
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          sources: {
+            actualFamilyHead: "family head after CMR before missing ship verification capability",
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
+    });
+    return INCOMPLETE_GATE;
+  }
+  const shipSpec = familyShipWorkerSpec(resolvedRoute);
+  const shipContext = {
+    familyBase,
+    ...(runId !== undefined ? { runId } : {}),
+    modelRoute: resolvedRoute,
+    ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+  };
+  // #823: a worker-reported completion is deliberately only an observation input,
+  // not shipped truth. On a fresh re-entry, verify that exact locator before any
+  // new mutating dispatch. Only a host-confirmed absence recurses with attempt >1;
+  // a mismatch is observed-but-unexpected state and must be escalated in place.
+  const completedShip =
+    shipTruthAttempt === 1
+      ? familyShipCompletedRecord(await familyBackend.readFamilyLedger())
+      : undefined;
+  let shipResult: WorkerResult | undefined =
+    completedShip === undefined
+      ? undefined
+      : {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: completedShip.branch,
+            status: "pr_opened",
+            pr: completedShip.pr,
+          },
+        };
+  let lastMalformedShipAttempt: WorkerResult | undefined;
+  let lastMalformedReason: string | undefined;
+  const shipLedger = await familyBackend.readFamilyLedger();
+  const legacyShipAttempts = shipDispatchAttemptsSinceLatestCorrectnessCmrPass(shipLedger);
+  const legacyInfraAttempts =
+    unconfirmedShipReservationsSinceLatestCorrectnessCmrPass(shipLedger);
+  let shipStreakId = activeShipStreakId(shipLedger);
+  if (shipStreakId === undefined) {
+    shipStreakId = `ship-streak-${Date.now()}`;
+    await recordShipStreakOpened(familyBackend, {
+      shipStreakId,
+      shipAttemptsAtOpen: legacyShipAttempts,
+      shipInfraAttemptsAtOpen: legacyInfraAttempts,
+    });
+  }
+  let shipStreakClosed = false;
+  const closeShipStreak = async (outcome: "shipped" | "exhausted") => {
+    if (shipStreakClosed) return;
+    await recordShipStreakClosed(familyBackend, { shipStreakId, shipStreakOutcome: outcome });
+    shipStreakClosed = true;
+  };
+  let usedShipAttempts = legacyShipAttempts;
+  let usedInfraAttempts = legacyInfraAttempts;
+  while (
+    shipResult === undefined &&
+    usedShipAttempts < MAX_DISPATCH_ATTEMPTS &&
+    usedInfraAttempts < MAX_DISPATCH_ATTEMPTS
+  ) {
+    const shipDispatchId = `ship-${Date.now()}-${usedShipAttempts}-${usedInfraAttempts}`;
+    await recordShipDispatchReservation(familyBackend, {
+      phase: "final",
+      shipDispatchId,
+    });
+    const dispatched = await dispatchShipOnce(
+      familyBackend,
+      shipSpec,
+      shipContext,
+      shipDispatchId,
+    );
+    if (!dispatched.launchConfirmed) {
+      usedInfraAttempts += 1;
+      continue;
+    }
+    usedShipAttempts += 1;
+    let candidate = dispatched.result;
+    if (candidate === undefined) {
+      const expectedHead = await readRequiredFamilyHead(familyBackend, familyBase);
+      const observed =
+        expectedHead === undefined || familyBackend.findFamilyShippedPr === undefined
+          ? {
+              ok: false as const,
+              kind: "observation_failed" as const,
+              reason:
+                expectedHead === undefined
+                  ? "ship dispatch threw and current family HEAD could not be observed"
+                  : "ship dispatch threw and backend has no host PR discovery capability",
+            }
+          : await familyBackend.findFamilyShippedPr({ familyBase, expectedHead });
+      if (observed.ok) {
+        candidate = {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: familyBase,
+            status: "pr_opened",
+            pr: observed.pr,
+          },
+        };
+      } else if (observed.kind === "pr_missing") {
+        // Host truth proved nothing landed: the next iteration writes a new durable
+        // marker before it performs the replacement physical dispatch.
+        continue;
+      } else {
+        candidate = {
+          kind: "failed",
+          reason: `family ship dispatch threw; host observation ${observed.kind}: ${observed.reason}`,
+        };
+      }
+    }
+    const malformedReason =
+      candidate.kind === "malformed"
+        ? candidate.reason
+        : candidate.kind === "completed" && candidate.output?.kind !== "ship"
+          ? "worker returned a non-ship payload"
+          : candidate.kind === "completed" &&
+              candidate.output.kind === "ship" &&
+              (!isFilledString(candidate.output.pr) || !isFilledString(candidate.output.branch))
+            ? `worker did not provide a PR locator or branch: ${describeShipPrState(candidate.output)}`
+            : undefined;
+    if (malformedReason === undefined) {
+      shipResult = candidate;
+      break;
+    }
+    lastMalformedShipAttempt = candidate;
+    lastMalformedReason = malformedReason;
+  }
+
+  if (shipResult === undefined && lastMalformedReason !== undefined) {
+    // ADR 0062: a malformed control envelope is a process/protocol failure, not
+    // a ship verdict. Re-dispatch this terminal step mechanically; only an
+    // exhausted bounded retry may raise the legal infrastructure escalation.
+    const reason =
+      `family ship worker output remained malformed after ${MAX_DISPATCH_ATTEMPTS} ` +
+      `dispatch attempts: ${lastMalformedReason}`;
+    const malformedAttempt = lastMalformedShipAttempt!;
+    const shipPrState =
+      malformedAttempt.kind === "completed" && malformedAttempt.output?.kind === "ship"
+        ? describeShipPrState(malformedAttempt.output)
+        : "malformed-worker-output";
+    const actualFamilyHeadSource =
+      malformedAttempt.kind === "completed" && malformedAttempt.output?.kind === "ship"
+        ? "family head after missing PR locator"
+        : "family head after malformed ship worker output";
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        "repair the family ship worker outcome sidecar/payload, then rerun the final family barrier",
+      ship: {
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        ...(postShipFamilyHead !== undefined
+          ? { currentFamilyHead: postShipFamilyHead }
+          : {}),
+        shipPrState,
+      },
+      heads: {
+        ...(postShipFamilyHead !== undefined
+          ? { actualFamilyHead: postShipFamilyHead }
+          : {}),
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        sources: {
+          actualFamilyHead: actualFamilyHeadSource,
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary,
+    });
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary,
+    });
+    await closeShipStreak("exhausted");
+    return { ok: false, ran: true };
+  }
+  if (shipResult === undefined) {
+    // The durable count was already exhausted before this resume could dispatch
+    // (for example, a process crashed after the third marker). Do not reset the
+    // budget or send a fourth ship worker; make the protocol failure visible.
+    const infraBudgetExhausted = usedInfraAttempts >= MAX_DISPATCH_ATTEMPTS;
+    const reason = infraBudgetExhausted
+      ? `family ship worker failed before physical launch after ${MAX_DISPATCH_ATTEMPTS} infrastructure attempts; confirmed ship dispatch budget remains ${usedShipAttempts}/${MAX_DISPATCH_ATTEMPTS}`
+      : `family ship worker output remained malformed after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts: durable ship dispatch budget exhausted before resume`;
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        "repair the family ship worker outcome sidecar/payload, then rerun the final family barrier",
+      ship: {
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        ...(postShipFamilyHead !== undefined
+          ? { currentFamilyHead: postShipFamilyHead }
+          : {}),
+        shipPrState: infraBudgetExhausted
+          ? "pre-spawn-infrastructure-budget-exhausted"
+          : "durable-ship-dispatch-budget-exhausted",
+      },
+      heads: {
+        ...(postShipFamilyHead !== undefined
+          ? { actualFamilyHead: postShipFamilyHead }
+          : {}),
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        sources: {
+          actualFamilyHead: "family head after durable ship dispatch budget exhaustion",
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary,
+    });
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary,
+    });
+    await closeShipStreak("exhausted");
+    return { ok: false, ran: true };
+  }
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4
   // finding: keep escalate semantics). A `completed` non-ship payload / crash /
@@ -3240,23 +3475,8 @@ export async function runVerifyCmr(
     });
     return INCOMPLETE_GATE;
   }
-  // ── cmr S336 r4 (P1): the terminal family gate must NOT trust the discriminant
-  // alone. verifyCmr explicitly allows ANY FamilyBackend to implement the unified
-  // dispatchWorker seam — a backend that implements the seam but skips the success
-  // contract (the real RealFamilyBackend.dispatchShipWorker enforces it, but a
-  // minimal seam-only backend need not) could return a `completed {kind:"ship"}`
-  // that never opened the family PR (status:"pushed", missing/blank pr) or opened
-  // it on the WRONG branch. Re-assert the family-ship contract here, fail-CLOSED
-  // (defense-in-depth, independent of which backend produced the payload; mirrors
-  // the non-completed/non-ship fail-safe just above). 止于 PR (decision 4) means a
-  // REAL family PR on the family base: branch === familyBase, status === "pr_opened",
-  // pr a non-empty string — anything else did not open the PR → INCOMPLETE_GATE.
   const ship = shipResult.output;
-  if (
-    ship.branch !== familyBase ||
-    ship.status !== "pr_opened" ||
-    !isFilledString(ship.pr)
-  ) {
+  if (!isFilledString(ship.pr)) {
     const postShipFamilyHead = await readPostCmrFamilyHead(
       familyBackend,
       familyBase,
@@ -3264,8 +3484,7 @@ export async function runVerifyCmr(
     );
     const shipPrState = describeShipPrState(ship);
     const reason =
-      `family ship worker did not open a valid family PR: ${shipPrState}; ` +
-      `expected branch=${familyBase} status=pr_opened and a non-empty PR URL`;
+      `family ship worker did not provide a PR locator: ${shipPrState}`;
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
@@ -3279,7 +3498,7 @@ export async function runVerifyCmr(
       stopSummary: infraFailureStopSummary({
         summary: reason,
         repairHint:
-          "repair the family ship worker result/PR state and rerun the final family barrier",
+          "repair the family ship PR locator and rerun the final family barrier",
         ship: {
           ...(cmrPassedFamilyHeadAfter !== undefined
             ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
@@ -3297,13 +3516,19 @@ export async function runVerifyCmr(
             ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
             : {}),
           sources: {
-            actualFamilyHead: "family head after ship contract failure",
+            actualFamilyHead: "family head after missing PR locator",
             verifiedCmrHead: "latest cmr_passed ledger row",
           },
         },
       }),
     });
     return INCOMPLETE_GATE;
+  }
+  if (completedShip === undefined) {
+    // Persist before reading host HEAD or calling `gh pr view`: this record is
+    // advisory worker output, and exists solely to resume host observation after a
+    // crash without sending another mutating ship worker.
+    await recordShipCompleted(familyBackend, { pr: ship.pr, branch: ship.branch });
   }
   const exactPostShipFamilyHead = await readRequiredFamilyHead(familyBackend, familyBase);
   if (exactPostShipFamilyHead === undefined) {
@@ -3344,43 +3569,82 @@ export async function runVerifyCmr(
     });
     return INCOMPLETE_GATE;
   }
-  if (!isFilledString(ship.prHead) || ship.prHead !== exactPostShipFamilyHead) {
+  const verifyShippedPr = async () =>
+    familyBackend.verifyFamilyShippedPr === undefined
+      ? {
+          ok: false as const,
+          kind: "observation_failed" as const,
+          reason: "backend has no host PR verification capability",
+        }
+      : familyBackend.verifyFamilyShippedPr({
+          pr: ship.pr!,
+          familyBase,
+          expectedHead: exactPostShipFamilyHead,
+        });
+  let shippedPrVerification = await verifyShippedPr();
+  // Unknown host truth must not re-run a mutating ship worker. Retry the
+  // observation itself within the shared #824 bound; only host-confirmed absence
+  // or mismatch re-dispatches ship below.
+  for (
+    let observationAttempt = 1;
+    !shippedPrVerification.ok &&
+    shippedPrVerification.kind === "observation_failed" &&
+    observationAttempt < MAX_DISPATCH_ATTEMPTS;
+    observationAttempt += 1
+  ) {
+    shippedPrVerification = await verifyShippedPr();
+  }
+  if (!shippedPrVerification.ok) {
+    if (
+      shippedPrVerification.kind === "pr_missing" &&
+      shipTruthAttempt < MAX_DISPATCH_ATTEMPTS
+    ) {
+      return runVerifyCmrWithShipTruthAttempt(input, shipTruthAttempt + 1);
+    }
     const reason =
-      `family ship worker opened a PR, but the PR head (${ship.prHead ?? "missing"}) ` +
-      `does not match current family HEAD (${exactPostShipFamilyHead}); refusing to persist a shipped marker`;
-    await familyBackend.recordAborted?.({
-      phase,
-      familyBase,
-      errorPackage: { reason },
+      `family ship PR failed host verification after ${MAX_DISPATCH_ATTEMPTS} ` +
+      `${shippedPrVerification.kind === "observation_failed" ? "observation" : shippedPrVerification.kind === "pr_missing" ? "dispatch" : "decision"} attempts: ` +
+      shippedPrVerification.reason;
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        shippedPrVerification.kind === "mismatch"
+          ? "inspect the observed PR base/head and decide whether to repair or accept it; never re-run the mutating ship blindly"
+          : "repair the family ship PR on the host or its locator, then rerun the final family barrier",
+      ship: {
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        currentFamilyHead: exactPostShipFamilyHead,
+        shipPrState: "host-verification-failed",
+      },
+      heads: {
+        actualFamilyHead: exactPostShipFamilyHead,
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        sources: {
+          actualFamilyHead: "family head after ship worker",
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
+    await familyBackend.escalateFamily?.({
+      reason,
       familyHeadAfter: exactPostShipFamilyHead,
+      stopSummary,
     });
     await recordDurableAbort(familyBackend, {
       phase,
       reason,
       familyHeadAfter: exactPostShipFamilyHead,
-      stopSummary: infraFailureStopSummary({
-        summary: reason,
-        repairHint:
-          "repair the family ship worker PR head binding and rerun the final family barrier",
-        ship: {
-          latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
-          currentFamilyHead: exactPostShipFamilyHead,
-          reportedFamilyHead: ship.prHead,
-          shipPrState: "pr-head-mismatch",
-        },
-        heads: {
-          actualFamilyHead: exactPostShipFamilyHead,
-          verifiedCmrHead: cmrPassedFamilyHeadAfter,
-          sources: {
-            actualFamilyHead: "family head after ship worker",
-            verifiedCmrHead: "latest cmr_passed ledger row",
-          },
-        },
-      }),
+      stopSummary,
     });
-    return INCOMPLETE_GATE;
+    if (shippedPrVerification.kind === "pr_missing") {
+      await closeShipStreak("exhausted");
+    }
+    return { ok: false, ran: true };
   }
-
   // ── Persist the terminal SHIPPED marker before reporting success (online review
   // r2, codex P1). The family ship commit (VERSION/CHANGELOG bump) advanced the
   // family base, but nothing durable recorded that the terminal 止于-PR ship ALREADY
@@ -3391,13 +3655,13 @@ export async function runVerifyCmr(
   // resume truth: the spine's `familyAlreadyShipped` guard short-circuits the barrier
   // only when the current family HEAD still equals this shipped head.
   const shippedHeadsSummary = {
-    reportedFamilyHead: ship.prHead,
+    reportedFamilyHead: exactPostShipFamilyHead,
     actualFamilyHead: exactPostShipFamilyHead,
     ...(cmrPassedFamilyHeadAfter !== undefined
       ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
       : {}),
     sources: {
-      reportedFamilyHead: "ship worker reported prHead",
+      reportedFamilyHead: "host-observed family HEAD used for PR truth",
       actualFamilyHead: "family head after ship worker",
       verifiedCmrHead: "latest cmr_passed ledger row",
     },
@@ -3432,6 +3696,7 @@ export async function runVerifyCmr(
           },
         }
       : shippedSuccessSummary;
+  await closeShipStreak("shipped");
   await recordShipped(familyBackend, {
     pr: ship.pr,
     familyHeadAfter: exactPostShipFamilyHead,
@@ -3448,7 +3713,7 @@ export async function runVerifyCmr(
       kind: "ship",
       branch: familyBase,
       pr: ship.pr,
-      prHead: ship.prHead,
+      prHead: exactPostShipFamilyHead,
       status: "pr_opened",
     },
     resolvedRoute,

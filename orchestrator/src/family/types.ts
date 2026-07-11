@@ -168,6 +168,15 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
+   *   - `"ship_dispatch_reserved"` / `"ship_dispatch_attempt"` — the two-phase
+   *     final-barrier launch marker. Reservation is written before launch; attempt
+   *     confirms physical launch. Neither is delivery or unblock truth.
+   *   - `"ship_completed"` — the ship worker reported a PR locator and branch,
+   *     before host observation verified either. This is advisory observation input
+   *     only; it is deliberately not delivery, unblock, or review-loop truth.
+   *   - `"ship_streak_opened"` / `"ship_streak_closed"` — durable boundaries for
+   *     the exactly-once mutating ship budget. CMR rows and HEAD movement do not
+   *     split an open streak.
    */
   readonly status:
     | "merged"
@@ -185,7 +194,12 @@ export interface FamilyLedgerEntry {
     | "admission_skipped"
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
-    | "worker_dispatched";
+    | "worker_dispatched"
+    | "ship_streak_opened"
+    | "ship_streak_closed"
+    | "ship_dispatch_reserved"
+    | "ship_dispatch_attempt"
+    | "ship_completed";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -220,6 +234,11 @@ export interface FamilyLedgerEntry {
    *     carries a `childIssue` it answers a `child_decision_parked` row (#604 slice 5).
    *   - `"admission_skipped"` — paired with `status:"admission_skipped"`; records
    *     production admission skips before scheduling.
+   *   - `"ship_dispatch_reserved"` — paired with the same status and written
+   *     before launch; `"ship_dispatch_attempt"` confirms successful spawn. Only
+   *     confirmed attempts consume the mutating budget.
+   *   - `"ship_completed"` — paired with `status:"ship_completed"`; a worker-
+   *     reported PR locator plus branch persisted before host observation (#823).
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
   readonly event?:
@@ -238,7 +257,12 @@ export interface FamilyLedgerEntry {
     | "admission_skipped"
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
-    | "worker_dispatched";
+    | "worker_dispatched"
+    | "ship_streak_opened"
+    | "ship_streak_closed"
+    | "ship_dispatch_reserved"
+    | "ship_dispatch_attempt"
+    | "ship_completed";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
   /**
@@ -315,6 +339,18 @@ export interface FamilyLedgerEntry {
    * guard's "already delivered" decision is locatable from the ledger alone.
    */
   readonly pr?: string;
+  /** Worker-reported branch on a `ship_completed` observation-input row (#823). */
+  readonly shipBranch?: string;
+  /** Correlates a pre-launch reservation with its confirmed physical launch. */
+  readonly shipDispatchId?: string;
+  /** Stable identity shared by the open/close rows of one ship streak. */
+  readonly shipStreakId?: string;
+  /** Legacy confirmed attempts carried into a newly materialized streak anchor. */
+  readonly shipAttemptsAtOpen?: number;
+  /** Legacy unconfirmed reservations carried into a newly materialized streak anchor. */
+  readonly shipInfraAttemptsAtOpen?: number;
+  /** Why an open ship streak became terminal. */
+  readonly shipStreakOutcome?: "shipped" | "exhausted";
   /** PR number on `status:"pr_merged"` terminal entries (#602). */
   readonly prNumber?: number;
   /** Remote branch name on `status:"pr_merged"` terminal entries (#602). */
@@ -642,6 +678,11 @@ export interface FamilyBackend {
   verifyFamilyShippedPr?(
     request: VerifyFamilyShippedPrRequest,
   ): Promise<VerifyFamilyShippedPrResult>;
+  /** Discover host truth after a ship dispatch throws, before any replacement dispatch. */
+  findFamilyShippedPr?(request: {
+    readonly familyBase: string;
+    readonly expectedHead: string;
+  }): Promise<FindFamilyShippedPrResult>;
   /**
    * Absolute git working directory for the family base clone. Optional — used to
    * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
@@ -780,7 +821,22 @@ export interface VerifyFamilyShippedPrRequest {
 
 export type VerifyFamilyShippedPrResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: string };
+  | {
+      readonly ok: false;
+      /** Host truth, not an error-string inference at the caller. */
+      readonly kind: "pr_missing" | "observation_failed" | "mismatch";
+      readonly reason: string;
+    };
+
+/** Host discovery used after a mutating ship dispatch loses its return path. */
+export type FindFamilyShippedPrResult =
+  | { readonly ok: true; readonly pr: string }
+  | {
+      readonly ok: false;
+      /** `pr_missing` is the only result that permits another mutating dispatch. */
+      readonly kind: "pr_missing" | "observation_failed" | "mismatch";
+      readonly reason: string;
+    };
 
 /**
  * An `aborted` event #296 hands to #298's `recordAborted` seam on a red verify
@@ -814,10 +870,16 @@ export interface FamilyAbortedEvent {
 export interface FamilyEscalation {
   /** Why the family gate paused. */
   readonly reason: string;
+  /** Worker-provided context needed for the human decision. */
+  readonly diagnosis?: string;
   /** Family base HEAD at the pause point, when known. */
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary for this pause, when the caller can classify it. */
   readonly stopSummary?: StopSummary;
+  /** Durable escalation semantic; defaults to the decision-gate meaning. */
+  readonly escalationKind?: "decision" | "failure";
+  /** Durable escalation phase; defaults to the final family gate. */
+  readonly phase?: "wave" | "final";
 }
 
 /** What the merger needs to merge one child branch into the family base. */
@@ -878,6 +940,8 @@ export interface MergeResult {
    * merge (the #293 happy path); the LLM resolver is never touched.
    */
   readonly conflicted?: boolean;
+  /** A human decision requested by the merger worker (ADR 0062 durable park). */
+  readonly escalation?: FamilyEscalation;
   /**
    * Was this merge LLM-resolved (the `resolving-merge-conflicts` soul ran) rather
    * than a clean deterministic merge? (#295.) Set by the merger AFTER a successful

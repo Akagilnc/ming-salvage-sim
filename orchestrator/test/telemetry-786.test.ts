@@ -11,10 +11,48 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const gitExecControl = vi.hoisted(() => ({
+  hangNextGitNumstat: false,
+  timeoutOptions: [] as unknown[],
+  releaseHungGit: undefined as undefined | (() => void),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFile: vi.fn((file, args, options, callback) => {
+      if (
+        file === "git" &&
+        gitExecControl.hangNextGitNumstat &&
+        args[0] === "show" &&
+        args.includes("--numstat")
+      ) {
+        gitExecControl.hangNextGitNumstat = false;
+        gitExecControl.timeoutOptions.push(options);
+        gitExecControl.releaseHungGit = () => {
+          callback(Object.assign(new Error("git timed out"), {
+            killed: true,
+            signal: "SIGTERM",
+          }), "", "");
+        };
+        return undefined;
+      }
+      return actual.execFile(
+        file,
+        args as Parameters<typeof actual.execFile>[1],
+        options as Parameters<typeof actual.execFile>[2],
+        callback as Parameters<typeof actual.execFile>[3],
+      );
+    }),
+  };
+});
 
 import { dispatchWorkerWithMonitor } from "../src/dispatchWorker.js";
 import { workerResultFromMonitorSidecar } from "../src/cliMonitorHooks.js";
@@ -30,9 +68,9 @@ import {
   categoryFromReason,
   classifyWorkerTerminal,
   clearTelemetryRunEnvironment,
-  collectCommitDiffLines,
-  collectCommitMetrics,
-  commitsBetween,
+  collectCommitDiffAuditAsync,
+  collectCommitMetricsAsync,
+  commitsBetweenAsync,
   configureTelemetryFromWorkerImage,
   configureTelemetryRunEnvironment,
   durableTelemetryDirForSingleSlice,
@@ -44,6 +82,7 @@ import {
   newLegId,
   readTelemetryRecords,
   recordVerificationStamp,
+  scheduleCommitTelemetry,
   TELEMETRY_FILENAME,
   tryAppendTelemetryRecord,
   type TelemetryCollectRecord,
@@ -67,6 +106,9 @@ const tempDirs: string[] = [];
 
 afterEach(() => {
   clearTelemetryRunEnvironment();
+  gitExecControl.hangNextGitNumstat = false;
+  gitExecControl.timeoutOptions = [];
+  gitExecControl.releaseHungGit = undefined;
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -256,6 +298,7 @@ describe("#786 telemetry pure helpers", () => {
       runId: "run-786",
       issue: 786,
       commit: "abc123",
+      worker: { stepId: null, modelSlug: null },
       files: 3,
       insertions: 12,
       deletions: 4,
@@ -342,6 +385,310 @@ describe("#786 telemetry pure helpers", () => {
     expect(record.assertions).toEqual({ added: 0, deleted: 0 });
   });
 
+  it("keeps TypeScript UTF-16 trivia offsets aligned after an astral character", () => {
+    const record = buildCommitStamp({
+      commit: "abc123",
+      diffLines: [
+        '+const example = "😀 value as any; @ts-ignore; expect(";',
+        "+const real = value as any;",
+      ],
+    });
+
+    expect(record.escapeHatches?.added.asAny).toBe(1);
+    expect(record.escapeHatches?.added.tsIgnore).toBe(0);
+    expect(record.assertions?.added).toBe(0);
+  });
+
+  it("excludes escape-hatch examples in JSX text", () => {
+    const record = buildCommitStamp({
+      commit: "abc123",
+      diffLines: [
+        "+export const Example = () => <pre>value as any; @ts-ignore; expect(</pre>;",
+        "+const real = value as any;",
+      ],
+    });
+
+    expect(record.escapeHatches?.added.asAny).toBe(1);
+    expect(record.escapeHatches?.added.tsIgnore).toBe(0);
+    expect(record.assertions?.added).toBe(0);
+  });
+
+  it("counts an as-any escape hatch in a .ts generic arrow body", async () => {
+    const repo = tempDir("orch-786-ts-generic-arrow-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "generic.ts");
+    writeFileSync(fixture, "export const f = <T>(x: T) => x;\n");
+    execFileSync("git", ["add", "generic.ts"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    writeFileSync(fixture, "export const f = <T>(x: T) => x as any;\n");
+    execFileSync("git", ["commit", "-am", "add escape hatch", "-q"], { cwd: repo });
+
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
+
+    expect(buildCommitStamp({ commit, ...audit! }).escapeHatches?.added.asAny).toBe(1);
+  });
+
+  it("does not count escape-hatch examples in Markdown diff lines", async () => {
+    const repo = tempDir("orch-786-markdown-escape-hatch-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "README.md");
+    writeFileSync(fixture, "# Example\n");
+    execFileSync("git", ["add", "README.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    writeFileSync(
+      fixture,
+      "# Example\n\nvalue as any\n@ts-ignore\nJSON.parse(JSON.stringify(value))\n",
+    );
+    execFileSync("git", ["commit", "-am", "document escape hatches", "-q"], { cwd: repo });
+
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
+
+    expect(buildCommitStamp({ commit, ...audit! }).escapeHatches).toEqual({
+      added: { asAny: 0, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+      deleted: { asAny: 0, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+    });
+  });
+
+  it("returns before a gated commit collection begins or completes", async () => {
+    let beginCollection!: () => void;
+    const collectionBegun = new Promise<void>((resolve) => { beginCollection = resolve; });
+    let releaseCollection!: () => void;
+    const release = new Promise<void>((resolve) => { releaseCollection = resolve; });
+    let completed = false;
+
+    const pending = scheduleCommitTelemetry(
+      { ledgerDir: undefined, repoPath: "/unused", before: "before", after: "after" },
+      async () => {
+        beginCollection();
+        await release;
+        completed = true;
+      },
+    );
+
+    // The caller can continue routing before even the first git read starts.
+    expect(completed).toBe(false);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await collectionBegun;
+    expect(completed).toBe(false);
+    releaseCollection();
+    await pending;
+    expect(completed).toBe(true);
+  });
+
+  it("serializes scheduled collections for one ledger in observation order", async () => {
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstBegun!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstBegun = resolve; });
+    const appendOrder: string[] = [];
+
+    const first = scheduleCommitTelemetry(
+      { ledgerDir: "/ledger", repoPath: "/unused", before: "before", after: "first" },
+      async () => {
+        firstBegun();
+        await firstBlocked;
+        appendOrder.push("first");
+      },
+    );
+    const second = scheduleCommitTelemetry(
+      { ledgerDir: "/ledger", repoPath: "/unused", before: "first", after: "second" },
+      async () => {
+        appendOrder.push("second");
+      },
+    );
+
+    await firstStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(appendOrder).toEqual([]);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(appendOrder).toEqual(["first", "second"]);
+  });
+
+  it("freezes concurrent collection ranges when each coder schedule captures its own HEAD", async () => {
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstBegun!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstBegun = resolve; });
+    const observed: Array<{ before: string; after: string }> = [];
+    const collect = async (input: { readonly before: string; readonly after: string }): Promise<void> => {
+      observed.push({ before: input.before, after: input.after });
+      if (input.after === "commit-a") {
+        firstBegun();
+        await firstBlocked;
+      }
+    };
+
+    const first = scheduleCommitTelemetry(
+      { ledgerDir: "/frozen-boundary", repoPath: "/unused", before: "base", after: "commit-a" },
+      collect,
+    );
+    const second = scheduleCommitTelemetry(
+      { ledgerDir: "/frozen-boundary", repoPath: "/unused", before: "commit-a", after: "commit-b" },
+      collect,
+    );
+
+    await firstStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(observed).toEqual([{ before: "base", after: "commit-a" }]);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(observed).toEqual([
+      { before: "base", after: "commit-a" },
+      { before: "commit-a", after: "commit-b" },
+    ]);
+  });
+
+  it("times out a hung git read, writes a partial stamp, and drains the ledger queue", async () => {
+    const repo = tempDir("orch-786-timeout-drain-");
+    const ledgerDir = join(repo, "ledger");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    writeFileSync(join(repo, "tracked.txt"), "base\n");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    writeFileSync(join(repo, "tracked.txt"), "first\n");
+    execFileSync("git", ["commit", "-am", "first", "-q"], { cwd: repo });
+    const firstCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    writeFileSync(join(repo, "tracked.txt"), "second\n");
+    execFileSync("git", ["commit", "-am", "second", "-q"], { cwd: repo });
+    const secondCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    gitExecControl.hangNextGitNumstat = true;
+    const first = scheduleCommitTelemetry({
+      ledgerDir,
+      repoPath: repo,
+      worker: { stepId: "S5", modelSlug: "relay-fallback" },
+      before: base,
+      after: firstCommit,
+    });
+    const second = scheduleCommitTelemetry({ ledgerDir, repoPath: repo, before: firstCommit, after: secondCommit });
+    await vi.waitFor(() => {
+      expect(gitExecControl.releaseHungGit).toBeTypeOf("function");
+    });
+    expect(gitExecControl.timeoutOptions).toContainEqual(expect.objectContaining({
+      timeout: 5_000,
+      killSignal: "SIGTERM",
+    }));
+
+    gitExecControl.releaseHungGit!();
+    await Promise.all([first, second]);
+
+    const records = readTelemetryRecords(ledgerDir).filter(
+      (record): record is TelemetryCommitRecord => record.phase === "commit",
+    );
+    expect(records.map((record) => record.commit)).toEqual([firstCommit, secondCommit]);
+    expect(records[0]).toMatchObject({ files: null, insertions: null, deletions: null });
+    expect(records[0]?.worker).toEqual({ stepId: "S5", modelSlug: "relay-fallback" });
+  });
+
+  it("excludes an escape hatch changed inside an existing post-image block comment", () => {
+    const record = buildCommitStamp({
+      commit: "abc123",
+      diffLines: [
+        "@@ -4 +4 @@ export function example() {",
+        "+ * revised example: value as any",
+      ],
+      // The post-image's full-file TypeScript scan, rather than this
+      // zero-context hunk, establishes that this range is comment trivia.
+      triviaByDiffIndex: new Map([[1, [{ start: 0, end: 37, kind: "comment" as const }]]]),
+    });
+
+    expect(record.escapeHatches?.added.asAny).toBe(0);
+  });
+
+  it("derives block-comment state from the changed file post-image, not the zero-context hunk", async () => {
+    const repo = tempDir("orch-786-comment-post-image-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "fixture.ts");
+    writeFileSync(fixture, "/* existing example\n * value as any\n */\nexport const ok = true;\n");
+    execFileSync("git", ["add", "fixture.ts"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    writeFileSync(fixture, "/* existing example\n * revised value as any\n */\nexport const ok = true;\n");
+    execFileSync("git", ["commit", "-am", "change comment", "-q"], { cwd: repo });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
+    expect(audit).toBeDefined();
+    const record = buildCommitStamp({ commit, ...audit! });
+
+    expect(record.escapeHatches?.added.asAny).toBe(0);
+  });
+
+  it("uses TypeScript trivia from both images, preserving template expressions as code", async () => {
+    const repo = tempDir("orch-786-typescript-trivia-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "fixture.ts");
+    writeFileSync(
+      fixture,
+      [
+        "/* retained comment",
+        " * value as any",
+        " */",
+        "const removed = value as any;",
+        "const quoted = '/* value as any';",
+        "const templated = `updated comment /* ${`inner ${value as any}`} tail`;",
+        "",
+      ].join("\n"),
+    );
+    execFileSync("git", ["add", "fixture.ts"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    writeFileSync(
+      fixture,
+      [
+        "/* retained comment",
+        " */",
+        "const quoted = '/* value as any';",
+        "const templated = `comment /* ${`inner ${value as any}`} tail`;",
+        "",
+      ].join("\n"),
+    );
+    execFileSync("git", ["commit", "-am", "remove trivia cases", "-q"], { cwd: repo });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
+    expect(audit).toBeDefined();
+    const record = buildCommitStamp({ commit, ...audit! });
+
+    expect(record.escapeHatches).toEqual({
+      added: { asAny: 1, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+      deleted: { asAny: 2, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+    });
+  });
+
+  it("uses the pre-image trivia table when a deleted file contains only comment examples", async () => {
+    const repo = tempDir("orch-786-typescript-trivia-deleted-file-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "deleted.ts");
+    writeFileSync(fixture, "/* value as any */\nconst quoted = '/* value as any';\n");
+    execFileSync("git", ["add", "deleted.ts"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    rmSync(fixture);
+    execFileSync("git", ["add", "-u"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "delete fixture"], { cwd: repo });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
+    expect(audit).toBeDefined();
+    expect(buildCommitStamp({ commit, ...audit! }).escapeHatches?.deleted.asAny).toBe(0);
+  });
+
   it("leaves per-commit metrics null when host git collection is unavailable", () => {
     expect(buildCommitStamp({ commit: "abc123" })).toMatchObject({
       files: null,
@@ -403,14 +750,39 @@ describe("#786 telemetry pure helpers", () => {
       "stamped_at",
       "test",
       "v",
+      "worker",
     ]);
   });
 
-  it("fails open when the host-git repository is unavailable", () => {
+  it("fails open when the host-git repository is unavailable", async () => {
     const missingRepo = join(tempDir("orch-786-missing-git-"), "missing");
-    expect(collectCommitMetrics(missingRepo, "abc123")).toBeUndefined();
-    expect(collectCommitDiffLines(missingRepo, "abc123")).toBeUndefined();
-    expect(commitsBetween(missingRepo, "before", "after")).toBeUndefined();
+    expect(await collectCommitMetricsAsync(missingRepo, "abc123")).toBeUndefined();
+    expect(await collectCommitDiffAuditAsync(missingRepo, "abc123")).toBeUndefined();
+    expect(await commitsBetweenAsync(missingRepo, "before", "after")).toBeUndefined();
+  });
+
+  it("keeps text numstat metrics when the commit also contains a binary file", async () => {
+    const repo = tempDir("orch-786-binary-numstat-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    execFileSync("git", ["add", "base.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+
+    mkdirSync(join(repo, "src"));
+    writeFileSync(join(repo, "src", "value.ts"), "export const value = true;\n");
+    writeFileSync(join(repo, "asset.bin"), Buffer.from([0, 1, 2, 3]));
+    execFileSync("git", ["add", "src/value.ts", "asset.bin"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "add text and binary files"], { cwd: repo });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    await expect(collectCommitMetricsAsync(repo, commit)).resolves.toMatchObject({
+      files: 2,
+      insertions: 1,
+      deletions: 0,
+      source: { files: 1, insertions: 1, deletions: 0 },
+    });
   });
 
   it("builds a review-round row with required dimensions and nulls unavailable data", () => {
@@ -667,16 +1039,7 @@ describe("#786 telemetry pure helpers", () => {
     ).toBe("stream-disconnect");
   });
 
-  it("categoryFromReason maps realBackend max-iteration completion-signal text to honest-incomplete", () => {
-    // Exact shape from realBackend.assertCompletionSignal (realBackend.ts:~1095).
-    const realMaxIter =
-      'realBackend: step S2 did not fire its required completion ' +
-      'signal — expected "<coder>", got none (no signal fired before the ' +
-      "iteration limit). The agent must emit the completion signal to advance " +
-      'the step (#244 "agent emit completionSignal 才进下一步"); a ' +
-      "complete-but-unsignaled run (e.g. maxIter hit mid-work) does NOT advance.";
-    expect(categoryFromReason(realMaxIter)).toBe("honest-incomplete");
-
+  it("categoryFromReason maps remaining completion-signal gate reasons to honest-incomplete", () => {
     // ship / cmr / merger gate reasons (shipOutcome / realFamilyBackend).
     expect(
       categoryFromReason("ship worker did not fire its completion signal"),
@@ -699,11 +1062,11 @@ describe("#786 telemetry pure helpers", () => {
     // Must not classify as 429-quota via bare "limit" / must preserve message.
     const classified = classifyWorkerTerminal({
       kind: "thrown",
-      error: new Error(realMaxIter),
+      error: new Error("ship worker did not fire its completion signal"),
     });
     expect(classified.terminal).toBe("thrown");
     expect(classified.errorCategory).toBe("honest-incomplete");
-    expect(classified.errorMessage).toBe(realMaxIter);
+    expect(classified.errorMessage).toBe("ship worker did not fire its completion signal");
   });
 
   it("escalated missing-completion-signal is honest-incomplete (not category null)", () => {
@@ -1462,6 +1825,9 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     );
 
     expect(outcome.result.kind).toBe("completed");
+    await vi.waitFor(() => {
+      expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
+    });
     const records = readTelemetryRecords(ledgerDir);
     const dispatch = records.find((r) => r.phase === "dispatch") as
       | TelemetryDispatchRecord
@@ -1781,6 +2147,9 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     );
 
     expect(outcome.result.kind).toBe("completed");
+    await vi.waitFor(() => {
+      expect(readTelemetryRecords(ledgerDir).some((r) => r.phase === "environment")).toBe(true);
+    });
     const records = readTelemetryRecords(ledgerDir);
     expect(records.some((r) => r.phase === "environment")).toBe(true);
     expect(records.some((r) => r.phase === "dispatch")).toBe(true);

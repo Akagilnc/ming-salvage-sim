@@ -205,12 +205,12 @@ describe("integ-cmr int-r2 A-1 — runMergerAgent fails-closed (structured) with
     expect(be.sandboxReached).toBe(false);
   });
 
-  it("resolveMergeConflict surfaces the no-auth non-resolve as a loud throw (no phantom merged)", async () => {
+  it("resolveMergeConflict keeps the no-auth non-resolve conflicted (no phantom merged)", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const be = new NoClaudeMerger(baseOpts());
     await expect(
       be.resolveMergeConflict({ childIssue: 99, childBranch: "feat/child-99" }),
-    ).rejects.toThrow(/did not resolve|claude|token|auth/i);
+    ).resolves.toMatchObject({ conflicted: true });
     expect(be.sandboxReached).toBe(false);
   });
 });

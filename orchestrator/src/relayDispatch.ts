@@ -59,6 +59,23 @@ const blockedSchema = z
   })
   .strict();
 
+const resourceSignalSchema = z
+  .object({
+    resource: z.literal(true),
+    phase: z.enum(["build", "clear"]),
+    state_summary: nonEmpty,
+    remaining: nonEmpty,
+  })
+  .strict();
+
+const decisionGateSignalSchema = z
+  .object({
+    decision_gate: z.literal(true),
+    state_summary: nonEmpty,
+    remaining: nonEmpty.optional(),
+  })
+  .strict();
+
 export type RelayTagOutcome =
   | {
       readonly kind: "phase_complete";
@@ -72,11 +89,17 @@ export type RelayTagOutcome =
       readonly state_summary: string;
       readonly remaining?: string;
     }
+  | {
+      readonly kind: "decision_gate";
+      readonly state_summary: string;
+      readonly remaining?: string;
+    }
   | { readonly kind: "malformed"; readonly reason: string };
 
 /**
- * Parse the worker's `<relay>{…}</relay>` terminal. Shape-validated and
- * fail-closed: malformed ≠ phase_complete. Only the LAST tag is read.
+ * Parse the worker's `<relay>{…}</relay>` terminal. Resource relay and human
+ * decision are explicit signal bits; their prose is opaque context. Legacy
+ * #686 shapes remain readable during the rollout. Malformed tags are ignored.
  */
 export function parseRelayTag(stdout: string): RelayTagOutcome {
   const re = /<relay>([\s\S]*?)<\/relay>/g;
@@ -93,6 +116,25 @@ export function parseRelayTag(stdout: string): RelayTagOutcome {
   }
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "relay tag was not a JSON object" };
+  }
+  const resource = resourceSignalSchema.safeParse(parsed);
+  if (resource.success) {
+    return {
+      kind: "phase_complete",
+      phase: resource.data.phase,
+      state_summary: resource.data.state_summary,
+      remaining: resource.data.remaining,
+    };
+  }
+  const decisionGate = decisionGateSignalSchema.safeParse(parsed);
+  if (decisionGate.success) {
+    return {
+      kind: "decision_gate",
+      state_summary: decisionGate.data.state_summary,
+      ...(decisionGate.data.remaining !== undefined
+        ? { remaining: decisionGate.data.remaining }
+        : {}),
+    };
   }
   const blocked = blockedSchema.safeParse(parsed);
   if (blocked.success) {
@@ -444,31 +486,37 @@ export function isHangWithLivePoolError(
 }
 
 /**
- * #686 — worker self-reported `<relay>{"blocked":…}` (or phase_complete).
- * Resource failure: preserve drift, hand off — never reset.
+ * #686 — worker self-reported actionable `<relay>` terminal. Resource signals
+ * preserve drift and hand off; decision gates park for a human ruling.
  */
 export class SelfReportedRelayError extends Error {
   readonly tag: Extract<
     RelayTagOutcome,
-    { kind: "blocked" } | { kind: "phase_complete" }
+    { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
   >;
   readonly step?: StepId;
+  /** Provider session captured with the sidecar result before the relay tag throws. */
+  readonly sessionId?: string;
 
   constructor(
     tag: Extract<
       RelayTagOutcome,
-      { kind: "blocked" } | { kind: "phase_complete" }
+      { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
     >,
     step?: StepId,
+    sessionId?: string,
   ) {
     const label =
       tag.kind === "blocked"
         ? `self-reported blocked: ${tag.reason}`
-        : `phase_complete:${tag.phase}`;
+        : tag.kind === "phase_complete"
+          ? `phase_complete:${tag.phase}`
+          : `decision_gate:${tag.state_summary}`;
     super(label);
     this.name = "SelfReportedRelayError";
     this.tag = tag;
     if (step !== undefined) this.step = step;
+    if (sessionId !== undefined) this.sessionId = sessionId;
   }
 }
 
@@ -490,10 +538,17 @@ export function isSelfReportedRelayError(
 export function tryParseActionableRelayTag(
   stdout: string,
 ):
-  | Extract<RelayTagOutcome, { kind: "blocked" } | { kind: "phase_complete" }>
+  | Extract<
+      RelayTagOutcome,
+      { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
+    >
   | undefined {
   const parsed = parseRelayTag(stdout);
-  if (parsed.kind === "blocked" || parsed.kind === "phase_complete") {
+  if (
+    parsed.kind === "blocked" ||
+    parsed.kind === "phase_complete" ||
+    parsed.kind === "decision_gate"
+  ) {
     return parsed;
   }
   return undefined;
