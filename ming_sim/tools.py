@@ -396,7 +396,24 @@ def build_minister_tools(character: Character, context: CourtContext,
             t = max(1, min(24, int(turns)))
         except (TypeError, ValueError):
             t = 6
-        return filter_domain("treasury", acc)
+        if not hasattr(context.db, "conn"):
+            return filter_domain("treasury", acc)
+        start_turn = max(0, int(context.state.turn) - t + 1)
+        rows = context.db.conn.execute(
+            "SELECT turn, year, period, delta, balance_after, category, reason "
+            "FROM economy_ledger WHERE account=? AND turn>=? AND turn<=? "
+            "ORDER BY turn DESC, id DESC",
+            (acc, start_turn, int(context.state.turn)),
+        ).fetchall()
+        if not rows:
+            return f"见闻中未载{acc}近{t}回合流水。"
+        lines = [f"【{acc}近{t}回合流水】"]
+        for row in rows:
+            lines.append(
+                f"{row['year']}年{row['period']}月：{row['delta']:+d}（{row['reason'] or row['category']}；"
+                f"余额{row['balance_after']}）"
+            )
+        return "\n".join(lines)
 
     def audit_tax_arrears(target: str = "各省积欠") -> str:
         """清查积欠、估算可追收入库。"""
