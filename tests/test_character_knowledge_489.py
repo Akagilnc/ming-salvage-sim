@@ -145,6 +145,23 @@ def test_office_knowledge_domains_are_loaded_from_content(game, monkeypatch):
     assert "personnel" not in view["world"]
 
 
+def test_current_state_facts_are_selected_by_content_domain_not_role_label(
+    game, monkeypatch
+):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    monkeypatch.setattr(db, "faction_report", lambda: "当前派系事实")
+    monkeypatch.setattr(db, "army_report", lambda **_: "不应读取的军情")
+    monkeypatch.setattr(db, "treasury_report", lambda *_args, **_: "不应读取的账目")
+
+    view = db.get_character_knowledge(state, minister.name)["world"]
+
+    assert view["personnel"] == "当前派系事实"
+    assert "礼部本职所涉" not in view["personnel"]
+    assert "military" not in view
+    assert "treasury" not in view
+
+
 def test_turn_zero_knowledge_is_role_specific_and_restores(game):
     db, state, content = game
     household = next(c for c in content.characters.values() if c.office_type == "户部")

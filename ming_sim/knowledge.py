@@ -86,7 +86,11 @@ def _world(
     result["role"] = _role_roster(db, office_type)
     for domain in visible_domains:
         if domain in facts:
-            result[domain] = fact(f"{office_type}本职所涉：{facts[domain]}")
+            # The domain map is the semantic boundary.  Do not prepend an
+            # office label to manufacture a difference between otherwise
+            # identical reports; the value must remain an actual current-state
+            # fact selected by the content-owned domain mapping.
+            result[domain] = fact(facts[domain])
     return result
 
 
