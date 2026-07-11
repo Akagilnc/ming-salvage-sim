@@ -70,8 +70,11 @@ export function isMonitoredWorkerKind(kind: WorkerKind): boolean {
   return MONITORED_KINDS.has(kind);
 }
 
-/** Log directory for monitor handles: stateDir preferred, else worktree-local. */
+/** Log directory for monitor handles: durable telemetry dir preferred. */
 export function resolveMonitorLogDir(ctx: DispatchContext): string | undefined {
+  if (ctx.telemetryDir !== undefined && ctx.telemetryDir.length > 0) {
+    return join(ctx.telemetryDir, "worker-logs");
+  }
   if (ctx.stateDir !== undefined && ctx.stateDir.length > 0) {
     return join(ctx.stateDir, "worker-logs");
   }

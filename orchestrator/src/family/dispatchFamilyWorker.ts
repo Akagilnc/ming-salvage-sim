@@ -225,8 +225,15 @@ export async function dispatchFamilyWorkerWithMonitor(
   landing?: WorkerLandingPayload,
   opts?: DispatchFamilyWorkerWithMonitorOptions,
 ): Promise<DispatchFamilyWorkerWithMonitorOutcome> {
-  const ledgerDir = ctx.stateDir;
-  const telemetry = createTelemetryLegStamper({ ledgerDir, spec, ctx });
+  const telemetryDir =
+    ctx.telemetryDir ?? familyBackend.resolveTelemetryDir?.(ctx) ?? ctx.stateDir;
+  const telemetryCtx =
+    telemetryDir === undefined ? ctx : { ...ctx, telemetryDir };
+  const telemetry = createTelemetryLegStamper({
+    ledgerDir: telemetryDir,
+    spec,
+    ctx: telemetryCtx,
+  });
   let firstOutputAt: string | null = null;
   let logPath: string | null = null;
   let logStartOffset: number | undefined;
@@ -244,7 +251,7 @@ export async function dispatchFamilyWorkerWithMonitor(
   };
 
   try {
-    const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, ctx, landing);
+    const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, telemetryCtx, landing);
     if (cliSpec !== undefined) {
       const input: MonitoredCliDispatchInput = {
         command: cliSpec.command,
@@ -276,7 +283,7 @@ export async function dispatchFamilyWorkerWithMonitor(
       // Environment collection is intentionally lazy and non-blocking. It must
       // start before the persistence callback so a callback throw cannot erase
       // this run's environment row.
-      scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, familyBackend);
+      scheduleTelemetryEnvironmentStamp(telemetryDir, telemetryCtx, familyBackend);
       if (opts?.onMonitorHandleSpawned !== undefined) {
         try {
           await opts.onMonitorHandleSpawned(handle);
@@ -325,7 +332,7 @@ export async function dispatchFamilyWorkerWithMonitor(
       new Date().toISOString(),
       ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
-    scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, familyBackend);
+    scheduleTelemetryEnvironmentStamp(telemetryDir, telemetryCtx, familyBackend);
     const result = await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
     telemetry.stampCollect({ kind: "result", result });
     return { result };

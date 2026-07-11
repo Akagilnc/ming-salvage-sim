@@ -6,9 +6,16 @@ contracts before the behavioral suite runs.
 
 ## Telemetry sidecar (#786)
 
-Append-only JSONL at `<ledgerDir>/telemetry.jsonl`, parallel to the step ledger
-(`steps.jsonl`). Raw per-leg stamps only — aggregation / stats are out of scope
-for #786.
+Append-only JSONL at the durable ledger location
+`<ledgerDir>/telemetry.jsonl`, parallel to the step ledger (`steps.jsonl`). For
+single-slice runs this is `<dedicated-clone>/.ledger-<issue>/`; it is outside
+Sandcastle's `.sandcastle/worktrees/` prune scope. Family runs use their
+existing durable family `ledgerDir`. Raw per-leg stamps only — aggregation /
+stats are out of scope for #786.
+
+The durable telemetry directory is never automatically deleted. The former
+`.sandcastle/worktrees/.ledger-<issue>/telemetry.jsonl` path is retained as a
+read-only migration fallback for offline readers and is not a write target.
 
 Phases (one JSON object per line):
 

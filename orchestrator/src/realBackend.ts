@@ -205,7 +205,10 @@ import {
   isValidFixerResult,
   isValidVerifyResult,
 } from "./reviewLoopOutcome.js";
-import { configureTelemetryFromWorkerImage } from "./telemetry.js";
+import {
+  configureTelemetryFromWorkerImage,
+  durableTelemetryDirForSingleSlice,
+} from "./telemetry.js";
 import type {
   CleanupResult,
   DocReleaseResult,
@@ -3820,6 +3823,10 @@ export class RealBackend implements Backend {
       ctx,
       landing,
     });
+  }
+
+  resolveTelemetryDir(ctx: DispatchContext): string | undefined {
+    return durableTelemetryDirForSingleSlice(this.workingRepo, ctx.stateDir);
   }
 
   /**
