@@ -67,10 +67,9 @@ import {
   categoryFromReason,
   classifyWorkerTerminal,
   clearTelemetryRunEnvironment,
-  collectCommitDiffAudit,
-  collectCommitDiffLines,
-  collectCommitMetrics,
-  commitsBetween,
+  collectCommitDiffAuditAsync,
+  collectCommitMetricsAsync,
+  commitsBetweenAsync,
   configureTelemetryFromWorkerImage,
   configureTelemetryRunEnvironment,
   durableTelemetryDirForSingleSlice,
@@ -331,7 +330,7 @@ describe("#786 telemetry pure helpers", () => {
     expect(record.assertions?.added).toBe(0);
   });
 
-  it("counts an as-any escape hatch in a .ts generic arrow body", () => {
+  it("counts an as-any escape hatch in a .ts generic arrow body", async () => {
     const repo = tempDir("orch-786-ts-generic-arrow-");
     execFileSync("git", ["init", "-q"], { cwd: repo });
     execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
@@ -344,7 +343,7 @@ describe("#786 telemetry pure helpers", () => {
     execFileSync("git", ["commit", "-am", "add escape hatch", "-q"], { cwd: repo });
 
     const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
-    const audit = collectCommitDiffAudit(repo, commit);
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
 
     expect(buildCommitStamp({ commit, ...audit! }).escapeHatches?.added.asAny).toBe(1);
   });
@@ -494,7 +493,7 @@ describe("#786 telemetry pure helpers", () => {
     expect(record.escapeHatches?.added.asAny).toBe(0);
   });
 
-  it("derives block-comment state from the changed file post-image, not the zero-context hunk", () => {
+  it("derives block-comment state from the changed file post-image, not the zero-context hunk", async () => {
     const repo = tempDir("orch-786-comment-post-image-");
     execFileSync("git", ["init", "-q"], { cwd: repo });
     execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
@@ -507,14 +506,14 @@ describe("#786 telemetry pure helpers", () => {
     execFileSync("git", ["commit", "-am", "change comment", "-q"], { cwd: repo });
     const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
 
-    const audit = collectCommitDiffAudit(repo, commit);
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
     expect(audit).toBeDefined();
     const record = buildCommitStamp({ commit, ...audit! });
 
     expect(record.escapeHatches?.added.asAny).toBe(0);
   });
 
-  it("uses TypeScript trivia from both images, preserving template expressions as code", () => {
+  it("uses TypeScript trivia from both images, preserving template expressions as code", async () => {
     const repo = tempDir("orch-786-typescript-trivia-");
     execFileSync("git", ["init", "-q"], { cwd: repo });
     execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
@@ -547,7 +546,7 @@ describe("#786 telemetry pure helpers", () => {
     execFileSync("git", ["commit", "-am", "remove trivia cases", "-q"], { cwd: repo });
     const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
 
-    const audit = collectCommitDiffAudit(repo, commit);
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
     expect(audit).toBeDefined();
     const record = buildCommitStamp({ commit, ...audit! });
 
@@ -557,7 +556,7 @@ describe("#786 telemetry pure helpers", () => {
     });
   });
 
-  it("uses the pre-image trivia table when a deleted file contains only comment examples", () => {
+  it("uses the pre-image trivia table when a deleted file contains only comment examples", async () => {
     const repo = tempDir("orch-786-typescript-trivia-deleted-file-");
     execFileSync("git", ["init", "-q"], { cwd: repo });
     execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
@@ -571,7 +570,7 @@ describe("#786 telemetry pure helpers", () => {
     execFileSync("git", ["commit", "-qm", "delete fixture"], { cwd: repo });
     const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
 
-    const audit = collectCommitDiffAudit(repo, commit);
+    const audit = await collectCommitDiffAuditAsync(repo, commit);
     expect(audit).toBeDefined();
     expect(buildCommitStamp({ commit, ...audit! }).escapeHatches?.deleted.asAny).toBe(0);
   });
@@ -640,11 +639,11 @@ describe("#786 telemetry pure helpers", () => {
     ]);
   });
 
-  it("fails open when the host-git repository is unavailable", () => {
+  it("fails open when the host-git repository is unavailable", async () => {
     const missingRepo = join(tempDir("orch-786-missing-git-"), "missing");
-    expect(collectCommitMetrics(missingRepo, "abc123")).toBeUndefined();
-    expect(collectCommitDiffLines(missingRepo, "abc123")).toBeUndefined();
-    expect(commitsBetween(missingRepo, "before", "after")).toBeUndefined();
+    expect(await collectCommitMetricsAsync(missingRepo, "abc123")).toBeUndefined();
+    expect(await collectCommitDiffAuditAsync(missingRepo, "abc123")).toBeUndefined();
+    expect(await commitsBetweenAsync(missingRepo, "before", "after")).toBeUndefined();
   });
 
   it("builds a review-round row with required dimensions and nulls unavailable data", () => {

@@ -3279,6 +3279,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // from an issue. Telemetry therefore needs a separate per-invocation key:
   // same-issue restarts must append a fresh environment row, never dedupe it.
   const runId = mintRunId();
+  let lastResolvedBranchHEAD: string | undefined;
 
   /**
    * Resolve the ledger's `branchHEAD` value (#256).
@@ -3294,11 +3295,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (backend.worktreeHead !== undefined) {
       try {
         const sha = await backend.worktreeHead(worktree);
-        if (sha !== undefined && sha.length > 0) return sha;
+        if (sha !== undefined && sha.length > 0) {
+          lastResolvedBranchHEAD = sha;
+          return sha;
+        }
       } catch {
         // fall through to the branch-name fallback
       }
     }
+    lastResolvedBranchHEAD = worktree.branch;
     return worktree.branch;
   }
 
@@ -4320,8 +4325,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         promptFile = stepSpecs[step].promptFile;
         const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
-        const coderHeadBeforeStep =
-          expectedKind === "coder" ? gitHead(worktree) : undefined;
+        // Telemetry must not perform boundary-capture I/O on the routing path.
+        // Reuse the latest durable value already held by the runner; legacy/fake
+        // ledgers without an oid are resolved later inside the telemetry queue.
+        const stepTelemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
+        const coderHeadBeforeStep = expectedKind === "coder"
+          ? (lastResolvedBranchHEAD !== undefined && isLikelyGitSha(lastResolvedBranchHEAD)
+              ? lastResolvedBranchHEAD
+              : stepTelemetryDir === undefined ? gitHead(worktree) : undefined)
+          : undefined;
         try {
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
@@ -4807,19 +4819,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // A failed read/write cannot affect the step's ledger or route decision.
         // Trigger this from the expected worker role before any output contract
         // gate: a worker may have committed before reporting malformed output.
-        if (expectedKind === "coder" && coderHeadBeforeStep !== undefined && worktree !== undefined) {
-          // Freeze both boundaries before yielding. Deferred collection must
-          // never reread HEAD, or concurrent coder steps can overlap ranges.
-          const coderHeadAfterStep = gitHead(worktree);
-          const telemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
-          if (telemetryDir !== undefined && coderHeadAfterStep !== undefined) {
+        if (expectedKind === "coder" && worktree !== undefined) {
+          const telemetryDir = stepTelemetryDir;
+          if (telemetryDir !== undefined) {
             void scheduleCommitTelemetry({
               ledgerDir: telemetryDir,
               repoPath: worktree.path,
               runId,
               issue: issueNumber,
-              before: coderHeadBeforeStep,
-              after: coderHeadAfterStep,
+              before: coderHeadBeforeStep === undefined
+                ? { kind: "resolve-before-head", commitsAdded:
+                    output.kind === "coder" && Number.isInteger(output.commitsAdded)
+                      ? output.commitsAdded
+                      : 1 }
+                : { kind: "held", oid: coderHeadBeforeStep },
+              after: { kind: "resolve-head" },
             });
           }
         }

@@ -302,8 +302,8 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       expect(schedule).toHaveBeenCalledOnce();
       expect(schedule.mock.calls[0]?.[0]).toMatchObject({
         repoPath: repo,
-        before: expect.any(String),
-        after: expect.any(String),
+        before: { kind: "resolve-before-head", commitsAdded: 1 },
+        after: { kind: "resolve-head" },
       });
       releaseCollection();
     } finally {
