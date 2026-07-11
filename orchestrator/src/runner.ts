@@ -4690,7 +4690,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             return await escalateTermination(
               step,
               escalation,
-              undefined,
+              err.sessionId,
               "decision",
               decisionOutput,
               decisionGateParkStopSummary({
@@ -5106,7 +5106,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             return await escalateTermination(
               "S7",
               escalation,
-              undefined,
+              err.sessionId,
               "decision",
               undefined,
               decisionGateParkStopSummary({
@@ -6315,7 +6315,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             return await escalateTermination(
               reviewStep,
               escalation,
-              undefined,
+              err.sessionId,
               "decision",
               undefined,
               decisionGateParkStopSummary({

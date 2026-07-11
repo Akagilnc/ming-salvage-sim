@@ -1156,7 +1156,7 @@ export async function dispatchWorkerWithMonitor(
         if (logText !== null) {
           const tag = tryParseActionableRelayTag(logText);
           if (tag !== undefined) {
-            throw new SelfReportedRelayError(tag, spec.id);
+            throw new SelfReportedRelayError(tag, spec.id, result.sessionId);
           }
         }
       } catch (err) {
