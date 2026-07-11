@@ -4417,6 +4417,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const coderHeadBeforeStep = expectedKind === "coder"
           ? gitHead(worktree)
           : undefined;
+        let commitTelemetryWorker:
+          | { readonly stepId: string; readonly modelSlug: string }
+          | undefined;
         try {
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
@@ -4446,6 +4449,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 typeof resumeSessionId === "string" ? "resume" : "fresh",
                 billingPool,
               );
+              if (expectedKind === "coder") {
+                commitTelemetryWorker = {
+                  stepId: workerSpec.id,
+                  modelSlug: workerSpec.model,
+                };
+              }
               const focusPath = relayFocusForDispatch(step);
               const dispatchCtx = {
                 runId,
@@ -4938,6 +4947,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               repoPath: worktree.path,
               runId,
               issue: issueNumber,
+              ...(commitTelemetryWorker !== undefined
+                ? { worker: commitTelemetryWorker }
+                : {}),
               before: coderHeadBeforeStep === undefined
                 ? { kind: "resolve-before-head", commitsAdded:
                     output.kind === "coder" && Number.isInteger(output.commitsAdded)
