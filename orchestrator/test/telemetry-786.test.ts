@@ -269,9 +269,9 @@ describe("#786 telemetry pure helpers", () => {
         "@@ -4 +4 @@ export function example() {",
         "+ * revised example: value as any",
       ],
-      // The post-image's full-file scan, rather than this zero-context hunk,
-      // establishes that the changed line starts inside an existing /* ... */.
-      addedBlockCommentDiffIndexes: new Set([1]),
+      // The post-image's full-file TypeScript scan, rather than this
+      // zero-context hunk, establishes that this range is comment trivia.
+      triviaByDiffIndex: new Map([[1, [{ start: 0, end: 37, kind: "comment" as const }]]]),
     });
 
     expect(record.escapeHatches?.added.asAny).toBe(0);
@@ -295,6 +295,68 @@ describe("#786 telemetry pure helpers", () => {
     const record = buildCommitStamp({ commit, ...audit! });
 
     expect(record.escapeHatches?.added.asAny).toBe(0);
+  });
+
+  it("uses TypeScript trivia from both images, preserving template expressions as code", () => {
+    const repo = tempDir("orch-786-typescript-trivia-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "fixture.ts");
+    writeFileSync(
+      fixture,
+      [
+        "/* retained comment",
+        " * value as any",
+        " */",
+        "const removed = value as any;",
+        "const quoted = '/* value as any';",
+        "const templated = `updated comment /* ${`inner ${value as any}`} tail`;",
+        "",
+      ].join("\n"),
+    );
+    execFileSync("git", ["add", "fixture.ts"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    writeFileSync(
+      fixture,
+      [
+        "/* retained comment",
+        " */",
+        "const quoted = '/* value as any';",
+        "const templated = `comment /* ${`inner ${value as any}`} tail`;",
+        "",
+      ].join("\n"),
+    );
+    execFileSync("git", ["commit", "-am", "remove trivia cases", "-q"], { cwd: repo });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    const audit = collectCommitDiffAudit(repo, commit);
+    expect(audit).toBeDefined();
+    const record = buildCommitStamp({ commit, ...audit! });
+
+    expect(record.escapeHatches).toEqual({
+      added: { asAny: 1, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+      deleted: { asAny: 2, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+    });
+  });
+
+  it("uses the pre-image trivia table when a deleted file contains only comment examples", () => {
+    const repo = tempDir("orch-786-typescript-trivia-deleted-file-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "deleted.ts");
+    writeFileSync(fixture, "/* value as any */\nconst quoted = '/* value as any';\n");
+    execFileSync("git", ["add", "deleted.ts"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    rmSync(fixture);
+    execFileSync("git", ["add", "-u"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "delete fixture"], { cwd: repo });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    const audit = collectCommitDiffAudit(repo, commit);
+    expect(audit).toBeDefined();
+    expect(buildCommitStamp({ commit, ...audit! }).escapeHatches?.deleted.asAny).toBe(0);
   });
 
   it("leaves per-commit metrics null when host git collection is unavailable", () => {

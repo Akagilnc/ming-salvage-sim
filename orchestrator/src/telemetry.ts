@@ -37,6 +37,8 @@ import {
 import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import ts from "typescript";
+
 import {
   resolveCoderRecOrder,
 } from "./coderRoster.js";
@@ -1247,12 +1249,8 @@ export interface BuildCommitStampInput {
   readonly metrics?: TelemetryCommitMetrics;
   /** Changed lines from host `git show --unified=0`, for #782 / assertion auditing. */
   readonly diffLines?: readonly string[];
-  /**
-   * Diff-line indexes whose added line starts inside a block comment in the
-   * commit post-image. This avoids reconstructing comment state from a
-   * zero-context patch.
-   */
-  readonly addedBlockCommentDiffIndexes?: ReadonlySet<number>;
+  /** TypeScript-scanned comment/string spans mapped from the relevant diff image. */
+  readonly triviaByDiffIndex?: ReadonlyMap<number, readonly TriviaSpan[]>;
 }
 
 const EMPTY_ESCAPE_HATCH_COUNTS: TelemetryEscapeHatchCounts = {
@@ -1280,68 +1278,115 @@ function changedLineKind(line: string): "added" | "deleted" | undefined {
   return undefined;
 }
 
-interface CommentScanState {
-  inBlockComment: boolean;
+type TriviaKind = "comment" | "string";
+
+export interface TriviaSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly kind: TriviaKind;
 }
 
-function stripComments(content: string, state: CommentScanState): string {
-  let code = "";
-  let quote: "'" | '"' | "`" | undefined;
-  for (let index = 0; index < content.length; index += 1) {
-    const char = content[index]!;
-    const next = content[index + 1];
-    if (state.inBlockComment) {
-      if (char === "*" && next === "/") {
-        state.inBlockComment = false;
-        index += 1;
-      }
-      continue;
-    }
-    if (quote !== undefined) {
-      code += char;
-      if (char === "\\") {
-        if (next !== undefined) {
-          code += next;
-          index += 1;
-        }
-      } else if (char === quote) {
-        quote = undefined;
-      }
-      continue;
-    }
-    if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-      code += char;
-      continue;
-    }
-    if (char === "/" && next === "/") break;
-    if (char === "/" && next === "*") {
-      state.inBlockComment = true;
-      index += 1;
-      continue;
-    }
-    code += char;
+function triviaKindForToken(kind: ts.SyntaxKind): TriviaKind | undefined {
+  if (kind === ts.SyntaxKind.SingleLineCommentTrivia || kind === ts.SyntaxKind.MultiLineCommentTrivia) {
+    return "comment";
   }
-  return code;
+  if (
+    kind === ts.SyntaxKind.StringLiteral ||
+    kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral ||
+    kind === ts.SyntaxKind.TemplateHead ||
+    kind === ts.SyntaxKind.TemplateMiddle ||
+    kind === ts.SyntaxKind.LastTemplateToken
+  ) {
+    return "string";
+  }
+  return undefined;
 }
 
-function auditableLine(line: string, state: CommentScanState): string | undefined {
+/**
+ * Use TypeScript's scanner for language-level trivia/string boundaries. Template
+ * substitutions are scanned as ordinary code; only their literal segments are
+ * masked. This deliberately replaces the former hand-written quote/comment state
+ * machine.
+ */
+function triviaSpansByLine(source: string): ReadonlyMap<number, readonly TriviaSpan[]> {
+  const result = new Map<number, TriviaSpan[]>();
+  const lineStarts = [0];
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === "\n") lineStarts.push(index + 1);
+  }
+  const lineForOffset = (offset: number): number => {
+    let low = 0;
+    let high = lineStarts.length;
+    while (low + 1 < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (lineStarts[middle]! <= offset) low = middle;
+      else high = middle;
+    }
+    return low + 1;
+  };
+  const addTriviaSpan = (start: number, end: number, kind: TriviaKind): void => {
+    const firstLine = lineForOffset(start);
+    const lastLine = lineForOffset(Math.max(start, end - 1));
+    for (let line = firstLine; line <= lastLine; line += 1) {
+      const lineStart = lineStarts[line - 1]!;
+      const lineEnd = lineStarts[line] === undefined ? source.length : lineStarts[line]! - 1;
+      const spans = result.get(line) ?? [];
+      spans.push({ start: Math.max(start, lineStart) - lineStart, end: Math.min(end, lineEnd) - lineStart, kind });
+      result.set(line, spans);
+    }
+  };
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source);
+  const templateExpressionDepths: number[] = [];
+  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+    const kind = triviaKindForToken(token);
+    if (kind !== undefined) {
+      addTriviaSpan(scanner.getTokenStart(), scanner.getTokenEnd(), kind);
+    }
+    if (token === ts.SyntaxKind.TemplateHead || token === ts.SyntaxKind.TemplateMiddle) {
+      templateExpressionDepths.push(0);
+    } else if (token === ts.SyntaxKind.FirstPunctuation && templateExpressionDepths.length > 0) {
+      templateExpressionDepths[templateExpressionDepths.length - 1]! += 1;
+    } else if (token === ts.SyntaxKind.CloseBraceToken && templateExpressionDepths.length > 0) {
+      const top = templateExpressionDepths.length - 1;
+      if (templateExpressionDepths[top]! > 0) {
+        templateExpressionDepths[top]! -= 1;
+      } else {
+        const templateToken = scanner.reScanTemplateToken(false);
+        const templateKind = triviaKindForToken(templateToken);
+        if (templateKind !== undefined) {
+          addTriviaSpan(scanner.getTokenStart(), scanner.getTokenEnd(), templateKind);
+        }
+        if (templateToken !== ts.SyntaxKind.TemplateMiddle) templateExpressionDepths.pop();
+      }
+    }
+  }
+  return result;
+}
+
+function fallbackTriviaByDiffIndex(diffLines: readonly string[]): ReadonlyMap<number, readonly TriviaSpan[]> {
+  const result = new Map<number, readonly TriviaSpan[]>();
+  for (const kind of ["added", "deleted"] as const) {
+    const indexes = diffLines.flatMap((line, index) => changedLineKind(line) === kind ? [index] : []);
+    const source = indexes.map((index) => diffLines[index]!.slice(1)).join("\n");
+    const byLine = triviaSpansByLine(source);
+    for (const [offset, index] of indexes.entries()) result.set(index, byLine.get(offset + 1) ?? []);
+  }
+  return result;
+}
+
+function auditableLine(line: string, spans: readonly TriviaSpan[]): string | undefined {
   const kind = changedLineKind(line);
   if (kind === undefined) return undefined;
-  const content = line.slice(1).trimStart();
-  // TypeScript directives are necessarily comments and are themselves the audit
-  // target. Other comment-only examples must not synthesize escape hatches.
-  if (!state.inBlockComment && content.startsWith("//")) {
-    return /^(?:\/\/|\/\*|\*)\s*@ts-(?:ignore|expect-error)\b/.test(content)
-      ? content
-      : undefined;
-  }
-  if (!state.inBlockComment && content.startsWith("*")) return undefined;
-  const uncommented = stripComments(content, state).trim();
-  if (uncommented === "") return undefined;
-  // This is still regex-based auditing, but quoted examples must not turn into
-  // synthetic escape hatches or weakened assertions.
-  return uncommented.replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, "");
+  const content = line.slice(1);
+  const directive = spans.find((span) =>
+    span.kind === "comment" &&
+    /^\s*(?:\/\/|\/\*|\*)\s*@ts-(?:ignore|expect-error)\b/.test(content.slice(span.start, span.end)),
+  );
+  if (directive !== undefined) return content.slice(directive.start, directive.end);
+  const characters = [...content];
+  for (const span of spans) characters.fill(" ", span.start, span.end);
+  const code = characters.join("").trim();
+  return code === "" ? undefined : code;
 }
 
 /**
@@ -1359,20 +1404,10 @@ export function buildCommitStamp(input: BuildCommitStampInput): TelemetryCommitR
     const deleted = { ...EMPTY_ESCAPE_HATCH_COUNTS };
     let addedAssertions = 0;
     let deletedAssertions = 0;
-    const addedCommentState: CommentScanState = { inBlockComment: false };
-    const deletedCommentState: CommentScanState = { inBlockComment: false };
+    const triviaByDiffIndex = input.triviaByDiffIndex ?? fallbackTriviaByDiffIndex(input.diffLines);
     for (const [index, line] of input.diffLines.entries()) {
       const kind = changedLineKind(line);
-      const commentState =
-        kind === "added" && input.addedBlockCommentDiffIndexes !== undefined
-          ? { inBlockComment: input.addedBlockCommentDiffIndexes.has(index) }
-          : kind === "added"
-            ? addedCommentState
-            : deletedCommentState;
-      const content = auditableLine(
-        line,
-        commentState,
-      );
+      const content = auditableLine(line, triviaByDiffIndex.get(index) ?? []);
       if (kind === undefined || content === undefined) continue;
       const counts = kind === "added" ? added : deleted;
       for (const [name, pattern] of Object.entries(ESCAPE_HATCH_PATTERNS) as Array<
@@ -1493,49 +1528,13 @@ export function collectCommitDiffLines(
 
 export interface CommitDiffAudit {
   readonly diffLines: readonly string[];
-  readonly addedBlockCommentDiffIndexes: ReadonlySet<number>;
-}
-
-function blockCommentStartsByLine(content: string): ReadonlySet<number> {
-  const starts = new Set<number>();
-  let inBlockComment = false;
-  let inLineComment = false;
-  let quote: "'" | '"' | "`" | undefined;
-  let line = 1;
-  for (let index = 0; index < content.length; index += 1) {
-    const char = content[index]!;
-    const next = content[index + 1];
-    if (inBlockComment) starts.add(line);
-    if (inBlockComment) {
-      if (char === "*" && next === "/") {
-        inBlockComment = false;
-        index += 1;
-      }
-    } else if (inLineComment) {
-      // Nothing can open a block comment until this line ends.
-    } else if (quote !== undefined) {
-      if (char === "\\") index += 1;
-      else if (char === quote) quote = undefined;
-    } else if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-    } else if (char === "/" && next === "*") {
-      inBlockComment = true;
-      index += 1;
-    } else if (char === "/" && next === "/") {
-      inLineComment = true;
-    }
-    if (char === "\n") {
-      line += 1;
-      inLineComment = false;
-    }
-  }
-  return starts;
+  readonly triviaByDiffIndex: ReadonlyMap<number, readonly TriviaSpan[]>;
 }
 
 /**
- * Collect the zero-context patch plus block-comment state derived from each
- * changed post-image file. The patch only maps its added lines to post-image
- * line numbers; it never establishes comment state itself.
+ * Collect the zero-context patch plus TypeScript-scanned comment/string spans
+ * from each changed file's post-image and pre-image. The patch only maps +/-
+ * lines to those image line numbers; it never infers language trivia itself.
  */
 export function collectCommitDiffAudit(
   repoPath: string,
@@ -1544,40 +1543,64 @@ export function collectCommitDiffAudit(
   const diffLines = collectCommitDiffLines(repoPath, commit);
   if (diffLines === undefined) return undefined;
   try {
-    const startsByPath = new Map<string, ReadonlySet<number>>();
-    const addedBlockCommentDiffIndexes = new Set<number>();
-    let path: string | undefined;
+    const postImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
+    const preImageTriviaByPath = new Map<string, ReadonlyMap<number, readonly TriviaSpan[]>>();
+    const triviaByDiffIndex = new Map<number, readonly TriviaSpan[]>();
+    let prePath: string | undefined;
+    let postPath: string | undefined;
+    let preImageLine: number | undefined;
     let postImageLine: number | undefined;
     for (const [index, line] of diffLines.entries()) {
-      if (line.startsWith("+++ ")) {
+      if (line.startsWith("--- ")) {
         const rawPath = line.slice(4);
-        path = rawPath.startsWith("b/") ? rawPath.slice(2) : undefined;
+        prePath = rawPath.startsWith("a/") ? rawPath.slice(2) : undefined;
         continue;
       }
-      const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (line.startsWith("+++ ")) {
+        const rawPath = line.slice(4);
+        postPath = rawPath.startsWith("b/") ? rawPath.slice(2) : undefined;
+        continue;
+      }
+      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
       if (hunk !== null) {
-        postImageLine = Number(hunk[1]);
+        preImageLine = Number(hunk[1]);
+        postImageLine = Number(hunk[2]);
         continue;
       }
       if (line.startsWith("+") && !line.startsWith("+++")) {
-        if (path === undefined || postImageLine === undefined) return undefined;
-        let starts = startsByPath.get(path);
-        if (starts === undefined) {
-          const postImage = execFileSync("git", ["show", `${commit}:${path}`], {
+        if (postPath === undefined || postImageLine === undefined) return undefined;
+        let spansByLine = postImageTriviaByPath.get(postPath);
+        if (spansByLine === undefined) {
+          const postImage = execFileSync("git", ["show", `${commit}:${postPath}`], {
             cwd: repoPath,
             encoding: "utf8",
             stdio: ["ignore", "pipe", "ignore"],
           });
-          starts = blockCommentStartsByLine(postImage);
-          startsByPath.set(path, starts);
+          spansByLine = triviaSpansByLine(postImage);
+          postImageTriviaByPath.set(postPath, spansByLine);
         }
-        if (starts.has(postImageLine)) addedBlockCommentDiffIndexes.add(index);
+        triviaByDiffIndex.set(index, spansByLine.get(postImageLine) ?? []);
         postImageLine += 1;
-      } else if (!line.startsWith("-")) {
+      } else if (line.startsWith("-") && !line.startsWith("---")) {
+        if (prePath === undefined || preImageLine === undefined) return undefined;
+        let spansByLine = preImageTriviaByPath.get(prePath);
+        if (spansByLine === undefined) {
+          const preImage = execFileSync("git", ["show", `${commit}^:${prePath}`], {
+            cwd: repoPath,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+          spansByLine = triviaSpansByLine(preImage);
+          preImageTriviaByPath.set(prePath, spansByLine);
+        }
+        triviaByDiffIndex.set(index, spansByLine.get(preImageLine) ?? []);
+        preImageLine += 1;
+      } else {
+        preImageLine = preImageLine === undefined ? undefined : preImageLine + 1;
         postImageLine = postImageLine === undefined ? undefined : postImageLine + 1;
       }
     }
-    return { diffLines, addedBlockCommentDiffIndexes };
+    return { diffLines, triviaByDiffIndex };
   } catch {
     return undefined;
   }
