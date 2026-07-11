@@ -2288,6 +2288,8 @@ async function familyShipMalformedAfterCmrReplay(): Promise<SeamReplay> {
     convergedCmr,
     convergedCmr,
     { kind: "malformed", reason: "ship worker emitted no valid result" },
+    { kind: "malformed", reason: "ship worker emitted no valid result" },
+    { kind: "malformed", reason: "ship worker emitted no valid result" },
   ]);
   const result = await runVerifyCmr({
     phase: "final",
@@ -2296,8 +2298,8 @@ async function familyShipMalformedAfterCmrReplay(): Promise<SeamReplay> {
     familyHeadAfter: "verified-head",
   });
   const abort = backend.ledger.find((entry) => entry.status === "aborted");
-  if (result.ok || abort?.stopSummary?.reason !== "contract_drift") {
-    throw new Error("dogfood family ship-malformed replay did not abort as contract drift");
+  if (result.ok || abort?.stopSummary?.reason !== "infra_failure") {
+    throw new Error("dogfood family ship-malformed replay did not exhaust durable retries");
   }
   return {
     stopSummary: abort.stopSummary,
@@ -2976,8 +2978,8 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "405-ship-worker-malformed-after-final-cmr",
       issue: 405,
-      title: "ship worker malformed after final CMR pass does not write shipped marker",
-      classification: "contract_drift",
+      title: "ship worker malformed after final CMR pass exhausts durable retries without writing shipped marker",
+      classification: "infra_failure",
       stopSummary: shipMalformedAfterCmrSource.stopSummary,
       source: "family",
       sourceStopSummary: shipMalformedAfterCmrSource.stopSummary,
