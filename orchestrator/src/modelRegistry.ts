@@ -31,7 +31,7 @@ export function effortForLiveOfficer(
   return undefined;
 }
 
-export type ModelFamily = "claude" | "codex" | "agy" | "opencode" | "other";
+export type ModelFamily = "claude" | "codex" | "agy" | "grok-build" | "opencode" | "other";
 
 export type ModelProviderFactory =
   | "claudeCode"
@@ -69,6 +69,8 @@ export type ModelSlugRegistryEntry =
 type ModelSlugRegistryRow = ModelSlugRegistryEntry & {
   readonly family: ModelFamily;
   readonly strongLeg?: boolean;
+  /** This shared slug may change provider only when its billing pool says so. */
+  readonly poolDispatchOverride?: boolean;
 };
 
 type ProviderFactory = (model: string, options?: ModelProviderOptions) => sc.AgentProvider;
@@ -108,6 +110,16 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     provider: "cursor",
     model: "grok-4.5",
     family: "other",
+    strongLeg: true,
+    poolDispatchOverride: true,
+  },
+  // #807: Pi's Grok Build subscription is a distinct executable channel from
+  // Cursor's `grok-4.5`; keep the slug/provider/family truthful without relying
+  // on a pool-level disguise.
+  "grok-4.5-build": {
+    provider: "pi",
+    model: "grok-4.5-build",
+    family: "grok-build",
     strongLeg: true,
   },
   sonnet: {
@@ -219,8 +231,15 @@ export function resolveModelSlugForPool(
   slug: string,
   pool?: BillingPoolDispatchId,
 ): ModelSlugRegistryEntry {
+  const row = rowForSlug(slug);
   const base = resolveModelSlug(slug);
-  if (pool === undefined || POOL_DISPATCH_BINDINGS[pool] === base.provider) return base;
+  if (
+    pool === undefined ||
+    POOL_DISPATCH_BINDINGS[pool] === base.provider ||
+    row.poolDispatchOverride !== true
+  ) {
+    return base;
+  }
   return { provider: POOL_DISPATCH_BINDINGS[pool], model: base.model } as ModelSlugRegistryEntry;
 }
 

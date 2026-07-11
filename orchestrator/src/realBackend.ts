@@ -667,6 +667,8 @@ export function issueNumberFromBranch(branch: string): number {
 
 /** Where Sandcastle mounts the codex auth dir inside the container. */
 export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
+/** Where Pi reads its persisted login state inside the container. */
+export const SANDBOX_PI_AGENT_DIR = "/home/agent/.pi/agent";
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -786,8 +788,8 @@ export function soulsMount(soulsDir: string): { hostPath: string; sandboxPath: s
 }
 
 /**
- * Host paths for the per-issue codex auth copy + the claude token (spike
- * contract). codex auth MUST live under $HOME (colima shares $HOME into the
+ * Host paths for the per-issue codex/Pi auth copies + the claude token (spike
+ * contract). Credential copies MUST live under $HOME (colima shares $HOME into the
  * Docker VM; $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty →
  * "Permission denied"). The claude leg uses a durable OAuth token env var, not
  * a mount.
@@ -801,6 +803,10 @@ export interface AuthPaths {
   readonly srcCodexAuth: string;
   /** Source codex config.toml on the host (best-effort copy). */
   readonly srcCodexConfig: string;
+  /** Per-issue host dir holding Pi's auth.json copy. */
+  readonly hostPiAuthDir: string;
+  /** Source Pi login state on the host. */
+  readonly srcPiAuth: string;
   /** Host file holding the durable claude OAuth token. */
   readonly claudeTokenFile: string;
 }
@@ -835,6 +841,8 @@ export function buildAuthPaths(
     hostCodexAuthDir: join(home, ".sc-orchestrator", `auth-${issueNumber}`),
     srcCodexAuth: join(home, ".codex", "auth.json"),
     srcCodexConfig: join(home, ".codex", "config.toml"),
+    hostPiAuthDir: join(home, ".sc-orchestrator", `pi-auth-${issueNumber}`),
+    srcPiAuth: join(home, ".pi", "agent", "auth.json"),
     claudeTokenFile: join(home, ".sc-claude-token"),
   };
 }
@@ -2867,6 +2875,7 @@ export class RealBackend implements Backend {
   // temp $HOME (assert auth.json copied + the minimal container config written).
   protected mountAuth(issueNumber: number): {
     authDir: string;
+    piAuthDir?: string;
     claudeToken?: string;
   } {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
@@ -2896,6 +2905,19 @@ export class RealBackend implements Backend {
     // minimal container config instead of copying the host's (#378). Always written
     // so the dir is a valid mount even when codex auth was absent.
     writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
+    // Pi persists its `/login` credentials in ~/.pi/agent/auth.json. Like the
+    // per-issue Codex copy, mount a private writable copy so a container cannot
+    // read or mutate the host's real login state.
+    let piAuthDir: string | undefined;
+    try {
+      rmSync(paths.hostPiAuthDir, { recursive: true, force: true });
+      mkdirSync(paths.hostPiAuthDir, { recursive: true, mode: 0o700 });
+      copyFileSync(paths.srcPiAuth, join(paths.hostPiAuthDir, "auth.json"));
+      chmodSync(join(paths.hostPiAuthDir, "auth.json"), 0o600);
+      piAuthDir = paths.hostPiAuthDir;
+    } catch {
+      rmSync(paths.hostPiAuthDir, { recursive: true, force: true });
+    }
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
     // Codex (model gpt-5.6-terra), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
     // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
@@ -2908,7 +2930,7 @@ export class RealBackend implements Backend {
     } catch {
       claudeToken = undefined;
     }
-    return { authDir: paths.hostCodexAuthDir, claudeToken };
+    return { authDir: paths.hostCodexAuthDir, piAuthDir, claudeToken };
   }
 
   private box(
@@ -3003,7 +3025,7 @@ export class RealBackend implements Backend {
    * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
    */
   protected boxConfig(
-    auth: { authDir: string; claudeToken?: string; ghToken?: string },
+    auth: { authDir: string; piAuthDir?: string; claudeToken?: string; ghToken?: string },
     spec: Pick<StepSpec, "role" | "soul">,
     issueNumber?: number,
     options?: AgentStepRunOptions,
@@ -3049,6 +3071,9 @@ export class RealBackend implements Backend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
     ];
+    if (auth.piAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.piAuthDir, sandboxPath: SANDBOX_PI_AGENT_DIR });
+    }
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.

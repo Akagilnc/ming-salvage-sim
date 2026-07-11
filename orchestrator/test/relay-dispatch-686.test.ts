@@ -1927,6 +1927,11 @@ describe("#686 R2 production seams", () => {
     );
     // Default registry alone is cursor — pool override is what makes 换马甲 real.
     expect(resolveModelSlugForPool("grok-4.5").provider).toBe("cursor");
+    // Dedicated Pi slug never relies on the shared grok-4.5 pool override.
+    expect(resolveModelSlugForPool("grok-4.5-build")).toMatchObject({
+      provider: "pi",
+      model: "grok-4.5-build",
+    });
   });
 
   it("P1: monitor attribution follows the active billing pool after a relay", () => {
