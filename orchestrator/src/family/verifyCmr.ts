@@ -2163,8 +2163,7 @@ function stampCmrReviewRound(input: {
         issue: input.familyIssue ?? null,
         cmrPass: input.pass,
         reviewRound: priorReviewRecords.length + 1,
-        verdict:
-          input.finalDisposition === "rejected" ? "rejected" : workerVerdict,
+        verdict: workerVerdict,
         finalDisposition: input.finalDisposition,
         ...(output?.findings !== undefined ? { findings: output.findings } : {}),
         priorReviewRecords,

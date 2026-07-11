@@ -330,7 +330,7 @@ describe("#786 family dispatch telemetry", () => {
     expect(result.status).toBe("success");
   });
 
-  it("records a rejected final review-round verdict when the runner rejects a green CMR payload", async () => {
+  it("preserves a green CMR verdict when the runner rejects its durable outcome", async () => {
     class HeadMovingReviewerBackend extends FamilyTelemetryBackend {
       async readFamilyCurrentHead(): Promise<string> {
         return `${FAMILY_HEAD}-reviewer-moved`;
@@ -352,23 +352,28 @@ describe("#786 family dispatch telemetry", () => {
     expect(reviewRounds).toHaveLength(1);
     expect(reviewRounds[0]).toMatchObject({
       cmrPass: "completeness",
-      verdict: "rejected",
+      verdict: "converged",
       finalDisposition: "rejected",
     });
   });
 
   it.each([
-    ["failed", { kind: "failed", reason: "worker exited 1" }],
-    ["malformed", { kind: "malformed", reason: "missing CMR verdict" }],
+    ["failed", "failed", { kind: "failed", reason: "worker exited 1" }],
+    [
+      "malformed outcome after its protocol rewrite",
+      "protocol_failure",
+      { kind: "malformed", reason: "missing CMR verdict" },
+    ],
     [
       "outcome protocol failure",
+      "protocol_failure",
       {
         kind: "outcome_protocol_failure",
         reason: "outcome guard rejected the CMR envelope",
         attempts: 1,
       },
     ],
-  ] as const)("records a rejected review-round when the runner rejects %s", async (_label, terminal) => {
+  ] as const)("preserves the %s worker verdict when the runner rejects it", async (_label, verdict, terminal) => {
     class RejectedTerminalBackend extends FamilyTelemetryBackend {
       override async dispatchWorker(
         spec: WorkerSpec,
@@ -397,7 +402,46 @@ describe("#786 family dispatch telemetry", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        verdict: "rejected",
+        verdict,
+        finalDisposition: "rejected",
+      }),
+    );
+  });
+
+  it("preserves a malformed worker verdict when the runner rejects its moved-HEAD abort", async () => {
+    class MalformedHeadMovingReviewerBackend extends FamilyTelemetryBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.ctxs.push(ctx);
+          return { kind: "malformed", reason: "missing CMR verdict" };
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+
+      override async readFamilyCurrentHead(): Promise<string> {
+        return `${FAMILY_HEAD}-reviewer-moved`;
+      }
+    }
+
+    const durable = join(tempDir("orch-786-malformed-rejected-"), ".ledger-809");
+    const result = await runFamily({
+      epic: { issue: 809, children: [] },
+      familyBackend: new MalformedHeadMovingReviewerBackend(durable),
+      singleSliceBackend: new SmokeOnlySingleSliceBackend(),
+      familyBase: "family/809-sidecar",
+    });
+
+    expect(result.status).not.toBe("success");
+    expect(
+      readTelemetryRecords(durable).filter(
+        (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
+      ),
+    ).toContainEqual(
+      expect.objectContaining({
+        verdict: "malformed",
         finalDisposition: "rejected",
       }),
     );
