@@ -795,7 +795,9 @@ export class RealFamilyBackend implements FamilyBackend {
     return (
       familyHead !== familyHeadBefore &&
       this.isAncestorOf(childHead, familyHead, repo) &&
-      this.isMergeCommit(familyHead, repo)
+      this.isMergeCommit(familyHead, repo) &&
+      !this.hasUnmergedEntries(repo) &&
+      !this.hasConflictMarkers(repo)
     );
   }
 
@@ -809,6 +811,26 @@ export class RealFamilyBackend implements FamilyBackend {
       return parents.length === 2;
     } catch {
       return false;
+    }
+  }
+
+  /** A landed merge must not leave index entries for unresolved paths. */
+  protected hasUnmergedEntries(repo: string): boolean {
+    return this.sh("git", ["ls-files", "-u"], repo).trim().length > 0;
+  }
+
+  /** A merger commit containing conflict markers is not a clean resolution. */
+  protected hasConflictMarkers(repo: string): boolean {
+    try {
+      const matches = this.sh(
+        "git",
+        ["grep", "-n", "-E", "^(<<<<<<<|=======|>>>>>>>)( |$)", "--", "."],
+        repo,
+      );
+      return matches.trim().length > 0;
+    } catch (err) {
+      if (gitExitStatus(err) === 1) return false;
+      throw err;
     }
   }
 
