@@ -12,6 +12,7 @@
  *   - `environment` — once per run (image / route lineup / CLI versions)
  *   - `dispatch`    — half-row at spawn (identity / model / pool / time)
  *   - `collect`     — half-row at finish (terminal / tokens / session / log)
+ *   - `verification`— deterministic typecheck / test harness observations
  *
  * Join key: `legId` shared by a dispatch+collect pair.
  * Unobtainable fields are `null` — never block the worker path.
@@ -600,12 +601,28 @@ export interface TelemetryCommitRecord extends TelemetryRecordBase {
   readonly assertions: { readonly added: number; readonly deleted: number } | null;
 }
 
+/** One deterministic typecheck / test harness observation. Telemetry only. */
+export interface TelemetryVerificationRecord extends TelemetryRecordBase {
+  readonly phase: "verification";
+  readonly runId: string | null;
+  readonly issue: number | null;
+  /** Wave unit lane versus the end-of-run full lane. */
+  readonly verification: "typecheck" | "unit" | "full";
+  /** Harness exit result; null when the structured observation is unavailable. */
+  readonly passed: boolean | null;
+  /** Test count only when the harness supplied structured count data. */
+  readonly count: number | null;
+  /** Monotonic command duration observed by the harness. */
+  readonly duration_ms: number | null;
+}
+
 export type TelemetryRecord =
   | TelemetryEnvironmentRecord
   | TelemetryDispatchRecord
   | TelemetryCollectRecord
   | TelemetryReviewRoundRecord
-  | TelemetryCommitRecord;
+  | TelemetryCommitRecord
+  | TelemetryVerificationRecord;
 
 // ───────────────────────── pure helpers ─────────────────────────
 
@@ -1249,6 +1266,16 @@ export interface BuildCommitStampInput {
   readonly diffLines?: readonly string[];
 }
 
+export interface BuildVerificationStampInput {
+  readonly stampedAt?: string;
+  readonly runId?: string | null;
+  readonly issue?: number | null;
+  readonly verification: TelemetryVerificationRecord["verification"];
+  readonly passed?: boolean | null;
+  readonly count?: number | null;
+  readonly durationMs?: number | null;
+}
+
 const EMPTY_ESCAPE_HATCH_COUNTS: TelemetryEscapeHatchCounts = {
   asAny: 0,
   asNever: 0,
@@ -1391,6 +1418,23 @@ export function buildCommitStamp(input: BuildCommitStampInput): TelemetryCommitR
     test: metrics?.test ?? null,
     escapeHatches: escapeHatches ?? null,
     assertions: assertions ?? null,
+  };
+}
+
+/** Build a raw verification observation without deriving any control-flow state. */
+export function buildVerificationStamp(
+  input: BuildVerificationStampInput,
+): TelemetryVerificationRecord {
+  return {
+    v: TELEMETRY_SCHEMA_VERSION,
+    phase: "verification",
+    stamped_at: input.stampedAt ?? new Date().toISOString(),
+    runId: input.runId ?? null,
+    issue: input.issue ?? null,
+    verification: input.verification,
+    passed: input.passed ?? null,
+    count: input.count ?? null,
+    duration_ms: input.durationMs ?? null,
   };
 }
 
@@ -1818,6 +1862,26 @@ export function tryAppendTelemetryRecord(
   } catch (err) {
     console.warn(
       `[orchestrator] telemetry append failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return false;
+  }
+}
+
+/**
+ * Best-effort verification append. This remains deliberately write-only: a
+ * missing sidecar must never alter the family verification verdict or routing.
+ */
+export function recordVerificationStamp(
+  ledgerDir: string | undefined,
+  input: BuildVerificationStampInput,
+): boolean {
+  try {
+    return tryAppendTelemetryRecord(ledgerDir, buildVerificationStamp(input));
+  } catch (err) {
+    console.warn(
+      `[orchestrator] verification telemetry failed (fail-open): ${
         err instanceof Error ? err.message : String(err)
       }`,
     );

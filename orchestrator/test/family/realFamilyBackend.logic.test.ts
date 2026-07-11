@@ -1707,6 +1707,74 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
 // ═══════════════════════════ 5. runFamilyVerify ═════════════════════════════
 
 describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
+  it("appends structured typecheck and wave-unit observations without parsing command prose", async () => {
+    const commands: Array<{ file: string; args: string[] }> = [];
+    class ObservedVerifyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], _cwd?: string): string {
+        commands.push({ file, args });
+        return "human-readable output that telemetry must not parse";
+      }
+      protected override async installDeps(_cwd: string): Promise<void> {}
+      protected override isNodeProject(_cwd: string): boolean { return true; }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+    }
+    const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
+    const backend = new ObservedVerifyBackend(options);
+
+    await expect(backend.runFamilyVerify({
+      phase: "wave",
+      familyBase: "family/293-base",
+      runId: "run-786",
+      issue: 786,
+    })).resolves.toEqual({ ok: true });
+
+    const rows = telemetry.readTelemetryRecords(options.ledgerDir).filter(
+      (record): record is telemetry.TelemetryVerificationRecord =>
+        record.phase === "verification",
+    );
+    expect(rows).toMatchObject([
+      { runId: "run-786", issue: 786, verification: "typecheck", passed: true, count: null },
+      { runId: "run-786", issue: 786, verification: "unit", passed: true, count: null },
+    ]);
+    expect(rows.every((row) => typeof row.duration_ms === "number")).toBe(true);
+    expect(commands).toContainEqual({ file: "npm", args: ["run", "typecheck"] });
+    expect(commands).toContainEqual({ file: "npm", args: ["test"] });
+  });
+
+  it("records a failed final observation and preserves the verification verdict", async () => {
+    class FailedObservedVerifyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], _cwd?: string): string {
+        if (file === "npm" && args[0] === "test") throw new Error("plain test output");
+        return "";
+      }
+      protected override async installDeps(_cwd: string): Promise<void> {}
+      protected override isNodeProject(_cwd: string): boolean { return true; }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+    }
+    const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
+    const backend = new FailedObservedVerifyBackend(options);
+
+    await expect(backend.runFamilyVerify({
+      phase: "final",
+      familyBase: "family/293-base",
+      runId: "run-786",
+      issue: 786,
+    })).resolves.toMatchObject({ ok: false });
+
+    const rows = telemetry.readTelemetryRecords(options.ledgerDir).filter(
+      (record): record is telemetry.TelemetryVerificationRecord =>
+        record.phase === "verification",
+    );
+    expect(rows.map((row) => [row.verification, row.passed])).toEqual([
+      ["typecheck", true],
+      ["full", false],
+    ]);
+  });
+
   it("GREEN → {ok:true}; runs verify scoped to the phase against the family base", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.verifyOutcome = "green";

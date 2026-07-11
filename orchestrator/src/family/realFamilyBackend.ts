@@ -157,6 +157,7 @@ import {
 import {
   configureTelemetryFromWorkerImage,
   createTelemetryLegStamper,
+  recordVerificationStamp,
   scheduleTelemetryEnvironmentStamp,
 } from "../telemetry.js";
 
@@ -1138,12 +1139,49 @@ export class RealFamilyBackend implements FamilyBackend {
     // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
     // real type-checking build) > nothing. So types are NEVER silently skipped.
     if (scripts.includes("typecheck")) {
-      await this.sh("npm", ["run", "typecheck"], cwd);
+      this.runObservedVerification(_request, "typecheck", ["run", "typecheck"], cwd);
     } else if (scripts.includes("build")) {
-      await this.sh("npm", ["run", "build"], cwd);
+      this.runObservedVerification(_request, "typecheck", ["run", "build"], cwd);
     }
     if (scripts.includes("test")) {
-      await this.sh("npm", ["test"], cwd);
+      this.runObservedVerification(
+        _request,
+        _request.phase === "wave" ? "unit" : "full",
+        ["test"],
+        cwd,
+      );
+    }
+  }
+
+  /**
+   * Narrow verification-result seam: observe the harness exit and monotonic
+   * duration, then append a raw sidecar row. Test counts are intentionally null
+   * until a harness provides a structured count; stdout/stderr prose is never
+   * parsed. The write is telemetry-only and cannot affect a verify result.
+   */
+  protected runObservedVerification(
+    request: FamilyVerifyRequest,
+    verification: "typecheck" | "unit" | "full",
+    args: string[],
+    cwd: string,
+  ): string {
+    const startedAt = process.hrtime.bigint();
+    let passed = false;
+    try {
+      const output = this.sh("npm", args, cwd);
+      passed = true;
+      return output;
+    } finally {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      recordVerificationStamp(this.opts.ledgerDir, {
+        ...(request.runId !== undefined ? { runId: request.runId } : {}),
+        ...(request.issue !== undefined ? { issue: request.issue } : {}),
+        verification,
+        passed,
+        // No structured count is produced by the project command contract.
+        count: null,
+        durationMs,
+      });
     }
   }
 
