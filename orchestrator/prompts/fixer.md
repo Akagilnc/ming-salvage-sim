@@ -7,14 +7,16 @@ Soul: `fixer` (`/home/agent/.orchestrator/souls/fixer.md`)
 - `.orchestrator-online-review.json` — bot snapshot + `fixMarkedFindingIdentityKeys` from the prior verify worker.
 - `.fix-focus.md` (when present) — pattern-level `findingFamilies` briefs from the prior verify worker (#711).
 
-After repairing the listed findings, sweep each touched file and every file
-sharing its mechanism for other instances of the same defect class; repair each
-live instance in this round. When two or more findings share a deeper cause,
-name its underlying invariant and repair to that invariant so the class closes
-as a whole. Record the self-audit checklist in the fixing commit message body:
-every site checked, `file:line` — `fixed` or `already-correct`, giving the next
-reviewer coverage to verify. The `<fixer>` outcome remains only the JSON envelope
-defined below.
+After repairing the listed findings, sweep the touched code and same-mechanism
+sites within the assigned family base for other instances of the same defect
+class; repair each live in-scope instance in this round. When two or more
+findings share a deeper cause, name its underlying invariant and repair to that
+invariant so the class closes as a whole within the assigned scope. Record the self-audit checklist in the fixing commit message body:
+every in-scope site checked, `file:line` — `fixed` or `already-correct`, giving
+the next reviewer coverage to verify. Record same-class sites noticed outside
+the assigned family base as `file:line` — `out-of-scope observation` for the
+runner; never edit them.
+The `<fixer>` outcome remains only the JSON envelope defined below.
 
 ## Output
 
