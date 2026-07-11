@@ -9563,7 +9563,13 @@ class GameDB:
         period: Optional[int] = None,
         evidence: Any = False,
     ) -> int:
-        """唯一的边事件写入口；重复同一事件返回原 id，不生成第二笔。"""
+        """唯一的边事件写入口；重复同一事件返回原 id，不生成第二笔。
+
+        事务归属与 set_fiscal_config / withdraw_pending_action 一致：调用方已开
+        事务（atomic 内或裸 BEGIN/DML 使 conn.in_transaction 为真）时不提前
+        commit。不调 load_state()——其末尾 self.conn.commit() 会把调用方半成品
+        落盘、破坏原子性（PR #804 P2）。仅需 turn/year/period 三个默认值，直读
+        game_state 行即可。"""
         source = str(source or "").strip()
         target = str(target or "").strip()
         context = str(context or "").strip()
@@ -9573,10 +9579,19 @@ class GameDB:
             raise ValueError("边事件语境不能为空")
         kind = validate_edge_kind(event_kind)
         evidence_flag = normalize_evidence(evidence)
-        state = self.load_state()
-        effective_turn = int(turn if turn is not None else state.turn)
-        effective_year = int(year if year is not None else state.year)
-        effective_period = int(period if period is not None else state.period)
+        owns_transaction = self.owns_transaction()
+        state_row = self.conn.execute(
+            "SELECT turn, year, period FROM game_state WHERE id = 1"
+        ).fetchone()
+        if state_row is not None:
+            default_turn, default_year, default_period = (
+                int(state_row["turn"]), int(state_row["year"]), int(state_row["period"]),
+            )
+        else:
+            default_turn, default_year, default_period = 1, 1627, 10
+        effective_turn = int(turn if turn is not None else default_turn)
+        effective_year = int(year if year is not None else default_year)
+        effective_period = int(period if period is not None else default_period)
         bound_origin, origin_round = bind_origin_round(origin, effective_turn)
         self.conn.execute(
             """
@@ -9590,9 +9605,7 @@ class GameDB:
                 effective_turn, effective_year, effective_period, int(evidence_flag),
             ),
         )
-        if not bool(getattr(self.conn, "_commit_suspended", False)) and int(
-            getattr(self.conn, "_atomic_depth", 0) or 0
-        ) == 0:
+        if owns_transaction:
             self.conn.commit()
         row = self.conn.execute(
             """
