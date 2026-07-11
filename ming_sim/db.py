@@ -7520,6 +7520,7 @@ class GameDB:
     def save_turn_report(
         self, state: GameState, report: str,
         knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
+        public_body: Optional[str] = None,
         *,
         commit: bool = True,
     ) -> None:
@@ -7542,23 +7543,20 @@ class GameDB:
             (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
         )
         self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
-        # Direct archive writers (including compatibility callers) do not
-        # have decree.py's settlement projection hook.  Give their aggregate
-        # a source-scoped public counterpart, while removing known restricted
-        # fragments so an unrelated secret in the same turn cannot suppress
-        # public facts or be re-published by the fallback archive.
+        # Aggregate prose cannot authorize an audience read: removing known
+        # secret substrings is not safe against a paraphrase.  Persist a
+        # separate public counterpart made from source-scoped public items.
+        # Legacy callers with no restricted source retain their whole report.
         items = self.knowledge_items_for_turn(state.turn)
-        restricted = {
-            str(fragment).strip()
-            for item in items
-            if item.get("excluded_names")
-            for fragment in (item.get("title"), item.get("body"))
-            if str(fragment or "").strip()
-        }
-        public_report = str(report or "")
-        for fragment in sorted(restricted, key=len, reverse=True):
-            public_report = public_report.replace(fragment, "")
-        public_report = re.sub(r"[；;、 ]{2,}", "；", public_report).strip("；;、 ")
+        has_restricted_source = any(item.get("excluded_names") for item in items)
+        if public_body is None:
+            public_report = (
+                "\n".join(str(item.get("body") or item.get("title") or "")
+                          for item in items if not item.get("excluded_names"))
+                if has_restricted_source else str(report or "")
+            )
+        else:
+            public_report = str(public_body or "")
         if public_report:
             self.record_public_knowledge_event(
                 state, "邸报", sanitize_sqlite_text(public_report),
@@ -7590,6 +7588,7 @@ class GameDB:
     def save_chapter_memory(
         self, state: GameState, title: str, body: str, tags: Optional[List[str]] = None,
         knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
+        public_body: Optional[str] = None,
         *,
         commit: bool = True,
     ) -> int:
@@ -7626,15 +7625,22 @@ class GameDB:
         self.persist_knowledge_items_for_turn(
             state, knowledge_items, default_title=title, commit=commit
         )
-        # An LLM chapter is an aggregate, never an authorization boundary.
-        # When this turn contains restricted sources it may paraphrase them;
-        # publish only independently bounded items, not the aggregate itself.
-        has_restricted_source = any(
-            item.get("excluded_names") for item in self.knowledge_items_for_turn(state.turn)
-        )
-        if not has_restricted_source:
+        # The public chapter counterpart is a separate, source-preserving
+        # authorization record.  Never derive it by deleting secret strings
+        # from an LLM aggregate: a paraphrase would evade that redaction.
+        items = self.knowledge_items_for_turn(state.turn)
+        has_restricted_source = any(item.get("excluded_names") for item in items)
+        if public_body is None:
+            public_chapter = (
+                "\n".join(str(item.get("body") or item.get("title") or "")
+                          for item in items if not item.get("excluded_names"))
+                if has_restricted_source else str(body or "")
+            )
+        else:
+            public_chapter = str(public_body or "")
+        if public_chapter:
             self.record_public_knowledge_event(
-                state, str(title or "朝局旧闻"), str(body or ""),
+                state, str(title or "朝局旧闻"), public_chapter,
                 source_id=f"chapter_source:{state.turn}", commit=False,
             )
         if commit:

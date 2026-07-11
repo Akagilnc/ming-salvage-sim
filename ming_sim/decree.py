@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -107,69 +106,23 @@ def _candidate_event_ids_from_simulator_payload(simulator_payload: object) -> Op
     }
 
 
-def _public_narrative_projection(db: GameDB, turn: int, narrative: str) -> str:
-    """Keep restricted source fragments out of the aggregate public archive.
-
-    The simulator narrative is an aggregate presentation artifact, not an
-    authorization boundary.  Source rows already materialized for this turn
-    carry the boundary; remove their exact title/body fragments before the
-    aggregate gets a public source row, so a mixed narrative cannot re-publish
-    a restricted item to every character.
-    """
-    projected = str(narrative or "")
-    restricted_fragments = {
-        str(fragment).strip()
-        for item in db.knowledge_items_for_turn(turn)
-        if item.get("excluded_names")
-        for fragment in (item.get("title"), item.get("body"))
-        if str(fragment or "").strip()
-    }
-    for fragment in sorted(restricted_fragments, key=len, reverse=True):
-        projected = projected.replace(fragment, "")
-    return re.sub(r"[；;、 ]{2,}", "；", projected).strip("；;、 ")
-
-
 def _record_settlement_narrative_sources(
     db: GameDB, state: GameState, narrative: str, *, commit: bool = False,
 ) -> None:
     """Archive settlement prose without making an aggregate an access boundary.
 
     A simulator narrative is an aggregate and may paraphrase a restricted
-    source.  The aggregate therefore inherits every exclusion from the
-    source-scoped items already materialized for this turn.  A redacted copy is
-    public only when removing a known restricted fragment actually produced a
-    different string; an unchanged aggregate is never published as public
-    material while a restricted source exists.
+    source.  When this turn has restricted material it is never an audience
+    source: independently persisted source items and explicit public archive
+    counterparts provide the only readable material.
     """
     items = db.knowledge_items_for_turn(state.turn)
-    restricted_names = list(dict.fromkeys(
-        str(name)
-        for item in items
-        for name in (item.get("excluded_names") or ())
-        if str(name).strip()
-    ))
-    projected = _public_narrative_projection(db, state.turn, narrative)
+    has_restricted_source = any(item.get("excluded_names") for item in items)
     source_id = f"settlement:narrative:{state.turn}"
-    if restricted_names:
-        db.record_public_knowledge_event(
-            state, "本回合邸报", str(narrative or ""), source_id=source_id,
-            excluded_names=restricted_names, commit=commit,
-        )
-        # A source-scoped public row must exist even when the whole narrative
-        # was independently public.  Otherwise the presence of an unrelated
-        # restricted source suppresses every public fact for excluded readers.
-        # If no restricted fragment matched, the remaining aggregate is not a
-        # source projection.  Retain it only when the producer has explicitly
-        # marked it public; otherwise a paraphrased secret has no safe
-        # authorization boundary and must stay out of the excluded audience.
-        if projected and (projected != str(narrative or "") or "公开" in projected):
-            db.record_public_knowledge_event(
-                state, "本回合公开事项", projected,
-                source_id=f"{source_id}:public", commit=commit,
-            )
+    if has_restricted_source:
         return
     db.record_public_knowledge_event(
-        state, "本回合邸报", projected, source_id=source_id, commit=commit,
+        state, "本回合邸报", str(narrative or ""), source_id=source_id, commit=commit,
     )
 
 
