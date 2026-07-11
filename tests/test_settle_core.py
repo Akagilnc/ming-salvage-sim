@@ -185,6 +185,33 @@ def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
     assert order > 0
 
 
+def test_settlement_rewritten_narrative_cannot_publish_restricted_source(game):
+    """聚合邸报改写密令后，受排除者仍不能从真实结算归档读到它。"""
+    db, state, content = game
+    ministers = [
+        character for character in content.characters.values()
+        if character.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(character.name)[0] == "active"
+    ]
+    knower, excluded = ministers[:2]
+    order = db.create_secret_order(
+        state, knower.name, "改写密查", "核验边镇欠饷密令", [],
+        excluded_names=[excluded.name],
+    )
+
+    settle_with_delta(
+        state, db, {}, before_turn=state.turn, content=content,
+        narrative="邸报只说边镇近日另有一番暗中安排，未直书其名。",
+    )
+
+    excluded_text = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, excluded.name)["public_events"]
+    )
+    assert "暗中安排" not in excluded_text
+    assert order > 0
+
+
 def test_settlement_archive_writes_rollback_on_later_failure(game, monkeypatch):
     """真实结算在归档后续故障时不能留下 source/event/chapter/report 半写。"""
     db, state, _content = game

@@ -129,6 +129,43 @@ def _public_narrative_projection(db: GameDB, turn: int, narrative: str) -> str:
     return re.sub(r"[；;、 ]{2,}", "；", projected).strip("；;、 ")
 
 
+def _record_settlement_narrative_sources(
+    db: GameDB, state: GameState, narrative: str, *, commit: bool = False,
+) -> None:
+    """Archive settlement prose without making an aggregate an access boundary.
+
+    A simulator narrative is an aggregate and may paraphrase a restricted
+    source.  The aggregate therefore inherits every exclusion from the
+    source-scoped items already materialized for this turn.  A redacted copy is
+    public only when removing a known restricted fragment actually produced a
+    different string; an unchanged aggregate is never published as public
+    material while a restricted source exists.
+    """
+    items = db.knowledge_items_for_turn(state.turn)
+    restricted_names = list(dict.fromkeys(
+        str(name)
+        for item in items
+        for name in (item.get("excluded_names") or ())
+        if str(name).strip()
+    ))
+    projected = _public_narrative_projection(db, state.turn, narrative)
+    source_id = f"settlement:narrative:{state.turn}"
+    if restricted_names:
+        db.record_public_knowledge_event(
+            state, "本回合邸报", str(narrative or ""), source_id=source_id,
+            excluded_names=restricted_names, commit=commit,
+        )
+        if projected and projected != str(narrative or ""):
+            db.record_public_knowledge_event(
+                state, "本回合公开事项", projected,
+                source_id=f"{source_id}:public", commit=commit,
+            )
+        return
+    db.record_public_knowledge_event(
+        state, "本回合邸报", projected, source_id=source_id, commit=commit,
+    )
+
+
 def write_decree_with_agno(
     llm_config: LLMConfig,
     agno_db: SqliteDb,
@@ -371,13 +408,7 @@ def resolve_directives(
             # Materialize the complete source set only after those writes and
             # before either aggregate archive is saved, matching the normal
             # settlement path's source-first authorization boundary.
-            db.record_public_knowledge_event(
-                state,
-                "本回合邸报",
-                _public_narrative_projection(db, state.turn, narrative),
-                source_id=f"settlement:narrative:{state.turn}",
-                commit=False,
-            )
+            _record_settlement_narrative_sources(db, state, narrative, commit=False)
             db.persist_knowledge_items_for_turn(state, commit=False)
             db.save_turn_report(
                 state, narrative, knowledge_items=[], commit=False
@@ -1306,13 +1337,7 @@ def _settle_after_extract_body(
     # The simulator narrative is the real settlement input for the public
     # gazette.  Keep it as its own source before archiving, so a mixed
     # aggregate cannot become the only durable representation of this turn.
-    db.record_public_knowledge_event(
-        state,
-        "本回合邸报",
-        _public_narrative_projection(db, before_turn, narrative),
-        source_id=f"settlement:narrative:{before_turn}",
-        commit=False,
-    )
+    _record_settlement_narrative_sources(db, state, narrative, commit=False)
     # Persist the per-source public projection before either aggregate archive
     # is written.  turn_report/chapter are derived prose and cannot provide an
     # authorization boundary when they mix public and restricted matters.
