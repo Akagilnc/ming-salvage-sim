@@ -1,4 +1,3 @@
-Use the baked route-smoke skill parameters `NONCE` and `NONCE_FILE`.
-
-The output contract is: create the nonce evidence file at `NONCE_FILE` containing
-exactly `NONCE`, then emit `ROUTE_SMOKE_COMPLETE`.
+The output contract: create the nonce evidence file at {{NONCE_FILE}} (relative
+to your working directory) containing exactly {{NONCE}}, then emit
+ROUTE_SMOKE_COMPLETE.
