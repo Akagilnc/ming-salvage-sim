@@ -9,11 +9,17 @@
  * Driven entirely by a zero-container injected-seam fake (no real codex / container).
  */
 
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { findingIdentityKey } from "../../src/findings.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
+import { readTelemetryRecords } from "../../src/telemetry.js";
 import { isValidFinding } from "../../src/validate.js";
-import { runVerifyCmr } from "../../src/family/verifyCmr.js";
+import {
+  runVerifyCmr,
+} from "../../src/family/verifyCmr.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -33,6 +39,124 @@ import type {
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
 } as const;
+
+describe("review-round persistence immunity", () => {
+  class ReviewRoundStampBackend implements FamilyBackend {
+    readonly telemetryDir = mkdtempSync(join(tmpdir(), "verify-cmr-review-round-"));
+    readonly ledger: FamilyLedgerEntry[] = [];
+    currentFamilyHead = "review-head";
+
+    constructor(
+      private readonly failure: "helper-record" | "terminal-record" | "none",
+    ) {}
+
+    async mergeChildIntoFamilyBase(): Promise<never> {
+      throw new Error("not used");
+    }
+
+    async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+      return this.ledger;
+    }
+
+    async readFamilyHead(): Promise<string> {
+      return this.currentFamilyHead;
+    }
+
+    async runFamilyVerify(): Promise<FamilyVerifyResult> {
+      return { ok: true };
+    }
+
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind !== "cmr") throw new Error(`unexpected worker kind ${spec.kind}`);
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: this.failure === "terminal-record",
+          reason: "stop after one review round",
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
+        },
+      };
+    }
+
+    resolveTelemetryDir(): string {
+      return this.telemetryDir;
+    }
+
+    async readFamilyCurrentHead(): Promise<string> {
+      if (this.failure === "helper-record") {
+        throw new Error("injected current HEAD read failure");
+      }
+      return this.currentFamilyHead;
+    }
+
+    async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+      if (
+        this.failure === "helper-record" ||
+        (this.failure === "terminal-record" && entry.status === "cmr_passed")
+      ) {
+        throw new Error("injected durable record failure");
+      }
+      this.ledger.push(entry);
+    }
+  }
+
+  const reviewRoundRows = (backend: ReviewRoundStampBackend) =>
+    readTelemetryRecords(backend.telemetryDir).filter(
+      (record) => record.phase === "review_round",
+    );
+
+  it("stamps unknown when an intermediate git-state helper rejects while recording its abort", async () => {
+    const backend = new ReviewRoundStampBackend("helper-record");
+
+    await expect(
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/review-round-helper-reject",
+        familyBackend: backend,
+      }),
+    ).rejects.toThrow("injected durable record failure");
+
+    expect(reviewRoundRows(backend)).toEqual([
+      expect.objectContaining({ cmrPass: "completeness", finalDisposition: "unknown" }),
+    ]);
+  });
+
+  it("stamps unknown when the terminal durable record rejects", async () => {
+    const backend = new ReviewRoundStampBackend("terminal-record");
+
+    await expect(
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/review-round-record-reject",
+        familyBackend: backend,
+      }),
+    ).rejects.toThrow("injected durable record failure");
+
+    expect(reviewRoundRows(backend)).toEqual([
+      expect.objectContaining({ cmrPass: "completeness", finalDisposition: "unknown" }),
+    ]);
+  });
+
+  it("stamps accepted once on a normal terminal path", async () => {
+    const backend = new ReviewRoundStampBackend("none");
+
+    await expect(
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/review-round-normal",
+        familyBackend: backend,
+      }),
+    ).resolves.toEqual({ ok: false, ran: true });
+
+    expect(reviewRoundRows(backend)).toEqual([
+      expect.objectContaining({ cmrPass: "completeness", finalDisposition: "accepted" }),
+    ]);
+  });
+});
 
 /** #600/#603: successful pr_opened ship → verify → docRelease → post-merge cleanup. */
 const ONLINE_REVIEW_DISPATCH_TAIL = [
@@ -96,6 +220,9 @@ class SchedulerFamilyBackend implements FamilyBackend {
   }
   async readFamilyHead(): Promise<string> {
     return this.currentFamilyHead;
+  }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
   }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     return this.script.verify?.(req) ?? { ok: true };
@@ -246,6 +373,9 @@ class ReviewFixRereviewBackend implements FamilyBackend {
   async readFamilyHead(): Promise<string> {
     return this.currentFamilyHead;
   }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     this.verifyRequests.push(req);
     return { ok: true };
@@ -351,6 +481,9 @@ class ReviewFixRereviewBackend implements FamilyBackend {
  * coder-fix by identity key.
  */
 class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly verifyRequests: FamilyVerifyRequest[] = [];
@@ -474,6 +607,9 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
 }
 
 class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly verifyRequests: FamilyVerifyRequest[] = [];
@@ -599,6 +735,9 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
 }
 
 class RepeatedReviewFixRereviewBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   currentFamilyHead = "head-before-repeat-cmr-review";
@@ -763,6 +902,9 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
 }
 
 class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   currentFamilyHead = "head-before-excessive-cmr-review";
@@ -917,6 +1059,9 @@ const DOGFOOD_272_KEYS = DOGFOOD_272_FINDINGS.map((finding) =>
 );
 
 class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   currentFamilyHead = "head-before-dogfood-272";

@@ -634,7 +634,7 @@ describe("#796 Coder-Rec host dispatch", () => {
     ["sonnet", undefined, "claude"],
     ["grok-4.5", undefined, "cursor"],
     ["opencode-grok", undefined, "opencode"],
-    ["grok-4.5", "grok-build", "pi"],
+    ["grok-4.5", "grok-build", "grok"],
     ["grok-4.5", "codex-5h", "codex"],
   ] as const)(
     "derives host %s/%s from the registered provider",

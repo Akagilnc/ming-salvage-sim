@@ -124,7 +124,10 @@ import {
 } from "../src/onlineReviewLoop.js";
 import { runOrchestrator } from "../src/runner.js";
 import { route } from "../src/route.js";
-import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
+import {
+  fixerHasFixCommit,
+  skeletonReviewLoopWorkerResult,
+} from "../src/reviewLoopOutcome.js";
 import {
   buildOnlineReviewLanding,
   clampVerifyConvergenceForCheckRuns,
@@ -831,6 +834,24 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toEqual({ kind: "next", step: "S10" });
   });
 
+  it("S9 verifier decision gate parks instead of dispatching another fixer", () => {
+    expect(
+      route({
+        from: "S9",
+        output: {
+          kind: "verify",
+          converged: false,
+          terminalState: "decision_gate_raised",
+        },
+        onlineReviewRound: 1,
+      }),
+    ).toEqual({
+      kind: "handoff",
+      status: "escalate",
+      onlineReviewTerminal: "decision_gate_raised",
+    });
+  });
+
   it("S9 not converged at round cap still routes to S10 (AC5: round-3 fix attempted)", () => {
     expect(
       route({
@@ -864,14 +885,23 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toEqual({ kind: "next", step: "S9" });
   });
 
-  it("S10 not committed → decision_gate_raised (contract-valid nothing-to-fix)", () => {
+  it("S10 committed:false returns to S9; only an explicit verify decision signal may park", () => {
     expect(
       route({ from: "S10", output: { kind: "fixer", committed: false } }),
-    ).toEqual({
-      kind: "handoff",
-      status: "escalate",
-      onlineReviewTerminal: "decision_gate_raised",
-    });
+    ).toEqual({ kind: "next", step: "S9" });
+  });
+
+  it("pin r41: only a fixer envelope with a non-empty SHA has commit side effects", () => {
+    expect(fixerHasFixCommit({ kind: "fixer", committed: false })).toBe(false);
+    expect(
+      fixerHasFixCommit({
+        kind: "fixer",
+        committed: false,
+        alreadySatisfied: true,
+        fixCommitSha: FIXER_ENVELOPE_SHA,
+      }),
+    ).toBe(true);
+    expect(fixerHasFixCommit(fixerCommitted())).toBe(true);
   });
 
   it("pin r33: S10 alreadySatisfied routes back to S9 (not decision_gate)", () => {
@@ -5450,30 +5480,45 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(roundSeen).toBe(MAX_ONLINE_REVIEW_ROUNDS + 1);
   });
 
-  it("non-convergence terminal: fixer failure raises decision gate on first round", async () => {
+  it("committed:false returns through fresh verify findings instead of ending the run", async () => {
+    let verifyCalls = 0;
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
-      dispatchVerify: async () => ({ kind: "verify", converged: false }),
+      dispatchVerify: async () => {
+        verifyCalls += 1;
+        return verifyCalls === 2
+          ? {
+              kind: "verify",
+              converged: true,
+              isRecheck: true,
+              fixMarkedFindingIdentityKeys: ["no-fix:1"],
+            }
+          : {
+              kind: "verify",
+              converged: false,
+              findingDispositions: [
+                { identityKey: "no-fix:1", threadId: "thread-no-fix", action: "fix" },
+              ],
+            };
+      },
       dispatchFixer: async () => fixerNotFixed(),
       dispatchCleanup: async (_landing) => true,
       dispatchDocRelease: async (_landing) => true,
       applySideEffects: (_landing, verify) => verify,
       retriggerAfterFix: () => {},
     });
-    expect(result).toEqual({
-      ok: false,
-      terminalState: "decision_gate_raised",
-      round: 1,
-      stopSummary: onlineReviewFixerNothingToFixStopSummary(),
-    });
-    expect(result.stopSummary?.reason).toBe("decision_gate_park");
-    expect(result.stopSummary?.reason).not.toBe("infra_failure");
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+    expect(verifyCalls).toBe(2);
   });
 
-  it("pin r23: fixer nothing-to-fix stopSummary inherited by family summarizer (not infra_failure)", async () => {
+  it("pin r23: only verifier decision signal parks with the decision-gate summary", async () => {
     const stageResult = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
-      dispatchVerify: async () => ({ kind: "verify", converged: false }),
+      dispatchVerify: async () => ({
+        kind: "verify",
+        converged: false,
+        terminalState: "decision_gate_raised",
+      }),
       dispatchFixer: async () => fixerNotFixed(),
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
@@ -5743,12 +5788,33 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(fixingSha).not.toBe(driftHeadOid);
   });
 
-  it("pin r39: committed:true without fixCommitSha is rejected (no silent live-HEAD fallback)", async () => {
+  it("pin r39: committed:true without fixCommitSha retries once, then returns through verify", async () => {
     const malformed = { kind: "fixer", committed: true } as FixerResult;
+    let fixerCalls = 0;
+    let verifyCalls = 0;
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => baseSnapshot,
-      dispatchVerify: async () => ({ kind: "verify", converged: false }),
-      dispatchFixer: async () => malformed,
+      dispatchVerify: async () => {
+        verifyCalls += 1;
+        return verifyCalls === 2
+          ? {
+              kind: "verify",
+              converged: true,
+              isRecheck: true,
+              fixMarkedFindingIdentityKeys: ["missing-sha:1"],
+            }
+          : {
+              kind: "verify",
+              converged: false,
+              findingDispositions: [
+                { identityKey: "missing-sha:1", threadId: "thread-missing-sha", action: "fix" },
+              ],
+            };
+      },
+      dispatchFixer: async () => {
+        fixerCalls += 1;
+        return malformed;
+      },
       dispatchCleanup: async () => true,
       dispatchDocRelease: async () => true,
       applySideEffects: (_landing, verify) => verify,
@@ -5756,15 +5822,8 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         throw new Error("retriggerAfterFix must not run for malformed fixer envelope");
       },
     });
-    expect(result).toEqual({
-      ok: false,
-      terminalState: "decision_gate_raised",
-      round: 1,
-      stopSummary: expect.objectContaining({
-        reason: "infra_failure",
-        summary: expect.stringMatching(/missing fixCommitSha/i),
-      }),
-    });
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+    expect(fixerCalls).toBe(2);
   });
 
   it("pin r40: retrigger-only ledger yields no fix SHA (single-slice, envelope-only)", () => {
