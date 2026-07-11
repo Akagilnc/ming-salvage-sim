@@ -95,6 +95,7 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly cmrCalls: IntegratedCmrRequest[] = [];
   readonly prCalls: OpenFamilyPrRequest[] = [];
+  readonly resolveCalls: ConflictResolveRequest[] = [];
   private head = "base0";
 
   constructor(private readonly conflictIssues: ReadonlySet<number> = new Set()) {}
@@ -107,6 +108,7 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
     return { familyHead: this.head, childHead: `c${child.childIssue}`, familyHeadBefore: "base0" };
   }
   async resolveMergeConflict(req: ConflictResolveRequest): Promise<MergeResult> {
+    this.resolveCalls.push(req);
     this.head = `resolved-${req.childIssue}`;
     return {
       familyHead: this.head,
@@ -160,6 +162,10 @@ describe("Wiring 1 — conflictResolvedByLlm flows to the integrated cmr (#291 �
     expect(byIssue.get(295)).toBe(true);
     // The clean child (294) was a deterministic merge → flag false/omitted.
     expect(byIssue.get(294) ?? false).toBe(false);
+    // The merger is a leg of the startup-smoked route, even though it runs
+    // before CMR/ship and may write the run's environment row first.
+    expect(backend.resolveCalls).toHaveLength(1);
+    expect(backend.resolveCalls[0]?.modelRoute?.slots).toBeDefined();
   });
 
   it("the spine derives IntegratedCmrRequest.llmResolvedChildren from the ledger (only the LLM-resolved child)", async () => {

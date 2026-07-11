@@ -276,6 +276,7 @@ export {
   buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
+  selectCapacityRelayBaton,
   selectNextRelayBaton,
 } from "./quotaPoolTable.js";
 export type {
@@ -294,11 +295,13 @@ export {
   buildRelayFocusFile,
   buildRelayHandoffLedgerEntry,
   canRelayHandoff,
+  capacityRelayErrorFrom,
   classifyFailureForRetryOrRelay,
   countRelayHandoffsInLedger,
   decideRelayAfterIdle,
   forkQuotaWallAt683Point,
   isHangWithLivePoolError,
+  isCapacityRelayError,
   isRelayCandidateExhaustion,
   isRelayChainReadyForReviewGate,
   isSelfReportedRelayError,
@@ -307,6 +310,7 @@ export {
   tryBuildRelayFocusFile,
   tryParseActionableRelayTag,
   HangWithLivePoolError,
+  CapacityRelayError,
   SelfReportedRelayError,
 } from "./relayDispatch.js";
 export type {
