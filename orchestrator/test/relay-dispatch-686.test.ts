@@ -19,9 +19,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CODER_ROSTER,
   lookupCoderRosterEntry,
+  poolSeparationViolation,
   resolveCoderRecOrder,
 } from "../src/coderRoster.js";
 import { modelIdForSlug } from "../src/modelRegistry.js";
+import { resolveRouteModels } from "../src/modelRoutes.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
   DEFAULT_POOL_MODELS,
@@ -58,7 +60,7 @@ import {
 import { decideIdleAfterProbe, QuotaWaitForResetError } from "../src/quotaProbe.js";
 import { buildCliMonitorSpawnSpec } from "../src/cliMonitorHooks.js";
 import { legacyDispatchWorker } from "../src/dispatchWorker.js";
-import { runOrchestrator } from "../src/runner.js";
+import { relayCandidateConflictSlugs, runOrchestrator } from "../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
@@ -1516,8 +1518,10 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
 
     const previousRoute = process.env.ORCHESTRATOR_ROUTE;
     const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
+    const previousCmrReview = process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
     process.env.ORCHESTRATOR_ROUTE = "normal";
     process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+    process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = "opus,agy";
     try {
       const result = await runOrchestrator({
         issueNumber: 686,
@@ -1554,6 +1558,8 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       else process.env.ORCHESTRATOR_ROUTE = previousRoute;
       if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
       else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
+      if (previousCmrReview === undefined) delete process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
+      else process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = previousCmrReview;
     }
   });
 
@@ -1631,8 +1637,10 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
 
     const previousRoute = process.env.ORCHESTRATOR_ROUTE;
     const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
+    const previousCmrReview = process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
     process.env.ORCHESTRATOR_ROUTE = "normal";
     process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+    process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = "opus,agy";
     try {
       const result = await runOrchestrator({
         issueNumber: 686,
@@ -1670,6 +1678,8 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       else process.env.ORCHESTRATOR_ROUTE = previousRoute;
       if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
       else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
+      if (previousCmrReview === undefined) delete process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
+      else process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = previousCmrReview;
     }
   });
 
@@ -1760,8 +1770,10 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
 
     const previousRoute = process.env.ORCHESTRATOR_ROUTE;
     const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
+    const previousCmrReview = process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
     process.env.ORCHESTRATOR_ROUTE = "normal";
     process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+    process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = "opus,agy";
     try {
       const result = await runOrchestrator({
         issueNumber: 686,
@@ -1797,10 +1809,68 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       else process.env.ORCHESTRATOR_ROUTE = previousRoute;
       if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
       else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
+      if (previousCmrReview === undefined) delete process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
+      else process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = previousCmrReview;
       if (previousReviewer === undefined) delete process.env.ORCHESTRATOR_REVIEWER_MODEL;
       else process.env.ORCHESTRATOR_REVIEWER_MODEL = previousReviewer;
     }
   });
+});
+
+describe("#686 reviewer relay candidate conflict set", () => {
+  const sol = lookupCoderRosterEntry("sol@med")!;
+
+  it.each(["S3", "S6"] as const)(
+    "%s rejects sol when any complete-route CMR or verify leg shares its checkpoint",
+    (wallStep) => {
+      const route = resolveRouteModels("normal", {
+        cmrCompleteness: sol.slug,
+        cmrCorrectness: sol.slug,
+        verify: sol.slug,
+      }, {
+        cmrReview: ["opus", "gpt-5.6-sol", "agy"],
+      });
+
+      const conflicts = relayCandidateConflictSlugs(route, sol, wallStep);
+
+      expect(conflicts).toEqual(
+        expect.arrayContaining([
+          route.slots.coder,
+          route.slots.cmrCompleteness,
+          route.slots.cmrCorrectness,
+          route.slots.verify,
+          ...route.legCollections.cmrReview.map((leg) => leg.slug),
+        ]),
+      );
+      expect(poolSeparationViolation(sol, conflicts)).toMatch(
+        /must not double as.*reviewer/i,
+      );
+    },
+  );
+
+  it.each([
+    "sol@med",
+    "grok-4.5",
+  ] as const)(
+    "allows %s when its only matching slug is the reviewer slot it replaces",
+    (candidateId) => {
+      const candidate = lookupCoderRosterEntry(candidateId)!;
+      const route = resolveRouteModels("normal", {
+        reviewer: candidate.slug,
+        cmrCompleteness: "opus",
+        cmrCorrectness: "opus",
+        verify: "opus",
+      }, {
+        cmrReview: ["opus", "agy"],
+      });
+
+      for (const wallStep of ["S3", "S6"] as const) {
+        const conflicts = relayCandidateConflictSlugs(route, candidate, wallStep);
+        expect(conflicts).not.toContain(candidate.slug);
+        expect(poolSeparationViolation(candidate, conflicts)).toBeUndefined();
+      }
+    },
+  );
 });
 
 /**

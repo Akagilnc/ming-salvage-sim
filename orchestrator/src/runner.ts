@@ -148,6 +148,7 @@ import {
   applyRuntimeTightRoutePolicy,
   modelForSlot,
   printableRouteLineup,
+  routeConflictSlugsExcluding,
   resolveActiveModelRoute,
   withCoderSlot,
   type ModelRouteEnv,
@@ -155,7 +156,6 @@ import {
 } from "./modelRoutes.js";
 import {
   resolveCoderRecOrder,
-  reviewerSlugsFromRoute,
   lookupCoderRosterEntry,
   CODER_REC_FALLBACK_AFTER_ROUNDS,
   type CoderRosterEntry,
@@ -225,6 +225,34 @@ import type {
   WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
+
+/**
+ * The self-review peers after a relay candidate lands in its real route.
+ *
+ * Relay candidates can only replace the coder (S2/S5) or reviewer (S3/S6)
+ * slot. Every other complete-route checkpoint remains a separation peer,
+ * including both CMR gates, verify, and every CMR review leg. Removal is by
+ * slot identity rather than slug so another checkpoint using the same slug is
+ * still a conflict.
+ */
+export function relayCandidateConflictSlugs(
+  route: ResolvedModelRoute,
+  candidate: CoderRosterEntry,
+  wallStep: StepId,
+): ReadonlyArray<string> {
+  const candidateRoute =
+    wallStep === "S3" || wallStep === "S6"
+      ? { ...route, slots: { ...route.slots, reviewer: candidate.slug } }
+      : wallStep === "S2" || wallStep === "S5"
+        ? withCoderSlot(route, candidate.slug)
+        : undefined;
+  if (candidateRoute === undefined) return [];
+
+  return routeConflictSlugsExcluding(
+    candidateRoute,
+    wallStep === "S3" || wallStep === "S6" ? "reviewer" : "coder",
+  );
+}
 
 /** Merge resume history with the display-seeded ledger without replaying shared rows. */
 export function mergeResumeLedgerHistory(
@@ -2752,42 +2780,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const reviewerSlugsForRelayCandidate = (
     candidate: CoderRosterEntry,
     wallStep: StepId,
-  ): ReadonlyArray<string> => {
-    if (wallStep === "S3" || wallStep === "S6") {
-      // A reviewer-wall baton lands in the reviewer slot, not the coder slot.
-      // Model its real route before checking the coder/reviewer separation.
-      const candidateRoute: ResolvedModelRoute = {
-        ...modelRoute,
-        slots: { ...modelRoute.slots, reviewer: candidate.slug },
-      };
-      // The candidate owns this reviewer slot after the relay, so it is not
-      // a separation peer. Keep comparing against the coder it will review.
-      return candidate.id === "sol@med"
-        ? [candidateRoute.slots.coder]
-        : [
-            candidateRoute.slots.coder,
-            ...reviewerSlugsFromRoute(candidateRoute).filter(
-              (slug) => slug !== candidateRoute.slots.reviewer,
-            ),
-          ];
-    }
-    if (wallStep === "S2" || wallStep === "S5") {
-      // S2/S5/default: the candidate becomes the coder, so Sol's landing
-      // route correctly replaces its reviewer with Opus.
-      const candidateRoute = withCoderSlot(modelRoute, candidate.slug);
-      // Sol's owner-ratified landing route replaces the per-slice Sol reviewer
-      // with Opus only when Sol actually becomes the coder. Its normal CMR
-      // collection may still include Sol, but that is not the reviewer
-      // checkpoint that a coder relay will enter.
-      return candidate.id === "sol@med"
-        ? [candidateRoute.slots.reviewer]
-        : reviewerSlugsFromRoute(candidateRoute);
-    }
-    // S7/S9–S12 batons do not become a coder or reviewer. Comparing that
-    // candidate against reviewer legs would falsely reject a worker for being
-    // its own ship/verify/fix leg rather than protecting self-review.
-    return [];
-  };
+  ): ReadonlyArray<string> =>
+    relayCandidateConflictSlugs(modelRoute, candidate, wallStep);
 
   const relayBillingPoolForDispatch = (
     dispatchStep: StepId,
