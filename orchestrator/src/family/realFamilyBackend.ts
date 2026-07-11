@@ -2721,7 +2721,7 @@ export class RealFamilyBackend implements FamilyBackend {
       this.writeShipFocusFile(ctx);
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
       try {
-        const result = await this.shipContainerRun(spec, auth, outcomeLanding);
+        const result = await this.shipContainerRun(spec, auth, outcomeLanding, ctx);
         return shipOutcomeFromResult({
           ...result,
           outcomePath: outcomeLanding.path,
@@ -2744,6 +2744,7 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return sc.run({
       name: "family-ship",
@@ -2755,7 +2756,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
       // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
       // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
-      agent: this.agentForSpec(spec),
+      agent: this.agentForSpec(spec, ctx),
       maxIterations: spec.maxIter,
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
