@@ -60,7 +60,6 @@ import {
   promptsDirError,
   soulsDirError,
   REQUIRED_SOUL_FILES,
-  realCommitCount,
   reconcileCoderCommits,
   reconcileResumeCoderCommits,
   resumeCoderCommitBasis,
@@ -849,17 +848,6 @@ describe("realBackend lastSessionId", () => {
   it("returns undefined when no iteration carries a sessionId", () => {
     expect(lastSessionId({ iterations: [{}, {}] })).toBeUndefined();
     expect(lastSessionId({ iterations: [] })).toBeUndefined();
-  });
-});
-
-describe("realBackend realCommitCount (#256 commit-truth)", () => {
-  it("reads the real commit count from result.commits.length", () => {
-    expect(
-      realCommitCount({ commits: [{ sha: "a1" }, { sha: "b2" }] }),
-    ).toBe(2);
-  });
-  it("returns 0 when the agent made no commits", () => {
-    expect(realCommitCount({ commits: [] })).toBe(0);
   });
 });
 
@@ -1690,6 +1678,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     public lastAgentOptions?: Parameters<typeof sc.run>[0];
     public preflightResults = new Map<string, boolean>();
     public preflightHook?: (tool: string) => Promise<void>;
+    /** Final reachable commits after the fresh worker's pinned baseline. */
+    public finalGraphCommitCount = 0;
 
     protected override cloneDirExists(): boolean {
       return true;
@@ -1698,6 +1688,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     protected override sh(file: string, args: string[]): string {
       if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
         return ".git";
+      }
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+        return "a".repeat(40);
+      }
+      if (file === "git" && args[0] === "rev-list" && args[1] === "--count") {
+        return String(this.finalGraphCommitCount);
       }
       return "";
     }
@@ -1771,6 +1767,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
   it("prefers a runner-owned outcome sidecar over malformed coder stdout", async () => {
     const backend = makeBackend();
+    backend.finalGraphCommitCount = 1;
     const dir = mkdtempSync(join(tmpdir(), "worker-outcome-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -1806,8 +1803,44 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("routes a fresh coder with only unreachable observed commits to the 0-commit edge", async () => {
+    const backend = makeBackend();
+    // Sandcastle observed a now-unreachable commit. Final HEAD is still the
+    // pre-worker baseline, so graph truth must override both observations and
+    // the worker's self-report without turning the mismatch into a failure.
+    backend.finalGraphCommitCount = 0;
+    backend.agentResult = agentRunResult({
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: '<coder>{"committed":true,"commitsAdded":1}</coder>',
+      commits: [{ sha: "unreachable-after-reset" }],
+      sessionId: "sess-final-graph-truth",
+    });
+
+    await expect(
+      backend.runStep(coderSpec, {
+        branch: "feat/issue-818",
+        base: "main",
+        path: "/tmp/worktree/issue-818",
+      }),
+    ).resolves.toEqual({
+      output: {
+        kind: "coder",
+        committed: false,
+        commitsAdded: 0,
+        selfReportDiscrepancy: {
+          code: "coder_self_report_disagrees_with_git_commits",
+          selfReportedCommitted: true,
+          selfReportedCommitsAdded: 1,
+          gitCommitCount: 0,
+        },
+      },
+      sessionId: "sess-final-graph-truth",
+    });
+  });
+
   it("falls back to signaled coder stdout when the outcome sidecar path is an empty directory", async () => {
     const backend = makeBackend();
+    backend.finalGraphCommitCount = 1;
     const dir = mkdtempSync(join(tmpdir(), "worker-outcome-empty-dir-"));
     const outcomePath = join(dir, "outcome.json");
     mkdirSync(outcomePath);
