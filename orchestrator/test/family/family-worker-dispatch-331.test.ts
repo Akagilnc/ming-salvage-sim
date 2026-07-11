@@ -139,6 +139,35 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
     }
   });
 
+  it("legacy monitored dispatch confirms only after the physical launch", async () => {
+    const events: string[] = [];
+    const backend = {
+      dispatchWorker: async (): Promise<WorkerResult> => {
+        events.push("launched");
+        return {
+          kind: "completed",
+          output: { kind: "cmr", converged: true },
+        };
+      },
+    } as unknown as FamilyBackend;
+
+    await dispatchFamilyWorkerWithMonitor(
+      backend,
+      cmrWorkerSpec(),
+      {
+        familyBase: "family/base",
+        modelRoute: await smokeRouteModels(
+          resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" }),
+          async () => ({ ok: true }),
+        ),
+      },
+      undefined,
+      { onDispatchConfirmed: () => events.push("confirmed") },
+    );
+
+    expect(events).toEqual(["launched", "confirmed"]);
+  });
+
   it("final barrier: green verify → cmr worker (converged) → ship worker (PR), ok", async () => {
     const be = new CapableFamilyBackend();
     const res = await runVerifyCmr({

@@ -148,7 +148,6 @@ export interface CmrPassedRecord {
 
 /** A durable, phase-level marker written immediately before a ship dispatch (#823). */
 export interface ShipDispatchAttemptRecord {
-  /** Ship retry streaks start only after a green correctness CMR pass. */
   readonly phase: "final";
   readonly shipDispatchId: string;
 }
@@ -167,54 +166,100 @@ export interface ShipCompletedRecord {
 }
 
 /**
- * Count ship dispatches in the current retry streak.
- *
- * A fresh correctness CMR pass starts a fresh streak, so a legitimate later
- * final-barrier round cannot inherit malformed-output budget from an earlier
- * round. Conversely, a crash/re-feed that resume-skips CMR sees the markers
- * after that same pass and spends only the remaining dispatches.
+ * Count confirmed ship dispatches in the durable open streak. The explicit
+ * anchor survives intervening CMR passes and ship-induced HEAD movement.
  */
 export function shipDispatchAttemptsSinceLatestCorrectnessCmrPass(
   entries: ReadonlyArray<FamilyLedgerEntry>,
 ): number {
+  const latestBoundary = lastIndexWhere(
+    entries,
+    (entry) =>
+      entry.status === "ship_streak_opened" || entry.status === "ship_streak_closed",
+  );
+  if (latestBoundary >= 0) {
+    const boundary = entries[latestBoundary]!;
+    if (boundary.status === "ship_streak_closed") {
+      const laterCmr = entries.slice(latestBoundary + 1).some(
+        (entry) =>
+          entry.status === "cmr_passed" &&
+          entry.phase === "final" &&
+          entry.cmrPass === "correctness",
+      );
+      if (laterCmr || boundary.shipStreakOutcome === "shipped") return 0;
+      const opened = lastIndexWhere(
+        entries.slice(0, latestBoundary),
+        (entry) => entry.status === "ship_streak_opened",
+      );
+      if (opened < 0) return 0;
+      return shipAttemptsBetween(entries, opened, latestBoundary);
+    }
+    return shipAttemptsBetween(entries, latestBoundary, entries.length);
+  }
+  return legacyShipAttempts(entries);
+}
+
+function shipAttemptsBetween(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  openedIndex: number,
+  endExclusive: number,
+): number {
+  const opened = entries[openedIndex]!;
+  return (
+    (opened.shipAttemptsAtOpen ?? 0) +
+    entries.slice(openedIndex + 1, endExclusive).filter(
+      (entry) => entry.status === "ship_dispatch_attempt" && entry.phase === "final",
+    ).length
+  );
+}
+
+function legacyShipAttempts(entries: ReadonlyArray<FamilyLedgerEntry>): number {
   let attempts = 0;
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    if (
-      entry.status === "cmr_passed" &&
-      entry.event === "cmr_passed" &&
-      entry.phase === "final" &&
-      entry.cmrPass === "correctness"
-    ) {
-      return attempts;
-    }
-    if (
-      entry.status === "ship_dispatch_attempt" &&
-      entry.event === "ship_dispatch_attempt" &&
-      entry.phase === "final"
-    ) {
-      attempts += 1;
-    }
+    if (entry.status === "cmr_passed" && entry.cmrPass === "correctness") return attempts;
+    if (entry.status === "ship_dispatch_attempt" && entry.phase === "final") attempts += 1;
   }
   return 0;
 }
 
-/** Count unconfirmed reservations in the current CMR streak (infra retry lane). */
+/** Count unconfirmed reservations in the durable open streak (infra retry lane). */
 export function unconfirmedShipReservationsSinceLatestCorrectnessCmrPass(
   entries: ReadonlyArray<FamilyLedgerEntry>,
 ): number {
-  const confirmed = new Set<string>();
-  let reservations = 0;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (
-      entry.status === "cmr_passed" &&
-      entry.event === "cmr_passed" &&
-      entry.phase === "final" &&
-      entry.cmrPass === "correctness"
-    ) {
-      break;
+  const latestBoundary = lastIndexWhere(
+    entries,
+    (entry) =>
+      entry.status === "ship_streak_opened" || entry.status === "ship_streak_closed",
+  );
+  if (latestBoundary >= 0) {
+    const boundary = entries[latestBoundary]!;
+    if (boundary.status === "ship_streak_closed") {
+      const laterCmr = entries.slice(latestBoundary + 1).some(
+        (entry) => entry.status === "cmr_passed" && entry.cmrPass === "correctness",
+      );
+      if (laterCmr || boundary.shipStreakOutcome === "shipped") return 0;
+      const opened = lastIndexWhere(
+        entries.slice(0, latestBoundary),
+        (entry) => entry.status === "ship_streak_opened",
+      );
+      if (opened < 0) return 0;
+      return unconfirmedReservationsBetween(entries, opened, latestBoundary);
     }
+    return unconfirmedReservationsBetween(entries, latestBoundary, entries.length);
+  }
+  return legacyUnconfirmedReservations(entries);
+}
+
+function unconfirmedReservationsBetween(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  openedIndex: number,
+  endExclusive: number,
+): number {
+  const confirmed = new Set<string>();
+  let reservations = entries[openedIndex]!.shipInfraAttemptsAtOpen ?? 0;
+  for (let i = endExclusive - 1; i > openedIndex; i--) {
+    const entry = entries[i]!;
     if (
       entry.status === "ship_dispatch_attempt" &&
       entry.shipDispatchId !== undefined
@@ -230,6 +275,78 @@ export function unconfirmedShipReservationsSinceLatestCorrectnessCmrPass(
     }
   }
   return reservations;
+}
+
+function legacyUnconfirmedReservations(entries: ReadonlyArray<FamilyLedgerEntry>): number {
+  const confirmed = new Set<string>();
+  let reservations = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.status === "cmr_passed" && entry.cmrPass === "correctness") break;
+    if (entry.status === "ship_dispatch_attempt" && entry.shipDispatchId !== undefined) {
+      confirmed.add(entry.shipDispatchId);
+    }
+    if (
+      entry.status === "ship_dispatch_reserved" &&
+      entry.shipDispatchId !== undefined &&
+      !confirmed.has(entry.shipDispatchId)
+    ) {
+      reservations += 1;
+    }
+  }
+  return reservations;
+}
+
+function lastIndexWhere(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  predicate: (entry: FamilyLedgerEntry) => boolean,
+): number {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (predicate(entries[i]!)) return i;
+  }
+  return -1;
+}
+
+export function activeShipStreakId(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.status === "ship_streak_closed") return undefined;
+    if (entry.status === "ship_streak_opened") return entry.shipStreakId;
+  }
+  return undefined;
+}
+
+export async function recordShipStreakOpened(
+  backend: FamilyBackend,
+  record: {
+    readonly shipStreakId: string;
+    readonly shipAttemptsAtOpen: number;
+    readonly shipInfraAttemptsAtOpen: number;
+  },
+): Promise<void> {
+  await backend.appendFamilyLedger({
+    status: "ship_streak_opened",
+    event: "ship_streak_opened",
+    phase: "final",
+    ...record,
+  });
+}
+
+export async function recordShipStreakClosed(
+  backend: FamilyBackend,
+  record: {
+    readonly shipStreakId: string;
+    readonly shipStreakOutcome: "shipped" | "exhausted";
+  },
+): Promise<void> {
+  await backend.appendFamilyLedger({
+    status: "ship_streak_closed",
+    event: "ship_streak_closed",
+    phase: "final",
+    ...record,
+  });
 }
 
 export async function recordShipDispatchReservation(

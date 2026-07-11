@@ -157,6 +157,9 @@ import {
   familyShipCompletedRecord,
   recordShipDispatchReservation,
   recordShipDispatchAttempt,
+  activeShipStreakId,
+  recordShipStreakOpened,
+  recordShipStreakClosed,
   recordShipCompleted,
   recordShipped,
   shipDispatchAttemptsSinceLatestCorrectnessCmrPass,
@@ -2911,12 +2914,27 @@ async function runVerifyCmrWithShipTruthAttempt(
         };
   let lastMalformedShipAttempt: WorkerResult | undefined;
   let lastMalformedReason: string | undefined;
-  let usedShipAttempts = shipDispatchAttemptsSinceLatestCorrectnessCmrPass(
-    await familyBackend.readFamilyLedger(),
-  );
-  let usedInfraAttempts = unconfirmedShipReservationsSinceLatestCorrectnessCmrPass(
-    await familyBackend.readFamilyLedger(),
-  );
+  const shipLedger = await familyBackend.readFamilyLedger();
+  const legacyShipAttempts = shipDispatchAttemptsSinceLatestCorrectnessCmrPass(shipLedger);
+  const legacyInfraAttempts =
+    unconfirmedShipReservationsSinceLatestCorrectnessCmrPass(shipLedger);
+  let shipStreakId = activeShipStreakId(shipLedger);
+  if (shipStreakId === undefined) {
+    shipStreakId = `ship-streak-${Date.now()}`;
+    await recordShipStreakOpened(familyBackend, {
+      shipStreakId,
+      shipAttemptsAtOpen: legacyShipAttempts,
+      shipInfraAttemptsAtOpen: legacyInfraAttempts,
+    });
+  }
+  let shipStreakClosed = false;
+  const closeShipStreak = async (outcome: "shipped" | "exhausted") => {
+    if (shipStreakClosed) return;
+    await recordShipStreakClosed(familyBackend, { shipStreakId, shipStreakOutcome: outcome });
+    shipStreakClosed = true;
+  };
+  let usedShipAttempts = legacyShipAttempts;
+  let usedInfraAttempts = legacyInfraAttempts;
   while (
     shipResult === undefined &&
     usedShipAttempts < MAX_DISPATCH_ATTEMPTS &&
@@ -3055,6 +3073,7 @@ async function runVerifyCmrWithShipTruthAttempt(
       familyHeadAfter: postShipFamilyHead,
       stopSummary,
     });
+    await closeShipStreak("exhausted");
     return { ok: false, ran: true };
   }
   if (shipResult === undefined) {
@@ -3115,6 +3134,7 @@ async function runVerifyCmrWithShipTruthAttempt(
       familyHeadAfter: postShipFamilyHead,
       stopSummary,
     });
+    await closeShipStreak("exhausted");
     return { ok: false, ran: true };
   }
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
@@ -3372,6 +3392,9 @@ async function runVerifyCmrWithShipTruthAttempt(
       familyHeadAfter: exactPostShipFamilyHead,
       stopSummary,
     });
+    if (shippedPrVerification.kind === "pr_missing") {
+      await closeShipStreak("exhausted");
+    }
     return { ok: false, ran: true };
   }
   // ── Persist the terminal SHIPPED marker before reporting success (online review
@@ -3425,6 +3448,7 @@ async function runVerifyCmrWithShipTruthAttempt(
           },
         }
       : shippedSuccessSummary;
+  await closeShipStreak("shipped");
   await recordShipped(familyBackend, {
     pr: ship.pr,
     familyHeadAfter: exactPostShipFamilyHead,
