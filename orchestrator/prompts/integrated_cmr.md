@@ -22,7 +22,7 @@ orchestrator-outcome-guard \
   --draft "<draft-json-path>" \
   --outcome "$ORCHESTRATOR_OUTCOME_PATH" \
   --evidence-root "$PWD" \
-  --completion-signal "CMR_STEP_COMPLETE"
+  --completion-signal "<COMPLETION_SIGNAL>"
 ```
 
 After validation, the guard may emit the compatibility `<cmr>` tag and completion
@@ -33,21 +33,18 @@ Converged:
 
 ```text
 <cmr>{"converged": true, "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
-CMR_STEP_COMPLETE
 ```
 
 Not converged:
 
 ```text
 <cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now"}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
-CMR_STEP_COMPLETE
 ```
 
 Escalation:
 
 ```text
 <cmr>{"escalate": {"reason": "<short>", "diagnosis": "<why the worker cannot converge>"}}</cmr>
-CMR_STEP_COMPLETE
 ```
 
 Rules:
@@ -111,6 +108,7 @@ Rules:
   blocker).
 - When `$ORCHESTRATOR_OUTCOME_PATH` is set, completion is judged by the validated
   sidecar JSON and typed CMR outcome; let `orchestrator-outcome-guard` emit the
-  `<cmr>` tag and `CMR_STEP_COMPLETE` as optional telemetry.
+  `<cmr>` tag and optional completion telemetry.
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag LAST; if you iterate,
-  the LAST tag is the one that counts. `CMR_STEP_COMPLETE` remains optional telemetry.
+  the LAST tag is the one that counts.
+- For optional telemetry, you may print CMR_STEP_COMPLETE on its own final line.

@@ -9,7 +9,9 @@ Soul: `fixer` (`/home/agent/.orchestrator/souls/fixer.md`)
 
 ## Output
 
-Emit `<fixer>` JSON. `FIXER_STEP_COMPLETE` is optional telemetry:
+Emit `<fixer>` JSON:
+
+For optional telemetry, you may print FIXER_STEP_COMPLETE on its own final line.
 
 ```json
 {"committed": true, "fixCommitSha": "<the-commit-sha-you-just-made>"}

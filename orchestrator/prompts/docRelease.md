@@ -29,7 +29,7 @@ push failure → `released: false` (or no valid tag). Auto-merge must not procee
 
 ## Output
 
-Emit `<docRelease>` JSON. `DOCRELEASE_STEP_COMPLETE` is optional telemetry. Thin schema only:
+Emit `<docRelease>` JSON. Thin schema only:
 
 ```json
 {"released": true}
@@ -45,4 +45,4 @@ Rules:
 
 - `kind` is implied by the tag; JSON body is `{ "released": boolean }` only.
 - No path-allowlist self-check is a success criterion (ADR 0123).
-- Once the verdict is final, `DOCRELEASE_STEP_COMPLETE` is available as optional telemetry.
+- For optional telemetry, you may print DOCRELEASE_STEP_COMPLETE on its own final line.
