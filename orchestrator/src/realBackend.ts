@@ -712,6 +712,39 @@ export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
  * symlink into this tree) so the bind-mount does not hide PATH.
  */
 export const SANDBOX_GROK_DIR = "/home/agent/.grok";
+/** OpenCode Go auth is a single read-only file; SQLite/runtime state stays per-container. */
+export const SANDBOX_OPENCODE_AUTH_FILE = "/home/agent/.local/share/opencode/auth.json";
+
+export function opencodeAuthMount(home: string): {
+  hostPath: string;
+  sandboxPath: string;
+  readonly: true;
+} {
+  return {
+    hostPath: join(home, ".local", "share", "opencode", "auth.json"),
+    sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+    readonly: true,
+  };
+}
+
+export function hostOpenCodeAuthFile(home: string): string | undefined {
+  const path = opencodeAuthMount(home).hostPath;
+  return existsSync(path) ? path : undefined;
+}
+
+export function appendOpenCodeAuthMount(
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
+  hostPath: string | undefined,
+): void {
+  if (hostPath !== undefined) {
+    mounts.push({ hostPath, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true });
+  }
+}
+
+/** Pass the optional Z.ai credential through at dispatch time; never persist it. */
+export function appendGlmKeyEnv(env: Record<string, string>): void {
+  if (process.env.GLM_KEY !== undefined) env.GLM_KEY = process.env.GLM_KEY;
+}
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -870,6 +903,8 @@ export interface ShipAuth {
   readonly codexAuthDir?: string;
   /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
   readonly grokAuthDir?: string;
+  /** Host OpenCode auth.json mounted read-only; runtime DB remains container-local. */
+  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -2900,6 +2935,7 @@ export class RealBackend implements Backend {
     claudeToken?: string;
     /** Per-issue host dir for grok auth, only when host `~/.grok/auth.json` exists. */
     grokAuthDir?: string;
+    opencodeAuthFile?: string;
     providerAuth: ProviderAuthAvailability;
   } {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
@@ -2958,6 +2994,7 @@ export class RealBackend implements Backend {
       authDir: paths.hostCodexAuthDir,
       claudeToken,
       grokAuthDir,
+      opencodeAuthFile: hostOpenCodeAuthFile(this.opts.home ?? homedir()),
       providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
     };
   }
@@ -3095,6 +3132,7 @@ export class RealBackend implements Backend {
       ghToken?: string;
       /** #807: optional per-issue grok auth dir (omit when host auth absent). */
       grokAuthDir?: string;
+      opencodeAuthFile?: string;
     },
     spec: Pick<StepSpec, "role" | "soul">,
     issueNumber?: number,
@@ -3110,6 +3148,7 @@ export class RealBackend implements Backend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
+    appendGlmKeyEnv(env);
     // Inject the Claude token only when present: a Codex coder (model gpt-5.6-terra)
     // needs no CLAUDE_CODE_OAUTH_TOKEN, and an empty/undefined value would defeat
     // the in-container Claude auth on a Codex-only host (#384 codex P2).
@@ -3147,6 +3186,7 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
@@ -4286,6 +4326,7 @@ export class RealBackend implements Backend {
     return {
       codexAuthDir,
       grokAuthDir,
+      opencodeAuthFile: hostOpenCodeAuthFile(this.opts.home ?? homedir()),
       claudeToken,
       ghToken: this.readGhToken(),
       providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
@@ -4340,6 +4381,7 @@ export class RealBackend implements Backend {
       [SANDBOX_SOUL_ENV]: "ship",
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
+    appendGlmKeyEnv(env);
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
     // authenticates from GH_TOKEN. Set only when present (the pure seam stays
@@ -4356,6 +4398,7 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
     // #372: souls mount for ship worker too (live source, shadows baked if any).
     // Shared helper forces readonly:true at all sites.
     mounts.push(soulsMount(this.opts.soulsDir));

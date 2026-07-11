@@ -81,6 +81,9 @@ import {
 } from "../modelRegistry.js";
 import {
   agentForSlug,
+  appendGlmKeyEnv,
+  appendOpenCodeAuthMount,
+  hostOpenCodeAuthFile,
   candidateBranches,
   extractCoderTag,
   lastSessionId,
@@ -1059,7 +1062,11 @@ export class RealFamilyBackend implements FamilyBackend {
       // claude token absent ⇒ the top-level merger worker degrades; the
       // runMergerAgent preflight returns a structured non-resolve.
     }
-    return { codexAuthDir, claudeToken };
+    return {
+      codexAuthDir,
+      claudeToken,
+      opencodeAuthFile: hostOpenCodeAuthFile(home),
+    };
   }
 
   /**
@@ -1097,6 +1104,7 @@ export class RealFamilyBackend implements FamilyBackend {
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
+    appendGlmKeyEnv(env);
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
@@ -1108,6 +1116,7 @@ export class RealFamilyBackend implements FamilyBackend {
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -2023,6 +2032,7 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
     };
+    appendGlmKeyEnv(env);
     if (fixFocusLanding !== undefined) {
       env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
     }
@@ -2049,6 +2059,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
@@ -2286,6 +2297,7 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
+    appendGlmKeyEnv(env);
     if (onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
     }
@@ -2329,6 +2341,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
     mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
@@ -2709,6 +2722,7 @@ export class RealFamilyBackend implements FamilyBackend {
       codexAuthDir,
       agyDir,
       grokAuthDir,
+      opencodeAuthFile: hostOpenCodeAuthFile(home),
       claudeToken,
       ghToken: this.readGhToken(),
       providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
@@ -2777,6 +2791,7 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_REPO_ENV]: this.opts.repo,
       ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(reviewLegs),
     };
+    appendGlmKeyEnv(env);
     const codexReviewLeg = reviewLegs.find((leg) => leg.family === "codex");
     if (codexReviewLeg !== undefined) {
       env.CMR_CODEX_MODEL = codexReviewLeg.slug;
@@ -2803,6 +2818,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3167,6 +3183,7 @@ export class RealFamilyBackend implements FamilyBackend {
     return {
       codexAuthDir,
       grokAuthDir,
+      opencodeAuthFile: hostOpenCodeAuthFile(home),
       claudeToken,
       ghToken: this.readGhToken(),
       providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
@@ -3216,6 +3233,7 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: SHIP_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
+    appendGlmKeyEnv(env);
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
@@ -3231,6 +3249,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3490,6 +3509,7 @@ export interface CmrAuth {
   readonly agyDir?: string;
   /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
   readonly grokAuthDir?: string;
+  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3517,6 +3537,7 @@ export interface ShipAuth {
   readonly codexAuthDir?: string;
   /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
   readonly grokAuthDir?: string;
+  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3539,6 +3560,7 @@ export interface ShipAuth {
 export interface MergerAuth {
   /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
   readonly codexAuthDir?: string;
+  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
 }
