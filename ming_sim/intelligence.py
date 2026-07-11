@@ -61,8 +61,12 @@ def source_kind_for_query(query: str) -> str:
 
 
 def _safe_report_text(text: object) -> str:
-    """Keep reusable report prose qualitative at the audience boundary."""
-    return re.sub(r"[-+]?\d+(?:\.\d+)?%?", "若干", str(text or ""))
+    """Keep reusable report prose at the audience boundary.
+
+    DB report readers already hide abstract axes.  Do not erase countable
+    military, fiscal, date, or arrears facts from a near-minister's return.
+    """
+    return str(text or "")
 
 
 def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:

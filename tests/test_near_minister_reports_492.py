@@ -24,8 +24,9 @@ def test_frontier_vacancies_are_seeded_and_restore_from_characters(game):
     assert restored_row["holder_name"] == "胡廷宴"
 
 
-def test_return_report_records_source_without_bare_values(game):
+def test_return_report_records_source_and_keeps_countable_facts(game, monkeypatch):
     db, _state, _content = game
+    monkeypatch.setattr(db, "army_report", lambda **_: "辽镇兵额12000，欠饷25月，士气低迷")
 
     report = build_return_report(
         db,
@@ -39,7 +40,9 @@ def test_return_report_records_source_without_bare_values(game):
     assert report["statement"]
     assert "陕西巡抚" in report["statement"]
     assert all(isinstance(value, str) for value in report.values())
-    assert not any(char.isdigit() for value in report.values() for char in value)
+    arrears = build_return_report(db, "各镇欠饷如何？")
+    assert "12000" in arrears["statement"]
+    assert "25月" in arrears["statement"]
 
 
 def test_report_source_is_derived_from_query_not_caller_label(game):
@@ -129,7 +132,7 @@ def test_firsthand_report_uses_the_matching_witness_body(game):
     assert report["source_kind"] == "firsthand"
     assert report["statement"] == "辽东有报"
     assert report["source_ref"] == "见闻/持久见闻"
-    assert not any(char.isdigit() for value in report.values() for char in value)
+    assert report["statement"] == "辽东有报"
 
 
 def test_question_wording_cannot_create_firsthand_provenance(game):

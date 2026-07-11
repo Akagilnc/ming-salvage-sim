@@ -155,7 +155,10 @@ def _record_settlement_narrative_sources(
             state, "本回合邸报", str(narrative or ""), source_id=source_id,
             excluded_names=restricted_names, commit=commit,
         )
-        if projected and projected != str(narrative or ""):
+        # A source-scoped public row must exist even when the whole narrative
+        # was independently public.  Otherwise the presence of an unrelated
+        # restricted source suppresses every public fact for excluded readers.
+        if projected:
             db.record_public_knowledge_event(
                 state, "本回合公开事项", projected,
                 source_id=f"{source_id}:public", commit=commit,

@@ -375,14 +375,18 @@ def test_issue_write_path_projects_participants_across_restore(game):
     assert before["events"] == after["events"]
 
 
-def test_knowledge_world_is_qualitative_not_numeric(game):
+def test_knowledge_world_keeps_countable_fiscal_facts_but_not_abstract_axes(game, monkeypatch):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "户部")
+    monkeypatch.setattr(
+        db, "treasury_report", lambda _state: "太仓银两167万两；民心低迷；皇威不足。"
+    )
 
     view = db.get_character_knowledge(state, minister.name)
 
     assert "treasury" in view["world"]
-    assert not any(char.isdigit() for char in view["world"]["treasury"])
+    assert "167万两" in view["world"]["treasury"]
+    assert "民心低迷" in view["world"]["treasury"]
 
 
 def test_secret_office_exclusion_does_not_hide_unrelated_world_bucket(game):
