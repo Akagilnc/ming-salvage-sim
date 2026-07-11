@@ -728,6 +728,17 @@ describe("realBackend modelIdForSlug", () => {
 // ─── resolveModelSlug (data-driven slug → backend registry) ──────────────────
 
 describe("realBackend resolveModelSlug", () => {
+  it("pins the OpenCode Grok routes to the live Grok 4.5 model", () => {
+    expect(resolveModelSlug("opencode-grok")).toEqual({
+      provider: "opencode",
+      model: "grok-4.5",
+    });
+    expect(resolveModelSlug("agy")).toEqual({
+      provider: "opencode",
+      model: "grok-4.5",
+    });
+  });
+
   it("declares the six Sandcastle-native provider factories the registry can target", () => {
     expect(SUPPORTED_MODEL_PROVIDER_FACTORIES).toEqual([
       "claudeCode",
