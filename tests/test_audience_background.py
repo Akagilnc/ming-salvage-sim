@@ -224,6 +224,7 @@ def test_background_audience_reply_keeps_staged_edict_after_observer_departure(g
         for row in db.list_directives(state, statuses=("pending", "draft"))
     )
     assert _wait_for(lambda: db.can_undo_last_chat_turn(minister_name, state.turn))
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
 
 
 def test_stream_tool_staged_secret_order_merges_minister_reply(game):
@@ -464,6 +465,9 @@ def _cli_web_game(db, state, content, agent, **kwargs) -> WebGame:
     game.session = _CliActionSession(db, state, content, agent, **kwargs)
     game.chat_history = {name: [] for name in content.characters}
     game.suggestions_for = lambda _character: []
+    game._drain_cond = threading.Condition()
+    game._pending_writes_count = 0
+    game._draining = False
     return game
 
 
@@ -484,6 +488,8 @@ def test_background_audience_secret_order_persists_after_observer_departure(game
     assert _wait_for(lambda: len(web_game.session.apply_calls) >= 1)
     assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
 
 
 def test_background_audience_pending_action_persists_after_observer_departure(game):
@@ -501,6 +507,7 @@ def test_background_audience_pending_action_persists_after_observer_departure(ga
     assert _wait_for(lambda: len(web_game.session.apply_calls) >= 1)
     assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
 
 
 def test_background_audience_appointment_stages_after_observer_departure(game):
@@ -563,6 +570,7 @@ def test_background_audience_recommendation_stages_candidate_snapshot(game):
     staged = json.loads(db.list_pending_actions(state.turn)[0]["payload_json"])
     assert staged["recommendation"]["recommender"] == minister_name
     assert staged["recommendation"]["candidate"]["name"] == candidate["name"]
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
 
 
 def test_llm_failure_does_not_leave_half_chat_in_history(game):
