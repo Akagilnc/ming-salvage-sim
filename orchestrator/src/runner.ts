@@ -4325,7 +4325,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         promptFile = stepSpecs[step].promptFile;
         const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
-        const stepTelemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
+        let stepTelemetryDir: string | undefined;
+        try {
+          stepTelemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
+        } catch (err) {
+          console.warn(
+            `[orchestrator] telemetry dir resolution failed (fail-open): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
         const coderHeadBeforeStep = expectedKind === "coder"
           ? gitHead(worktree)
           : undefined;
