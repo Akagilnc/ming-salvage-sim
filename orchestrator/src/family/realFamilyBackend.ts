@@ -200,6 +200,7 @@ import type {
   ReconcileGit,
   VerifyFamilyShippedPrRequest,
   VerifyFamilyShippedPrResult,
+  FindFamilyShippedPrResult,
 } from "./types.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
@@ -491,7 +492,13 @@ export class RealFamilyBackend implements FamilyBackend {
   protected verifyFamilyShipPr(input: {
     readonly pr: string;
     readonly familyBase: string;
-  }): { ok: true; headOid: string } | { ok: false; reason: string } {
+  }):
+    | { ok: true; headOid: string }
+    | {
+        ok: false;
+        kind: "pr_missing" | "observation_failed" | "mismatch";
+        reason: string;
+      } {
     try {
       const raw = this.sh(
         "gh",
@@ -515,32 +522,47 @@ export class RealFamilyBackend implements FamilyBackend {
       if (parsed.state !== "OPEN") {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" is ${String(parsed.state)} but must be OPEN`,
         };
       }
       if (parsed.baseRefName !== this.opts.base) {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" targets base "${String(parsed.baseRefName)}" but expected "${this.opts.base}"`,
         };
       }
       if (parsed.headRefName !== input.familyBase) {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" uses head "${String(parsed.headRefName)}" but expected "${input.familyBase}"`,
         };
       }
       if (typeof parsed.headRefOid !== "string" || parsed.headRefOid.trim().length === 0) {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" did not expose a non-empty headRefOid`,
         };
       }
       return { ok: true, headOid: parsed.headRefOid.trim() };
     } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      // Only an explicit host/gh not-found answer proves absence. Authentication,
+      // transport, rate-limit, JSON, and every unknown CLI failure mean merely
+      // that host truth could not be observed.
+      const kind =
+        /(?:pull request|pr).*(?:not found|does not exist)|no pull requests found|could not resolve to a pullrequest/i.test(
+          detail,
+        )
+        ? "pr_missing"
+        : "observation_failed";
       return {
         ok: false,
-        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${err instanceof Error ? err.message : String(err)}`,
+        kind,
+        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${detail}`,
       };
     }
   }
@@ -556,12 +578,50 @@ export class RealFamilyBackend implements FamilyBackend {
     if (verifiedPr.headOid !== request.expectedHead) {
       return {
         ok: false,
+        kind: "mismatch",
         reason:
           `family PR "${request.pr}" head ${verifiedPr.headOid} ` +
           `does not match current family HEAD ${request.expectedHead}`,
       };
     }
     return { ok: true };
+  }
+
+  async findFamilyShippedPr(input: {
+    readonly familyBase: string;
+    readonly expectedHead: string;
+  }): Promise<FindFamilyShippedPrResult> {
+    try {
+      const raw = this.sh("gh", [
+        "pr", "list", "--repo", this.opts.repo, "--base", this.opts.base,
+        "--head", input.familyBase, "--state", "open", "--json", "url,headRefOid",
+      ], this.opts.workingRepo);
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return {
+          ok: false,
+          kind: "observation_failed",
+          reason: "could not discover family PR via gh pr list: host response was not an array",
+        };
+      }
+      const matches = parsed as readonly { readonly url?: unknown; readonly headRefOid?: unknown }[];
+      if (matches.length === 0) {
+        return { ok: false, kind: "pr_missing", reason: `host has no open family PR for branch "${input.familyBase}"` };
+      }
+      if (matches.length !== 1) {
+        return { ok: false, kind: "mismatch", reason: `host found ${matches.length} open family PRs for branch "${input.familyBase}"` };
+      }
+      const match = matches[0]!;
+      if (typeof match.url !== "string" || match.url.trim().length === 0) {
+        return { ok: false, kind: "mismatch", reason: "host family PR has no URL" };
+      }
+      if (match.headRefOid !== input.expectedHead) {
+        return { ok: false, kind: "mismatch", reason: `host family PR head ${String(match.headRefOid)} does not match current family HEAD ${input.expectedHead}` };
+      }
+      return { ok: true, pr: match.url.trim() };
+    } catch (err) {
+      return { ok: false, kind: "observation_failed", reason: `could not discover family PR via gh pr list: ${err instanceof Error ? err.message : String(err)}` };
+    }
   }
 
   /**
@@ -2800,8 +2860,19 @@ export class RealFamilyBackend implements FamilyBackend {
       pr: outcome.pr,
       familyBase: ctx.familyBase,
     });
-    if (!verifiedPr.ok) {
-      return { kind: "malformed", reason: verifiedPr.reason };
+    // A host-confirmed metadata mismatch is observed-but-unexpected state, not a
+    // malformed worker response. Escalate it durably so verifyCmr never maps a
+    // deliberately closed or otherwise mismatched claimed PR into another
+    // mutating ship dispatch. Missing PRs and unknown observations remain
+    // lifecycle outcomes owned by verifyCmr.
+    if (!verifiedPr.ok && verifiedPr.kind === "mismatch") {
+      return {
+        kind: "escalated",
+        escalation: {
+          reason: verifiedPr.reason,
+          diagnosis: "claimed family PR metadata was observed but did not match the delivery contract",
+        },
+      };
     }
     return {
       kind: "completed",
@@ -2810,7 +2881,7 @@ export class RealFamilyBackend implements FamilyBackend {
         branch: outcome.branch,
         status: outcome.status,
         pr: outcome.pr,
-        prHead: verifiedPr.headOid,
+        ...(verifiedPr.ok ? { prHead: verifiedPr.headOid } : {}),
       },
     };
   }
