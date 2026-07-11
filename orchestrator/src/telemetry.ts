@@ -1276,8 +1276,7 @@ function issueFromContext(ctx: DispatchContext): number | null {
 }
 
 function runIdFromContext(ctx: DispatchContext): string | null {
-  // No dedicated run UUID on DispatchContext yet — use stateDir as a stable proxy.
-  return ctx.stateDir ?? null;
+  return ctx.runId ?? null;
 }
 
 function cliVersionForSlug(

@@ -653,7 +653,7 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     await dispatchWorkerWithMonitor(
       backend,
       workerSpec(),
-      { stateDir: ledgerDir, modelRoute: route },
+      { runId: ledgerDir, stateDir: ledgerDir, modelRoute: route },
       undefined,
       {
         idleThresholdMs: 60_000,
@@ -668,7 +668,7 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(backend.opts.installs).toBe(0);
   });
 
-  it("keeps the first run sidecar readable after a second run starts", async () => {
+  it("keeps the first run sidecar readable after a same-issue rerun", async () => {
     const root = tempDir("orch-809-two-runs-");
     const durable = join(root, ".ledger-809");
     const backend = Object.assign(
@@ -689,7 +689,8 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
       backend,
       workerSpec(),
       {
-        stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809-run-1"),
+        runId: "run-809-first",
+        stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809"),
         modelRoute: route,
       },
       undefined,
@@ -701,13 +702,14 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     expect(
       (afterFirstRun.find((record) => record.phase === "environment") as TelemetryEnvironmentRecord)
         .runId,
-    ).toBe(join(root, ".sandcastle", "worktrees", ".ledger-809-run-1"));
+    ).toBe("run-809-first");
 
     await dispatchWorkerWithMonitor(
       backend,
       workerSpec(),
       {
-        stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809-run-2"),
+        runId: "run-809-second",
+        stateDir: join(root, ".sandcastle", "worktrees", ".ledger-809"),
         modelRoute: route,
       },
       undefined,
@@ -722,8 +724,8 @@ describe("#786 dispatch/collect integration via dispatchWorkerWithMonitor", () =
     );
     expect(environmentRecords).toHaveLength(2);
     expect(environmentRecords.map((record) => record.runId)).toEqual([
-      join(root, ".sandcastle", "worktrees", ".ledger-809-run-1"),
-      join(root, ".sandcastle", "worktrees", ".ledger-809-run-2"),
+      "run-809-first",
+      "run-809-second",
     ]);
     expect(afterSecondRun).toEqual(expect.arrayContaining(afterFirstRun));
   });
