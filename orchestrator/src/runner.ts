@@ -243,18 +243,29 @@ export function relayCandidateConflictSlugs(
   candidate: CoderRosterEntry,
   wallStep: StepId,
 ): ReadonlyArray<string> {
-  const candidateRoute =
+  const replacedSlot =
     wallStep === "S3" || wallStep === "S6"
-      ? { ...route, slots: { ...route.slots, reviewer: candidate.slug } }
-      : wallStep === "S2" || wallStep === "S5"
-        ? withCoderSlot(route, candidate.slug)
-        : undefined;
-  if (candidateRoute === undefined) return [];
+      ? "reviewer"
+      : wallStep === "S7"
+        ? "ship"
+        : wallStep === "S9"
+          ? "verify"
+          : wallStep === "S10"
+            ? "fixer"
+            : wallStep === "S11"
+              ? "cleanup"
+              : wallStep === "S12"
+                ? "docRelease"
+                : "coder";
+  const candidateRoute =
+    replacedSlot === "coder"
+      ? withCoderSlot(route, candidate.slug)
+      : {
+          ...route,
+          slots: { ...route.slots, [replacedSlot]: candidate.slug },
+        };
 
-  return routeConflictSlugsExcluding(
-    candidateRoute,
-    wallStep === "S3" || wallStep === "S6" ? "reviewer" : "coder",
-  );
+  return routeConflictSlugsExcluding(candidateRoute, replacedSlot);
 }
 
 /** Merge resume history with the display-seeded ledger without replaying shared rows. */
