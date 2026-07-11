@@ -2711,6 +2711,11 @@ describe("#686 R2 production seams", () => {
         reason: "decision_gate_park",
         summary: expect.stringContaining("need product ruling"),
       });
+      expect(
+        first.stepLedger.find(
+          (entry) => entry.step === "S2" && entry.output?.kind === "coder",
+        ),
+      ).toMatchObject({ sessionId: WORKER_SESSION_ID });
       expect(persisted.at(-1)).toMatchObject({
         step: "S8",
         handoffStatus: "escalate",

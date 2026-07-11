@@ -3636,7 +3636,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   ): Promise<RunResult> {
     const stopSummary = stopSummaryOverride ?? stopSummaryForEscalation(escalation);
     if (failedStep !== "S8") {
-      ledger.push({ step: failedStep, ...(output !== undefined ? { output } : {}) });
+      ledger.push({
+        step: failedStep,
+        ...(output !== undefined ? { output } : {}),
+        ...(sessionId !== undefined ? { sessionId } : {}),
+      });
       // Persist the failing step carrying its REAL worker session id (5th arg —
       // NOT the promptFile slot; codex cmr R6 finding), so a re-feed reading the
       // persisted ledger has the true session id for the human-answer resume.
