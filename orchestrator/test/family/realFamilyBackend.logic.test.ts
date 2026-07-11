@@ -826,6 +826,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
     headRefOid: " pr-head-1 ",
     state: "OPEN",
   };
+  prListResponse: unknown = [];
   mergeInProgressFake = false;
   // STATEFUL fake of the family-base ref so the resolve postcondition (the family
   // base ref moved past familyHeadBefore + child is its ancestor) is exercised
@@ -882,6 +883,9 @@ class FakeSeamsBackend extends RealFamilyBackend {
     if (file === "gh" && args[0] === "pr" && args[1] === "view") {
       return JSON.stringify(this.prViewResponse);
     }
+    if (file === "gh" && args[0] === "pr" && args[1] === "list") {
+      return JSON.stringify(this.prListResponse);
+    }
     return "";
   }
 
@@ -907,6 +911,10 @@ class FakeSeamsBackend extends RealFamilyBackend {
 
   public verifyShipPr(pr: string, familyBase: string) {
     return this.verifyFamilyShipPr({ pr, familyBase });
+  }
+
+  public findFamilyPr(familyBase: string, expectedHead: string) {
+    return this.findFamilyShippedPr({ familyBase, expectedHead });
   }
 }
 
@@ -2013,6 +2021,17 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
         expectedHead: "new-head",
       }),
     ).resolves.toMatchObject({ ok: false });
+  });
+
+  it("treats a non-array gh pr list response as an observation failure", async () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.prListResponse = { url: "https://example.test/pull/823" };
+
+    await expect(b.findFamilyPr("family/823-base", "head-823")).resolves.toMatchObject({
+      ok: false,
+      kind: "observation_failed",
+      reason: expect.stringMatching(/not an array/i),
+    });
   });
 });
 
