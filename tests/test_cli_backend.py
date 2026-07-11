@@ -91,6 +91,17 @@ def test_secret_exclusion_extracts_people_and_offices(monkeypatch):
     assert result["excluded_targets"] == {"people": ["魏忠贤"], "offices": ["司礼监"]}
 
 
+def test_secret_exclusion_recovery_splits_each_explicit_person(monkeypatch):
+    """LLM omission cannot merge two named people into one ineffective target."""
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+
+    result = cb._extract_secret_order(
+        "密查此案，瞒住魏忠贤、王体乾和曹化淳，勿使他们知晓。", "臣领旨", "毕自严"
+    )
+
+    assert result["excluded_names"] == ["魏忠贤", "王体乾", "曹化淳"]
+
+
 def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
     """PR #409 R1 Codex P2：密令按钮只补期限时，仍须从前文召对恢复任务正文。"""
     canned = json.dumps({
