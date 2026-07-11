@@ -12,10 +12,12 @@ parameters.
 
 ## Required output
 
-When you are done (or are escalating), write the single JSON object to
-`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for compatibility
-with older runners, emit EXACTLY ONE `<review>` tag on its own containing the same
-single JSON object, and print the completion signal on its own line.
+When you are done (or are escalating), the real completion evidence is the
+single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
+set and the typed `<review>` outcome. For compatibility with older runners,
+emit EXACTLY ONE `<review>` tag on its own containing the same single JSON
+object. The completion signal is optional telemetry and may be printed as an
+extra line.
 
 Success:
 

@@ -49,6 +49,7 @@ describe("#807 grokAgent AgentProvider", () => {
     const cmd = agent.buildPrintCommand({
       prompt: "continue",
       resumeSession: "sess-807",
+      dangerouslySkipPermissions: true,
     });
     expect(cmd.command).not.toContain("--resume");
   });

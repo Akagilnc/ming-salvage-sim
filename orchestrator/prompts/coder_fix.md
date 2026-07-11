@@ -35,10 +35,12 @@ scene — do not reset or discard uncommitted prior-baton work.
 
 ## Required output
 
-When you are done (or are escalating), write the single JSON object to
-`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set. Then, for compatibility
-with older runners, emit EXACTLY ONE `<coder>` tag on its own containing the same
-single JSON object, and print the completion signal on its own line.
+When you are done (or are escalating), the real completion evidence is the
+single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
+set, the typed `<coder>` outcome, the repair evidence, and the worker's actual
+git state. For compatibility with older runners, emit EXACTLY ONE `<coder>` tag
+on its own containing the same single JSON object. The completion signal is
+optional telemetry and may be printed as an extra line.
 
 Success:
 

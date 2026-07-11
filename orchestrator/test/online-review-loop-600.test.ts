@@ -6559,7 +6559,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
               return {
                 kind: "completed",
                 output: { kind: "verify", converged: "bad" },
-              } as WorkerResult;
+              } as unknown as WorkerResult;
             }
           }
           return super.dispatchWorker(spec, ctx, landing);
