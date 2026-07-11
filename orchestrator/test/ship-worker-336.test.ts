@@ -233,7 +233,7 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
-      return this.shipSandboxConfig(auth, undefined, model, billingPool);
+      return this.shipSandboxConfig(auth);
     }
   }
   function cfg(): ConfigBackend {
@@ -270,7 +270,7 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     });
   });
 
-  it("derives OpenCode auth from the actual ship model + billing pool", () => {
+  it("provisions OpenCode auth uniformly regardless of ship model or billing pool", () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
     const authFile = join(mkDir("ship-opencode-"), "auth.json");
     writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "api", key: "x" } }));
@@ -283,8 +283,12 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     });
 
     const codex = cfg().config({ opencodeAuthFile: authFile }, "gpt-5.6-terra", "codex-5h");
-    expect(codex.env).not.toHaveProperty("GLM_KEY");
-    expect(codex.mounts).not.toContainEqual(expect.objectContaining({ sandboxPath: SANDBOX_OPENCODE_AUTH_FILE }));
+    expect(codex.env.GLM_KEY).toBe("glm-secret");
+    expect(codex.mounts).toContainEqual({
+      hostPath: authFile,
+      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
+      readonly: true,
+    });
   });
 
   it("shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {

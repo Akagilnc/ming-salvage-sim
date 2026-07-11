@@ -523,7 +523,7 @@ describe("#685 route tool smoke", () => {
     }
   });
 
-  it("does not reuse a default-provider smoke for the grok-build relay pool", async () => {
+  it("runs a live smoke again on every ignition", async () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-cache-"));
     mkdirSync(join(home, ".grok"), { recursive: true });
     writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
@@ -533,10 +533,12 @@ describe("#685 route tool smoke", () => {
       const route = resolveRouteModels("normal", { coder: "grok-4.5" });
 
       await backend.smokeModelRoute(route);
+      const firstIgnitionCalls = runSpy.mock.calls.length;
       runSpy.mockClear();
-      await backend.smokeModelRoute(route, {}, "grok-build", "coder:grok-4.5");
+      await backend.smokeModelRoute(route);
 
-      expect(runSpy.mock.calls.some(([options]) => options.agent.name === "grok")).toBe(true);
+      expect(firstIgnitionCalls).toBeGreaterThan(0);
+      expect(runSpy).toHaveBeenCalledTimes(firstIgnitionCalls);
     } finally {
       runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });

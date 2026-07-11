@@ -306,17 +306,16 @@ ship, not after.
 OpenCode is baked into the worker image and the route-selectable `glm-5.2`
 slug resolves to `opencode-go/glm-5.2`. Its Go-subscription credential remains
 on the host at `~/.local/share/opencode/auth.json` and is mounted read-only at
-runtime. This is safe only because `opencode-go` uses a static `type: "api"`
-credential with no refresh write. **OpenCode providers backed by OAuth or any
-refresh-type credential must not be routed in-container with this read-only
-mount.** They first require a writable, per-container credential copy, following
-the grok/codex isolation pattern; dispatch fails fast when selected auth metadata
-has `type: "oauth"`. Only credential `type` metadata is inspected—secret values
-are never read into an error or log. Only that file is shared: OpenCode's SQLite database, WAL, logs, and
+runtime. Only that file is shared: OpenCode's SQLite database, WAL, logs, and
 other writable state live in each container's isolated ephemeral home, avoiding
-the CLI's concurrent shared-data-dir lock crash. If a direct Z.ai route is used,
-the dispatcher passes an existing host `GLM_KEY` environment variable through;
-the key is never baked into the image or written to orchestrator state.
+the CLI's concurrent shared-data-dir lock crash. Credential provisioning is
+uniform across worker roles and routes: when host `auth.json` and `GLM_KEY` are
+present, every sandbox receives the same read-only mount and environment value.
+The dispatcher never inspects credential metadata or contents. Every ignition
+runs a fresh route smoke with the provisioned credentials; that live call is the
+only credential oracle. Expiry, rate limits, and server failures after startup
+flow through the ordinary leg degrade/park paths. `GLM_KEY` is never baked into
+the image or written to orchestrator state.
 
 ## Review loops
 

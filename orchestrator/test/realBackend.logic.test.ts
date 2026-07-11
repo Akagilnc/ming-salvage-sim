@@ -54,9 +54,7 @@ import {
   modelFamilyForSlug,
   modelIsStrongLeg,
   opencodeAuthMount,
-  appendGlmKeyEnv,
-  applyDispatchOpenCodeAuth,
-  assertOpenCodeReadonlyCredential,
+  applyUniformCredentialProvisioning,
   parseBlockedBy,
   parseCoderSelfReport,
   parseSubIssueCount,
@@ -70,7 +68,6 @@ import {
   soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
-  routeSmokeCacheKey,
   routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
@@ -140,66 +137,6 @@ describe("#685 route smoke hardening", () => {
         formattedArgs: 'echo "OK"',
       }),
     ).toBe(true);
-  });
-
-  it("changes the cache key when the sandbox fingerprint changes", () => {
-    const route = resolveRouteModels("normal", {});
-    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
-      routeSmokeCacheKey(route, "image-b"),
-    );
-  });
-
-  it("invalidates the sandbox fingerprint when OpenCode auth or GLM_KEY availability changes", () => {
-    const home = tempHome("route-smoke-auth-");
-    const opencodeAuth = join(home, ".local", "share", "opencode", "auth.json");
-    const backend = {
-      opts: {
-        imageName: "test-image",
-        runKey: 850,
-        home,
-        promptsDir: join(home, "prompts"),
-        soulsDir: join(home, "souls"),
-      },
-      sh: (file: string) => file === "docker" ? "sha256:test-image" : "test-gh-token",
-    };
-    const fingerprint = (
-      RealBackend.prototype as unknown as {
-        routeSmokeSandboxFingerprint(this: typeof backend): string;
-      }
-    ).routeSmokeSandboxFingerprint.bind(backend);
-
-    vi.stubEnv("GLM_KEY", undefined);
-    const missing = fingerprint();
-    expect(fingerprint()).toBe(missing);
-
-    mkdirSync(dirname(opencodeAuth), { recursive: true });
-    writeFileSync(opencodeAuth, '{"token":"first-secret"}\n');
-    const appeared = fingerprint();
-    expect(appeared).not.toBe(missing);
-    expect(fingerprint()).toBe(appeared);
-
-    writeFileSync(opencodeAuth, '{"token":"rotated-secret"}\n');
-    const rotated = fingerprint();
-    expect(rotated).not.toBe(appeared);
-
-    rmSync(opencodeAuth);
-    expect(fingerprint()).toBe(missing);
-
-    vi.stubEnv("GLM_KEY", "secret-never-exposed");
-    const glmPresent = fingerprint();
-    expect(glmPresent).not.toBe(missing);
-    expect(fingerprint()).toBe(glmPresent);
-
-    vi.stubEnv("GLM_KEY", undefined);
-    expect(fingerprint()).toBe(missing);
-  });
-
-  it("separates a relay pool from the default provider cache", () => {
-    const route = resolveRouteModels("normal", { coder: "grok-4.5" });
-
-    expect(routeSmokeCacheKey(route, "image-a")).not.toBe(
-      routeSmokeCacheKey(route, "image-a", "grok-build"),
-    );
   });
 
   it("turns a missing host CLI into an unknown version instead of throwing", () => {
@@ -880,51 +817,7 @@ describe("#420 OpenCode runtime auth", () => {
     });
   });
 
-  it("passes GLM_KEY only to zai-pool dispatches", () => {
-    vi.stubEnv("GLM_KEY", "test-secret-never-logged");
-    const opencodeEnv: Record<string, string> = {};
-    const codexEnv: Record<string, string> = {};
-    const claudeEnv: Record<string, string> = {};
-    appendGlmKeyEnv(opencodeEnv, "zai");
-    appendGlmKeyEnv(codexEnv, "codex-5h");
-    appendGlmKeyEnv(claudeEnv, "claude");
-    expect(opencodeEnv.GLM_KEY).toBe("test-secret-never-logged");
-    expect(codexEnv).not.toHaveProperty("GLM_KEY");
-    expect(claudeEnv).not.toHaveProperty("GLM_KEY");
-  });
-
-  it("allows static API credentials under the read-only auth mount", () => {
-    const dir = mkdtempSync(join(tmpdir(), "opencode-static-auth-"));
-    const authFile = join(dir, "auth.json");
-    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "api", key: "secret" } }));
-    expect(() => assertOpenCodeReadonlyCredential(authFile, "opencode-go/glm-5.2")).not.toThrow();
-  });
-
-  it("rejects refresh-type credentials before mounting them read-only", () => {
-    const dir = mkdtempSync(join(tmpdir(), "opencode-oauth-auth-"));
-    const authFile = join(dir, "auth.json");
-    writeFileSync(authFile, JSON.stringify({ xai: { type: "oauth", refresh: "secret" } }));
-    expect(() => assertOpenCodeReadonlyCredential(authFile, "xai/grok-4")).toThrow(
-      /xai.*OAuth\/refresh-type.*writable per-container copy/i,
-    );
-  });
-
-  it.each([
-    ["unknown type", { type: "refresh", token: "secret" }],
-    ["null entry", null],
-    ["primitive entry", "secret"],
-    ["missing type", { key: "secret" }],
-  ])("rejects %s because only an API credential is read-only safe", (_label, credential) => {
-    const dir = mkdtempSync(join(tmpdir(), "opencode-invalid-auth-"));
-    const authFile = join(dir, "auth.json");
-    writeFileSync(authFile, JSON.stringify({ "opencode-go": credential }));
-    expect(() => assertOpenCodeReadonlyCredential(authFile, "opencode-go/glm-5.2")).toThrow(
-      /opencode-go.*type "api".*read-only/i,
-    );
-  });
-});
-
-describe("dispatch OpenCode auth invariant", () => {
+  describe("uniform dispatch credential provisioning", () => {
   const authFile = join(tmpdir(), "dispatch-opencode-auth.json");
 
   afterEach(() => {
@@ -932,44 +825,27 @@ describe("dispatch OpenCode auth invariant", () => {
     vi.unstubAllEnvs();
   });
 
-  it("applies mount, GLM_KEY, and OAuth preflight from the resolved slug + pool", () => {
+  it("injects every available credential without inspecting its contents", () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
     writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
-    expect(() => applyDispatchOpenCodeAuth({
-      env: {}, mounts: [], opencodeAuthFile: authFile, models: ["sonnet"], billingPool: "zai",
-    })).toThrow(/OAuth\/refresh-type/);
-
-    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "api", key: "x" } }));
     const env: Record<string, string> = {};
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-    applyDispatchOpenCodeAuth({
-      env, mounts, opencodeAuthFile: authFile, models: ["sonnet"], billingPool: "zai",
-    });
+    applyUniformCredentialProvisioning({ env, mounts, opencodeAuthFile: authFile });
     expect(env.GLM_KEY).toBe("glm-secret");
     expect(mounts).toContainEqual({
       hostPath: authFile, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true,
     });
   });
 
-  it("does not leak OpenCode auth into codex or claude dispatches", () => {
-    vi.stubEnv("GLM_KEY", "glm-secret");
-    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
-    for (const model of ["gpt-5.6-terra", "sonnet"]) {
-      const env: Record<string, string> = {};
-      const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-      applyDispatchOpenCodeAuth({ env, mounts, opencodeAuthFile: authFile, models: [model] });
-      expect(env).not.toHaveProperty("GLM_KEY");
-      expect(mounts).not.toContainEqual(expect.objectContaining({ sandboxPath: SANDBOX_OPENCODE_AUTH_FILE }));
-    }
+  it("tolerates absent optional credentials and leaves provisioning empty", () => {
+    vi.stubEnv("GLM_KEY", undefined);
+    const env: Record<string, string> = {};
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    expect(() => applyUniformCredentialProvisioning({ env, mounts })).not.toThrow();
+    expect(env).toEqual({});
+    expect(mounts).toEqual([]);
   });
-
-  it("requires a mounted credential for a non-zai OpenCode dispatch", () => {
-    vi.stubEnv("GLM_KEY", "glm-secret");
-    expect(() => applyDispatchOpenCodeAuth({
-      env: {}, mounts: [], models: ["glm-5.2"],
-    })).toThrow(/opencode-go\/glm-5\.2.*auth\.json.*required/i);
   });
-
 });
 
 // ─── agentForSlug (model slug → baked-in CLI provider) ────────────────────────

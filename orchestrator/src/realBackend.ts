@@ -54,7 +54,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  renameSync,
   readFileSync,
   rmSync,
   statSync,
@@ -106,28 +105,11 @@ import {
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
 import {
-  modelRouteFingerprint,
   routeSmokeEntries,
-  routeSmokeFailure,
   smokeRouteModels,
-  withRouteSmoke,
   type ResolvedModelRoute,
-  type RouteSmokeStatus,
 } from "./modelRoutes.js";
 import type { CoderSelfReportDiscrepancy } from "./types.js";
-
-export function routeSmokeCacheKey(
-  route: ResolvedModelRoute,
-  sandboxFingerprint: string,
-  billingPool?: string,
-  relaySmokeEntryKey?: string,
-): string {
-  const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
-  const providerFingerprint = routeSmokeEntries(route)
-    .map(({ key, slug }) => `${key}:${resolveModelSlugForPool(slug, key === relaySmokeEntryKey ? dispatchPool : undefined).provider}`)
-    .join("|");
-  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}\0${dispatchPool ?? "default"}\0${providerFingerprint}`;
-}
 
 export function routeSmokeToolCallIsEchoOk(event: {
   readonly type?: unknown;
@@ -735,88 +717,23 @@ export function hostOpenCodeAuthFile(home: string): string | undefined {
 export function appendOpenCodeAuthMount(
   mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
   hostPath: string | undefined,
-  models: readonly string[],
 ): void {
   if (hostPath !== undefined) {
-    for (const model of models) assertOpenCodeReadonlyCredential(hostPath, model);
     mounts.push({ hostPath, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true });
   }
 }
 
-/** Reject credentials that need refresh writes before binding auth.json read-only. */
-export function assertOpenCodeReadonlyCredential(authFile: string, model: string): void {
-  const provider = model.split("/", 1)[0];
-  const parsed = JSON.parse(readFileSync(authFile, "utf8")) as Record<string, unknown>;
-  const credential = parsed[provider];
-  if (credential === undefined) {
-    throw new Error(
-      `OpenCode model "${model}" derived provider "${provider}", but that provider is missing ` +
-        "from auth.json; the read-only auth rule fails closed unless the runtime " +
-        "model can be mapped to a credential entry present in the mounted auth file",
-    );
-  }
-  const type = credential !== null && typeof credential === "object"
-    ? (credential as { type?: unknown }).type
-    : undefined;
-  if (type === "oauth") {
-    throw new Error(
-      `OpenCode provider ${provider} uses an OAuth/refresh-type credential; ` +
-        "the read-only auth.json mount is forbidden and requires a writable per-container copy",
-    );
-  }
-  if (type !== "api") {
-    throw new Error(
-      `OpenCode provider ${provider} credential must be an object with type "api" ` +
-        "to satisfy the read-only auth.json rule; every other shape or type fails closed",
-    );
-  }
-}
-
-/** Pass the optional Z.ai credential through at dispatch time; never persist it. */
-export function appendGlmKeyEnv(
-  env: Record<string, string>,
-  billingPool?: BillingPoolDispatchId,
-): void {
-  if (billingPool === "zai" && process.env.GLM_KEY !== undefined) {
-    env.GLM_KEY = process.env.GLM_KEY;
-  }
-}
-
 /**
- * Apply the complete OpenCode dispatch-auth invariant from the models that the
- * dispatch will actually resolve. Callers provide slugs and the dispatch pool;
- * this seam alone resolves providers, injects GLM_KEY, validates credential
- * mutability, and conditionally mounts auth.json.
+ * Provision optional OpenCode credentials identically in every worker sandbox.
+ * Credential validity is established only by the live route smoke.
  */
-export function applyDispatchOpenCodeAuth(input: {
+export function applyUniformCredentialProvisioning(input: {
   env: Record<string, string>;
   mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[];
   opencodeAuthFile?: string;
-  models: readonly string[];
-  billingPool?: BillingPoolDispatchId;
 }): void {
-  const resolved = input.models.map((model) =>
-    resolveModelSlugForPool(model, input.billingPool),
-  );
-  const openCodeModels = resolved
-    .filter((model) => model.provider === "opencode")
-    .map((model) =>
-      input.billingPool === "zai" ? `opencode-go/${model.model}` : model.model,
-    );
-  if (openCodeModels.length === 0) return;
-  appendGlmKeyEnv(input.env, input.billingPool);
-  const openCodeOnlyDispatch = openCodeModels.length === resolved.length;
-  if (
-    input.billingPool !== "zai" &&
-    openCodeOnlyDispatch &&
-    input.opencodeAuthFile === undefined
-  ) {
-    throw new Error(
-      `OpenCode dispatch for ${openCodeModels.join(", ")}: auth.json is required because ` +
-        "non-zai dispatches receive no GLM_KEY and must mount a usable API credential read-only",
-    );
-  }
-  appendOpenCodeAuthMount(input.mounts, input.opencodeAuthFile, openCodeModels);
+  if (process.env.GLM_KEY !== undefined) input.env.GLM_KEY = process.env.GLM_KEY;
+  appendOpenCodeAuthMount(input.mounts, input.opencodeAuthFile);
 }
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
@@ -2369,14 +2286,6 @@ export class RealBackend implements Backend {
     relaySmokeEntryKey?: string,
   ): Promise<ResolvedModelRoute> {
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
-    const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
-    const persisted = this.readRouteSmokeState(route, sandboxFingerprint, dispatchPool, relaySmokeEntryKey);
-    if (persisted !== undefined) {
-      const hydrated = withRouteSmoke(route, persisted);
-      if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
-        return hydrated;
-      }
-    }
     const idleTimeoutSeconds = resolveRouteSmokeIdleTimeoutSeconds(
       process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
     );
@@ -2395,7 +2304,7 @@ export class RealBackend implements Backend {
         rmSync(noncePath, { force: true });
         const result = await sc.run({
           agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key }), entryPool),
-          sandbox: this.routeSmokeSandbox(auth, entry.slug, entryPool),
+          sandbox: this.routeSmokeSandbox(auth),
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
           promptArgs: { NONCE: nonce, NONCE_FILE: nonceFile },
@@ -2435,55 +2344,7 @@ export class RealBackend implements Backend {
         this.cleanupTempAuthDirs([auth.grokAuthDir]);
       }
     });
-    this.writeRouteSmokeState(smoked, sandboxFingerprint, dispatchPool, relaySmokeEntryKey);
     return smoked;
-  }
-
-  private routeSmokeStatePath(): string {
-    return join(this.opts.home ?? homedir(), ".sc-orchestrator", "route-smoke-state.json");
-  }
-
-  private readRouteSmokeState(
-    route: ResolvedModelRoute,
-    sandboxFingerprint: string,
-    billingPool?: string,
-    relaySmokeEntryKey?: string,
-  ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
-    try {
-      const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
-      if (raw === null || typeof raw !== "object") return undefined;
-      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint, billingPool, relaySmokeEntryKey)];
-      if (state === null || typeof state !== "object") return undefined;
-      return state as Readonly<Record<string, RouteSmokeStatus>>;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private writeRouteSmokeState(
-    route: ResolvedModelRoute,
-    sandboxFingerprint: string,
-    billingPool?: string,
-    relaySmokeEntryKey?: string,
-  ): void {
-    const path = this.routeSmokeStatePath();
-    let all: Record<string, unknown> = {};
-    try {
-      const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-      if (raw !== null && typeof raw === "object") all = raw as Record<string, unknown>;
-    } catch {
-      // Missing or malformed state is treated as empty; the fresh smoke result
-      // below becomes the new durable source of truth.
-    }
-    all[routeSmokeCacheKey(route, sandboxFingerprint, billingPool, relaySmokeEntryKey)] = route.smoke;
-    mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
-    const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-    try {
-      writeFileSync(tempPath, JSON.stringify(all, null, 2) + "\n", "utf8");
-      renameSync(tempPath, path);
-    } finally {
-      if (existsSync(tempPath)) rmSync(tempPath, { force: true });
-    }
   }
 
   private cliVersionForSlug(slug: string, billingPool?: string): string {
@@ -2499,55 +2360,16 @@ export class RealBackend implements Backend {
     }
   }
 
-  private routeSmokeSandboxFingerprint(): string {
-    const hash = createHash("sha256");
-    const home = this.opts.home ?? homedir();
-    hash.update(`image:${this.opts.imageName}\n`);
-    try {
-      hash.update(`image-id:${this.sh("docker", ["image", "inspect", "--format", "{{.Id}}", this.opts.imageName]).trim()}\n`);
-    } catch {
-      hash.update("image-id:unknown\n");
-    }
-    const auth = buildAuthPaths(this.opts.runKey, this.opts.home);
-    const files = [
-      join(this.opts.promptsDir, "route-smoke.md"),
-      ...REQUIRED_SOUL_FILES.map((file) => join(this.opts.soulsDir, file)),
-      auth.srcCodexAuth,
-      auth.srcCodexConfig,
-      auth.srcGrokAuth,
-      auth.claudeTokenFile,
-      opencodeAuthMount(home).hostPath,
-    ];
-    for (const file of files) {
-      hash.update(`file:${file}\0`);
-      try {
-        hash.update(readFileSync(file));
-      } catch {
-        hash.update("missing");
-      }
-    }
-    try {
-      hash.update(`gh:${this.sh("gh", ["auth", "token"]).trim()}\n`);
-    } catch {
-      hash.update("gh:missing\n");
-    }
-    hash.update(`glm-key:${process.env.GLM_KEY === undefined ? "missing" : "present"}\n`);
-    return hash.digest("hex");
-  }
-
   /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
   private routeSmokeSandbox(
     auth: ReturnType<RealBackend["mountAuth"]>,
-    model: string,
-    pool?: BillingPoolDispatchId,
   ): sc.SandboxProvider {
     return docker(
       this.boxConfig(
         { ...auth, ghToken: this.readGhToken() },
-        { role: "reviewer", soul: "READ-ONLY", model },
+        { role: "reviewer", soul: "READ-ONLY" },
         undefined,
         undefined,
-        pool,
       ),
     );
   }
@@ -3126,7 +2948,6 @@ export class RealBackend implements Backend {
           spec,
           issueNumber,
           options,
-          isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined,
         ),
       ),
       providerAuth: auth.providerAuth,
@@ -3221,7 +3042,6 @@ export class RealBackend implements Backend {
     spec: Pick<StepSpec, "role" | "soul"> & { model?: string },
     issueNumber?: number,
     options?: AgentStepRunOptions,
-    pool?: BillingPoolDispatchId,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -3270,12 +3090,10 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyDispatchOpenCodeAuth({
+    applyUniformCredentialProvisioning({
       env,
       mounts,
       opencodeAuthFile: auth.opencodeAuthFile,
-      models: spec.model === undefined ? [] : [spec.model],
-      billingPool: pool,
     });
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
@@ -4216,7 +4034,7 @@ export class RealBackend implements Backend {
           name: `${spec.id}-ship`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
-          sandbox: this.shipSandbox(auth, outcomeLanding, spec.model, pool),
+          sandbox: this.shipSandbox(auth, outcomeLanding),
           agent: agentForSlug(
             spec.model,
             effortForLiveOfficer(spec.model, spec),
@@ -4344,10 +4162,8 @@ export class RealBackend implements Backend {
   protected shipSandbox(
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
-    model = "sonnet",
-    billingPool?: BillingPoolDispatchId,
   ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding, model, billingPool));
+    return docker(this.shipSandboxConfig(auth, outcomeLanding));
   }
 
   /**
@@ -4456,8 +4272,6 @@ export class RealBackend implements Backend {
   protected shipSandboxConfig(
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
-    model = "sonnet",
-    billingPool?: BillingPoolDispatchId,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -4491,12 +4305,10 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyDispatchOpenCodeAuth({
+    applyUniformCredentialProvisioning({
       env,
       mounts,
       opencodeAuthFile: auth.opencodeAuthFile,
-      models: [model],
-      billingPool,
     });
     // #372: souls mount for ship worker too (live source, shadows baked if any).
     // Shared helper forces readonly:true at all sites.

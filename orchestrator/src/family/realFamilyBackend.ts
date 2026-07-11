@@ -81,7 +81,7 @@ import {
 } from "../modelRegistry.js";
 import {
   agentForSlug,
-  applyDispatchOpenCodeAuth,
+  applyUniformCredentialProvisioning,
   hostOpenCodeAuthFile,
   candidateBranches,
   extractCoderTag,
@@ -1114,11 +1114,10 @@ export class RealFamilyBackend implements FamilyBackend {
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
-    applyDispatchOpenCodeAuth({
+    applyUniformCredentialProvisioning({
       env,
       mounts,
       opencodeAuthFile: auth.opencodeAuthFile,
-      models: [mergerModel()],
     });
     if (outcomeLanding !== undefined) {
       mounts.push({
@@ -2043,7 +2042,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_FIX_FINDINGS_PATH_ENV]: FAMILY_FIX_FINDINGS_FILENAME,
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
     };
-    const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
     if (fixFocusLanding !== undefined) {
       env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
     }
@@ -2070,12 +2068,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyDispatchOpenCodeAuth({
+    applyUniformCredentialProvisioning({
       env,
       mounts,
       opencodeAuthFile: auth.opencodeAuthFile,
-      models: [model],
-      billingPool: pool,
     });
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
@@ -2314,7 +2310,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
     if (onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
     }
@@ -2358,12 +2353,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyDispatchOpenCodeAuth({
+    applyUniformCredentialProvisioning({
       env,
       mounts,
       opencodeAuthFile: auth.opencodeAuthFile,
-      models: [spec.model],
-      billingPool: pool,
     });
     mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
@@ -2830,7 +2823,6 @@ export class RealFamilyBackend implements FamilyBackend {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-    const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
     // `readonly`); codex auth likewise. No skills mount — the baked image wins (#334).
@@ -2843,12 +2835,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyDispatchOpenCodeAuth({
+    applyUniformCredentialProvisioning({
       env,
       mounts,
       opencodeAuthFile: auth.opencodeAuthFile,
-      models: reviewLegs.map((leg) => leg.slug),
-      billingPool: pool,
     });
     if (outcomeLanding !== undefined) {
       mounts.push({
@@ -3054,7 +3044,7 @@ export class RealFamilyBackend implements FamilyBackend {
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
-      sandbox: this.shipSandbox(auth, outcomeLanding, spec.model, ctx),
+      sandbox: this.shipSandbox(auth, outcomeLanding),
       // Derive the model from the spec via the SAME validated mapping the
       // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
@@ -3149,10 +3139,8 @@ export class RealFamilyBackend implements FamilyBackend {
   protected shipSandbox(
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
-    model = modelForSlot("ship"),
-    ctx?: Pick<DispatchContext, "billingPool">,
   ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding, model, ctx));
+    return docker(this.shipSandboxConfig(auth, outcomeLanding));
   }
 
   /**
@@ -3252,8 +3240,6 @@ export class RealFamilyBackend implements FamilyBackend {
   protected shipSandboxConfig(
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
-    model = modelForSlot("ship"),
-    ctx?: Pick<DispatchContext, "billingPool">,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -3268,7 +3254,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: SHIP_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
@@ -3284,12 +3269,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyDispatchOpenCodeAuth({
+    applyUniformCredentialProvisioning({
       env,
       mounts,
       opencodeAuthFile: auth.opencodeAuthFile,
-      models: [model],
-      billingPool: pool,
     });
     if (outcomeLanding !== undefined) {
       mounts.push({
