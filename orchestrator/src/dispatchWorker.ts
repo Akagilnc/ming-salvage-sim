@@ -54,15 +54,9 @@ import {
 } from "./relayDispatch.js";
 import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import {
-  buildCollectStamp,
-  buildDispatchStamp,
-  classifyWorkerTerminal,
-  ensureEnvironmentStamp,
-  extractTokensFromLog,
-  hasEnvironmentStamp,
-  newLegId,
+  createTelemetryLegStamper,
   readDispatchLogSlice,
-  tryAppendTelemetryRecord,
+  scheduleTelemetryEnvironmentStamp,
 } from "./telemetry.js";
 import { isMissingMonitorSidecarResult } from "./cliMonitorHooks.js";
 import {
@@ -94,13 +88,6 @@ import type {
 const FIX_FINDINGS_LANDING_FILE = ".orchestrator-fix-findings.json";
 
 /**
- * First-run environment stamps are deliberately asynchronous (#793), but a
- * caller that is about to exit or consume the sidecar needs a precise join
- * point. Key by ledger so concurrent legs share the same installation work.
- */
-const pendingTelemetryEnvironmentStamps = new Map<string, Promise<void>>();
-
-/**
  * The worker host follows the executable provider selected by the registry.
  * `claudeCode` retains the historical `claude` host spelling; every other
  * provider is already the corresponding host CLI name.
@@ -113,52 +100,6 @@ export function workerHostForModel(
   return provider === "claudeCode" ? "claude" : provider;
 }
 
-function scheduleTelemetryEnvironmentStamp(
-  ledgerDir: string | undefined,
-  ctx: DispatchContext,
-  backend: Pick<Backend, "installTelemetryRunEnvironment">,
-): Promise<void> {
-  if (
-    ledgerDir === undefined ||
-    ledgerDir.length === 0 ||
-    hasEnvironmentStamp(ledgerDir)
-  ) {
-    return Promise.resolve();
-  }
-  const pending = pendingTelemetryEnvironmentStamps.get(ledgerDir);
-  if (pending !== undefined) return pending;
-
-  let complete: () => void;
-  const completion = new Promise<void>((resolve) => {
-    complete = resolve;
-  });
-  pendingTelemetryEnvironmentStamps.set(ledgerDir, completion);
-  queueMicrotask(() => {
-    void (async () => {
-      try {
-        if (!hasEnvironmentStamp(ledgerDir)) {
-          // Invoke through the backend receiver. Production implementations are
-          // class methods that read `this.opts`; extracting and bare-calling the
-          // method loses that receiver and skips the environment stamp entirely.
-          await backend.installTelemetryRunEnvironment?.();
-          ensureEnvironmentStamp(ledgerDir, ctx);
-        }
-      } catch (err) {
-        console.warn(
-          `[orchestrator] telemetry environment stamp failed (fail-open): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      } finally {
-        if (pendingTelemetryEnvironmentStamps.get(ledgerDir) === completion) {
-          pendingTelemetryEnvironmentStamps.delete(ledgerDir);
-        }
-        complete();
-      }
-    })();
-  });
-  return completion;
-}
 const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
 
@@ -913,108 +854,12 @@ export async function dispatchWorkerWithMonitor(
 ): Promise<DispatchWorkerWithMonitorOutcome> {
   // #786 — per-leg telemetry sidecar (dispatch + collect half-rows).
   // Best-effort only: never changes worker semantics or resume contracts.
-  // Fail-open: telemetry init (legId / model stamp) lives in a guarded block so
-  // crypto.randomUUID (or pure stamp builders) cannot abort dispatch before the
-  // backend is invoked.
   const ledgerDir = ctx.stateDir;
-  let legId: string | null = null;
-  let modelFamily: string | null = null;
   let firstOutputAt: string | null = null;
   let logPath: string | null = null;
   let logStartOffset: number | undefined;
-  let collectStamped = false;
   let telemetryEnvironmentStamp = Promise.resolve();
-  // Collect half-row only pairs with a successfully stamped dispatch half-row
-  // (no orphan collect on resolve/spawn failure).
-  let dispatchStamped = false;
-
-  try {
-    legId = newLegId();
-    // model family for token extract — pure stamp, not the durable dispatch row.
-    // Durable dispatched_at comes from handle.dispatchedAt after real spawn.
-    modelFamily = buildDispatchStamp({
-      legId,
-      spec,
-      ctx,
-      dispatchedAt: new Date().toISOString(),
-    }).model.family;
-  } catch (err) {
-    console.warn(
-      `[orchestrator] telemetry init failed (fail-open): ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-    legId = null;
-    modelFamily = null;
-  }
-
-  const stampCollect = (
-    outcome:
-      | { readonly kind: "result"; readonly result: WorkerResult }
-      | { readonly kind: "thrown"; readonly error: unknown },
-  ): void => {
-    if (collectStamped || legId === null || !dispatchStamped) return;
-    collectStamped = true;
-    try {
-      const logText = readDispatchLogSlice(
-        logPath ?? undefined,
-        logStartOffset,
-      );
-      const classified = classifyWorkerTerminal(outcome);
-      tryAppendTelemetryRecord(
-        ledgerDir,
-        buildCollectStamp({
-          legId,
-          completedAt: new Date().toISOString(),
-          terminal: classified.terminal,
-          errorCategory: classified.errorCategory,
-          errorMessage: classified.errorMessage,
-          tokens:
-            logText !== null
-              ? extractTokensFromLog(logText, modelFamily)
-              : null,
-          sessionId: classified.sessionId,
-          logPath,
-          firstOutputAt,
-        }),
-      );
-    } catch (err) {
-      console.warn(
-        `[orchestrator] telemetry collect stamp failed (fail-open): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  };
-
-  const stampDispatch = (
-    dispatchedAt: string,
-    poolId: string | undefined,
-  ): void => {
-    if (legId === null) return;
-    try {
-      // Only mark stamped when the half-row actually landed. A failed append
-      // must leave dispatchStamped=false so stampCollect cannot write an
-      // unjoinable orphan collect if the ledger becomes writable later.
-      dispatchStamped = tryAppendTelemetryRecord(
-        ledgerDir,
-        buildDispatchStamp({
-          legId,
-          spec,
-          ctx,
-          dispatchedAt,
-          poolId,
-        }),
-      );
-    } catch (err) {
-      dispatchStamped = false;
-      console.warn(
-        `[orchestrator] telemetry dispatch stamp failed (fail-open): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  };
+  const telemetry = createTelemetryLegStamper({ ledgerDir, spec, ctx });
 
   /**
    * #786 first_output_at — first *observed* log growth past the post-spawn
@@ -1075,8 +920,15 @@ export async function dispatchWorkerWithMonitor(
       logStartOffset = handle.logStartOffset;
       // Dispatch half-row AFTER spawn: use the monitor handle's exact stamp
       // (same clock as the log line / instance identity), not a pre-parse guess.
-      stampDispatch(handle.dispatchedAt, cliSpec.poolId);
+      telemetry.stampDispatch(handle.dispatchedAt, cliSpec.poolId);
       const exitPromise = waitForChildExit(child);
+      // Schedule before the caller callback. A failed durable-handle write still
+      // leaves the asynchronous, best-effort environment row for this run.
+      telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
+        ledgerDir,
+        ctx,
+        backend,
+      );
       // SPAWN-TIME persist seam: handle is available before waitForChildExit so a
       // hang still leaves a ledger-rebuildable handle for judge/kill/resume.
       if (opts?.onMonitorHandleSpawned !== undefined) {
@@ -1092,15 +944,6 @@ export async function dispatchWorkerWithMonitor(
           throw error;
         }
       }
-      // The first environment fingerprint can synchronously inspect Docker and
-      // hash prompt trees. Queue it only after the CLI monitor handle has been
-      // persisted, so quick-exit first-output observation cannot be delayed by
-      // that first calculation.
-      telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
-        ledgerDir,
-        ctx,
-        backend,
-      );
       const monitorDeps = opts?.monitorDeps;
       const idleThresholdMs =
         opts?.idleThresholdMs ?? DEFAULT_MONITOR_IDLE_THRESHOLD_MS;
@@ -1226,7 +1069,10 @@ export async function dispatchWorkerWithMonitor(
                   `CLI worker ${spec.id} finished (exit ${exitCode}) but backend has ` +
                   `no awaitMonitoredCliWorker to map the process into a WorkerResult`,
               };
-        stampCollect({ kind: "result", result });
+        telemetry.stampCollect(
+          { kind: "result", result },
+          { logPath, logStartOffset, firstOutputAt },
+        );
         return { result, monitorHandle: handle, telemetryEnvironmentStamp };
       }
       let result = await backend.awaitMonitoredCliWorker(
@@ -1267,12 +1113,15 @@ export async function dispatchWorkerWithMonitor(
       }
       // Final reconcile in case await path delayed past more log growth.
       reconcileFirstOutputAt(handle, firstOutputBaseline, monitorDeps);
-      stampCollect({ kind: "result", result });
+      telemetry.stampCollect(
+        { kind: "result", result },
+        { logPath, logStartOffset, firstOutputAt },
+      );
       return { result, monitorHandle: handle, telemetryEnvironmentStamp };
     }
     // Container / legacy path: stamp dispatch at the moment we hand off to the
     // backend (no monitor handle.dispatchedAt available).
-    stampDispatch(
+    telemetry.stampDispatch(
       new Date().toISOString(),
       ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
@@ -1282,14 +1131,15 @@ export async function dispatchWorkerWithMonitor(
       backend,
     );
     const result = await dispatchWorker(backend, spec, ctx, landing);
-    stampCollect({ kind: "result", result });
+    telemetry.stampCollect({ kind: "result", result });
     return { result, telemetryEnvironmentStamp };
   } catch (err) {
-    stampCollect({ kind: "thrown", error: err });
-    // Once first-run telemetry has started, an exceptional terminal path must
-    // not let callers advance (relay/retry/failure) before the environment row
-    // has had its fail-open completion opportunity. Successful dispatches keep
-    // the asynchronous hand-off above; only error propagation joins here.
+    telemetry.stampCollect(
+      { kind: "thrown", error: err },
+      { logPath, logStartOffset, firstOutputAt },
+    );
+    // Error propagation is a terminal boundary: give the first-run environment
+    // stamp its fail-open completion opportunity before callers retry or relay.
     await telemetryEnvironmentStamp;
     throw err;
   }

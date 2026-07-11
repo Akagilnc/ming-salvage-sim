@@ -2017,6 +2017,7 @@ async function dispatchOrAbort(
             },
           );
           workerResult = monitored.result;
+          await monitored.telemetryEnvironmentStamp;
         } catch (err) {
           dispatchError = err;
         }

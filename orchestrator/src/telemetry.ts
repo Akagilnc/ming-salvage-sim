@@ -81,6 +81,7 @@ export interface TelemetryRunEnvironment {
 }
 
 let telemetryRunEnvironment: TelemetryRunEnvironment = {};
+const pendingTelemetryEnvironmentStamps = new Map<string, Promise<void>>();
 
 /** Install / merge the process-level run environment used by stamp builders. */
 export function configureTelemetryRunEnvironment(
@@ -498,6 +499,173 @@ export type TelemetryRecord =
 /** Fresh join key for a dispatch↔collect pair. */
 export function newLegId(): string {
   return globalThis.crypto.randomUUID();
+}
+
+/** The narrow provider seam shared by single-slice and family backends. */
+export interface TelemetryEnvironmentProvider {
+  installTelemetryRunEnvironment?(): void | Promise<void>;
+}
+
+/**
+ * Queue the once-per-run environment row without delaying worker dispatch.
+ *
+ * Providers must be invoked through their receiver: production backend methods
+ * read instance options to reinstall the matching image/prompt fingerprints.
+ */
+export function scheduleTelemetryEnvironmentStamp(
+  ledgerDir: string | undefined,
+  ctx: DispatchContext,
+  backend: TelemetryEnvironmentProvider,
+): Promise<void> {
+  if (
+    ledgerDir === undefined ||
+    ledgerDir.length === 0 ||
+    hasEnvironmentStamp(ledgerDir)
+  ) {
+    return Promise.resolve();
+  }
+  const pending = pendingTelemetryEnvironmentStamps.get(ledgerDir);
+  if (pending !== undefined) return pending;
+
+  let complete: () => void;
+  const completion = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  pendingTelemetryEnvironmentStamps.set(ledgerDir, completion);
+  queueMicrotask(() => {
+    void (async () => {
+      try {
+        if (!hasEnvironmentStamp(ledgerDir)) {
+          await backend.installTelemetryRunEnvironment?.();
+          ensureEnvironmentStamp(ledgerDir, ctx);
+        }
+      } catch (err) {
+        console.warn(
+          `[orchestrator] telemetry environment stamp failed (fail-open): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      } finally {
+        if (pendingTelemetryEnvironmentStamps.get(ledgerDir) === completion) {
+          pendingTelemetryEnvironmentStamps.delete(ledgerDir);
+        }
+        complete();
+      }
+    })();
+  });
+  return completion;
+}
+
+export type TelemetryWorkerOutcome =
+  | { readonly kind: "result"; readonly result: WorkerResult }
+  | { readonly kind: "thrown"; readonly error: unknown };
+
+export interface TelemetryLegCollectInput {
+  readonly logPath?: string | null;
+  readonly logStartOffset?: number;
+  readonly firstOutputAt?: string | null;
+}
+
+export interface TelemetryLegStamper {
+  stampDispatch(dispatchedAt: string, poolId?: string): void;
+  stampCollect(
+    outcome: TelemetryWorkerOutcome,
+    input?: TelemetryLegCollectInput,
+  ): void;
+}
+
+/**
+ * Build a fail-open paired dispatch/collect stamper for one worker leg.
+ * Both dispatch seams use this so terminal taxonomy and JSONL join semantics
+ * cannot drift between single-slice and family workers.
+ */
+export function createTelemetryLegStamper(input: {
+  readonly ledgerDir: string | undefined;
+  readonly spec: WorkerSpec;
+  readonly ctx: DispatchContext;
+}): TelemetryLegStamper {
+  let legId: string | null = null;
+  let modelFamily: string | null = null;
+  let collectStamped = false;
+  let dispatchStamped = false;
+
+  try {
+    legId = newLegId();
+    modelFamily = buildDispatchStamp({
+      legId,
+      spec: input.spec,
+      ctx: input.ctx,
+      dispatchedAt: new Date().toISOString(),
+    }).model.family;
+  } catch (err) {
+    console.warn(
+      `[orchestrator] telemetry init failed (fail-open): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
+  return {
+    stampDispatch(dispatchedAt: string, poolId?: string): void {
+      if (legId === null) return;
+      try {
+        dispatchStamped = tryAppendTelemetryRecord(
+          input.ledgerDir,
+          buildDispatchStamp({
+            legId,
+            spec: input.spec,
+            ctx: input.ctx,
+            dispatchedAt,
+            poolId,
+          }),
+        );
+      } catch (err) {
+        dispatchStamped = false;
+        console.warn(
+          `[orchestrator] telemetry dispatch stamp failed (fail-open): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    },
+    stampCollect(
+      outcome: TelemetryWorkerOutcome,
+      collectInput: TelemetryLegCollectInput = {},
+    ): void {
+      if (collectStamped || legId === null || !dispatchStamped) return;
+      collectStamped = true;
+      try {
+        const logText = readDispatchLogSlice(
+          collectInput.logPath ?? undefined,
+          collectInput.logStartOffset,
+        );
+        const classified = classifyWorkerTerminal(outcome);
+        tryAppendTelemetryRecord(
+          input.ledgerDir,
+          buildCollectStamp({
+            legId,
+            completedAt: new Date().toISOString(),
+            terminal: classified.terminal,
+            errorCategory: classified.errorCategory,
+            errorMessage: classified.errorMessage,
+            tokens:
+              logText !== null
+                ? extractTokensFromLog(logText, modelFamily)
+                : null,
+            sessionId: classified.sessionId,
+            logPath: collectInput.logPath ?? null,
+            firstOutputAt: collectInput.firstOutputAt ?? null,
+          }),
+        );
+      } catch (err) {
+        console.warn(
+          `[orchestrator] telemetry collect stamp failed (fail-open): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    },
+  };
 }
 
 /**
