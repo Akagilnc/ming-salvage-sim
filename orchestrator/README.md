@@ -123,9 +123,22 @@ console.log(JSON.stringify(result, null, 2));
 ```
 
 Full option contract: `FamilyDriverOptions` JSDoc in `src/familyDriver.ts`.
-Existing drivers to crib from: `~/.sc-orchestrator/run-485/driver-485.mjs`
-(W1), `run-497` (W2). Guard worth copying from 485: refuse to start if
-`ORCHESTRATOR_CODER_MODEL` is set when per-issue Coder-Rec should decide.
+Existing driver to crib from: `~/.sc-orchestrator/run-485/driver-485.mjs`.
+Include the 485 guard (refuse to start if `ORCHESTRATOR_CODER_MODEL` is set)
+whenever per-issue Coder-Rec should pick the coder — omit it only when you
+deliberately pin one coder for the whole run.
+
+**Resuming a PRIOR lineage vs starting fresh (check before writing the
+driver):** `ledgerDir` + `familyBase` ARE the run lineage. If this epic was
+run before (look for an existing `~/.sc-orchestrator/*-ledger` with rows for
+it, and an `…-iso-<epic>` clone), point the driver at the EXISTING
+`ledgerDir` and `familyBase` values to resume — already-merged children
+re-admit as `already_done`. Writing new values starts a parallel lineage that
+cannot see the old ledger and will rebuild its children. A pre-existing iso
+clone from another lineage may hold unpushed merged work on its family
+branch: never delete it without checking `git -C <iso> log
+origin/main..HEAD` first (uncommitted/unpushed worker output is
+non-recoverable — adopt it or set it aside, don't wipe).
 
 ### 4. Ignite
 
@@ -135,10 +148,30 @@ ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS="gpt-5.6-sol,opus" \
   node driver-<EPIC>.mjs >> run.log 2>&1
 ```
 
-Add route/slot env overrides from the table below as needed. Startup is
-fail-closed: if the route smoke fails, the run records an `infra_failure`
-escalation, skips every child, and exits 0 — read the `stopSummary` in
-`run.log` for the reason.
+`ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` here is an OVERRIDE example, not
+mandatory: the `normal` preset's own legs are codex sol + claude opus + agy;
+the override above drops the agy leg (use it when agy quota is dead). Omit
+the variable to take the preset's legs. Add further route/slot env overrides
+from the table below as needed.
+
+Rules of engagement:
+
+- **One family run per machine at a time.** Runs share the docker daemon,
+  host CLI auth, and model quota; do not ignite a second family while one is
+  active (`docker ps` + a fresh `run.log` mtime tell you).
+- **Resume must reuse the byte-identical ignition command** — same env
+  overrides included — or the route lineup (and its smoke) changes mid-run.
+- Auth freshness probes (cheap, before igniting): codex —
+  `echo "reply with exactly: OK" | codex exec --skip-git-repo-check -m gpt-5.6-terra -c model_reasoning_effort=low -`;
+  claude — `claude -p "reply OK" --model claude-haiku-4-5-20251001`. An
+  expired OAuth fails here in seconds instead of killing the route smoke.
+- No need to run the test suite before igniting from a pulled main — the
+  route smoke plus the merged gates are the launch bar (`npm test` is the bar
+  for MERGING orchestrator changes, not for launching).
+
+Startup is fail-closed: if the route smoke fails, the run records an
+`infra_failure` escalation, skips every child, and exits 0 — read the
+`stopSummary` in `run.log` for the reason.
 
 ### 5. Monitor
 
