@@ -5209,7 +5209,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           if (!isFilledString(ship.prHead)) {
             const headOid = await resolveBranchHEAD();
             if (isFilledString(headOid)) {
-              shipWithHead = { ...ship, prHead: headOid };
+              shipWithHead = { ...shipWithHead, prHead: headOid };
             }
           }
           output = shipWithHead;
