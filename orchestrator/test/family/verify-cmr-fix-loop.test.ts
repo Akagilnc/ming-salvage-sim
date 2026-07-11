@@ -1272,6 +1272,45 @@ class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
   }
 }
 
+class UnknownFamilyBaselineThenGoodBackend extends ReviewFixRereviewBackend {
+  override async readFamilyHead(): Promise<string> {
+    throw new Error("git rev-parse HEAD unavailable");
+  }
+}
+
+class KnownCoderGitMismatchThenGoodBackend extends ReviewFixRereviewBackend {
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+    return {
+      kind: "completed",
+      output: {
+        kind: "coder",
+        committed: false,
+        commitsAdded: 0,
+        selfReportDiscrepancy: {
+          code: "coder_self_report_disagrees_with_git_commits",
+          selfReportedCommitted: true,
+          selfReportedCommitsAdded: 1,
+          gitCommitCount: 0,
+        },
+      },
+    };
+  }
+}
+
 class MultipleEvidenceOnlyFailuresThenGoodBackend extends ReviewFixRereviewBackend {
   private coderFixRound = 0;
 
@@ -1853,7 +1892,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ]);
   });
 
-  it("bounces family coder-fix back before re-review when repair evidence is missing", async () => {
+  it("lets fresh re-review judge a coder-fix when repair evidence is missing", async () => {
     const backend = new MissingRepairEvidenceThenGoodBackend();
 
     const result = await runVerifyCmr({
@@ -1866,17 +1905,6 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "coder" }),
-      expect.objectContaining({
-        kind: "coder",
-        repairAttemptFailures: [
-          expect.objectContaining({
-            attempt: 1,
-            reason: expect.stringContaining("repairEvidence missing required"),
-            familyHeadBefore: "head-before-cmr-review",
-            familyHeadAfter: "head-after-bad-coder-fix",
-          }),
-        ],
-      }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
@@ -1902,10 +1930,51 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           index > 0
         );
       }),
-    ).toBe(3);
+    ).toBe(2);
   });
 
-  it("preserves evidence-only repair state across multiple failed evidence retries", async () => {
+  it("records an unknown family baseline as telemetry and lets fresh CMR judge the attempted fix", async () => {
+    const backend = new UnknownFamilyBaselineThenGoodBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/551-base",
+      familyBackend: backend,
+    });
+
+    expect(result.ran).toBe(true);
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr").length).toBeGreaterThan(1);
+    expect(backend.ledger.some(
+      (entry) => entry.status === "aborted" && /repair evidence gate failed/.test(entry.reason ?? ""),
+    )).toBe(false);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "cmr_fix_committed",
+      reason: expect.stringMatching(/telemetry family\/git observation advisory/),
+    }));
+  });
+
+  it("records a known coder/git mismatch as telemetry and lets fresh CMR judge the attempted fix", async () => {
+    const backend = new KnownCoderGitMismatchThenGoodBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/551-base",
+      familyBackend: backend,
+    });
+
+    expect(result.ran).toBe(true);
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "coder")).toHaveLength(1);
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr").length).toBeGreaterThan(1);
+    expect(backend.ledger.some(
+      (entry) => entry.status === "aborted" && /repair evidence gate failed/.test(entry.reason ?? ""),
+    )).toBe(false);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "cmr_fix_committed",
+      reason: expect.stringMatching(/telemetry family\/git baseline unknown|warning coder_self_report/),
+    }));
+  });
+
+  it("does not retry coder-fix in the observation layer when repair evidence is incomplete", async () => {
     const backend = new MultipleEvidenceOnlyFailuresThenGoodBackend();
 
     const result = await runVerifyCmr({
@@ -1918,27 +1987,6 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({ kind: "coder" }),
-      expect.objectContaining({
-        kind: "coder",
-        repairAttemptFailures: [
-          expect.objectContaining({
-            attempt: 1,
-            familyHeadBefore: "head-before-cmr-review",
-            familyHeadAfter: "head-after-bad-coder-fix",
-          }),
-        ],
-      }),
-      expect.objectContaining({
-        kind: "coder",
-        repairAttemptFailures: [
-          expect.objectContaining({ attempt: 1 }),
-          expect.objectContaining({
-            attempt: 2,
-            familyHeadBefore: "head-before-cmr-review",
-            familyHeadAfter: "head-after-bad-coder-fix",
-          }),
-        ],
-      }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
@@ -1958,7 +2006,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     }));
   });
 
-  it("bounces family coder-fix back before re-review when family HEAD did not move", async () => {
+  it("lets fresh re-review judge a coder-fix when family HEAD did not move", async () => {
     const backend = new NoHeadMovementThenGoodBackend();
 
     const result = await runVerifyCmr({
@@ -1970,7 +2018,6 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
-      expect.objectContaining({ kind: "coder" }),
       expect.objectContaining({ kind: "coder" }),
       expect.objectContaining({
         kind: "cmr",
