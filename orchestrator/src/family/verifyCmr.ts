@@ -2129,7 +2129,7 @@ function stampCmrReviewRound(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyIssue?: number;
   readonly result: WorkerResult;
-  readonly finalDisposition: "accepted" | "rejected";
+  readonly finalDisposition: "accepted" | "rejected" | "unknown";
 }): void {
   try {
     const ledgerDir = input.familyBackend.resolveTelemetryDir?.(input.ctx);
@@ -2252,7 +2252,7 @@ async function runIntegratedCmrPass(input: {
   };
   const stampReviewRound = (
     result: WorkerResult,
-    finalDisposition: "accepted" | "rejected",
+    finalDisposition: "accepted" | "rejected" | "unknown",
   ): void => {
     stampCmrReviewRound({
       familyBackend,
@@ -2338,9 +2338,21 @@ async function runIntegratedCmrPass(input: {
     };
   }
   const stampFinalReviewRound = (
-    finalDisposition: "accepted" | "rejected",
+    finalDisposition: "accepted" | "rejected" | "unknown",
   ): void => {
     stampReviewRound(cmrResult, finalDisposition);
+  };
+  const persistThenStampFinalReviewRound = async (
+    finalDisposition: "accepted" | "rejected",
+    persist: () => Promise<void>,
+  ): Promise<void> => {
+    let persistedDisposition: "accepted" | "rejected" | "unknown" = "unknown";
+    try {
+      await persist();
+      persistedDisposition = finalDisposition;
+    } finally {
+      stampFinalReviewRound(persistedDisposition);
+    }
   };
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
@@ -2408,21 +2420,22 @@ async function runIntegratedCmrPass(input: {
             skippedLegs: cmrResult.cmrLegAccountingPayload.skippedLegs,
           })
         : undefined;
-    await familyBackend.recordAborted?.({
-      phase: "final",
-      cmrPass: pass,
-      familyBase,
-      errorPackage: { reason },
-      familyHeadAfter: postWorkerFamilyHead,
+    await persistThenStampFinalReviewRound("rejected", async () => {
+      await familyBackend.recordAborted?.({
+        phase: "final",
+        cmrPass: pass,
+        familyBase,
+        errorPackage: { reason },
+        familyHeadAfter: postWorkerFamilyHead,
+      });
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        ...(stopSummary !== undefined ? { stopSummary } : {}),
+      });
     });
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      ...(stopSummary !== undefined ? { stopSummary } : {}),
-    });
-    stampFinalReviewRound("accepted");
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
   if (
@@ -2628,10 +2641,11 @@ async function runIntegratedCmrPass(input: {
       moduleContext: moduleContext ?? { currentModules: [], childModules: [] },
       ...(priorDispositions !== undefined ? { priorDispositions } : {}),
     });
-    if (cmrFindingClassification.blocking.length > 0) {
+    const classification = cmrFindingClassification;
+    if (classification.blocking.length > 0) {
       const reason =
         `integrated cmr ${pass} found blocking family-scope findings: ` +
-        cmrFindingClassification.results
+        classification.results
           .filter(
             // #604 slice 4 (ADR 0062): only accepted-suppression is non-blocking;
             // the routing classifications (incl. cross_module_defer) are gone.
@@ -2640,7 +2654,7 @@ async function runIntegratedCmrPass(input: {
           .map((result) => `${result.classification}:${result.identityKey}`)
           .join(", ");
       const stopSummary = familyCmrBlockingStopSummary(
-        cmrFindingClassification,
+        classification,
         reason,
       );
       // #604 slice 2 / ADR 0062: the runner is a PURE SCHEDULER — it counts
@@ -2671,27 +2685,28 @@ async function runIntegratedCmrPass(input: {
       // or worker/infra errors bubbling up) — those are error paths, not the
       // removed budget cap.
       const blockingFindingIdentityKeys = [
-        ...new Set(cmrFindingClassification.blocking.map(findingIdentityKey)),
+        ...new Set(classification.blocking.map(findingIdentityKey)),
       ];
       if (allowCoderFix) {
         // #604 slice 3 / ADR 0062: persist ONLY the thin envelope the runner reads
         // (blocking identity keys) + the gate's governance data (dispositions).
         // The fat `cmrFindingClassification` blob no longer lands on the ledger.
-        await recordCmrReviewed(familyBackend, {
-          cmrPass: pass,
-          reason,
-          familyHeadAfter: postWorkerFamilyHead,
-          blockingFindingIdentityKeys,
-          cmrDispositions: cmrFindingClassification.dispositions,
-          stopSummary,
-        });
-        stampFinalReviewRound("accepted");
+        await persistThenStampFinalReviewRound("accepted", () =>
+          recordCmrReviewed(familyBackend, {
+            cmrPass: pass,
+            reason,
+            familyHeadAfter: postWorkerFamilyHead,
+            blockingFindingIdentityKeys,
+            cmrDispositions: classification.dispositions,
+            stopSummary,
+          }),
+        );
         const fixRound = await runCmrCoderFix({
           pass,
           familyBackend,
           familyBase,
           ...(runId !== undefined ? { runId } : {}),
-          classification: cmrFindingClassification,
+          classification,
           blockingFindingIdentityKeys,
           ...(cmrResult.output.findingFamilies !== undefined
             ? { findingFamilies: cmrResult.output.findingFamilies }
@@ -2717,16 +2732,17 @@ async function runIntegratedCmrPass(input: {
           },
         };
       }
-      await recordDurableAbort(familyBackend, {
-        phase: "final",
-        cmrPass: pass,
-        reason,
-        familyHeadAfter: postWorkerFamilyHead,
-        blockingFindingIdentityKeys,
-        cmrDispositions: cmrFindingClassification.dispositions,
-        stopSummary,
-      });
-      stampFinalReviewRound("accepted");
+      await persistThenStampFinalReviewRound("accepted", () =>
+        recordDurableAbort(familyBackend, {
+          phase: "final",
+          cmrPass: pass,
+          reason,
+          familyHeadAfter: postWorkerFamilyHead,
+          blockingFindingIdentityKeys,
+          cmrDispositions: classification.dispositions,
+          stopSummary,
+        }),
+      );
       return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
     }
   }
