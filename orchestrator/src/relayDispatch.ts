@@ -495,6 +495,8 @@ export class SelfReportedRelayError extends Error {
     { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
   >;
   readonly step?: StepId;
+  /** Provider session captured with the sidecar result before the relay tag throws. */
+  readonly sessionId?: string;
 
   constructor(
     tag: Extract<
@@ -502,6 +504,7 @@ export class SelfReportedRelayError extends Error {
       { kind: "blocked" } | { kind: "phase_complete" } | { kind: "decision_gate" }
     >,
     step?: StepId,
+    sessionId?: string,
   ) {
     const label =
       tag.kind === "blocked"
@@ -513,6 +516,7 @@ export class SelfReportedRelayError extends Error {
     this.name = "SelfReportedRelayError";
     this.tag = tag;
     if (step !== undefined) this.step = step;
+    if (sessionId !== undefined) this.sessionId = sessionId;
   }
 }
 

@@ -2608,6 +2608,7 @@ describe("#686 R2 production seams", () => {
       path: tmp,
     };
     const workerLog = `<relay>{"decision_gate":true,"state_summary":"need product ruling","remaining":"choose policy"}</relay>`;
+    const WORKER_SESSION_ID = "relay-826-worker-session";
     const persisted: PersistentLedgerEntry[] = [];
     const resumed: Array<{ step: string; sessionId: string }> = [];
     let monitorPass = 0;
@@ -2667,6 +2668,7 @@ describe("#686 R2 production seams", () => {
         return {
           kind: "completed",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
+          sessionId: WORKER_SESSION_ID,
         };
       },
     } as unknown as Backend;
@@ -2694,6 +2696,7 @@ describe("#686 R2 production seams", () => {
       ).rejects.toMatchObject({
         name: "SelfReportedRelayError",
         tag: { kind: "decision_gate", state_summary: "need product ruling" },
+        sessionId: WORKER_SESSION_ID,
       });
 
       monitorPass = 0;
@@ -2713,6 +2716,11 @@ describe("#686 R2 production seams", () => {
         handoffStatus: "escalate",
         escalationKind: "decision",
       });
+      // The decision park must retain the worker's actual provider session,
+      // never this orchestration run's fallback UUID.
+      expect(
+        persisted.filter((entry) => entry.step === "S2").at(-1)?.sessionId,
+      ).toBe(WORKER_SESSION_ID);
 
       persisted.push({
         step: "S2",
@@ -2732,7 +2740,7 @@ describe("#686 R2 production seams", () => {
         now: () => NOW,
       });
       expect(second.status).toBe("success");
-      expect(resumed).toContainEqual({ step: "S2", sessionId: expect.any(String) });
+      expect(resumed).toContainEqual({ step: "S2", sessionId: WORKER_SESSION_ID });
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
