@@ -550,11 +550,59 @@ export interface TelemetryReviewRoundRecord extends TelemetryRecordBase {
   }> | null;
 }
 
+/** Raw changed-line counts for one source/test bucket in a commit. */
+export interface TelemetryCommitFileDistribution {
+  readonly files: number;
+  readonly insertions: number;
+  readonly deletions: number;
+}
+
+/** #782 audit-pattern counts, kept separately for added and removed diff lines. */
+export interface TelemetryEscapeHatchCounts {
+  readonly asAny: number;
+  readonly asUnknownAs: number;
+  readonly jsonParseStringify: number;
+}
+
+export interface TelemetryCommitMetrics {
+  readonly files: number;
+  readonly insertions: number;
+  readonly deletions: number;
+  readonly source: TelemetryCommitFileDistribution;
+  readonly test: TelemetryCommitFileDistribution;
+  readonly escapeHatches: {
+    readonly added: TelemetryEscapeHatchCounts;
+    readonly deleted: TelemetryEscapeHatchCounts;
+  };
+  /** Approximation: added/removed diff lines matching expect( or assert. */
+  readonly assertions: { readonly added: number; readonly deleted: number };
+}
+
+/** Per host-git commit observation. Telemetry only; never read for routing. */
+export interface TelemetryCommitRecord extends TelemetryRecordBase {
+  readonly phase: "commit";
+  readonly runId: string | null;
+  readonly issue: number | null;
+  readonly commit: string;
+  readonly files: number | null;
+  readonly insertions: number | null;
+  readonly deletions: number | null;
+  readonly source: TelemetryCommitFileDistribution | null;
+  readonly test: TelemetryCommitFileDistribution | null;
+  readonly escapeHatches: {
+    readonly added: TelemetryEscapeHatchCounts;
+    readonly deleted: TelemetryEscapeHatchCounts;
+  } | null;
+  /** Approximate `expect(`/`assert` changed-line delta; see builder. */
+  readonly assertions: { readonly added: number; readonly deleted: number } | null;
+}
+
 export type TelemetryRecord =
   | TelemetryEnvironmentRecord
   | TelemetryDispatchRecord
   | TelemetryCollectRecord
-  | TelemetryReviewRoundRecord;
+  | TelemetryReviewRoundRecord
+  | TelemetryCommitRecord;
 
 // ───────────────────────── pure helpers ─────────────────────────
 
@@ -1185,6 +1233,203 @@ export interface BuildReviewRoundStampInput {
   readonly findings?: readonly Finding[];
   readonly priorReviewRecords?: readonly TelemetryReviewRoundRecord[];
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+}
+
+export interface BuildCommitStampInput {
+  readonly stampedAt?: string;
+  readonly runId?: string | null;
+  readonly issue?: number | null;
+  readonly commit: string;
+  /** Host-git numstat result. Omit when collection failed: all metrics become null. */
+  readonly metrics?: TelemetryCommitMetrics;
+  /** Changed lines from host `git show --unified=0`, for #782 / assertion auditing. */
+  readonly diffLines?: readonly string[];
+}
+
+const EMPTY_ESCAPE_HATCH_COUNTS: TelemetryEscapeHatchCounts = {
+  asAny: 0,
+  asUnknownAs: 0,
+  jsonParseStringify: 0,
+};
+
+const ESCAPE_HATCH_PATTERNS = {
+  asAny: /\bas\s+any\b/,
+  asUnknownAs: /\bas\s+unknown\s+as\b/,
+  jsonParseStringify: /\bJSON\s*\.\s*parse\s*\(\s*JSON\s*\.\s*stringify\s*\(/,
+} as const;
+
+function changedLineKind(line: string): "added" | "deleted" | undefined {
+  if (line.startsWith("+++") || line.startsWith("---")) return undefined;
+  if (line.startsWith("+")) return "added";
+  if (line.startsWith("-")) return "deleted";
+  return undefined;
+}
+
+function auditableLine(line: string): string | undefined {
+  const kind = changedLineKind(line);
+  if (kind === undefined) return undefined;
+  const content = line.slice(1).trimStart();
+  // Keep the audit mechanical while excluding the common comment-only false positive.
+  if (content.startsWith("//") || content.startsWith("/*") || content.startsWith("*")) {
+    return undefined;
+  }
+  // This is still regex-based auditing, but quoted examples must not turn into
+  // synthetic escape hatches or weakened assertions.
+  return content.replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, "");
+}
+
+/**
+ * Build one raw per-commit observation. Assertion counts are intentionally
+ * approximate: changed, non-comment lines matching `expect(` or `assert`.
+ * Metrics omitted after a host-git error are null, never a control-flow error.
+ */
+export function buildCommitStamp(input: BuildCommitStampInput): TelemetryCommitRecord {
+  let escapeHatches = input.metrics?.escapeHatches;
+  let assertions = input.metrics?.assertions;
+  if (input.diffLines !== undefined) {
+    const added = { ...EMPTY_ESCAPE_HATCH_COUNTS };
+    const deleted = { ...EMPTY_ESCAPE_HATCH_COUNTS };
+    let addedAssertions = 0;
+    let deletedAssertions = 0;
+    for (const line of input.diffLines) {
+      const kind = changedLineKind(line);
+      const content = auditableLine(line);
+      if (kind === undefined || content === undefined) continue;
+      const counts = kind === "added" ? added : deleted;
+      for (const [name, pattern] of Object.entries(ESCAPE_HATCH_PATTERNS) as Array<
+        [keyof TelemetryEscapeHatchCounts, RegExp]
+      >) {
+        if (pattern.test(content)) counts[name] += 1;
+      }
+      if (/\bexpect\s*\(|\bassert(?:\s*\(|\s*\.)/.test(content)) {
+        if (kind === "added") addedAssertions += 1;
+        else deletedAssertions += 1;
+      }
+    }
+    escapeHatches = { added, deleted };
+    assertions = { added: addedAssertions, deleted: deletedAssertions };
+  }
+  const metrics = input.metrics;
+  return {
+    v: TELEMETRY_SCHEMA_VERSION,
+    phase: "commit",
+    stamped_at: input.stampedAt ?? new Date().toISOString(),
+    runId: input.runId ?? null,
+    issue: input.issue ?? null,
+    commit: input.commit,
+    files: metrics?.files ?? null,
+    insertions: metrics?.insertions ?? null,
+    deletions: metrics?.deletions ?? null,
+    source: metrics?.source ?? null,
+    test: metrics?.test ?? null,
+    escapeHatches: escapeHatches ?? null,
+    assertions: assertions ?? null,
+  };
+}
+
+function emptyCommitDistribution(): TelemetryCommitFileDistribution {
+  return { files: 0, insertions: 0, deletions: 0 };
+}
+
+function addCommitDistribution(
+  distribution: TelemetryCommitFileDistribution,
+  insertions: number,
+  deletions: number,
+): TelemetryCommitFileDistribution {
+  return {
+    files: distribution.files + 1,
+    insertions: distribution.insertions + insertions,
+    deletions: distribution.deletions + deletions,
+  };
+}
+
+function isTestPath(path: string): boolean {
+  return /(?:^|\/)(?:test|tests)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path);
+}
+
+function isSourcePath(path: string): boolean {
+  return /(?:^|\/)src(?:\/|$)/.test(path);
+}
+
+/** Best-effort host-git numstat collection for one already-known commit. */
+export function collectCommitMetrics(
+  repoPath: string,
+  commit: string,
+): TelemetryCommitMetrics | undefined {
+  try {
+    const output = execFileSync("git", ["show", "--format=", "--numstat", commit], {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let files = 0;
+    let insertions = 0;
+    let deletions = 0;
+    let source = emptyCommitDistribution();
+    let test = emptyCommitDistribution();
+    for (const line of output.split(/\r?\n/)) {
+      if (line.length === 0) continue;
+      const [addedRaw, deletedRaw, path] = line.split("\t", 3);
+      const added = Number(addedRaw);
+      const deleted = Number(deletedRaw);
+      if (path === undefined || !Number.isInteger(added) || !Number.isInteger(deleted)) {
+        return undefined;
+      }
+      files += 1;
+      insertions += added;
+      deletions += deleted;
+      if (isTestPath(path)) test = addCommitDistribution(test, added, deleted);
+      else if (isSourcePath(path)) source = addCommitDistribution(source, added, deleted);
+    }
+    return {
+      files,
+      insertions,
+      deletions,
+      source,
+      test,
+      // Filled by `buildCommitStamp` from the separate zero-context patch read.
+      escapeHatches: { added: { ...EMPTY_ESCAPE_HATCH_COUNTS }, deleted: { ...EMPTY_ESCAPE_HATCH_COUNTS } },
+      assertions: { added: 0, deleted: 0 },
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Best-effort changed-line read for the #782 and weakened-checks audit axes. */
+export function collectCommitDiffLines(
+  repoPath: string,
+  commit: string,
+): readonly string[] | undefined {
+  try {
+    return execFileSync("git", ["show", "--format=", "--unified=0", commit], {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).split(/\r?\n/);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Best-effort ordered host-git commit list for an already-known HEAD movement. */
+export function commitsBetween(
+  repoPath: string,
+  before: string,
+  after: string,
+): readonly string[] | undefined {
+  try {
+    return execFileSync("git", ["rev-list", "--reverse", `${before}..${after}`], {
+      cwd: repoPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

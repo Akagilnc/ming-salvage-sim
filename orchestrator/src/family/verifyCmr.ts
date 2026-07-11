@@ -146,7 +146,11 @@ import type {
 } from "../types.js";
 import { findingIdentityKey } from "../findings.js";
 import {
+  buildCommitStamp,
   buildReviewRoundStamp,
+  collectCommitDiffLines,
+  collectCommitMetrics,
+  commitsBetween,
   readTelemetryRecords,
   tryAppendTelemetryRecord,
   type TelemetryReviewRoundRecord,
@@ -1133,6 +1137,22 @@ async function runCmrCoderFix(input: {
       familyBase,
       currentFamilyHeadBefore,
     );
+
+    if (
+      fixResult.kind === "completed" &&
+      fixResult.output.kind === "coder" &&
+      fixResult.output.committed &&
+      fixResult.output.commitsAdded >= 1
+    ) {
+      stampCmrCoderFixCommits({
+        familyBackend,
+        familyBase,
+        runId,
+        familyIssue,
+        before: currentFamilyHeadBefore,
+        after: familyHeadAfter,
+      });
+    }
 
     if (fixResult.kind === "escalated") {
       const reason = `${reasonPrefix} escalated: ${fixResult.escalation.reason} — ${fixResult.escalation.diagnosis}`;
@@ -2176,6 +2196,56 @@ function stampCmrReviewRound(input: {
   } catch (err) {
     console.warn(
       `[orchestrator] review-round telemetry failed (fail-open): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
+/**
+ * #786 per-commit dimension: host-git observation after a coder-fix moved the
+ * known family HEAD. It deliberately has no return value: telemetry cannot
+ * affect ADR 0062 repair-gate or routing decisions.
+ */
+function stampCmrCoderFixCommits(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly familyBase: string;
+  readonly runId?: string;
+  readonly familyIssue?: number;
+  readonly before?: string;
+  readonly after?: string;
+}): void {
+  try {
+    if (input.before === undefined || input.after === undefined || input.before === input.after) return;
+    const repoPath = input.familyBackend.resolveFamilyWorkingRepo?.();
+    if (repoPath === undefined || repoPath.length === 0) return;
+    const ctx: DispatchContext = {
+      familyBase: input.familyBase,
+      ...(input.runId !== undefined ? { runId: input.runId } : {}),
+      ...(input.familyIssue !== undefined ? { familyIssue: input.familyIssue } : {}),
+    };
+    const ledgerDir = input.familyBackend.resolveTelemetryDir?.(ctx);
+    if (ledgerDir === undefined || ledgerDir.length === 0) return;
+    // The post-fix HEAD is known even if `rev-list` fails; preserve that raw
+    // observation with null dimensions rather than dropping the telemetry row.
+    const commits = commitsBetween(repoPath, input.before, input.after) ?? [input.after];
+    for (const commit of commits) {
+      const metrics = collectCommitMetrics(repoPath, commit);
+      const diffLines = collectCommitDiffLines(repoPath, commit);
+      tryAppendTelemetryRecord(
+        ledgerDir,
+        buildCommitStamp({
+          runId: input.runId,
+          issue: input.familyIssue ?? null,
+          commit,
+          ...(metrics !== undefined ? { metrics } : {}),
+          ...(diffLines !== undefined ? { diffLines } : {}),
+        }),
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[orchestrator] commit telemetry failed (fail-open): ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
