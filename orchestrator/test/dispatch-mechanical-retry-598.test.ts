@@ -128,6 +128,22 @@ describe("#598 withMechanicalRetry", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("ordinary 503 and non-model capacity failures stay on the mechanical retry path", async () => {
+    for (const reason of [
+      "HTTP 503 service overloaded",
+      "worker queue is at capacity",
+    ]) {
+      const { dispatch, seen } = scripted([
+        { kind: "failed", reason },
+        COMPLETED,
+      ]);
+      await expect(withMechanicalRetry(coderSpec(), {}, dispatch)).resolves.toEqual(
+        COMPLETED,
+      );
+      expect(seen).toHaveLength(2);
+    }
+  });
+
   it("persistent process failure → durably returns the failure after the bounded attempts, naming the attempt count", async () => {
     const { dispatch, seen } = scripted([{ kind: "malformed", reason: "no completion signal" }]);
     const result = await withMechanicalRetry(coderSpec(), {}, dispatch);
