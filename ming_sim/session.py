@@ -1823,6 +1823,21 @@ class GameSession:
             tags = []
         if not isinstance(tags, list):
             tags = []
+        try:
+            excluded_names = json.loads(row["excluded_names"] or "[]")
+        except (ValueError, TypeError):
+            excluded_names = []
+        if not isinstance(excluded_names, list):
+            excluded_names = []
+        try:
+            excluded_targets = json.loads(row["excluded_targets"] or "{}")
+        except (ValueError, TypeError):
+            excluded_targets = {}
+        if not isinstance(excluded_targets, dict):
+            excluded_targets = {}
+        excluded_offices = excluded_targets.get("offices") or []
+        if not isinstance(excluded_offices, list):
+            excluded_offices = []
         due_turn = int(row["due_turn"] or 0)
         deadline = max(0, due_turn - int(self.state.turn)) if due_turn else 0
         from ming_sim.applier import atomic
@@ -1838,6 +1853,8 @@ class GameSession:
                     "assignee": str(row["minister_name"] or fallback_minister or "").strip(),
                     "tags": [str(t).strip() for t in tags if str(t).strip()],
                     "deadline_months": deadline,
+                    "excluded_names": [str(name).strip() for name in excluded_names if str(name).strip()],
+                    "excluded_offices": [str(office).strip() for office in excluded_offices if str(office).strip()],
                 },
             )
             cur = self.db.conn.execute(
