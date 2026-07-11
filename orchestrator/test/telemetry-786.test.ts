@@ -11,6 +11,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -29,6 +30,7 @@ import {
   categoryFromReason,
   classifyWorkerTerminal,
   clearTelemetryRunEnvironment,
+  collectCommitDiffAudit,
   collectCommitDiffLines,
   collectCommitMetrics,
   commitsBetween,
@@ -258,6 +260,41 @@ describe("#786 telemetry pure helpers", () => {
       },
     });
     expect(record.assertions).toEqual({ added: 0, deleted: 0 });
+  });
+
+  it("excludes an escape hatch changed inside an existing post-image block comment", () => {
+    const record = buildCommitStamp({
+      commit: "abc123",
+      diffLines: [
+        "@@ -4 +4 @@ export function example() {",
+        "+ * revised example: value as any",
+      ],
+      // The post-image's full-file scan, rather than this zero-context hunk,
+      // establishes that the changed line starts inside an existing /* ... */.
+      addedBlockCommentDiffIndexes: new Set([1]),
+    });
+
+    expect(record.escapeHatches?.added.asAny).toBe(0);
+  });
+
+  it("derives block-comment state from the changed file post-image, not the zero-context hunk", () => {
+    const repo = tempDir("orch-786-comment-post-image-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    const fixture = join(repo, "fixture.ts");
+    writeFileSync(fixture, "/* existing example\n * value as any\n */\nexport const ok = true;\n");
+    execFileSync("git", ["add", "fixture.ts"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+    writeFileSync(fixture, "/* existing example\n * revised value as any\n */\nexport const ok = true;\n");
+    execFileSync("git", ["commit", "-am", "change comment", "-q"], { cwd: repo });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    const audit = collectCommitDiffAudit(repo, commit);
+    expect(audit).toBeDefined();
+    const record = buildCommitStamp({ commit, ...audit! });
+
+    expect(record.escapeHatches?.added.asAny).toBe(0);
   });
 
   it("leaves per-commit metrics null when host git collection is unavailable", () => {

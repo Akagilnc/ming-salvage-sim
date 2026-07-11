@@ -148,7 +148,7 @@ import { findingIdentityKey } from "../findings.js";
 import {
   buildCommitStamp,
   buildReviewRoundStamp,
-  collectCommitDiffLines,
+  collectCommitDiffAudit,
   collectCommitMetrics,
   commitsBetween,
   readTelemetryRecords,
@@ -2232,7 +2232,7 @@ function stampCmrCoderFixCommits(input: {
     const commits = commitsBetween(repoPath, input.before, input.after) ?? [input.after];
     for (const commit of commits) {
       const metrics = collectCommitMetrics(repoPath, commit);
-      const diffLines = collectCommitDiffLines(repoPath, commit);
+      const diffAudit = collectCommitDiffAudit(repoPath, commit);
       tryAppendTelemetryRecord(
         ledgerDir,
         buildCommitStamp({
@@ -2240,7 +2240,7 @@ function stampCmrCoderFixCommits(input: {
           issue: input.familyIssue ?? null,
           commit,
           ...(metrics !== undefined ? { metrics } : {}),
-          ...(diffLines !== undefined ? { diffLines } : {}),
+          ...(diffAudit !== undefined ? diffAudit : {}),
         }),
       );
     }
