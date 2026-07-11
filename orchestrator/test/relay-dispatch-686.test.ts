@@ -518,10 +518,8 @@ describe("#787 capacity relay", () => {
     expect(isCapacityRelayError(new Error("worker queue is at capacity"))).toBe(false);
   });
 
-  it("wires a capacity failure through runOrchestrator: same-pool checkpoint first, then cross-pool only when needed", async () => {
-    async function runCapacityCase(input: {
-      readonly pools: BillingPoolEntry[];
-    }): Promise<{ readonly coderModels: readonly string[]; readonly handoff: unknown }> {
+  it("wires a first-leg capacity failure through the production family call shape to the next same-pool checkpoint", async () => {
+    async function runCapacityCase(): Promise<{ readonly coderModels: readonly string[]; readonly handoff: unknown }> {
       const worktree: WorktreeHandle = {
         branch: "feat/787-capacity-relay-test",
         base: "main",
@@ -580,10 +578,15 @@ describe("#787 capacity relay", () => {
         const result = await runOrchestrator({
           issueNumber: 787,
           backend: new CapacityBackend(),
-          relayPools: input.pools,
           now: () => now,
+          family: {
+            parentIssue: 686,
+            familyBase: "feat/686-family-base",
+            noPush: true,
+            mergedBlockers: [],
+          },
         });
-        expect(result.status).not.toBe("error");
+        expect(result.status, JSON.stringify(result, null, 2)).not.toBe("error");
         return {
           coderModels,
           handoff: result.stepLedger.find((entry) => entry.event === "relay_baton_handoff"),
@@ -595,25 +598,13 @@ describe("#787 capacity relay", () => {
       }
     }
 
-    const samePool = await runCapacityCase({
-      pools: [
-        { id: "grok-build", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["grok-4.5"] },
-        { id: "codex-5h", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["terra@med", "luna@med"] },
-        { id: "cursor", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["luna@med"] },
-      ],
+    const firstLeg = await runCapacityCase();
+    expect(firstLeg.coderModels).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
+    expect(firstLeg.handoff).toMatchObject({
+      trigger: "capacity",
+      toModelId: "luna@med",
+      toPool: "codex-5h",
     });
-    expect(samePool.coderModels).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
-    expect(samePool.handoff).toMatchObject({ trigger: "capacity", toModelId: "luna@med", toPool: "codex-5h" });
-
-    const crossPool = await runCapacityCase({
-      pools: [
-        { id: "grok-build", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["grok-4.5"] },
-        { id: "codex-5h", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["terra@med"] },
-        { id: "cursor", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["luna@med"] },
-      ],
-    });
-    expect(crossPool.coderModels).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
-    expect(crossPool.handoff).toMatchObject({ trigger: "capacity", toModelId: "luna@med", toPool: "cursor" });
   });
 
   it("keeps pre-capacity trigger rows readable when resuming a relay", () => {

@@ -127,6 +127,26 @@ export const DEFAULT_POOL_MODELS: Readonly<
 };
 
 /**
+ * Resolve a known roster model to its default billing boundary. This is
+ * distinct from quota probing: codex and Claude have no #683 probe-pool id,
+ * but their dispatched slugs still identify a billing pool for capacity relay.
+ */
+export function billingPoolForModelRef(
+  modelRef: string,
+): BillingPoolId | undefined {
+  switch (lookupCoderRosterEntry(modelRef)?.pool) {
+    case "supergrok":
+      return "grok-build";
+    case "codex":
+      return "codex-5h";
+    case "claude":
+      return "claude";
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Build a route pool table for a quota-wall disposition: the wall-hit pool is
  * `limited` (with resetAt). Every other billing pool defaults to **not-live**
  * (`dead`) unless the caller supplies a probed/override table via

@@ -161,6 +161,7 @@ import {
 } from "./coderRoster.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
+  billingPoolForModelRef,
   billingPoolFromQuotaPool,
   buildDefaultBillingPools,
   findLiveBillingPoolForModel,
@@ -2742,6 +2743,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     return buildDefaultBillingPools({ limitedPool, resetAt });
   };
 
+  const hasExplicitRelayPools = input.relayPools !== undefined;
+
   const resolveResourceFailurePool = (input: {
     readonly modelRef: string;
     readonly knownPool?: BillingPoolId;
@@ -2750,21 +2753,29 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     readonly currentPool: BillingPoolId;
     readonly pools: ReadonlyArray<BillingPoolEntry>;
   } => {
-    const inferredPool = billingPoolFromQuotaPool(poolForModelRef(input.modelRef));
+    const inferredPool =
+      billingPoolForModelRef(input.modelRef) ??
+      billingPoolFromQuotaPool(poolForModelRef(input.modelRef));
     const configuredPools = resolveRelayPools(inferredPool, undefined);
     const confirmedPool =
       input.knownPool ??
       currentBillingPool ??
       findLiveBillingPoolForModel(configuredPools, input.modelRef);
     const currentPool = confirmedPool ?? inferredPool;
+    // A first-leg capacity result comes from the currently dispatched model,
+    // so it proves that its inferred billing pool is live. Keep an explicit
+    // relay table authoritative, and keep later relay legs tied to their
+    // recorded pool; only the default, unbatoned first leg gets this proof.
+    const firstLegCapacityPoolIsLive =
+      input.capacity &&
+      confirmedPool === undefined &&
+      !hasExplicitRelayPools;
     return {
       currentPool,
       pools: configuredPools.map((pool) => {
         if (pool.id !== currentPool) return pool;
         if (!input.capacity) return { ...pool, status: "dead" as const };
-        // A capacity failure preserves only a known live billing pool. Never
-        // promote a slug-derived fallback (for example unknown → grok-build).
-        return confirmedPool !== undefined
+        return confirmedPool !== undefined || firstLegCapacityPoolIsLive
           ? { ...pool, status: "live" as const }
           : pool;
       }),
