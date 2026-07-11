@@ -148,7 +148,13 @@ describe("#786 family dispatch telemetry", () => {
 
     class TelemetryMergerBackend extends RealFamilyBackend {
       public runMergerAgentForTest() {
-        return this.runMergerAgent({ childIssue: 786, childBranch: "feat/child-786" });
+        return this.runMergerAgent({
+          childIssue: 786,
+          childBranch: "feat/child-786",
+          // This is the startup-smoked family route. The production merger must
+          // preserve it when its environment row is the run's first one.
+          modelRoute: smokedRoute(),
+        });
       }
 
       protected override mountMergerAuth(): MergerAuth {
@@ -186,7 +192,11 @@ describe("#786 family dispatch telemetry", () => {
 
     await expect(backend.runMergerAgentForTest()).resolves.toEqual({ resolved: true });
 
-    expect(await waitForEnvironment(ledgerDir)).toBeDefined();
+    const environment = await waitForEnvironment(ledgerDir);
+    expect(environment).toBeDefined();
+    expect(environment?.routeSlots).not.toBeNull();
+    expect(environment?.routeCmrReviewLegs).not.toBeNull();
+    expect(environment?.cliVersions).not.toBeNull();
     const records = readTelemetryRecords(ledgerDir);
     const dispatch = records.find(
       (record): record is TelemetryDispatchRecord => record.phase === "dispatch",
@@ -235,5 +245,35 @@ describe("#786 family dispatch telemetry", () => {
     ).rejects.toThrow(/ledger persistence failed/);
 
     expect(await waitForEnvironment(ledgerDir)).toBeDefined();
+  });
+
+  it("records first output from a monitored family CLI worker", async () => {
+    const ledgerDir = join(tempDir("orch-786-family-first-output-"), ".ledger");
+    const backend = {
+      resolveCliMonitorDispatch: (spec: WorkerSpec) => ({
+        command: process.execPath,
+        args: ["-e", "process.stdout.write('family worker output\\n')"],
+        logDir: ledgerDir,
+        poolId: `codex/${spec.model}`,
+        completionSignal: spec.completionSignal,
+        stepId: spec.id,
+      }),
+      awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      }),
+      installTelemetryRunEnvironment: async () => {},
+    } as unknown as FamilyBackend;
+
+    await dispatchFamilyWorkerWithMonitor(backend, familySpec("cmr"), {
+      familyBase: "feat/family-786",
+      stateDir: ledgerDir,
+      modelRoute: smokedRoute(),
+    });
+
+    const collect = readTelemetryRecords(ledgerDir).find(
+      (record): record is TelemetryCollectRecord => record.phase === "collect",
+    );
+    expect(collect?.first_output_at).not.toBeNull();
   });
 });

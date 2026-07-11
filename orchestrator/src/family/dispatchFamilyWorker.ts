@@ -33,6 +33,7 @@ import {
 import {
   dispatchMonitoredCliWorker,
   killWorkerTree,
+  readLogActivity,
   type MonitoredCliDispatchInput,
 } from "../workerMonitor.js";
 import type {
@@ -226,8 +227,22 @@ export async function dispatchFamilyWorkerWithMonitor(
 ): Promise<DispatchFamilyWorkerWithMonitorOutcome> {
   const ledgerDir = ctx.stateDir;
   const telemetry = createTelemetryLegStamper({ ledgerDir, spec, ctx });
+  let firstOutputAt: string | null = null;
   let logPath: string | null = null;
   let logStartOffset: number | undefined;
+  let monitorHandle: WorkerMonitorHandle | undefined;
+  let firstOutputBaseline: number | undefined;
+
+  const reconcileFirstOutputAt = (): void => {
+    if (firstOutputAt !== null || monitorHandle === undefined || firstOutputBaseline === undefined) {
+      return;
+    }
+    const activity = readLogActivity(monitorHandle);
+    if (activity !== undefined && activity.sizeBytes > firstOutputBaseline) {
+      firstOutputAt = new Date().toISOString();
+    }
+  };
+
   try {
     const cliSpec = familyBackend.resolveCliMonitorDispatch?.(spec, ctx, landing);
     if (cliSpec !== undefined) {
@@ -251,8 +266,11 @@ export async function dispatchFamilyWorkerWithMonitor(
           : {}),
       };
       const { handle, child } = await dispatchMonitoredCliWorker(input);
+      monitorHandle = handle;
       logPath = handle.logPath;
       logStartOffset = handle.logStartOffset;
+      firstOutputBaseline = firstOutputBaselineBytes(handle);
+      reconcileFirstOutputAt();
       telemetry.stampDispatch(handle.dispatchedAt, cliSpec.poolId);
       const exitPromise = waitForChildExit(child);
       // Environment collection is intentionally lazy and non-blocking. It must
@@ -275,6 +293,7 @@ export async function dispatchFamilyWorkerWithMonitor(
         }
       }
       const exitCode = await exitPromise;
+      reconcileFirstOutputAt();
       if (familyBackend.awaitMonitoredCliWorker === undefined) {
         const result: WorkerResult = {
           kind: "failed",
@@ -284,7 +303,7 @@ export async function dispatchFamilyWorkerWithMonitor(
         };
         telemetry.stampCollect(
           { kind: "result", result },
-          { logPath, logStartOffset },
+          { logPath, logStartOffset, firstOutputAt },
         );
         return { result, monitorHandle: handle };
       }
@@ -295,9 +314,10 @@ export async function dispatchFamilyWorkerWithMonitor(
         ctx,
         landing,
       );
+      reconcileFirstOutputAt();
       telemetry.stampCollect(
         { kind: "result", result },
-        { logPath, logStartOffset },
+        { logPath, logStartOffset, firstOutputAt },
       );
       return { result, monitorHandle: handle };
     }
@@ -310,12 +330,31 @@ export async function dispatchFamilyWorkerWithMonitor(
     telemetry.stampCollect({ kind: "result", result });
     return { result };
   } catch (error) {
+    reconcileFirstOutputAt();
     telemetry.stampCollect(
       { kind: "thrown", error },
-      { logPath, logStartOffset },
+      { logPath, logStartOffset, firstOutputAt },
     );
     throw error;
   }
+}
+
+/**
+ * Byte offset after the pre-dispatch log prefix plus the orchestrator's spawn
+ * marker. This mirrors the single-slice baseline: only later growth is worker
+ * output, not the marker written by `dispatchMonitoredCliWorker` itself.
+ */
+function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
+  const offset =
+    typeof handle.logStartOffset === "number" &&
+    Number.isFinite(handle.logStartOffset) &&
+    handle.logStartOffset >= 0
+      ? handle.logStartOffset
+      : 0;
+  const marker =
+    `[orchestrator] dispatched ${handle.stepId} pid=${handle.pid} ` +
+    `pool=${handle.poolId} instance=${handle.instanceId} at ${handle.dispatchedAt}\n`;
+  return offset + Buffer.byteLength(marker, "utf8");
 }
 
 /**

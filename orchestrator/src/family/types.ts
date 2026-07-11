@@ -40,6 +40,7 @@ import type {
   VerifyCmrResult,
 } from "./verifyCmr.js";
 import type { StopSummary } from "../stopSummary.js";
+import type { ResolvedModelRoute } from "../modelRoutes.js";
 
 /** The two runner-visible integrated CMR gates (#419). */
 export type IntegratedCmrPass = "completeness" | "correctness";
@@ -819,6 +820,8 @@ export interface MergeRequest {
   readonly childIssue: number;
   /** The child slice branch to merge (the reviewed, locally-committed branch). */
   readonly childBranch: string;
+  /** Startup-smoked route for any conflict resolver spawned during this merge. */
+  readonly modelRoute?: ResolvedModelRoute;
 }
 
 /**
@@ -833,6 +836,8 @@ export interface ConflictResolveRequest {
   readonly childIssue: number;
   /** The child slice branch whose merge into the family base conflicted. */
   readonly childBranch: string;
+  /** Startup-smoked family route, retained by the merger telemetry environment row. */
+  readonly modelRoute?: ResolvedModelRoute;
 }
 
 /** The merger's result for one child merge. */

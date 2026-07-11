@@ -878,6 +878,7 @@ export class RealFamilyBackend implements FamilyBackend {
           familyBase: this.opts.familyBase,
           familyIssue: req.childIssue,
           stateDir: this.opts.ledgerDir,
+          ...(req.modelRoute !== undefined ? { modelRoute: req.modelRoute } : {}),
         };
         const telemetry = createTelemetryLegStamper({
           ledgerDir: this.opts.ledgerDir,
