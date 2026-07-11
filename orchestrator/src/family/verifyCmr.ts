@@ -2838,7 +2838,10 @@ async function runVerifyCmrWithShipTruthAttempt(
   // runnable via EITHER the new unified `dispatchWorker` seam OR the legacy
   // `openFamilyPr`; neither ⇒ INCOMPLETE_GATE (the PR cannot open; never a false
   // success). #331 prefactor: dispatchFamilyWorker forwards to `openFamilyPr`; #336
-  // makes it invoke `gstack-ship`.
+  // makes it invoke `gstack-ship`. Host PR verification is also a preflight
+  // requirement: dispatch is mutating, and without that seam a legacy
+  // `openFamilyPr` backend could open a real PR then be unable to establish the
+  // shipped truth needed to finish this barrier.
   if (
     familyBackend.dispatchWorker === undefined &&
     familyBackend.openFamilyPr === undefined
@@ -2878,6 +2881,49 @@ async function runVerifyCmrWithShipTruthAttempt(
             : {}),
           sources: {
             actualFamilyHead: "family head after CMR before missing ship capability",
+            verifiedCmrHead: "latest cmr_passed ledger row",
+          },
+        },
+      }),
+    });
+    return INCOMPLETE_GATE;
+  }
+  if (familyBackend.verifyFamilyShippedPr === undefined) {
+    const reason =
+      "family ship worker unavailable before mutation: backend has no host PR verification capability";
+    const postCmrFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postCmrFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postCmrFamilyHead,
+      stopSummary: infraFailureStopSummary({
+        summary: `${reason}; the terminal PR gate cannot verify a dispatched PR`,
+        repairHint:
+          "provide verifyFamilyShippedPr before dispatching the family ship worker, then rerun the final family barrier",
+        ship: {
+          latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+          currentFamilyHead: postCmrFamilyHead,
+          shipPrState: "ship-verification-capability-missing",
+        },
+        heads: {
+          ...(postCmrFamilyHead !== undefined
+            ? { actualFamilyHead: postCmrFamilyHead }
+            : {}),
+          ...(cmrPassedFamilyHeadAfter !== undefined
+            ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+            : {}),
+          sources: {
+            actualFamilyHead: "family head after CMR before missing ship verification capability",
             verifiedCmrHead: "latest cmr_passed ledger row",
           },
         },

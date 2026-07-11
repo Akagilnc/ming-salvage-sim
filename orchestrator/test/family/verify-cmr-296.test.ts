@@ -133,7 +133,11 @@ function currentRouteFingerprint(): string {
   return modelRouteFingerprint(activeModelRoute());
 }
 
-/** A #293-era backend WITHOUT the new optional methods (the no-op default). */
+/**
+ * A minimal #293-era backend. Ship-focused subclasses inherit host verification
+ * so their fixtures reach the ship behavior they are exercising; the no-op path
+ * still has no verify/cmr/ship dispatch capability.
+ */
 class BareFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -144,6 +148,9 @@ class BareFamilyBackend implements FamilyBackend {
   }
   async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
     return this.ledger;
+  }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
   }
 }
 
@@ -671,6 +678,30 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.ledger.some((entry) => entry.status === "shipped")).toBe(false);
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("gh pr view: PR not found");
+  });
+
+  it("fails closed before mutation when a legacy openFamilyPr backend cannot verify shipped PR truth", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+    });
+    Reflect.set(backend, "verifyFamilyShippedPr", undefined);
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger.some((entry) => entry.status === "ship_completed")).toBe(false);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      event: "aborted",
+      phase: "final",
+      reason: expect.stringContaining("no host PR verification capability"),
+    }));
   });
 
   it("retries an unknown host observation without re-dispatching ship, then escalates", async () => {
