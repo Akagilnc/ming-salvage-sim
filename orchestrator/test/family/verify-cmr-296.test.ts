@@ -769,6 +769,32 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.escalations).toEqual([]);
   });
 
+  it("#823 escalates a host PR mismatch without re-dispatching the mutating ship worker", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      verifyShippedPr: () => ({
+        ok: false,
+        kind: "mismatch",
+        reason: "observed PR 823 has base main and unexpected head deadbeef",
+      }),
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.prCalls).toHaveLength(1);
+    expect(backend.verifyShippedPrCalls).toHaveLength(1);
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]?.reason).toContain("observed PR 823");
+    expect(backend.ledger.some((entry) => entry.status === "shipped")).toBe(false);
+  });
+
   it("rejects converged CMR when runner-protected prior findings are not explicitly claimed fixed", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
@@ -1864,6 +1890,73 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
 });
 
 describe("#823 family ship malformed-output recovery", () => {
+  it("pre-spawn infrastructure failures do not consume the confirmed ship budget", async () => {
+    class PreSpawnFailureBackend extends BareFamilyBackend {
+      shipDispatches = 0;
+      preSpawnFailures = 0;
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-after-cmr";
+      }
+      async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+        return { ok: true };
+      }
+      resolveCliMonitorDispatch(spec: WorkerSpec): undefined {
+        if (spec.kind === "ship" && this.preSpawnFailures++ < MAX_DISPATCH_ATTEMPTS - 1) {
+          throw new Error("monitor job construction failed before spawn");
+        }
+        return undefined;
+      }
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return { kind: "completed", output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"], ...CMR_EVIDENCE } };
+        }
+        if (spec.kind === "docRelease") return { kind: "completed", output: { kind: "docRelease", released: true } };
+        if (spec.kind === "cleanup") return { kind: "completed", output: { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" } };
+        if (spec.kind !== "ship") throw new Error(`unexpected ${spec.kind} dispatch`);
+        this.shipDispatches += 1;
+        return { kind: "completed", output: { kind: "ship", branch: ctx.familyBase ?? "", status: "pr_opened", pr: "pr://family/823" } };
+      }
+    }
+
+    const backend = new PreSpawnFailureBackend();
+    const result = await runVerifyCmr({ phase: "final", familyBase: "family/823-base", familyBackend: backend, familyHeadAfter: "head-after-cmr" });
+
+    // This minimal backend intentionally lacks the later online-review seam.
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.shipDispatches).toBe(1);
+    expect(backend.ledger.filter((entry) => entry.status === "ship_dispatch_attempt")).toHaveLength(1);
+  });
+
+  it("resumes an unconfirmed ship reservation without consuming the confirmed launch budget", async () => {
+    class ReservedResumeBackend extends BareFamilyBackend {
+      shipDispatches = 0;
+      async runFamilyVerify(): Promise<FamilyVerifyResult> { return { ok: true }; }
+      async readFamilyHead(): Promise<string> { return "head-after-cmr"; }
+      async verifyFamilyShippedPr(): Promise<{ ok: true }> { return { ok: true }; }
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind !== "ship") throw new Error(`unexpected ${spec.kind} dispatch: CMR should resume-skip`);
+        this.shipDispatches += 1;
+        return { kind: "completed", output: { kind: "ship", branch: ctx.familyBase ?? "", status: "pr_opened", pr: "pr://family/823-resumed" } };
+      }
+    }
+    const backend = new ReservedResumeBackend();
+    backend.ledger.push(
+      { status: "cmr_passed", event: "cmr_passed", phase: "final", cmrPass: "completeness", familyHeadAfter: "head-after-cmr", routeFingerprint: currentRouteFingerprint() },
+      { status: "cmr_passed", event: "cmr_passed", phase: "final", cmrPass: "correctness", familyHeadAfter: "head-after-cmr", routeFingerprint: currentRouteFingerprint() },
+      { status: "ship_dispatch_reserved", event: "ship_dispatch_reserved", phase: "final", shipDispatchId: "ship-1" },
+    );
+
+    const result = await runVerifyCmr({ phase: "final", familyBase: "family/823-base", familyBackend: backend, familyHeadAfter: "head-after-cmr" });
+    // This minimal backend intentionally lacks the later online-review seam.
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.shipDispatches).toBe(1);
+    expect(backend.ledger.filter((entry) => entry.status === "ship_dispatch_attempt")).toHaveLength(1);
+  });
+
   it("re-dispatches malformed sidecar and wrong payload attempts before accepting the first valid ship result", async () => {
     class RecoveringShipBackend extends BareFamilyBackend {
       readonly aborted: FamilyAbortedEvent[] = [];
