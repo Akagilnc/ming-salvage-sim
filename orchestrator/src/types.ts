@@ -50,6 +50,17 @@ export type StepId =
   | "S11"
   | "S12";
 
+/**
+ * Durable ledger rows normally identify a canonical orchestrator step.  Retry
+ * bookkeeping deliberately occupies its own namespace so step-result readers
+ * cannot mistake a pre-dispatch marker for that step's result (#824 r6).
+ */
+export type LedgerStepId = StepId | "mechanical_redispatch_attempt";
+
+export function isStepId(step: LedgerStepId): step is StepId {
+  return step !== "mechanical_redispatch_attempt";
+}
+
 /** Which role a single-slice worker runs under. */
 export type StepRole =
   | "coder"
@@ -519,6 +530,8 @@ export interface WorkerMonitorSpawnedEvent {
  */
 export interface MechanicalRedispatchAttemptEvent {
   readonly event: "mechanical_redispatch_attempt";
+  /** Canonical worker step whose current invocation owns this attempt. */
+  readonly forStep: StepId;
   readonly mechanicalRedispatchAttempt: number;
 }
 
@@ -1319,7 +1332,7 @@ export interface WorktreeHandle {
  * persisted ledger (sessionId, prompt_hash, branchHEAD, ts, sibling state dir).
  */
 export interface LedgerEntry {
-  readonly step: StepId;
+  readonly step: LedgerStepId;
   /** Structured output for agent steps; undefined for runner-action steps. */
   readonly output?: StepOutput;
   /**

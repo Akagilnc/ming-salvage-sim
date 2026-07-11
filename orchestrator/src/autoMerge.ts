@@ -34,6 +34,8 @@ export interface PrMergeLiveState {
   readonly state: string;
   readonly headOid: string;
   readonly headRefName: string;
+  /** GitHub's owner login for the PR head repository. */
+  readonly headRepositoryOwnerLogin?: string;
   readonly mergeStateStatus: string;
   readonly mergeable?: string;
 }
@@ -72,7 +74,12 @@ export function observeOpenPrForBranch(
     // A ship worker's URL is only an observation.  It is not authority to run
     // S9 against an unrelated open PR: GitHub must confirm both liveness and
     // the branch identity that S7 actually shipped.
-    if (live.state === "OPEN" && live.headRefName === branch) {
+    const expectedOwner = repo.split("/", 1)[0];
+    if (
+      live.state === "OPEN" &&
+      live.headRefName === branch &&
+      live.headRepositoryOwnerLogin === expectedOwner
+    ) {
       return { present: true, prUrl: live.prUrl };
     }
     // A mismatched report is not a judged ship failure.  Discard it and query
@@ -205,6 +212,14 @@ function parsePrMergeLivePayload(raw: string, prUrl: string): PrMergeLiveState {
     typeof obj.headRefName === "string" ? obj.headRefName.trim() : "";
   const headRefOid =
     typeof obj.headRefOid === "string" ? obj.headRefOid.trim() : "";
+  const headRepositoryOwner = obj.headRepositoryOwner;
+  const headRepositoryOwnerRecord =
+    headRepositoryOwner !== null && typeof headRepositoryOwner === "object"
+      ? (headRepositoryOwner as Record<string, unknown>)
+      : undefined;
+  const ownerLogin = headRepositoryOwnerRecord?.login;
+  const headRepositoryOwnerLogin =
+    typeof ownerLogin === "string" ? ownerLogin.trim() : "";
   const mergeStateStatus =
     typeof obj.mergeStateStatus === "string" ? obj.mergeStateStatus.trim() : "";
   const mergeable =
@@ -221,6 +236,7 @@ function parsePrMergeLivePayload(raw: string, prUrl: string): PrMergeLiveState {
     state,
     headOid: headRefOid,
     headRefName,
+    ...(headRepositoryOwnerLogin.length > 0 ? { headRepositoryOwnerLogin } : {}),
     mergeStateStatus,
     ...(mergeable !== undefined ? { mergeable } : {}),
   };
@@ -240,7 +256,7 @@ export function fetchPrMergeLiveState(
     "--repo",
     repo,
     "--json",
-    "number,url,state,headRefName,headRefOid,mergeStateStatus,mergeable",
+    "number,url,state,headRefName,headRefOid,headRepositoryOwner,mergeStateStatus,mergeable",
   ]);
   return parsePrMergeLivePayload(raw, prUrl);
 }
@@ -442,6 +458,7 @@ function offlineSyntheticLiveState(
     state,
     headOid: snapshot.headOid,
     headRefName: "offline-branch",
+    headRepositoryOwnerLogin: "offline",
     mergeStateStatus: state === "OPEN" ? "CLEAN" : "UNKNOWN",
   };
 }
