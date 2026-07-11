@@ -110,6 +110,7 @@ import {
   type ResolvedModelRoute,
   type RouteSmokeStatus,
 } from "./modelRoutes.js";
+import type { CoderSelfReportDiscrepancy } from "./types.js";
 
 export function routeSmokeCacheKey(
   route: ResolvedModelRoute,
@@ -1295,6 +1296,7 @@ export function stripJsonFence(s: string): string {
 export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
+  readonly selfReportDiscrepancy?: CoderSelfReportDiscrepancy;
   readonly escalate?: { readonly reason: string; readonly diagnosis: string };
   readonly repairEvidence?: RepairEvidence;
 }
@@ -1315,10 +1317,10 @@ export interface SelfReportedCoder {
  *   - committed   ← realCommitCount > 0
  *   - commitsAdded ← realCommitCount
  *
- * The self-report is kept only as a CROSS-CHECK: a self-report that contradicts
- * git (claims a commit git did not see, or miscounts) is a contract violation →
- * THROW. The caller (runStep / resumeSession) lets that propagate to the runner's
- * error edge = S8(error) + error package, never a silently-trusted success.
+ * The self-report is advisory once git has observed work: an under-count is
+ * retained as a discrepancy record but does not interrupt the run. A claim that
+ * git cannot support remains fail-closed: reporting any commits when git observed
+ * none, or reporting more commits than git observed, throws to S8(error).
  *
  * `escalate` is a MODEL signal (not derivable from git), so it is preserved from
  * the self-report verbatim — but it does NOT suppress a commit-count
@@ -1332,24 +1334,32 @@ export function reconcileCoderCommits(
   gitCommitCount: number,
 ): SelfReportedCoder {
   const committed = gitCommitCount > 0;
-  // Cross-check the self-report against git truth; a contradiction is a contract
-  // violation (the model claimed a commit count git does not back).
-  if (
-    selfReported.committed !== committed ||
-    selfReported.commitsAdded !== gitCommitCount
-  ) {
+  const selfReportClaimsMoreCommits =
+    selfReported.commitsAdded > gitCommitCount ||
+    (selfReported.committed && gitCommitCount === 0);
+  if (selfReportClaimsMoreCommits) {
     throw new Error(
       `realBackend: coder self-report {committed:${selfReported.committed}, ` +
         `commitsAdded:${selfReported.commitsAdded}} contradicts git ` +
         `(${gitCommitCount} real commit${gitCommitCount === 1 ? "" : "s"} on ` +
-        `the resident branch). The commit count is derived from git, not the ` +
-        `model's claim (#256 truthification); a divergent self-report is a ` +
-        `contract violation → S8(error).`,
+        `the resident branch). The self-report claims commits git did not ` +
+        `observe, so this is a contract violation → S8(error).`,
     );
   }
+  const selfReportDiscrepancy =
+    selfReported.committed !== committed ||
+    selfReported.commitsAdded !== gitCommitCount
+      ? {
+          code: "coder_self_report_understated_git_commits" as const,
+          selfReportedCommitted: selfReported.committed,
+          selfReportedCommitsAdded: selfReported.commitsAdded,
+          gitCommitCount,
+        }
+      : undefined;
   const base = {
     committed,
     commitsAdded: gitCommitCount,
+    ...(selfReportDiscrepancy !== undefined ? { selfReportDiscrepancy } : {}),
     ...(selfReported.repairEvidence !== undefined
       ? { repairEvidence: selfReported.repairEvidence }
       : {}),
@@ -3216,12 +3226,17 @@ export class RealBackend implements Backend {
         out.repairEvidence !== undefined
           ? { repairEvidence: out.repairEvidence }
           : {};
+      const selfReportDiscrepancy =
+        out.selfReportDiscrepancy !== undefined
+          ? { selfReportDiscrepancy: out.selfReportDiscrepancy }
+          : {};
       return out.escalate
         ? {
             kind: "coder",
             committed: out.committed,
             commitsAdded: out.commitsAdded,
             ...repairEvidence,
+            ...selfReportDiscrepancy,
             escalate: out.escalate,
           }
         : {
@@ -3229,6 +3244,7 @@ export class RealBackend implements Backend {
             committed: out.committed,
             commitsAdded: out.commitsAdded,
             ...repairEvidence,
+            ...selfReportDiscrepancy,
           };
     }
 

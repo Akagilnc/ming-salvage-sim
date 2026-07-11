@@ -264,6 +264,12 @@ export interface CoderOutput {
   readonly committed: boolean;
   readonly commitsAdded: number;
   /**
+   * Git observed more commits than the worker reported. This is advisory-only:
+   * git-derived commit truth remains authoritative, while the durable ledger
+   * retains the discrepancy for diagnosis.
+   */
+  readonly selfReportDiscrepancy?: CoderSelfReportDiscrepancy;
+  /**
    * Optional scoped proof that the fix worker changed implementation, tests, or
    * fixtures for an active finding. Generic "I tried" is not progress.
    */
@@ -278,6 +284,14 @@ export interface CoderOutput {
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
+}
+
+/** Advisory record emitted when a coder under-reports commits that git observed. */
+export interface CoderSelfReportDiscrepancy {
+  readonly code: "coder_self_report_understated_git_commits";
+  readonly selfReportedCommitted: boolean;
+  readonly selfReportedCommitsAdded: number;
+  readonly gitCommitCount: number;
 }
 
 /** Output of a reviewer step (S3/S6). Empty findings ⇒ approve only when no prior finding needs adjudication. */

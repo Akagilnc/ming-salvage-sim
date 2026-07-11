@@ -1899,6 +1899,9 @@ export class RealFamilyBackend implements FamilyBackend {
       ...(output.repairEvidence !== undefined
         ? { repairEvidence: output.repairEvidence }
         : {}),
+      ...(output.selfReportDiscrepancy !== undefined
+        ? { selfReportDiscrepancy: output.selfReportDiscrepancy }
+        : {}),
       ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
     };
   }
