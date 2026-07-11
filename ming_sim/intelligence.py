@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -79,6 +80,24 @@ def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
     return _safe_report_text(db.power_report(exclude_self=True)), "powers"
 
 
+def _character_domain_statement(db: Any, state: Any, character_name: str, query: str) -> tuple[str, str]:
+    """Read a firsthand report from the character's durable knowledge rail.
+
+    A near-minister report must not turn the global engine readers into an
+    audience bypass.  Inquiry reports use the independent provider below;
+    firsthand reports are limited to the role projection already granted to
+    this character.
+    """
+    domain = _query_domain(query)
+    knowledge_domain = {"arrears": "military", "bandits": "security", "military": "military"}.get(domain)
+    knowledge = db.get_character_knowledge(state, character_name)
+    if domain == "office":
+        return _vacancy_statement(db.list_office_vacancies(), query), "office_vacancies"
+    if not knowledge_domain or knowledge_domain not in (knowledge.get("world") or {}):
+        return "近臣未从自身见闻掌握所问一事。", f"knowledge_denied:{domain}"
+    return _safe_report_text((knowledge.get("world") or {}).get(knowledge_domain)), f"knowledge:{knowledge_domain}"
+
+
 def _canonical_source_ref(source_kind: str, source_ref: Optional[str], domain_ref: str) -> str:
     """Canonicalize provider metadata; arbitrary caller text is never echoed."""
     if source_kind == "inquiry":
@@ -92,6 +111,14 @@ def _canonical_source_ref(source_kind: str, source_ref: Optional[str], domain_re
     else:
         raise ValueError("回奏来源必须是 firsthand 或 inquiry")
     return f"{provider}/{domain_ref}"
+
+
+def _persisted_firsthand_exists(db: Any, state: Any, character_name: str) -> bool:
+    knowledge = db.get_character_knowledge(state, character_name)
+    return any(
+        str(item.get("kind") or "") in {"witness", "scout", "firsthand"}
+        for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
+    )
 
 
 def build_return_report(
@@ -112,6 +139,49 @@ def build_return_report(
         "subject": "查访" if source_kind == "inquiry" else "见闻",
         "statement": statement,
     }
+
+
+def persist_return_report(
+    db: Any, state: Any, character_name: str, query: str,
+) -> Dict[str, str]:
+    """Persist one scoped near-minister report and return its canonical payload.
+
+    The audience source is the durable knowledge-source row, not a caller
+    supplied label.  The stable key makes repeated prompt construction
+    idempotent while keeping one minister's report out of another minister's
+    projection.
+    """
+    # An emperor's question opens the inquiry channel by default.  Firsthand
+    # is allowed only when a durable witness/scout record already exists (or
+    # the caller explicitly asks for the witness channel); wording alone may
+    # not manufacture provenance.
+    source_kind = (
+        "firsthand" if ("见闻" in str(query) or _persisted_firsthand_exists(db, state, character_name))
+        else "inquiry"
+    )
+    if source_kind == "firsthand":
+        statement, domain_ref = _character_domain_statement(db, state, character_name, query)
+    else:
+        # Keep the existing DB seam as the single deterministic inquiry
+        # provider; it derives the source from the queried substrate.
+        report = db.build_return_report(query, source_kind="inquiry", source_ref="")
+        statement = report["statement"]
+        source_ref = report["source_ref"]
+    if source_kind == "firsthand":
+        source_ref = _canonical_source_ref(source_kind, None, domain_ref)
+    digest = hashlib.sha256(f"{state.turn}|{character_name}|{query}".encode()).hexdigest()[:16]
+    source_id = f"near_minister:{state.turn}:{digest}"
+    report = {
+        "source_kind": source_kind,
+        "source_ref": source_ref,
+        "subject": "查访" if source_kind == "inquiry" else "见闻",
+        "statement": statement,
+    }
+    db.register_character_knowledge_source(
+        state, [{"character_id": character_name}], "return_report",
+        f"近臣{report['subject']}（{source_ref}）", statement, source_id=source_id,
+    )
+    return report
 
 
 build_return_report.parallel_safe = True

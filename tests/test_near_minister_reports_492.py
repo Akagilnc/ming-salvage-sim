@@ -2,7 +2,7 @@
 
 import inspect
 
-from ming_sim.intelligence import build_return_report, source_kind_for_query
+from ming_sim.intelligence import build_return_report, persist_return_report, source_kind_for_query
 
 
 def test_frontier_vacancies_are_seeded_and_restore_from_characters(game):
@@ -72,3 +72,31 @@ def test_return_report_interface_does_not_depend_on_minister_reply():
     assert "minister_reply" not in signature.parameters
     assert build_return_report.parallel_safe is True
     assert build_return_report.dependencies == frozenset()
+
+
+def test_production_report_is_durable_and_scoped_to_the_questioned_minister(game):
+    db, state, _content = game
+    first = next(iter(db.content.characters))
+    second = next(name for name in db.content.characters if name != first)
+
+    report = persist_return_report(db, state, first, "军情如何？")
+
+    assert report["source_kind"] == "inquiry"
+    assert db.get_character_knowledge(state, first)["events"][-1]["source_id"].startswith("near_minister:")
+    assert not any(
+        item.get("source_id", "").startswith("near_minister:")
+        for item in db.get_character_knowledge(state, second)["events"]
+    )
+
+
+def test_firsthand_requires_a_persisted_witness_record(game):
+    db, state, _content = game
+    minister = next(iter(db.content.characters))
+    db.register_character_knowledge_source(
+        state, [{"character_id": minister}], "witness", "边地见闻", "边地有报",
+        source_id="witness:492:test",
+    )
+
+    report = persist_return_report(db, state, minister, "军情如何？")
+
+    assert report["source_kind"] == "firsthand"
