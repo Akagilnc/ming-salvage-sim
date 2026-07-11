@@ -535,18 +535,20 @@ export function scheduleTelemetryEnvironmentStamp(
   ctx: DispatchContext,
   backend: TelemetryEnvironmentProvider,
 ): void {
+  const runId = runIdFromContext(ctx);
+  const pendingKey = `${ledgerDir ?? ""}\0${runId ?? ""}`;
   if (
     ledgerDir === undefined ||
     ledgerDir.length === 0 ||
-    hasEnvironmentStamp(ledgerDir) ||
-    pendingTelemetryEnvironmentStamps.has(ledgerDir)
+    hasEnvironmentStamp(ledgerDir, runId) ||
+    pendingTelemetryEnvironmentStamps.has(pendingKey)
   ) {
     return;
   }
-  pendingTelemetryEnvironmentStamps.add(ledgerDir);
+  pendingTelemetryEnvironmentStamps.add(pendingKey);
   queueMicrotask(async () => {
     try {
-      if (!hasEnvironmentStamp(ledgerDir)) {
+      if (!hasEnvironmentStamp(ledgerDir, runId)) {
         await backend.installTelemetryRunEnvironment?.();
         ensureEnvironmentStamp(ledgerDir, ctx);
       }
@@ -557,7 +559,7 @@ export function scheduleTelemetryEnvironmentStamp(
         }`,
       );
     } finally {
-      pendingTelemetryEnvironmentStamps.delete(ledgerDir);
+      pendingTelemetryEnvironmentStamps.delete(pendingKey);
     }
   });
 }
@@ -1377,8 +1379,9 @@ export function tryAppendTelemetryRecord(
 }
 
 /**
- * Ensure a single environment stamp exists for this ledgerDir.
- * Idempotent: skips when an environment phase line is already present.
+ * Ensure a single environment stamp exists for this ledgerDir and run.
+ * Idempotent: skips when an environment phase line for the current run is
+ * already present.
  */
 export function ensureEnvironmentStamp(
   ledgerDir: string | undefined,
@@ -1394,7 +1397,8 @@ export function ensureEnvironmentStamp(
 ): boolean {
   if (ledgerDir === undefined || ledgerDir.length === 0) return false;
   try {
-    if (hasEnvironmentStamp(ledgerDir)) return false;
+    const runId = opts?.runId ?? runIdFromContext(ctx);
+    if (hasEnvironmentStamp(ledgerDir, runId)) return false;
     return tryAppendTelemetryRecord(
       ledgerDir,
       buildEnvironmentStamp({
@@ -1417,14 +1421,29 @@ export function ensureEnvironmentStamp(
   }
 }
 
-/** Cheap, synchronous existence check used before scheduling expensive setup. */
-export function hasEnvironmentStamp(ledgerDir: string | undefined): boolean {
+/** Cheap, synchronous existence check for one run before expensive setup. */
+export function hasEnvironmentStamp(
+  ledgerDir: string | undefined,
+  runId: string | null = null,
+): boolean {
   if (ledgerDir === undefined || ledgerDir.length === 0) return false;
   try {
     const path = telemetryPath(ledgerDir);
-    return existsSync(path)
-      ? readFileSync(path, "utf8").includes('"phase":"environment"')
-      : false;
+    if (!existsSync(path)) return false;
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .some((line) => {
+        if (line.trim().length === 0) return false;
+        try {
+          const record = JSON.parse(line) as {
+            readonly phase?: unknown;
+            readonly runId?: unknown;
+          };
+          return record.phase === "environment" && record.runId === runId;
+        } catch {
+          return false;
+        }
+      });
   } catch {
     return false;
   }
