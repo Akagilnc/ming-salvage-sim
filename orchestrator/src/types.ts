@@ -1613,8 +1613,14 @@ export interface Backend {
   smokeModelRoute(
     route: ResolvedModelRoute,
     currentCliVersions?: Readonly<Record<string, string | undefined>>,
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Promise<ResolvedModelRoute>;
-  currentCliVersions?(route: ResolvedModelRoute): Promise<Readonly<Record<string, string | undefined>>>;
+  currentCliVersions?(
+    route: ResolvedModelRoute,
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
+  ): Promise<Readonly<Record<string, string | undefined>>>;
   /**
    * #255: detect resume residue for this issue at the very start of a run.
    *

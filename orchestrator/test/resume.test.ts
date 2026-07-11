@@ -1544,6 +1544,46 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     expect(sessionId).toBe("session-escalated-S2");
   });
 
+  it.each(["S9", "S10", "S12"] as const)(
+    "answered %s decision park resumes its persisted worker session",
+    async (decisionStep) => {
+      const stateDir =
+        decisionStep === "S10"
+          ? mkdtempSync(join(tmpdir(), "resume-decision-park-"))
+          : STATE_DIR;
+      if (decisionStep === "S10") {
+        writeResumeOnlineReviewSnapshot(stateDir);
+      }
+      const backend = new ReviewLoopResumeBackend({
+        worktree: WORKTREE,
+        stateDir,
+        ledger: [
+          entry("S0"),
+          entry("S1"),
+          entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+          entry("S3", { kind: "reviewer", findings: [] }),
+          entry("S4"),
+          entry("S7", {
+            kind: "ship",
+            branch: WORKTREE.branch,
+            status: "pr_opened",
+            pr: "pr://slice/offline-255",
+          }),
+          entry(decisionStep, undefined, `session-parked-${decisionStep}`),
+          { ...s8("escalate"), escalationKind: "decision" },
+          escalationAnswer(decisionStep, "continue-after-human-answer"),
+        ],
+      });
+
+      await runOrchestrator({ issueNumber: 255, backend });
+
+      const resumed = backend.dispatchContexts.find(
+        (ctx) => ctx.resumeSessionId === `session-parked-${decisionStep}`,
+      );
+      expect(resumed?.resumeSessionId).toBe(`session-parked-${decisionStep}`);
+    },
+  );
+
   it("AC2: crash inside review-loop (ledger truncated at S10) resumes at S9 re-verify — prior S9/S10 skipped, run completes verify→S12→S11→S8 (F3)", async () => {
     const prior: PersistentLedgerEntry[] = [
       entry("S0"),

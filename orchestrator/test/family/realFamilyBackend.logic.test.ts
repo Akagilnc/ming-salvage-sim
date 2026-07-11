@@ -112,8 +112,8 @@ afterEach(() => {
 
 describe("RealFamilyBackend live officer effort", () => {
   class Probe extends RealFamilyBackend {
-    public agentForLiveSpec(spec: WorkerSpec): sc.AgentProvider {
-      return this.agentForSpec(spec);
+    public agentForLiveSpec(spec: WorkerSpec, billingPool?: string): sc.AgentProvider {
+      return this.agentForSpec(spec, { billingPool });
     }
   }
 
@@ -144,6 +144,14 @@ describe("RealFamilyBackend live officer effort", () => {
     expect(
       commandFor(liveSpec({ id: "S5", kind: "verify", role: "verify", soul: "READ-ONLY" })),
     ).toContain('model_reasoning_effort="xhigh"');
+  });
+
+  it("applies the ADR 0124 billing-pool provider binding to family workers", () => {
+    const backend = new Probe(opts(trackRepo()));
+    const command = backend
+      .agentForLiveSpec(liveSpec({ model: "grok-4.5" }), "grok-build")
+      .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
+    expect(command).toContain("grok --prompt-file /dev/stdin");
   });
 });
 
@@ -830,6 +838,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
     state: "OPEN",
     mergeStateStatus: "CLEAN",
   };
+  prListResponse: unknown = [];
   mergeInProgressFake = false;
   // STATEFUL fake of the family-base ref so the resolve postcondition (the family
   // base ref moved past familyHeadBefore + child is its ancestor) is exercised
@@ -867,6 +876,9 @@ class FakeSeamsBackend extends RealFamilyBackend {
   protected override isAncestorOf(_ancestor: string, _descendant: string, _repo: string): boolean {
     return this.childLandedFake;
   }
+  protected override isMergeCommit(_commit: string, _repo: string): boolean {
+    return this.childLandedFake;
+  }
   // Intercept the git/gh/npx subprocess seam so no real command runs.
   protected override sh(file: string, args: string[], _cwd?: string): string {
     this.shCalls.push({ file, args });
@@ -891,7 +903,9 @@ class FakeSeamsBackend extends RealFamilyBackend {
         ...(this.prViewResponse as Record<string, unknown>),
       });
     }
-    if (file === "gh" && args[0] === "pr" && args[1] === "list") return "[]";
+    if (file === "gh" && args[0] === "pr" && args[1] === "list") {
+      return JSON.stringify(this.prListResponse);
+    }
     return "";
   }
 
@@ -918,9 +932,76 @@ class FakeSeamsBackend extends RealFamilyBackend {
   public verifyShipPr(pr: string, familyBase: string) {
     return this.verifyFamilyShipPr({ pr, familyBase });
   }
+
+  public findFamilyPr(familyBase: string, expectedHead: string) {
+    return this.findFamilyShippedPr({ familyBase, expectedHead });
+  }
 }
 
 describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () => {
+  it("checks conflict markers only in files introduced or modified by the merge", () => {
+    class MarkerScopeBackend extends RealFamilyBackend {
+      hasMarkers(before: string, after: string): boolean {
+        return this.hasConflictMarkers(before, after, this.opts.workingRepo);
+      }
+    }
+
+    const repo = trackRepo();
+    const marker = "<<<<<<< archived fixture\n=======\n>>>>>>> archived fixture\n";
+    mkdirSync(join(repo, "docs"));
+    mkdirSync(join(repo, "src"));
+    commitFile(repo, "docs/fixture.md", marker);
+    const before = git(repo, "rev-parse", "HEAD");
+    commitFile(repo, "src/touched.ts", "export const touched = true;\n");
+    const after = git(repo, "rev-parse", "HEAD");
+
+    expect(new MarkerScopeBackend(opts(repo)).hasMarkers(before, after)).toBe(false);
+  });
+
+  it("rejects a two-parent merge commit that still contains conflict markers", async () => {
+    class MarkerLeavingMergerBackend extends RealFamilyBackend {
+      protected override async runMergerAgent(req: ConflictResolveRequest) {
+        writeFileSync(
+          join(this.opts.workingRepo, "shared.txt"),
+          "<<<<<<< HEAD\nFAMILY VERSION\n=======\nCHILD VERSION\n>>>>>>> child\n",
+          "utf8",
+        );
+        git(this.opts.workingRepo, "add", "shared.txt");
+        execFileSync("git", ["commit", "-q", "-m", `bad resolution ${req.childIssue}`], {
+          cwd: this.opts.workingRepo,
+        });
+        return { resolved: true };
+      }
+    }
+
+    const repo = trackRepo();
+    git(repo, "checkout", "-q", "-b", "family/293-base");
+    commitFile(repo, "shared.txt", "FAMILY VERSION");
+    const baseBefore = git(repo, "rev-parse", "HEAD");
+    git(repo, "checkout", "-q", "-b", "feat/child-24", "HEAD~1");
+    const childHead = commitFile(repo, "shared.txt", "CHILD VERSION");
+    git(repo, "checkout", "-q", "family/293-base");
+
+    const backend = new MarkerLeavingMergerBackend(opts(repo));
+    const deterministic = await backend.mergeChildIntoFamilyBase({
+      childIssue: 24,
+      childBranch: "feat/child-24",
+    });
+    expect(deterministic.conflicted).toBe(true);
+
+    const result = await backend.resolveMergeConflict({
+      childIssue: 24,
+      childBranch: "feat/child-24",
+    });
+
+    expect(result).toMatchObject({
+      familyHeadBefore: baseBefore,
+      childHead,
+      conflicted: true,
+    });
+    expect(() => git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD")).toThrow();
+  });
+
   it("resolved agent → returns the resolved head (NOT conflicted); runs ONE merger agent", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: true };
@@ -932,12 +1013,12 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     expect(res.familyHead).toBe("resolved-head");
   });
 
-  it("agent escalated/failed → THROWS (the merger never records `merged`)", async () => {
+  it("agent escalated/failed → leaves the merge unresolved (the merger never records `merged`)", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: false, reason: "needs a product decision on field X" };
     await expect(
       b.resolveMergeConflict({ childIssue: 11, childBranch: "feat/child-11" }),
-    ).rejects.toThrow(/did not resolve|product decision/i);
+    ).resolves.toMatchObject({ conflicted: true });
   });
 
   it("agent CLAIMED resolved but left the merge in-progress → still-conflicted result (never looks clean)", async () => {
@@ -1012,12 +1093,12 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     expect(b.mergerCalls).toHaveLength(2);
   });
 
-  it("#598 a merger agent that RETURNS {resolved:false} is NOT retried (a judged non-resolve, one call)", async () => {
+  it("#598 a merger agent that RETURNS {resolved:false} is not a git resolve (one call)", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: false, reason: "needs a product decision on field X" };
     await expect(
       b.resolveMergeConflict({ childIssue: 21, childBranch: "feat/child-21" }),
-    ).rejects.toThrow(/did not resolve|product decision/i);
+    ).resolves.toMatchObject({ conflicted: true });
     // A judged non-resolve is surfaced, never retried.
     expect(b.mergerCalls).toHaveLength(1);
   });
@@ -1231,6 +1312,31 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
   });
 
+  it("treats a non-empty malformed review-loop sidecar as a protocol failure", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const dir = trackTempDir("review-loop-outcome-fallback-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+    const sha = "a".repeat(40);
+
+    expect(mod.parseVerifyOutcome('<verify>{"converged": true}</verify>', outcomePath)).toMatchObject({
+      kind: "malformed",
+      reason: expect.stringContaining("sidecar protocol failure"),
+    });
+    expect(
+      mod.parseFixerOutcome(
+        `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
+        outcomePath,
+      ),
+    ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
+    expect(
+      mod.parseCleanupOutcome('<cleanup>{"terminal": true, "ok": true}</cleanup>', outcomePath),
+    ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
+    expect(
+      mod.parseDocReleaseOutcome('<docRelease>{"released": true}</docRelease>', outcomePath),
+    ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
+  });
+
   it("pin r39: committed:true without fixCommitSha is malformed on family parseFixerOutcome", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
     const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);
@@ -1414,7 +1520,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("fails closed instead of falling back to stdout when the cmr outcome sidecar is malformed", () => {
+  it("treats a non-empty malformed cmr sidecar as a protocol failure", () => {
     const dir = trackTempDir("cmr-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1422,16 +1528,18 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
       cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
     });
 
-    expect(outcome.kind).toBe("malformed");
-    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+    expect(outcome).toMatchObject({
+      kind: "malformed",
+      reason: expect.stringContaining("sidecar protocol failure"),
+    });
   });
 
-  it("rejects a blank guarded cmr sidecar instead of falling back to stdout", () => {
+  it("falls back to stdout when the cmr outcome sidecar is blank", () => {
     const dir = trackTempDir("cmr-outcome-blank-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "   \n", "utf8");
@@ -1448,8 +1556,11 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       ],
     });
 
-    expect(outcome.kind).toBe("malformed");
-    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+    });
   });
 
   it("falls back to signaled cmr stdout only when no outcome sidecar path exists", () => {
@@ -1471,7 +1582,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("keeps malformed cmr sidecar from masking a missing completion signal", () => {
+  it("does not let stdout bypass a malformed cmr sidecar without a completion signal", () => {
     const dir = trackTempDir("cmr-outcome-bad-unsignaled-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1479,15 +1590,15 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: undefined,
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
       cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
     });
 
-    expect(outcome.kind).toBe("escalate");
-    if (outcome.kind === "escalate") {
-      expect(outcome.reason).toContain("completion signal");
-    }
+    expect(outcome).toMatchObject({
+      kind: "malformed",
+      reason: expect.stringContaining("sidecar protocol failure"),
+    });
   });
 
   it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
@@ -1685,7 +1796,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   });
 });
 
-describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
+describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () => {
   it("prefers a runner-owned outcome sidecar over malformed merger stdout", () => {
     const dir = trackTempDir("merger-outcome-");
     const outcomePath = join(dir, "outcome.json");
@@ -1725,7 +1836,7 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
     ).toEqual({ resolved: true });
   });
 
-  it("fails closed instead of falling back to stdout when the merger outcome sidecar is malformed", () => {
+  it("treats a non-empty malformed merger sidecar as a protocol failure", () => {
     const dir = trackTempDir("merger-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1736,11 +1847,13 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
       outcomePath,
     });
 
-    expect(outcome.resolved).toBe(false);
-    expect(outcome.reason).toContain("sidecar");
+    expect(outcome).toMatchObject({
+      resolved: false,
+      reason: expect.stringContaining("sidecar protocol failure"),
+    });
   });
 
-  it("rejects a blank guarded merger sidecar instead of falling back to stdout", () => {
+  it("falls back to stdout when the merger outcome sidecar is blank", () => {
     const dir = trackTempDir("merger-outcome-blank-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "   \n", "utf8");
@@ -1751,8 +1864,7 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
       outcomePath,
     });
 
-    expect(outcome.resolved).toBe(false);
-    expect(outcome.reason).toContain("sidecar");
+    expect(outcome).toEqual({ resolved: true });
   });
 
   it("falls back to signaled merger stdout only when no outcome sidecar path exists", () => {
@@ -1772,15 +1884,14 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
       }),
     ).toEqual({ resolved: true });
   });
-  it("an UNSIGNALED run is unresolved even when stdout claims resolved (codex R1)", () => {
-    // maxIterations hit mid-resolution: no completion signal, but an earlier
-    // `<merger>{"resolved":true}</merger>` rode in. The gate must NOT accept it.
+  it("keeps a valid merger result available for git-truth adjudication without a signal", () => {
+    // The compatibility signal is telemetry only. The caller must still verify
+    // the merge commit and conflict state before recording a landed merge.
     const out = mergerOutcomeFromResult({
       completionSignal: undefined,
       stdout: '<merger>{"resolved": true}</merger>',
     });
-    expect(out.resolved).toBe(false);
-    expect(out.reason).toMatch(/did not fire its completion signal/);
+    expect(out).toEqual({ resolved: true });
   });
   it("a wrong completion signal is unresolved", () => {
     expect(
@@ -1788,7 +1899,7 @@ describe("mergerOutcomeFromResult (#291 completion-signal gate, pure)", () => {
         completionSignal: "SOME_OTHER_SIGNAL",
         stdout: '<merger>{"resolved": true}</merger>',
       }).resolved,
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
@@ -1967,6 +2078,34 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
     });
   });
 
+  it("separates host-confirmed PR absence from an unknown gh observation failure", () => {
+    class ThrowingPrViewBackend extends FakeSeamsBackend {
+      constructor(private readonly failure: string) {
+        super(opts(trackRepo()));
+      }
+
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        if (file === "gh" && args[0] === "pr" && args[1] === "view") {
+          throw new Error(this.failure);
+        }
+        return super.sh(file, args, cwd);
+      }
+    }
+
+    expect(
+      new ThrowingPrViewBackend("pull request not found").verifyShipPr(
+        "pr://missing",
+        "family/293-base",
+      ),
+    ).toMatchObject({ ok: false, kind: "pr_missing" });
+    expect(
+      new ThrowingPrViewBackend("network timeout contacting api.github.com").verifyShipPr(
+        "pr://unknown",
+        "family/293-base",
+      ),
+    ).toMatchObject({ ok: false, kind: "pr_missing" });
+  });
+
   it("rejects PR metadata when the PR is not OPEN or lacks a non-empty head OID", () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
 
@@ -2018,6 +2157,17 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
       }),
     ).resolves.toMatchObject({ ok: false });
   });
+
+  it("treats a non-array gh pr list response as an observation failure", async () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.prListResponse = { url: "https://example.test/pull/823" };
+
+    await expect(b.findFamilyPr("family/823-base", "head-823")).resolves.toMatchObject({
+      ok: false,
+      kind: "observation_failed",
+      reason: expect.stringMatching(/malformed gh pr list payload/i),
+    });
+  });
 });
 
 // ═══════════════════════════ 8. recordAborted / escalate ════════════════════
@@ -2063,6 +2213,27 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
     expect(recs).toHaveLength(1);
     expect(recs[0]?.reason).toContain("cmr did not converge");
     expect(recs[0]?.escalationKind).toBe("decision");
+  });
+
+  it("preserves a merger failure's wave shape through the real backend seam", async () => {
+    const b = new RealFamilyBackend(opts(trackRepo()));
+    await b.escalateFamily({
+      reason: "merger step for child #10 exhausted bounded still-conflicted retries",
+      familyHeadAfter: "conflicted-10",
+      escalationKind: "failure",
+      phase: "wave",
+    });
+
+    expect(await b.readFamilyLedger()).toEqual([
+      expect.objectContaining({
+        status: "escalated",
+        event: "escalated",
+        phase: "wave",
+        reason: "merger step for child #10 exhausted bounded still-conflicted retries",
+        familyHeadAfter: "conflicted-10",
+        escalationKind: "failure",
+      }),
+    ]);
   });
 
   it("keeps legacy family-escalations.jsonl stuck-points readable during migration", async () => {

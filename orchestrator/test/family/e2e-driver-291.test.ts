@@ -241,7 +241,7 @@ class E2EFamilyBackend extends RealFamilyBackend {
   protected override verifyFamilyShipPr(input: {
     readonly pr: string;
     readonly familyBase: string;
-  }): { ok: true; headOid: string; prUrl: string } | { ok: false; reason: string } {
+  }): { ok: true; headOid: string; prUrl: string } | { ok: false; kind: "pr_missing" | "observation_failed" | "mismatch"; reason: string } {
     return {
       ok: true,
       headOid: git(this.opts.workingRepo, "rev-parse", input.familyBase),
@@ -353,10 +353,21 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     expect(familyHead).not.toBe(startHead);
     expect(await backend.reconcileGit().isAncestor(startHead, familyHead)).toBe(true);
 
-    // ── 3. the family ledger REALLY recorded each merge (real JSONL) ────────────
+    // ── 3. #817: the production mergeChild chain really recorded each merge ────
+    // This is deliberately the RealFamilyBackend shape used by the driver, not
+    // a fake FamilyBackend that can report synthetic heads without landing Git.
     const ledger = await backend.readFamilyLedger();
     const merged = ledger.filter((e) => e.status === "merged");
     expect(merged.map((e) => e.childIssue).sort()).toEqual([11, 12, 13]);
+    for (const entry of merged) {
+      expect(entry.childBranch).toBeDefined();
+      expect(entry.childHead).toBeDefined();
+      expect(entry.familyHeadBefore).toBeDefined();
+      expect(entry.familyHeadAfter).toBeDefined();
+      expect(git(clone, "show", "-s", "--format=%P", entry.familyHeadAfter!)).toMatch(
+        /^\S+\s+\S+$/,
+      );
+    }
     // It is a real sibling JSONL on disk.
     const raw = readFileSync(join(ledgerDir, "family-ledger.jsonl"), "utf8");
     expect(raw.trim().split("\n").length).toBeGreaterThanOrEqual(3);

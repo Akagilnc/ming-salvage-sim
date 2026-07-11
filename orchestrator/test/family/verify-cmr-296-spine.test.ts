@@ -161,11 +161,13 @@ class CapableFamilyBackend implements FamilyBackend {
     pr: string;
     familyBase: string;
     expectedHead: string;
-  }): Promise<{ ok: true } | { ok: false; reason: string }> {
+  }): Promise<
+    { ok: true } | { ok: false; kind: "mismatch"; reason: string }
+  > {
     this.verifyShippedPrCalls.push(req);
     return this.shippedPrOk
       ? { ok: true }
-      : { ok: false, reason: this.shippedPrFailureReason };
+      : { ok: false, kind: "mismatch", reason: this.shippedPrFailureReason };
   }
   resolveFamilyWorkingRepo(): string | undefined {
     return this.workingRepo;
