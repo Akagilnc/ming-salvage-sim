@@ -57,8 +57,11 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
         "SELECT name, office, office_type, faction, status, reason_code, status_reason "
         "FROM characters WHERE name != ? AND power_id='ming' "
         "AND faction != '流寇' AND office_type NOT IN ('后宫','宗藩','未仕') "
-        "AND status IN ('active','offstage','retired','dismissed') ORDER BY name",
-        (recommender,),
+        "AND status IN ('active','offstage','retired','dismissed') "
+        "AND NOT (debut_year > 0 AND "
+        "(debut_year > ? OR (debut_year = ? AND debut_month > ?))) "
+        "ORDER BY name",
+        (recommender, int(state.year), int(state.year), int(state.period)),
     ).fetchall()
     result: List[Dict[str, object]] = []
     for row in rows:

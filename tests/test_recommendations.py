@@ -26,6 +26,24 @@ def test_recommendation_candidates_are_limited_to_faction_or_character_knowledge
     assert hidden.name not in names
 
 
+def test_same_faction_future_debut_is_not_recommendable(game):
+    db, state, content = game
+    recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
+    future = next(c for c in content.characters.values()
+                  if c.name != recommender.name and c.faction == recommender.faction
+                  and c.office_type not in ("后宫", "宗藩"))
+    db.conn.execute(
+        "UPDATE characters SET status='offstage', office='', debut_year=?, debut_month=1 "
+        "WHERE name=?",
+        (state.year + 1, future.name),
+    )
+    db.conn.commit()
+
+    names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
+
+    assert future.name not in names
+
+
 def test_adopted_recommendation_is_an_auditable_event_after_restore(game):
     db, state, content = game
     recommender = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
