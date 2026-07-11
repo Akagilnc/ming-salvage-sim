@@ -748,6 +748,13 @@ export function assertOpenCodeReadonlyCredential(authFile: string, model: string
   const provider = model.split("/", 1)[0];
   const parsed = JSON.parse(readFileSync(authFile, "utf8")) as Record<string, unknown>;
   const credential = parsed[provider];
+  if (credential === undefined) {
+    throw new Error(
+      `OpenCode model "${model}" derived provider "${provider}", but that provider is missing ` +
+        "from auth.json; the read-only auth rule fails closed unless the runtime " +
+        "model can be mapped to a credential entry present in the mounted auth file",
+    );
+  }
   if (credential === null || typeof credential !== "object") return;
   const type = (credential as { type?: unknown }).type;
   if (type === "oauth") {
