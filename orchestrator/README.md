@@ -25,6 +25,7 @@ Phases (one JSON object per line):
 | `dispatch` | at spawn | identity / model / pool / `dispatched_at` |
 | `collect` | at finish | terminal / tokens / session / log / `first_output_at` / `completed_at` |
 | `review_round` | each integrated CMR verdict | pass / verdict / severity counts / identity-key recurrence / prior-finding dispositions |
+| `verification` | each family typecheck or test command | typecheck / wave-unit / final-full pass-fail, structured count when supplied, monotonic duration |
 
 Join key: `legId` on a dispatch+collect pair. Unobtainable fields are `null`;
 telemetry I/O is fail-open and must never block the worker path.

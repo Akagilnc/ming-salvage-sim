@@ -292,11 +292,15 @@ async function runFamilyVerifyOrAbort(input: {
   readonly familyBase: string;
   readonly familyBackend: FamilyBackend;
   readonly familyHeadAfter?: string;
+  readonly runId?: string;
+  readonly familyIssue?: number;
 }): Promise<VerifyCmrResult | undefined> {
   const { phase, familyBase, familyBackend, familyHeadAfter } = input;
   const verify: FamilyVerifyResult = await familyBackend.runFamilyVerify!({
     phase,
     familyBase,
+    ...(input.runId !== undefined ? { runId: input.runId } : {}),
+    ...(input.familyIssue !== undefined ? { issue: input.familyIssue } : {}),
   });
   if (verify.ok) return undefined;
 
@@ -2925,6 +2929,8 @@ export async function runVerifyCmr(
     familyBase,
     familyBackend,
     familyHeadAfter,
+    runId,
+    familyIssue,
   });
   if (verifyFailed !== undefined) return verifyFailed;
 
