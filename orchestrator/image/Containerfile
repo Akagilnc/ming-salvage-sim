@@ -17,7 +17,8 @@
 # FROM the existing sc-pipeline base (claude + codex CLIs + node + python + bash +
 # git + curl + jq already baked); this layer ADDS:
 #   - the full dev-skill closure (see SKILL CLOSURE GRAPH below)
-#   - agy (Gemini CLI, Linux build) + gh + bun (gstack-ship + cmr deps)
+#   - agy (Gemini CLI, Linux build) + grok (SuperGrok CLI, Linux; #807)
+#     + gh + bun (gstack-ship + cmr deps)
 # Souls (coder/reviewer/... .md) are mounted live at runtime (#372), not baked.
 #
 # Build context is a STAGING dir prepared by build.sh, NOT this directory: build.sh
@@ -66,6 +67,11 @@ USER root
 #            is NOT portable (it is a macOS ELF), so we install the Linux ELF via
 #            the official installer (issue #333 spike: aarch64 Linux agy installs
 #            + runs in-container).
+#   - grok : SuperGrok / grok-build pool CLI (#807). Same portability rule as agy —
+#            host `~/.grok/bin/grok` is a macOS Mach-O and must NOT be copied in;
+#            bake the Linux ELF via the official installer (https://x.ai/cli/install.sh).
+#            Installer drops under `$HOME/.grok/bin/` (default) and may symlink into
+#            `~/.local/bin`; we always expose `/usr/local/bin/grok` for PATH.
 # agy AUTH is NOT baked: it is live OAuth material. The cmr sandbox copies the
 # host token into a per-run writable dir and mounts it at
 #   /home/agent/.gemini/antigravity-cli/
@@ -73,6 +79,10 @@ USER root
 # `antigravity-oauth-token` and refresh/write runtime state without touching the
 # host file directly. When the token is absent, that leg degrades; the rest of the
 # cmr still runs.
+# grok AUTH is NOT baked either: live OAuth in host `~/.grok/auth.json`. The
+# orchestrator copies it into a per-issue writable dir and bind-mounts at
+#   /home/agent/.grok/
+# (realBackend.ts `mountAuth`, #807). Missing host auth → that leg degrades.
 # codex AUTH = writable CODEX_HOME: the orchestrator copies ~/.codex into a
 # per-issue writable dir and bind-mounts it to /home/agent/.codex — NOT a ro
 # mount, or codex's first run rc=1 on an unwritable auth dir (spike constraint #2;
@@ -99,6 +109,21 @@ USER root
 RUN set -eux; \
     ln -sf /home/agent/.local/bin/agy /usr/local/bin/agy; \
     agy --version 2>/dev/null || true   # version probe may need auth; presence is the gate
+
+# grok (SuperGrok CLI, Linux; #807). Installer writes under the invoking user's
+# ~/.grok/{bin,downloads}/ — run as `agent`, then symlink onto PATH for all users.
+# Official installer needs no host auth for the public stable channel; presence
+# (`grok --version`) is the bake gate (unlike agy, version works offline).
+USER agent
+RUN set -eux; \
+    curl -fsSL https://x.ai/cli/install.sh | bash; \
+    test -x "$HOME/.grok/bin/grok"
+USER root
+RUN set -eux; \
+    ln -sf /home/agent/.grok/bin/grok /usr/local/bin/grok; \
+    # Optional alias: installer also links `agent` → same binary on host installs.
+    ln -sf /home/agent/.grok/bin/grok /usr/local/bin/grok-agent 2>/dev/null || true; \
+    grok --version
 
 # ── codex sandbox / userns note (spike constraint #3) ────────────────────────
 # codex ships its own bwrap sandbox. In a NON-privileged container bwrap cannot
