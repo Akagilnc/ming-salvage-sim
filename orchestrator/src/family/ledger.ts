@@ -153,6 +153,17 @@ export interface ShipDispatchAttemptRecord {
 }
 
 /**
+ * Advisory ship-worker completion, durable before host PR observation (#823).
+ *
+ * Unlike `shipped`, this proves only what the worker reported. Consumers must
+ * still verify `pr` against host GitHub before treating delivery as truth.
+ */
+export interface ShipCompletedRecord {
+  readonly pr: string;
+  readonly branch: string;
+}
+
+/**
  * Count ship dispatches in the current retry streak.
  *
  * A fresh correctness CMR pass starts a fresh streak, so a legitimate later
@@ -195,6 +206,47 @@ export async function recordShipDispatchAttempt(
     event: "ship_dispatch_attempt",
     phase: record.phase,
   });
+}
+
+/** Persist the worker-reported PR locator before any host observation (#823). */
+export async function recordShipCompleted(
+  backend: FamilyBackend,
+  record: ShipCompletedRecord,
+): Promise<void> {
+  const pr = record.pr.trim();
+  const shipBranch = record.branch.trim();
+  if (pr.length === 0 || shipBranch.length === 0) {
+    throw new Error("family ship_completed marker must include non-empty PR locator and branch");
+  }
+  await backend.appendFamilyLedger({
+    status: "ship_completed",
+    event: "ship_completed",
+    phase: "final",
+    pr,
+    shipBranch,
+    ts: new Date().toISOString(),
+  });
+}
+
+/** Return the latest complete advisory ship observation input, if any (#823). */
+export function familyShipCompletedRecord(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): ShipCompletedRecord | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (
+      entry.status === "ship_completed" &&
+      entry.event === "ship_completed" &&
+      entry.phase === "final" &&
+      typeof entry.pr === "string" &&
+      entry.pr.trim().length > 0 &&
+      typeof entry.shipBranch === "string" &&
+      entry.shipBranch.trim().length > 0
+    ) {
+      return { pr: entry.pr.trim(), branch: entry.shipBranch.trim() };
+    }
+  }
+  return undefined;
 }
 
 /** A red integrated CMR review outcome handed back to the runner before fix (#550). */

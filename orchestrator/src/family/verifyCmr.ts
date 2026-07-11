@@ -154,7 +154,9 @@ import {
   recordOnlineReviewFixCommitted,
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
+  familyShipCompletedRecord,
   recordShipDispatchAttempt,
+  recordShipCompleted,
   recordShipped,
   shipDispatchAttemptsSinceLatestCorrectnessCmrPass,
   familyPostMergeCleanupForHead,
@@ -2836,13 +2838,32 @@ async function runVerifyCmrWithShipTruthAttempt(
     modelRoute: resolvedRoute,
     ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
   };
-  let shipResult: WorkerResult | undefined;
+  // #823: a worker-reported completion is deliberately only an observation input,
+  // not shipped truth. On a fresh re-entry, verify that exact locator before any
+  // new mutating dispatch. A host-confirmed absence/mismatch recurses with attempt
+  // >1, which intentionally bypasses this record and may dispatch a replacement.
+  const completedShip =
+    shipTruthAttempt === 1
+      ? familyShipCompletedRecord(await familyBackend.readFamilyLedger())
+      : undefined;
+  let shipResult: WorkerResult | undefined =
+    completedShip === undefined
+      ? undefined
+      : {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: completedShip.branch,
+            status: "pr_opened",
+            pr: completedShip.pr,
+          },
+        };
   let lastMalformedShipAttempt: WorkerResult | undefined;
   let lastMalformedReason: string | undefined;
   let usedShipAttempts = shipDispatchAttemptsSinceLatestCorrectnessCmrPass(
     await familyBackend.readFamilyLedger(),
   );
-  while (usedShipAttempts < MAX_DISPATCH_ATTEMPTS) {
+  while (shipResult === undefined && usedShipAttempts < MAX_DISPATCH_ATTEMPTS) {
     // Persist BEFORE dispatch: a crash after the worker starts must still consume
     // this streak's budget when the final barrier resume-skips CMR and re-enters.
     await recordShipDispatchAttempt(familyBackend, { phase: "final" });
@@ -3132,6 +3153,12 @@ async function runVerifyCmrWithShipTruthAttempt(
       }),
     });
     return INCOMPLETE_GATE;
+  }
+  if (completedShip === undefined) {
+    // Persist before reading host HEAD or calling `gh pr view`: this record is
+    // advisory worker output, and exists solely to resume host observation after a
+    // crash without sending another mutating ship worker.
+    await recordShipCompleted(familyBackend, { pr: ship.pr, branch: ship.branch });
   }
   const exactPostShipFamilyHead = await readRequiredFamilyHead(familyBackend, familyBase);
   if (exactPostShipFamilyHead === undefined) {

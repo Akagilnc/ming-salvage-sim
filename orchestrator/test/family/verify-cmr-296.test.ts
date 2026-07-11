@@ -699,6 +699,45 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.ledger.some((entry) => entry.status === "shipped")).toBe(false);
   });
 
+  it("#823 crash after an unknown ship observation resumes that locator without a second mutating ship dispatch", async () => {
+    let firstObservation = true;
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      verifyShippedPr: () => {
+        if (firstObservation) {
+          firstObservation = false;
+          throw new Error("gh pr view: network timeout");
+        }
+        return { ok: true as const };
+      },
+    });
+
+    await expect(runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    })).rejects.toThrow("network timeout");
+    expect(backend.prCalls).toHaveLength(1);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "ship_completed",
+      event: "ship_completed",
+      pr: "pr://family/823-base",
+      shipBranch: "family/823-base",
+    }));
+
+    const resumed = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+    expect(resumed).toEqual({ ok: true, ran: true });
+    expect(backend.prCalls).toHaveLength(1);
+    expect(backend.verifyShippedPrCalls).toHaveLength(2);
+  });
+
   it("re-dispatches after one host-verification miss and ships only after host truth succeeds", async () => {
     let verificationAttempt = 0;
     const backend = new CapableFamilyBackend({
