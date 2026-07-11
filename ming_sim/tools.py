@@ -793,11 +793,6 @@ def build_board_query_tools(context: CourtContext):
         写 faction_delta / class_delta 前查当前基准值。"""
         return context.db.faction_report() + "\n" + context.db.class_report()
 
-    def list_recommendable_persons() -> str:
-        """查本大臣派系网络与亲身见闻可及的荐人切片（起复/破格差遣）。"""
-        from ming_sim.recommendations import build_recommendation_brief
-        return build_recommendation_brief(context.db, context.state, character.name)
-
     def recommend_person(name: str, target_office: str, reason: str = "") -> str:
         """具名荐人并交给皇帝确认；不绕过任命确认闸门。"""
         target = str(name or "").strip()
@@ -832,7 +827,6 @@ def build_board_query_tools(context: CourtContext):
         inspect_issue,
         get_active_ministers,
         get_faction_class_state,
-        list_recommendable_persons,
         recommend_person,
     ]
 
