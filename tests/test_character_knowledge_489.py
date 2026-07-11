@@ -5,6 +5,40 @@ import json
 from ming_sim.models import Character
 
 
+def test_role_roster_only_lists_current_active_ming_people(game):
+    db, state, content = game
+    reader = next(c for c in content.characters.values() if c.office_type == "礼部")
+    names = [c.name for c in content.characters.values() if c.name != reader.name][:4]
+    for name, status, debut_year, power_id in zip(
+        names, ("dismissed", "offstage", "active", "active"),
+        (0, 0, state.year + 1, 0), ("ming", "ming", "ming", "houjin"),
+    ):
+        db.conn.execute("UPDATE characters SET office_type='礼部', status=?, debut_year=?, power_id=? WHERE name=?",
+                        (status, debut_year, power_id, name))
+    db.conn.commit()
+    roster = db.get_character_knowledge(state, reader.name)["world"]["role"]
+    assert all(name not in roster for name in names)
+
+
+def test_chapter_aggregate_never_projects_paraphrased_restricted_source(game):
+    db, state, content = game
+    knower, excluded = list(content.characters.values())[:2]
+    db.register_character_knowledge_source(
+        state, [{"character_id": knower.name}], "secret_order", "密查", "原始密事",
+        source_id="test:chapter-secret", excluded_names=[excluded.name],
+    )
+    db.save_chapter_memory(state, "朝局", "宫中有人暗中安排了不应知晓的事务。")
+    text = " ".join(item.get("body", "") for item in db.get_character_knowledge(state, excluded.name)["public_events"])
+    assert "宫中有人暗中安排" not in text
+
+
+def test_secret_alias_exclusion_is_canonicalized_before_projection(game):
+    db, state, _content = game
+    order = db.create_secret_order(state, "毕自严", "密查", "查账", [], excluded_names=["九千岁"])
+    row = db.conn.execute("SELECT excluded_names FROM secret_orders WHERE id=?", (order,)).fetchone()
+    assert "魏忠贤" in row["excluded_names"]
+
+
 def test_every_supported_office_type_has_a_role_specific_current_world_slice(game):
     db, state, content = game
     characters_by_type = {
@@ -112,11 +146,12 @@ def test_role_slice_contains_only_the_current_office_roster(game):
         role_facts = world["role"]
 
         assert office_type in role_facts
-        for name, candidate in content.characters.items():
-            if candidate.office_type == office_type:
-                assert name in role_facts
-            else:
-                assert name not in role_facts
+        rows = db.conn.execute(
+            "SELECT name FROM characters WHERE office_type=? AND status='active' AND power_id='ming' "
+            "AND (debut_year=0 OR debut_year<? OR (debut_year=? AND debut_month<=?))",
+            (office_type, state.year, state.year, state.period),
+        ).fetchall()
+        assert all(row["name"] in role_facts for row in rows)
 
 
 def test_different_office_types_do_not_share_the_same_role_facts(game):

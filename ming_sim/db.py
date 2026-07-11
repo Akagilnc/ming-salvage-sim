@@ -82,7 +82,15 @@ def _snapshot_secret_order_people(
     from "everyone holding this office" instead of reconstructing that intent
     from the expanded names.
     """
-    names = list(dict.fromkeys(str(name).strip() for name in explicit_people if str(name).strip()))
+    names = []
+    for raw_name in explicit_people:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        canonical = next((character.name for character in getattr(content, "characters", {}).values()
+                          if name == character.name or name in (character.aliases or [])), name)
+        names.append(canonical)
+    names = list(dict.fromkeys(names))
     if not offices or content is None:
         return names
     for character in content.characters.values():
@@ -643,8 +651,9 @@ class GameDB:
             FROM office_slots AS s
             LEFT JOIN characters AS c
               ON c.status = 'active'
-             AND (',' || replace(replace(c.office, '，', ','), ' ', '') || ',')
-                 LIKE '%,' || s.office_title || ',%';
+             AND (((',' || replace(replace(c.office, '，', ','), ' ', '') || ',')
+                   LIKE '%,' || s.office_title || ',%')
+                  OR (s.office_title = '两广总督' AND c.office = '总督两广'));
 
             CREATE TABLE IF NOT EXISTS person_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7617,13 +7626,17 @@ class GameDB:
         self.persist_knowledge_items_for_turn(
             state, knowledge_items, default_title=title, commit=commit
         )
-        # A chapter saved without extracted source items is still an explicitly
-        # public record.  Give it its own source row so a same-turn secret does
-        # not suppress unrelated chapter material during projection.
-        self.record_public_knowledge_event(
-            state, str(title or "朝局旧闻"), str(body or ""),
-            source_id=f"chapter_source:{state.turn}", commit=False,
+        # An LLM chapter is an aggregate, never an authorization boundary.
+        # When this turn contains restricted sources it may paraphrase them;
+        # publish only independently bounded items, not the aggregate itself.
+        has_restricted_source = any(
+            item.get("excluded_names") for item in self.knowledge_items_for_turn(state.turn)
         )
+        if not has_restricted_source:
+            self.record_public_knowledge_event(
+                state, str(title or "朝局旧闻"), str(body or ""),
+                source_id=f"chapter_source:{state.turn}", commit=False,
+            )
         if commit:
             self.conn.commit()
         return memory_id
@@ -9943,9 +9956,7 @@ class GameDB:
         ).fetchone()[0]
         if active_count >= 20:
             raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
-        raw_excluded_names = list(dict.fromkeys(
-            str(name).strip() for name in (excluded_names or []) if str(name).strip()
-        ))
+        raw_excluded_names = _snapshot_secret_order_people(self.content, excluded_names or [], [])
         excluded_offices = list(dict.fromkeys(
             str(office).strip() for office in (excluded_offices or []) if str(office).strip()
         ))

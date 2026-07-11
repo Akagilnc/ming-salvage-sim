@@ -46,13 +46,9 @@ def _inner_role_text(character: object) -> str:
 def is_inner_court_attendant(character: object) -> bool:
     """按御前近臣的职位识别读心者，不把王承恩姓名写死。"""
     text = _inner_role_text(character)
-    office_type = str(_character_field(character, "office_type") or "")
-    role_tokens = ("随驾", "内官", "内侍", "太监", "大总管", "御前")
-    if office_type in {"司礼监", "内廷"}:
-        return True
-    # office_type may be stale on a legacy/in-flight character object; a
-    # strongly identifying office title is sufficient on its own.
-    return any(token in text for token in role_tokens)
+    # 内廷/司礼监是机构，不是御前唯一近臣位；只有随驾或明确的御前近臣
+    # 槽才能读取旁人的底账。名称可变，职位槽不可泛化。
+    return any(token in text for token in ("随驾", "御前近臣"))
 
 
 def intelligence_precision(target_factor: float = 1.0, channel_factor: float = 1.0) -> str:

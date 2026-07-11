@@ -134,7 +134,7 @@ def render_character_knowledge(knowledge: Dict[str, object], character_name: str
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
-def _role_roster(db: Any, office_type: str) -> str:
+def _role_roster(db: Any, office_type: str, state: Any) -> str:
     """Return only the current roster for this office type.
 
     The role rail is intentionally queried from the current DB rather than
@@ -146,8 +146,12 @@ def _role_roster(db: Any, office_type: str) -> str:
     if not hasattr(db, "conn"):
         return f"{office_type}本职在册：暂无。"
     rows = db.conn.execute(
-        "SELECT name, office FROM characters WHERE office_type = ? ORDER BY name",
-        (office_type,),
+        """SELECT name, office FROM characters
+           WHERE office_type = ? AND status = 'active' AND power_id = 'ming'
+             AND (debut_year = 0 OR debut_year < ?
+                  OR (debut_year = ? AND debut_month <= ?))
+           ORDER BY name""",
+        (office_type, int(state.year), int(state.year), int(state.period)),
     ).fetchall()
     if not rows:
         return f"{office_type}本职在册：暂无。"
@@ -239,7 +243,7 @@ def _world(
         for domain in visible_domains
         if domain in report_builders
     }
-    result["role"] = _role_roster(db, office_type)
+    result["role"] = _role_roster(db, office_type, state)
     for domain in visible_domains:
         if domain in facts:
             # The domain map is the semantic boundary.  Do not prepend an
@@ -407,7 +411,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         if not str(row.get("source_id") or "").startswith(
             ("turn_report:", "chapter_source:")
         )
-        and not re.fullmatch(r"settlement:narrative:\\d+", str(row.get("source_id") or ""))
+        and not re.fullmatch(r"settlement:narrative:\d+", str(row.get("source_id") or ""))
         if knowledge_row_visible_to(
             db,
             {**row, "office_type": office_type, "office": office_name},

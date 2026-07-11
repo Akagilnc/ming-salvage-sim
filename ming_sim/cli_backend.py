@@ -1838,6 +1838,9 @@ def _extract_secret_order(
     tags = [str(t).strip() for t in tags if str(t).strip()] if isinstance(tags, list) else []
     excluded_names, excluded_offices = _normalize_secret_exclusions(
         obj.get("排除对象"), legacy=obj.get("排除名单"))
+    recovered_names = _secret_excluded_people_from_command(player_command)
+    if recovered_names:
+        excluded_names = list(dict.fromkeys([*excluded_names, *recovered_names]))
     fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
     if not tags:
         tags = fallback_tags
@@ -1860,6 +1863,17 @@ def _normalize_secret_exclusions(value: object, *, legacy: object = None) -> Tup
         [str(item).strip() for item in people if str(item).strip()] if isinstance(people, list) else [],
         [str(item).strip() for item in offices if str(item).strip()] if isinstance(offices, list) else [],
     )
+
+
+def _secret_excluded_people_from_command(command: str) -> List[str]:
+    """Recover explicit named secrecy targets when the extractor omits them."""
+    patterns = (
+        r"(?:瞒住|瞒着|不可令|不得让|勿使|不要让)([^，。；、\s]{2,8})(?:知晓|知道|得知)?",
+    )
+    names = []
+    for pattern in patterns:
+        names.extend(match.strip("，。；、 ") for match in re.findall(pattern, str(command or "")))
+    return list(dict.fromkeys(name for name in names if name))
 
 
 def resolve_minister_actions(

@@ -25,6 +25,12 @@ def test_reader_is_selected_by_inner_court_post_not_name(game):
     assert not is_inner_court_attendant(minister)
 
 
+def test_only_the_unique_attendant_slot_can_mindread(game):
+    _db, _state, content = game
+    for name in ("王体乾", "曹化淳", "高起潜"):
+        assert not is_inner_court_attendant(content.characters[name])
+
+
 def test_mindreading_and_scouting_consume_the_same_precision_contract(game, monkeypatch):
     calls = []
 
