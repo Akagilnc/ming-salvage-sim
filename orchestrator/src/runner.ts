@@ -4325,14 +4325,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         promptFile = stepSpecs[step].promptFile;
         const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
-        // Telemetry must not perform boundary-capture I/O on the routing path.
-        // Reuse the latest durable value already held by the runner; legacy/fake
-        // ledgers without an oid are resolved later inside the telemetry queue.
         const stepTelemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
         const coderHeadBeforeStep = expectedKind === "coder"
-          ? (lastResolvedBranchHEAD !== undefined && isLikelyGitSha(lastResolvedBranchHEAD)
-              ? lastResolvedBranchHEAD
-              : stepTelemetryDir === undefined ? gitHead(worktree) : undefined)
+          ? gitHead(worktree)
           : undefined;
         try {
           let resumeSessionId: string | undefined;
@@ -4815,13 +4810,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           return await errorTermination(step, err);
         }
 
+        // The routing gate owns a fresh HEAD capture independent of telemetry.
+        // Telemetry may reuse this load-bearing evidence, never supply it.
+        const coderHeadAfterStep = expectedKind === "coder"
+          ? gitHead(worktree)
+          : undefined;
+
         // #786: host-git commit observations are strictly sidecar-only.
         // A failed read/write cannot affect the step's ledger or route decision.
         // Trigger this from the expected worker role before any output contract
         // gate: a worker may have committed before reporting malformed output.
         if (expectedKind === "coder" && worktree !== undefined) {
           const telemetryDir = stepTelemetryDir;
-          if (telemetryDir !== undefined) {
+          if (telemetryDir !== undefined && coderHeadAfterStep !== undefined) {
             void scheduleCommitTelemetry({
               ledgerDir: telemetryDir,
               repoPath: worktree.path,
@@ -4833,7 +4834,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       ? output.commitsAdded
                       : 1 }
                 : { kind: "held", oid: coderHeadBeforeStep },
-              after: { kind: "resolve-head" },
+              after: { kind: "held", oid: coderHeadAfterStep },
             });
           }
         }
@@ -4863,7 +4864,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           );
           if (step === "S5" && coderHeadBeforeStep !== undefined) {
             try {
-              const afterFix = gitHead(worktree);
+              const afterFix = coderHeadAfterStep;
               if (afterFix === undefined) {
                 throw new Error(
                   "reviewFixAssertionSignal: unable to read HEAD after S5 (fail-closed)",

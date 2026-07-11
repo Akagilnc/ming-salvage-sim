@@ -24,7 +24,7 @@
  * `orchestrator/README.md` § first_output_at.
  */
 
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
@@ -176,21 +176,6 @@ function resolveDockerImageDigestAsync(imageTag: string): Promise<string | null>
   });
 }
 
-/** Best-effort docker image Id for an image tag; null when docker/image absent. */
-export function resolveDockerImageDigest(imageTag: string): string | null {
-  if (imageTag.trim().length === 0) return null;
-  try {
-    const out = execFileSync(
-      "docker",
-      ["image", "inspect", "--format", "{{.Id}}", imageTag],
-      { encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
-    return out.length > 0 ? out : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Stable SHA-256 over files under `dir` (sorted relative paths).
  * Returns null when dir is missing or unreadable.
@@ -250,27 +235,6 @@ async function hashDirectoryContentsAsync(dir: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-/** Lightweight sandbox fingerprint: image + souls + prompts content (no auth). */
-export function computeSandboxFingerprint(input: {
-  readonly imageTag: string;
-  readonly imageDigest?: string | null;
-  readonly soulsDir?: string;
-  readonly promptsDir?: string;
-}): string {
-  return computeSandboxFingerprintFromHashes({
-    imageTag: input.imageTag,
-    imageDigest: input.imageDigest,
-    soulsHash:
-      input.soulsDir !== undefined
-        ? hashDirectoryContents(input.soulsDir)
-        : undefined,
-    promptHash:
-      input.promptsDir !== undefined
-        ? hashDirectoryContents(input.promptsDir)
-        : undefined,
-  });
 }
 
 function computeSandboxFingerprintFromHashes(input: {
@@ -1968,14 +1932,17 @@ export interface CommitTelemetryScheduleInput {
   readonly runId?: string;
   readonly issue?: number | null;
   readonly before: CommitTelemetryBoundary;
-  readonly after: CommitTelemetryBoundary;
+  readonly after: CommitTelemetryHeldBoundary;
 }
 
-/** A routing-safe boundary: either an already-held oid or an async resolution request. */
-export type CommitTelemetryBoundary =
+/** A boundary captured synchronously before telemetry enters its deferred queue. */
+export type CommitTelemetryHeldBoundary =
   | string
-  | { readonly kind: "held"; readonly oid: string }
-  | { readonly kind: "resolve-head" }
+  | { readonly kind: "held"; readonly oid: string };
+
+/** Before may be derived from the frozen after oid when no prior oid is held. */
+export type CommitTelemetryBoundary =
+  | CommitTelemetryHeldBoundary
   | { readonly kind: "resolve-before-head"; readonly commitsAdded: number };
 
 interface CommitTelemetryCollectInput extends Omit<CommitTelemetryScheduleInput, "before" | "after"> {
@@ -1995,8 +1962,6 @@ export function scheduleCommitTelemetry(
   input: CommitTelemetryScheduleInput,
   collect: (input: CommitTelemetryCollectInput) => Promise<void> = collectCommitTelemetry,
 ): Promise<void> {
-  const resolveHead = async (): Promise<string | undefined> =>
-    gitOutput(input.repoPath, ["rev-parse", "HEAD"]).then((oid) => oid?.trim() || undefined);
   let settle!: () => void;
   const completion = new Promise<void>((resolve) => { settle = resolve; });
   const prior = input.ledgerDir === undefined
@@ -2004,13 +1969,12 @@ export function scheduleCommitTelemetry(
     : telemetryCollectionQueues.get(input.ledgerDir);
   const queued = (prior ?? Promise.resolve()).catch(() => undefined).then(async () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
-    const after = typeof input.after === "string" ? input.after
-      : input.after.kind === "held" ? input.after.oid : await resolveHead();
+    const after = typeof input.after === "string" ? input.after : input.after.oid;
     const before = typeof input.before === "string" ? input.before
       : input.before.kind === "held" ? input.before.oid
       : input.before.kind === "resolve-before-head" && after !== undefined
         ? await gitOutput(input.repoPath, ["rev-parse", `${after}~${input.before.commitsAdded}`]).then((oid) => oid?.trim() || undefined)
-        : await resolveHead();
+        : undefined;
     if (before === undefined || after === undefined || before === after) return;
     await collect({ ...input, before, after });
   });

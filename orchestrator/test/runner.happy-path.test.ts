@@ -259,7 +259,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     expect(result.branch).toBe(backend.worktree.branch);
   });
 
-  it("returns from the real routing hop while commit telemetry collection is gated", async () => {
+  it("freezes the real runner telemetry range with held SHAs before deferred collection", async () => {
     const repo = mkdtempSync(join(tmpdir(), "runner-786-telemetry-"));
     try {
       execFileSync("git", ["init", "-q"], { cwd: repo });
@@ -302,9 +302,12 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       expect(schedule).toHaveBeenCalledOnce();
       expect(schedule.mock.calls[0]?.[0]).toMatchObject({
         repoPath: repo,
-        before: { kind: "resolve-before-head", commitsAdded: 1 },
-        after: { kind: "resolve-head" },
+        before: { kind: "held", oid: expect.stringMatching(/^[0-9a-f]{40}$/) },
+        after: { kind: "held", oid: expect.stringMatching(/^[0-9a-f]{40}$/) },
       });
+      expect(schedule.mock.calls[0]?.[0].before).not.toEqual(
+        schedule.mock.calls[0]?.[0].after,
+      );
       releaseCollection();
     } finally {
       rmSync(repo, { recursive: true, force: true });
