@@ -30,6 +30,19 @@ before acting. On a resumed decision escalation it may contain
 `escalationAnswer`; apply that human answer and do not repeat the same escalation
 unless the answer leaves a concrete blocker unresolved.
 
+## First-pass shape discipline
+
+- **Cross-cutting change = one seam.** When a change touches two or more
+  consumer sites, converge it into one shared function or seam. In the commit
+  body, list every consumer site in a `file:line` audit table.
+- **Tests consume production paths.** Fixtures consume the real rendered or
+  dispatched artifacts, with parameters arriving from the production spec or
+  context. Pair every positive case with a negative case that explicitly
+  asserts failure behavior for bad input.
+- **Answer three pre-submit questions in the commit body.** Which consumer site
+  is not yet on the seam? Which type or input lacks a negative case? Which
+  assertion peeks at pre-seeded input instead of the rendered contract?
+
 ## Required output
 
 When you are done (or are escalating), the real completion evidence is the
