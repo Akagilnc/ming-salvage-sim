@@ -55,6 +55,7 @@ import {
   modelIsStrongLeg,
   opencodeAuthMount,
   appendGlmKeyEnv,
+  applyDispatchOpenCodeAuth,
   assertOpenCodeReadonlyCredential,
   parseBlockedBy,
   parseCoderSelfReport,
@@ -906,6 +907,78 @@ describe("#420 OpenCode runtime auth", () => {
     expect(() => assertOpenCodeReadonlyCredential(authFile, "xai/grok-4")).toThrow(
       /xai.*OAuth\/refresh-type.*writable per-container copy/i,
     );
+  });
+});
+
+describe("dispatch OpenCode auth invariant", () => {
+  const authFile = join(tmpdir(), "dispatch-opencode-auth.json");
+
+  afterEach(() => {
+    rmSync(authFile, { force: true });
+    vi.unstubAllEnvs();
+  });
+
+  it("applies mount, GLM_KEY, and OAuth preflight from the resolved slug + pool", () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
+    expect(() => applyDispatchOpenCodeAuth({
+      env: {}, mounts: [], opencodeAuthFile: authFile, models: ["sonnet"], billingPool: "zai",
+    })).toThrow(/OAuth\/refresh-type/);
+
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "api", key: "x" } }));
+    const env: Record<string, string> = {};
+    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    applyDispatchOpenCodeAuth({
+      env, mounts, opencodeAuthFile: authFile, models: ["sonnet"], billingPool: "zai",
+    });
+    expect(env.GLM_KEY).toBe("glm-secret");
+    expect(mounts).toContainEqual({
+      hostPath: authFile, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true,
+    });
+  });
+
+  it("does not leak OpenCode auth into codex or claude dispatches", () => {
+    vi.stubEnv("GLM_KEY", "glm-secret");
+    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
+    for (const model of ["gpt-5.6-terra", "sonnet"]) {
+      const env: Record<string, string> = {};
+      const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+      applyDispatchOpenCodeAuth({ env, mounts, opencodeAuthFile: authFile, models: [model] });
+      expect(env).not.toHaveProperty("GLM_KEY");
+      expect(mounts).not.toContainEqual(expect.objectContaining({ sandboxPath: SANDBOX_OPENCODE_AUTH_FILE }));
+    }
+  });
+
+  it("routes every sandbox config builder through the shared invariant seam", () => {
+    const sources = [
+      fileURLToPath(new URL("../src/realBackend.ts", import.meta.url)),
+      fileURLToPath(new URL("../src/family/realFamilyBackend.ts", import.meta.url)),
+    ];
+    const audited: string[] = [];
+    for (const path of sources) {
+      const source = readFileSync(path, "utf8");
+      const pattern = /protected\s+(boxConfig|\w+SandboxConfig)\s*\(/g;
+      const matches = [...source.matchAll(pattern)];
+      for (const [index, match] of matches.entries()) {
+        const name = `${path.split("/").at(-1)}:${match[1]}`;
+        audited.push(name);
+        const next = matches[index + 1]?.index ?? source.length;
+        expect(source.slice(match.index, next), name).toContain("applyDispatchOpenCodeAuth({");
+      }
+      const handRolled = [...source.matchAll(/\bappend(?:OpenCodeAuthMount|GlmKeyEnv)\s*\(/g)]
+        .map((match) => source.slice(0, match.index).split("\n").length)
+        .filter((line) => line > 800);
+      expect(handRolled, `${path} hand-rolled auth sites`).toEqual([]);
+    }
+    expect(audited.sort()).toEqual([
+      "realBackend.ts:boxConfig",
+      "realBackend.ts:shipSandboxConfig",
+      "realFamilyBackend.ts:cmrSandboxConfig",
+      "realFamilyBackend.ts:familyCoderSandboxConfig",
+      "realFamilyBackend.ts:familyReviewLoopSandboxConfig",
+      "realFamilyBackend.ts:mergerSandboxConfig",
+      "realFamilyBackend.ts:shipSandboxConfig",
+    ]);
   });
 });
 
