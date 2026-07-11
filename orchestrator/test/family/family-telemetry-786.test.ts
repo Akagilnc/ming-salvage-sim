@@ -421,7 +421,7 @@ describe("#786 family dispatch telemetry", () => {
         return super.dispatchWorker(spec, ctx);
       }
 
-      override async readFamilyCurrentHead(): Promise<string> {
+      async readFamilyCurrentHead(): Promise<string> {
         return `${FAMILY_HEAD}-reviewer-moved`;
       }
     }
