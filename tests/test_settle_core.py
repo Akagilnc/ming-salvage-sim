@@ -123,6 +123,9 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
     )
     before_turn = state.turn
     source_id = f"secret_order:{order}"
+    db.record_public_knowledge_event(
+        state, "生产链公开事项", "生产链公开事项", source_id="test:settlement-public",
+    )
     assert db.conn.execute(
         "SELECT 1 FROM character_knowledge_events WHERE source_id=?",
         (source_id,),
@@ -142,7 +145,7 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
         (before_turn,),
     ).fetchall()
     by_source = {row["source_id"]: row for row in rows}
-    assert f"settlement:narrative:{before_turn}" in by_source
+    assert f"settlement:narrative:{before_turn}" not in by_source
     assert source_id in by_source
     assert excluded.name in by_source[source_id]["excluded_names"]
 
@@ -169,6 +172,10 @@ def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
     )
     before_turn = state.turn
     narrative = "公开结算标记；混合结算密令标记；公开结算尾声"
+    db.record_public_knowledge_event(
+        state, "公开结算", "公开结算标记；公开结算尾声",
+        source_id="test:mixed-settlement-public",
+    )
 
     settle_with_delta(
         state, db, {}, before_turn=before_turn, content=content,

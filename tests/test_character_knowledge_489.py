@@ -259,7 +259,9 @@ def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
         state, "密事记录", "SECRET_SOURCE_MARKER_490", source_id=f"secret_order:{order}"
     )
     marker = "TURN_REPORT_SECRET_MARKER_490"
-    db.save_turn_report(state, f"朝廷常务；{marker}")
+    db.save_turn_report(
+        state, f"朝廷常务；{marker}", public_body=f"朝廷常务；{marker}",
+    )
 
     view = db.get_character_knowledge(state, minister.name)
 
