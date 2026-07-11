@@ -35,7 +35,7 @@ import {
   readFileSync,
   statSync,
 } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -1873,12 +1873,29 @@ export function tryAppendTelemetryRecord(
  * Best-effort verification append. This remains deliberately write-only: a
  * missing sidecar must never alter the family verification verdict or routing.
  */
-export function recordVerificationStamp(
+export async function recordVerificationStamp(
   ledgerDir: string | undefined,
   input: BuildVerificationStampInput,
-): boolean {
+): Promise<boolean> {
+  if (ledgerDir === undefined || ledgerDir.length === 0) return false;
   try {
-    return tryAppendTelemetryRecord(ledgerDir, buildVerificationStamp(input));
+    try {
+      await stat(ledgerDir);
+    } catch {
+      const parent = dirname(ledgerDir);
+      if (parent === ledgerDir || parent.length === 0) return false;
+      try {
+        await stat(parent);
+      } catch {
+        return false;
+      }
+      await mkdir(ledgerDir, { recursive: true });
+    }
+    await appendFile(telemetryPath(ledgerDir), `${JSON.stringify(buildVerificationStamp(input))}\n`, {
+      encoding: "utf8",
+      flag: "a",
+    });
+    return true;
   } catch (err) {
     console.warn(
       `[orchestrator] verification telemetry failed (fail-open): ${

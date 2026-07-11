@@ -428,6 +428,31 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
     expect(calls.slice(1).every((c) => c.cwd === "/clone/root/orchestrator")).toBe(true);
   });
 
+  it("never appends telemetry reporters or compiler flags to the project's declared verify commands (#786)", async () => {
+    const calls: Array<{ file: string; args: string[]; cwd?: string }> = [];
+    class SpyBackend extends RealFamilyBackend {
+      protected override sh(file: string, args: string[], cwd?: string): string {
+        calls.push({ file, args, cwd });
+        return "";
+      }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["typecheck", "test"];
+      }
+      protected override isNodeProject(_cwd: string): boolean {
+        return true;
+      }
+      async runVerifyForTest(): Promise<void> {
+        await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
+      }
+    }
+
+    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
+      "npm run typecheck",
+      "npm test",
+    ]);
+  });
+
   it("#3 + #372 P2: ALWAYS runs installDeps (unconditional, by construction) even when node_modules EXISTS and manifest changed after a wave", async () => {
     // #372 P2: runVerifyCommands must not condition install on depsInstalled presence.
     // Freshness by construction: later waves in family can change package.json / package-lock.json
@@ -1707,7 +1732,7 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
 // ═══════════════════════════ 5. runFamilyVerify ═════════════════════════════
 
 describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
-  it("appends structured typecheck and wave-unit observations from production command output", async () => {
+  it("records unknown counts without rewriting the project's typecheck or wave-unit commands", async () => {
     const commands: Array<{ file: string; args: string[] }> = [];
     class ObservedVerifyBackend extends RealFamilyBackend {
       protected override sh(file: string, args: string[], _cwd?: string): string {
@@ -1722,11 +1747,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["typecheck", "test"];
       }
-      protected override packageScriptUses(
-        _cwd: string,
-        _script: string,
-        _harness: string,
-      ): boolean { return true; }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
     const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
     const backend = new ObservedVerifyBackend(options);
@@ -1737,24 +1758,25 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       runId: "run-786",
       issue: 786,
     })).resolves.toEqual({ ok: true });
+    await backend.waitForStamps();
 
     const rows = telemetry.readTelemetryRecords(options.ledgerDir).filter(
       (record): record is telemetry.TelemetryVerificationRecord =>
         record.phase === "verification",
     );
     expect(rows).toMatchObject([
-      { runId: "run-786", issue: 786, verification: "typecheck", passed: true, count: 0 },
-      { runId: "run-786", issue: 786, verification: "unit", passed: true, count: 507 },
+      { runId: "run-786", issue: 786, verification: "typecheck", passed: true, count: null },
+      { runId: "run-786", issue: 786, verification: "unit", passed: true, count: null },
     ]);
     expect(rows.every((row) => typeof row.duration_ms === "number")).toBe(true);
     expect(commands).toContainEqual({
       file: "npm",
-      args: ["run", "typecheck", "--", "--pretty", "false"],
+      args: ["run", "typecheck"],
     });
-    expect(commands).toContainEqual({ file: "npm", args: ["test", "--", "--reporter=json"] });
+    expect(commands).toContainEqual({ file: "npm", args: ["test"] });
   });
 
-  it("counts failed typecheck diagnostics from its non-pretty diagnostic stream", async () => {
+  it("keeps a failed typecheck count unknown instead of parsing its diagnostic prose", async () => {
     class FailedTypecheckBackend extends RealFamilyBackend {
       protected override sh(file: string, args: string[], _cwd?: string): string {
         if (file === "npm" && args.includes("typecheck")) {
@@ -1774,11 +1796,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["typecheck", "test"];
       }
-      protected override packageScriptUses(
-        _cwd: string,
-        _script: string,
-        _harness: string,
-      ): boolean { return true; }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
     const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
     const backend = new FailedTypecheckBackend(options);
@@ -1789,12 +1807,13 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       runId: "run-786",
       issue: 786,
     })).resolves.toMatchObject({ ok: false });
+    await backend.waitForStamps();
 
     expect(telemetry.readTelemetryRecords(options.ledgerDir)).toContainEqual(expect.objectContaining({
       phase: "verification",
       verification: "typecheck",
       passed: false,
-      count: 2,
+      count: null,
     }));
   });
 
@@ -1809,6 +1828,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["typecheck", "test"];
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
     const options = opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" });
     const backend = new FailedObservedVerifyBackend(options);
@@ -1819,6 +1839,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       runId: "run-786",
       issue: 786,
     })).resolves.toMatchObject({ ok: false });
+    await backend.waitForStamps();
 
     const rows = telemetry.readTelemetryRecords(options.ledgerDir).filter(
       (record): record is telemetry.TelemetryVerificationRecord =>

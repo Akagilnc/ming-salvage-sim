@@ -188,14 +188,17 @@ describe("#786 telemetry pure helpers", () => {
     } satisfies TelemetryVerificationRecord);
   });
 
-  it("persists a verification JSONL line with every final-schema key", () => {
+  it("persists a verification JSONL line with every final-schema key without blocking the caller", async () => {
     const ledgerDir = tempDir("orch-786-verification-raw-");
-    recordVerificationStamp(ledgerDir, {
+    const stamp = recordVerificationStamp(ledgerDir, {
       verification: "typecheck",
       passed: true,
       count: null,
       durationMs: 12,
     });
+
+    expect(existsSync(join(ledgerDir, TELEMETRY_FILENAME))).toBe(false);
+    await stamp;
 
     const [line] = readFileSync(join(ledgerDir, TELEMETRY_FILENAME), "utf8")
       .trim()
@@ -213,17 +216,17 @@ describe("#786 telemetry pure helpers", () => {
     ]);
   });
 
-  it("fails open when verification telemetry has no writable ledger", () => {
+  it("fails open when verification telemetry has no writable ledger", async () => {
     const missingLedger = join(
       tempDir("orch-786-verification-fail-open-"),
       "missing",
       "nested",
     );
-    expect(recordVerificationStamp(missingLedger, {
+    await expect(recordVerificationStamp(missingLedger, {
       verification: "typecheck",
       passed: true,
       durationMs: 1,
-    })).toBe(false);
+    })).resolves.toBe(false);
   });
 
   it("builds a per-commit row with numstat dimensions and null unavailable diff dimensions", () => {
