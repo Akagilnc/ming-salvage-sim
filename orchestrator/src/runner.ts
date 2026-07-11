@@ -94,7 +94,7 @@ import {
 import {
   docReleasePathsFromCommit,
   isPrMergedMarker,
-  resolveHostTruthPr,
+  observeOpenPrForBranch,
   offlineAutoMergeAllowUnverifiedDocPaths,
   runAutoMergeStage,
   slicePrMergedRecordFromLedger,
@@ -3053,8 +3053,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     ) {
       return { present: true, prUrl: ship.pr };
     }
-    const resolved = resolveHostTruthPr(ghSh, repo, ship.branch, ship.pr);
-    return { present: true, prUrl: resolved.prUrl };
+    return observeOpenPrForBranch(ghSh, repo, ship.branch, ship.pr);
   }
 
   async function pollMergeReadinessForShip(
@@ -6752,15 +6751,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
-    // Pending CI re-poll: stay on S9 without ledger/route advance (online R2 Codex P2).
-    // Shared delay with family stage (sleepPendingCiPollInterval).
-    if (reenterS9ForPendingCi) {
-      reenterS9ForPendingCi = false;
-      step = "S9";
-      await sleepPendingCiPollInterval();
-      continue;
-    }
-
     const stepFindingDispositions =
       step === "S4" ? findingDispositions : undefined;
     const stepRepairMovementPaths =
@@ -6824,6 +6814,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         findingDispositions: stepFindingDispositions,
         repairMovementPaths: stepRepairMovementPaths,
       });
+    }
+
+    // A green verify is a completed mechanical invocation even when CI is still
+    // pending. Persist its canonical S9 row above before re-entering so the
+    // durable retry scan sees a success boundary across both live loops and
+    // crash/re-feed. Shared delay with the family stage.
+    if (reenterS9ForPendingCi) {
+      reenterS9ForPendingCi = false;
+      step = "S9";
+      await sleepPendingCiPollInterval();
+      continue;
     }
 
     // A relay baton is a step-local override. Once its relayed step has

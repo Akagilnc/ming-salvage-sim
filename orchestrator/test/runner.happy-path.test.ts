@@ -154,7 +154,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     );
   });
 
-  it("runs S0→S1→S2→S3→S4→S7→S8 in order and hands off status=success", async () => {
+  it("#824 push-only ship observes no PR and reaches S8(success)", async () => {
     const backend = new HappyPathBackend();
 
     const result = await runOrchestrator({ issueNumber: 247, backend });
@@ -182,6 +182,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       "S7",
       "S8",
     ]);
+    expect(result.stepLedger.some((e) => e.step === "S9")).toBe(false);
   });
 
   it("dispatches implementation and review steps to the sandbox", async () => {
