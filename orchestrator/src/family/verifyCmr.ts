@@ -291,6 +291,7 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
  */
 const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
 const OUTCOME_REWRITE_RETRY_CAP = 2;
+const FINDINGS_SUPPLEMENT_RETRY_CAP = 3;
 
 async function runFamilyVerifyOrAbort(input: {
   readonly phase: VerifyCmrPhase;
@@ -2063,7 +2064,19 @@ async function rewriteOutcomeProtocolFailure(input: {
   }
 
   let lastFailure: Extract<WorkerResult, { kind: "malformed" }> = input.result;
-  for (let attempt = 1; attempt <= OUTCOME_REWRITE_RETRY_CAP; attempt++) {
+  const retryCap = input.result.cmrPriorOutput !== undefined
+    ? FINDINGS_SUPPLEMENT_RETRY_CAP
+    : OUTCOME_REWRITE_RETRY_CAP;
+  for (let attempt = 1; attempt <= retryCap; attempt++) {
+    if (input.result.cmrPriorOutput !== undefined) {
+      await input.familyBackend.appendFamilyLedger({
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: `${input.spec.kind}:${input.ctx.cmrPass ?? "legacy"}:findings-supplement`,
+        mechanicalRedispatchAttempt: attempt,
+        reason: lastFailure.reason,
+      });
+    }
     let rewritten: WorkerResult;
     try {
       rewritten = await input.familyBackend.rewriteWorkerOutcome(
@@ -2089,11 +2102,22 @@ async function rewriteOutcomeProtocolFailure(input: {
   }
 
   const sessionId = lastFailure.sessionId ?? input.result.sessionId;
+  if (input.result.cmrPriorOutput !== undefined) {
+    return {
+      kind: "escalated",
+      escalation: {
+        reason: "reviewer omitted findings = x after 3 supplement attempts",
+        diagnosis:
+          "The semantic review is complete, but its constitutional findings count is still missing; a human decision is required.",
+      },
+      ...(sessionId !== undefined ? { sessionId } : {}),
+    };
+  }
   return {
     kind: "outcome_protocol_failure",
     reason:
       `worker outcome protocol failure persisted after ` +
-      `${OUTCOME_REWRITE_RETRY_CAP} same-worker rewrite attempts: ` +
+      `${retryCap} same-reviewer supplement attempts: ` +
       lastFailure.reason,
     attempts: OUTCOME_REWRITE_RETRY_CAP,
     ...(sessionId !== undefined ? { sessionId } : {}),
@@ -2467,6 +2491,7 @@ async function runIntegratedCmrPass(input: {
   }
   if (
     !cmrResult.output.converged &&
+    cmrResult.output.findingsCount === undefined &&
     (cmrResult.output.findings === undefined ||
       cmrResult.output.findings.length === 0)
   ) {
@@ -2672,8 +2697,8 @@ async function runIntegratedCmrPass(input: {
   }
   let cmrFindingClassification: CmrEnvelope | undefined;
   if (
-    cmrResult.output.findings !== undefined &&
-    cmrResult.output.findings.length > 0
+    (cmrResult.output.findingsCount ?? cmrResult.output.findings?.length ?? 0) > 0 &&
+    cmrResult.output.findings !== undefined
   ) {
     const priorDispositions = latestFamilyCmrDispositions(
       await familyBackend.readFamilyLedger(),
@@ -2791,6 +2816,7 @@ async function runIntegratedCmrPass(input: {
   }
   if (
     !cmrResult.output.converged &&
+    cmrResult.output.findingsCount === undefined &&
     (cmrFindingClassification === undefined ||
       (cmrFindingClassification.deferred.length === 0 &&
         cmrFindingClassification.dispositions.length === 0))

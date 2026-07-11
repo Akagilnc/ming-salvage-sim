@@ -19,22 +19,8 @@ Do not run the correctness gate in this worker.
 
 ## Required output
 
-When the completeness gate has converged (or you must escalate), write the single
-JSON object to a draft file first. When `$ORCHESTRATOR_OUTCOME_PATH` is set, do
-not write the sidecar or completion output yourself; run the versioned guard:
-
-```bash
-orchestrator-outcome-guard \
-  --role "cmr" \
-  --draft "<draft-json-path>" \
-  --outcome "$ORCHESTRATOR_OUTCOME_PATH" \
-  --evidence-root "$PWD" \
-  --completion-signal "<COMPLETION_SIGNAL>"
-```
-
-After validation, the guard may emit the compatibility `<cmr>` tag and completion
-signal as optional telemetry. If `$ORCHESTRATOR_OUTCOME_PATH` is not set, use the
-same JSON shape in the legacy tag/signal output.
+When the review is complete, emit `findings = x` on its own line, replacing `x`
+with the number of findings. This fragment is required even when the count is 0.
 
 Converged:
 
@@ -113,9 +99,6 @@ Rules:
   MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
   `action:"fix_now"` (that would silently turn the governance suppression into a
   blocker).
-- When `$ORCHESTRATOR_OUTCOME_PATH` is set, completion is judged by the validated
-  sidecar JSON and typed CMR outcome; let `orchestrator-outcome-guard` emit the
-  `<cmr>` tag and optional completion telemetry.
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag as the last typed tag;
   if you iterate, the last typed `<cmr>` tag is the one that counts. The optional
   telemetry line below may follow it.

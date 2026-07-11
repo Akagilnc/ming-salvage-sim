@@ -180,6 +180,7 @@ import type {
   Finding,
   FindingFamily,
   FixerResult,
+  CmrResult,
   PriorFindingDisposition,
   StepSoul,
   VerifyResult,
@@ -1536,6 +1537,30 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.cmrLegAccountingPayload !== undefined
           ? { cmrLegAccountingPayload: outcome.cmrLegAccountingPayload }
           : {}),
+        ...(outcome.priorVerdict !== undefined
+          ? {
+              cmrPriorOutput: {
+                kind: "cmr",
+                ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+                converged: outcome.priorVerdict.converged,
+                ...(outcome.priorVerdict.reason !== undefined
+                  ? { reason: outcome.priorVerdict.reason }
+                  : {}),
+                successfulLegs: outcome.priorVerdict.successfulLegs,
+                ...(outcome.priorVerdict.skippedLegs !== undefined
+                  ? { skippedLegs: outcome.priorVerdict.skippedLegs }
+                  : {}),
+                claimedFixedFindingIdentityKeys:
+                  outcome.priorVerdict.claimedFixedFindingIdentityKeys,
+                priorFindingDispositions:
+                  outcome.priorVerdict.priorFindingDispositions,
+                ...(outcome.priorVerdict.findings !== undefined
+                  ? { findings: outcome.priorVerdict.findings }
+                  : {}),
+                evidencePaths: outcome.priorVerdict.evidencePaths,
+              },
+            }
+          : {}),
       };
     }
     return {
@@ -1557,6 +1582,9 @@ export class RealFamilyBackend implements FamilyBackend {
           ? { priorFindingDispositions: outcome.priorFindingDispositions }
           : {}),
         ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
+        ...(outcome.findingsCount !== undefined
+          ? { findingsCount: outcome.findingsCount }
+          : {}),
         ...(outcome.findingFamilies !== undefined
           ? { findingFamilies: outcome.findingFamilies }
           : {}),
@@ -1785,7 +1813,7 @@ export class RealFamilyBackend implements FamilyBackend {
       const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
       try {
         const result = await this.runAgentSandbox({
-          name: `family-cmr-outcome-rewrite-${ctx.cmrPass ?? "legacy"}-${attempt}`,
+          name: `family-cmr-findings-supplement-${ctx.cmrPass ?? "legacy"}-${attempt}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: this.opts.workingRepo,
           sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
@@ -1803,6 +1831,22 @@ export class RealFamilyBackend implements FamilyBackend {
             COMPLETION_SIGNAL: spec.completionSignal,
           },
         });
+        if (protocolFailure.cmrPriorOutput !== undefined) {
+          const findingsCount = parseFindingsSentinel(result.stdout);
+          if (findingsCount === undefined) {
+            return {
+              kind: "malformed",
+              reason: `same reviewer supplement attempt ${attempt} omitted findings = x`,
+              sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
+              priorVerdict: cmrResultToWorkerVerdict(protocolFailure.cmrPriorOutput),
+            };
+          }
+          return {
+            ...cmrResultToWorkerVerdict(protocolFailure.cmrPriorOutput),
+            findingsCount,
+            sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
+          };
+        }
         const outcome = withCmrSession(
           cmrOutcomeFromResult({
             ...result,
@@ -3481,6 +3525,7 @@ export type CmrWorkerOutcome =
       readonly claimedFixedFindingIdentityKeys?: readonly string[];
       readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
       readonly findings?: readonly Finding[];
+      readonly findingsCount?: number;
       readonly findingFamilies?: readonly FindingFamily[];
       readonly evidencePaths: readonly string[];
       readonly sessionId?: string;
@@ -3495,6 +3540,7 @@ export type CmrWorkerOutcome =
       readonly kind: "malformed";
       readonly reason: string;
       readonly sessionId?: string;
+      readonly priorVerdict?: Extract<CmrWorkerOutcome, { readonly kind: "verdict" }>;
       readonly cmrLegAccountingPayload?: {
         readonly successfulLegs?: readonly string[];
         readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
@@ -3511,6 +3557,25 @@ function withCmrSession(
   sessionId: string | undefined,
 ): CmrWorkerOutcome {
   return sessionId === undefined ? outcome : { ...outcome, sessionId };
+}
+
+function cmrResultToWorkerVerdict(
+  output: CmrResult,
+): Extract<CmrWorkerOutcome, { readonly kind: "verdict" }> {
+  return {
+    kind: "verdict",
+    converged: output.converged,
+    ...(output.reason !== undefined ? { reason: output.reason } : {}),
+    successfulLegs: output.successfulLegs ?? [],
+    ...(output.skippedLegs !== undefined ? { skippedLegs: output.skippedLegs } : {}),
+    claimedFixedFindingIdentityKeys: output.claimedFixedFindingIdentityKeys,
+    priorFindingDispositions: output.priorFindingDispositions,
+    ...(output.findings !== undefined ? { findings: output.findings } : {}),
+    ...(output.findingFamilies !== undefined
+      ? { findingFamilies: output.findingFamilies }
+      : {}),
+    evidencePaths: output.evidencePaths ?? [],
+  };
 }
 
 function lastSessionIdIfPresent(result: unknown): string | undefined {
@@ -3605,11 +3670,21 @@ export function cmrOutcomeFromResult(result: {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
-        return classifyCmrOutcomePayload(
+        const classified = classifyCmrOutcomePayload(
           sidecar,
           result.cmrReviewLegs ?? process.env,
           "cmr worker outcome sidecar",
         );
+        if (classified.kind !== "verdict") return classified;
+        const findingsCount = parseFindingsSentinel(result.stdout);
+        if (findingsCount === undefined) {
+          return {
+            kind: "malformed",
+            reason: "cmr reviewer output omitted required findings = x fragment",
+            priorVerdict: classified,
+          };
+        }
+        return { ...classified, findingsCount };
       }
     } catch (err) {
       return {
@@ -3622,6 +3697,15 @@ export function cmrOutcomeFromResult(result: {
   }
 
   return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
+}
+
+/** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
+export function parseFindingsSentinel(stdout: string): number | undefined {
+  const matches = [...stdout.matchAll(/(?:^|\n)findings\s*=\s*(\d+)\s*(?=\n|$)/g)];
+  const raw = matches.at(-1)?.[1];
+  if (raw === undefined) return undefined;
+  const count = Number(raw);
+  return Number.isSafeInteger(count) ? count : undefined;
 }
 
 /** A trimmed, non-empty string at the schema layer (mirrors shipOutcome.ts). */
