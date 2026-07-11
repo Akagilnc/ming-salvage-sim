@@ -2109,6 +2109,27 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
     expect(recs[0]?.escalationKind).toBe("decision");
   });
 
+  it("preserves a merger failure's wave shape through the real backend seam", async () => {
+    const b = new RealFamilyBackend(opts(trackRepo()));
+    await b.escalateFamily({
+      reason: "merger step for child #10 exhausted bounded still-conflicted retries",
+      familyHeadAfter: "conflicted-10",
+      escalationKind: "failure",
+      phase: "wave",
+    });
+
+    expect(await b.readFamilyLedger()).toEqual([
+      expect.objectContaining({
+        status: "escalated",
+        event: "escalated",
+        phase: "wave",
+        reason: "merger step for child #10 exhausted bounded still-conflicted retries",
+        familyHeadAfter: "conflicted-10",
+        escalationKind: "failure",
+      }),
+    ]);
+  });
+
   it("keeps legacy family-escalations.jsonl stuck-points readable during migration", async () => {
     const o = opts(trackRepo());
     mkdirSync(o.ledgerDir, { recursive: true });

@@ -814,6 +814,10 @@ export interface FamilyEscalation {
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary for this pause, when the caller can classify it. */
   readonly stopSummary?: StopSummary;
+  /** Durable escalation semantic; defaults to the decision-gate meaning. */
+  readonly escalationKind?: "decision" | "failure";
+  /** Durable escalation phase; defaults to the final family gate. */
+  readonly phase?: "wave" | "final";
 }
 
 /** What the merger needs to merge one child branch into the family base. */

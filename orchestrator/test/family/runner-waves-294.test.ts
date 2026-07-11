@@ -22,6 +22,7 @@
 import { describe, expect, it } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { runFamily } from "../../src/family/runner.js";
+import { recordFamilyEscalated } from "../../src/family/ledger.js";
 import type {
   Backend,
   IssueMeta,
@@ -34,6 +35,7 @@ import type {
 } from "../../src/types.js";
 import type {
   FamilyBackend,
+  FamilyEscalation,
   FamilyEpic,
   FamilyLedgerEntry,
   MergeRequest,
@@ -120,7 +122,7 @@ class LandedWithoutMergerReportBackend extends FakeFamilyBackend {
 
 class PersistentlyConflictedFamilyBackend extends FakeFamilyBackend {
   readonly resolverCalls: number[] = [];
-  readonly escalationCalls: string[] = [];
+  readonly escalationCalls: Array<{ reason: string; escalationKind?: string; phase?: string }> = [];
 
   override async mergeChildIntoFamilyBase(child: MergeRequest) {
     this.mergeOrder.push(child.childIssue);
@@ -132,8 +134,15 @@ class PersistentlyConflictedFamilyBackend extends FakeFamilyBackend {
     return { familyHead: `conflicted-${request.childIssue}`, conflicted: true };
   }
 
-  async escalateFamily(escalation: { reason: string }): Promise<void> {
-    this.escalationCalls.push(escalation.reason);
+  async escalateFamily(escalation: FamilyEscalation): Promise<void> {
+    this.escalationCalls.push(escalation);
+    await recordFamilyEscalated(this, {
+      reason: escalation.reason,
+      escalationKind: escalation.escalationKind ?? "decision",
+      phase: escalation.phase ?? "final",
+      familyHeadAfter: escalation.familyHeadAfter,
+      stopSummary: escalation.stopSummary,
+    });
   }
 }
 
@@ -181,9 +190,14 @@ describe("#294 acceptance 1 — dependency chain scheduled in topological order"
       Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => 10),
     );
     expect(familyBackend.mergeOrder).toEqual([10]);
-    expect(familyBackend.escalationCalls).toEqual([
-      "merger step for child #10 exhausted bounded still-conflicted retries",
-    ]);
+    expect(familyBackend.escalationCalls).toHaveLength(1);
+    expect(familyBackend.escalationCalls[0]).toEqual(
+      expect.objectContaining({
+        reason: "merger step for child #10 exhausted bounded still-conflicted retries",
+        escalationKind: "failure",
+        phase: "wave",
+      }),
+    );
     expect(familyBackend.ledger).toEqual([
       expect.objectContaining({
         status: "escalated",
