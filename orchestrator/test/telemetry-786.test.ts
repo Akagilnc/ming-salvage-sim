@@ -147,7 +147,7 @@ function finding(
 // ───────────────────────── pure unit tests ─────────────────────────
 
 describe("#786 telemetry pure helpers", () => {
-  it("builds a per-commit row with diff, src/test, escape-hatch, and assertion dimensions", () => {
+  it("builds a per-commit row with numstat dimensions and null unavailable diff dimensions", () => {
     const record = buildCommitStamp({
       stampedAt: "2026-07-11T00:00:00.000Z",
       runId: "run-786",
@@ -160,8 +160,8 @@ describe("#786 telemetry pure helpers", () => {
         source: { files: 1, insertions: 5, deletions: 1 },
         test: { files: 2, insertions: 7, deletions: 3 },
         escapeHatches: {
-          added: { asAny: 1, asUnknownAs: 2, jsonParseStringify: 3 },
-          deleted: { asAny: 4, asUnknownAs: 5, jsonParseStringify: 6 },
+          added: { asAny: 1, asNever: 0, asUnknownAs: 2, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 3 },
+          deleted: { asAny: 4, asNever: 0, asUnknownAs: 5, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 6 },
         },
         assertions: { added: 7, deleted: 8 },
       },
@@ -179,11 +179,8 @@ describe("#786 telemetry pure helpers", () => {
       deletions: 4,
       source: { files: 1, insertions: 5, deletions: 1 },
       test: { files: 2, insertions: 7, deletions: 3 },
-      escapeHatches: {
-        added: { asAny: 1, asUnknownAs: 2, jsonParseStringify: 3 },
-        deleted: { asAny: 4, asUnknownAs: 5, jsonParseStringify: 6 },
-      },
-      assertions: { added: 7, deleted: 8 },
+      escapeHatches: null,
+      assertions: null,
     } satisfies TelemetryCommitRecord);
   });
 
@@ -192,22 +189,41 @@ describe("#786 telemetry pure helpers", () => {
       commit: "abc123",
       diffLines: [
         "+const one = value as any;",
+        "+const neverValue = value as never;",
         "+const two = value as unknown as Target;",
         "+const three = JSON.parse(JSON.stringify(value));",
+        "+// @ts-ignore documented exception",
+        "+// @ts-expect-error documented exception",
         "+expect(result).toBe(true);",
         "+assert.equal(result, true);",
         "+const notCast = value as anything;",
         "+const notChain = JSON.parse(JSON.stringifySafe(value));",
         "+const assertion = 'expect(';",
         "+// assert.equal(commentOnly, true);",
+        "+const example = 'value as never; @ts-ignore; @ts-expect-error';",
+        "+/* value as never; @ts-ignore; @ts-expect-error */",
         "-expect(oldResult).toBe(true);",
         "-const old = value as any;",
       ],
     });
 
     expect(record.escapeHatches).toEqual({
-      added: { asAny: 1, asUnknownAs: 1, jsonParseStringify: 1 },
-      deleted: { asAny: 1, asUnknownAs: 0, jsonParseStringify: 0 },
+      added: {
+        asAny: 1,
+        asNever: 1,
+        asUnknownAs: 1,
+        tsIgnore: 1,
+        tsExpectError: 1,
+        jsonParseStringify: 1,
+      },
+      deleted: {
+        asAny: 1,
+        asNever: 0,
+        asUnknownAs: 0,
+        tsIgnore: 0,
+        tsExpectError: 0,
+        jsonParseStringify: 0,
+      },
     });
     expect(record.assertions).toEqual({ added: 2, deleted: 1 });
   });
@@ -222,6 +238,58 @@ describe("#786 telemetry pure helpers", () => {
       escapeHatches: null,
       assertions: null,
     });
+  });
+
+  it("preserves numstat dimensions but marks failed diff dimensions null", () => {
+    const record = buildCommitStamp({
+      commit: "abc123",
+      metrics: {
+        files: 1,
+        insertions: 2,
+        deletions: 3,
+        source: { files: 1, insertions: 2, deletions: 3 },
+        test: { files: 0, insertions: 0, deletions: 0 },
+        escapeHatches: {
+          added: { asAny: 0, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+          deleted: { asAny: 0, asNever: 0, asUnknownAs: 0, tsIgnore: 0, tsExpectError: 0, jsonParseStringify: 0 },
+        },
+        assertions: { added: 0, deleted: 0 },
+      },
+    });
+
+    expect(record).toMatchObject({
+      files: 1,
+      insertions: 2,
+      deletions: 3,
+      source: { files: 1, insertions: 2, deletions: 3 },
+      test: { files: 0, insertions: 0, deletions: 0 },
+      escapeHatches: null,
+      assertions: null,
+    });
+  });
+
+  it("persists a commit JSONL line with every final-schema key", () => {
+    const ledgerDir = tempDir("orch-786-commit-raw-");
+    appendTelemetryRecord(ledgerDir, buildCommitStamp({ commit: "abc123" }));
+
+    const [line] = readFileSync(join(ledgerDir, TELEMETRY_FILENAME), "utf8")
+      .trim()
+      .split("\n");
+    expect(Object.keys(JSON.parse(line!) as Record<string, unknown>).sort()).toEqual([
+      "assertions",
+      "commit",
+      "deletions",
+      "escapeHatches",
+      "files",
+      "insertions",
+      "issue",
+      "phase",
+      "runId",
+      "source",
+      "stamped_at",
+      "test",
+      "v",
+    ]);
   });
 
   it("fails open when the host-git repository is unavailable", () => {

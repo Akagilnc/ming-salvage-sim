@@ -1138,11 +1138,12 @@ async function runCmrCoderFix(input: {
       currentFamilyHeadBefore,
     );
 
+    // Commit telemetry follows the independently observed family HEAD, never
+    // the coder's self-report. The report remains for the repair gate below.
     if (
-      fixResult.kind === "completed" &&
-      fixResult.output.kind === "coder" &&
-      fixResult.output.committed &&
-      fixResult.output.commitsAdded >= 1
+      currentFamilyHeadBefore !== undefined &&
+      familyHeadAfter !== undefined &&
+      familyHeadAfter !== currentFamilyHeadBefore
     ) {
       stampCmrCoderFixCommits({
         familyBackend,
