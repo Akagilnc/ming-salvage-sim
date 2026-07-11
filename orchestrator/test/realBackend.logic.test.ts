@@ -1768,6 +1768,31 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("treats a resumed coder with no sidecar, typed output, or stdout tag as malformed even when git observed commits", async () => {
+    const backend = makeBackend();
+    backend.agentResult = agentRunResult({
+      stdout: "resumed worker completed its changes",
+      commits: [{ sha: "abc123" }],
+      sessionId: "sess-resumed-advisory-exit",
+    });
+
+    await expect(
+      backend.resumeSession(
+        coderSpec,
+        {
+          branch: "feat/issue-286",
+          base: "main",
+          path: "/tmp/worktree/issue-286",
+        },
+        "prior-coder-session",
+      ),
+    ).rejects.toMatchObject({
+      name: "StructuredOutputError",
+      message: expect.stringContaining("no worker outcome"),
+    });
+    expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
+  });
+
   it("treats a reviewer with no sidecar, typed output, or stdout tag as malformed instead of a clean review", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
