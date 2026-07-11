@@ -191,8 +191,6 @@ COPY bin/ /home/agent/.orchestrator/bin/
 
 RUN chmod -R a+rX /home/agent/.claude/skills /home/agent/.orchestrator \
  && chmod +x /home/agent/.orchestrator/githooks/commit-msg \
- && chmod +x /home/agent/.orchestrator/bin/orchestrator-outcome-guard \
- && ln -sf /home/agent/.orchestrator/bin/orchestrator-outcome-guard /usr/local/bin/orchestrator-outcome-guard \
  && find /home/agent/.claude/skills -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null \
  ; find /home/agent/.claude/skills/gstack/bin -type f -exec chmod +x {} + 2>/dev/null \
  ; (id agent >/dev/null 2>&1 \

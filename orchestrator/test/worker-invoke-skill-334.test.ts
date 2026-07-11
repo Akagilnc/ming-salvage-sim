@@ -396,22 +396,14 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
 
   it("the baked shared output protocol owns sidecar parser validation", () => {
     const protocol = readSoul("output_protocol.md");
-    expect(protocol).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
-    expect(protocol).toMatch(/raw sidecar JSON/i);
-    expect(protocol).toMatch(/if \[ -n "\$\{ORCHESTRATOR_OUTCOME_PATH:-\}" \]/);
-    expect(protocol).toMatch(/orchestrator-outcome-guard/);
-    expect(protocol).toMatch(/--draft "<draft-json-path>"/);
-    expect(protocol).toMatch(/--outcome "\$ORCHESTRATOR_OUTCOME_PATH"/);
-    expect(protocol).toMatch(/--completion-signal "<COMPLETION_SIGNAL>"/);
+    expect(protocol).toMatch(/ORCHESTRATOR_OUTCOME_PATH/);
+    expect(protocol).toMatch(/write[\s\S]*directly/i);
     expect(protocol).not.toMatch(/python3 -c 'import json/);
     expect(protocol).not.toMatch(/python3 -m json\.tool/);
 
     for (const soulName of [
       "coder.md",
       "reviewer.md",
-      "cmr.md",
-      "cmr_completeness.md",
-      "cmr_correctness.md",
       "merger.md",
       "ship.md",
     ]) {

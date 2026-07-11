@@ -445,7 +445,7 @@ describe("#451 dogfood replay fixture", () => {
       stopReason: "same_module_still_red",
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr",
-        runStatus: "same_module_still_red",
+        runStatus: "success",
       }),
     });
     expect(rowsById.get("376-route-accounting-non-default")?.sourceEvidence).toMatchObject({
@@ -551,7 +551,7 @@ describe("#451 dogfood replay fixture", () => {
         seam: "family_verify_cmr_provider_worker_failure",
         failedLeg: "agy",
         status: "aborted",
-        dispatches: ["cmr:completeness"],
+        dispatches: ["cmr:completeness", "cmr:completeness", "cmr:completeness"],
       }),
     });
     expect(rowsById.get("376-provider-degraded-nonblocking")).toMatchObject({

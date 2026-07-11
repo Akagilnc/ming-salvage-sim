@@ -892,7 +892,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(res.kind).toBe("malformed");
   });
 
-  it("rewrites a malformed CMR outcome by resuming the same worker with the outcome-only prompt", async () => {
+  it("supplements a missing findings fragment by resuming the same reviewer with its prior verdict", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
@@ -932,7 +932,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         );
         return {
           completionSignal: "CMR_STEP_COMPLETE",
-          stdout: "",
+          stdout: "findings = 0\n",
           branch: "test/rewritten",
           iterations: [{ sessionId: "cmr-session-rewritten" }],
           commits: [],
@@ -957,8 +957,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       { familyBase: "fb", cmrPass: "completeness" },
       {
         kind: "malformed",
-        reason: "cmr worker outcome sidecar was not valid JSON",
+        reason: "cmr reviewer output omitted required findings = x fragment",
         sessionId: "cmr-session-original",
+        cmrPriorOutput: {
+          kind: "cmr",
+          cmrPass: "completeness",
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+        },
       },
       1,
     );
@@ -1031,7 +1038,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         );
         return {
           completionSignal: "CMR_STEP_COMPLETE",
-          stdout: "",
+          stdout: "findings = 0\n",
           branch: "test/rewritten",
           iterations: [{ sessionId: "cmr-session-rewritten" }],
           commits: [],
@@ -1127,7 +1134,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         );
         return {
           completionSignal: "CMR_STEP_COMPLETE",
-          stdout: "",
+          stdout: "findings = 0\n",
           branch: "test/rewritten",
           iterations: [{ sessionId: "cmr-session-rewritten" }],
           commits: [],
@@ -1221,7 +1228,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         );
         return {
           completionSignal: "CMR_STEP_COMPLETE",
-          stdout: "",
+          stdout: "findings = 0\n",
           branch: "test/rewritten",
           iterations: [{ sessionId: "cmr-session-rewritten" }],
           commits: [],

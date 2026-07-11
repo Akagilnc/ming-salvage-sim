@@ -146,7 +146,7 @@ describe("#604 r4 D1 — early closure guard is well-formed-only, not verified-c
     expect(result).toEqual({ ok: false, ran: true });
     // Reached coder-fix (still-active finding routed) — the positive signal. The
     // early closure guard did NOT abort as a closure-payload contract drift.
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(
       backend.ledger.some(
         (e) =>
@@ -336,6 +336,6 @@ describe("#604 r4 D3 — first-pass self-reported closure payload is guarded", (
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
   });
 });

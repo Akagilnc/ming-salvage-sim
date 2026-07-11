@@ -94,7 +94,6 @@ import {
   runOnlineReviewLoopStage,
   shipLedgerTriggeredAtFromFamilyLedger,
   verifyReviewerHeadMovedStopSummary,
-  verifyReviewerWorktreeDirtyStopSummary,
   waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
@@ -292,6 +291,7 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
  */
 const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
 const OUTCOME_REWRITE_RETRY_CAP = 2;
+const FINDINGS_SUPPLEMENT_RETRY_CAP = 3;
 
 async function runFamilyVerifyOrAbort(input: {
   readonly phase: VerifyCmrPhase;
@@ -1017,20 +1017,6 @@ function cmrReviewerHeadMovedStopSummary(input: {
   });
 }
 
-function cmrReviewerTrackedDirtyStopSummary(input: {
-  readonly pass: IntegratedCmrPass;
-  readonly trackedStatus: readonly string[];
-}): StopSummary {
-  return contractDriftStopSummary({
-    summary:
-      `integrated CMR ${input.pass} reviewer left tracked changes: ` +
-      input.trackedStatus.join("; "),
-    repairHint:
-      "restore the reviewer/coder role boundary so CMR review leaves the tracked worktree clean, then rerun the family CMR gate",
-    metadata: { trackedStatus: input.trackedStatus },
-  });
-}
-
 async function runCmrCoderFix(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
@@ -1354,17 +1340,15 @@ async function guardPostCmrReviewerGitState(input: {
     const reason =
       `integrated CMR ${pass} reviewer left tracked changes: ` +
       trackedStatus.join("; ");
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
+    await familyBackend.appendFamilyLedger({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: `cmr:${pass}`,
       reason,
-      familyHeadAfter,
-      stopSummary: cmrReviewerTrackedDirtyStopSummary({
-        pass,
-        trackedStatus,
-      }),
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    // #853: reviewer edits are ordinary diff content. Preserve them for the
+    // current round's normal finding/fix/re-review path; never abort or discard.
+    return undefined;
   }
   return undefined;
 }
@@ -1482,6 +1466,13 @@ async function dispatchFamilyReviewWorker(
     return primary;
   }
   if (primary.kind === "escalated") {
+    return primary;
+  }
+  if (
+    primary.kind === "failed" ||
+    primary.kind === "malformed" ||
+    primary.kind === "outcome_protocol_failure"
+  ) {
     return primary;
   }
   return {
@@ -1679,13 +1670,11 @@ export async function runFamilyOnlineReviewLoop(input: {
           trackedAfter !== undefined &&
           trackedAfter.join("\n") !== trackedBefore.join("\n")
         ) {
-          throw new OnlineReviewLoopTerminal({
-            ok: false,
-            terminalState: "contract_drift",
-            round,
-            stopSummary: verifyReviewerWorktreeDirtyStopSummary({
-              trackedStatus: trackedAfter,
-            }),
+          await input.familyBackend.appendFamilyLedger({
+            status: "worker_dispatched",
+            event: "worker_dispatched",
+            workerStep: `online-verify:${round}`,
+            reason: `online review verify worker left tracked changes: ${trackedAfter.join("; ")}`,
           });
         }
       };
@@ -1966,7 +1955,34 @@ async function dispatchOrAbort(
       },
       {
         callerOwns: (o) =>
-          opts?.extraCallerOwns?.(o) === true || "result" in o,
+          opts?.extraCallerOwns?.(o) === true ||
+          // Only the integrated CMR reviewer path has a follow-up loop for
+          // malformed outcomes (`rewriteOutcomeProtocolFailure`); every other
+          // family worker's caller would just abort on them, so those retry
+          // mechanically like any transient failure.
+          (spec.kind === "cmr" &&
+            "result" in o &&
+            (o.result.kind === "malformed" ||
+              o.result.kind === "outcome_protocol_failure")),
+        onFailure: async (outcome, attempt) => {
+          const reason =
+            "result" in outcome
+              ? outcome.result.kind === "failed" ||
+                  outcome.result.kind === "malformed" ||
+                  outcome.result.kind === "outcome_protocol_failure"
+                ? outcome.result.reason
+                : `worker returned ${outcome.result.kind}`
+              : outcome.error instanceof Error
+                ? outcome.error.message
+                : String(outcome.error);
+          await familyBackend.appendFamilyLedger({
+            status: "worker_dispatched",
+            event: "worker_dispatched",
+            workerStep: `${spec.kind}${ctx.cmrPass !== undefined ? `:${ctx.cmrPass}` : ""}`,
+            mechanicalRedispatchAttempt: attempt,
+            reason,
+          });
+        },
         rethrowOnExhaustion: true,
       },
     );
@@ -2053,7 +2069,19 @@ async function rewriteOutcomeProtocolFailure(input: {
   }
 
   let lastFailure: Extract<WorkerResult, { kind: "malformed" }> = input.result;
-  for (let attempt = 1; attempt <= OUTCOME_REWRITE_RETRY_CAP; attempt++) {
+  const retryCap = input.result.cmrPriorOutput !== undefined
+    ? FINDINGS_SUPPLEMENT_RETRY_CAP
+    : OUTCOME_REWRITE_RETRY_CAP;
+  for (let attempt = 1; attempt <= retryCap; attempt++) {
+    if (input.result.cmrPriorOutput !== undefined) {
+      await input.familyBackend.appendFamilyLedger({
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: `${input.spec.kind}:${input.ctx.cmrPass ?? "legacy"}:findings-supplement`,
+        mechanicalRedispatchAttempt: attempt,
+        reason: lastFailure.reason,
+      });
+    }
     let rewritten: WorkerResult;
     try {
       rewritten = await input.familyBackend.rewriteWorkerOutcome(
@@ -2079,11 +2107,22 @@ async function rewriteOutcomeProtocolFailure(input: {
   }
 
   const sessionId = lastFailure.sessionId ?? input.result.sessionId;
+  if (input.result.cmrPriorOutput !== undefined) {
+    return {
+      kind: "escalated",
+      escalation: {
+        reason: "reviewer omitted findings = x after 3 supplement attempts",
+        diagnosis:
+          "The semantic review is complete, but its constitutional findings count is still missing; a human decision is required.",
+      },
+      ...(sessionId !== undefined ? { sessionId } : {}),
+    };
+  }
   return {
     kind: "outcome_protocol_failure",
     reason:
       `worker outcome protocol failure persisted after ` +
-      `${OUTCOME_REWRITE_RETRY_CAP} same-worker rewrite attempts: ` +
+      `${retryCap} same-reviewer supplement attempts: ` +
       lastFailure.reason,
     attempts: OUTCOME_REWRITE_RETRY_CAP,
     ...(sessionId !== undefined ? { sessionId } : {}),
@@ -2457,6 +2496,7 @@ async function runIntegratedCmrPass(input: {
   }
   if (
     !cmrResult.output.converged &&
+    cmrResult.output.findingsCount === undefined &&
     (cmrResult.output.findings === undefined ||
       cmrResult.output.findings.length === 0)
   ) {
@@ -2662,8 +2702,8 @@ async function runIntegratedCmrPass(input: {
   }
   let cmrFindingClassification: CmrEnvelope | undefined;
   if (
-    cmrResult.output.findings !== undefined &&
-    cmrResult.output.findings.length > 0
+    (cmrResult.output.findingsCount ?? cmrResult.output.findings?.length ?? 0) > 0 &&
+    cmrResult.output.findings !== undefined
   ) {
     const priorDispositions = latestFamilyCmrDispositions(
       await familyBackend.readFamilyLedger(),
@@ -2781,6 +2821,7 @@ async function runIntegratedCmrPass(input: {
   }
   if (
     !cmrResult.output.converged &&
+    cmrResult.output.findingsCount === undefined &&
     (cmrFindingClassification === undefined ||
       (cmrFindingClassification.deferred.length === 0 &&
         cmrFindingClassification.dispositions.length === 0))

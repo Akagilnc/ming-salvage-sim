@@ -2189,7 +2189,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ]);
   });
 
-  it("preserves coder-fix outcome protocol failure details in the durable abort", async () => {
+  it("preserves coder-fix outcome protocol failure details in the durable abort after mechanical retries (#855 review)", async () => {
     const backend = new OutcomeProtocolFailureCoderFixBackend();
 
     const result = await runVerifyCmr({
@@ -2199,13 +2199,23 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: false, ran: true });
+    // A persistent protocol failure from a NON-reviewer worker is retried
+    // mechanically (it is not caller-owned — only the CMR reviewer path has a
+    // malformed follow-up loop), then aborts durably with details preserved.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({
         kind: "coder",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
+      expect.objectContaining({ kind: "coder", session: "fresh" }),
+      expect.objectContaining({ kind: "coder", session: "fresh" }),
     ]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      mechanicalRedispatchAttempt: 1,
+    }));
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
@@ -2260,7 +2270,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ).toBe(false);
   });
 
-  it("fails closed when the CMR reviewer leaves tracked changes without moving HEAD", async () => {
+  it("#853 keeps reviewer tracked changes in the normal diff/review flow", async () => {
     const backend = new ReviewerLeavesTrackedDirtyBeforeFindingBackend();
 
     const result = await runVerifyCmr({
@@ -2269,30 +2279,21 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr").length)
+      .toBeGreaterThan(1);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      cmrPass: "completeness",
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: "cmr:completeness",
       reason: expect.stringMatching(/reviewer left tracked changes/i),
-      familyHeadAfter: "head-before-cmr-review",
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        metadata: expect.objectContaining({
-          trackedStatus: ["M tracked.txt"],
-        }),
-      }),
     }));
     expect(
-      backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
-    ).toBe(false);
-    expect(
-      backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
+      backend.ledger.some((entry) => entry.status === "aborted" && /tracked changes/i.test(entry.reason ?? "")),
     ).toBe(false);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_passed"),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("fails closed when the CMR reviewer checks out a different clean HEAD", async () => {
