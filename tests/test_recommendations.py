@@ -140,3 +140,23 @@ def test_listed_heard_for_selection_candidate_stays_recovery_type_through_contex
                         if row["name"] == candidate.name)
     assert restored_row["candidate_kind"] == "荐起复"
     assert validate_recommendation_snapshot(db, restored, recommender.name, row)
+
+
+def test_hearing_title_without_displacement_reason_is_not_talent_pool_candidate(game):
+    """ADR 0009 人才池 active 分支须同时满足 office 与被顶替缘由。"""
+    db, state, content = game
+    recommender = next(c for c in content.characters.values()
+                       if c.office_type not in ("后宫", "宗藩"))
+    candidate = next(c for c in content.characters.values()
+                     if c.name != recommender.name and c.faction == recommender.faction
+                     and c.office_type not in ("后宫", "宗藩"))
+    db.conn.execute(
+        "UPDATE characters SET status='active', office='听用候铨', reason_code='登场' WHERE name=?",
+        (candidate.name,),
+    )
+    db.conn.commit()
+
+    row = next(row for row in db.list_recommendation_candidates(state, recommender.name)
+               if row["name"] == candidate.name)
+
+    assert row["candidate_kind"] == "荐在职"
