@@ -579,6 +579,10 @@ class DogfoodFamilyBackend implements FamilyBackend {
   async readFamilyHead(): Promise<string> {
     return this.currentHead;
   }
+
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
 }
 
 class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {

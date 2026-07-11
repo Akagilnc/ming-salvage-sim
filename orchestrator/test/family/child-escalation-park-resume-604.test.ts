@@ -36,6 +36,7 @@ import type {
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
+  StepResult,
   StepSpec,
   WorktreeHandle,
 } from "../../src/types.js";
@@ -52,6 +53,8 @@ const STUCK: Escalation = {
   diagnosis:
     "The child issue body says 'optional' in one place but 'required' in another; a product decision is required before implementation can proceed.",
 };
+
+const ORIGINAL_SESSION_ID = "child-11-decision-gate-session";
 
 // ─── fakes ────────────────────────────────────────────────────────────────────
 
@@ -126,7 +129,10 @@ class EscalatingChildBackend implements Backend {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
   async writeSnapshot(): Promise<void> {}
-  async runStep(spec: StepSpec, worktree?: WorktreeHandle): Promise<StepOutput> {
+  async runStep(
+    spec: StepSpec,
+    worktree?: WorktreeHandle,
+  ): Promise<StepOutput | StepResult> {
     const issue = worktree !== undefined ? this.issueOfWorktree(worktree) : -1;
     this.runStepCalls.push({ issue, step: spec.id });
     if (
@@ -141,7 +147,7 @@ class EscalatingChildBackend implements Backend {
         commitsAdded: 0,
         escalate: STUCK,
       };
-      return out;
+      return { output: out, sessionId: ORIGINAL_SESSION_ID };
     }
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
@@ -313,6 +319,10 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
     expect(first.status).toBe("escalated");
     const parked = familyBackend.ledger.find((e) => e.event === "child_decision_parked");
     expect(parked?.childIssue).toBe(11);
+    expect(parked?.sessionId).toBe(ORIGINAL_SESSION_ID);
+    expect(first.children.find((child) => child.issue === 11)?.escalation?.sessionId).toBe(
+      ORIGINAL_SESSION_ID,
+    );
     // #604 F7: capture the ORIGINAL escalated session BEFORE resume, so the
     // post-resume assertion can pin that resumeSession reopened THIS exact
     // session (not a fresh/arbitrary one).
@@ -384,6 +394,11 @@ describe("#604 slice 5 — resume: an answered child escalation resumes in place
       childIssue: 11,
       answer: "the decision is answered; resume in place",
       source: "human",
+    });
+    expect(familyBackend.ledger.at(-1)).toMatchObject({
+      event: "escalation_answered",
+      childIssue: 11,
+      sessionId: ORIGINAL_SESSION_ID,
     });
     expect(familyBackend.ledger.at(-1)).not.toHaveProperty("familyHeadAfter");
 
@@ -458,8 +473,12 @@ describe("#604 slice 5 — resume via production helper (F1)", () => {
     expect(singleSliceBackend.resumeSessionCalls).toContainEqual([
       11,
       original.step,
-      original.sessionId,
+      ORIGINAL_SESSION_ID,
     ]);
+    const childAnswer = singleSliceBackend.childLedgers
+      .get(11)
+      ?.find((entry) => entry.event === "escalation_answered");
+    expect(childAnswer?.sessionId).toBe(ORIGINAL_SESSION_ID);
     expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(true);
   });
 });
@@ -656,7 +675,10 @@ describe("#604 slice 5 — A/B: failure-kind child outcome is NOT parked", () =>
         // never decision-escalates
         super(-1);
       }
-      override async runStep(spec: StepSpec, worktree?: WorktreeHandle): Promise<StepOutput> {
+      override async runStep(
+        spec: StepSpec,
+        worktree?: WorktreeHandle,
+      ): Promise<StepOutput | StepResult> {
         const issue =
           worktree !== undefined && /child-(\d+)/.test(worktree.branch)
             ? Number(worktree.branch.match(/child-(\d+)/)![1])
@@ -712,7 +734,7 @@ describe("#604 r1 (P1-a ②) — a real failure in the wave is not masked by a d
       override async runStep(
         spec: StepSpec,
         worktree?: WorktreeHandle,
-      ): Promise<StepOutput> {
+      ): Promise<StepOutput | StepResult> {
         const issue =
           worktree !== undefined && /child-(\d+)/.test(worktree.branch)
             ? Number(worktree.branch.match(/child-(\d+)/)![1])
@@ -779,7 +801,7 @@ describe("#604 r4 (D5) — a synthesized-failure escalate is not parked", () => 
       override async runStep(
         spec: StepSpec,
         worktree?: WorktreeHandle,
-      ): Promise<StepOutput> {
+      ): Promise<StepOutput | StepResult> {
         const issue =
           worktree !== undefined && /child-(\d+)/.test(worktree.branch)
             ? Number(worktree.branch.match(/child-(\d+)/)![1])

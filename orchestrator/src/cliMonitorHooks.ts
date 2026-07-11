@@ -166,7 +166,8 @@ export function buildCliMonitorSpawnSpec(input: {
 
 /**
  * Map a finished monitored CLI child into a WorkerResult by reading the result
- * sidecar the bridge wrote (fail-closed when missing / unreadable).
+ * sidecar the bridge wrote. A missing sidecar is retry telemetry, not a
+ * worker-outcome verdict.
  */
 export function workerResultFromMonitorSidecar(
   handle: WorkerMonitorHandle,
@@ -210,9 +211,9 @@ export function workerResultFromMonitorSidecar(
 
   if (exitCode === 0) {
     return markMissingMonitorSidecarResult({
-      kind: "malformed",
+      kind: "failed",
       reason:
-        `monitored CLI worker ${handle.stepId} exited 0 but wrote no usable ` +
+        `telemetry: monitored CLI worker ${handle.stepId} exited 0 but wrote no usable ` +
         `WorkerResult sidecar at ${expectedPath}`,
     });
   }

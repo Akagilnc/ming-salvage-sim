@@ -71,7 +71,13 @@ import {
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
-import { effortForLiveOfficer } from "../modelRegistry.js";
+import {
+  effortForLiveOfficer,
+  isBillingPoolDispatchId,
+  resolveModelSlugForPool,
+  unavailableProviderAuth,
+  type ProviderAuthAvailability,
+} from "../modelRegistry.js";
 import {
   agentForSlug,
   candidateBranches,
@@ -80,6 +86,7 @@ import {
   parseCoderSelfReport,
   reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GROK_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
@@ -125,6 +132,7 @@ import {
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
+  readWorkerOutcomeSidecar,
   readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
 import {
@@ -192,6 +200,7 @@ import type {
   ReconcileGit,
   VerifyFamilyShippedPrRequest,
   VerifyFamilyShippedPrResult,
+  FindFamilyShippedPrResult,
 } from "./types.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
@@ -483,7 +492,13 @@ export class RealFamilyBackend implements FamilyBackend {
   protected verifyFamilyShipPr(input: {
     readonly pr: string;
     readonly familyBase: string;
-  }): { ok: true; headOid: string } | { ok: false; reason: string } {
+  }):
+    | { ok: true; headOid: string }
+    | {
+        ok: false;
+        kind: "pr_missing" | "observation_failed" | "mismatch";
+        reason: string;
+      } {
     try {
       const raw = this.sh(
         "gh",
@@ -507,32 +522,47 @@ export class RealFamilyBackend implements FamilyBackend {
       if (parsed.state !== "OPEN") {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" is ${String(parsed.state)} but must be OPEN`,
         };
       }
       if (parsed.baseRefName !== this.opts.base) {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" targets base "${String(parsed.baseRefName)}" but expected "${this.opts.base}"`,
         };
       }
       if (parsed.headRefName !== input.familyBase) {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" uses head "${String(parsed.headRefName)}" but expected "${input.familyBase}"`,
         };
       }
       if (typeof parsed.headRefOid !== "string" || parsed.headRefOid.trim().length === 0) {
         return {
           ok: false,
+          kind: "mismatch",
           reason: `family PR "${input.pr}" did not expose a non-empty headRefOid`,
         };
       }
       return { ok: true, headOid: parsed.headRefOid.trim() };
     } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      // Only an explicit host/gh not-found answer proves absence. Authentication,
+      // transport, rate-limit, JSON, and every unknown CLI failure mean merely
+      // that host truth could not be observed.
+      const kind =
+        /(?:pull request|pr).*(?:not found|does not exist)|no pull requests found|could not resolve to a pullrequest/i.test(
+          detail,
+        )
+        ? "pr_missing"
+        : "observation_failed";
       return {
         ok: false,
-        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${err instanceof Error ? err.message : String(err)}`,
+        kind,
+        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${detail}`,
       };
     }
   }
@@ -548,12 +578,50 @@ export class RealFamilyBackend implements FamilyBackend {
     if (verifiedPr.headOid !== request.expectedHead) {
       return {
         ok: false,
+        kind: "mismatch",
         reason:
           `family PR "${request.pr}" head ${verifiedPr.headOid} ` +
           `does not match current family HEAD ${request.expectedHead}`,
       };
     }
     return { ok: true };
+  }
+
+  async findFamilyShippedPr(input: {
+    readonly familyBase: string;
+    readonly expectedHead: string;
+  }): Promise<FindFamilyShippedPrResult> {
+    try {
+      const raw = this.sh("gh", [
+        "pr", "list", "--repo", this.opts.repo, "--base", this.opts.base,
+        "--head", input.familyBase, "--state", "open", "--json", "url,headRefOid",
+      ], this.opts.workingRepo);
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return {
+          ok: false,
+          kind: "observation_failed",
+          reason: "could not discover family PR via gh pr list: host response was not an array",
+        };
+      }
+      const matches = parsed as readonly { readonly url?: unknown; readonly headRefOid?: unknown }[];
+      if (matches.length === 0) {
+        return { ok: false, kind: "pr_missing", reason: `host has no open family PR for branch "${input.familyBase}"` };
+      }
+      if (matches.length !== 1) {
+        return { ok: false, kind: "mismatch", reason: `host found ${matches.length} open family PRs for branch "${input.familyBase}"` };
+      }
+      const match = matches[0]!;
+      if (typeof match.url !== "string" || match.url.trim().length === 0) {
+        return { ok: false, kind: "mismatch", reason: "host family PR has no URL" };
+      }
+      if (match.headRefOid !== input.expectedHead) {
+        return { ok: false, kind: "mismatch", reason: `host family PR head ${String(match.headRefOid)} does not match current family HEAD ${input.expectedHead}` };
+      }
+      return { ok: true, pr: match.url.trim() };
+    } catch (err) {
+      return { ok: false, kind: "observation_failed", reason: `could not discover family PR via gh pr list: ${err instanceof Error ? err.message : String(err)}` };
+    }
   }
 
   /**
@@ -565,8 +633,28 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` + pure (no container/I/O) so a unit test asserts the resolved model
    * without spinning a real `sc.run`.
    */
-  protected agentForSpec(spec: WorkerSpec): sc.AgentProvider {
-    return agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec));
+  protected agentForSpec(spec: WorkerSpec, ctx?: Pick<DispatchContext, "billingPool">): sc.AgentProvider {
+    return agentForSlug(
+      spec.model,
+      effortForLiveOfficer(spec.model, spec),
+      isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
+    );
+  }
+
+  /** Typed provider gate shared by every family `sc.run` dispatch. */
+  protected unavailableWorkerProviderAuth(
+    spec: Pick<WorkerSpec, "model">,
+    auth: Pick<CmrAuth | ShipAuth, "claudeToken" | "grokAuthDir" | "providerAuth">,
+    ctx?: Pick<DispatchContext, "billingPool">,
+  ): "claude" | "grok" | undefined {
+    const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
+    return unavailableProviderAuth(
+      resolveModelSlugForPool(spec.model, pool).provider,
+      auth.providerAuth ?? {
+        claude: auth.claudeToken !== undefined,
+        grok: auth.grokAuthDir !== undefined,
+      },
+    );
   }
 
   // ─────────────────────────── family ledger ───────────────────────────
@@ -745,7 +833,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // the bound on the CURRENT worktree as-is. A returned structured outcome is
     // telemetry; git post-state below is the only resolve decision. A persistent
     // crash re-throws.
-    await retryProcessCrash(async () => {
+    const outcome = await retryProcessCrash(async () => {
       // If a PRIOR crashed attempt already COMMITTED the merge, the child is LANDED
       // (git truth). Do NOT re-run the merger on a no-conflict state — recognize the
       // landed merge instead (the post-state check below then returns it clean).
@@ -754,6 +842,14 @@ export class RealFamilyBackend implements FamilyBackend {
       }
       return await this.runMergerAgent(req);
     });
+    if (outcome.escalation !== undefined) {
+      return {
+        familyHead: this.sh("git", ["rev-parse", this.opts.familyBase], repo),
+        familyHeadBefore,
+        childHead,
+        escalation: outcome.escalation,
+      };
+    }
     // The worker has exited — VERIFY git truth before returning clean (the prompt's
     // "resolve → add → commit, never --abort" is a soft LLM instruction, not a
     // postcondition). Failure modes a clean return
@@ -797,7 +893,7 @@ export class RealFamilyBackend implements FamilyBackend {
       this.isAncestorOf(childHead, familyHead, repo) &&
       this.isMergeCommit(familyHead, repo) &&
       !this.hasUnmergedEntries(repo) &&
-      !this.hasConflictMarkers(repo)
+      !this.hasConflictMarkers(familyHeadBefore, familyHead, repo)
     );
   }
 
@@ -820,11 +916,18 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** A merger commit containing conflict markers is not a clean resolution. */
-  protected hasConflictMarkers(repo: string): boolean {
+  protected hasConflictMarkers(before: string, after: string, repo: string): boolean {
     try {
+      const changed = this.sh(
+        "git",
+        ["diff", "--diff-filter=AM", "--name-only", "-z", before, after],
+        repo,
+      );
+      const paths = changed.split("\0").filter(Boolean);
+      if (paths.length === 0) return false;
       const matches = this.sh(
         "git",
-        ["grep", "-n", "-E", "^(<<<<<<<|=======|>>>>>>>)( |$)", "--", "."],
+        ["grep", "-n", "-E", "^(<<<<<<<|=======|>>>>>>>)( |$)", after, "--", ...paths],
         repo,
       );
       return matches.trim().length > 0;
@@ -856,7 +959,7 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected async runMergerAgent(
     req: ConflictResolveRequest,
-  ): Promise<{ resolved: boolean; reason?: string }> {
+  ): Promise<{ resolved: boolean; reason?: string; escalation?: FamilyEscalation }> {
     // FAIL-CLOSED on the WORKER's OWN auth (integ-cmr int-r2 A-1, mirroring the
     // cmr/ship worker preflight): when the merger slot resolves to a Claude-family
     // model, the Claude OAuth token is THIS worker's auth, not a degradable leg.
@@ -1534,6 +1637,14 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountCmrAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalate",
+          reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
+          diagnosis: "typed provider availability preflight rejected the cmr launch before sc.run",
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
@@ -1571,7 +1682,7 @@ export class RealFamilyBackend implements FamilyBackend {
           // symmetry): resolve the worker's slug through the same registry as the
           // single-slice + family ship paths — no constant that could silently drift
           // from the spec the runner declares.
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
           // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
           // sequencing and accounting.
@@ -1595,7 +1706,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -1631,6 +1742,14 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountCmrAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "malformed",
+          reason: `cmr outcome rewrite cannot resume without ${missingProvider} auth`,
+          sessionId: protocolFailure.sessionId,
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "malformed",
@@ -1648,7 +1767,7 @@ export class RealFamilyBackend implements FamilyBackend {
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: this.opts.workingRepo,
           sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding),
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           maxIterations: 1,
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
@@ -1682,7 +1801,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -1714,6 +1833,16 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountShipAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalated",
+          escalation: {
+            reason: `no ${missingProvider} auth — the family coder-fix provider cannot start`,
+            diagnosis: "typed provider availability preflight rejected the coder-fix launch before sc.run",
+          },
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
@@ -1750,7 +1879,7 @@ export class RealFamilyBackend implements FamilyBackend {
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
             sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding, fixFocusLanding),
-            agent: this.agentForSpec(spec),
+            agent: this.agentForSpec(spec, ctx),
             maxIterations: spec.maxIter,
             completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
@@ -1767,7 +1896,7 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -1906,6 +2035,9 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
@@ -1998,6 +2130,17 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountShipAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalated",
+          escalation: {
+            reason: `no ${missingProvider} auth — the family ${spec.kind} provider cannot start`,
+            diagnosis: "typed provider availability preflight rejected the review-loop launch before sc.run",
+            synthesizedFailure: true,
+          },
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
@@ -2035,7 +2178,7 @@ export class RealFamilyBackend implements FamilyBackend {
             fixFocusLanding,
             outcomeLanding,
           ),
-          agent: this.agentForSpec(spec),
+          agent: this.agentForSpec(spec, ctx),
           maxIterations: spec.maxIter,
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
@@ -2052,7 +2195,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -2171,6 +2314,9 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
@@ -2492,6 +2638,22 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(tempCodexDir, { recursive: true, force: true });
       }
     }
+    // grok auth.json → a per-run dir mounted at the Grok CLI's fixed home path.
+    // Like codex/agy, an absent source degrades just this reviewer leg; unique
+    // mkdtemp dirs prevent concurrent family CMR workers from sharing credentials.
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, "cmr-grok-auth-"));
+      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
 
     // agy OAuth token → a per-run WRITABLE dir mounted at the antigravity config
     // path (the agy CLI writes cache/log under its config dir, so it must NOT be
@@ -2532,7 +2694,14 @@ export class RealFamilyBackend implements FamilyBackend {
     // the ship worker's readGhToken extraction (host OS keyring, not a portable
     // hosts.yml) — but NOT preflighted: a missing token degrades the gate's authority,
     // it does not block the cmr worker (the cmr worker has no `gh pr create` to fail).
-    return { codexAuthDir, agyDir, claudeToken, ghToken: this.readGhToken() };
+    return {
+      codexAuthDir,
+      agyDir,
+      grokAuthDir,
+      claudeToken,
+      ghToken: this.readGhToken(),
+      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+    };
   }
 
   /**
@@ -2620,6 +2789,9 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.agyDir !== undefined) {
       mounts.push({ hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR });
     }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -2688,8 +2860,19 @@ export class RealFamilyBackend implements FamilyBackend {
       pr: outcome.pr,
       familyBase: ctx.familyBase,
     });
-    if (!verifiedPr.ok) {
-      return { kind: "malformed", reason: verifiedPr.reason };
+    // A host-confirmed metadata mismatch is observed-but-unexpected state, not a
+    // malformed worker response. Escalate it durably so verifyCmr never maps a
+    // deliberately closed or otherwise mismatched claimed PR into another
+    // mutating ship dispatch. Missing PRs and unknown observations remain
+    // lifecycle outcomes owned by verifyCmr.
+    if (!verifiedPr.ok && verifiedPr.kind === "mismatch") {
+      return {
+        kind: "escalated",
+        escalation: {
+          reason: verifiedPr.reason,
+          diagnosis: "claimed family PR metadata was observed but did not match the delivery contract",
+        },
+      };
     }
     return {
       kind: "completed",
@@ -2698,7 +2881,7 @@ export class RealFamilyBackend implements FamilyBackend {
         branch: outcome.branch,
         status: outcome.status,
         pr: outcome.pr,
-        prHead: verifiedPr.headOid,
+        ...(verifiedPr.ok ? { prHead: verifiedPr.headOid } : {}),
       },
     };
   }
@@ -2737,6 +2920,15 @@ export class RealFamilyBackend implements FamilyBackend {
     // returns (online review r1 — 3 bots: leaked temp dirs).
     const auth = this.mountShipAuth();
     try {
+      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalate",
+          reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
+          diagnosis:
+            "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; typed provider availability preflight rejected the ship launch before sc.run",
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
@@ -2775,7 +2967,7 @@ export class RealFamilyBackend implements FamilyBackend {
       this.writeShipFocusFile(ctx);
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
       try {
-        const result = await this.shipContainerRun(spec, auth, outcomeLanding);
+        const result = await this.shipContainerRun(spec, auth, outcomeLanding, ctx);
         return shipOutcomeFromResult({
           ...result,
           outcomePath: outcomeLanding.path,
@@ -2784,7 +2976,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -2798,6 +2990,7 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    ctx?: Pick<DispatchContext, "billingPool">,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return sc.run({
       name: "family-ship",
@@ -2809,7 +3002,7 @@ export class RealFamilyBackend implements FamilyBackend {
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
       // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
       // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
-      agent: this.agentForSpec(spec),
+      agent: this.agentForSpec(spec, ctx),
       maxIterations: spec.maxIter,
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
@@ -2936,6 +3129,19 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(tempCodexDir, { recursive: true, force: true });
       }
     }
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, "ship-grok-auth-"));
+      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
     let claudeToken: string | undefined;
     try {
       const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
@@ -2947,7 +3153,13 @@ export class RealFamilyBackend implements FamilyBackend {
       // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
       // route slots simply run without this env var.
     }
-    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
+    return {
+      codexAuthDir,
+      grokAuthDir,
+      claudeToken,
+      ghToken: this.readGhToken(),
+      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+    };
   }
 
   /**
@@ -3004,6 +3216,9 @@ export class RealFamilyBackend implements FamilyBackend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     if (outcomeLanding !== undefined) {
       mounts.push({
@@ -3262,6 +3477,8 @@ export interface CmrAuth {
   readonly codexAuthDir?: string;
   /** Per-run agy token dir (host-mirrored antigravity config), or undefined. */
   readonly agyDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3272,6 +3489,8 @@ export interface CmrAuth {
    * (it falls back to commit-titles/test-files) — it never blocks the cmr worker.
    */
   readonly ghToken?: string;
+  /** Typed provider availability used before the top-level worker launches. */
+  readonly providerAuth?: ProviderAuthAvailability;
 }
 
 /**
@@ -3285,6 +3504,8 @@ export interface CmrAuth {
 export interface ShipAuth {
   /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
   readonly codexAuthDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3293,6 +3514,8 @@ export interface ShipAuth {
    * (`gh pr create`), so `runShipWorker` preflights it and escalates when absent.
    */
   readonly ghToken?: string;
+  /** Typed provider availability used before the top-level worker launches. */
+  readonly providerAuth?: ProviderAuthAvailability;
 }
 
 /**
@@ -3321,20 +3544,24 @@ export function cmrOutcomeFromResult(result: {
   outcomePath?: string;
   stdout: string;
 }): CmrWorkerOutcome {
-  try {
-    if (result.outcomePath !== undefined) {
-      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
-      return classifyCmrOutcomePayload(
-        sidecar,
-        result.cmrReviewLegs ?? process.env,
-        "cmr worker outcome sidecar",
-      );
+  if (result.outcomePath !== undefined) {
+    try {
+      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+      if (sidecar !== undefined) {
+        return classifyCmrOutcomePayload(
+          sidecar,
+          result.cmrReviewLegs ?? process.env,
+          "cmr worker outcome sidecar",
+        );
+      }
+    } catch (err) {
+      return {
+        kind: "malformed",
+        reason:
+          `cmr worker outcome sidecar protocol failure: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      };
     }
-  } catch (err) {
-    // A runner-owned sidecar is preferred, but it is only one transport. Keep
-    // the sidecar failure for diagnostics and let the stdout protocol provide
-    // the next available outcome when the worker emitted one there.
-    void err;
   }
 
   return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
@@ -3726,17 +3953,19 @@ export function mergerOutcomeFromResult(result: {
   completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
-}): { resolved: boolean; reason?: string } {
-  try {
-    if (result.outcomePath !== undefined) {
-      const sidecar = readRequiredWorkerOutcomeSidecar(result.outcomePath);
-      return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
+}): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
+  if (result.outcomePath !== undefined) {
+    try {
+      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+      if (sidecar !== undefined) {
+        return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
+      }
+    } catch (err) {
+      return {
+        resolved: false,
+        reason: `merger worker outcome sidecar protocol failure: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
-  } catch (err) {
-    // Sidecar is the preferred telemetry source, not a reason to discard a
-    // usable stdout result. Fall through so the telemetry row can still carry
-    // the worker's structured merger signal.
-    void err;
   }
   return parseMergerOutcome(result.stdout);
 }
@@ -3798,7 +4027,7 @@ export function parseMergerOutcome(stdout: string): {
 function classifyMergerOutcomePayload(
   parsed: unknown,
   source: string,
-): { resolved: boolean; reason?: string } {
+): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
   // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"`; the
   // strict schemas reject every non-object, but guard explicitly so the message
   // stays specific (agy R1: a non-object must never crash or coerce to resolved).
@@ -3816,6 +4045,14 @@ function classifyMergerOutcomePayload(
       // code (online review r3, gemini). `diagnosis` stays an optional schema field.
       resolved: false,
       reason: escalate.data.escalate.reason,
+      escalation: {
+        reason: escalate.data.escalate.reason,
+        ...(escalate.data.escalate.diagnosis !== undefined
+          ? { diagnosis: escalate.data.escalate.diagnosis }
+          : {}),
+        escalationKind: "decision",
+        phase: "wave",
+      },
     };
   }
   // No strict schema matched → off-contract (mixed payload, extra key, blank
@@ -3926,14 +4163,14 @@ function parseOutcomePayload(
 ): { parsed: unknown; source: string } | { error: string } {
   if (outcomePath !== undefined) {
     try {
-      return {
-        parsed: readRequiredWorkerOutcomeSidecar(outcomePath),
-        source: `${tag} worker outcome sidecar`,
-      };
+      const sidecar = readWorkerOutcomeSidecar(outcomePath);
+      if (sidecar !== undefined) {
+        return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
+      }
     } catch (err) {
-      // The sidecar is first choice, not the only choice. Continue to the
-      // stdout tag so a broken/blank sidecar does not mask the worker result.
-      void err;
+      return {
+        error: `${tag} worker outcome sidecar protocol failure: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
   const last = extractLastTag(stdout, tag);
