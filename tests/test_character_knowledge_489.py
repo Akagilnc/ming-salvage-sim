@@ -71,6 +71,41 @@ def test_every_distinct_office_type_gets_a_distinct_current_world_slice(game):
             )
 
 
+def test_role_slice_contains_only_the_current_office_roster(game):
+    db, state, content = game
+    characters_by_type = {
+        character.office_type: character
+        for character in content.characters.values()
+        if character.office_type in _OFFICE_BUCKETS
+    }
+
+    for office_type, character in characters_by_type.items():
+        world = db.get_character_knowledge(state, character.name)["world"]
+        role_facts = world["role"]
+
+        assert office_type in role_facts
+        for name, candidate in content.characters.items():
+            if candidate.office_type == office_type:
+                assert name in role_facts
+            else:
+                assert name not in role_facts
+
+
+def test_different_office_types_do_not_share_the_same_role_facts(game):
+    db, state, content = game
+    representatives = {}
+    for character in content.characters.values():
+        if character.office_type in _OFFICE_BUCKETS:
+            representatives.setdefault(character.office_type, character)
+
+    role_facts = {
+        office_type: db.get_character_knowledge(state, character.name)["world"]["role"]
+        for office_type, character in representatives.items()
+    }
+
+    assert len(set(role_facts.values())) == len(role_facts)
+
+
 def test_turn_zero_knowledge_is_role_specific_and_restores(game):
     db, state, content = game
     household = next(c for c in content.characters.values() if c.office_type == "户部")
