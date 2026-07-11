@@ -2399,6 +2399,14 @@ describe("realBackend reconcileCoderCommits", () => {
     ).toThrow(/self-report/i);
   });
 
+  it("throws when the coder reports more commits than a nonzero git count", () => {
+    // Keep the fail-closed rule broad: a real single final commit must not make
+    // an inflated self-report acceptable merely because git is nonzero.
+    expect(() =>
+      reconcileCoderCommits({ committed: true, commitsAdded: 3 }, 1),
+    ).toThrow(/self-report/i);
+  });
+
   it("continues with a discrepancy when git has more commits than the coder reported", () => {
     const out = reconcileCoderCommits(
       { committed: true, commitsAdded: 1 },
