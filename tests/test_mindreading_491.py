@@ -130,6 +130,24 @@ def test_mindreading_reads_current_target_ledger_after_persisted_changes(game):
     assert "未见深交" in payload["truths"]["君臣账"]
 
 
+def test_party_ledger_names_db_faction_and_identity_split_for_wen_tiren(game):
+    db, state, content = game
+    reader = content.characters["王承恩"]
+    target = content.characters["温体仁"]
+
+    # The DB is the live ledger; the in-memory roster object may be stale.
+    db.conn.execute(
+        "UPDATE characters SET faction=?, identity=? WHERE name=?",
+        ("皇党", 18, target.name),
+    )
+    db.conn.commit()
+
+    payload = build_mindreading_payload(db, state, reader, target, "臣愿担责。")
+
+    assert "名义党派：皇党" in payload["truths"]["党账"]
+    assert "对本党的认同：几乎不染党色" in payload["truths"]["党账"]
+
+
 def test_reply_is_an_explicit_pipeline_input():
     signature = inspect.signature(build_mindreading_payload)
     assert "minister_reply" in signature.parameters
