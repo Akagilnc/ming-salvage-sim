@@ -23,8 +23,16 @@ import {
   type TelemetryDispatchRecord,
   type TelemetryEnvironmentRecord,
 } from "../../src/telemetry.js";
-import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
-import type { Backend } from "../../src/types.js";
+import type {
+  Backend,
+  DispatchContext,
+  IssueMeta,
+  IssueSnapshot,
+  StepOutput,
+  WorkerResult,
+  WorkerSpec,
+  WorktreeHandle,
+} from "../../src/types.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -183,6 +191,61 @@ class FamilyTelemetryBackend implements FamilyBackend {
   }
 }
 
+/**
+ * Empty-epic family runs only call smokeModelRoute on the single-slice backend
+ * (no children → no resume/runStep). Implements Backend so the test stays
+ * type-safe without `as unknown as Backend`.
+ */
+class SmokeOnlySingleSliceBackend implements Backend {
+  async smokeModelRoute(
+    _route: Parameters<Backend["smokeModelRoute"]>[0],
+  ): Promise<Awaited<ReturnType<Backend["smokeModelRoute"]>>> {
+    return smokedRoute();
+  }
+
+  async findResumeState(): Promise<undefined> {
+    return undefined;
+  }
+
+  async cleanResidue(): Promise<void> {}
+
+  async resumeSession(): Promise<StepOutput> {
+    throw new Error("smoke-only single-slice backend: resumeSession unused");
+  }
+
+  async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+    return {
+      number: issueNumber,
+      isReadyForAgent: true,
+      hasSubIssues: false,
+      isClosed: false,
+      openBlockedBy: [],
+    };
+  }
+
+  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+    return { number: issueNumber, body: "", comments: [], agentBrief: "" };
+  }
+
+  async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
+    return {
+      branch: `feat/issue-${issueNumber}`,
+      base,
+      path: `/wt/${issueNumber}`,
+    };
+  }
+
+  async writeSnapshot(): Promise<void> {}
+
+  async runStep(): Promise<StepOutput> {
+    throw new Error("smoke-only single-slice backend: runStep unused");
+  }
+
+  async push(): Promise<void> {}
+
+  async writeLedger(): Promise<void> {}
+}
+
 describe("#786 family dispatch telemetry", () => {
   it("keeps two full family runner invocations distinct in one durable telemetry sidecar", async () => {
     const durable = join(tempDir("orch-809-family-runner-sidecar-"), ".ledger-809");
@@ -191,11 +254,7 @@ describe("#786 family dispatch telemetry", () => {
     // dispatchFamilyWorkerWithMonitor. No manual runId is injected here.
     const first = new FamilyTelemetryBackend(durable);
     const second = new FamilyTelemetryBackend(durable);
-    const singleSliceBackend = {
-      async smokeModelRoute() {
-        return smokedRoute();
-      },
-    } as unknown as Backend;
+    const singleSliceBackend = new SmokeOnlySingleSliceBackend();
 
     await runFamily({
       epic: { issue: 809, children: [] },
