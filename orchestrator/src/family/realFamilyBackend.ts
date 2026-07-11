@@ -69,6 +69,7 @@ import {
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
+import { resolveHostTruthPr } from "../autoMerge.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
 import { effortForLiveOfficer } from "../modelRegistry.js";
@@ -484,62 +485,21 @@ export class RealFamilyBackend implements FamilyBackend {
   protected verifyFamilyShipPr(input: {
     readonly pr: string;
     readonly familyBase: string;
-  }): { ok: true; headOid: string } | { ok: false; reason: string } {
+  }): { ok: true; headOid: string; prUrl: string } | { ok: false; reason: string } {
     try {
-      const raw = this.sh(
-        "gh",
-        [
-          "pr",
-          "view",
-          input.pr,
-          "--repo",
-          this.opts.repo,
-          "--json",
-          "baseRefName,headRefName,headRefOid,headRepositoryOwner,state",
-        ],
-        this.opts.workingRepo,
+      const resolved = resolveHostTruthPr(
+        (file, args) => this.sh(file, args, this.opts.workingRepo),
+        this.opts.repo,
+        input.familyBase,
+        input.pr,
       );
-      const parsed = JSON.parse(raw) as {
-        readonly baseRefName?: unknown;
-        readonly headRefName?: unknown;
-        readonly headRefOid?: unknown;
-        readonly headRepositoryOwner?: { readonly login?: unknown } | null;
-        readonly state?: unknown;
-      };
-      if (parsed.state !== "OPEN") {
+      if (resolved.baseRefName !== this.opts.base) {
         return {
           ok: false,
-          reason: `family PR "${input.pr}" is ${String(parsed.state)} but must be OPEN`,
+          reason: `family PR "${resolved.prUrl}" targets base "${String(resolved.baseRefName)}" but expected "${this.opts.base}"`,
         };
       }
-      if (parsed.baseRefName !== this.opts.base) {
-        return {
-          ok: false,
-          reason: `family PR "${input.pr}" targets base "${String(parsed.baseRefName)}" but expected "${this.opts.base}"`,
-        };
-      }
-      if (parsed.headRefName !== input.familyBase) {
-        return {
-          ok: false,
-          reason: `family PR "${input.pr}" uses head "${String(parsed.headRefName)}" but expected "${input.familyBase}"`,
-        };
-      }
-      const expectedHeadOwner = this.opts.repo.split("/", 1)[0];
-      if (parsed.headRepositoryOwner?.login !== expectedHeadOwner) {
-        return {
-          ok: false,
-          reason:
-            `family PR "${input.pr}" has head repository owner ` +
-            `"${String(parsed.headRepositoryOwner?.login)}" but expected "${expectedHeadOwner}"`,
-        };
-      }
-      if (typeof parsed.headRefOid !== "string" || parsed.headRefOid.trim().length === 0) {
-        return {
-          ok: false,
-          reason: `family PR "${input.pr}" did not expose a non-empty headRefOid`,
-        };
-      }
-      return { ok: true, headOid: parsed.headRefOid.trim() };
+      return { ok: true, headOid: resolved.headOid, prUrl: resolved.prUrl };
     } catch (err) {
       return {
         ok: false,
@@ -2664,7 +2624,7 @@ export class RealFamilyBackend implements FamilyBackend {
         kind: "ship",
         branch: outcome.branch,
         status: outcome.status,
-        pr: outcome.pr,
+        pr: verifiedPr.prUrl,
         prHead: verifiedPr.headOid,
       },
     };
@@ -3021,7 +2981,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (!verifiedPr.ok) {
       throw new Error(verifiedPr.reason);
     }
-    return { url, prHead: verifiedPr.headOid };
+    return { url: verifiedPr.prUrl, prHead: verifiedPr.headOid };
   }
 
   // ─────────────────────────── aborted / escalate ───────────────────────────

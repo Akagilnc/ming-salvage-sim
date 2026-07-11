@@ -640,8 +640,13 @@ describe("#334 ADR 0030 worker routing", () => {
       args.slice(0, 2).join(" ") === "pr list"
         ? JSON.stringify([
             {
+              number: 824,
               url: "pr://slice/offline-824",
+              state: "OPEN",
+              headRefName: "feat/orchestrator/issue-334",
+              headRefOid: "host-confirmed-head",
               headRepositoryOwner: { login: "Akagilnc" },
+              mergeStateStatus: "CLEAN",
             },
           ])
         : "",

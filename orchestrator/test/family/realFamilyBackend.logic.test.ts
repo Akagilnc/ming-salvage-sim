@@ -821,11 +821,14 @@ class FakeSeamsBackend extends RealFamilyBackend {
   cmrCalls: IntegratedCmrRequest[] = [];
   shCalls: Array<{ file: string; args: string[] }> = [];
   prViewResponse: unknown = {
+    number: 777,
+    url: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
     baseRefName: "main",
     headRefName: "family/293-base",
     headRefOid: " pr-head-1 ",
     headRepositoryOwner: { login: "Akagilnc" },
     state: "OPEN",
+    mergeStateStatus: "CLEAN",
   };
   mergeInProgressFake = false;
   // STATEFUL fake of the family-base ref so the resolve postcondition (the family
@@ -881,8 +884,14 @@ class FakeSeamsBackend extends RealFamilyBackend {
       return "https://github.com/Akagilnc/ming-salvage-sim/pull/777";
     }
     if (file === "gh" && args[0] === "pr" && args[1] === "view") {
-      return JSON.stringify(this.prViewResponse);
+      return JSON.stringify({
+        number: 777,
+        url: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
+        mergeStateStatus: "CLEAN",
+        ...(this.prViewResponse as Record<string, unknown>),
+      });
     }
+    if (file === "gh" && args[0] === "pr" && args[1] === "list") return "[]";
     return "";
   }
 
@@ -1936,9 +1945,10 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
     expect(b.verifyShipPr("https://github.com/Akagilnc/ming-salvage-sim/pull/777", "family/293-base")).toEqual({
       ok: true,
       headOid: "pr-head-777",
+      prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
     });
     const view = b.shCalls.find((c) => c.file === "gh" && c.args[0] === "pr" && c.args[1] === "view");
-    expect(view?.args).toContain("baseRefName,headRefName,headRefOid,headRepositoryOwner,state");
+    expect(view?.args).toContain("number,url,state,baseRefName,headRefName,headRefOid,headRepositoryOwner,mergeStateStatus,mergeable");
   });
 
   it("rejects a same-named family branch when its PR head belongs to another fork", () => {
@@ -1953,7 +1963,7 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
 
     expect(b.verifyShipPr("pr://foreign-head", "family/293-base")).toMatchObject({
       ok: false,
-      reason: expect.stringMatching(/head repository owner/i),
+      reason: expect.stringMatching(/no open PR/i),
     });
   });
 
@@ -1995,14 +2005,14 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
 
     await expect(
       b.verifyFamilyShippedPr({
-        pr: "pr://current",
+        pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
         familyBase: "family/293-base",
         expectedHead: "pr-head-1",
       }),
     ).resolves.toEqual({ ok: true });
     await expect(
       b.verifyFamilyShippedPr({
-        pr: "pr://stale",
+        pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
         familyBase: "family/293-base",
         expectedHead: "new-head",
       }),

@@ -805,8 +805,13 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
       calls.push(`${file} ${args.join(" ")}`);
       return JSON.stringify([
         {
+          number: 42,
           url: "https://github.com/o/r/pull/42",
+          state: "OPEN",
+          headRefName: "fix/824-radius",
+          headRefOid: "head-42",
           headRepositoryOwner: { login: "o" },
+          mergeStateStatus: "CLEAN",
         },
       ]);
     }, "o/r", "fix/824-radius");
@@ -838,8 +843,13 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
             })
           : JSON.stringify([
               {
+                number: 100,
                 url: "https://github.com/o/r/pull/100",
+                state: "OPEN",
+                headRefName: "fix/824-radius",
+                headRefOid: "head-100",
                 headRepositoryOwner: { login: "o" },
+                mergeStateStatus: "CLEAN",
               },
             ]),
       "o/r",
