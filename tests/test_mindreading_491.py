@@ -31,6 +31,16 @@ def test_only_the_unique_attendant_slot_can_mindread(game):
         assert not is_inner_court_attendant(content.characters[name])
 
 
+def test_inner_court_attendant_rejects_candidate_titles_that_only_contain_the_slot_name(game):
+    """Only the current slot, not a similarly worded inner-court title, may mindread."""
+    _db, _state, content = game
+    candidate = replace(
+        content.characters["王承恩"], office="御前近臣候补", office_type="司礼监"
+    )
+
+    assert not is_inner_court_attendant(candidate)
+
+
 def test_mindreading_and_scouting_consume_the_same_precision_contract(game, monkeypatch):
     calls = []
 
