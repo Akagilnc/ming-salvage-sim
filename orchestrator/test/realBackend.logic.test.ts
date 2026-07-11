@@ -123,6 +123,7 @@ function cleanupTempHomes(): void {
 }
 
 afterEach(cleanupTempHomes);
+afterEach(() => vi.restoreAllMocks());
 afterAll(cleanupTempHomes);
 
 describe("#685 route smoke hardening", () => {
@@ -1872,6 +1873,46 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         { outcomeLanding: { path: outcomePath, sandboxPath: ".orchestrator-outcome.json" } },
       ),
     ).toEqual(payload);
+  });
+
+  it("does not label a multi-iteration coder stdout tag as a legacy fallback", () => {
+    const backend = makeBackend();
+    const rawOutputFor = (backend as unknown as {
+      rawOutputFor(
+        result: { output?: unknown; stdout: string },
+        spec: StepSpec,
+        typedOutputUsed: boolean,
+      ): unknown;
+    }).rawOutputFor.bind(backend);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(
+      rawOutputFor(
+        { stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>' },
+        coderSpec,
+        false,
+      ),
+    ).toEqual({ committed: false, commitsAdded: 0 });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("keeps the legacy advisory when stdout substitutes for missing typed output", () => {
+    const backend = makeBackend();
+    const rawOutputFor = (backend as unknown as {
+      rawOutputFor(
+        result: { output?: unknown; stdout: string },
+        spec: StepSpec,
+        typedOutputUsed: boolean,
+      ): unknown;
+    }).rawOutputFor.bind(backend);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(
+      rawOutputFor({ stdout: '<review>{"findings": []}</review>' }, reviewerSpec, true),
+    ).toEqual({ findings: [] });
+    expect(warn).toHaveBeenCalledWith(
+      "[orchestrator] telemetry: S3-reviewer used legacy stdout tag compatibility fallback",
+    );
   });
 
   it("reclaims the temporary Grok OAuth copy after a worker container exits", async () => {
