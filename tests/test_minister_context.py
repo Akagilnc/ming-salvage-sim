@@ -669,6 +669,11 @@ def test_final_minister_context_qualifies_unmocked_faction_and_power_reports(gam
     # make this minister's durable current role take the court projection.
     db.conn.execute("UPDATE characters SET office_type='内阁' WHERE name=?", (minister.name,))
     db.conn.commit()
+    # The report producers intentionally retain engine values for non-audience
+    # consumers; this test proves the final minister boundary, rather than a
+    # mock, removes those values before the agent receives instructions.
+    assert "满意17" in db.faction_report()
+    assert "威望19" in db.power_report(exclude_self=True)
     captured = {}
 
     def fake_agent(**kwargs):
