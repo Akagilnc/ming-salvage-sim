@@ -179,6 +179,27 @@ def test_turn_zero_knowledge_is_role_specific_and_restores(game):
     assert any(item["source_id"] == "opening:anti_eunuch" for item in household_view["public_events"])
 
 
+def test_restored_knowledge_uses_current_db_office_after_transfer(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+
+    # Simulate a persisted transfer followed by restore while the original
+    # content roster is still resident in memory.  The DB row is the durable
+    # current-world source; a stale content object must not keep the old rail.
+    db.conn.execute(
+        "UPDATE characters SET office = ?, office_type = ? WHERE name = ?",
+        ("户部尚书", "户部", minister.name),
+    )
+    db.conn.commit()
+    restored = db.load_state()
+
+    view = db.get_character_knowledge(restored, minister.name)
+
+    assert view["office_type"] == "户部"
+    assert "treasury" in view["world"]
+    assert "personnel" not in view["world"]
+
+
 def test_public_directive_is_seen_by_uninvolved_minister_but_secret_exclusion_wins(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")

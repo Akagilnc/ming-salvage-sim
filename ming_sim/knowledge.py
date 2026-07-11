@@ -96,8 +96,23 @@ def _world(
 
 def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[str, object]:
     character = db.content.characters.get(character_name) if db.content else None
-    office_type = str(getattr(character, "office_type", "") or "")
-    office_name = str(getattr(character, "office", "") or "")
+    # The content object is the seed/in-memory roster and can lag behind a
+    # restored save.  The characters table is the durable current-world source
+    # for the position rail, so always prefer it when this is a real GameDB.
+    current = None
+    if hasattr(db, "conn"):
+        current = db.conn.execute(
+            "SELECT office, office_type FROM characters WHERE name = ?",
+            (character_name,),
+        ).fetchone()
+    office_type = str(
+        (current["office_type"] if current is not None else getattr(character, "office_type", ""))
+        or ""
+    )
+    office_name = str(
+        (current["office"] if current is not None else getattr(character, "office", ""))
+        or ""
+    )
     world = _world(db, state, office_type)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
