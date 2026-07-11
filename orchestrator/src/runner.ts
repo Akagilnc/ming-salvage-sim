@@ -2751,14 +2751,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   };
   const reviewerSlugsForRelayCandidate = (
     candidate: CoderRosterEntry,
+    wallStep: StepId,
   ): ReadonlyArray<string> => {
-    const candidateRoute = withCoderSlot(modelRoute, candidate.slug);
-    // Sol's owner-ratified landing route replaces the per-slice Sol reviewer
-    // with Opus. Its normal CMR collection may still include Sol, but that is
-    // not the reviewer checkpoint that this coder relay will enter.
-    return candidate.id === "sol@med"
-      ? [candidateRoute.slots.reviewer]
-      : reviewerSlugsFromRoute(candidateRoute);
+    if (wallStep === "S3" || wallStep === "S6") {
+      // A reviewer-wall baton lands in the reviewer slot, not the coder slot.
+      // Model its real route before checking the coder/reviewer separation.
+      const candidateRoute: ResolvedModelRoute = {
+        ...modelRoute,
+        slots: { ...modelRoute.slots, reviewer: candidate.slug },
+      };
+      return candidate.id === "sol@med"
+        ? [candidateRoute.slots.reviewer]
+        : reviewerSlugsFromRoute(candidateRoute);
+    }
+    if (wallStep === "S2" || wallStep === "S5") {
+      // S2/S5/default: the candidate becomes the coder, so Sol's landing
+      // route correctly replaces its reviewer with Opus.
+      const candidateRoute = withCoderSlot(modelRoute, candidate.slug);
+      // Sol's owner-ratified landing route replaces the per-slice Sol reviewer
+      // with Opus only when Sol actually becomes the coder. Its normal CMR
+      // collection may still include Sol, but that is not the reviewer
+      // checkpoint that a coder relay will enter.
+      return candidate.id === "sol@med"
+        ? [candidateRoute.slots.reviewer]
+        : reviewerSlugsFromRoute(candidateRoute);
+    }
+    // S7/S9–S12 batons do not become a coder or reviewer. Comparing that
+    // candidate against reviewer legs would falsely reject a worker for being
+    // its own ship/verify/fix leg rather than protecting self-review.
+    return [];
   };
 
   const relayBillingPoolForDispatch = (
@@ -4477,7 +4498,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   currentPool,
                   rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
                   pools,
-                  reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
+                  reviewerSlugsForCandidate: (candidate) =>
+                    reviewerSlugsForRelayCandidate(candidate, step),
                   now: relayNow(),
                   step,
                 });
@@ -4594,7 +4616,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools: resolveRelayPools(currentPool, err.disposition.resetAt),
-              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
+              reviewerSlugsForCandidate: (candidate) =>
+                reviewerSlugsForRelayCandidate(candidate, step),
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
@@ -4641,7 +4664,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools,
-              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
+              reviewerSlugsForCandidate: (candidate) =>
+                reviewerSlugsForRelayCandidate(candidate, step),
               now: relayNow(),
               step,
             });
@@ -4982,7 +5006,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools: resolveRelayPools(currentPool, err.disposition.resetAt),
-              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
+              reviewerSlugsForCandidate: (candidate) =>
+                reviewerSlugsForRelayCandidate(candidate, "S7"),
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
@@ -5030,7 +5055,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools,
-              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
+              reviewerSlugsForCandidate: (candidate) =>
+                reviewerSlugsForRelayCandidate(candidate, "S7"),
               now: relayNow(),
               step: "S7",
             });
@@ -6149,7 +6175,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools: resolveRelayPools(currentPool, err.disposition.resetAt),
-              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
+              reviewerSlugsForCandidate: (candidate) =>
+                reviewerSlugsForRelayCandidate(candidate, reviewStep),
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
@@ -6205,7 +6232,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools,
-              reviewerSlugsForCandidate: reviewerSlugsForRelayCandidate,
+              reviewerSlugsForCandidate: (candidate) =>
+                reviewerSlugsForRelayCandidate(candidate, reviewStep),
               now: relayNow(),
               step: reviewStep,
             });
