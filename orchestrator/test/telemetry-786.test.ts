@@ -646,6 +646,30 @@ describe("#786 telemetry pure helpers", () => {
     expect(await commitsBetweenAsync(missingRepo, "before", "after")).toBeUndefined();
   });
 
+  it("keeps text numstat metrics when the commit also contains a binary file", async () => {
+    const repo = tempDir("orch-786-binary-numstat-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "telemetry@example.test"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Telemetry Test"], { cwd: repo });
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    execFileSync("git", ["add", "base.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "base"], { cwd: repo });
+
+    mkdirSync(join(repo, "src"));
+    writeFileSync(join(repo, "src", "value.ts"), "export const value = true;\n");
+    writeFileSync(join(repo, "asset.bin"), Buffer.from([0, 1, 2, 3]));
+    execFileSync("git", ["add", "src/value.ts", "asset.bin"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "add text and binary files"], { cwd: repo });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    await expect(collectCommitMetricsAsync(repo, commit)).resolves.toMatchObject({
+      files: 2,
+      insertions: 1,
+      deletions: 0,
+      source: { files: 1, insertions: 1, deletions: 0 },
+    });
+  });
+
   it("builds a review-round row with required dimensions and nulls unavailable data", () => {
     const record = buildReviewRoundStamp({
       stampedAt: "2026-07-11T00:00:00.000Z",
