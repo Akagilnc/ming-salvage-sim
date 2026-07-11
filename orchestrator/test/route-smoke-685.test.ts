@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,6 +134,13 @@ function successfulSmoke(options: Parameters<typeof sc.run>[0]) {
 }
 
 describe("#685 route tool smoke", () => {
+  it("keeps the nonce placeholders in the route-smoke prompt for Sandcastle substitution", () => {
+    const prompt = readFileSync(join(smokePromptsDir, "route-smoke.md"), "utf8");
+
+    expect(prompt).toContain("{{NONCE}}");
+    expect(prompt).toContain("{{NONCE_FILE}}");
+  });
+
   it("rejects a route before its model×pipe entries have been smoked", () => {
     const route = resolveRouteModels("normal", {});
 
