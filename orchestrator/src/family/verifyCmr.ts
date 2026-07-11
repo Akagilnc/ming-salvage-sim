@@ -1100,6 +1100,7 @@ async function runCmrCoderFix(input: {
     blockingFindingIdentityKeys.join(", ");
 
   let currentFamilyHeadBefore = familyHeadBefore;
+  let telemetryFamilyHeadBefore = familyHeadBefore;
   let attempt = 1;
   let evidenceOnlyFamilyHeadAfter: string | undefined;
   let repairAttemptFailures: NonNullable<
@@ -1138,18 +1139,19 @@ async function runCmrCoderFix(input: {
     // Commit telemetry follows the independently observed family HEAD, never
     // the coder's self-report. The report remains for the repair gate below.
     if (
-      currentFamilyHeadBefore !== undefined &&
+      telemetryFamilyHeadBefore !== undefined &&
       familyHeadAfter !== undefined &&
-      familyHeadAfter !== currentFamilyHeadBefore
+      familyHeadAfter !== telemetryFamilyHeadBefore
     ) {
       stampCmrCoderFixCommits({
         familyBackend,
         familyBase,
         runId,
         familyIssue,
-        before: currentFamilyHeadBefore,
+        before: telemetryFamilyHeadBefore,
         after: familyHeadAfter,
       });
+      telemetryFamilyHeadBefore = familyHeadAfter;
     }
 
     if (fixResult.kind === "escalated") {

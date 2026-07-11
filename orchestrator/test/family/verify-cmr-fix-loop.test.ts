@@ -1398,6 +1398,16 @@ class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
 
 class MultipleEvidenceOnlyFailuresThenGoodBackend extends ReviewFixRereviewBackend {
   private coderFixRound = 0;
+  telemetryRepoResolutions = 0;
+
+  resolveFamilyWorkingRepo(): string {
+    this.telemetryRepoResolutions += 1;
+    return process.cwd();
+  }
+
+  resolveTelemetryDir(): string {
+    return mkdtempSync(join(tmpdir(), "verify-cmr-telemetry-range-"));
+  }
 
   override async dispatchWorker(
     spec: WorkerSpec,
@@ -2080,6 +2090,10 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyHeadAfter: "head-after-bad-coder-fix",
       blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
     }));
+    // One resolution schedules the coder-fix commit range and one belongs to
+    // the independent terminal family auto-merge observation. Evidence-only
+    // retries must not add further resolutions for the same coder-fix range.
+    expect(backend.telemetryRepoResolutions).toBe(2);
   });
 
   it("bounces family coder-fix back before re-review when family HEAD did not move", async () => {
