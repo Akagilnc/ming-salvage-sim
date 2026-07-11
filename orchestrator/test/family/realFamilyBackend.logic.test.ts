@@ -208,6 +208,76 @@ describe("RealFamilyBackend family coder-fix commit truth (#818)", () => {
 
     expect(backend.finalCommitCountSince(undefined)).toBeUndefined();
   });
+
+  it("runs the real coder-fix chain after rev-parse HEAD fails and emits unknown-count telemetry", async () => {
+    const repo = trackRepo();
+    class RevParseFailureBackend extends RealFamilyBackend {
+      outcomePath: string | undefined;
+      sandboxRuns = 0;
+
+      public run(spec: WorkerSpec) {
+        return this.runFamilyCoderFixWorker(spec, { familyBase: "family/293-base" });
+      }
+
+      protected override sh(file: string, args: string[], _cwd?: string): string {
+        if (file === "git" && args[0] === "checkout") return "";
+        if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+          throw new Error("rev-parse failed");
+        }
+        throw new Error(`unexpected command: ${file} ${args.join(" ")}`);
+      }
+
+      protected override prepareFamilyCoderOutcomeLanding() {
+        const landing = super.prepareFamilyCoderOutcomeLanding();
+        this.outcomePath = landing.path;
+        return landing;
+      }
+
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        this.sandboxRuns += 1;
+        writeFileSync(this.outcomePath!, JSON.stringify({ committed: true, commitsAdded: 1 }), "utf8");
+        return {
+          branch: "family/293-base",
+          completionSignal: "CODER_STEP_COMPLETE",
+          stdout: "",
+          commits: [],
+          iterations: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+
+    const backend = new RevParseFailureBackend(opts(repo));
+    const result = await backend.run({
+      id: "S5",
+      kind: "coder",
+      role: "coder",
+      host: "codex",
+      session: "fresh",
+      contextRetention: "retain",
+      promptFile: "coder_fix.md",
+      completionSignal: "CODER_STEP_COMPLETE",
+      maxIter: 1,
+      model: "gpt-5.6-terra",
+      soul: "coder",
+      toolchain: [],
+    });
+
+    expect(backend.sandboxRuns).toBe(1);
+    expect(result).toMatchObject({
+      kind: "completed",
+      output: {
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        selfReportDiscrepancy: {
+          code: "coder_git_commit_count_unknown",
+          gitCommitCount: null,
+        },
+      },
+    });
+  });
 });
 
 // ═══════════════════════════════ 1. family ledger ═══════════════════════════

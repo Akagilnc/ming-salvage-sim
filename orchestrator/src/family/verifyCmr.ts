@@ -1206,16 +1206,25 @@ async function runCmrCoderFix(input: {
       return { result: { ok: false, ran: true }, familyHeadAfter };
     }
 
-    const repairGateFailure = familyRepairEvidenceGateFailureReason({
-      pass,
-      output: fixResult.output,
-      blockingFindingIdentityKeys,
-      familyHeadBefore: currentFamilyHeadBefore,
-      familyHeadAfter,
-      allowEvidenceOnlyRepair:
-        evidenceOnlyFamilyHeadAfter !== undefined &&
-        familyHeadAfter === evidenceOnlyFamilyHeadAfter,
-    });
+    const repairBaselineUnknown =
+      fixResult.output.selfReportDiscrepancy?.gitCommitCount === null ||
+      currentFamilyHeadBefore === undefined ||
+      familyHeadAfter === undefined;
+    // A missing git/family baseline makes this runner unable to judge evidence,
+    // not unable for the coder to have attempted a repair. Preserve that unknown
+    // as telemetry and let the next fresh CMR/verify pass count its findings.
+    const repairGateFailure = repairBaselineUnknown
+      ? undefined
+      : familyRepairEvidenceGateFailureReason({
+          pass,
+          output: fixResult.output,
+          blockingFindingIdentityKeys,
+          familyHeadBefore: currentFamilyHeadBefore,
+          familyHeadAfter,
+          allowEvidenceOnlyRepair:
+            evidenceOnlyFamilyHeadAfter !== undefined &&
+            familyHeadAfter === evidenceOnlyFamilyHeadAfter,
+        });
     if (repairGateFailure !== undefined) {
       if (attempt < MAX_CODER_FIX_REPAIR_EVIDENCE_ATTEMPTS) {
         repairAttemptFailures = [
@@ -1276,7 +1285,9 @@ async function runCmrCoderFix(input: {
       familyHeadAfter,
       blockingFindingIdentityKeys,
       reason:
-        fixResult.output.committed && fixResult.output.commitsAdded >= 1
+        repairBaselineUnknown
+          ? `${reasonPrefix}: coder-fix attempted; telemetry family/git baseline unknown`
+          : fixResult.output.committed && fixResult.output.commitsAdded >= 1
           ? `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
             `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}` +
             (fixResult.output.selfReportDiscrepancy !== undefined

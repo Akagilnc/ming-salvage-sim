@@ -57,8 +57,8 @@ Rules:
 - **`committed` / `commitsAdded` must ALWAYS reflect the REAL git state, even when
   escalating.** `commitsAdded` must equal the number of `git commit` commands you
   actually made in this worker run; if you make multiple commits, report the full
-  count. The runner derives final truth from git and records an under-count as a
-  warning, but a claim of commits git cannot observe remains fail-closed. So
+  count. The runner derives final truth from git and records any mismatch as
+  discrepancy telemetry. So
   if you already made a baseline / fix commit and THEN hit an escalating blocker in
   the second review, report `committed:true` with the real count PLUS `escalate` —
   NOT `committed:false, commitsAdded:0`. `escalate` is orthogonal to the count.

@@ -1272,6 +1272,12 @@ class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
   }
 }
 
+class UnknownFamilyBaselineThenGoodBackend extends ReviewFixRereviewBackend {
+  override async readFamilyHead(): Promise<string> {
+    throw new Error("git rev-parse HEAD unavailable");
+  }
+}
+
 class MultipleEvidenceOnlyFailuresThenGoodBackend extends ReviewFixRereviewBackend {
   private coderFixRound = 0;
 
@@ -1903,6 +1909,26 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         );
       }),
     ).toBe(3);
+  });
+
+  it("records an unknown family baseline as telemetry and lets fresh CMR judge the attempted fix", async () => {
+    const backend = new UnknownFamilyBaselineThenGoodBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/551-base",
+      familyBackend: backend,
+    });
+
+    expect(result.ran).toBe(true);
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr").length).toBeGreaterThan(1);
+    expect(backend.ledger.some(
+      (entry) => entry.status === "aborted" && /repair evidence gate failed/.test(entry.reason ?? ""),
+    )).toBe(false);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "cmr_fix_committed",
+      reason: expect.stringMatching(/telemetry family\/git baseline unknown/),
+    }));
   });
 
   it("preserves evidence-only repair state across multiple failed evidence retries", async () => {

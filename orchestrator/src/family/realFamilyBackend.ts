@@ -1705,7 +1705,14 @@ export class RealFamilyBackend implements FamilyBackend {
       // Keep the baseline before Sandcastle starts. `result.commits` is an
       // observation log across iterations, so a later rebase/squash/drop can
       // leave it containing SHAs that are no longer reachable from final HEAD.
-      const headBefore = this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo);
+      let headBefore: string | undefined;
+      try {
+        headBefore = this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo);
+      } catch {
+        // Commit reconciliation remains advisory when a pre-worker baseline cannot
+        // be observed. The worker must still run and emit unknown-count telemetry.
+        headBefore = undefined;
+      }
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
       const fixFocusLanding = this.writeFamilyFixFocusFile(landing);
       try {
