@@ -485,7 +485,11 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     let verifyCalled = false;
     familyBackend.verifyFamilyShippedPr = async () => {
       verifyCalled = true;
-      return { ok: false, reason: "PR is MERGED but must be OPEN" };
+      return {
+        ok: false,
+        kind: "mismatch",
+        reason: "PR is MERGED but must be OPEN",
+      };
     };
 
     const result = await runFamily({

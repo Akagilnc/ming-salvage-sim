@@ -776,7 +776,12 @@ export interface VerifyFamilyShippedPrRequest {
 
 export type VerifyFamilyShippedPrResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: string };
+  | {
+      readonly ok: false;
+      /** Host truth, not an error-string inference at the caller. */
+      readonly kind: "pr_missing" | "observation_failed" | "mismatch";
+      readonly reason: string;
+    };
 
 /**
  * An `aborted` event #296 hands to #298's `recordAborted` seam on a red verify
