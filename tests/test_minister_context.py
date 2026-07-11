@@ -656,6 +656,37 @@ def test_final_minister_context_rejects_any_injected_abstract_value_shape(game):
     assert not re.search(r"(?:民心|动乱|皇威|火器|完好|进度)\s*[:：]?\s*\d+", rendered)
 
 
+def test_final_minister_context_qualifies_unmocked_faction_and_power_reports(game):
+    """派系与势力报告也不得把原始抽象轴送进最终 instructions。"""
+    db, _state, content = game
+    db.conn.execute("UPDATE factions SET satisfaction=17, leverage=83")
+    db.conn.execute(
+        "UPDATE powers SET leverage=19, military_strength=82, supply=67 "
+        "WHERE id != 'ming'"
+    )
+    minister = next(c for c in content.characters.values() if c.office_type == "内阁")
+    # The restored fixture's historical office roster can differ from content;
+    # make this minister's durable current role take the court projection.
+    db.conn.execute("UPDATE characters SET office_type='内阁' WHERE name=?", (minister.name,))
+    db.conn.commit()
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry.build_minister_tools", return_value=[]):
+        create_minister_agent(minister, cfg, _ctx(game), db)
+
+    rendered = "\n".join(captured["instructions"])
+    assert "court：" in rendered
+    assert not re.search(r"(?:满意|势力|威望|实力|经济)\s*[:：]?\s*\d+", rendered)
+    assert any(word in rendered for word in ("怨愤", "强盛", "极弱", "充足"))
+
+
 def test_historical_context_rejects_injected_abstract_values_across_all_history_seams(game):
     """邸报、章节记忆和历史报告工具都必须守住最终上下文的 P4 边界。"""
     db, state, content = game

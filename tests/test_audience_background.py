@@ -113,6 +113,12 @@ def _web_game(db, state, content, agent: _FakeAgent) -> WebGame:
     game.session = _FakeSession(db, state, content, agent)
     game.chat_history = {name: [] for name in content.characters}
     game.suggestions_for = lambda _character: []
+    # The production lifecycle waits on this condition before closing its
+    # shared DB.  Keep observer-departure tests on the same boundary so a
+    # daemon worker cannot outlive the fixture and touch a closed connection.
+    game._drain_cond = threading.Condition()
+    game._pending_writes_count = 0
+    game._draining = False
     return game
 
 
@@ -143,6 +149,9 @@ def test_chat_stream_observer_departure_after_acceptance_still_completes_turn(ga
         {"role": "minister", "content": "臣遵旨。"},
     ]
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
+    assert _wait_for(lambda: web_game._pending_writes_count == 0), (
+        "fixture 关闭共享 DB 前必须等后台 worker 的 finally 完整结束"
+    )
 
 
 def test_chat_reload_exposes_retryable_failed_secret_order(game):
