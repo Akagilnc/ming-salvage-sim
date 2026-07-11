@@ -25,7 +25,10 @@ export interface GrokAgentOptions {
     | "max";
   /** Extra env injected by this provider. */
   readonly env?: Record<string, string>;
-  /** When false, session capture is disabled. Default: false (no capture path wired yet). */
+  /**
+   * @deprecated Grok sessions are not persistent yet; this option is ignored.
+   * It remains accepted for compatibility with provider option plumbing.
+   */
   readonly captureSessions?: boolean;
 }
 
@@ -119,17 +122,13 @@ export function grokAgent(
   return {
     name: "grok",
     env: options?.env ?? {},
-    // No session capture path yet (would need host↔sandbox transfer for
-    // ~/.grok/sessions). Resume still works in-container via --resume when the
-    // session file lives under the mounted ~/.grok tree.
-    captureSessions: options?.captureSessions ?? false,
-    buildPrintCommand({ prompt, resumeSession }) {
+    // Grok's temporary ~/.grok directory is deleted after each run, so there
+    // is no persistent host↔sandbox session storage to support capture/resume.
+    captureSessions: false,
+    buildPrintCommand({ prompt }) {
       const modelFlag = model ? ` -m ${shellEscape(model)}` : "";
       const effortFlag = options?.effort
         ? ` --reasoning-effort ${shellEscape(options.effort)}`
-        : "";
-      const resumeFlag = resumeSession
-        ? ` --resume ${shellEscape(resumeSession)}`
         : "";
       // Prompt via stdin + --prompt-file /dev/stdin avoids the Linux 128KB
       // argv limit (same motivation as codex/pi stdin prompts). Host probe
@@ -138,7 +137,7 @@ export function grokAgent(
         command:
           `grok --prompt-file /dev/stdin --output-format streaming-json` +
           ` --always-approve --permission-mode bypassPermissions` +
-          `${modelFlag}${effortFlag}${resumeFlag}`,
+          `${modelFlag}${effortFlag}`,
         stdin: prompt,
       };
     },
