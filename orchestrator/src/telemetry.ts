@@ -952,8 +952,6 @@ export function mentionsHttp429(reasonLower: string): boolean {
  * Map a free-text failure reason onto a telemetry category.
  *
  * Patterns below are taken from the actual throw/return sites (not invented):
- * - realBackend.assertCompletionSignal — "did not fire its required completion
- *   signal" / "no signal fired before the iteration limit"
  * - shipOutcome / realFamilyBackend cmr+merger — "… did not fire its completion signal"
  * - HangWithLivePoolError — "hang with live pool"
  * - dispatchWorker idle monitor — "monitored worker idle hang"
@@ -1015,12 +1013,8 @@ export function categoryFromReason(reason: string): TelemetryErrorCategory {
     return "stream-disconnect";
   }
 
-  // ── honest-incomplete (maxIter / missing completion signal) ──────────────
-  // Real sources (must match first; "iteration limit" must not fall into quota):
-  //   realBackend.ts assertCompletionSignal:
-  //     `… did not fire its required completion signal — expected "…", got
-  //      none (no signal fired before the iteration limit). …`
-  //   shipOutcome / cmr / merger:
+  // ── honest-incomplete (missing completion signal) ─────────────────────────
+  // Real sources (must match first): shipOutcome / cmr / merger:
   //     `… did not fire its completion signal`
   //   also: "none (no signal fired before the iteration limit)" fragment alone
   if (

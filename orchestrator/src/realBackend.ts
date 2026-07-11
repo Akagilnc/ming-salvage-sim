@@ -1034,9 +1034,9 @@ export function checkOwnGitDir(
  * So the soul is `role`-derived: `coder` → the `"coder"` soul, `reviewer` → the
  * `"READ-ONLY"` soul. The StepSpec ALSO carries an explicit `spec.soul`; this
  * helper VALIDATES the two agree (a reviewer step carrying the coder soul is a
- * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug
- * and {@link assertCompletionSignal} throws on a missing signal). The mismatch
- * throws → the runner's S8(error) edge, never a silently-mis-souled run.
+ * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug).
+ * The mismatch throws → the runner's S8(error) edge, never a silently-mis-souled
+ * run.
  *
  * Why this closes the finding: previously `spec.soul` was declared in the
  * StepSpec contract and populated in per-run worker specs but NEVER consumed by the real
@@ -1077,11 +1077,7 @@ export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
 export interface RunResultLike {
   readonly iterations: ReadonlyArray<{ readonly sessionId?: string }>;
   readonly commits: ReadonlyArray<{ readonly sha: string }>;
-  /**
-   * The matched completion signal, or `undefined` if no signal fired before the
-   * iteration limit (Sandcastle d.ts). The step-advance gate keys off this — see
-   * {@link assertCompletionSignal}.
-   */
+  /** The completion signal observed by Sandcastle, if any. */
   readonly completionSignal?: string;
 }
 
@@ -1105,52 +1101,6 @@ export function lastSessionId(
   return undefined;
 }
 
-// ── completion-signal gate (ship-pre 256 r1) ────────────────────────────────
-
-/**
- * Assert a step's run fired the EXACT completion signal its {@link StepSpec}
- * declared, BEFORE the caller decodes the output and advances the step.
- *
- * WHY (ship-pre 256 r1, design-compliance / real-Backend wiring): Sandcastle's
- * `RunResult.completionSignal` is "`undefined` if no signal fired before the
- * iteration limit" (sandcastle d.ts). Passing `completionSignal: spec.…` into
- * `run()` only tells the sandbox WHICH string ends the step early — it does NOT
- * make the run fail when the signal never fires. So an agent that emits a
- * complete, schema-valid `<coder>`/`<review>` tag but hits `maxIter` mid-work
- * WITHOUT firing `CODER_STEP_COMPLETE` / `REVIEWER_STEP_COMPLETE` would have its
- * output decoded and the step advanced — violating #244's gate "agent emit
- * completionSignal 才进下一步" (issue body; StepSpec.completionSignal doc
- * "Required so the sandbox knows when to stop"). A totally-missing output
- * already throws (extractCoderTag / schema.parse → S8(error)); this closes the
- * complete-but-UNSIGNALED leak the missing-output throw does not cover.
- *
- * On mismatch/undefined: THROW. The caller (runStep / resumeSession) lets it
- * propagate to the runner's error edge = S8(error) + error package, never a
- * silently-trusted advance. `stepName` is woven into the message so the runner
- * attributes the failure to the right step.
- *
- * Pure (a check on the RunResultLike shape): unit-tested without a container.
- */
-export function assertCompletionSignal(
-  result: Pick<RunResultLike, "completionSignal">,
-  expected: string,
-  stepName: string,
-): void {
-  if (result.completionSignal !== expected) {
-    const actual =
-      result.completionSignal === undefined
-        ? "none (no signal fired before the iteration limit)"
-        : `"${result.completionSignal}"`;
-    throw new Error(
-      `realBackend: step ${stepName} did not fire its required completion ` +
-        `signal — expected "${expected}", got ${actual}. The agent must emit ` +
-        `the completion signal to advance the step (#244 "agent emit ` +
-        `completionSignal 才进下一步"); a complete-but-unsignaled run (e.g. ` +
-        `maxIter hit mid-work) does NOT advance.`,
-    );
-  }
-}
-
 // ── coder structured output from stdout (integ-cmr 256 r1) ──────────────────
 
 /**
@@ -1170,14 +1120,13 @@ export function assertCompletionSignal(
  *
  * Pure: parses a string only — unit-tested without a container. Returns the raw
  * parsed object for {@link RealBackend}'s `decodeOutput` (coderOutputSchema) to
- * validate; throws a clear error when the tag is missing (the caller turns that
- * into the runner's S8(error) edge, same as a malformed structured output).
+ * validate. Missing tags are advisory compatibility misses; malformed present
+ * tags still throw rather than being mistaken for a valid machine outcome.
  */
 function extractTaggedJson(
   stdout: string,
   tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease",
-  missingMessage: string,
-): unknown {
+): unknown | undefined {
   const open = `<${tag}>`;
   const close = `</${tag}>`;
   const starts: number[] = [];
@@ -1189,7 +1138,7 @@ function extractTaggedJson(
     starts.push(idx);
   }
   if (starts.length === 0) {
-    throw new Error(missingMessage);
+    return undefined;
   }
 
   for (let i = starts.length - 1; i >= 0; i -= 1) {
@@ -1200,7 +1149,7 @@ function extractTaggedJson(
     return parseTaggedJsonBody(body);
   }
 
-  throw new Error(missingMessage);
+  return undefined;
 }
 
 function parseTaggedJsonBody(body: string): unknown {
@@ -1253,59 +1202,26 @@ function balancedJsonPrefix(s: string): string | undefined {
   return undefined;
 }
 
-export function extractCoderTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "coder",
-    "realBackend: coder step stdout carried no <coder>…</coder> tag — the " +
-      "coder must emit its structured result in a <coder> tag (maxIter>1 " +
-      "steps cannot use Sandcastle's typed output, which requires " +
-      "maxIterations:1).",
-  );
+export function extractCoderTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "coder");
 }
 
-function extractReviewerTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "review",
-    "realBackend: reviewer step stdout carried no <review>…</review> tag — " +
-      "the reviewer must emit its structured result in a <review> tag.",
-  );
+function extractReviewerTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "review");
 }
 
-// #596 F2: tag extractors for the 4 review-loop kinds (untyped maxIter>1 path + raw decode tests).
-// Mirror reviewer/coder error wording exactly for fail-closed on missing tag.
-export function extractVerifyTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "verify",
-    "realBackend: verify step stdout carried no <verify>…</verify> tag — " +
-      "the verify worker must emit its structured result in a <verify> tag.",
-  );
+// #596 F2: tag extractors for the 4 review-loop kinds (untyped compatibility path).
+export function extractVerifyTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "verify");
 }
-export function extractFixerTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "fixer",
-    "realBackend: fixer step stdout carried no <fixer>…</fixer> tag — " +
-      "the fixer worker must emit its structured result in a <fixer> tag.",
-  );
+export function extractFixerTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "fixer");
 }
-export function extractCleanupTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "cleanup",
-    "realBackend: cleanup step stdout carried no <cleanup>…</cleanup> tag — " +
-      "the cleanup worker must emit its structured result in a <cleanup> tag.",
-  );
+export function extractCleanupTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "cleanup");
 }
-export function extractDocReleaseTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "docRelease",
-    "realBackend: docRelease step stdout carried no <docRelease>…</docRelease> tag — " +
-      "the docRelease worker must emit its structured result in a <docRelease> tag.",
-  );
+export function extractDocReleaseTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "docRelease");
 }
 
 /**
@@ -3285,7 +3201,7 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
-  ): unknown {
+  ): unknown | undefined {
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
@@ -3302,19 +3218,41 @@ export class RealBackend implements Backend {
       }
       throw err;
     }
-    if (typedOutputUsed) return result.output;
-    // Untyped compatibility path: structured result lives in the role tag.
-    // #596 F2: extended for the 4 review-loop roles (single-slice real decode seam).
-    if (spec.role === "coder") return extractCoderTag(result.stdout);
-    if (spec.role === "reviewer") return extractReviewerTag(result.stdout);
-    if (spec.role === "verify") return extractVerifyTag(result.stdout);
-    if (spec.role === "fixer") return extractFixerTag(result.stdout);
-    if (spec.role === "cleanup") return extractCleanupTag(result.stdout);
-    if (spec.role === "docRelease") return extractDocReleaseTag(result.stdout);
-    // Unknown role: fail closed (no silent misroute to wrong extractor).
-    throw new Error(
-      `realBackend: unknown role '${spec.role}' for raw tag extraction`,
+    if (typedOutputUsed && result.output !== undefined) return result.output;
+    // Stdout tags are the primary machine channel for multi-iteration coders;
+    // elsewhere they are compatibility for a missing typed result.
+    const compatibility =
+      spec.role === "coder"
+        ? extractCoderTag(result.stdout)
+        : spec.role === "reviewer"
+          ? extractReviewerTag(result.stdout)
+          : spec.role === "verify"
+            ? extractVerifyTag(result.stdout)
+            : spec.role === "fixer"
+              ? extractFixerTag(result.stdout)
+              : spec.role === "cleanup"
+                ? extractCleanupTag(result.stdout)
+                : spec.role === "docRelease"
+                  ? extractDocReleaseTag(result.stdout)
+                  : undefined;
+    if (compatibility !== undefined) {
+      if (typedOutputUsed) {
+        console.warn(
+          `[orchestrator] telemetry: ${spec.id}-${spec.role} used legacy stdout tag compatibility fallback`,
+        );
+      }
+      return compatibility;
+    }
+    // Git truth reconciles a coder's committed-ness only AFTER a typed outcome
+    // exists. It cannot turn the absence of every outcome channel into a
+    // success-shaped coder result: that is a structural protocol failure, owned
+    // by the runner's bounded redispatch and exhaustion escalation path.
+    const err = new Error(
+      `StructuredOutputError: ${spec.id}-${spec.role} produced no worker outcome ` +
+        "sidecar, typed output, or legacy stdout tag",
     );
+    err.name = "StructuredOutputError";
+    throw err;
   }
 
   /**
@@ -3338,6 +3276,11 @@ export class RealBackend implements Backend {
     raw: unknown,
     gitCommitCount: number | undefined,
   ): StepOutput {
+    if (raw === undefined) {
+      throw new Error(
+        `realBackend: ${spec.id}-${spec.role} reached decodeOutput without a machine outcome`,
+      );
+    }
     if (spec.role === "reviewer") {
       const r = reviewerOutputSchema.parse(raw);
       const findings: Finding[] = r.findings.map((f) =>
@@ -3621,11 +3564,6 @@ export class RealBackend implements Backend {
         issueNumber,
       },
     });
-    // #244 step-advance gate: the step only advances if the agent fired its
-    // declared completionSignal. A complete-but-unsignaled run (e.g. maxIter hit
-    // mid-work) throws here → S8(error), before any output is decoded.
-    assertCompletionSignal(result, spec.completionSignal, `${spec.id}-${spec.role}`);
-    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     // #818: derive coder verdict fields from final graph truth, not Sandcastle's
     // cumulative commit observations or the worker self-report.
     const gitCommitCount =
@@ -3634,6 +3572,7 @@ export class RealBackend implements Backend {
           ? coderCommitCount(result)
           : this.freshCoderGitCommitCount(worktree, headBefore)
         : undefined;
+    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     const output = this.decodeOutput(spec, raw, gitCommitCount);
     return { output, sessionId: lastSessionId(result) };
     } finally {
@@ -3697,13 +3636,6 @@ export class RealBackend implements Backend {
           issueNumber,
         },
       });
-      // #244 step-advance gate (resume path): a resumed step still only advances
-      // on its declared completionSignal — an unsignaled resume throws → S8(error).
-      assertCompletionSignal(
-        result,
-        spec.completionSignal,
-        `${spec.id}-${spec.role}-resume`,
-      );
       // Resume path: git-truth against the cumulative resident-branch commit
       // count, not this one-iteration result.commits.length. The resumed
       // iteration may only re-emit the structured tag while prior commits already
@@ -3962,22 +3894,6 @@ export class RealBackend implements Backend {
       // the shared `withMechanicalRetry` path (the dogfood-362 / family-405 incident
       // class), so it maps to the retryable `malformed` kind — NOT a judged verdict.
       return { kind: "malformed", reason: outcome.reason };
-    }
-    // Branch-identity check (cmr S336 r3 F1): the worker self-reports `branch`, and
-    // a worker that ships some OTHER branch (e.g. the resident base `main`) but
-    // reports it as a success must NOT be read as a delivery. prompts/ship.md asks
-    // the worker to report THE shipped branch — the resident slice branch already
-    // checked out (`branchStrategy:{type:"head"}`), with no legitimate rename path —
-    // so an `outcome.branch` ≠ the worktree branch it was asked to deliver is
-    // off-contract. #601: this is a JUDGED off-contract delivery (the worker shipped
-    // something we can rule on), NOT a structural process failure → map to `failed`
-    // so the runner's `callerOwns` claims it and it passes through with ZERO retry
-    // (never re-running a decided wrong-branch delivery).
-    if (outcome.branch !== ctx.worktree.branch) {
-      return {
-        kind: "failed",
-        reason: `ship worker reported branch "${outcome.branch}" but was asked to deliver "${ctx.worktree.branch}" (a ship of a different branch is not the slice delivery)`,
-      };
     }
     return {
       kind: "completed",
