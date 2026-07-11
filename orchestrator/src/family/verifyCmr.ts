@@ -148,6 +148,7 @@ import { findingIdentityKey } from "../findings.js";
 import {
   buildReviewRoundStamp,
   readTelemetryRecords,
+  scheduleCommitTelemetry,
   tryAppendTelemetryRecord,
   type TelemetryReviewRoundRecord,
 } from "../telemetry.js";
@@ -1056,50 +1057,74 @@ async function runCmrCoderFix(input: {
     blockingFindingIdentityKeys.join(", ");
 
   const currentFamilyHeadBefore = familyHeadBefore;
+  let telemetryFamilyHeadBefore = familyHeadBefore;
+  const coderFixSpec = familyCoderFixWorkerSpec(resolvedRoute);
   const fixResult = await dispatchOrAbort(
     familyBackend,
-    familyCoderFixWorkerSpec(resolvedRoute),
-    {
+    coderFixSpec,
+      {
+        familyBase,
+        ...(runId !== undefined ? { runId } : {}),
+        modelRoute: resolvedRoute,
+        // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
+        // rich finding content travels in the separate landing payload below.
+        blockingFindingIdentityKeys,
+        blockingFindingCount: classification.blocking.length,
+        ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+        ...(familyIssue !== undefined ? { familyIssue } : {}),
+      },
+      {
+        blockingFindings: classification.blocking,
+        ...(findingFamilies !== undefined ? { findingFamilies } : {}),
+      },
+    );
+    const familyHeadAfter = await readPostCmrFamilyHead(
+      familyBackend,
       familyBase,
-      ...(runId !== undefined ? { runId } : {}),
-      modelRoute: resolvedRoute,
-      // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
-      // rich finding content travels in the separate landing payload below.
-      blockingFindingIdentityKeys,
-      blockingFindingCount: classification.blocking.length,
-      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
-      ...(familyIssue !== undefined ? { familyIssue } : {}),
-    },
-    {
-      blockingFindings: classification.blocking,
-      ...(findingFamilies !== undefined ? { findingFamilies } : {}),
-    },
-  );
-  const familyHeadAfter = await readPostCmrFamilyHead(
-    familyBackend,
-    familyBase,
     currentFamilyHeadBefore,
-    "unknown",
   );
 
-  if (fixResult.kind === "escalated") {
-    const reason = `${reasonPrefix} escalated: ${fixResult.escalation.reason} — ${fixResult.escalation.diagnosis}`;
-    const stopSummary = coderFixFailureStopSummary({
-      pass,
-      reason,
-      familyHeadBefore: currentFamilyHeadBefore,
-      familyHeadAfter,
-    });
-    await familyBackend.escalateFamily?.({ reason, familyHeadAfter, stopSummary });
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter,
-      stopSummary,
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
-  }
+    // Commit telemetry follows the independently observed family HEAD, never
+    // the coder's self-report. The report remains for the repair gate below.
+    if (
+      telemetryFamilyHeadBefore !== undefined &&
+      familyHeadAfter !== undefined &&
+      familyHeadAfter !== telemetryFamilyHeadBefore
+    ) {
+      stampCmrCoderFixCommits({
+        familyBackend,
+        familyBase,
+        runId,
+        familyIssue,
+        worker: { stepId: coderFixSpec.id, modelSlug: coderFixSpec.model },
+        before: telemetryFamilyHeadBefore,
+        after: familyHeadAfter,
+      });
+      telemetryFamilyHeadBefore = familyHeadAfter;
+    }
+
+    if (fixResult.kind === "escalated") {
+      const reason = `${reasonPrefix} escalated: ${fixResult.escalation.reason} — ${fixResult.escalation.diagnosis}`;
+      const stopSummary = coderFixFailureStopSummary({
+        pass,
+        reason,
+        familyHeadBefore: currentFamilyHeadBefore,
+        familyHeadAfter,
+      });
+      await familyBackend.escalateFamily?.({
+        reason,
+        familyHeadAfter,
+        stopSummary,
+      });
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter,
+        stopSummary,
+      });
+      return { result: { ok: false, ran: true }, familyHeadAfter };
+    }
 
   if (fixResult.kind !== "completed" || fixResult.output.kind !== "coder") {
       const reason =
@@ -2118,6 +2143,51 @@ function stampCmrReviewRound(input: {
   } catch (err) {
     console.warn(
       `[orchestrator] review-round telemetry failed (fail-open): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
+/**
+ * #786 per-commit dimension: host-git observation after a coder-fix moved the
+ * known family HEAD. It deliberately has no return value: telemetry cannot
+ * affect ADR 0062 repair-gate or routing decisions.
+ */
+function stampCmrCoderFixCommits(input: {
+  readonly familyBackend: FamilyBackend;
+  readonly familyBase: string;
+  readonly runId?: string;
+  readonly familyIssue?: number;
+  readonly worker: { readonly stepId: string; readonly modelSlug: string };
+  readonly before?: string;
+  readonly after?: string;
+}): void {
+  try {
+    if (input.before === undefined || input.after === undefined || input.before === input.after) return;
+    const repoPath = input.familyBackend.resolveFamilyWorkingRepo?.();
+    if (repoPath === undefined || repoPath.length === 0) return;
+    const ctx: DispatchContext = {
+      familyBase: input.familyBase,
+      ...(input.runId !== undefined ? { runId: input.runId } : {}),
+      ...(input.familyIssue !== undefined ? { familyIssue: input.familyIssue } : {}),
+    };
+    const ledgerDir = input.familyBackend.resolveTelemetryDir?.(ctx);
+    if (ledgerDir === undefined || ledgerDir.length === 0) return;
+    // Commit observation is strictly sidecar-only. Its git reads, full-file
+    // scans, and JSONL append run after routing yields, through async I/O.
+    void scheduleCommitTelemetry({
+      ledgerDir,
+      repoPath,
+      runId: input.runId,
+      issue: input.familyIssue ?? null,
+      worker: input.worker,
+      before: input.before,
+      after: input.after,
+    });
+  } catch (err) {
+    console.warn(
+      `[orchestrator] commit telemetry failed (fail-open): ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
