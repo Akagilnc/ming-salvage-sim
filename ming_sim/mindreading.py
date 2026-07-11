@@ -183,7 +183,7 @@ def build_mindreading_payload(
     current_target: object = target
     if hasattr(db, "conn"):
         row = db.conn.execute(
-            "SELECT identity, loyalty, seed_guilt FROM characters WHERE name=?",
+            "SELECT faction, identity, loyalty, seed_guilt FROM characters WHERE name=?",
             (target.name,),
         ).fetchone()
         if row is not None:
@@ -191,6 +191,7 @@ def build_mindreading_payload(
 
     identity = int(_character_field(current_target, "identity") or 0)
     loyalty = int(_character_field(current_target, "loyalty") or 0)
+    faction = str(_character_field(current_target, "faction") or "未明党籍")
     if identity < 40 and loyalty >= 60:
         relation = "忠而不党"
     elif identity >= 60 and loyalty < 40:
@@ -206,7 +207,11 @@ def build_mindreading_payload(
         "precision": intelligence_precision(target_factor, channel_factor),
         "reader_context": reader_context,
         "truths": {
-            "党账": f"对本党的认同：{_band(identity, _IDENTITY_BANDS)}；{_seed_guilt_text(current_target)}",
+            "党账": (
+                f"名义党派：{faction}；"
+                f"对本党的认同：{_band(identity, _IDENTITY_BANDS)}；"
+                f"{_seed_guilt_text(current_target)}"
+            ),
             "君臣账": f"对君的真心：{_band(loyalty, _LOYALTY_BANDS)}。",
             "关系判断": relation,
             "潜台词": _infer_subtext(
