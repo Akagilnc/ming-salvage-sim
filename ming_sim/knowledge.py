@@ -127,10 +127,10 @@ def _role_roster(db: Any, office_type: str) -> str:
     ).fetchall()
     if not rows:
         return f"{office_type}本职在册：暂无。"
-    roster = "、".join(
-        f"{row['name']}（{row['office']}）" if row['office'] else str(row['name'])
-        for row in rows
-    )
+    # The roster is a membership fact, not a second free-text office report.
+    # Including office strings here can name people outside this role (for
+    # example a kinship note in an office title), defeating the role boundary.
+    roster = "、".join(str(row["name"]) for row in rows)
     return f"{office_type}本职在册：{roster}。"
 
 

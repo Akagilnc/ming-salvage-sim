@@ -3310,6 +3310,28 @@
         "crime": "无",
         "severity": "无"
       }
+    },
+    {
+      "name": "乔允升",
+      "office": "刑部尚书",
+      "office_type": "刑部",
+      "faction": "中立",
+      "aliases": ["乔允升", "乔尚书"],
+      "personal_skills": ["刑名审谳", "狱案覆核", "律例持守"],
+      "loyalty": 58,
+      "ability": 67,
+      "integrity": 66,
+      "courage": 52,
+      "style": "持法谨慎",
+      "birth_year": 1550,
+      "historical_death_year": 1631,
+      "historical_death_month": 0,
+      "status": "active",
+      "summary": "天启末任刑部尚书，熟谙刑名与狱案覆核。",
+      "power_id": "ming",
+      "location": "beijing",
+      "identity": 50,
+      "seed_guilt": {"crime": "无", "severity": "无"}
     }
   ]
 }

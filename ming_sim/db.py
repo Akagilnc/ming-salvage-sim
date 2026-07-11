@@ -7489,6 +7489,28 @@ class GameDB:
             (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
         )
         self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
+        # Direct archive writers (including compatibility callers) do not
+        # have decree.py's settlement projection hook.  Give their aggregate
+        # a source-scoped public counterpart, while removing known restricted
+        # fragments so an unrelated secret in the same turn cannot suppress
+        # public facts or be re-published by the fallback archive.
+        items = self.knowledge_items_for_turn(state.turn)
+        restricted = {
+            str(fragment).strip()
+            for item in items
+            if item.get("excluded_names")
+            for fragment in (item.get("title"), item.get("body"))
+            if str(fragment or "").strip()
+        }
+        public_report = str(report or "")
+        for fragment in sorted(restricted, key=len, reverse=True):
+            public_report = public_report.replace(fragment, "")
+        public_report = re.sub(r"[；;、 ]{2,}", "；", public_report).strip("；;、 ")
+        if public_report:
+            self.record_public_knowledge_event(
+                state, "邸报", sanitize_sqlite_text(public_report),
+                source_id=f"turn_report:{state.turn}:public", commit=commit,
+            )
         if commit:
             self.conn.commit()
 
