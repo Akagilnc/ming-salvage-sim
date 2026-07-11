@@ -36,6 +36,7 @@ import {
   modelIdForSlug,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   soulsMount,
@@ -92,7 +93,10 @@ class FixturedShipBackend extends RealFamilyBackend {
   openFamilyPrCount = 0;
   verifiedPr:
     | { ok: true; headOid: string }
-    | { ok: false; reason: string } = { ok: true, headOid: "head-1" };
+    | { ok: false; kind: "pr_missing" | "observation_failed" | "mismatch"; reason: string } = {
+      ok: true,
+      headOid: "head-1",
+    };
   protected override async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -105,7 +109,9 @@ class FixturedShipBackend extends RealFamilyBackend {
     this.openFamilyPrCount += 1;
     throw new Error("openFamilyPr must not be reached — family ship via gstack-ship (#336)");
   }
-  protected override verifyFamilyShipPr(): { ok: true; headOid: string } | { ok: false; reason: string } {
+  protected override verifyFamilyShipPr():
+    | { ok: true; headOid: string }
+    | { ok: false; kind: "pr_missing" | "observation_failed" | "mismatch"; reason: string } {
     return this.verifiedPr;
   }
 }
@@ -209,18 +215,14 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     await expect(be.dispatchWorker(familyShipWorkerSpec(), {})).rejects.toThrow(/familyBase/);
   });
 
-  // ── cmr S336 r3 F1 (branch-identity check): the family worker self-reports `branch`,
-  // and the consumer trusted it. family_ship.md pins the family base (the worker `git
-  // checkout`s ctx.familyBase, branchStrategy:{type:"head"}) and asks it to report THE
-  // family base branch — no legitimate rename path. A worker that ships some other
-  // branch (e.g. the PR target base) but reports a success must NOT be read as a family
-  // delivery (verifyCmr would return ok:true on a PR for the wrong branch).
-  it("a shipped outcome whose branch ≠ familyBase ⇒ malformed (branch identity)", async () => {
+  it("a shipped outcome whose branch differs from familyBase remains a worker outcome", async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: "main", status: "pr_opened", pr: "u" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("malformed");
-    if (res.kind === "malformed") expect(res.reason).toMatch(/branch/);
+    expect(res).toMatchObject({
+      kind: "completed",
+      output: { kind: "ship", branch: "main", status: "pr_opened", pr: "u" },
+    });
   });
 
   it("a shipped pr_opened on the correct family base ⇒ completed (identity holds)", async () => {
@@ -230,13 +232,17 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(res.kind).toBe("completed");
   });
 
-  it("a pr_opened ship whose host PR metadata targets the wrong base ⇒ malformed", async () => {
+  it("a pr_opened ship whose claimed host PR is CLOSED ⇒ durable escalation, never malformed re-ship", async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
-    be.verifiedPr = { ok: false, reason: "family PR targets base main but expected integ" };
+    be.verifiedPr = {
+      ok: false,
+      kind: "mismatch",
+      reason: 'family PR "u" is CLOSED but must be OPEN',
+    };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("malformed");
-    if (res.kind === "malformed") expect(res.reason).toMatch(/targets base|expected/);
+    expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") expect(res.escalation.reason).toMatch(/CLOSED.*OPEN/);
   });
 
   it("the cmr worker is still routed to its own (cmr) path, NOT the ship seam", async () => {
@@ -291,6 +297,18 @@ describe("#336 family shipSandboxConfig — the WRITE-soul ship sandbox", () => 
     // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
     expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("mounts isolated grok auth when the family ship route selects grok", () => {
+    const c = cfg().config({
+      codexAuthDir: "/tmp/codex",
+      grokAuthDir: "/tmp/family-grok-auth",
+      claudeToken: "tok",
+    });
+    expect(c.mounts).toContainEqual({
+      hostPath: "/tmp/family-grok-auth",
+      sandboxPath: SANDBOX_GROK_DIR,
+    });
   });
 
   it("family shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
@@ -561,7 +579,13 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       // test isolates the focus-write ordering from the auth preflights, so provide
       // BOTH so runShipWorker proceeds past the preflights to the focus write + container.
       protected override mountShipAuth(): ShipAuth {
-        return { claudeToken: "tok", codexAuthDir: "/x/codex", ghToken: "gho_ok" };
+        return {
+          claudeToken: "tok",
+          codexAuthDir: "/x/codex",
+          grokAuthDir: "/x/grok",
+          ghToken: "gho_ok",
+          providerAuth: { claude: true, grok: true },
+        };
       }
       protected override async shipContainerRun(): Promise<never> {
         // Capture the focus-file state at the moment the container would launch.
@@ -590,6 +614,51 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     ).rejects.toThrow(/SENTINEL/);
     expect(focusBodyAtRun).toBeDefined();
     expect(focusBodyAtRun).toContain("integ/291-wave3");
+  });
+
+  it("family ship with billingPool=grok-build launches the grok provider", async () => {
+    let providerAtLaunch: string | undefined;
+    class ProviderBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return {
+          claudeToken: "tok",
+          codexAuthDir: "/x/codex",
+          grokAuthDir: "/x/grok",
+          ghToken: "gho_ok",
+          providerAuth: { claude: true, grok: true },
+        };
+      }
+      protected override async shipContainerRun(
+        spec: WorkerSpec,
+        _auth: ShipAuth,
+        _outcomeLanding?: { path: string; sandboxPath: string },
+        ctx?: Pick<DispatchContext, "billingPool">,
+      ): Promise<never> {
+        providerAtLaunch = this.agentForSpec(spec, ctx).name;
+        throw new Error("SENTINEL: provider captured");
+      }
+    }
+    const b = new ProviderBackend({
+      workingRepo: realRepo(),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-provider-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+    });
+
+    await expect(
+      (b as unknown as { runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<unknown> }).runShipWorker(
+        { ...familyShipWorkerSpec(), model: "grok-4.5" },
+        { familyBase: FAMILY_BASE, billingPool: "grok-build" },
+      ),
+    ).rejects.toThrow(/SENTINEL/);
+    expect(providerAtLaunch).toBe("grok");
   });
 
   it("runShipWorker removes the temporary outcome sidecar directory after parsing it", async () => {

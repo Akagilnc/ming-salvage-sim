@@ -46,7 +46,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
@@ -96,9 +96,13 @@ import {
   modelIdForSlug,
   modelIsStrongLeg,
   resolveModelSlug,
+  resolveModelSlugForPool,
+  unavailableProviderAuth,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
+  type BillingPoolDispatchId,
   type ModelFamily,
   type ModelProviderFactory,
+  type ProviderAuthAvailability,
   type ModelSlugRegistryEntry,
 } from "./modelRegistry.js";
 import {
@@ -110,12 +114,19 @@ import {
   type ResolvedModelRoute,
   type RouteSmokeStatus,
 } from "./modelRoutes.js";
+import type { CoderSelfReportDiscrepancy } from "./types.js";
 
 export function routeSmokeCacheKey(
   route: ResolvedModelRoute,
   sandboxFingerprint: string,
+  billingPool?: string,
+  relaySmokeEntryKey?: string,
 ): string {
-  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}`;
+  const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
+  const providerFingerprint = routeSmokeEntries(route)
+    .map(({ key, slug }) => `${key}:${resolveModelSlugForPool(slug, key === relaySmokeEntryKey ? dispatchPool : undefined).provider}`)
+    .join("|");
+  return `${modelRouteFingerprint(route)}\0${sandboxFingerprint}\0${dispatchPool ?? "default"}\0${providerFingerprint}`;
 }
 
 export function routeSmokeToolCallIsEchoOk(event: {
@@ -130,6 +141,30 @@ export function routeSmokeToolCallIsEchoOk(event: {
     typeof event.formattedArgs === "string" &&
     /echo\s+(?:"OK"|'OK'|OK)/i.test(event.formattedArgs)
   );
+}
+
+/**
+ * A nonce must be read back from the worktree after the agent returns. Text in
+ * the agent stream is never execution evidence: a model can merely repeat it.
+ */
+export function routeSmokeNonceFileEvidence(
+  fileContents: string | undefined,
+  nonce: string,
+): boolean {
+  return fileContents?.trim() === nonce;
+}
+
+/**
+ * Whether a smoke run produced observable bash evidence. The checked nonce file
+ * is a filesystem side effect, so this is provider-independent and does not
+ * trust model text or provider-specific stream formatting.
+ */
+export function routeSmokeBashEvidenceSatisfied(input: {
+  readonly provider: string;
+  readonly sawToolCallEchoOk: boolean;
+  readonly sawNonceFile: boolean;
+}): boolean {
+  return input.sawNonceFile;
 }
 export {
   agentForSlug,
@@ -670,6 +705,13 @@ export function issueNumberFromBranch(branch: string): number {
 
 /** Where Sandcastle mounts the codex auth dir inside the container. */
 export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
+/**
+ * Where Sandcastle mounts the grok auth dir inside the container (#807).
+ * Grok CLI reads credentials from `~/.grok/auth.json` under this tree.
+ * The worker image installs a real `/usr/local/bin/grok` binary (not a
+ * symlink into this tree) so the bind-mount does not hide PATH.
+ */
+export const SANDBOX_GROK_DIR = "/home/agent/.grok";
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -804,6 +846,13 @@ export interface AuthPaths {
   readonly srcCodexAuth: string;
   /** Source codex config.toml on the host (best-effort copy). */
   readonly srcCodexConfig: string;
+  /**
+   * Per-issue host dir holding the grok auth.json copy (#807; under $HOME so
+   * colima can share it into the Docker VM — same constraint as codex).
+   */
+  readonly hostGrokAuthDir: string;
+  /** Source grok auth.json on the host (`~/.grok/auth.json`). */
+  readonly srcGrokAuth: string;
   /** Host file holding the durable claude OAuth token. */
   readonly claudeTokenFile: string;
 }
@@ -819,6 +868,8 @@ export interface AuthPaths {
 export interface ShipAuth {
   /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
   readonly codexAuthDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -828,6 +879,8 @@ export interface ShipAuth {
    * `runShipWorker` preflights it and escalates when absent (cmr S336 r10).
    */
   readonly ghToken?: string;
+  /** Typed launch preflight; mounts alone are not an availability contract. */
+  readonly providerAuth?: ProviderAuthAvailability;
 }
 
 export function buildAuthPaths(
@@ -838,6 +891,8 @@ export function buildAuthPaths(
     hostCodexAuthDir: join(home, ".sc-orchestrator", `auth-${issueNumber}`),
     srcCodexAuth: join(home, ".codex", "auth.json"),
     srcCodexConfig: join(home, ".codex", "config.toml"),
+    hostGrokAuthDir: join(home, ".sc-orchestrator", `grok-auth-${issueNumber}`),
+    srcGrokAuth: join(home, ".grok", "auth.json"),
     claudeTokenFile: join(home, ".sc-claude-token"),
   };
 }
@@ -979,9 +1034,9 @@ export function checkOwnGitDir(
  * So the soul is `role`-derived: `coder` → the `"coder"` soul, `reviewer` → the
  * `"READ-ONLY"` soul. The StepSpec ALSO carries an explicit `spec.soul`; this
  * helper VALIDATES the two agree (a reviewer step carrying the coder soul is a
- * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug
- * and {@link assertCompletionSignal} throws on a missing signal). The mismatch
- * throws → the runner's S8(error) edge, never a silently-mis-souled run.
+ * misconfigured spec, mirroring how {@link modelIdForSlug} throws on a bad slug).
+ * The mismatch throws → the runner's S8(error) edge, never a silently-mis-souled
+ * run.
  *
  * Why this closes the finding: previously `spec.soul` was declared in the
  * StepSpec contract and populated in per-run worker specs but NEVER consumed by the real
@@ -1022,11 +1077,7 @@ export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
 export interface RunResultLike {
   readonly iterations: ReadonlyArray<{ readonly sessionId?: string }>;
   readonly commits: ReadonlyArray<{ readonly sha: string }>;
-  /**
-   * The matched completion signal, or `undefined` if no signal fired before the
-   * iteration limit (Sandcastle d.ts). The step-advance gate keys off this — see
-   * {@link assertCompletionSignal}.
-   */
+  /** The completion signal observed by Sandcastle, if any. */
   readonly completionSignal?: string;
 }
 
@@ -1050,67 +1101,6 @@ export function lastSessionId(
   return undefined;
 }
 
-/**
- * The number of commits Sandcastle observed on the resident branch during a run
- * = `result.commits.length` (#256 commit-truth). This is the SINGLE SOURCE OF
- * TRUTH the coder path reconciles its self-reported `commitsAdded` against (see
- * {@link reconcileCoderCommits}), reading the {@link RunResultLike.commits} field
- * the Backend previously declared but never consumed. Mirrors
- * {@link lastSessionId}: a tiny accessor so the wiring is unit-tested without a
- * container.
- */
-export function realCommitCount(
-  result: Pick<RunResultLike, "commits">,
-): number {
-  return result.commits.length;
-}
-
-// ── completion-signal gate (ship-pre 256 r1) ────────────────────────────────
-
-/**
- * Assert a step's run fired the EXACT completion signal its {@link StepSpec}
- * declared, BEFORE the caller decodes the output and advances the step.
- *
- * WHY (ship-pre 256 r1, design-compliance / real-Backend wiring): Sandcastle's
- * `RunResult.completionSignal` is "`undefined` if no signal fired before the
- * iteration limit" (sandcastle d.ts). Passing `completionSignal: spec.…` into
- * `run()` only tells the sandbox WHICH string ends the step early — it does NOT
- * make the run fail when the signal never fires. So an agent that emits a
- * complete, schema-valid `<coder>`/`<review>` tag but hits `maxIter` mid-work
- * WITHOUT firing `CODER_STEP_COMPLETE` / `REVIEWER_STEP_COMPLETE` would have its
- * output decoded and the step advanced — violating #244's gate "agent emit
- * completionSignal 才进下一步" (issue body; StepSpec.completionSignal doc
- * "Required so the sandbox knows when to stop"). A totally-missing output
- * already throws (extractCoderTag / schema.parse → S8(error)); this closes the
- * complete-but-UNSIGNALED leak the missing-output throw does not cover.
- *
- * On mismatch/undefined: THROW. The caller (runStep / resumeSession) lets it
- * propagate to the runner's error edge = S8(error) + error package, never a
- * silently-trusted advance. `stepName` is woven into the message so the runner
- * attributes the failure to the right step.
- *
- * Pure (a check on the RunResultLike shape): unit-tested without a container.
- */
-export function assertCompletionSignal(
-  result: Pick<RunResultLike, "completionSignal">,
-  expected: string,
-  stepName: string,
-): void {
-  if (result.completionSignal !== expected) {
-    const actual =
-      result.completionSignal === undefined
-        ? "none (no signal fired before the iteration limit)"
-        : `"${result.completionSignal}"`;
-    throw new Error(
-      `realBackend: step ${stepName} did not fire its required completion ` +
-        `signal — expected "${expected}", got ${actual}. The agent must emit ` +
-        `the completion signal to advance the step (#244 "agent emit ` +
-        `completionSignal 才进下一步"); a complete-but-unsignaled run (e.g. ` +
-        `maxIter hit mid-work) does NOT advance.`,
-    );
-  }
-}
-
 // ── coder structured output from stdout (integ-cmr 256 r1) ──────────────────
 
 /**
@@ -1130,14 +1120,13 @@ export function assertCompletionSignal(
  *
  * Pure: parses a string only — unit-tested without a container. Returns the raw
  * parsed object for {@link RealBackend}'s `decodeOutput` (coderOutputSchema) to
- * validate; throws a clear error when the tag is missing (the caller turns that
- * into the runner's S8(error) edge, same as a malformed structured output).
+ * validate. Missing tags are advisory compatibility misses; malformed present
+ * tags still throw rather than being mistaken for a valid machine outcome.
  */
 function extractTaggedJson(
   stdout: string,
   tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease",
-  missingMessage: string,
-): unknown {
+): unknown | undefined {
   const open = `<${tag}>`;
   const close = `</${tag}>`;
   const starts: number[] = [];
@@ -1149,7 +1138,7 @@ function extractTaggedJson(
     starts.push(idx);
   }
   if (starts.length === 0) {
-    throw new Error(missingMessage);
+    return undefined;
   }
 
   for (let i = starts.length - 1; i >= 0; i -= 1) {
@@ -1160,7 +1149,7 @@ function extractTaggedJson(
     return parseTaggedJsonBody(body);
   }
 
-  throw new Error(missingMessage);
+  return undefined;
 }
 
 function parseTaggedJsonBody(body: string): unknown {
@@ -1213,59 +1202,26 @@ function balancedJsonPrefix(s: string): string | undefined {
   return undefined;
 }
 
-export function extractCoderTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "coder",
-    "realBackend: coder step stdout carried no <coder>…</coder> tag — the " +
-      "coder must emit its structured result in a <coder> tag (maxIter>1 " +
-      "steps cannot use Sandcastle's typed output, which requires " +
-      "maxIterations:1).",
-  );
+export function extractCoderTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "coder");
 }
 
-function extractReviewerTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "review",
-    "realBackend: reviewer step stdout carried no <review>…</review> tag — " +
-      "the reviewer must emit its structured result in a <review> tag.",
-  );
+function extractReviewerTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "review");
 }
 
-// #596 F2: tag extractors for the 4 review-loop kinds (untyped maxIter>1 path + raw decode tests).
-// Mirror reviewer/coder error wording exactly for fail-closed on missing tag.
-export function extractVerifyTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "verify",
-    "realBackend: verify step stdout carried no <verify>…</verify> tag — " +
-      "the verify worker must emit its structured result in a <verify> tag.",
-  );
+// #596 F2: tag extractors for the 4 review-loop kinds (untyped compatibility path).
+export function extractVerifyTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "verify");
 }
-export function extractFixerTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "fixer",
-    "realBackend: fixer step stdout carried no <fixer>…</fixer> tag — " +
-      "the fixer worker must emit its structured result in a <fixer> tag.",
-  );
+export function extractFixerTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "fixer");
 }
-export function extractCleanupTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "cleanup",
-    "realBackend: cleanup step stdout carried no <cleanup>…</cleanup> tag — " +
-      "the cleanup worker must emit its structured result in a <cleanup> tag.",
-  );
+export function extractCleanupTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "cleanup");
 }
-export function extractDocReleaseTag(stdout: string): unknown {
-  return extractTaggedJson(
-    stdout,
-    "docRelease",
-    "realBackend: docRelease step stdout carried no <docRelease>…</docRelease> tag — " +
-      "the docRelease worker must emit its structured result in a <docRelease> tag.",
-  );
+export function extractDocReleaseTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "docRelease");
 }
 
 /**
@@ -1295,14 +1251,15 @@ export function stripJsonFence(s: string): string {
 export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
+  readonly selfReportDiscrepancy?: CoderSelfReportDiscrepancy;
   readonly escalate?: { readonly reason: string; readonly diagnosis: string };
   readonly repairEvidence?: RepairEvidence;
 }
 
 /**
  * Reconcile a coder step's SELF-REPORTED `{committed, commitsAdded}` against the
- * REAL number of commits Sandcastle observed on the resident branch
- * (`result.commits.length`), and return a git-TRUTHED coder output.
+ * REAL number of commits reachable from final HEAD but not the pinned
+ * pre-worker baseline, and return a git-TRUTHED coder output.
  *
  * WHY (integ-cmr 256 r4, real-backend-wiring / commit-truth): the coder reports
  * `committed` / `commitsAdded` in its `<coder>` tag, but a model can claim a
@@ -1310,46 +1267,58 @@ export interface SelfReportedCoder {
  * commits). Trusting the self-report routes that step to S2/S5 SUCCESS, slipping
  * the #252 0-commit edge and defeating the very truthification this slice was
  * assigned (the in-tree `validate.ts` note: "deriving the real count from git is
- * #256"). The single source of truth is git — `result.commits.length` — so:
+ * #256"). The single source of truth is the final git graph —
+ * `git rev-list <headBefore>..HEAD` — so:
  *
- *   - committed   ← realCommitCount > 0
- *   - commitsAdded ← realCommitCount
+ *   - committed   ← finalGraphCommitCount > 0
+ *   - commitsAdded ← finalGraphCommitCount
  *
- * The self-report is kept only as a CROSS-CHECK: a self-report that contradicts
- * git (claims a commit git did not see, or miscounts) is a contract violation →
- * THROW. The caller (runStep / resumeSession) lets that propagate to the runner's
- * error edge = S8(error) + error package, never a silently-trusted success.
+ * The self-report is always advisory. Any disagreement is retained as durable
+ * discrepancy telemetry, but never interrupts or routes the run. When no
+ * trustworthy git baseline is available, the count is explicitly recorded as
+ * unknown rather than inventing a failure signal.
  *
  * `escalate` is a MODEL signal (not derivable from git), so it is preserved from
- * the self-report verbatim — but it does NOT suppress a commit-count
- * contradiction (an escalating coder that miscounts its commits still throws).
+ * the self-report verbatim.
  *
- * Pure (no I/O): the caller supplies the real commit count from `result.commits`,
- * so the reconciliation is unit-tested without a container.
+ * Pure (no I/O): the caller supplies the final-graph commit count, so the
+ * reconciliation is unit-tested without a container.
  */
 export function reconcileCoderCommits(
   selfReported: SelfReportedCoder,
-  gitCommitCount: number,
+  gitCommitCount: number | undefined,
 ): SelfReportedCoder {
+  if (gitCommitCount === undefined) {
+    return {
+      committed: selfReported.committed,
+      commitsAdded: selfReported.commitsAdded,
+      selfReportDiscrepancy: {
+        code: "coder_git_commit_count_unknown",
+        selfReportedCommitted: selfReported.committed,
+        selfReportedCommitsAdded: selfReported.commitsAdded,
+        gitCommitCount: null,
+      },
+      ...(selfReported.repairEvidence !== undefined
+        ? { repairEvidence: selfReported.repairEvidence }
+        : {}),
+      ...(selfReported.escalate !== undefined ? { escalate: selfReported.escalate } : {}),
+    };
+  }
   const committed = gitCommitCount > 0;
-  // Cross-check the self-report against git truth; a contradiction is a contract
-  // violation (the model claimed a commit count git does not back).
-  if (
+  const selfReportDiscrepancy =
     selfReported.committed !== committed ||
     selfReported.commitsAdded !== gitCommitCount
-  ) {
-    throw new Error(
-      `realBackend: coder self-report {committed:${selfReported.committed}, ` +
-        `commitsAdded:${selfReported.commitsAdded}} contradicts git ` +
-        `(${gitCommitCount} real commit${gitCommitCount === 1 ? "" : "s"} on ` +
-        `the resident branch). The commit count is derived from git, not the ` +
-        `model's claim (#256 truthification); a divergent self-report is a ` +
-        `contract violation → S8(error).`,
-    );
-  }
+      ? {
+          code: "coder_self_report_disagrees_with_git_commits" as const,
+          selfReportedCommitted: selfReported.committed,
+          selfReportedCommitsAdded: selfReported.commitsAdded,
+          gitCommitCount,
+        }
+      : undefined;
   const base = {
     committed,
     commitsAdded: gitCommitCount,
+    ...(selfReportDiscrepancy !== undefined ? { selfReportDiscrepancy } : {}),
     ...(selfReported.repairEvidence !== undefined
       ? { repairEvidence: selfReported.repairEvidence }
       : {}),
@@ -1412,12 +1381,7 @@ export function reconcileResumeCoderCommits(
   selfReported: SelfReportedCoder,
   cumulativeGitCommitCount: number,
 ): SelfReportedCoder {
-  try {
-    return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`resume coder commit truth mismatch: ${reason}`);
-  }
+  return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
 }
 
 /** A git SHA / abbreviation: only lower-case hex, length 7–40. */
@@ -2251,11 +2215,17 @@ export class RealBackend implements Backend {
    */
   async currentCliVersions(
     route: ResolvedModelRoute,
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Promise<Readonly<Record<string, string | undefined>>> {
+    const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const versions: Record<string, string | undefined> = {};
     for (const entry of routeSmokeEntries(route)) {
       if (versions[entry.slug] === undefined) {
-        versions[entry.slug] = this.cliVersionForSlug(entry.slug);
+        versions[entry.slug] = this.cliVersionForSlug(
+          entry.slug,
+          entry.key === relaySmokeEntryKey ? dispatchPool : undefined,
+        );
       }
     }
     return versions;
@@ -2264,9 +2234,12 @@ export class RealBackend implements Backend {
   async smokeModelRoute(
     route: ResolvedModelRoute,
     currentCliVersions: Readonly<Record<string, string | undefined>> = {},
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Promise<ResolvedModelRoute> {
+    const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const sandboxFingerprint = this.routeSmokeSandboxFingerprint();
-    const persisted = this.readRouteSmokeState(route, sandboxFingerprint);
+    const persisted = this.readRouteSmokeState(route, sandboxFingerprint, dispatchPool, relaySmokeEntryKey);
     if (persisted !== undefined) {
       const hydrated = withRouteSmoke(route, persisted);
       if (routeSmokeFailure(hydrated, Date.now(), undefined, currentCliVersions) === undefined) {
@@ -2277,14 +2250,24 @@ export class RealBackend implements Backend {
       process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
     );
     const smoked = await smokeRouteModels(route, async (entry) => {
-      let sawBash = false;
+      let sawToolCallEchoOk = false;
+      const entryPool = entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
+      const resolved = resolveModelSlugForPool(entry.slug, entryPool);
+      const provider = resolved.provider;
+      const auth = this.mountAuth(this.opts.runKey);
+      const nonce = randomUUID();
+      const nonceFile = `.route-smoke-${nonce}.nonce`;
+      const noncePath = join(this.workingRepo, nonceFile);
       const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
       try {
+        this.assertProviderAuth(entry.slug, entryPool, auth.providerAuth);
+        rmSync(noncePath, { force: true });
         const result = await sc.run({
-          agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key })),
-          sandbox: this.routeSmokeSandbox(),
+          agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key }), entryPool),
+          sandbox: this.routeSmokeSandbox(auth),
           cwd: this.workingRepo,
           promptFile: join(this.opts.promptsDir, "route-smoke.md"),
+          promptArgs: { NONCE: nonce, NONCE_FILE: nonceFile },
           maxIterations: 1,
           idleTimeoutSeconds,
           completionSignal: "ROUTE_SMOKE_COMPLETE",
@@ -2292,25 +2275,36 @@ export class RealBackend implements Backend {
             type: "file",
             path: join(logDir, "run.log"),
             onAgentStreamEvent: (event) => {
-              if (
-                routeSmokeToolCallIsEchoOk(event)
-              ) {
-                sawBash = true;
+              if (routeSmokeToolCallIsEchoOk(event)) {
+                sawToolCallEchoOk = true;
               }
             },
           },
         });
-        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !sawBash) {
+        let nonceContents: string | undefined;
+        try {
+          nonceContents = readFileSync(noncePath, "utf8");
+        } catch {
+          nonceContents = undefined;
+        }
+        const bashOk = routeSmokeBashEvidenceSatisfied({
+          provider,
+          sawToolCallEchoOk,
+          sawNonceFile: routeSmokeNonceFileEvidence(nonceContents, nonce),
+        });
+        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !bashOk) {
           throw new Error(
             `model did not complete an observable bash smoke for ${entry.slug}`,
           );
         }
-        return { cliVersion: this.cliVersionForSlug(entry.slug) };
+        return { cliVersion: this.cliVersionForSlug(entry.slug, entryPool) };
       } finally {
+        rmSync(noncePath, { force: true });
         rmSync(logDir, { recursive: true, force: true });
+        this.cleanupTempAuthDirs([auth.grokAuthDir]);
       }
     });
-    this.writeRouteSmokeState(smoked, sandboxFingerprint);
+    this.writeRouteSmokeState(smoked, sandboxFingerprint, dispatchPool, relaySmokeEntryKey);
     return smoked;
   }
 
@@ -2321,11 +2315,13 @@ export class RealBackend implements Backend {
   private readRouteSmokeState(
     route: ResolvedModelRoute,
     sandboxFingerprint: string,
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
   ): Readonly<Record<string, RouteSmokeStatus>> | undefined {
     try {
       const raw = JSON.parse(readFileSync(this.routeSmokeStatePath(), "utf8")) as unknown;
       if (raw === null || typeof raw !== "object") return undefined;
-      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint)];
+      const state = (raw as Record<string, unknown>)[routeSmokeCacheKey(route, sandboxFingerprint, billingPool, relaySmokeEntryKey)];
       if (state === null || typeof state !== "object") return undefined;
       return state as Readonly<Record<string, RouteSmokeStatus>>;
     } catch {
@@ -2333,7 +2329,12 @@ export class RealBackend implements Backend {
     }
   }
 
-  private writeRouteSmokeState(route: ResolvedModelRoute, sandboxFingerprint: string): void {
+  private writeRouteSmokeState(
+    route: ResolvedModelRoute,
+    sandboxFingerprint: string,
+    billingPool?: string,
+    relaySmokeEntryKey?: string,
+  ): void {
     const path = this.routeSmokeStatePath();
     let all: Record<string, unknown> = {};
     try {
@@ -2343,7 +2344,7 @@ export class RealBackend implements Backend {
       // Missing or malformed state is treated as empty; the fresh smoke result
       // below becomes the new durable source of truth.
     }
-    all[routeSmokeCacheKey(route, sandboxFingerprint)] = route.smoke;
+    all[routeSmokeCacheKey(route, sandboxFingerprint, billingPool, relaySmokeEntryKey)] = route.smoke;
     mkdirSync(join(this.opts.home ?? homedir(), ".sc-orchestrator"), { recursive: true });
     const tempPath = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     try {
@@ -2354,8 +2355,11 @@ export class RealBackend implements Backend {
     }
   }
 
-  private cliVersionForSlug(slug: string): string {
-    const provider = resolveModelSlug(slug).provider;
+  private cliVersionForSlug(slug: string, billingPool?: string): string {
+    const provider = resolveModelSlugForPool(
+      slug,
+      isBillingPoolDispatchId(billingPool) ? billingPool : undefined,
+    ).provider;
     const command = provider === "claudeCode" ? "claude" : provider;
     try {
       return this.sh(command, ["--version"]).trim() || "unknown";
@@ -2378,6 +2382,7 @@ export class RealBackend implements Backend {
       ...REQUIRED_SOUL_FILES.map((file) => join(this.opts.soulsDir, file)),
       auth.srcCodexAuth,
       auth.srcCodexConfig,
+      auth.srcGrokAuth,
       auth.claudeTokenFile,
     ];
     for (const file of files) {
@@ -2397,8 +2402,7 @@ export class RealBackend implements Backend {
   }
 
   /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
-  private routeSmokeSandbox(): sc.SandboxProvider {
-    const auth = this.mountAuth(this.opts.runKey);
+  private routeSmokeSandbox(auth: ReturnType<RealBackend["mountAuth"]>): sc.SandboxProvider {
     return docker(
       this.boxConfig(
         { ...auth, ghToken: this.readGhToken() },
@@ -2871,6 +2875,9 @@ export class RealBackend implements Backend {
   protected mountAuth(issueNumber: number): {
     authDir: string;
     claudeToken?: string;
+    /** Per-issue host dir for grok auth, only when host `~/.grok/auth.json` exists. */
+    grokAuthDir?: string;
+    providerAuth: ProviderAuthAvailability;
   } {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
     // production keeps the os.homedir() default when opts.home is omitted.
@@ -2899,6 +2906,19 @@ export class RealBackend implements Backend {
     // minimal container config instead of copying the host's (#378). Always written
     // so the dir is a valid mount even when codex auth was absent.
     writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
+    // #807: grok auth is BEST-EFFORT + fail-closed skip. Host missing
+    // `~/.grok/auth.json` ⇒ omit the mount entirely (unlike codex, which still
+    // mounts an empty-ish dir for config.toml). Presence gate = copy success.
+    let grokAuthDir: string | undefined = mkdtempSync(`${paths.hostGrokAuthDir}-`);
+    try {
+      chmodSync(grokAuthDir, 0o700);
+      copyFileSync(paths.srcGrokAuth, join(grokAuthDir, "auth.json"));
+      chmodSync(join(grokAuthDir, "auth.json"), 0o600);
+    } catch {
+      // No host grok auth → skip mount; reclaim the half-built dir.
+      rmSync(grokAuthDir, { recursive: true, force: true });
+      grokAuthDir = undefined;
+    }
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
     // Codex (model gpt-5.6-terra), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
     // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
@@ -2911,23 +2931,63 @@ export class RealBackend implements Backend {
     } catch {
       claudeToken = undefined;
     }
-    return { authDir: paths.hostCodexAuthDir, claudeToken };
+    return {
+      authDir: paths.hostCodexAuthDir,
+      claudeToken,
+      grokAuthDir,
+      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+    };
+  }
+
+  /**
+   * Grok OAuth copies are invocation-unique and only needed while their mounted
+   * container runs. Reclaim them on every terminal path without masking the
+   * worker result; this mirrors the family backend's per-run auth lifecycle.
+   */
+  protected cleanupTempAuthDirs(dirs: ReadonlyArray<string | undefined>): void {
+    for (const dir of dirs) {
+      if (dir === undefined) continue;
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup must not mask the worker's own outcome.
+      }
+    }
+  }
+
+  /** Fail before `sc.run`: a missing mount is not permission to launch unauthenticated. */
+  private assertProviderAuth(
+    slug: string,
+    pool: BillingPoolDispatchId | undefined,
+    availability: ProviderAuthAvailability,
+  ): void {
+    const resolved = resolveModelSlugForPool(slug, pool);
+    const missing = unavailableProviderAuth(resolved.provider, availability);
+    if (missing !== undefined) {
+      throw new Error(
+        `no ${missing} auth for selected ${resolved.provider} provider (${slug}) — refusing to launch`,
+      );
+    }
   }
 
   private box(
     issueNumber: number,
     spec: Pick<StepSpec, "role" | "soul">,
     options?: AgentStepRunOptions,
-  ): sc.SandboxProvider {
+  ): { sandbox: sc.SandboxProvider; providerAuth: ProviderAuthAvailability; cleanup: () => void } {
     const auth = this.mountAuth(issueNumber);
-    return docker(
-      this.boxConfig(
-        { ...auth, ghToken: this.readGhToken() },
-        spec,
-        issueNumber,
-        options,
+    return {
+      sandbox: docker(
+        this.boxConfig(
+          { ...auth, ghToken: this.readGhToken() },
+          spec,
+          issueNumber,
+          options,
+        ),
       ),
-    );
+      providerAuth: auth.providerAuth,
+      cleanup: () => this.cleanupTempAuthDirs([auth.grokAuthDir]),
+    };
   }
 
   /**
@@ -3006,7 +3066,13 @@ export class RealBackend implements Backend {
    * signal, not an OS readonly mount (reviewer READ-ONLY stays soft, ADR 0017 §4).
    */
   protected boxConfig(
-    auth: { authDir: string; claudeToken?: string; ghToken?: string },
+    auth: {
+      authDir: string;
+      claudeToken?: string;
+      ghToken?: string;
+      /** #807: optional per-issue grok auth dir (omit when host auth absent). */
+      grokAuthDir?: string;
+    },
     spec: Pick<StepSpec, "role" | "soul">,
     issueNumber?: number,
     options?: AgentStepRunOptions,
@@ -3052,6 +3118,12 @@ export class RealBackend implements Backend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
     ];
+    // #807: mount grok auth only when host `~/.grok/auth.json` was present
+    // (fail-closed skip). Whole-dir mount at SANDBOX_GROK_DIR; image keeps
+    // `/usr/local/bin/grok` outside this tree so PATH survives the bind.
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
@@ -3129,7 +3201,7 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
-  ): unknown {
+  ): unknown | undefined {
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
@@ -3146,36 +3218,55 @@ export class RealBackend implements Backend {
       }
       throw err;
     }
-    if (typedOutputUsed) return result.output;
-    // Untyped compatibility path: structured result lives in the role tag.
-    // #596 F2: extended for the 4 review-loop roles (single-slice real decode seam).
-    if (spec.role === "coder") return extractCoderTag(result.stdout);
-    if (spec.role === "reviewer") return extractReviewerTag(result.stdout);
-    if (spec.role === "verify") return extractVerifyTag(result.stdout);
-    if (spec.role === "fixer") return extractFixerTag(result.stdout);
-    if (spec.role === "cleanup") return extractCleanupTag(result.stdout);
-    if (spec.role === "docRelease") return extractDocReleaseTag(result.stdout);
-    // Unknown role: fail closed (no silent misroute to wrong extractor).
-    throw new Error(
-      `realBackend: unknown role '${spec.role}' for raw tag extraction`,
+    if (typedOutputUsed && result.output !== undefined) return result.output;
+    // Stdout tags are the primary machine channel for multi-iteration coders;
+    // elsewhere they are compatibility for a missing typed result.
+    const compatibility =
+      spec.role === "coder"
+        ? extractCoderTag(result.stdout)
+        : spec.role === "reviewer"
+          ? extractReviewerTag(result.stdout)
+          : spec.role === "verify"
+            ? extractVerifyTag(result.stdout)
+            : spec.role === "fixer"
+              ? extractFixerTag(result.stdout)
+              : spec.role === "cleanup"
+                ? extractCleanupTag(result.stdout)
+                : spec.role === "docRelease"
+                  ? extractDocReleaseTag(result.stdout)
+                  : undefined;
+    if (compatibility !== undefined) {
+      if (typedOutputUsed) {
+        console.warn(
+          `[orchestrator] telemetry: ${spec.id}-${spec.role} used legacy stdout tag compatibility fallback`,
+        );
+      }
+      return compatibility;
+    }
+    // Git truth reconciles a coder's committed-ness only AFTER a typed outcome
+    // exists. It cannot turn the absence of every outcome channel into a
+    // success-shaped coder result: that is a structural protocol failure, owned
+    // by the runner's bounded redispatch and exhaustion escalation path.
+    const err = new Error(
+      `StructuredOutputError: ${spec.id}-${spec.role} produced no worker outcome ` +
+        "sidecar, typed output, or legacy stdout tag",
     );
+    err.name = "StructuredOutputError";
+    throw err;
   }
 
   /**
    * Decode a Sandcastle structured output into a domain StepOutput.
    *
-   * `gitCommitCount` is `result.commits.length` (via {@link realCommitCount}) —
-   * the number of commits Sandcastle observed THIS run. For a coder step on the
-   * NORMAL completion path it is the SINGLE SOURCE OF TRUTH for `committed` /
-   * `commitsAdded` (#256 truthification): the self-reported `<coder>` tag is
-   * reconciled against git via {@link reconcileCoderCommits}, which derives the
-   * count from git and throws on a contradiction (a model claiming a commit it
-   * never made) — the caller propagates that to the runner's S8(error) edge.
+   * For a fresh coder step `gitCommitCount` is the final graph delta from its
+   * pinned pre-worker HEAD to final HEAD. It is the SINGLE SOURCE OF TRUTH for
+   * `committed` / `commitsAdded` (#818): self-reported `<coder>` values are
+   * advisory discrepancy telemetry only, never a reconcile failure.
    *
    * `gitCommitCount === undefined` is allowed only for roles where commit truth
    * is irrelevant (reviewer). A resumed coder still gets git-truthed, but the
-   * count is cumulative from the persisted ledger baseline to the resident HEAD,
-   * not `result.commits.length`: resume may only re-emit corrected structured
+   * count is cumulative from the persisted ledger baseline to the resident HEAD:
+   * resume may only re-emit corrected structured
    * output while earlier commits already live on the branch.
    *
    * Ignored for the reviewer role (commits are not part of a review's contract).
@@ -3185,6 +3276,11 @@ export class RealBackend implements Backend {
     raw: unknown,
     gitCommitCount: number | undefined,
   ): StepOutput {
+    if (raw === undefined) {
+      throw new Error(
+        `realBackend: ${spec.id}-${spec.role} reached decodeOutput without a machine outcome`,
+      );
+    }
     if (spec.role === "reviewer") {
       const r = reviewerOutputSchema.parse(raw);
       const findings: Finding[] = r.findings.map((f) =>
@@ -3199,22 +3295,19 @@ export class RealBackend implements Backend {
         ...(r.escalate ? { escalate: r.escalate } : {}),
       };
     }
-    // Coder: parse the self-report for shape, then TRUTH the commit count from
-    // git. Fresh runs use result.commits.length; resumed runs pass a cumulative
-    // ledger-baseline count. A contradiction throws → S8(error) at the runner.
+    // Coder: parse the self-report for shape, then attach final graph truth.
+    // Fresh runs use their final graph delta; resumed runs use a cumulative
+    // ledger-baseline count. Mismatch/unknown is advisory telemetry.
     if (spec.role === "coder") {
       const c = coderOutputSchema.parse(raw);
-      if (gitCommitCount === undefined) {
-        throw new Error(
-          "realBackend: coder output decoded without git commit truth. " +
-            "Fresh and resumed coder steps must reconcile committed/commitsAdded " +
-            "against git; trusting the model self-report would bypass S8(error).",
-        );
-      }
       const out = reconcileCoderCommits(c, gitCommitCount);
       const repairEvidence =
         out.repairEvidence !== undefined
           ? { repairEvidence: out.repairEvidence }
+          : {};
+      const selfReportDiscrepancy =
+        out.selfReportDiscrepancy !== undefined
+          ? { selfReportDiscrepancy: out.selfReportDiscrepancy }
           : {};
       return out.escalate
         ? {
@@ -3222,6 +3315,7 @@ export class RealBackend implements Backend {
             committed: out.committed,
             commitsAdded: out.commitsAdded,
             ...repairEvidence,
+            ...selfReportDiscrepancy,
             escalate: out.escalate,
           }
         : {
@@ -3229,6 +3323,7 @@ export class RealBackend implements Backend {
             committed: out.committed,
             commitsAdded: out.commitsAdded,
             ...repairEvidence,
+            ...selfReportDiscrepancy,
           };
     }
 
@@ -3333,32 +3428,31 @@ export class RealBackend implements Backend {
     worktree: WorktreeHandle,
     sessionId: string,
     beforeResumeHead: string | undefined,
-  ): number {
+  ): number | undefined {
     const stateDir = this.stateDirFor(worktree.path, this.issueOf(worktree));
     const ledger = this.readLedger(stateDir);
     const basis =
       ledger === undefined ? {} : resumeCoderCommitBasis(ledger, sessionId);
     if (basis.baselineHead !== undefined) {
-      return this.countCommitsSince(worktree, basis.baselineHead);
+      try {
+        return this.countCommitsSince(worktree, basis.baselineHead);
+      } catch {
+        return undefined;
+      }
     }
     if (basis.priorCommitsAdded !== undefined) {
       if (beforeResumeHead === undefined) {
-        throw new Error(
-          `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
-            "the persisted ledger only has a prior commit count fallback, but " +
-            "the before-resume HEAD could not be read. Refusing to count " +
-            "resume-only commits as zero.",
-        );
+        return undefined;
       }
-      const resumeOnlyCommits =
-        this.countCommitsSince(worktree, beforeResumeHead);
-      return basis.priorCommitsAdded + resumeOnlyCommits;
+      try {
+        const resumeOnlyCommits =
+          this.countCommitsSince(worktree, beforeResumeHead);
+        return basis.priorCommitsAdded + resumeOnlyCommits;
+      } catch {
+        return undefined;
+      }
     }
-    throw new Error(
-      `realBackend: cannot git-truth resumed coder session ${sessionId}; ` +
-        "the persisted ledger has no matching coder entry with a baseline HEAD " +
-        "or prior commit count. Refusing to trust the resumed <coder> self-report.",
-    );
+    return undefined;
   }
 
   async countCommitsBetween(
@@ -3371,6 +3465,28 @@ export class RealBackend implements Backend {
 
   private countCommitsSince(worktree: WorktreeHandle, fromHead: string): number {
     return this.countCommitsInRange(worktree, `${fromHead}..HEAD`);
+  }
+
+  /**
+   * Fresh-coder commit truth is the final graph delta, never Sandcastle's
+   * accumulated observation log. A worker can commit and later reset, rebase,
+   * squash, or drop that commit; only commits still reachable from final HEAD
+   * are allowed to set `committed:true`.
+   */
+  private freshCoderGitCommitCount(
+    worktree: WorktreeHandle,
+    headBefore: string | undefined,
+  ): number | undefined {
+    if (headBefore === undefined || headBefore.trim().length === 0) {
+      return undefined;
+    }
+    try {
+      return this.countCommitsSince(worktree, headBefore.trim());
+    } catch {
+      // The self-report remains advisory when the final graph cannot be
+      // observed. Do not invent a mismatch failure from an unavailable probe.
+      return undefined;
+    }
   }
 
   private countCommitsInRange(worktree: WorktreeHandle, range: string): number {
@@ -3397,17 +3513,26 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     options?: AgentStepRunOptions,
-    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number,
+    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number | undefined,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
+    // Pin the graph before Sandcastle begins. `result.commits` is only an
+    // accumulated observation log, so it may include SHAs a worker later made
+    // unreachable; the final graph delta below is the sole verdict input.
+    const headBefore =
+      spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     const typedOutputUsed =
       spec.maxIter === 1 && options?.outcomeLanding === undefined;
+    const box = this.box(issueNumber, spec, options);
+    try {
+    const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
+    this.assertProviderAuth(spec.model, pool, box.providerAuth);
     const result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
-      sandbox: this.box(issueNumber, spec, options),
+      sandbox: box.sandbox,
       // The build worker's CLI is the spec's model slug → provider (the S2 coder
       // runs on Codex gpt-5.6-terra; a claude slug stays claudeCode). agentForSlug keeps
       // the "model slug → baked CLI" #244 mapping unit-testable. #686: billing pool
@@ -3415,9 +3540,7 @@ export class RealBackend implements Backend {
       agent: agentForSlug(
         spec.model,
         effortForLiveOfficer(spec.model, spec),
-        isBillingPoolDispatchId(options?.billingPool)
-          ? options.billingPool
-          : undefined,
+        pool,
       ),
       // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
       // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
@@ -3441,19 +3564,20 @@ export class RealBackend implements Backend {
         issueNumber,
       },
     });
-    // #244 step-advance gate: the step only advances if the agent fired its
-    // declared completionSignal. A complete-but-unsignaled run (e.g. maxIter hit
-    // mid-work) throws here → S8(error), before any output is decoded.
-    assertCompletionSignal(result, spec.completionSignal, `${spec.id}-${spec.role}`);
-    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-    // #256 commit-truth: the coder's committed/commitsAdded is derived from the
-    // REAL commits Sandcastle observed (result.commits), not the self-report.
+    // #818: derive coder verdict fields from final graph truth, not Sandcastle's
+    // cumulative commit observations or the worker self-report.
     const gitCommitCount =
       spec.role === "coder"
-        ? (coderCommitCount?.(result) ?? realCommitCount(result))
+        ? coderCommitCount !== undefined
+          ? coderCommitCount(result)
+          : this.freshCoderGitCommitCount(worktree, headBefore)
         : undefined;
+    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     const output = this.decodeOutput(spec, raw, gitCommitCount);
     return { output, sessionId: lastSessionId(result) };
+    } finally {
+      box.cleanup();
+    }
   }
 
   async runStep(
@@ -3475,22 +3599,23 @@ export class RealBackend implements Backend {
     const beforeResumeHead =
       spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     await this.preflightToolchain(spec);
+    const box = this.box(issueNumber, spec, options);
     try {
+      const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
+      this.assertProviderAuth(spec.model, pool, box.providerAuth);
       const typedOutputUsed = options?.outcomeLanding === undefined;
       const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
         cwd: worktree.path,
-        sandbox: this.box(issueNumber, spec, options),
+        sandbox: box.sandbox,
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
         // codex for the gpt-5.6-terra coder, claudeCode for a claude slug). #686 pool
         // channel must match the fresh dispatch.
         agent: agentForSlug(
           spec.model,
           effortForLiveOfficer(spec.model, spec),
-          isBillingPoolDispatchId(options?.billingPool)
-            ? options.billingPool
-            : undefined,
+          pool,
         ),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
@@ -3511,13 +3636,6 @@ export class RealBackend implements Backend {
           issueNumber,
         },
       });
-      // #244 step-advance gate (resume path): a resumed step still only advances
-      // on its declared completionSignal — an unsignaled resume throws → S8(error).
-      assertCompletionSignal(
-        result,
-        spec.completionSignal,
-        `${spec.id}-${spec.role}-resume`,
-      );
       // Resume path: git-truth against the cumulative resident-branch commit
       // count, not this one-iteration result.commits.length. The resumed
       // iteration may only re-emit the structured tag while prior commits already
@@ -3556,6 +3674,8 @@ export class RealBackend implements Backend {
         );
       }
       throw err;
+    } finally {
+      box.cleanup();
     }
   }
 
@@ -3775,22 +3895,6 @@ export class RealBackend implements Backend {
       // class), so it maps to the retryable `malformed` kind — NOT a judged verdict.
       return { kind: "malformed", reason: outcome.reason };
     }
-    // Branch-identity check (cmr S336 r3 F1): the worker self-reports `branch`, and
-    // a worker that ships some OTHER branch (e.g. the resident base `main`) but
-    // reports it as a success must NOT be read as a delivery. prompts/ship.md asks
-    // the worker to report THE shipped branch — the resident slice branch already
-    // checked out (`branchStrategy:{type:"head"}`), with no legitimate rename path —
-    // so an `outcome.branch` ≠ the worktree branch it was asked to deliver is
-    // off-contract. #601: this is a JUDGED off-contract delivery (the worker shipped
-    // something we can rule on), NOT a structural process failure → map to `failed`
-    // so the runner's `callerOwns` claims it and it passes through with ZERO retry
-    // (never re-running a decided wrong-branch delivery).
-    if (outcome.branch !== ctx.worktree.branch) {
-      return {
-        kind: "failed",
-        reason: `ship worker reported branch "${outcome.branch}" but was asked to deliver "${ctx.worktree.branch}" (a ship of a different branch is not the slice delivery)`,
-      };
-    }
     return {
       kind: "completed",
       output: {
@@ -3911,6 +4015,19 @@ export class RealBackend implements Backend {
     // leaked temp dirs accumulating under the codex-auth root).
     const auth = this.mountShipAuth(this.issueOf(worktree));
     try {
+      const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
+      const missingProvider = unavailableProviderAuth(
+        resolveModelSlugForPool(spec.model, pool).provider,
+        auth.providerAuth ?? { claude: auth.claudeToken !== undefined, grok: auth.grokAuthDir !== undefined },
+      );
+      if (missingProvider !== undefined) {
+        return {
+          kind: "escalate",
+          reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
+          diagnosis:
+            "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; provider availability preflight rejected the ship launch before sc.run",
+        };
+      }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
@@ -3984,15 +4101,9 @@ export class RealBackend implements Backend {
         }
       }
     } finally {
-      // Reclaim the per-call temp codex auth dir (online review r1, 3 bots):
-      // best-effort — a failed cleanup must never mask the worker's outcome.
-      if (auth.codexAuthDir !== undefined) {
-        try {
-          rmSync(auth.codexAuthDir, { recursive: true, force: true });
-        } catch {
-          // best-effort: the run already returned/threw.
-        }
-      }
+      // Reclaim every per-call auth copy. Best-effort cleanup must never mask the
+      // worker's outcome.
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
     }
   }
 
@@ -4100,10 +4211,10 @@ export class RealBackend implements Backend {
   protected mountShipAuth(issueNumber: number): ShipAuth {
     // #748: same injectable-home seam as mountAuth (opts.home ?? os.homedir()).
     const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
+    const root = join(paths.hostCodexAuthDir, "..");
     let codexAuthDir: string | undefined;
     let tempCodexDir: string | undefined;
     try {
-      const root = join(paths.hostCodexAuthDir, "..");
       mkdirSync(root, { recursive: true, mode: 0o700 });
       tempCodexDir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
       copyFileSync(paths.srcCodexAuth, join(tempCodexDir, "auth.json"));
@@ -4123,6 +4234,21 @@ export class RealBackend implements Backend {
         rmSync(tempCodexDir, { recursive: true, force: true });
       }
     }
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, `ship-grok-auth-${issueNumber}-`));
+      copyFileSync(paths.srcGrokAuth, join(tempGrokDir, "auth.json"));
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      // grok auth is an optional dispatch leg; omit its mount when absent and
+      // reclaim a partially-created per-invocation dir.
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
     let claudeToken: string | undefined;
     try {
       const tok = readFileSync(paths.claudeTokenFile, "utf8").trim();
@@ -4134,7 +4260,13 @@ export class RealBackend implements Backend {
       // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
       // route slots simply run without this env var.
     }
-    return { codexAuthDir, claudeToken, ghToken: this.readGhToken() };
+    return {
+      codexAuthDir,
+      grokAuthDir,
+      claudeToken,
+      ghToken: this.readGhToken(),
+      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+    };
   }
 
   /**
@@ -4197,6 +4329,9 @@ export class RealBackend implements Backend {
     // #334: codex auth ONLY — baked skills win (no host skills mount).
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     // #372: souls mount for ship worker too (live source, shadows baked if any).
     // Shared helper forces readonly:true at all sites.
@@ -4313,7 +4448,8 @@ export class RealBackend implements Backend {
 
   async worktreeHead(worktree: WorktreeHandle): Promise<string | undefined> {
     try {
-      return this.sh("git", ["rev-parse", "HEAD"], worktree.path);
+      const head = this.sh("git", ["rev-parse", "HEAD"], worktree.path).trim();
+      return head.length > 0 ? head : undefined;
     } catch {
       return undefined;
     }

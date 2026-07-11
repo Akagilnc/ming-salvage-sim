@@ -15,7 +15,15 @@
  * deleted-inline regression are asserted at the seam.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +34,7 @@ import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SHIP_FOCUS_FILENAME,
@@ -170,23 +179,14 @@ describe("#336 RealBackend.dispatchWorker — the single-slice ship worker", () 
     await expect(be.dispatchWorker!(shipWorkerSpec(), {})).rejects.toThrow(/worktree/);
   });
 
-  // ── cmr S336 r3 F1 (branch-identity check): the worker self-reports `branch`, and
-  // the consumer trusted it. A worker that ships `main` (or any branch ≠ the resident
-  // slice worktree branch it was asked to deliver) but reports it as a success was
-  // read as a completed delivery. ship.md asks the worker to report THE shipped branch
-  // (the slice branch already checked out, branchStrategy:{type:"head"}) — there is no
-  // legitimate rename path, so an outcome.branch ≠ ctx.worktree.branch is off-contract.
-  it("a shipped outcome whose branch ≠ the worktree branch ⇒ failed (a JUDGED off-contract delivery, #601)", async () => {
-    // #601: a branch-identity mismatch is a JUDGED outcome (the worker shipped
-    // something we can rule on), NOT a structural process failure → maps to `failed`
-    // so the runner's `callerOwns` claims it and it passes through with ZERO retry
-    // (never re-running a decided wrong-branch delivery). A structural `malformed`
-    // (no parseable `<ship>` tag) is the retryable case; a branch mismatch is not.
+  it("a shipped outcome whose branch differs from the worktree branch remains a worker outcome", async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: "main", status: "pr_opened", pr: "u" };
     const res = await be.dispatchWorker!(shipWorkerSpec(), { worktree });
-    expect(res.kind).toBe("failed");
-    if (res.kind === "failed") expect(res.reason).toMatch(/branch/);
+    expect(res).toMatchObject({
+      kind: "completed",
+      output: { kind: "ship", branch: "main", status: "pr_opened", pr: "u" },
+    });
   });
 
   it("a shipped outcome on the correct worktree branch ⇒ completed (identity holds)", async () => {
@@ -255,6 +255,18 @@ describe("#336 single-slice shipSandboxConfig — best-effort ship auth", () => 
     // ORCHESTRATOR_REPO is exported so the ship soul's `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` defer path works (codex #384).
     expect(c.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
+  });
+
+  it("mounts the isolated grok auth dir when the selected dispatch can use grok", () => {
+    const c = cfg().config({
+      codexAuthDir: "/tmp/codex",
+      grokAuthDir: "/tmp/grok",
+      claudeToken: "tok",
+    });
+    expect(c.mounts).toContainEqual({
+      hostPath: "/tmp/grok",
+      sandboxPath: SANDBOX_GROK_DIR,
+    });
   });
 
   it("shipSandboxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) (#372)", () => {
@@ -375,6 +387,30 @@ describe("#336 single-slice runShipWorker — fail-closed when the top-level Cla
     if (res.kind === "escalated") {
       expect(res.escalation.reason).toMatch(/claude|token|auth/i);
     }
+  });
+
+  it("reclaims the isolated grok auth dir on the early no-Claude-auth exit", async () => {
+    const codexDir = mkDir("ship-reclaim-codex-");
+    const grokDir = mkDir("ship-reclaim-grok-");
+    class ReclaimBackend extends NoClaudeAuthBackend {
+      protected override mountShipAuth(): ShipAuth {
+        return { codexAuthDir: codexDir, grokAuthDir: grokDir };
+      }
+    }
+    const be = new ReclaimBackend({
+      sourceRepo: mkDir("ship-reclaim-src-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: 336,
+      home: mkDir("ship-reclaim-home-"),
+    });
+
+    const outcome = await be.run(shipWorkerSpec(), { worktree });
+    expect(outcome.kind).toBe("escalate");
+    expect(existsSync(codexDir)).toBe(false);
+    expect(existsSync(grokDir)).toBe(false);
   });
 });
 
@@ -675,5 +711,97 @@ describe("#378 RealBackend auth mounts — write a minimal danger-full-access co
     const auth = be.shipAuth(378);
     expect(auth.codexAuthDir).toBeTruthy();
     assertMinimalConfig(auth.codexAuthDir as string);
+  });
+});
+
+// ═══════════════════ #807 grok auth mount (agent-step mountAuth only) ═══════════════════
+
+describe("#807 mountAuth grok auth copy (fail-closed skip when host absent)", () => {
+  class GrokAuthBackend extends RealBackend {
+    protected override buildOrReuseClone(): string {
+      return mkdtempSync(join(tmpdir(), "grok-auth-clone-"));
+    }
+    protected override assertIndependentClone(): void {}
+    public agentAuth(issueNumber: number): {
+      authDir: string;
+      claudeToken?: string;
+      grokAuthDir?: string;
+    } {
+      return this.mountAuth(issueNumber);
+    }
+    public agentBoxConfig(auth: {
+      authDir: string;
+      claudeToken?: string;
+      grokAuthDir?: string;
+    }) {
+      return this.boxConfig(auth, { role: "coder", soul: "coder" }, 807);
+    }
+  }
+
+  function mkHome(withGrok: boolean): string {
+    const home = mkdtempSync(join(tmpdir(), "grok-auth-home-"));
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "auth.json"), '{"tok":"codex"}\n');
+    writeFileSync(join(home, ".sc-claude-token"), "sk-claude\n");
+    if (withGrok) {
+      mkdirSync(join(home, ".grok"), { recursive: true });
+      writeFileSync(join(home, ".grok", "auth.json"), '{"https://auth.x.ai::x":{"key":"g"}}\n');
+      chmodSync(join(home, ".grok", "auth.json"), 0o600);
+    }
+    return home;
+  }
+
+  function backend(home: string): GrokAuthBackend {
+    return new GrokAuthBackend({
+      sourceRepo: mkdtempSync(join(tmpdir(), "grok-auth-src-")),
+      repo: "Akagilnc/ming-salvage-sim",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: 807,
+      home,
+    });
+  }
+
+  it("copies host ~/.grok/auth.json into a per-issue dir when present", () => {
+    const home = mkHome(true);
+    const be = backend(home);
+    const auth = be.agentAuth(807);
+    expect(auth.grokAuthDir).toMatch(new RegExp(`${join(home, ".sc-orchestrator", "grok-auth-807-")}.+`));
+    expect(readFileSync(join(auth.grokAuthDir!, "auth.json"), "utf8")).toContain("auth.x.ai");
+  });
+
+  it("allocates isolated Grok auth copies for concurrent same-issue launches", () => {
+    const home = mkHome(true);
+    const be = backend(home);
+    const first = be.agentAuth(807);
+    const second = be.agentAuth(807);
+    expect(first.grokAuthDir).toBeDefined();
+    expect(second.grokAuthDir).toBeDefined();
+    expect(first.grokAuthDir).not.toBe(second.grokAuthDir);
+    expect(readFileSync(join(first.grokAuthDir!, "auth.json"), "utf8")).toContain("auth.x.ai");
+    expect(readFileSync(join(second.grokAuthDir!, "auth.json"), "utf8")).toContain("auth.x.ai");
+  });
+
+  it("skips grokAuthDir (and the sandbox mount) when host auth is absent", () => {
+    const home = mkHome(false);
+    const be = backend(home);
+    const auth = be.agentAuth(807);
+    expect(auth.grokAuthDir).toBeUndefined();
+    expect(existsSync(join(home, ".sc-orchestrator", "grok-auth-807"))).toBe(false);
+    const cfg = be.agentBoxConfig({ authDir: auth.authDir });
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
+  });
+
+  it("boxConfig mounts the per-issue grok auth dir at SANDBOX_GROK_DIR when present", () => {
+    const home = mkHome(true);
+    const be = backend(home);
+    const auth = be.agentAuth(807);
+    const cfg = be.agentBoxConfig(auth);
+    expect(
+      cfg.mounts.some(
+        (m) => m.hostPath === auth.grokAuthDir && m.sandboxPath === SANDBOX_GROK_DIR,
+      ),
+    ).toBe(true);
   });
 });

@@ -271,10 +271,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     expect(pushed).toBe(false);
   });
 
-  it("S2 returns a coder output with garbage commitsAdded → S8(error), NOT pushed", async () => {
-    // The dangerous one: a malformed coder output must NEVER be coerced into a
-    // committed success and pushed (that would ship unreviewed code). Here the
-    // shape is coder-kind but commitsAdded is non-numeric → contract violation.
+  it("S2 garbage commitsAdded remains advisory; later invalid worker output still stops before push", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -291,9 +288,8 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S2");
-    // CRUCIAL: push must NEVER happen on a malformed coder output.
+    expect(result.status).toBe("escalate");
+    // The follow-on reviewer is invalid; no unreviewed push occurs.
     expect(pushed).toBe(false);
   });
 

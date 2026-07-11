@@ -191,6 +191,47 @@ class DispatchBackend implements Backend {
 }
 
 describe("#331 unified worker-dispatch seam — happy path", () => {
+  it("continues from a coder/git discrepancy through the production dispatch seam to a fresh reviewer", async () => {
+    class AdvisoryDiscrepancyBackend extends DispatchBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "coder") {
+          this.dispatched.push(
+            `${spec.id}:${spec.kind}:${spec.role}:${spec.session}:${spec.contextRetention}:${spec.skill ?? "—"}`,
+          );
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: {
+              kind: "coder",
+              committed: false,
+              commitsAdded: 0,
+              selfReportDiscrepancy: {
+                code: "coder_self_report_disagrees_with_git_commits",
+                selfReportedCommitted: true,
+                selfReportedCommitsAdded: 1,
+                gitCommitCount: 0,
+              },
+            },
+          };
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    const backend = new AdvisoryDiscrepancyBackend();
+    const result = await runOrchestrator({ issueNumber: 818, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched.slice(0, 2)).toEqual([
+      "S2:coder:coder:fresh:retain:/tdd",
+      "S3:reviewer:reviewer:fresh:clean:/code-review",
+    ]);
+  });
+
   it("routes S2/S3 (and S7 ship) through dispatchWorker, never the legacy methods", async () => {
     const backend = new DispatchBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
@@ -320,10 +361,13 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       const result = await runOrchestrator({ issueNumber: 786, backend });
 
       expect(result.status).toBe("error");
-      const commits = readTelemetryRecords(telemetryDir).filter(
-        (record): record is TelemetryCommitRecord => record.phase === "commit",
-      );
-      expect(commits).toHaveLength(1);
+      let commits: TelemetryCommitRecord[] = [];
+      await vi.waitFor(() => {
+        commits = readTelemetryRecords(telemetryDir).filter(
+          (record): record is TelemetryCommitRecord => record.phase === "commit",
+        );
+        expect(commits).toHaveLength(1);
+      });
       expect(commits[0]).toMatchObject({ issue: 786, runId: backend.ctxs[0]?.runId });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -651,7 +695,7 @@ describe("#796 Coder-Rec host dispatch", () => {
     ["sonnet", undefined, "claude"],
     ["grok-4.5", undefined, "cursor"],
     ["opencode-grok", undefined, "opencode"],
-    ["grok-4.5", "grok-build", "pi"],
+    ["grok-4.5", "grok-build", "grok"],
     ["grok-4.5", "codex-5h", "codex"],
   ] as const)(
     "derives host %s/%s from the registered provider",

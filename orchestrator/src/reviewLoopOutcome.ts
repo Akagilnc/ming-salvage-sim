@@ -192,12 +192,12 @@ export function isValidFixerResult(o: StepOutput | undefined): o is FixerResult 
   return obj.kind === "fixer" && isValidFixerEnvelopeFields(obj);
 }
 
-/** True when the fixer outcome should advance to fresh S9 verify (not park). */
-export function fixerProceedsToVerify(output: FixerResult): boolean {
-  return output.committed || output.alreadySatisfied === true;
+/** Every well-shaped fixer envelope returns to fresh S9 verification. */
+export function fixerProceedsToVerify(_output: FixerResult): boolean {
+  return true;
 }
 
-/** Ledger replay: S10 fixer output that advanced the loop (committed or alreadySatisfied). */
+/** Ledger replay: every valid S10 fixer output advances to fresh verification. */
 export function fixerLedgerOutputProceeds(output?: {
   readonly kind?: string;
   readonly committed?: boolean;
@@ -205,7 +205,7 @@ export function fixerLedgerOutputProceeds(output?: {
 }): boolean {
   return (
     output?.kind === "fixer" &&
-    (output.committed === true || output.alreadySatisfied === true)
+    typeof output?.committed === "boolean"
   );
 }
 
@@ -233,14 +233,17 @@ export function fixerLedgerFixCommitSha(entry: {
 }
 
 /**
- * Fix SHA from the fixer envelope (committed:true or alreadySatisfied).
- * Runner/stage must not re-read live git for this value (ADR 0030).
+ * Optional fix SHA from the fixer envelope. A no-fix envelope has no SHA and
+ * proceeds through the verify findings channel.
  */
 export function fixerEnvelopeFixCommitSha(output: FixerResult): string | undefined {
-  if (output.committed === true || output.alreadySatisfied === true) {
-    return output.fixCommitSha;
-  }
-  return undefined;
+  return output.fixCommitSha;
+}
+
+/** Whether the fixer envelope carries a commit that permits commit side effects. */
+export function fixerHasFixCommit(output: FixerResult): boolean {
+  const fixCommitSha = fixerEnvelopeFixCommitSha(output);
+  return fixCommitSha !== undefined && fixCommitSha.length > 0;
 }
 
 export function fixerResultFromParsed(parsed: {
