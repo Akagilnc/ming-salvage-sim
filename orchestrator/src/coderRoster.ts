@@ -24,7 +24,7 @@ export interface CoderRosterEntry {
 }
 
 /** Roster table version — bump when #424 bench updates the eligible set. */
-export const CODER_ROSTER_VERSION = "2026-07-11";
+export const CODER_ROSTER_VERSION = "2026-07-11.1";
 
 /**
  * Eligible coder models (model × pool × aliases). Keep in sync with
@@ -51,6 +51,12 @@ export const CODER_ROSTER: ReadonlyArray<CoderRosterEntry> = [
     slug: "gpt-5.6-luna",
     pool: "codex",
     aliases: ["luna@med+fast", "gpt-5.6-luna"],
+  },
+  {
+    id: "sol@med",
+    slug: "gpt-5.6-sol",
+    pool: "codex",
+    aliases: ["sol@med+fast", "gpt-5.6-sol"],
   },
   {
     id: "sonnet-5",

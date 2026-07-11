@@ -1,6 +1,6 @@
 # Coder 花名册（Coder-Rec roster）
 
-Version: **2026-07-11**（随 [#424](https://github.com/Akagilnc/ming-salvage-sim/issues/424) bench / [#789](https://github.com/Akagilnc/ming-salvage-sim/issues/789) Claude 备选扩展）
+Version: **2026-07-11.1**（#795 补入 sol 难片收敛型 coder）
 
 设计时标注推荐 coder + 补位顺序；编排器只读查表（[#767](https://github.com/Akagilnc/ming-salvage-sim/issues/767)）。运行时无自适应升档状态机。
 
@@ -11,6 +11,7 @@ Version: **2026-07-11**（随 [#424](https://github.com/Akagilnc/ming-salvage-si
 | `grok-4.5` | SuperGrok 周池 | `grok-4.5` | 首发收敛率全场最佳、速度并列最快 | 主力（池子在时） |
 | `terra@med` | codex 5h/周 | `gpt-5.6-terra` | 完整面 / 常规 fix | 5.6 选官；别名 `terra@med+fast` |
 | `luna@med` | codex 5h/周 | `gpt-5.6-luna` | fix 轮迭代收敛、交互单修 | fix 主力；别名 `luna@med+fast` |
+| `sol@med` | codex 5h/周 | `gpt-5.6-sol` | 难片收敛、换棒接管 | 非批量默认；别名 `sol@med+fast`；自产片不得由 sol 自审 |
 | `sonnet-5` | Claude 池 | `sonnet` | 完整面 / 大活 | grok 枯竭后备选（[#789](https://github.com/Akagilnc/ming-salvage-sim/issues/789)；与 cmr 腿 `opus` 不同 slug，不撞池分离） |
 | `haiku-4.5` | Claude 池 | `haiku` | 小修 / 快速机械活 | grok 枯竭后小活起步；别名 `Haiku 4.5` / `haiku` |
 

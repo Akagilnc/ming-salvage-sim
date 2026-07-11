@@ -121,7 +121,14 @@ export const DEFAULT_POOL_MODELS: Readonly<
   "grok-build": ["grok-4.5"],
   cursor: ["grok-4.5"],
   zai: ["grok-4.5"],
-  "codex-5h": ["terra@med", "luna@med", "gpt-5.6-terra", "gpt-5.6-luna"],
+  "codex-5h": [
+    "terra@med",
+    "luna@med",
+    "sol@med",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+  ],
   // #789 — roster ids + runnable slugs (mirrors codex-5h dual keys).
   claude: ["sonnet-5", "haiku-4.5", "sonnet", "haiku"],
 };
