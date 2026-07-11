@@ -91,8 +91,10 @@ def _character_domain_statement(db: Any, state: Any, character_name: str, query:
     record = _matching_firsthand_record(db, state, character_name, query)
     if record is None:
         return "近臣未从自身见闻掌握所问一事。", f"knowledge_denied:{_query_domain(query)}"
-    source_id = str(record.get("source_id") or "")
-    return _safe_report_text(record.get("body")), source_id
+    # The durable source id remains in the knowledge ledger.  The audience
+    # payload gets only a qualitative label, so its provenance can be
+    # explained without exposing an internal key (which may contain digits).
+    return _safe_report_text(record.get("body")), "持久见闻"
 
 
 def _canonical_source_ref(source_kind: str, source_ref: Optional[str], domain_ref: str) -> str:
@@ -104,7 +106,7 @@ def _canonical_source_ref(source_kind: str, source_ref: Optional[str], domain_re
             return "吏部查访"
         provider = "查访"
     elif source_kind == "firsthand":
-        provider = "见闻"
+        return "见闻/持久见闻"
     else:
         raise ValueError("回奏来源必须是 firsthand 或 inquiry")
     return f"{provider}/{domain_ref}"
@@ -149,9 +151,14 @@ def build_return_report(
     source_ref: Optional[str] = None,
 ) -> Dict[str, str]:
     """Build a traceable report without a minister-reply dependency."""
-    source_kind = source_kind or source_kind_for_query(query)
-    if source_kind not in {"firsthand", "inquiry"}:
+    requested_kind = source_kind or source_kind_for_query(query)
+    if requested_kind not in {"firsthand", "inquiry"}:
         raise ValueError("回奏来源必须是 firsthand 或 inquiry")
+    # This seam has no character/state argument, so it cannot verify a
+    # minister's durable witness.  Never let wording or a caller label mint
+    # a firsthand report; the production, role-scoped seam below performs the
+    # witness check before selecting firsthand.
+    source_kind = "inquiry"
     statement, domain_ref = _qualitative_domain_statement(db, query)
     return {
         "source_kind": source_kind,
@@ -175,7 +182,12 @@ def persist_return_report(
     # is allowed only when a durable witness/scout record for this domain
     # already exists; wording alone may not manufacture provenance.
     firsthand_record = _matching_firsthand_record(db, state, character_name, query)
-    source_kind = "firsthand" if firsthand_record is not None else "inquiry"
+    requested_kind = source_kind_for_query(query)
+    source_kind = (
+        "firsthand"
+        if requested_kind != "inquiry" and firsthand_record is not None
+        else "inquiry"
+    )
     if source_kind == "firsthand":
         statement, domain_ref = _character_domain_statement(db, state, character_name, query)
     else:

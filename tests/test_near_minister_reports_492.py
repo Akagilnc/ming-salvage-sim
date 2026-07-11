@@ -48,8 +48,8 @@ def test_report_source_is_derived_from_query_not_caller_label(game):
     report = build_return_report(db, "军情如何？", source_ref="伪造来源")
 
     assert source_kind_for_query("军情如何？") == "firsthand"
-    assert report["source_kind"] == "firsthand"
-    assert report["source_ref"] == "见闻/powers"
+    assert report["source_kind"] == "inquiry"
+    assert report["source_ref"] == "查访/powers"
     assert "伪造来源" not in report["source_ref"]
 
 
@@ -128,7 +128,8 @@ def test_firsthand_report_uses_the_matching_witness_body(game):
 
     assert report["source_kind"] == "firsthand"
     assert report["statement"] == "辽东有报"
-    assert report["source_ref"] == "见闻/witness:492:matching"
+    assert report["source_ref"] == "见闻/持久见闻"
+    assert not any(char.isdigit() for value in report.values() for char in value)
 
 
 def test_question_wording_cannot_create_firsthand_provenance(game):
@@ -138,3 +139,17 @@ def test_question_wording_cannot_create_firsthand_provenance(game):
     report = persist_return_report(db, state, minister, "请据见闻说说军情。")
 
     assert report["source_kind"] == "inquiry"
+
+
+def test_explicit_inquiry_overrides_matching_firsthand_witness(game):
+    db, state, _content = game
+    minister = next(iter(db.content.characters))
+    db.register_character_knowledge_source(
+        state, [{"character_id": minister}], "witness", "边地见闻", "辽东有报",
+        source_id="witness:492:explicit-inquiry",
+    )
+
+    report = persist_return_report(db, state, minister, "请查访军情如何？")
+
+    assert report["source_kind"] == "inquiry"
+    assert report["source_ref"] == "查访/powers"
