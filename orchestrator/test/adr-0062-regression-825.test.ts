@@ -2,10 +2,11 @@
  * #825 — closing regression sweep for ADR 0062 / #820.
  *
  * Completion sentinels are useful observability stamps, but an otherwise
- * completed worker must never be told they are a routing requirement. The
- * runtime's exit / durable facts remain the control plane; these strings are
- * deliberately checked at the authored contract boundary so a future prompt
- * edit cannot restore a lie-detector gate by instruction alone.
+ * completed worker must never be told they are a routing requirement. Every
+ * authored *_STEP_COMPLETE occurrence is rejected unless its local instruction
+ * context explicitly allowlists it as optional telemetry. Therefore a prompt
+ * edit cannot restore a lie-detector gate merely by choosing an imperative the
+ * sweep did not anticipate.
  */
 
 import { globSync, readFileSync } from "node:fs";
@@ -44,53 +45,33 @@ const CONTRACT_FILES = globSync(
 ).sort();
 
 const COMPLETION_SENTINEL = "[A-Z][A-Z0-9_]*_STEP_COMPLETE";
-const OBLIGATION = "(?:must|required|always|shall|need\\s+to)";
+const OPTIONAL_FRAMING = /\b(?:optional|may|telemetry)\b/i;
 
-function hasRequiredSignalObligation(normalized: string): boolean {
-  const obligationNearSentinel = new RegExp(
-    `(?:\\b${OBLIGATION}\\b[\\s\\S]{0,120}\\b${COMPLETION_SENTINEL}\\b|\\b${COMPLETION_SENTINEL}\\b[\\s\\S]{0,120}\\b${OBLIGATION}\\b)`,
-    "i",
-  );
-  // Keep the proximity check inside a sentence / fenced example. Otherwise a
-  // sentinel-only example can be paired with an unrelated required field in
-  // the next paragraph. Explicit optional-telemetry wording remains allowed.
-  const prose = normalized.replace(/```[\s\S]*?```/g, "");
-  return prose
-    .split(/(?<=[.!?])\s+|```/)
-    .some((clause) => obligationNearSentinel.test(clause) && !/optional telemetry/i.test(clause));
+function hasUnframedCompletionSentinel(authoredText: string): boolean {
+  const sentinel = new RegExp(`\\b${COMPLETION_SENTINEL}\\b`, "g");
+  const authoredContexts = authoredText.split(/(?=^##?\s)/m);
+
+  return authoredContexts.some((context) => {
+    const occurrences = context.match(sentinel) ?? [];
+    return occurrences.length > 0 && !OPTIONAL_FRAMING.test(context);
+  });
 }
 
 describe("#825 ADR 0062 completion-sentinel contract sweep", () => {
+  it.each([
+    "append CODER_STEP_COMPLETE to your response",
+    "Finish by writing CODER_STEP_COMPLETE.",
+    "Your response has to end with the line CODER_STEP_COMPLETE.",
+    "Add CODER_STEP_COMPLETE to the bottom of your reply.",
+    "Close the message with CODER_STEP_COMPLETE.",
+    "The final line is CODER_STEP_COMPLETE.",
+  ])("rejects unframed completion-sentinel instruction: %s", (instruction) => {
+    expect(hasUnframedCompletionSentinel(instruction)).toBe(true);
+  });
+
   it.each(CONTRACT_FILES)("treats completion sentinels as optional telemetry in %s", (file) => {
     const body = readFileSync(resolve(process.cwd(), file), "utf8");
-    const normalized = body.replace(/\s+/g, " ");
-    const requiredOutput = normalized.match(
-      /## Required output(.*?)(?=## |$)/i,
-    )?.[1] ?? normalized;
-    const requiredSignalSentence = requiredOutput
-      .split(/(?<=[.!?])\s+/)
-      .some(
-        (sentence) =>
-          /(?:print|emit|fire)\s+(?:the\s+)?(?:completion\s+signal|[`\w]*_STEP_COMPLETE)/i.test(
-            sentence,
-          ) &&
-          !/(?:optional telemetry|may\s+(?:print|emit|fire))/i.test(sentence),
-      );
-
-    expect(requiredSignalSentence).toBe(false);
-    expect(hasRequiredSignalObligation(normalized)).toBe(false);
-    expect(normalized).not.toMatch(
-      /(?:always\s+)?(?:print|emit|fire)\s+[`\w]*_STEP_COMPLETE.{0,180}(?:must|only|required|at the very end)/i,
-    );
-    expect(normalized).not.toMatch(
-      /(?:must|required to)\s+(?:emit|print|fire).{0,180}_STEP_COMPLETE/i,
-    );
-    expect(normalized).not.toMatch(
-      /(?:end|finish)\s+(?:your\s+)?(?:output|response).{0,180}_STEP_COMPLETE/i,
-    );
-    expect(normalized).not.toMatch(
-      /(?:need\s+not|do\s+not\s+need\s+to|does\s+not\s+need\s+to|do\s+not|don't)\s+(?:print|emit|fire)(?:\s+\w+){0,8}\s+(?:[A-Z][A-Z0-9_]*_STEP_COMPLETE|them|it)\b/i,
-    );
+    expect(hasUnframedCompletionSentinel(body)).toBe(false);
   });
 });
 
