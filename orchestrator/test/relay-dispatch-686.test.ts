@@ -597,16 +597,18 @@ describe("#787 capacity relay", () => {
 
     const samePool = await runCapacityCase({
       pools: [
-        { id: "grok-build", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["terra@med", "luna@med"] },
+        { id: "grok-build", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["grok-4.5"] },
+        { id: "codex-5h", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["terra@med", "luna@med"] },
         { id: "cursor", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["luna@med"] },
       ],
     });
     expect(samePool.coderModels).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
-    expect(samePool.handoff).toMatchObject({ trigger: "capacity", toModelId: "luna@med", toPool: "grok-build" });
+    expect(samePool.handoff).toMatchObject({ trigger: "capacity", toModelId: "luna@med", toPool: "codex-5h" });
 
     const crossPool = await runCapacityCase({
       pools: [
-        { id: "grok-build", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["terra@med"] },
+        { id: "grok-build", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["grok-4.5"] },
+        { id: "codex-5h", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["terra@med"] },
         { id: "cursor", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["luna@med"] },
       ],
     });
