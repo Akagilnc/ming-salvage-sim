@@ -22,6 +22,7 @@ import {
   type TelemetryCollectRecord,
   type TelemetryDispatchRecord,
   type TelemetryEnvironmentRecord,
+  type TelemetryReviewRoundRecord,
 } from "../../src/telemetry.js";
 import type {
   Backend,
@@ -153,6 +154,10 @@ class FamilyTelemetryBackend implements FamilyBackend {
   async installTelemetryRunEnvironment(): Promise<void> {}
 
   async runFamilyVerify(): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
     return { ok: true };
   }
 
@@ -291,6 +296,257 @@ describe("#786 family dispatch telemetry", () => {
     expect(records.filter((r) => r.phase === "collect").length).toBeGreaterThanOrEqual(2);
     expect(records.some((r) => r.phase === "dispatch" && r.runId === firstRunId)).toBe(true);
     expect(records.some((r) => r.phase === "dispatch" && r.runId === secondRunId)).toBe(true);
+    const reviewRounds = records.filter(
+      (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
+    );
+    expect(reviewRounds).toHaveLength(4);
+    expect(reviewRounds.map((record) => record.verdict)).toEqual([
+      "converged",
+      "converged",
+      "converged",
+      "converged",
+    ]);
+    expect(reviewRounds.map((record) => record.findingsBySeverity)).toEqual([
+      null,
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it("keeps the family flow green when review-round telemetry resolution throws", async () => {
+    class ThrowingTelemetryBackend extends FamilyTelemetryBackend {
+      override resolveTelemetryDir(): string {
+        throw new Error("telemetry directory unavailable");
+      }
+    }
+
+    const backend = new ThrowingTelemetryBackend(
+      join(tempDir("orch-786-review-round-failopen-"), ".ledger-809"),
+    );
+    const result = await runFamily({
+      epic: { issue: 809, children: [] },
+      familyBackend: backend,
+      singleSliceBackend: new SmokeOnlySingleSliceBackend(),
+      familyBase: "family/809-sidecar",
+    });
+
+    expect(result.status).toBe("success");
+  });
+
+  it("preserves a green CMR verdict when the runner rejects its durable outcome", async () => {
+    class HeadMovingReviewerBackend extends FamilyTelemetryBackend {
+      async readFamilyCurrentHead(): Promise<string> {
+        return `${FAMILY_HEAD}-reviewer-moved`;
+      }
+    }
+
+    const durable = join(tempDir("orch-786-review-round-rejected-"), ".ledger-809");
+    const result = await runFamily({
+      epic: { issue: 809, children: [] },
+      familyBackend: new HeadMovingReviewerBackend(durable),
+      singleSliceBackend: new SmokeOnlySingleSliceBackend(),
+      familyBase: "family/809-sidecar",
+    });
+
+    expect(result.status).not.toBe("success");
+    const reviewRounds = readTelemetryRecords(durable).filter(
+      (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
+    );
+    expect(reviewRounds).toHaveLength(1);
+    expect(reviewRounds[0]).toMatchObject({
+      cmrPass: "completeness",
+      verdict: "converged",
+      finalDisposition: "rejected",
+    });
+  });
+
+  it.each([
+    ["failed", "failed", { kind: "failed", reason: "worker exited 1" }],
+    [
+      "malformed outcome after its protocol rewrite",
+      "protocol_failure",
+      { kind: "malformed", reason: "missing CMR verdict" },
+    ],
+    [
+      "outcome protocol failure",
+      "protocol_failure",
+      {
+        kind: "outcome_protocol_failure",
+        reason: "outcome guard rejected the CMR envelope",
+        attempts: 1,
+      },
+    ],
+  ] as const)("preserves the %s worker verdict when the runner rejects it", async (_label, verdict, terminal) => {
+    class RejectedTerminalBackend extends FamilyTelemetryBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.ctxs.push(ctx);
+          return terminal;
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    const durable = join(tempDir("orch-786-protocol-rejected-"), ".ledger-809");
+    const result = await runFamily({
+      epic: { issue: 809, children: [] },
+      familyBackend: new RejectedTerminalBackend(durable),
+      singleSliceBackend: new SmokeOnlySingleSliceBackend(),
+      familyBase: "family/809-sidecar",
+    });
+
+    expect(result.status).not.toBe("success");
+    expect(
+      readTelemetryRecords(durable).filter(
+        (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
+      ),
+    ).toContainEqual(
+      expect.objectContaining({
+        verdict,
+        finalDisposition: "rejected",
+      }),
+    );
+  });
+
+  it("preserves a malformed worker verdict when the runner rejects its moved-HEAD abort", async () => {
+    class MalformedHeadMovingReviewerBackend extends FamilyTelemetryBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.ctxs.push(ctx);
+          return { kind: "malformed", reason: "missing CMR verdict" };
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+
+      async readFamilyCurrentHead(): Promise<string> {
+        return `${FAMILY_HEAD}-reviewer-moved`;
+      }
+    }
+
+    const durable = join(tempDir("orch-786-malformed-rejected-"), ".ledger-809");
+    const result = await runFamily({
+      epic: { issue: 809, children: [] },
+      familyBackend: new MalformedHeadMovingReviewerBackend(durable),
+      singleSliceBackend: new SmokeOnlySingleSliceBackend(),
+      familyBase: "family/809-sidecar",
+    });
+
+    expect(result.status).not.toBe("success");
+    expect(
+      readTelemetryRecords(durable).filter(
+        (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
+      ),
+    ).toContainEqual(
+      expect.objectContaining({
+        verdict: "malformed",
+        finalDisposition: "rejected",
+      }),
+    );
+  });
+
+  it("keeps an unknown review-round row when durable abort persistence throws", async () => {
+    class ThrowingDurableAbortBackend extends FamilyTelemetryBackend {
+      override async appendFamilyLedger(): Promise<void> {
+        throw new Error("durable abort ledger unavailable");
+      }
+
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.ctxs.push(ctx);
+          return { kind: "failed", reason: "provider returned HTTP 429" };
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    const durable = join(tempDir("orch-786-abort-telemetry-"), ".ledger-809");
+    await expect(
+      runFamily({
+        epic: { issue: 809, children: [] },
+        familyBackend: new ThrowingDurableAbortBackend(durable),
+        singleSliceBackend: new SmokeOnlySingleSliceBackend(),
+        familyBase: "family/809-sidecar",
+      }),
+    ).rejects.toThrow("durable abort ledger unavailable");
+
+    expect(
+      readTelemetryRecords(durable).filter(
+        (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
+      ),
+    ).toContainEqual(
+      expect.objectContaining({
+        verdict: "failed",
+        finalDisposition: "unknown",
+      }),
+    );
+  });
+
+  it("keeps an unknown review-round row when CMR-reviewed persistence throws", async () => {
+    class ThrowingReviewedBackend extends FamilyTelemetryBackend {
+      override async appendFamilyLedger(): Promise<void> {
+        throw new Error("CMR-reviewed ledger unavailable");
+      }
+
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: false,
+              successfulLegs: [...COMPLETE_CMR_LEGS],
+              evidencePaths: ["cmr/blocking.json"],
+              findings: [
+                {
+                  severity: "medium",
+                  category: "correctness",
+                  claim_quote: "runner must preserve the blocker",
+                  location: "orchestrator/src/family/verifyCmr.ts:2680",
+                  suggested_fix: "route it through coder-fix",
+                  action: "fix_now",
+                },
+              ],
+            },
+          };
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    const durable = join(tempDir("orch-786-reviewed-telemetry-"), ".ledger-809");
+    await expect(
+      runFamily({
+        epic: { issue: 809, children: [] },
+        familyBackend: new ThrowingReviewedBackend(durable),
+        singleSliceBackend: new SmokeOnlySingleSliceBackend(),
+        familyBase: "family/809-sidecar",
+      }),
+    ).rejects.toThrow("CMR-reviewed ledger unavailable");
+
+    expect(
+      readTelemetryRecords(durable).filter(
+        (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
+      ),
+    ).toContainEqual(
+      expect.objectContaining({
+        verdict: "blocking",
+        finalDisposition: "unknown",
+      }),
+    );
   });
 
   it.each([

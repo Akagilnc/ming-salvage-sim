@@ -13,8 +13,8 @@
  *
  * Tested WITHOUT a real container:
  *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / malformed;
- *   - cmrOutcomeFromResult: the completion-signal gate (an unsignaled run is NOT a
- *     pass — mirrors the merger gate);
+ *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion signals
+ *     remain compatibility telemetry, not a verdict gate;
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
  *     clean cmr reviewer soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
@@ -56,6 +56,7 @@ import {
 import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
@@ -601,9 +602,9 @@ describe("integrated CMR pass prompt closure contract", () => {
   });
 });
 
-// ═══════════════════════ 2. cmrOutcomeFromResult (signal gate) ═══════════════════════
+// ═══════════════════════ 2. cmrOutcomeFromResult (structured outcome) ═══════════════════════
 
-describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merger gate)", () => {
+describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
   const SIGNAL = cmrWorkerSpec().completionSignal;
 
   it("a signaled converged run ⇒ a verdict outcome", () => {
@@ -619,7 +620,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
     if (o.kind === "verdict") expect(o.converged).toBe(true);
   });
 
-  it("an UNSIGNALED run ⇒ escalate (a complete-but-unsignaled run is NOT a pass)", () => {
+  it("an UNSIGNALED run still parses the structured verdict (signal is telemetry)", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: undefined,
       stdout: `<cmr>${JSON.stringify({
@@ -628,10 +629,10 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
         ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>`,
     });
-    expect(o.kind).toBe("escalate");
+    expect(o.kind).toBe("verdict");
   });
 
-  it("a wrong-signal run ⇒ escalate", () => {
+  it("a wrong signal does not override the structured verdict", () => {
     const o = cmrOutcomeFromResult({
       completionSignal: "SOME_OTHER_SIGNAL",
       stdout: `<cmr>${JSON.stringify({
@@ -640,7 +641,7 @@ describe("#335 cmrOutcomeFromResult — completion-signal gate (mirrors the merg
         ...VALID_CMR_VERDICT_FIELDS,
       })}</cmr>`,
     });
-    expect(o.kind).toBe("escalate");
+    expect(o.kind).toBe("verdict");
   });
 
   it("accounts worker verdict legs against the frozen worker route, not later process env", () => {
@@ -709,7 +710,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    protected override verifyFamilyShipPr(): { ok: true; headOid: string } | { ok: false; reason: string } {
+    protected override verifyFamilyShipPr(): { ok: true; headOid: string } {
       return { ok: true, headOid: "head-1" };
     }
   }
@@ -1432,6 +1433,14 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("Akagilnc/ming-salvage-sim");
   });
 
+  it("mounts isolated grok auth when the CMR route can dispatch grok", () => {
+    const cfg = cfgBackend().config({ ...auth, grokAuthDir: "/tmp/cmr-grok-auth" });
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/tmp/cmr-grok-auth",
+      sandboxPath: SANDBOX_GROK_DIR,
+    });
+  });
+
   it("exports the gh token as GH_TOKEN so the in-container completeness gate can `gh issue view` the live issue body as authority (mirrors the ship worker)", () => {
     // The completeness gate grounds against the live issue body via `gh issue view`;
     // without GH_TOKEN that fails and the audit degrades to commit-titles/test-files.
@@ -1653,8 +1662,10 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
     expect(auth).toEqual({
       codexAuthDir: undefined,
       agyDir: undefined,
+      grokAuthDir: undefined,
       claudeToken: undefined,
       ghToken: undefined,
+      providerAuth: { claude: false, grok: false },
     });
   });
 
@@ -2226,12 +2237,14 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     }
   }
 
-  it("the early no-claude-auth escalate still removes the codex + agy temp dirs", async () => {
+  it("the early no-claude-auth escalate removes codex, agy, and grok temp dirs", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const codexDir = mkDir("reclaim-codex-");
     const agyDir = mkDir("reclaim-agy-");
+    const grokDir = mkDir("reclaim-grok-");
     expect(existsSync(codexDir)).toBe(true);
     expect(existsSync(agyDir)).toBe(true);
+    expect(existsSync(grokDir)).toBe(true);
 
     const be = new ReclaimBackend(
       {
@@ -2245,7 +2258,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         imageName: "img",
         familyBaseStartHead: "abc123",
       },
-      { codexAuthDir: codexDir, agyDir }, // no claudeToken ⇒ early escalate
+      { codexAuthDir: codexDir, agyDir, grokAuthDir: grokDir }, // no claudeToken ⇒ early escalate
     );
 
     const outcome = await be.run(legacyClaudeCmrSpec(), { familyBase: "fb" });
@@ -2253,6 +2266,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     // The finally reclaimed BOTH per-run dirs even though sc.run never ran.
     expect(existsSync(codexDir)).toBe(false);
     expect(existsSync(agyDir)).toBe(false);
+    expect(existsSync(grokDir)).toBe(false);
   });
 
   it("the successful container path removes the temporary outcome sidecar directory", async () => {
@@ -2313,7 +2327,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 
-  it("a prepared but blank CMR outcome sidecar fails closed instead of accepting legacy stdout", async () => {
+  it("a prepared but blank CMR outcome sidecar falls back to legacy stdout", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
@@ -2366,11 +2380,11 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
 
     const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
 
-    expect(outcome.kind).toBe("malformed");
-    expect(outcome.kind === "malformed" ? outcome.reason : "").toContain(
-      "outcome sidecar",
-    );
-    expect(outcome.kind === "malformed" ? outcome.reason : "").toMatch(/blank|empty/i);
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: DEFAULT_CMR_LEGS,
+    });
   });
 });
 
