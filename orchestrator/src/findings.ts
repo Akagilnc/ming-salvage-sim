@@ -24,10 +24,10 @@ function encodeFindingPart(value: string): string {
 /**
  * Stable identity key for cross-round finding matching.
  *
- * ADR 0030 requires drift/suppression/reopen logic to recognize the same
- * finding even when a reviewer changes wording. The runner anchors identity on
- * the stable parts every reviewer must provide: category + location + normalized
- * claim text. The key is intentionally semantic-ish, not a raw object hash.
+ * ADR 0030 requires a stable cross-round key. The runner uses an exact match on
+ * category + location + normalized claim text; it is not semantic deduplication.
+ * Wording or line-location drift therefore produces a different key and can make
+ * a recurring finding appear new.
  */
 export function findingIdentityKey(finding: Finding): string {
   return [

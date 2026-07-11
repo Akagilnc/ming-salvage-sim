@@ -150,6 +150,7 @@ describe("#786 telemetry pure helpers", () => {
       cmrPass: "completeness",
       reviewRound: 1,
       verdict: "not_converged",
+      finalDisposition: "accepted",
     });
 
     expect(record).toEqual({
@@ -161,12 +162,64 @@ describe("#786 telemetry pure helpers", () => {
       cmrPass: "completeness",
       reviewRound: 1,
       verdict: "not_converged",
+      finalDisposition: "accepted",
       findingsBySeverity: null,
-      findingIdentityKeys: null,
-      newFindingIdentityKeys: null,
-      recurringFindingIdentityKeys: null,
+      identityMatch: "exact_identity_match",
+      exactIdentityMatchKeys: null,
+      newExactIdentityMatchKeys: null,
+      recurringExactIdentityMatchKeys: null,
       priorFindingDispositions: null,
     } satisfies TelemetryReviewRoundRecord);
+  });
+
+  it("persists a review-round JSONL line with the complete final-schema key set", () => {
+    const ledgerDir = tempDir("orch-786-review-round-raw-");
+    appendTelemetryRecord(
+      ledgerDir,
+      buildReviewRoundStamp({
+        stampedAt: "2026-07-11T00:00:00.000Z",
+        runId: "run-786",
+        issue: 786,
+        cmrPass: "correctness",
+        reviewRound: 2,
+        verdict: "converged",
+        finalDisposition: "accepted",
+      }),
+    );
+
+    const [line] = readFileSync(join(ledgerDir, TELEMETRY_FILENAME), "utf8")
+      .trim()
+      .split("\n");
+    const raw = JSON.parse(line!) as Record<string, unknown>;
+
+    expect(Object.keys(raw).sort()).toEqual([
+      "cmrPass",
+      "exactIdentityMatchKeys",
+      "finalDisposition",
+      "findingsBySeverity",
+      "identityMatch",
+      "issue",
+      "newExactIdentityMatchKeys",
+      "phase",
+      "priorFindingDispositions",
+      "recurringExactIdentityMatchKeys",
+      "reviewRound",
+      "runId",
+      "stamped_at",
+      "v",
+      "verdict",
+    ]);
+    expect(raw).toMatchObject({
+      phase: "review_round",
+      verdict: "converged",
+      finalDisposition: "accepted",
+      identityMatch: "exact_identity_match",
+      findingsBySeverity: null,
+      exactIdentityMatchKeys: null,
+      newExactIdentityMatchKeys: null,
+      recurringExactIdentityMatchKeys: null,
+      priorFindingDispositions: null,
+    });
   });
 
   it("separates new and recurring identity keys and maps next-round dispositions", () => {
@@ -177,6 +230,7 @@ describe("#786 telemetry pure helpers", () => {
       cmrPass: "completeness",
       reviewRound: 1,
       verdict: "blocking",
+      finalDisposition: "accepted",
       findings: [finding()],
     });
     const dispositions: PriorFindingDisposition[] = [
@@ -192,16 +246,17 @@ describe("#786 telemetry pure helpers", () => {
       cmrPass: "completeness",
       reviewRound: 2,
       verdict: "blocking",
+      finalDisposition: "accepted",
       findings: [finding(), finding({ severity: "medium", location: "src/new.ts:8", claim_quote: "new concern" })],
       priorReviewRecords: [prior],
       priorFindingDispositions: dispositions,
     });
 
     expect(record.findingsBySeverity).toEqual({ critical: 0, high: 1, medium: 1, low: 0, clarity: 0 });
-    expect(record.recurringFindingIdentityKeys).toEqual([
+    expect(record.recurringExactIdentityMatchKeys).toEqual([
       "correctness|src/retry.ts:42|the retry ignores the error",
     ]);
-    expect(record.newFindingIdentityKeys).toEqual([
+    expect(record.newExactIdentityMatchKeys).toEqual([
       "correctness|src/new.ts:8|new concern",
     ]);
     expect(record.priorFindingDispositions).toEqual([

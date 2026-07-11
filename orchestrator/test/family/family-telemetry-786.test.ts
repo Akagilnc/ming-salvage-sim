@@ -330,6 +330,33 @@ describe("#786 family dispatch telemetry", () => {
     expect(result.status).toBe("success");
   });
 
+  it("records a rejected final review-round verdict when the runner rejects a green CMR payload", async () => {
+    class HeadMovingReviewerBackend extends FamilyTelemetryBackend {
+      async readFamilyCurrentHead(): Promise<string> {
+        return `${FAMILY_HEAD}-reviewer-moved`;
+      }
+    }
+
+    const durable = join(tempDir("orch-786-review-round-rejected-"), ".ledger-809");
+    const result = await runFamily({
+      epic: { issue: 809, children: [] },
+      familyBackend: new HeadMovingReviewerBackend(durable),
+      singleSliceBackend: new SmokeOnlySingleSliceBackend(),
+      familyBase: "family/809-sidecar",
+    });
+
+    expect(result.status).not.toBe("success");
+    const reviewRounds = readTelemetryRecords(durable).filter(
+      (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
+    );
+    expect(reviewRounds).toHaveLength(1);
+    expect(reviewRounds[0]).toMatchObject({
+      cmrPass: "completeness",
+      verdict: "rejected",
+      finalDisposition: "rejected",
+    });
+  });
+
   it.each([
     ["family CMR", "cmr", "failed", "429-quota"],
     ["family verify", "verify", "thrown", "stream-disconnect"],
