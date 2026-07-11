@@ -218,7 +218,7 @@ class E2EFamilyBackend extends RealFamilyBackend {
     return {
       kind: "verdict",
       converged: true,
-      successfulLegs: ["opus", "gpt-5.6-sol"],
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       evidencePaths: ["cmr/review-summary.json"],
     };
   }

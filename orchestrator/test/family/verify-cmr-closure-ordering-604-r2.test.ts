@@ -84,7 +84,7 @@ class ClosureOrderingBackend implements FamilyBackend {
           kind: "cmr",
           converged: false,
           reason: "fresh re-review found a new blocker",
-          successfulLegs: ["opus", "gpt-5.6-sol"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           // Protected prior key NEITHER claimed fixed NOR disposed — malformed.
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],

@@ -850,7 +850,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
   mergerCalls: ConflictResolveRequest[] = [];
   verifyOutcome: "green" | "red" = "green";
   verifyCalls: FamilyVerifyRequest[] = [];
-  cmrResult: IntegratedCmrResult = { converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] };
+  cmrResult: IntegratedCmrResult = { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
   cmrCalls: IntegratedCmrRequest[] = [];
   shCalls: Array<{ file: string; args: string[] }> = [];
   prViewResponse: unknown = {
@@ -1441,6 +1441,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         successfulLegs: ["gpt-5.6-sol"],
         skippedLegs: [
           { slug: "opus", reason: "not configured for this test" },
+          { slug: "agy", reason: "not configured for this test" },
         ],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -1456,6 +1457,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       cmrReviewLegs: [
         { slug: "opus" },
         { slug: "gpt-5.6-sol" },
+        { slug: "agy" },
       ],
     });
 
@@ -1475,6 +1477,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         converged: false,
         reason: "same-module budget summary label mismatch remains",
         successfulLegs: ["opus", "gpt-5.6-sol"],
+        skippedLegs: [{ slug: "agy", reason: "no active conversation" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         findings: [
@@ -1503,6 +1506,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       cmrReviewLegs: [
         { slug: "opus" },
         { slug: "gpt-5.6-sol" },
+        { slug: "agy" },
       ],
     });
 
@@ -1568,11 +1572,12 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
       cmrReviewLegs: [
         { slug: "opus" },
         { slug: "gpt-5.6-sol" },
+        { slug: "agy" },
       ],
     });
 
@@ -1587,10 +1592,11 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       cmrReviewLegs: [
         { slug: "opus" },
         { slug: "gpt-5.6-sol" },
+        { slug: "agy" },
       ],
     });
 
@@ -1627,6 +1633,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
       ],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -1672,6 +1679,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
       ],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -1708,6 +1716,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
       ],
       claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|accepted"],
       evidencePaths: ["cmr/review.json"],
@@ -1736,6 +1745,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
       ],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -1756,6 +1766,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
       ],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -1785,6 +1796,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [
         { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
       ],
       claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|accepted"],
       evidencePaths: ["cmr/review.json"],

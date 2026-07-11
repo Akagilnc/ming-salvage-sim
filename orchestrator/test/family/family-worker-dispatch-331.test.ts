@@ -66,7 +66,7 @@ class CapableFamilyBackend implements FamilyBackend {
   ): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
     return this.cmrConverged
-      ? { converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] }
+      ? { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }
       : { converged: false, reason: "cross-slice seam mismatch" };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
@@ -278,7 +278,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
             kind: "cmr",
             converged:
               ctx.cmrPass === "completeness" ? this.completenessConverged : true,
-            successfulLegs: ["opus", "gpt-5.6-sol"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
             ...(ctx.cmrPass === "completeness" && !this.completenessConverged
               ? { reason: "family base is incomplete" }
@@ -430,7 +430,7 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
           output: {
             kind: "cmr",
             converged: true,
-            successfulLegs: ["opus", "gpt-5.6-sol"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
         };
@@ -441,7 +441,7 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.6-sol"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       };
@@ -496,7 +496,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
           output: {
             kind: "cmr",
             converged: true,
-            successfulLegs: ["opus", "gpt-5.6-sol"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
         };
@@ -685,7 +685,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
       return { ok: true };
     }
     async runIntegratedCmr(): Promise<IntegratedCmrResult> {
-      return { converged: true, successfulLegs: ["opus", "gpt-5.6-sol"] };
+      return { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
     }
   }
 
@@ -717,7 +717,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
           output: {
             kind: "cmr",
             converged: true,
-            successfulLegs: ["opus", "gpt-5.6-sol"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
         };
@@ -757,7 +757,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.6-sol"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       },
@@ -766,7 +766,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.6-sol"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       },
@@ -786,7 +786,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.6-sol"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       },
@@ -814,7 +814,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.6-sol"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       },
@@ -932,7 +932,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
           output: {
             kind: "cmr",
             converged: true,
-            successfulLegs: ["opus", "gpt-5.6-sol"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
         };
@@ -968,7 +968,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
           output: {
             kind: "cmr",
             converged: true,
-            successfulLegs: ["opus", "gpt-5.6-sol"],
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
         };
@@ -1106,7 +1106,7 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
         output: {
           kind: "cmr",
           converged: true,
-          successfulLegs: ["opus", "gpt-5.6-sol"],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
       };
