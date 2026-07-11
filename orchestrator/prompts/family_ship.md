@@ -34,21 +34,18 @@ PR opened:
 
 ```text
 <ship>{"status": "pr_opened", "branch": "<the family base branch>", "pr": "<the PR url>"}</ship>
-SHIP_STEP_COMPLETE
 ```
 
 Escalation:
 
 ```text
 <ship>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>"}}</ship>
-SHIP_STEP_COMPLETE
 ```
 
 Failure:
 
 ```text
 <ship>{"failed": {"reason": "<short>", "diagnosis": "<the hard failure>"}}</ship>
-SHIP_STEP_COMPLETE
 ```
 
 Rules:
@@ -56,4 +53,4 @@ Rules:
 - The JSON must match one of the shapes above exactly.
 - `status` is `pr_opened` and must include `pr`.
 - Emit the `<ship>` tag LAST; if you iterate, the LAST tag is the one that counts.
-- For optional telemetry, you may print `SHIP_STEP_COMPLETE` on its own final line.
+- For optional telemetry, you may print SHIP_STEP_COMPLETE on its own final line.

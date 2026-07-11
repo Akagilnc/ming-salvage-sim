@@ -27,7 +27,6 @@ Success / resolved:
 
 ```text
 <merger>{"resolved": true, "tradeoffs": "<one line: any side picked / note, or empty>"}</merger>
-MERGER_STEP_COMPLETE
 ```
 
 - `resolved` (boolean): did you resolve the conflict and commit the merge?
@@ -38,11 +37,11 @@ Escalation (a conflict you must NOT guess at — surface it to a human):
 
 ```text
 <merger>{"resolved": false, "escalate": {"reason": "<short>", "diagnosis": "<why this conflict cannot be resolved without a decision>"}}</merger>
-MERGER_STEP_COMPLETE
 ```
 
 Rules:
 
 - The JSON must be valid and match one of the shapes above exactly.
-- Emit the `<merger>` tag LAST. `MERGER_STEP_COMPLETE` is optional telemetry and may follow it on its own line.
+- Emit the `<merger>` tag LAST.
+- For optional telemetry, you may print MERGER_STEP_COMPLETE on its own final line.
 - Never `git merge --abort`. Never invent behaviour. Resolve or escalate.

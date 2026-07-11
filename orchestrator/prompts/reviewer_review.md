@@ -23,14 +23,12 @@ Success:
 
 ```text
 <review>{"findings":[]}</review>
-REVIEWER_STEP_COMPLETE
 ```
 
 With findings:
 
 ```text
 <review>{"findings":[{"severity":"high","category":"correctness","claim_quote":"<short>","location":"path:line","suggested_fix":"<short>","action":"fix_now"}]}</review>
-REVIEWER_STEP_COMPLETE
 ```
 
 Report each active finding with only its body (`severity`, `category`,
@@ -64,12 +62,12 @@ the same escalation unless the answer leaves a concrete blocker unresolved.
 
 ```text
 <review>{"findings":[],"priorFindingDispositions":[{"identityKey":"<prior-key>","status":"verified-closed","reason":"<short>"}]}</review>
-REVIEWER_STEP_COMPLETE
 ```
 
 Escalation:
 
 ```text
 <review>{"findings":[],"escalate":{"reason":"<short>","diagnosis":"<what blocks review>"}}</review>
-REVIEWER_STEP_COMPLETE
 ```
+
+For optional telemetry, you may print REVIEWER_STEP_COMPLETE on its own final line.

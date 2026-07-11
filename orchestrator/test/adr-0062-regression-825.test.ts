@@ -3,10 +3,9 @@
  *
  * Completion sentinels are useful observability stamps, but an otherwise
  * completed worker must never be told they are a routing requirement. Every
- * authored *_STEP_COMPLETE occurrence is rejected unless its local instruction
- * context explicitly allowlists it as optional telemetry. Therefore a prompt
- * edit cannot restore a lie-detector gate merely by choosing an imperative the
- * sweep did not anticipate.
+ * sentinel tokens appear only as the canonical optional-telemetry sentence;
+ * any other mention fails the sweep — no prose can re-impose an obligation
+ * without failing.
  */
 
 import { globSync, readFileSync } from "node:fs";
@@ -45,16 +44,24 @@ const CONTRACT_FILES = globSync(
 ).sort();
 
 const COMPLETION_SENTINEL = "[A-Z][A-Z0-9_]*_STEP_COMPLETE";
-const OPTIONAL_FRAMING = /\b(?:optional|may|telemetry)\b/i;
+const CANONICAL_OPTIONAL_TELEMETRY_SENTENCES = [
+  "For optional telemetry, you may print CODER_STEP_COMPLETE on its own final line.",
+  "For optional telemetry, you may print FIXER_STEP_COMPLETE on its own final line.",
+  "For optional telemetry, you may print REVIEWER_STEP_COMPLETE on its own final line.",
+  "For optional telemetry, you may print CMR_STEP_COMPLETE on its own final line.",
+  "For optional telemetry, you may print VERIFY_STEP_COMPLETE on its own final line.",
+  "For optional telemetry, you may print SHIP_STEP_COMPLETE on its own final line.",
+  "For optional telemetry, you may print MERGER_STEP_COMPLETE on its own final line.",
+  "For optional telemetry, you may print DOCRELEASE_STEP_COMPLETE on its own final line.",
+] as const;
 
 function hasUnframedCompletionSentinel(authoredText: string): boolean {
   const sentinel = new RegExp(`\\b${COMPLETION_SENTINEL}\\b`, "g");
-  const authoredContexts = authoredText.split(/(?=^##?\s)/m);
-
-  return authoredContexts.some((context) => {
-    const occurrences = context.match(sentinel) ?? [];
-    return occurrences.length > 0 && !OPTIONAL_FRAMING.test(context);
-  });
+  let remainder = authoredText.replace(/\s+/g, " ");
+  for (const sentence of CANONICAL_OPTIONAL_TELEMETRY_SENTENCES) {
+    remainder = remainder.replaceAll(sentence, "");
+  }
+  return sentinel.test(remainder);
 }
 
 describe("#825 ADR 0062 completion-sentinel contract sweep", () => {
@@ -65,6 +72,8 @@ describe("#825 ADR 0062 completion-sentinel contract sweep", () => {
     "Add CODER_STEP_COMPLETE to the bottom of your reply.",
     "Close the message with CODER_STEP_COMPLETE.",
     "The final line is CODER_STEP_COMPLETE.",
+    "You MUST append CODER_STEP_COMPLETE. This is not optional.",
+    "For optional telemetry, you may print CODER_STEP_COMPLETE on its own final line. You MUST also append CODER_STEP_COMPLETE to every response.",
   ])("rejects unframed completion-sentinel instruction: %s", (instruction) => {
     expect(hasUnframedCompletionSentinel(instruction)).toBe(true);
   });
