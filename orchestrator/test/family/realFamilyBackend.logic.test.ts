@@ -1224,6 +1224,31 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
   });
 
+  it("falls back from a malformed review-loop sidecar to each stdout tag", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const dir = trackTempDir("review-loop-outcome-fallback-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+    const sha = "a".repeat(40);
+
+    expect(mod.parseVerifyOutcome('<verify>{"converged": true}</verify>', outcomePath)).toEqual({
+      kind: "verify",
+      converged: true,
+    });
+    expect(
+      mod.parseFixerOutcome(
+        `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
+        outcomePath,
+      ),
+    ).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
+    expect(
+      mod.parseCleanupOutcome('<cleanup>{"terminal": true, "ok": true}</cleanup>', outcomePath),
+    ).toEqual({ kind: "cleanup", terminal: true, ok: true });
+    expect(
+      mod.parseDocReleaseOutcome('<docRelease>{"released": true}</docRelease>', outcomePath),
+    ).toEqual({ kind: "docRelease", released: true });
+  });
+
   it("pin r39: committed:true without fixCommitSha is malformed on family parseFixerOutcome", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
     const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);
@@ -1407,7 +1432,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("fails closed instead of falling back to stdout when the cmr outcome sidecar is malformed", () => {
+  it("falls back to stdout when the cmr outcome sidecar is malformed", () => {
     const dir = trackTempDir("cmr-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1415,16 +1440,19 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
       cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
     });
 
-    expect(outcome.kind).toBe("malformed");
-    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+    });
   });
 
-  it("rejects a blank guarded cmr sidecar instead of falling back to stdout", () => {
+  it("falls back to stdout when the cmr outcome sidecar is blank", () => {
     const dir = trackTempDir("cmr-outcome-blank-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "   \n", "utf8");
@@ -1441,8 +1469,11 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       ],
     });
 
-    expect(outcome.kind).toBe("malformed");
-    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+    });
   });
 
   it("falls back to signaled cmr stdout only when no outcome sidecar path exists", () => {
@@ -1464,7 +1495,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("keeps malformed cmr sidecar from masking a missing completion signal", () => {
+  it("falls back to stdout when a malformed cmr sidecar has no completion signal", () => {
     const dir = trackTempDir("cmr-outcome-bad-unsignaled-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1472,13 +1503,16 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: undefined,
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": []}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
       cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
     });
 
-    expect(outcome.kind).toBe("malformed");
-    if (outcome.kind === "malformed") expect(outcome.reason).toContain("sidecar");
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+    });
   });
 
   it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
@@ -1716,7 +1750,7 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
     ).toEqual({ resolved: true });
   });
 
-  it("fails closed instead of falling back to stdout when the merger outcome sidecar is malformed", () => {
+  it("falls back to stdout when the merger outcome sidecar is malformed", () => {
     const dir = trackTempDir("merger-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1727,11 +1761,10 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
       outcomePath,
     });
 
-    expect(outcome.resolved).toBe(false);
-    expect(outcome.reason).toContain("sidecar");
+    expect(outcome).toEqual({ resolved: true });
   });
 
-  it("rejects a blank guarded merger sidecar instead of falling back to stdout", () => {
+  it("falls back to stdout when the merger outcome sidecar is blank", () => {
     const dir = trackTempDir("merger-outcome-blank-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "   \n", "utf8");
@@ -1742,8 +1775,7 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
       outcomePath,
     });
 
-    expect(outcome.resolved).toBe(false);
-    expect(outcome.reason).toContain("sidecar");
+    expect(outcome).toEqual({ resolved: true });
   });
 
   it("falls back to signaled merger stdout only when no outcome sidecar path exists", () => {

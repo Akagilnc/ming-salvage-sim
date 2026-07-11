@@ -3309,12 +3309,10 @@ export function cmrOutcomeFromResult(result: {
       );
     }
   } catch (err) {
-    return {
-      kind: "malformed",
-      reason:
-        `cmr worker outcome sidecar was not valid JSON: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-    };
+    // A runner-owned sidecar is preferred, but it is only one transport. Keep
+    // the sidecar failure for diagnostics and let the stdout protocol provide
+    // the next available outcome when the worker emitted one there.
+    void err;
   }
 
   return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
@@ -3713,12 +3711,10 @@ export function mergerOutcomeFromResult(result: {
       return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
     }
   } catch (err) {
-    return {
-      resolved: false,
-      reason:
-        `merger agent outcome sidecar was not valid JSON: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-    };
+    // Sidecar is the preferred telemetry source, not a reason to discard a
+    // usable stdout result. Fall through so the telemetry row can still carry
+    // the worker's structured merger signal.
+    void err;
   }
   return parseMergerOutcome(result.stdout);
 }
@@ -3913,11 +3909,9 @@ function parseOutcomePayload(
         source: `${tag} worker outcome sidecar`,
       };
     } catch (err) {
-      return {
-        error:
-          `${tag} worker outcome sidecar was not valid JSON: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-      };
+      // The sidecar is first choice, not the only choice. Continue to the
+      // stdout tag so a broken/blank sidecar does not mask the worker result.
+      void err;
     }
   }
   const last = extractLastTag(stdout, tag);

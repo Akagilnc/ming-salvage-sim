@@ -2313,7 +2313,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 
-  it("a prepared but blank CMR outcome sidecar fails closed instead of accepting legacy stdout", async () => {
+  it("a prepared but blank CMR outcome sidecar falls back to legacy stdout", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
@@ -2366,11 +2366,11 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
 
     const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
 
-    expect(outcome.kind).toBe("malformed");
-    expect(outcome.kind === "malformed" ? outcome.reason : "").toContain(
-      "outcome sidecar",
-    );
-    expect(outcome.kind === "malformed" ? outcome.reason : "").toMatch(/blank|empty/i);
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      successfulLegs: DEFAULT_CMR_LEGS,
+    });
   });
 });
 
