@@ -608,6 +608,7 @@ def load_skill_content() -> Tuple[
     Dict[str, str],
     Set[str],
     Dict[str, Dict[str, object]],
+    Dict[str, List[str]],
 ]:
     data = require_dict(load_json_asset("skills.json"), "skills.json")
     office_skills_data = dict_of_string_lists(data.get("office_skills"), "skills.json.office_skills")
@@ -622,6 +623,20 @@ def load_skill_content() -> Tuple[
     grant_keywords = dict_of_string_lists(data.get("grant_keywords"), "skills.json.grant_keywords")
     directive_keywords = dict_of_strings(data.get("directive_keywords"), "skills.json.directive_keywords")
     directive_skill_ids = set(string_list(data.get("directive_skill_ids"), "skills.json.directive_skill_ids"))
+    knowledge_domains = dict_of_string_lists(
+        data.get("office_knowledge_domains"), "skills.json.office_knowledge_domains"
+    )
+    allowed_knowledge_domains = {
+        "treasury", "military", "regional", "personnel", "construction", "security", "court"
+    }
+    for office_type, domains in knowledge_domains.items():
+        if not domains:
+            raise SystemExit(f"skills.json.office_knowledge_domains.{office_type} 不能为空")
+        unknown = sorted(set(domains) - allowed_knowledge_domains)
+        if unknown:
+            raise SystemExit(
+                f"skills.json.office_knowledge_domains.{office_type} 含未知知识域：{','.join(unknown)}"
+            )
 
     office_definitions: Dict[str, Dict[str, object]] = {}
     for office_type, raw in require_dict(data.get("office_definitions"), "skills.json.office_definitions").items():
@@ -663,6 +678,7 @@ def load_skill_content() -> Tuple[
         directive_keywords,
         directive_skill_ids,
         office_definitions,
+        knowledge_domains,
     )
 
 
@@ -744,6 +760,7 @@ class GameContent:
     directive_keywords: Dict[str, str] = field(default_factory=dict)
     directive_skill_ids: Set[str] = field(default_factory=set)
     office_definitions: Dict[str, Dict[str, object]] = field(default_factory=dict)
+    office_knowledge_domains: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
     skill_tool_templates: Dict[str, str] = field(default_factory=dict)
 
     # 提示词
@@ -782,7 +799,21 @@ class GameContent:
             directive_keywords,
             directive_skill_ids,
             office_definitions,
+            office_knowledge_domains,
         ) = load_skill_content()
+        missing_knowledge_domains = sorted(
+            {
+                character.office_type
+                for character in characters.values()
+                if character.office_type
+            }
+            - set(office_knowledge_domains)
+        )
+        if missing_knowledge_domains:
+            raise SystemExit(
+                "skills.json.office_knowledge_domains 缺少职位映射："
+                + ",".join(missing_knowledge_domains)
+            )
         return cls(
             factions=factions,
             characters=characters,
@@ -806,6 +837,10 @@ class GameContent:
             directive_keywords=directive_keywords,
             directive_skill_ids=directive_skill_ids,
             office_definitions=office_definitions,
+            office_knowledge_domains={
+                office_type: tuple(domains)
+                for office_type, domains in office_knowledge_domains.items()
+            },
             fiscal_items=load_fiscal_config(),
             skill_tool_templates=dict_of_strings(load_json_asset("skill_tools.json"), "skill_tools.json"),
             game_world_prompt=load_text_asset("prompts/game_world.md"),

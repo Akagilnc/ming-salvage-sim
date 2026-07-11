@@ -604,7 +604,7 @@ class MinisterRegistry:
         )
 
     def build_draft_line(self) -> str:
-        """实时查本回合已核定草案。供 GameSession.chat 每轮前置进 user message。"""
+        """实时查本回合已核定草案，供需要展示草案列表的调用方使用。"""
         draft_rows = self.context.db.list_directives(self.context.state, statuses=("draft",))
         if not draft_rows:
             return "无"
