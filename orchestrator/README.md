@@ -1,8 +1,203 @@
-# Orchestrator checks
+# Ming Orchestrator — operator's manual
 
-`npm test` first runs the `tsconfig.test.json` compile gate (same check as `npm run typecheck:test`) before Vitest. That TypeScript lane checks all of
-`test/**`, so every test fixture and mock must satisfy the current production
-contracts before the behavioral suite runs.
+Multi-agent build pipeline for `Akagilnc/ming-salvage-sim`. A **runner** walks a
+ledger-backed step machine (S0–S12) and dispatches sandboxed CLI **workers**
+(coder, reviewer, merger, ship, …) into containers. Two entry shapes:
+
+- **single-slice** — one issue through S0(rfa gate) → S2(code) → S3(review) →
+  S5(fix loop) → S7(ship) → S9(verify) → S10(fixer) → S12(docRelease) →
+  S11(cleanup) → S8(terminal).
+- **family** — an epic's children built in waves on a shared `family/<epic>`
+  base, merged by a merger worker, closed by an integrated CMR
+  (completeness + correctness + cross-model review legs) and a family ship.
+
+## Constitution (ADR 0062 — the envelope rules)
+
+The runner is a pure dispatcher. It counts exactly three signals and **never
+reads worker prose**:
+
+1. **exit 0/1** → abnormal exit gets a step-level mechanical retry; normal exit
+   continues.
+2. **findings count 0 / non-0** → zero passes the gate; non-zero routes back to
+   the coder/fixer loop. Whether work is "good" is decided only by the next
+   reviewer/verify worker, never by parsing the previous worker's words.
+3. **decision-gate signal** → durable park; the answer resumes the SAME worker
+   session in place (`resumeSessionId`).
+
+Corollaries, all mechanically enforced by
+`test/adr-0062-regression-825.test.ts`:
+
+- A worker that did real work but delivered a defective report (bad JSON,
+  missing sidecar, wrong self-count, no sentinel) is a **shape failure**:
+  bounded mechanical redispatch of that step → exhausted = escalate. Never a
+  run abort, never fabricated success (a missing result is never synthesized
+  into `findings: []` / `converged: true`).
+- **Git/host truth over worker words.** Commit evidence comes from
+  `git rev-list <headBefore>..HEAD` (final-graph reachability); a
+  worker-reported PR URL is an advisory hint that is verified
+  (open + head branch + head repository owner) or discarded — a rejected hint
+  never reaches downstream steps. Self-reported numbers are telemetry only.
+- **`*_STEP_COMPLETE` sentinels are optional telemetry.** In every prompt/soul
+  they may appear only inside the canonical optional-telemetry sentence; the
+  sweep test fails any other mention, so no prompt edit can silently restore a
+  lie-detector gate.
+- **Mutating dispatches are exactly-once.** Family ship writes a durable
+  two-phase attempt marker (reserve before launch, confirm on spawn), a durable
+  `ship_completed` record before host observation, and re-dispatches only when
+  host truth confirms `pr_missing`. A mismatch (e.g. a deliberately closed PR)
+  escalates durably instead of re-shipping. Retry budgets live in the ledger
+  (`mechanical_redispatch_attempt` rows) and survive crash/re-feed;
+  legitimate repeated rounds (slow-CI S9 re-polls) never consume them.
+- **Observation failure ≠ confirmed absence.** A failed `gh`/git lookup is a
+  retryable observation problem (its own bounded lane), never proof that the
+  mutation didn't land and never a reason to abort a resume.
+
+## Launching a run
+
+Freshness ritual first — **unconditional, both halves** (#372; skipping the
+image rebake after a merge that touched `image/` or prompts costs you a dead
+launch):
+
+```bash
+cd orchestrator && git pull && npx tsc     # 1. rebuild dist
+cd image && ./build.sh                     # 2. rebake the worker image
+```
+
+Souls are mounted live (not baked), prompts ship with the repo, dev skills are
+baked at image build time.
+
+Then ignite from the run directory (example: family run 485):
+
+```bash
+cd ~/.sc-orchestrator/run-485
+ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS="gpt-5.6-sol,opus" \
+  node driver-485.mjs >> run.log 2>&1
+```
+
+The driver is resumable: state lives in the durable ledger
+(`steps.jsonl` + family ledger), so re-running the same command after a crash
+or kill continues from the last durable row instead of restarting. Startup is
+fail-closed: if the route smoke (below) fails, the run records an
+`infra_failure` escalation, skips every child, and exits 0.
+
+## Routes and per-role model selection
+
+Every role slot is independently overridable. Precedence:
+
+```
+preset (ORCHESTRATOR_ROUTE, default "normal")
+  → per-slot env override (ORCHESTRATOR_<ROLE>_MODEL)
+  → leg-collection env override (ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS)
+  → startup route smoke validates the FINAL lineup, slot by slot
+```
+
+Presets (`src/modelRoutes.ts` `ROUTE_PRESETS`):
+
+| preset | coder/coderFix | reviewer | verify + cmr gates | ship/merger/fixer/cleanup/docRelease | cmrReview legs |
+| --- | --- | --- | --- | --- | --- |
+| `normal` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | sonnet | codex sol + claude opus (+agy) |
+| `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | sonnet | opus + agy + codex sol |
+| `codex-tight` | sonnet | opus | opus | sonnet | opus + agy (codex family excluded) |
+| `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-terra | codex-side legs |
+| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-terra | codex sol + agy (claude family excluded) |
+
+`*-tight` presets declare `tightFamilies` — the family whose quota is scarce is
+kept off every slot and leg. Pick the preset whose scarce pool matches
+reality, then fine-tune single slots:
+
+| slot | env var |
+| --- | --- |
+| coder | `ORCHESTRATOR_CODER_MODEL` |
+| reviewer | `ORCHESTRATOR_REVIEWER_MODEL` |
+| coderFix | `ORCHESTRATOR_CODER_FIX_MODEL` |
+| ship | `ORCHESTRATOR_SHIP_MODEL` |
+| merger | `ORCHESTRATOR_MERGER_MODEL` |
+| cmrCompleteness | `ORCHESTRATOR_CMR_COMPLETENESS_MODEL` |
+| cmrCorrectness | `ORCHESTRATOR_CMR_CORRECTNESS_MODEL` |
+| verify | `ORCHESTRATOR_VERIFY_MODEL` |
+| fixer (S10) | `ORCHESTRATOR_FIXER_MODEL` |
+| cleanup | `ORCHESTRATOR_CLEANUP_MODEL` |
+| docRelease | `ORCHESTRATOR_DOCRELEASE_MODEL` |
+| cmrReview legs | `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` (comma list) |
+
+Role vocabulary worth keeping straight:
+
+- **coderFix** = in-loop fix worker during the build (responds to S3 reviewer
+  findings until the review is clean).
+- **fixer** = S10, the post-ship repair worker (eats verify/CI/online-review
+  failures after S7). Different seat, independently staffed.
+
+Roster conventions (from the exam/marathon evidence, 2026-07):
+
+- Reviewer is always a **different checkpoint** from the coder.
+- When a top-checkpoint codex coder (sol) writes the fix, the floor reviewer is
+  **cross-family (opus)** — a same-family sibling is a weak gate.
+- Reasoning-effort dials don't buy quality on mechanical work; run cheap tiers
+  for mechanical seats. Structural judgment is a model property, not an effort
+  property.
+- Capacity errors (`Selected model is at capacity`) mean server congestion,
+  not quota: switch checkpoint immediately (relay continues on the same
+  uncommitted drift — never reset a worker's tree), don't wait, don't retry
+  the congested checkpoint.
+
+## Route smoke (startup gate)
+
+Before any real work each selected model×pipe must prove it can act inside the
+container: the smoke prompt carries a random `{{NONCE}}` and a
+`{{NONCE_FILE}}` path (sandcastle substitutes `{{KEY}}` placeholders from
+`promptArgs` — placeholders in `prompts/route-smoke.md` are load-bearing; a
+regression test drives the REAL rendering and a text-only-obedient agent, plus
+a negative case proving a value-less prompt fails). The worker must create the
+evidence file with exactly the nonce. Any slot failing smoke = fail-closed
+startup escalation; nothing mutates.
+
+Providers with unavailable auth (e.g. grok without a mounted `auth.json`) are
+rejected **before** dispatch — fail-closed preflight, never an unauthenticated
+launch. Same pattern for capabilities: a backend without a required
+verification seam (`verifyFamilyShippedPr`) is refused before the mutating
+ship, not after.
+
+## Review loops
+
+1. **Per-slice loop** (runner-visible, ADR 0030): coder → fresh read-only
+   reviewer over the current full diff → coder-fix (new commit, never amend) →
+   fresh reviewer again, until findings reach zero. Review fixes are always
+   NEW commits: round-by-round history is part of the record.
+2. **Integrated CMR** (family close): completeness gate, correctness gate, and
+   cross-model review legs (`cmrReview`, e.g. codex sol + claude opus) over the
+   assembled family base — it exists to catch cross-slice seams that
+   per-slice green cannot see.
+3. **Online bot rounds** (after a PR opens): sourcery / codex-connector /
+   gemini / coderabbit threads are worked finding-by-finding — fix as a new
+   commit, reply with the commit hash, resolve the thread; refutations are
+   replied with verifiable evidence instead of code. Merge requires
+   mergeState CLEAN **and** zero unresolved threads.
+
+Ticket discipline for fix rounds: every ticket carries a sweep clause ("fix the
+finding, then sweep for the same class and print a self-audit checklist").
+When reviews deepen the same invariant chain two rounds in a row, the next
+ticket states the FULL target invariant (not the single hole) and goes to a
+structural-judgment coder. Any slice reaching round 5 triggers a mandatory
+stop-and-rethink before the next dispatch.
+
+Testing discipline (hard-won): fixtures must consume only real rendered
+artifacts (the rendered prompt text, the actual envelope) — a fixture that
+peeks at internal parameters is a psychic model and will greenlight broken
+value-chains. Every positive e2e pairs with a negative case that would have
+caught the original bug. Assert on the run's OUTPUT (result/ledger/files),
+never on input the test itself seeded.
+
+## Durability and resume
+
+- The step ledger (`steps.jsonl`) is the single source of resume truth;
+  bookkeeping rows (`mechanical_redispatch_attempt`, ship streak/attempt
+  records) use dedicated kinds that step consumers ignore but the budget
+  scanner rebuilds from.
+- Re-feed after a crash continues retry budgets (no fresh 3-attempt windfall)
+  and never re-runs a mutating dispatch whose durable completion record is
+  present.
+- Killing a worker never destroys its uncommitted worktree drift; a relay
+  successor continues on the drift as-is.
 
 ## Telemetry sidecar (#786)
 
@@ -25,10 +220,14 @@ Phases (one JSON object per line):
 | `dispatch` | at spawn | identity / model / pool / `dispatched_at` |
 | `collect` | at finish | terminal / tokens / session / log / `first_output_at` / `completed_at` |
 | `review_round` | each integrated CMR verdict | pass / verdict / severity counts / identity-key recurrence / prior-finding dispositions |
+| `commit` | each coder commit | worker identity (stepId + modelSlug) / size metrics / escape-hatch counts (code files only) |
 | `verification` | each family typecheck or test command | typecheck / wave-unit / final-full pass-fail, structured count when supplied, monotonic duration |
 
 Join key: `legId` on a dispatch+collect pair. Unobtainable fields are `null`;
-telemetry I/O is fail-open and must never block the worker path.
+telemetry I/O is fail-open and must never block the worker path — collection is
+fully async (boundaries frozen at schedule time from SHAs the runner already
+holds, per-ledger ordered appends, subprocess timeouts, a failed stamp never
+blocks the next one).
 
 ### `first_output_at` precision (poll granularity — not true TTFB)
 
@@ -42,7 +241,7 @@ time-to-first-token.
 | Quick-exit (exit wins race before any poll sees growth) | One-shot post-exit reconcile re-read | ≈ **process exit time** (may be much later than true first byte) |
 | No post-marker growth by collect time | Field is `null` | — |
 
-Consumers computing “time-to-first-output” as
+Consumers computing "time-to-first-output" as
 `first_output_at − dispatched_at` must treat the result as **poll-quantized**,
 not sub-poll TTFB. When non-null the monotonic order holds:
 
@@ -68,3 +267,26 @@ review, fix-loop, or ADR 0062 routing authority.
 Field-level JSDoc lives on `TelemetryCollectRecord.first_output_at` in
 `src/telemetry.ts`; the stamp site is `noteFirstOutputIfPastBaseline` /
 `reconcileFirstOutputAt` in `src/dispatchWorker.ts`.
+
+## Checks
+
+`npm test` first runs the `tsconfig.test.json` compile gate (same check as
+`npm run typecheck:test`) before Vitest. That TypeScript lane checks all of
+`test/**`, so every test fixture and mock must satisfy the current production
+contracts before the behavioral suite runs.
+
+Caveat: repository CI currently runs only the Python engine tests and the web
+build — the orchestrator vitest suite is NOT a required check yet (#838), so
+run `npx vitest run` locally before merging anything that touches
+`orchestrator/`. Individually-green branches can still combine into a red
+main across cross-slice seams; the integrated gates exist precisely for that.
+
+## Known failure signatures
+
+| symptom | likely cause | fix |
+| --- | --- | --- |
+| startup `route smoke failed … did not complete an observable bash smoke` (every launch) | smoke prompt lost its `{{NONCE}}`/`{{NONCE_FILE}}` placeholders, or model at capacity | check `prompts/route-smoke.md` placeholders; switch checkpoint |
+| image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
+| run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
+| resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
+| worker looks hung | judge by idle threshold (>15 min with no new output), then kill only that worker's own pid tree; capacity/quota errors are not hangs | relay a successor onto the surviving drift |
