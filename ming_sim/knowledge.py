@@ -68,11 +68,15 @@ def knowledge_row_visible_to(
 
 
 def _qualitative(text: object) -> str:
-    """Render an engine report for a minister without exposing machine values."""
-    value = str(text or "")
-    # Reports remain useful as labels and prose, but their exact balances, bars,
-    # ids, and percentages belong to the judge-side tools, not a character prompt.
-    return re.sub(r"[-+]?\d+(?:\.\d+)?%?", "若干", value)
+    """Keep report prose while preserving player-facing countable facts.
+
+    The report builders already translate abstract game axes (for example morale
+    and satisfaction) into qualitative language.  Amounts, troop totals, dates,
+    artillery pieces, and arrears months are diegetic facts, not hidden axes;
+    replacing every number here made the audience unable to reason about the
+    state it is entitled to see.
+    """
+    return str(text or "")
 
 
 def render_character_knowledge(knowledge: Dict[str, object], character_name: str) -> str:

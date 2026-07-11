@@ -513,12 +513,17 @@ def infer_office_type_from_office(
     text = normalize_office(office)
     if not text:
         return "待铨" if kind in COURT_OFFICE_TYPES or not kind else kind
+    if not use_llm and kind:
+        # Seed/sync callers carry a declared, durable office type.  A compound
+        # title such as “司礼监秉笔太监、东厂提督” can match more than one
+        # table keyword; letting the first match overwrite the declaration
+        # silently projects the person through the wrong knowledge domain.
+        return kind
     t = _office_type_from_table(text)
     if t:
         return t
     if not use_llm:
-        # 静态 seed / DB sync：content/DB 既定 office_type 即权威，表查不中原样保留(含朝堂类)，
-        # 不降级——否则每回合 sync 把动态任命落库的朝堂类 office_type 悄悄降级成待铨(cmr R2)。
+        # Static callers without a declaration still use the reference table.
         return kind or "待铨"
     t = _office_type_via_llm(text, llm_config)
     if t:

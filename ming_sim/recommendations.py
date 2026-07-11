@@ -67,16 +67,27 @@ def _visible_sources(db: Any, recommender: str) -> Iterable[tuple[Any, Any]]:
     ).fetchall()
     for row in rows:
         source = conn.execute(
-            "SELECT participant_roster, excluded_names, excluded_targets "
+            "SELECT source_id, participant_roster, excluded_names, excluded_targets "
             "FROM character_knowledge_sources WHERE source_id=?",
             (row["source_id"],),
         ).fetchone()
         yield source, row
 
+    # A durable source is sufficient evidence of direct participation.  The
+    # audience event mirror may not have been materialized yet (for example,
+    # immediately after a source is written), and recommendations must not
+    # lose an otherwise reachable candidate in that interval.
+    for source in conn.execute(
+        "SELECT source_id, participant_roster, excluded_names, excluded_targets "
+        "FROM character_knowledge_sources"
+    ).fetchall():
+        if recommender in _roster_names(source["participant_roster"]):
+            yield source, None
+
     # Public sources are visible without a direct participation row.  Their
     # structured roster is the public-event side of the #459 read projection.
     for source in conn.execute(
-        "SELECT participant_roster, excluded_names, excluded_targets "
+        "SELECT source_id, participant_roster, excluded_names, excluded_targets "
         "FROM character_knowledge_sources WHERE kind='public'"
     ).fetchall():
         yield source, None

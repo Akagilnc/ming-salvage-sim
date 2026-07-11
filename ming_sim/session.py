@@ -39,6 +39,7 @@ from ming_sim.decree import (
 from ming_sim.issues import bind_content as _bind_issues
 from ming_sim.issues import sync_opening_legacies
 from ming_sim.knowledge import render_character_knowledge
+from ming_sim.mindreading import is_inner_court_attendant
 from ming_sim.llm_model import create_agno_db, extract_agent_text, verify_llm_available
 from ming_sim.models import Character, CourtContext, GameState, LLMConfig, is_vassal_prince
 from ming_sim.paths import user_data_path
@@ -1048,7 +1049,10 @@ class GameSession:
         augmented = message
         try:
             knowledge = self.db.get_character_knowledge(self.state, character.name)
-            if any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情")):
+            if (
+                is_inner_court_attendant(character)
+                and any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情"))
+            ):
                 # The report is written to the durable, character-scoped
                 # knowledge source before rebuilding the projection.  This
                 # prevents a keyword hit from injecting a global snapshot into

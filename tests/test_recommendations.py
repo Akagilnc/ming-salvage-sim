@@ -232,6 +232,12 @@ def test_minister_tools_only_submit_recommendations(game):
     )}
     assert "list_recommendable_persons" not in tools
     assert "recommend_person" in tools
+    candidate = db.list_recommendation_candidates(state, minister.name)[0]
+
+    payload = tools["recommend_person"](candidate["name"], "巡盐御史", "请予试任")
+
+    assert payload.startswith("__pending_recommendation__")
+    assert candidate["name"] in payload
 
 
 def test_recommendation_appointment_preserves_kind_and_restores_both_types(game):
