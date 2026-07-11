@@ -451,6 +451,25 @@ def test_secret_office_exclusion_snapshots_people_before_transfer_and_publicatio
     assert excluded.office == "礼部尚书"
 
 
+def test_disclosed_secret_source_keeps_its_public_projection(game):
+    """A later public disclosure must not be replaced by the private source payload."""
+    db, state, content = game
+    excluded = next(c for c in content.characters.values() if c.office_type == "户部")
+    order = db.create_secret_order(
+        state, "毕自严", "暗查亏空", "查户部旧账", [],
+        excluded_names=[excluded.name],
+    )
+    db.record_public_knowledge_event(
+        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+    )
+
+    items = db.knowledge_items_for_turn(state.turn)
+
+    disclosed = next(item for item in items if item["source_id"] == f"secret_order:{order}")
+    assert disclosed["title"] == "密查公开"
+    assert disclosed["body"] == "该案已奉明发"
+
+
 def test_secret_exclusion_is_source_scoped_not_global_for_same_bucket(game):
     db, state, content = game
     treasury_ministers = [c for c in content.characters.values() if c.office_type == "户部"]
