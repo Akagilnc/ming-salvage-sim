@@ -24,6 +24,7 @@ import {
   buildCollectStamp,
   buildDispatchStamp,
   buildEnvironmentStamp,
+  buildReviewRoundStamp,
   categoryFromReason,
   classifyWorkerTerminal,
   clearTelemetryRunEnvironment,
@@ -42,7 +43,9 @@ import {
   type TelemetryCollectRecord,
   type TelemetryDispatchRecord,
   type TelemetryEnvironmentRecord,
+  type TelemetryReviewRoundRecord,
 } from "../src/telemetry.js";
+import type { Finding, PriorFindingDisposition } from "../src/types.js";
 import type {
   Backend,
   CliMonitorSpawnSpec,
@@ -122,9 +125,146 @@ function smokedRoute() {
   return resolveRouteModels("normal", {}, {}, smoke);
 }
 
+function finding(
+  overrides: Partial<Finding> = {},
+): Finding {
+  return {
+    severity: "high",
+    category: "correctness",
+    claim_quote: "the retry ignores the error",
+    location: "src/retry.ts:42",
+    suggested_fix: "preserve the error",
+    action: "fix_now",
+    ...overrides,
+  };
+}
+
 // ───────────────────────── pure unit tests ─────────────────────────
 
 describe("#786 telemetry pure helpers", () => {
+  it("builds a review-round row with required dimensions and nulls unavailable data", () => {
+    const record = buildReviewRoundStamp({
+      stampedAt: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      cmrPass: "completeness",
+      reviewRound: 1,
+      verdict: "not_converged",
+      finalDisposition: "accepted",
+    });
+
+    expect(record).toEqual({
+      v: 1,
+      phase: "review_round",
+      stamped_at: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      cmrPass: "completeness",
+      reviewRound: 1,
+      verdict: "not_converged",
+      finalDisposition: "accepted",
+      findingsBySeverity: null,
+      identityMatch: "exact_identity_match",
+      exactIdentityMatchKeys: null,
+      newExactIdentityMatchKeys: null,
+      recurringExactIdentityMatchKeys: null,
+      priorFindingDispositions: null,
+    } satisfies TelemetryReviewRoundRecord);
+  });
+
+  it("persists a review-round JSONL line with the complete final-schema key set", () => {
+    const ledgerDir = tempDir("orch-786-review-round-raw-");
+    appendTelemetryRecord(
+      ledgerDir,
+      buildReviewRoundStamp({
+        stampedAt: "2026-07-11T00:00:00.000Z",
+        runId: "run-786",
+        issue: 786,
+        cmrPass: "correctness",
+        reviewRound: 2,
+        verdict: "converged",
+        finalDisposition: "accepted",
+      }),
+    );
+
+    const [line] = readFileSync(join(ledgerDir, TELEMETRY_FILENAME), "utf8")
+      .trim()
+      .split("\n");
+    const raw = JSON.parse(line!) as Record<string, unknown>;
+
+    expect(Object.keys(raw).sort()).toEqual([
+      "cmrPass",
+      "exactIdentityMatchKeys",
+      "finalDisposition",
+      "findingsBySeverity",
+      "identityMatch",
+      "issue",
+      "newExactIdentityMatchKeys",
+      "phase",
+      "priorFindingDispositions",
+      "recurringExactIdentityMatchKeys",
+      "reviewRound",
+      "runId",
+      "stamped_at",
+      "v",
+      "verdict",
+    ]);
+    expect(raw).toMatchObject({
+      phase: "review_round",
+      verdict: "converged",
+      finalDisposition: "accepted",
+      identityMatch: "exact_identity_match",
+      findingsBySeverity: null,
+      exactIdentityMatchKeys: null,
+      newExactIdentityMatchKeys: null,
+      recurringExactIdentityMatchKeys: null,
+      priorFindingDispositions: null,
+    });
+  });
+
+  it("separates new and recurring identity keys and maps next-round dispositions", () => {
+    const prior: TelemetryReviewRoundRecord = buildReviewRoundStamp({
+      stampedAt: "2026-07-10T00:00:00.000Z",
+      runId: "old-run",
+      issue: 786,
+      cmrPass: "completeness",
+      reviewRound: 1,
+      verdict: "blocking",
+      finalDisposition: "accepted",
+      findings: [finding()],
+    });
+    const dispositions: PriorFindingDisposition[] = [
+      { identityKey: "correctness|src/retry.ts:42|the retry ignores the error", status: "verified-closed" },
+      { identityKey: "correctness|src/other.ts:1|new concern", status: "accepted_suppressed" },
+      { identityKey: "correctness|src/third.ts:9|uncertain", status: "unable-to-assess" },
+    ];
+
+    const record = buildReviewRoundStamp({
+      stampedAt: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      cmrPass: "completeness",
+      reviewRound: 2,
+      verdict: "blocking",
+      finalDisposition: "accepted",
+      findings: [finding(), finding({ severity: "medium", location: "src/new.ts:8", claim_quote: "new concern" })],
+      priorReviewRecords: [prior],
+      priorFindingDispositions: dispositions,
+    });
+
+    expect(record.findingsBySeverity).toEqual({ critical: 0, high: 1, medium: 1, low: 0, clarity: 0 });
+    expect(record.recurringExactIdentityMatchKeys).toEqual([
+      "correctness|src/retry.ts:42|the retry ignores the error",
+    ]);
+    expect(record.newExactIdentityMatchKeys).toEqual([
+      "correctness|src/new.ts:8|new concern",
+    ]);
+    expect(record.priorFindingDispositions).toEqual([
+      { identityKey: "correctness|src/retry.ts:42|the retry ignores the error", disposition: "fixed" },
+      { identityKey: "correctness|src/other.ts:1|new concern", disposition: "refuted" },
+      { identityKey: "correctness|src/third.ts:9|uncertain", disposition: "deferred" },
+    ]);
+  });
   it("derives single-slice telemetry outside the Sandcastle worktrees", () => {
     const clone = "/home/agent/.sc-orchestrator/repo-iso-809";
     const stateDir = `${clone}/.sandcastle/worktrees/.ledger-809`;
