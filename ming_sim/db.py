@@ -4664,8 +4664,13 @@ class GameDB:
             for row in self.power_rows(exclude_self=exclude_self)
         ]
 
-    def power_report(self, exclude_self: bool = True) -> str:
+    def power_report(
+        self, exclude_self: bool = True, kinds: Optional[Iterable[str]] = None,
+    ) -> str:
         rows = self.power_rows(exclude_self=exclude_self)
+        if kinds is not None:
+            allowed = {str(kind).strip().lower() for kind in kinds}
+            rows = [row for row in rows if str(row["kind"] or "").strip().lower() in allowed]
         if not rows:
             return "势力未建档。"
         return "；".join(

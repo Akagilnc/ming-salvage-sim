@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 
@@ -52,40 +53,38 @@ def _query_domain(query: str) -> str:
     return "office"
 
 
+def source_kind_for_query(query: str) -> str:
+    """Classify the durable channel implied by the emperor's wording."""
+    text = str(query or "")
+    return "inquiry" if any(word in text for word in ("查访", "密查", "查问", "访查")) else "firsthand"
+
+
+def _safe_report_text(text: object) -> str:
+    """Keep reusable report prose qualitative at the audience boundary."""
+    return re.sub(r"[-+]?\d+(?:\.\d+)?%?", "若干", str(text or ""))
+
+
 def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
-    """Read one existing substrate, keeping machine-valued fields out of payload."""
+    """Read the existing domain presentation seams, keeping values out of payload."""
     domain = _query_domain(query)
     if domain == "office":
         return _vacancy_statement(db.list_office_vacancies(), query), "office_vacancies"
     if domain == "arrears":
-        rows = db.conn.execute(
-            "SELECT name, arrears FROM armies WHERE owner_power='ming' ORDER BY name"
-        ).fetchall()
-        owing = [str(row["name"]) for row in rows if float(row["arrears"] or 0) > 0]
-        return (
-            ("军籍所载仍有欠饷的军镇：" + "、".join(owing) + "。" if owing
-             else "军籍所载各镇目前未见有欠饷记录。"),
-            "armies",
-        )
-    rows = db.power_rows(exclude_self=True)
+        return _safe_report_text(db.army_report(limit=10)), "armies"
     if domain == "bandits":
-        rows = [row for row in rows if any(word in (
-            str(row["kind"] or "") + str(row["id"] or "") + str(row["name"] or "")
-        ) for word in ("bandit", "贼", "流寇"))]
-    if not rows:
-        return "军情簿暂未载有与所问相符的势力。", "powers"
-    return "".join(
-        f"{row['name']}当前{row['stance']}，局面为{row['status']}；近况：{row['last_action'] or '尚无新动'}。"
-        for row in rows
-    ), "powers"
+        # power_report is the existing qualitative military-intelligence seam;
+        # use its domain filter so a bandit question cannot receive every
+        # foreign power's report.
+        return _safe_report_text(db.power_report(exclude_self=True, kinds={"bandit", "bandits"})), "powers"
+    return _safe_report_text(db.power_report(exclude_self=True)), "powers"
 
 
 def _canonical_source_ref(source_kind: str, source_ref: Optional[str], domain_ref: str) -> str:
     """Canonicalize provider metadata; arbitrary caller text is never echoed."""
     if source_kind == "inquiry":
-        # Keep the historical public label stable while deriving the actual
-        # domain substrate independently of it.
-        if source_ref == "吏部查访":
+        # The office channel has a stable historical provider label, but it is
+        # selected from the queried substrate rather than trusted caller text.
+        if domain_ref == "office_vacancies":
             return "吏部查访"
         provider = "查访"
     elif source_kind == "firsthand":
@@ -99,10 +98,11 @@ def build_return_report(
     db: Any,
     query: str,
     *,
-    source_kind: str,
+    source_kind: Optional[str] = None,
     source_ref: Optional[str] = None,
 ) -> Dict[str, str]:
     """Build a traceable report without a minister-reply dependency."""
+    source_kind = source_kind or source_kind_for_query(query)
     if source_kind not in {"firsthand", "inquiry"}:
         raise ValueError("回奏来源必须是 firsthand 或 inquiry")
     statement, domain_ref = _qualitative_domain_statement(db, query)
