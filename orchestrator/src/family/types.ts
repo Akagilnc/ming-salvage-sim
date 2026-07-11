@@ -171,6 +171,9 @@ export interface FamilyLedgerEntry {
    *   - `"ship_dispatch_attempt"` — a dedicated final-barrier retry marker. It
    *     belongs to the streak after the latest green correctness CMR pass; no
    *     existing merge/CMR/ship consumer treats it as delivery or unblock truth.
+   *   - `"ship_completed"` — the ship worker reported a PR locator and branch,
+   *     before host observation verified either. This is advisory observation input
+   *     only; it is deliberately not delivery, unblock, or review-loop truth.
    */
   readonly status:
     | "merged"
@@ -189,7 +192,8 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "ship_dispatch_attempt";
+    | "ship_dispatch_attempt"
+    | "ship_completed";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -227,6 +231,8 @@ export interface FamilyLedgerEntry {
    *   - `"ship_dispatch_attempt"` — paired with `status:"ship_dispatch_attempt"`;
    *     written before each ship-worker dispatch so crash/resume preserves the
    *     malformed-output budget without reusing a worker step id.
+   *   - `"ship_completed"` — paired with `status:"ship_completed"`; a worker-
+   *     reported PR locator plus branch persisted before host observation (#823).
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
   readonly event?:
@@ -246,7 +252,8 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "ship_dispatch_attempt";
+    | "ship_dispatch_attempt"
+    | "ship_completed";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
   /**
@@ -323,6 +330,8 @@ export interface FamilyLedgerEntry {
    * guard's "already delivered" decision is locatable from the ledger alone.
    */
   readonly pr?: string;
+  /** Worker-reported branch on a `ship_completed` observation-input row (#823). */
+  readonly shipBranch?: string;
   /** PR number on `status:"pr_merged"` terminal entries (#602). */
   readonly prNumber?: number;
   /** Remote branch name on `status:"pr_merged"` terminal entries (#602). */
