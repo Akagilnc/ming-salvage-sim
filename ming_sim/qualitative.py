@@ -22,6 +22,15 @@ _ABSTRACT_VALUE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# LLM prose frequently inserts connective words between an axis and its score
+# ("忠诚已达98分", "民心跌至20").  This is deliberately fail-closed: all
+# listed axes are abstract, while concrete quantities are absent from the set.
+_ABSTRACT_NEARBY_NUMBER_RE = re.compile(
+    r"(?:民心|动乱|皇威|忠诚(?:度)?|能力|操守|廉洁|清廉|胆略|勇气|满意度|态度|朝势|军力|财力|士气|训练|装备|火器|机动|士绅阻力|军事压力|满意|势力|威望|实力|经济|进度|进展)"
+    r"\s*(?:已达|提高到|提升至|只有|跌至|升至|降至|达到)\s*[-+]?\d+(?:\.\d+)?(?:\s*(?:分|%|/\s*100))?",
+    re.IGNORECASE,
+)
+
 
 def safe_historical_text(text: object, kind: str = "历史记录") -> str:
     """Return historical prose only when it does not leak abstract raw scores.
@@ -33,7 +42,7 @@ def safe_historical_text(text: object, kind: str = "历史记录") -> str:
     rendered = str(text or "").strip()
     if not rendered:
         return ""
-    if _ABSTRACT_VALUE_RE.search(rendered):
+    if _ABSTRACT_VALUE_RE.search(rendered) or _ABSTRACT_NEARBY_NUMBER_RE.search(rendered):
         return f"（{kind}含抽象指标原值，已略去；请以当时正式定性奏报为准。）"
     return rendered
 

@@ -1361,6 +1361,9 @@ def test_legacy_registered_secret_order_marker_is_restaged(game):
     assert payload["deadline_months"] == 3
     assert "毕自严" in payload["excluded_names"]
     assert payload["excluded_offices"] == ["户部"]
+    assert not db.conn.execute(
+        "SELECT 1 FROM character_knowledge_sources WHERE source_id=?", (f"secret_order:{oid}",)
+    ).fetchone()
 
 
 def test_legacy_registered_secret_order_restaging_rolls_back_pending_if_delete_fails(game, monkeypatch):

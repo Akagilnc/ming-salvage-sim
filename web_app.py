@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import os
 import queue
@@ -1533,9 +1534,10 @@ class WebGame:
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         try:
-            try:
+            chat_parameters = inspect.signature(self.session.chat).parameters
+            if "chat_turn_id" in chat_parameters:
                 result = self.session.chat(minister_name, text, chat_turn_id=chat_turn_id)
-            except TypeError:
+            else:
                 result = self.session.chat(minister_name, text)
             proposed = None
             if result.proposed_directive is not None:
