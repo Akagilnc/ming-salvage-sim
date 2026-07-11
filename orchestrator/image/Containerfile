@@ -115,17 +115,17 @@ RUN set -eux; \
 # Official npm package is pinned exactly; npm verifies its registry integrity
 # metadata and the version check below fails the build on drift.
 ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global
-ENV PATH=/home/agent/.npm-global/bin:${PATH}
+ENV PATH=${NPM_CONFIG_PREFIX}/bin:${PATH}
 USER agent
 RUN set -eux; \
     npm install -g @xai-official/grok@0.2.93; \
-    test -x "$HOME/.npm-global/bin/grok" || command -v grok
+    test -x "$NPM_CONFIG_PREFIX/bin/grok" || command -v grok
 USER root
 RUN set -eux; \
-    # Real copy (not symlink into ~/.grok/bin): runtime mounts a per-issue
-    # auth dir over /home/agent/.grok (codex-style), which would break a
-    # PATH symlink whose target lives under that tree (#807 mountAuth).
-    cp -L /home/agent/.npm-global/bin/grok /usr/local/bin/grok; \
+    # Keep a real copy rather than a symlink: although NPM_CONFIG_PREFIX is
+    # outside the current auth mount at ~/.grok, /usr/local/bin must remain
+    # usable if a future runtime layer replaces the agent home directory.
+    cp -L "$NPM_CONFIG_PREFIX/bin/grok" /usr/local/bin/grok; \
     chmod 755 /usr/local/bin/grok; \
     # Placeholder so a file bind-mount of auth.json is never mistaken for a dir.
     # (agent's primary group is not named "agent" on this base image — chown
