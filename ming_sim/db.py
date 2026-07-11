@@ -7476,7 +7476,10 @@ class GameDB:
 
         Aggregate archives are presentation artifacts.  Replaying the durable
         public rows here keeps source_id and explicit exclusions attached to
-        each item when a turn report or chapter is saved.
+        each item when a turn report or chapter is saved.  Source rows are
+        included as well: settlement producers may register a participating
+        item before either aggregate is rendered, and the archive write must
+        not lose that item's access boundary.
         """
         rows = self.conn.execute(
             "SELECT turn, year, period, title, body, source_id, excluded_names "
@@ -7484,7 +7487,7 @@ class GameDB:
             "ORDER BY id",
             (int(turn),),
         ).fetchall()
-        items: List[Dict[str, object]] = []
+        by_source: Dict[str, Dict[str, object]] = {}
         for row in rows:
             try:
                 excluded_names = json.loads(row["excluded_names"] or "[]")
@@ -7492,11 +7495,70 @@ class GameDB:
                 excluded_names = []
             if not isinstance(excluded_names, list):
                 excluded_names = []
-            items.append({
+            item = {
                 "title": row["title"], "body": row["body"],
                 "source_id": row["source_id"], "excluded_names": excluded_names,
-            })
-        return items
+            }
+            by_source[str(row["source_id"] or "")] = item
+
+        source_rows = self.conn.execute(
+            "SELECT title, body, source_id, participant_roster, excluded_names, "
+            "excluded_targets FROM character_knowledge_sources WHERE turn=? "
+            "ORDER BY id",
+            (int(turn),),
+        ).fetchall()
+        characters = self.conn.execute(
+            "SELECT name, office, office_type FROM characters"
+        ).fetchall()
+        character_names = {str(row["name"]) for row in characters}
+        for row in source_rows:
+            try:
+                roster = json.loads(row["participant_roster"] or "[]")
+            except (TypeError, ValueError):
+                roster = []
+            participants = {
+                str(item.get("character_id") or item.get("name"))
+                for item in roster
+                if isinstance(item, Mapping) and (item.get("character_id") or item.get("name"))
+            }
+            try:
+                excluded_names = json.loads(row["excluded_names"] or "[]")
+            except (TypeError, ValueError):
+                excluded_names = []
+            if not isinstance(excluded_names, list):
+                excluded_names = []
+            try:
+                excluded_targets = json.loads(row["excluded_targets"] or "{}")
+            except (TypeError, ValueError):
+                excluded_targets = {}
+            if not isinstance(excluded_targets, dict):
+                excluded_targets = {}
+            target_people = {
+                str(name) for name in excluded_targets.get("people", [])
+            }
+            target_offices = {
+                str(office) for office in excluded_targets.get("offices", [])
+            }
+            excluded_names = list(dict.fromkeys(
+                [*(str(name) for name in excluded_names),
+                 *(str(item["name"]) for item in characters
+                   if item["name"] in target_people
+                   or item["office"] in target_offices
+                   or item["office_type"] in target_offices)]
+            ))
+            # A participant-scoped source is materialized as a public ledger
+            # row whose exclusion snapshot is stable across later transfers.
+            # Empty rosters are genuinely public and therefore add no names.
+            if participants:
+                excluded_names = list(dict.fromkeys(
+                    [*(str(name) for name in excluded_names),
+                     *(sorted(character_names - participants))]
+                ))
+            by_source[str(row["source_id"] or "")] = {
+                "title": row["title"], "body": row["body"],
+                "source_id": row["source_id"], "excluded_names": excluded_names,
+            }
+        return list(by_source.values())
 
     def list_chapter_memories(
         self, upto_turn: Optional[int] = None, recent: Optional[int] = None
