@@ -14,9 +14,10 @@ After repairing the listed findings, sweep each touched file and every file
 sharing its mechanism for other instances of the same defect class; repair each
 live instance in this round. When two or more findings share a deeper cause,
 name its underlying invariant and repair to that invariant so the class closes
-as a whole. Close your summary with a self-audit checklist: every site checked,
-`file:line` — `fixed` or `already-correct`, giving the next reviewer coverage to
-verify.
+as a whole. Record the self-audit checklist in the fixing commit message body:
+every site checked, `file:line` — `fixed` or `already-correct`, giving the next
+reviewer coverage to verify. The `<fixer>` outcome remains only the JSON envelope
+defined below.
 
 Inspect the current branch for each assigned finding before emitting your outcome:
 
