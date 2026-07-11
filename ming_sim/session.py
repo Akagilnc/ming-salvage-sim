@@ -1045,6 +1045,14 @@ class GameSession:
         augmented = message
         try:
             knowledge = self.db.get_character_knowledge(self.state, character.name)
+            if any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情")):
+                # The report is written to the durable, character-scoped
+                # knowledge source before rebuilding the projection.  This
+                # prevents a keyword hit from injecting a global snapshot into
+                # every minister's prompt and leaves restore with the same
+                # source/audience boundary.
+                self.db.persist_return_report(self.state, character.name, message)
+                knowledge = self.db.get_character_knowledge(self.state, character.name)
             brief = render_character_knowledge(knowledge, character.name)
             if brief:
                 augmented = brief + "\n\n" + augmented
