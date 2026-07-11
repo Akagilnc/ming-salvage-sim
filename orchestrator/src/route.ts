@@ -32,7 +32,6 @@ import {
 } from "./validate.js";
 import { MAX_ONLINE_REVIEW_ROUNDS } from "./onlineReviewLoop.js";
 import {
-  fixerProceedsToVerify,
   isValidCleanupResult,
   isValidDocReleaseResult,
   isValidFixerResult,
@@ -130,7 +129,7 @@ export function route(ctx: RouteContext): RouteDecision {
         return { kind: "handoff", status: "error" };
       }
       // #252 error edge: 0 commits → S8(error: build produced nothing).
-      if (!ctx.output.committed) {
+      if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
         return { kind: "handoff", status: "error" };
       }
       return { kind: "next", step: "S3" };
@@ -160,7 +159,7 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidCoderOutput(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
-      if (!ctx.output.committed) {
+      if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
         return { kind: "handoff", status: "error" };
       }
       return { kind: "next", step: "S6" };
@@ -185,6 +184,13 @@ export function route(ctx: RouteContext): RouteDecision {
           step: "S12",
         };
       }
+      if (ctx.output.terminalState === "decision_gate_raised") {
+        return {
+          kind: "handoff",
+          status: "escalate",
+          onlineReviewTerminal: "decision_gate_raised",
+        };
+      }
       const round = ctx.onlineReviewRound ?? 1;
       // AC5: round 3 remaining P2/nits are attempted by default — only exhaust
       // after the final (round > cap) verify still has findings.
@@ -202,16 +208,8 @@ export function route(ctx: RouteContext): RouteDecision {
       if (!isValidFixerResult(ctx.output)) {
         return { kind: "handoff", status: "error" };
       }
-      // fixer.md: committed:false + alreadySatisfied → fresh verify; genuinely
-      // not fixed → decision gate (not S8(error)).
-      if (!fixerProceedsToVerify(ctx.output)) {
-        return {
-          kind: "handoff",
-          status: "escalate",
-          onlineReviewTerminal: "decision_gate_raised",
-        };
-      }
-      // ADR 0061: fixer → fresh verify re-check (never fixer → cleanup direct).
+      // Every valid fixer envelope, including committed:false, advances to a
+      // fresh S9 verification; findings there own any decision gate.
       return { kind: "next", step: "S9" };
     }
 

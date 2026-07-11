@@ -587,6 +587,9 @@ class FamilyShipMalformedAfterCmrBackend implements FamilyBackend {
   async runFamilyVerify(): Promise<{ ok: true }> {
     return { ok: true };
   }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   async escalateFamily(): Promise<void> {}
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.dispatches.push(`${spec.kind}:${ctx.cmrPass ?? ctx.familyBase ?? "unknown"}`);
@@ -768,12 +771,10 @@ describe("#601 AC#3 — a CMR closure whose downstream required-field re-validat
 //   - dogfood-362 — SINGLE-SLICE ship. The production runner DOES retry a
 //     structural `malformed` via `withMechanicalRetry` (AC#2 wired it). This
 //     replay is a real end-to-end production assertion (retry-then-converge).
-//   - family-405 — FAMILY ship. The production family gate currently
-//     first-occurrence-aborts a ship `malformed` as `contract_drift` (the gate
-//     owns resolved results via callerOwns; write-worker reset idempotency is
-//     deferred to #661). This replay PINS that current behavior + asserts the
-//     seam-level mechanism coverage #601 owns.
-//   - dogfood-70 — FAMILY CMR closure. Same as family-405: the production gate
+//   - family-405 — FAMILY ship. #823 superseded the original first-occurrence
+//     abort: production now durably reserves and bounds every malformed retry,
+//     then escalates exhausted attempts as infrastructure failure.
+//   - dogfood-70 — FAMILY CMR closure. Unlike family-405, the production gate
 //     first-occurrence-aborts a closure re-validation failure as `contract_drift`
 //     (AC#3 real-validation pin above). This replay cross-references that pin +
 //     asserts seam-level mechanism coverage.
@@ -791,14 +792,12 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
     expect(backend.shipDispatches).toBe(2);
   });
 
-  it("family-405 (CURRENT PRODUCTION PIN): a family ship worker emitting no valid <ship> verdict DURABLE-ABORTS as contract_drift today (#661 wires the retry)", async () => {
+  it("family-405 (CURRENT PRODUCTION PIN): a family ship worker emitting no valid <ship> verdict exhausts durable bounded retries before aborting", async () => {
     // The real family-405 incident: a family ship worker returned no valid result
-    // after a converged CMR and the gate classified it as `contract_drift`
-    // (first-occurrence abort). This replay PINS the current production behavior
-    // through the REAL family gate (runVerifyCmr): a ship `malformed` is owned by
-    // `callerOwns` and first-occurrence-aborts, NOT retried. The retry that #601
-    // AC#4 mandates is deferred to #661 (write-worker reset idempotency). This
-    // keeps the gap visible.
+    // after a converged CMR. #823 superseded the old first-occurrence
+    // `contract_drift` behavior: the real family gate now reserves every
+    // mutating attempt durably and retries malformed worker envelopes within a
+    // bounded streak before escalating the infrastructure failure.
     const convergedCmr: WorkerResult = {
       kind: "completed",
       output: {
@@ -821,22 +820,15 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
       familyBackend: backend,
     });
     expect(result.ok).toBe(false);
-    // PIN the dispatch count: without this the test can't detect what it
-    // claims to pin — a future retrying family gate would still pass because
-    // exhausted scripted outputs fall back to a completed-coder result that
-    // verifyCmr.ts still classifies as no-valid-result (→ contract_drift, see
-    // verifyCmr.ts:2351). Symmetric with the dogfood-70 pin's
-    // `cmrDispatches === 1`.
-    expect(backend.dispatches.filter((d) => d.startsWith("ship:"))).toHaveLength(1);
+    expect(backend.dispatches.filter((d) => d.startsWith("ship:"))).toHaveLength(3);
     const abort = backend.ledger.find((e) => e.status === "aborted");
-    expect(abort?.stopSummary?.reason).toBe("contract_drift");
+    expect(abort?.stopSummary?.reason).toBe("infra_failure");
   });
 
-  it("family-405 (SEAM-LEVEL COVERAGE): the shared withMechanicalRetry MECHANISM covers the family ship role at the family seam (#661 wires it into the gate)", async () => {
-    // SEAM-LEVEL (not a production claim): the shared MECHANISM retries a family
-    // ship `malformed` and converges to `pr_opened`. The production gate does NOT
-    // wire it this way yet (see the CURRENT PRODUCTION PIN above). This asserts
-    // the mechanism coverage #601 owns; #661 owns wiring it into the gate.
+  it("family-405 (SEAM-LEVEL COVERAGE): the shared withMechanicalRetry mechanism still covers a converging family ship role", async () => {
+    // The generic seam still retries a family ship `malformed` and converges to
+    // `pr_opened`; the production gate additionally owns #823's durable
+    // reservation and host-truth checks asserted by the production pin above.
     const backend = new FamilyShipMalformedThenConvergeBackend(1);
     const result = await withMechanicalRetry(
       familyShipSpec(),

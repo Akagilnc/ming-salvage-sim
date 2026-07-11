@@ -127,22 +127,23 @@ class SpyBackend implements Backend {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// B [High] — coder commitsAdded validation.
+// B [High] — coder commit self-reports are advisory.
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("B: coder commitsAdded validation", () => {
-  it("committed:true with commitsAdded:0 (inconsistent) → S8(error), NOT pushed", async () => {
+describe("B: coder commitsAdded advisory telemetry", () => {
+  it("committed:true with commitsAdded:0 continues; the self-report is not a gate", async () => {
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      return { kind: "coder", committed: true, commitsAdded: 0 };
+      return spec.role === "coder"
+        ? { kind: "coder", committed: true, commitsAdded: 0 }
+        : { kind: "reviewer", findings: [] };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S2");
-    expect(backend.pushed).toBe(false);
+    expect(result.status).toBe("success");
+    expect(backend.pushed).toBe(true);
   });
 
   it("committed:false with commitsAdded:2 (inconsistent) → S8(error)", async () => {
@@ -160,7 +161,7 @@ describe("B: coder commitsAdded validation", () => {
     expect(result.errorPackage?.failedStep).toBe("S2");
   });
 
-  it("missing commitsAdded → S8(error)", async () => {
+  it("missing commitsAdded continues", async () => {
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
@@ -171,11 +172,10 @@ describe("B: coder commitsAdded validation", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S2");
+    expect(result.status).toBe("success");
   });
 
-  it("non-integer commitsAdded (1.5) → S8(error)", async () => {
+  it("non-integer commitsAdded (1.5) continues", async () => {
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
@@ -186,8 +186,7 @@ describe("B: coder commitsAdded validation", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S2");
+    expect(result.status).toBe("success");
   });
 
   it("negative commitsAdded (-1) → S8(error)", async () => {
@@ -205,7 +204,7 @@ describe("B: coder commitsAdded validation", () => {
     expect(result.errorPackage?.failedStep).toBe("S2");
   });
 
-  it("non-number commitsAdded ('1') → S8(error)", async () => {
+  it("non-number commitsAdded ('1') continues", async () => {
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
@@ -216,8 +215,7 @@ describe("B: coder commitsAdded validation", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S2");
+    expect(result.status).toBe("success");
   });
 
   it("regression: committed:true with commitsAdded:1 (consistent) proceeds to S7 ship", async () => {

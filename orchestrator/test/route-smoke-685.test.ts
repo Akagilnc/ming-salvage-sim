@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,6 +124,13 @@ function productionSmokeBackend(home: string): ProductionSmokeBackend {
     soulsDir: smokeSoulsDir,
     home,
   });
+}
+
+function successfulSmoke(options: Parameters<typeof sc.run>[0]) {
+  const args = options.promptArgs as { readonly NONCE: string; readonly NONCE_FILE: string };
+  mkdirSync(options.cwd!, { recursive: true });
+  writeFileSync(join(options.cwd!, args.NONCE_FILE), `${args.NONCE}\n`);
+  return { completionSignal: "ROUTE_SMOKE_COMPLETE" } as Awaited<ReturnType<typeof sc.run>>;
 }
 
 describe("#685 route tool smoke", () => {
@@ -332,7 +339,7 @@ describe("#685 route tool smoke", () => {
           timestamp: new Date(),
         });
       }
-      return { completionSignal: "ROUTE_SMOKE_COMPLETE" } as Awaited<ReturnType<typeof sc.run>>;
+      return successfulSmoke(options);
     });
     try {
       const backend = productionSmokeBackend(home);
@@ -363,6 +370,88 @@ describe("#685 route tool smoke", () => {
       } else {
         process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = saved;
       }
+    }
+  });
+
+  it("smokes a pooled Grok route through the pool-selected Grok provider", async () => {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-pool-"));
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
+    runSpy.mockImplementation(async (options) => successfulSmoke(options));
+    try {
+      const backend = productionSmokeBackend(home);
+      const route = resolveRouteModels("normal", { coder: "grok-4.5" });
+      await backend.smokeModelRoute(route, {}, "grok-build", "coder:grok-4.5");
+      const grokRun = runSpy.mock.calls.find(([options]) => options.agent.name === "grok");
+      expect(grokRun).toBeDefined();
+      expect(
+        runSpy.mock.calls.find(([options]) => options.agent.name !== "grok"),
+      ).toBeDefined();
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reuse a default-provider smoke for the grok-build relay pool", async () => {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-cache-"));
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
+    runSpy.mockImplementation(async (options) => successfulSmoke(options));
+    try {
+      const backend = productionSmokeBackend(home);
+      const route = resolveRouteModels("normal", { coder: "grok-4.5" });
+
+      await backend.smokeModelRoute(route);
+      runSpy.mockClear();
+      await backend.smokeModelRoute(route, {}, "grok-build", "coder:grok-4.5");
+
+      expect(runSpy.mock.calls.some(([options]) => options.agent.name === "grok")).toBe(true);
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a Grok-selected smoke before launch when its auth copy is unavailable", async () => {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-no-auth-"));
+    runSpy.mockImplementation(async (options) => successfulSmoke(options));
+    try {
+      const backend = productionSmokeBackend(home);
+      const smoked = await backend.smokeModelRoute(
+        resolveRouteModels("normal", { coder: "grok-4.5" }),
+        {},
+        "grok-build",
+        "coder:grok-4.5",
+      );
+      expect(smoked.smoke["coder:grok-4.5"]).toMatchObject({
+        state: "failed",
+        error: expect.stringMatching(/no grok auth/i),
+      });
+      expect(runSpy.mock.calls.some(([options]) => options.agent.name === "grok")).toBe(false);
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reclaims the temporary Grok OAuth directory after each smoke container exits", async () => {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-auth-"));
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
+    runSpy.mockImplementation(async (options) => successfulSmoke(options));
+    try {
+      const backend = productionSmokeBackend(home);
+      await backend.smokeModelRoute(resolveRouteModels("normal", { coder: "grok-4.5" }));
+
+      expect(
+        readdirSync(join(home, ".sc-orchestrator")).filter((name) =>
+          name.startsWith("grok-auth-685-"),
+        ),
+      ).toEqual([]);
+    } finally {
+      runSpy.mockReset();
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

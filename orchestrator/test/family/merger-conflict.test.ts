@@ -30,6 +30,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { mergeChild } from "../../src/family/merger.js";
 import type {
   ConflictResolveRequest,
@@ -241,6 +242,33 @@ describe("merger conflict fallback — conflicting path routes to the LLM resolv
 });
 
 describe("merger conflict fallback — a FAILED resolution is not silently swallowed (#295 acc. 3)", () => {
+  it("forwards a structured merger decision without mechanical re-dispatch", async () => {
+    class DecisionBackend extends ConflictingFamilyBackend {
+      override async resolveMergeConflict(req: ConflictResolveRequest): Promise<MergeResult> {
+        this.resolves.push(req);
+        return {
+          familyHead: "base0",
+          escalation: {
+            reason: "choose the authoritative migration",
+            diagnosis: "both branches intentionally changed the same contract",
+            escalationKind: "decision",
+            phase: "wave",
+          },
+        };
+      }
+    }
+
+    const backend = new DecisionBackend(new Set([14]));
+    const result = await mergeChild(backend, { childIssue: 14, childBranch: "feat/child-14" });
+
+    expect(backend.resolves).toHaveLength(1);
+    expect(result.escalation).toMatchObject({
+      reason: "choose the authoritative migration",
+      diagnosis: "both branches intentionally changed the same contract",
+    });
+    expect(backend.appended).toEqual([]);
+  });
+
   it("throws and does NOT write a merged ledger entry when the LLM resolver fails", async () => {
     const backend = new ConflictingFamilyBackend(new Set([13]), new Set([13]));
     await expect(
@@ -253,7 +281,7 @@ describe("merger conflict fallback — a FAILED resolution is not silently swall
     expect(backend.appended).toEqual([]);
   });
 
-  it("throws and does NOT write a merged ledger entry when the resolver returns STILL-conflicted", async () => {
+  it("returns still-conflicted after the bounded merger-step retry and does NOT write a merged ledger entry", async () => {
     // The resolver returns WITHOUT throwing but its result is still
     // `conflicted: true` (a misbehaving / escalating backend that did not
     // actually clear the conflict). The merger must NOT treat this as a clean
@@ -263,13 +291,45 @@ describe("merger conflict fallback — a FAILED resolution is not silently swall
       /* resolveFailures */ new Set(),
       /* stillConflictedAfterResolve */ new Set([14]),
     );
-    await expect(
-      mergeChild(backend, { childIssue: 14, childBranch: "feat/child-14" }),
-    ).rejects.toThrow(/still-conflicted/i);
-    // The resolver WAS attempted.
-    expect(backend.resolves.map((r) => r.childIssue)).toEqual([14]);
+    const result = await mergeChild(backend, {
+      childIssue: 14,
+      childBranch: "feat/child-14",
+    });
+    expect(result.conflicted).toBe(true);
+    // The merger step was re-dispatched up to the shared mechanical bound.
+    expect(backend.resolves.map((r) => r.childIssue)).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => 14),
+    );
     // NO merged ledger entry — a still-conflicted resolution must never look clean.
     expect(backend.appended).toEqual([]);
+  });
+
+  it("re-dispatches the merger step after a transient still-conflicted result, then records the landed merge", async () => {
+    class ResolvesOnRetryBackend extends ConflictingFamilyBackend {
+      private attempts = 0;
+
+      override async resolveMergeConflict(req: ConflictResolveRequest): Promise<MergeResult> {
+        this.attempts += 1;
+        this.resolves.push(req);
+        if (this.attempts < 2) {
+          return { familyHead: "base0", conflicted: true };
+        }
+        return { familyHead: "resolved-14" };
+      }
+    }
+
+    const backend = new ResolvesOnRetryBackend(new Set([14]));
+    const result = await mergeChild(backend, {
+      childIssue: 14,
+      childBranch: "feat/child-14",
+    });
+
+    expect(result).toMatchObject({
+      familyHead: "resolved-14",
+      conflictResolvedByLlm: true,
+    });
+    expect(backend.resolves).toHaveLength(2);
+    expect(backend.appended).toHaveLength(1);
   });
 });
 
