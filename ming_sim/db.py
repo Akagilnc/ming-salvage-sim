@@ -31,6 +31,12 @@ from ming_sim.models import (
     FRONT_HALF_DONE_PHASES, Character, Event, GameState, is_vassal_prince,
     loads_effect_dict, monthly_amount, period_label,
 )
+from ming_sim.relations import (
+    bind_origin_round,
+    credit_events_as_edges,
+    normalize_evidence,
+    validate_edge_kind,
+)
 from ming_sim.token_stats import tlog
 
 # 落库字段白名单（模块级常量化——避免在 apply_region_deltas / apply_army_deltas /
@@ -1173,6 +1179,30 @@ class GameDB:
                 value TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- #632 关系账 S1：append-only 有向边事件流水。0079 信用事件只在读侧适配，
+            -- 不迁移、不双写；evidence 仅允许结构化产出方置真。
+            CREATE TABLE IF NOT EXISTS relation_edge_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                event_kind TEXT NOT NULL,
+                context TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                origin_round INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                period INTEGER NOT NULL,
+                evidence INTEGER NOT NULL DEFAULT 0 CHECK (evidence IN (0, 1)),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source, target, event_kind, context, origin)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_relation_edges_pair
+            ON relation_edge_events(source, target, turn, id);
+
+            CREATE INDEX IF NOT EXISTS idx_relation_edges_person
+            ON relation_edge_events(source, target, event_kind, id);
             """
         )
         for column, definition in {
@@ -9519,6 +9549,105 @@ class GameDB:
         cur = self.conn.execute(f"DELETE FROM {table} WHERE {pk}=?", (pk_value,))
         self.conn.commit()
         return cur.rowcount
+
+    def record_relation_edge_event(
+        self,
+        *,
+        source: str,
+        target: str,
+        event_kind: str,
+        context: str,
+        origin: str,
+        turn: Optional[int] = None,
+        year: Optional[int] = None,
+        period: Optional[int] = None,
+        evidence: Any = False,
+    ) -> int:
+        """唯一的边事件写入口；重复同一事件返回原 id，不生成第二笔。"""
+        source = str(source or "").strip()
+        target = str(target or "").strip()
+        context = str(context or "").strip()
+        if not source or not target:
+            raise ValueError("边事件 source/target 不能为空")
+        if not context:
+            raise ValueError("边事件语境不能为空")
+        kind = validate_edge_kind(event_kind)
+        evidence_flag = normalize_evidence(evidence)
+        state = self.load_state()
+        effective_turn = int(turn if turn is not None else state.turn)
+        effective_year = int(year if year is not None else state.year)
+        effective_period = int(period if period is not None else state.period)
+        bound_origin, origin_round = bind_origin_round(origin, effective_turn)
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO relation_edge_events
+                (source, target, event_kind, context, origin, origin_round,
+                 turn, year, period, evidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source, target, kind, context, bound_origin, origin_round,
+                effective_turn, effective_year, effective_period, int(evidence_flag),
+            ),
+        )
+        if not bool(getattr(self.conn, "_commit_suspended", False)) and int(
+            getattr(self.conn, "_atomic_depth", 0) or 0
+        ) == 0:
+            self.conn.commit()
+        row = self.conn.execute(
+            """
+            SELECT id FROM relation_edge_events
+            WHERE source = ? AND target = ? AND event_kind = ? AND context = ? AND origin = ?
+            """,
+            (source, target, kind, context, bound_origin),
+        ).fetchone()
+        return int(row["id"])
+
+    # Names kept as narrow aliases for callers that describe the same seam differently.
+    write_relation_edge_event = record_relation_edge_event
+    insert_relation_edge_event = record_relation_edge_event
+
+    def get_relation_edge_events(
+        self,
+        *,
+        person: Optional[str] = None,
+        source: Optional[str] = None,
+        target: Optional[str] = None,
+        event_kind: Optional[str] = None,
+        evidence: Optional[bool] = None,
+    ) -> List[Dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if person is not None:
+            clauses.append("(source = ? OR target = ?)")
+            params.extend([str(person), str(person)])
+        if source is not None:
+            clauses.append("source = ?")
+            params.append(str(source))
+        if target is not None:
+            clauses.append("target = ?")
+            params.append(str(target))
+        if event_kind is not None:
+            clauses.append("event_kind = ?")
+            params.append(validate_edge_kind(event_kind))
+        if evidence is not None:
+            clauses.append("evidence = ?")
+            params.append(int(normalize_evidence(evidence)))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM relation_edge_events {where} ORDER BY turn, id", params
+        ).fetchall()
+        return [
+            {
+                **dict(row),
+                "evidence": bool(row["evidence"]),
+            }
+            for row in rows
+        ]
+
+    def read_credit_events_as_edges(self, records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """0079 读侧契约适配；只返回边，不把 fixture 写入 0079 或本表。"""
+        return credit_events_as_edges(records)
 
     def close(self) -> None:
         self.conn.close()
