@@ -822,6 +822,8 @@ export interface MergeRequest {
   readonly childIssue: number;
   /** The child slice branch to merge (the reviewed, locally-committed branch). */
   readonly childBranch: string;
+  /** Invocation-scoped telemetry identity for a conflict-resolver worker. */
+  readonly runId?: string;
   /** Startup-smoked route for any conflict resolver spawned during this merge. */
   readonly modelRoute?: ResolvedModelRoute;
 }
@@ -838,6 +840,8 @@ export interface ConflictResolveRequest {
   readonly childIssue: number;
   /** The child slice branch whose merge into the family base conflicted. */
   readonly childBranch: string;
+  /** Invocation-scoped telemetry identity minted by the family runner. */
+  readonly runId?: string;
   /** Startup-smoked family route, retained by the merger telemetry environment row. */
   readonly modelRoute?: ResolvedModelRoute;
 }
