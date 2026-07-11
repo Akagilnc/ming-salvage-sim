@@ -761,13 +761,13 @@ describe("realBackend modelIdForSlug", () => {
 // ─── resolveModelSlug (data-driven slug → backend registry) ──────────────────
 
 describe("realBackend resolveModelSlug", () => {
-  it("pins the OpenCode Grok routes to the live Grok 4.5 model", () => {
+  it("#846 backs the agy compatibility leg with the baked Grok CLI", () => {
     expect(resolveModelSlug("opencode-grok")).toEqual({
       provider: "opencode",
       model: "grok-4.5",
     });
     expect(resolveModelSlug("agy")).toEqual({
-      provider: "opencode",
+      provider: "grok",
       model: "grok-4.5",
     });
   });
