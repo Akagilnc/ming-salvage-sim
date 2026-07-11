@@ -470,6 +470,29 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     }));
   });
 
+  it("rejects an anchor-leg skip through the integrated CMR wiring", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: true,
+        successfulLegs: ["gpt-5.6-sol", "agy"],
+        skippedLegs: [{ slug: "opus", reason: "provider unavailable" }],
+      }),
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.cmrCalls).toHaveLength(1);
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "aborted",
+      reason: expect.stringMatching(/anchor.*opus/i),
+    }));
+  });
+
   it("does not rewrite CMR route-accounting malformed results", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     class RouteAccountingRewriteBackend extends CapableFamilyBackend {
