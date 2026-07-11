@@ -489,7 +489,6 @@ def test_background_audience_secret_order_persists_after_observer_departure(game
     assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
     assert _wait_for(lambda: web_game._pending_writes_count == 0)
-    assert _wait_for(lambda: web_game._pending_writes_count == 0)
 
 
 def test_background_audience_pending_action_persists_after_observer_departure(game):
@@ -544,6 +543,7 @@ def test_background_audience_appointment_stages_after_observer_departure(game):
     ).fetchone() is None
     assert _wait_for(lambda: len(web_game.chat_history[minister_name]) >= 2)
     assert db.can_undo_last_chat_turn(minister_name, state.turn)
+    assert _wait_for(lambda: web_game._pending_writes_count == 0)
 
 
 def test_background_audience_recommendation_stages_candidate_snapshot(game):
