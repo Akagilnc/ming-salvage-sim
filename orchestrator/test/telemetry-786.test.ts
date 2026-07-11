@@ -24,10 +24,14 @@ import {
   buildCollectStamp,
   buildDispatchStamp,
   buildEnvironmentStamp,
+  buildCommitStamp,
   buildReviewRoundStamp,
   categoryFromReason,
   classifyWorkerTerminal,
   clearTelemetryRunEnvironment,
+  collectCommitDiffLines,
+  collectCommitMetrics,
+  commitsBetween,
   configureTelemetryFromWorkerImage,
   configureTelemetryRunEnvironment,
   durableTelemetryDirForSingleSlice,
@@ -41,6 +45,7 @@ import {
   TELEMETRY_FILENAME,
   tryAppendTelemetryRecord,
   type TelemetryCollectRecord,
+  type TelemetryCommitRecord,
   type TelemetryDispatchRecord,
   type TelemetryEnvironmentRecord,
   type TelemetryReviewRoundRecord,
@@ -142,6 +147,90 @@ function finding(
 // ───────────────────────── pure unit tests ─────────────────────────
 
 describe("#786 telemetry pure helpers", () => {
+  it("builds a per-commit row with diff, src/test, escape-hatch, and assertion dimensions", () => {
+    const record = buildCommitStamp({
+      stampedAt: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      commit: "abc123",
+      metrics: {
+        files: 3,
+        insertions: 12,
+        deletions: 4,
+        source: { files: 1, insertions: 5, deletions: 1 },
+        test: { files: 2, insertions: 7, deletions: 3 },
+        escapeHatches: {
+          added: { asAny: 1, asUnknownAs: 2, jsonParseStringify: 3 },
+          deleted: { asAny: 4, asUnknownAs: 5, jsonParseStringify: 6 },
+        },
+        assertions: { added: 7, deleted: 8 },
+      },
+    });
+
+    expect(record).toEqual({
+      v: 1,
+      phase: "commit",
+      stamped_at: "2026-07-11T00:00:00.000Z",
+      runId: "run-786",
+      issue: 786,
+      commit: "abc123",
+      files: 3,
+      insertions: 12,
+      deletions: 4,
+      source: { files: 1, insertions: 5, deletions: 1 },
+      test: { files: 2, insertions: 7, deletions: 3 },
+      escapeHatches: {
+        added: { asAny: 1, asUnknownAs: 2, jsonParseStringify: 3 },
+        deleted: { asAny: 4, asUnknownAs: 5, jsonParseStringify: 6 },
+      },
+      assertions: { added: 7, deleted: 8 },
+    } satisfies TelemetryCommitRecord);
+  });
+
+  it("counts only audit-pattern and assertion lines, excluding near-miss false positives", () => {
+    const record = buildCommitStamp({
+      commit: "abc123",
+      diffLines: [
+        "+const one = value as any;",
+        "+const two = value as unknown as Target;",
+        "+const three = JSON.parse(JSON.stringify(value));",
+        "+expect(result).toBe(true);",
+        "+assert.equal(result, true);",
+        "+const notCast = value as anything;",
+        "+const notChain = JSON.parse(JSON.stringifySafe(value));",
+        "+const assertion = 'expect(';",
+        "+// assert.equal(commentOnly, true);",
+        "-expect(oldResult).toBe(true);",
+        "-const old = value as any;",
+      ],
+    });
+
+    expect(record.escapeHatches).toEqual({
+      added: { asAny: 1, asUnknownAs: 1, jsonParseStringify: 1 },
+      deleted: { asAny: 1, asUnknownAs: 0, jsonParseStringify: 0 },
+    });
+    expect(record.assertions).toEqual({ added: 2, deleted: 1 });
+  });
+
+  it("leaves per-commit metrics null when host git collection is unavailable", () => {
+    expect(buildCommitStamp({ commit: "abc123" })).toMatchObject({
+      files: null,
+      insertions: null,
+      deletions: null,
+      source: null,
+      test: null,
+      escapeHatches: null,
+      assertions: null,
+    });
+  });
+
+  it("fails open when the host-git repository is unavailable", () => {
+    const missingRepo = join(tempDir("orch-786-missing-git-"), "missing");
+    expect(collectCommitMetrics(missingRepo, "abc123")).toBeUndefined();
+    expect(collectCommitDiffLines(missingRepo, "abc123")).toBeUndefined();
+    expect(commitsBetween(missingRepo, "before", "after")).toBeUndefined();
+  });
+
   it("builds a review-round row with required dimensions and nulls unavailable data", () => {
     const record = buildReviewRoundStamp({
       stampedAt: "2026-07-11T00:00:00.000Z",

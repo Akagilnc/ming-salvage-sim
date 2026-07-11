@@ -63,6 +63,13 @@ import {
   workerResultToStep,
 } from "./dispatchWorker.js";
 import { monitorHandleFromLedger } from "./workerMonitor.js";
+import {
+  buildCommitStamp,
+  collectCommitDiffLines,
+  collectCommitMetrics,
+  commitsBetween,
+  tryAppendTelemetryRecord,
+} from "./telemetry.js";
 import { routeSmokeFailure } from "./modelRoutes.js";
 import {
   fixerEnvelopeFixCommitSha,
@@ -4818,6 +4825,28 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         lastOutput = output;
         if (output.kind === "coder") {
+          // #786: host-git commit observations are strictly sidecar-only.
+          // A failed read/write cannot affect the step's ledger or route decision.
+          if (output.committed && output.commitsAdded >= 1 && coderHeadBeforeStep !== undefined && worktree !== undefined) {
+            try {
+              const afterCommit = gitHead(worktree);
+              const telemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
+              if (afterCommit !== undefined && telemetryDir !== undefined) {
+                const commits = commitsBetween(worktree.path, coderHeadBeforeStep, afterCommit) ?? [afterCommit];
+                for (const commit of commits) {
+                  const metrics = collectCommitMetrics(worktree.path, commit);
+                  const diffLines = collectCommitDiffLines(worktree.path, commit);
+                  tryAppendTelemetryRecord(telemetryDir, buildCommitStamp({
+                    runId, issue: issueNumber, commit,
+                    ...(metrics !== undefined ? { metrics } : {}),
+                    ...(diffLines !== undefined ? { diffLines } : {}),
+                  }));
+                }
+              }
+            } catch (err) {
+              console.warn(`[orchestrator] commit telemetry failed (fail-open): ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
           lastCoderRepairEvidence = output.repairEvidence;
           lastCoderActualRepairPaths = actualRepairMovementPaths(
             worktree,
