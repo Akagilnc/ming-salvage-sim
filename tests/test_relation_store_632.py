@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from ming_sim.db import GameDB
@@ -150,3 +152,44 @@ def test_relation_edges_survive_restore(game, tmp_path):
         assert rows[0]["origin_round"] == 7
     finally:
         restored.close()
+
+
+def test_record_relation_edge_event_respects_caller_owned_transaction(game):
+    """PR #804 P2:调用方已开事务时,record_relation_edge_event 不得提前 commit。
+
+    原 bug:入口先调 load_state(),其末尾 self.conn.commit() 把调用方半成品落盘;
+    入口自身尾部的 commit 守卫又漏判 conn.in_transaction。修复后两处都与
+    owns_transaction() 一致——调用方回滚则入口写入一并消失,无半成品落盘。
+    """
+    db, state, _ = game
+    db.conn.execute("DELETE FROM kv_store WHERE key='s1_rel_open'")
+    db.conn.commit()
+    # 调用方开事务(裸 DML → in_transaction True,非 atomic 暂停期)
+    db.conn.execute("INSERT INTO kv_store(key,value) VALUES('s1_rel_open','half')")
+    assert db.conn.in_transaction
+
+    # 走新入口:原 bug 在 load_state() 处提前 commit,把 kv 半成品落盘
+    db.record_relation_edge_event(
+        source="甲",
+        target="乙",
+        event_kind="结怨",
+        context="调用方持有事务时的边事件。",
+        origin="audience:tx-probe",
+    )
+    assert db.conn.in_transaction  # 入口没提前 commit,事务仍由调用方持有
+
+    # 抛错回滚:入口的 INSERT 与 kv 半成品一并消失
+    db.conn.rollback()
+    assert not db.conn.in_transaction
+    assert db.kv_get("s1_rel_open") is None
+    assert db.conn.execute(
+        "SELECT id FROM relation_edge_events WHERE source='甲' AND target='乙'"
+    ).fetchone() is None
+    # 另开连接验真:磁盘上无半成品落盘
+    other = sqlite3.connect(db.path)
+    try:
+        assert other.execute(
+            "SELECT id FROM relation_edge_events WHERE source='甲' AND target='乙'"
+        ).fetchone() is None
+    finally:
+        other.close()
