@@ -1977,4 +1977,154 @@ describe("#823 family ship malformed-output recovery", () => {
       `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
     );
   });
+
+  it("resume spends only the remaining malformed-ship dispatch budget recorded after the current CMR streak", async () => {
+    class ResumeAfterMalformedShipBackend extends BareFamilyBackend {
+      shipDispatches = 0;
+      readonly aborted: FamilyAbortedEvent[] = [];
+      readonly escalations: FamilyEscalation[] = [];
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+        this.aborted.push(event);
+      }
+      async escalateFamily(event: FamilyEscalation): Promise<void> {
+        this.escalations.push(event);
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind !== "ship") {
+          throw new Error(`unexpected ${spec.kind} dispatch: CMR should resume-skip`);
+        }
+        this.shipDispatches += 1;
+        return { kind: "malformed", reason: "ship outcome sidecar invalid" };
+      }
+    }
+
+    const backend = new ResumeAfterMalformedShipBackend();
+    backend.ledger.push(
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-after-cmr",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-after-cmr",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+      { status: "ship_dispatch_attempt", event: "ship_dispatch_attempt", phase: "final" },
+      { status: "ship_dispatch_attempt", event: "ship_dispatch_attempt", phase: "final" },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-cmr",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.shipDispatches).toBe(1);
+    expect(backend.ledger.filter((entry) => entry.status === "ship_dispatch_attempt"))
+      .toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    expect(backend.escalations).toHaveLength(1);
+
+    // A crash after the third marker but before the first process finishes its
+    // escalation must not permit a fourth dispatch on the next re-feed.
+    const refeed = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-cmr",
+    });
+    expect(refeed).toEqual({ ok: false, ran: true });
+    expect(backend.shipDispatches).toBe(1);
+    expect(backend.escalations).toHaveLength(2);
+  });
+
+  it("a later CMR pass starts a fresh malformed-ship retry streak", async () => {
+    class FreshCmrStreakBackend extends BareFamilyBackend {
+      shipDispatches = 0;
+
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async readFamilyHead(): Promise<string> {
+        return "head-after-cmr";
+      }
+      async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+        return { ok: true };
+      }
+      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              cmrPass: ctx.cmrPass,
+              converged: true,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              ...CMR_EVIDENCE,
+            },
+          };
+        }
+        if (spec.kind === "verify") {
+          return { kind: "completed", output: { kind: "verify", converged: true } };
+        }
+        if (spec.kind === "docRelease") {
+          return { kind: "completed", output: { kind: "docRelease", released: true } };
+        }
+        if (spec.kind === "cleanup") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cleanup",
+              terminal: true,
+              ok: true,
+              branchOutcome: "already_gone",
+            },
+          };
+        }
+        if (spec.kind !== "ship") throw new Error(`unexpected ${spec.kind} dispatch`);
+        this.shipDispatches += 1;
+        if (this.shipDispatches < MAX_DISPATCH_ATTEMPTS) {
+          return { kind: "malformed", reason: "ship outcome sidecar invalid" };
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: ctx.familyBase ?? "",
+            status: "pr_opened",
+            pr: "pr://family/823-fresh-streak",
+          },
+        };
+      }
+    }
+
+    const backend = new FreshCmrStreakBackend();
+    backend.ledger.push(
+      { status: "ship_dispatch_attempt", event: "ship_dispatch_attempt", phase: "final" },
+      { status: "ship_dispatch_attempt", event: "ship_dispatch_attempt", phase: "final" },
+      { status: "ship_dispatch_attempt", event: "ship_dispatch_attempt", phase: "final" },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/823-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-cmr",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+  });
 });

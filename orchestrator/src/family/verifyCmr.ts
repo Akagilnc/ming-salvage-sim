@@ -154,7 +154,9 @@ import {
   recordOnlineReviewFixCommitted,
   recordOnlineReviewRoundRetrigger,
   recordReviewLoopConverged,
+  recordShipDispatchAttempt,
   recordShipped,
+  shipDispatchAttemptsSinceLatestCorrectnessCmrPass,
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   mergedSet,
@@ -2835,7 +2837,16 @@ async function runVerifyCmrWithShipTruthAttempt(
     ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
   };
   let shipResult: WorkerResult | undefined;
-  for (let shipAttempt = 1; shipAttempt <= MAX_DISPATCH_ATTEMPTS; shipAttempt++) {
+  let lastMalformedShipAttempt: WorkerResult | undefined;
+  let lastMalformedReason: string | undefined;
+  let usedShipAttempts = shipDispatchAttemptsSinceLatestCorrectnessCmrPass(
+    await familyBackend.readFamilyLedger(),
+  );
+  while (usedShipAttempts < MAX_DISPATCH_ATTEMPTS) {
+    // Persist BEFORE dispatch: a crash after the worker starts must still consume
+    // this streak's budget when the final barrier resume-skips CMR and re-enters.
+    await recordShipDispatchAttempt(familyBackend, { phase: "final" });
+    usedShipAttempts += 1;
     const candidate = await dispatchOrAbort(
       familyBackend,
       shipSpec,
@@ -2856,20 +2867,24 @@ async function runVerifyCmrWithShipTruthAttempt(
       shipResult = candidate;
       break;
     }
-    if (shipAttempt < MAX_DISPATCH_ATTEMPTS) continue;
+    lastMalformedShipAttempt = candidate;
+    lastMalformedReason = malformedReason;
+  }
 
+  if (shipResult === undefined && lastMalformedReason !== undefined) {
     // ADR 0062: a malformed control envelope is a process/protocol failure, not
     // a ship verdict. Re-dispatch this terminal step mechanically; only an
     // exhausted bounded retry may raise the legal infrastructure escalation.
     const reason =
       `family ship worker output remained malformed after ${MAX_DISPATCH_ATTEMPTS} ` +
-      `dispatch attempts: ${malformedReason}`;
+      `dispatch attempts: ${lastMalformedReason}`;
+    const malformedAttempt = lastMalformedShipAttempt!;
     const shipPrState =
-      candidate.kind === "completed" && candidate.output?.kind === "ship"
-        ? describeShipPrState(candidate.output)
+      malformedAttempt.kind === "completed" && malformedAttempt.output?.kind === "ship"
+        ? describeShipPrState(malformedAttempt.output)
         : "malformed-worker-output";
     const actualFamilyHeadSource =
-      candidate.kind === "completed" && candidate.output?.kind === "ship"
+      malformedAttempt.kind === "completed" && malformedAttempt.output?.kind === "ship"
         ? "family head after missing PR locator"
         : "family head after malformed ship worker output";
     const postShipFamilyHead = await readPostCmrFamilyHead(
@@ -2923,7 +2938,61 @@ async function runVerifyCmrWithShipTruthAttempt(
     return { ok: false, ran: true };
   }
   if (shipResult === undefined) {
-    throw new Error("family ship dispatch loop ended without a result");
+    // The durable count was already exhausted before this resume could dispatch
+    // (for example, a process crashed after the third marker). Do not reset the
+    // budget or send a fourth ship worker; make the protocol failure visible.
+    const reason =
+      `family ship worker output remained malformed after ${MAX_DISPATCH_ATTEMPTS} ` +
+      `dispatch attempts: durable ship dispatch budget exhausted before resume`;
+    const postShipFamilyHead = await readPostCmrFamilyHead(
+      familyBackend,
+      familyBase,
+      cmrPassedFamilyHeadAfter,
+    );
+    const stopSummary = infraFailureStopSummary({
+      summary: reason,
+      repairHint:
+        "repair the family ship worker outcome sidecar/payload, then rerun the final family barrier",
+      ship: {
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        ...(postShipFamilyHead !== undefined
+          ? { currentFamilyHead: postShipFamilyHead }
+          : {}),
+        shipPrState: "durable-ship-dispatch-budget-exhausted",
+      },
+      heads: {
+        ...(postShipFamilyHead !== undefined
+          ? { actualFamilyHead: postShipFamilyHead }
+          : {}),
+        ...(cmrPassedFamilyHeadAfter !== undefined
+          ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+          : {}),
+        sources: {
+          actualFamilyHead: "family head after durable ship dispatch budget exhaustion",
+          verifiedCmrHead: "latest cmr_passed ledger row",
+        },
+      },
+    });
+    await familyBackend.escalateFamily?.({
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary,
+    });
+    await familyBackend.recordAborted?.({
+      phase,
+      familyBase,
+      errorPackage: { reason },
+      familyHeadAfter: postShipFamilyHead,
+    });
+    await recordDurableAbort(familyBackend, {
+      phase,
+      reason,
+      familyHeadAfter: postShipFamilyHead,
+      stopSummary,
+    });
+    return { ok: false, ran: true };
   }
   // An ESCALATED family ship worker (gstack-ship STOP/HITL) is the family
   // escalate续跑 path, not a false success — call the escalate seam (codex cmr R4

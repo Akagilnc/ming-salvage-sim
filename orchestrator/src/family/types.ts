@@ -168,6 +168,9 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
+   *   - `"ship_dispatch_attempt"` — a dedicated final-barrier retry marker. It
+   *     belongs to the streak after the latest green correctness CMR pass; no
+   *     existing merge/CMR/ship consumer treats it as delivery or unblock truth.
    */
   readonly status:
     | "merged"
@@ -185,7 +188,8 @@ export interface FamilyLedgerEntry {
     | "admission_skipped"
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
-    | "worker_dispatched";
+    | "worker_dispatched"
+    | "ship_dispatch_attempt";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -220,6 +224,9 @@ export interface FamilyLedgerEntry {
    *     carries a `childIssue` it answers a `child_decision_parked` row (#604 slice 5).
    *   - `"admission_skipped"` — paired with `status:"admission_skipped"`; records
    *     production admission skips before scheduling.
+   *   - `"ship_dispatch_attempt"` — paired with `status:"ship_dispatch_attempt"`;
+   *     written before each ship-worker dispatch so crash/resume preserves the
+   *     malformed-output budget without reusing a worker step id.
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
   readonly event?:
@@ -238,7 +245,8 @@ export interface FamilyLedgerEntry {
     | "admission_skipped"
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
-    | "worker_dispatched";
+    | "worker_dispatched"
+    | "ship_dispatch_attempt";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
   /**
