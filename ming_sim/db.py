@@ -6985,6 +6985,8 @@ class GameDB:
         source_kind: str = "system",
         source_id: str = "",
         expires_turn: Optional[int] = None,
+        *,
+        commit: bool = True,
     ) -> int:
         """写入/更新一张事件记忆摘要卡，按主体+类型+来源去重。"""
         subject_type = (subject_type or "").strip()
@@ -7051,7 +7053,8 @@ class GameDB:
             """,
             (subject_type, subject_id, event_type, source_kind, source_id),
         ).fetchone()
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         action = "更新" if existed else "保存"
         tlog(
             f"[memory/{action}] #{int(row['id']) if row else '?'} "
@@ -7372,6 +7375,8 @@ class GameDB:
     def save_turn_report(
         self, state: GameState, report: str,
         knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
+        *,
+        commit: bool = True,
     ) -> None:
         """每回合月末奏报单独存档（turn_reports），与 turn_logs 解耦。
 
@@ -7391,8 +7396,9 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
         )
-        self.persist_knowledge_items_for_turn(state, knowledge_items)
-        self.conn.commit()
+        self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
+        if commit:
+            self.conn.commit()
 
     def get_turn_report(self, turn: int) -> str:
         row = self.conn.execute(
@@ -7417,6 +7423,8 @@ class GameDB:
     def save_chapter_memory(
         self, state: GameState, title: str, body: str, tags: Optional[List[str]] = None,
         knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
+        *,
+        commit: bool = True,
     ) -> int:
         """落本回合章节记忆。subject 固定 court/chapter，event_type=chapter_summary，
         source_id=turn 保证每回合唯一。body 存整段叙事章节（不受 outcome 80 字限）。
@@ -7441,14 +7449,18 @@ class GameDB:
             source_kind="turn_report",
             source_id=str(state.turn),
             expires_turn=None,
+            commit=commit,
         )
         if memory_id:
             self.conn.execute(
                 "UPDATE event_memories SET body = ? WHERE id = ?",
                 (str(body or ""), memory_id),
             )
+        self.persist_knowledge_items_for_turn(
+            state, knowledge_items, default_title=title, commit=commit
+        )
+        if commit:
             self.conn.commit()
-        self.persist_knowledge_items_for_turn(state, knowledge_items, default_title=title)
         return memory_id
 
     def persist_knowledge_items_for_turn(
@@ -7457,6 +7469,7 @@ class GameDB:
         knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
         *,
         default_title: str = "邸报事项",
+        commit: bool = True,
     ) -> None:
         """Materialize every turn source before any aggregate archive is read.
 
@@ -7477,6 +7490,7 @@ class GameDB:
                 str(item.get("body") or ""),
                 source_id=str(item.get("source_id") or ""),
                 excluded_names=item.get("excluded_names") or (),
+                commit=commit,
             )
 
     def knowledge_items_for_turn(self, turn: int) -> List[Dict[str, object]]:
