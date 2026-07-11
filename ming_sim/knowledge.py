@@ -231,7 +231,7 @@ def _world(
         "military": lambda: db.army_report(limit=10),
         "regional": lambda: db.region_report(limit=10),
         "personnel": lambda: db.faction_report(audience=True),
-        "construction": db.buildings_report,
+        "construction": lambda: db.buildings_report(qualitative=True),
         "security": lambda: db.power_report(exclude_self=True, audience=True),
         "court": lambda: "\n".join((
             db.faction_report(audience=True),

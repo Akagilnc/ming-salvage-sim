@@ -48,6 +48,11 @@ def test_qualitative_audience_text_rejects_compound_and_adverbial_raw_axes():
         assert "已略去" in qualitative_audience_text(injected), injected
 
 
+def test_safe_historical_text_rejects_nearby_raw_axis_variants():
+    for injected in ("忠诚已达98分", "忠诚提高到98", "势力提升至70", "能力只有30分", "民心跌至20"):
+        assert "已略去" in safe_historical_text(injected), injected
+
+
 def test_qualitative_band_preserves_zero_and_uses_default_only_for_missing_or_invalid():
     words = ("low", "middle", "high", "very high", "max")
 

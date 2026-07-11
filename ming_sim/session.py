@@ -1869,6 +1869,10 @@ class GameSession:
             )
             if cur.rowcount != 1:
                 raise RuntimeError("legacy secret order conversion lost source row")
+            self.db.conn.execute(
+                "DELETE FROM character_knowledge_sources WHERE source_id=?",
+                (f"secret_order:{int(order_id)}",),
+            )
         return pending_id
 
     def _apply_close_secret_order(self, payload: str) -> None:

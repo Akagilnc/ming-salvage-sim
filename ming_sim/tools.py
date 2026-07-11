@@ -228,7 +228,13 @@ def build_minister_tools(character: Character, context: CourtContext,
 
     def query_court_roster(names: List[str] = []) -> str:
         """查在朝人事名册。names 为空返回全部姓名+状态索引；传姓名列表返回指定人物详情（现职/官署/派系/状态）。"""
-        rendered = scoped_world("personnel")
+        rows = context.db.conn.execute(
+            "SELECT name, office, office_type, faction, status FROM characters WHERE power_id='ming' ORDER BY name"
+        ).fetchall()
+        rendered = "\n".join(
+            f"{row['name']}：{row['status']}，{row['office'] or row['office_type'] or '未任官'}，{row['faction'] or '无党籍'}"
+            for row in rows
+        ) or "见闻中未载在朝名册。"
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
         if not wanted:
             return rendered
@@ -238,7 +244,10 @@ def build_minister_tools(character: Character, context: CourtContext,
     def query_army_roster(names: List[str] = []) -> str:
         """查全军名册。names 为空返回军名+欠饷+状态索引；传军名列表返回指定军队完整信息。"""
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
-        rendered = scoped_world("military")
+        # Reuse the knowledge presentation seam so an uncapped roster keeps
+        # the same qualitative contract as the regular military rail.
+        from ming_sim.knowledge import _qualitative
+        rendered = _qualitative(context.db.army_report(limit=10000))
         if not wanted:
             return rendered
         return "\n".join(line for line in rendered.splitlines()
