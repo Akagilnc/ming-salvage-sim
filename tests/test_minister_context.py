@@ -472,6 +472,71 @@ def test_minister_context_secret_order_chain_filters_final_tools_and_instruction
     assert "密令转为明证" not in second_tools["search_memories"](keywords="军饷")
 
 
+def test_secret_source_boundary_survives_chapter_material_and_issue_tools(game):
+    """真实密令→公开确认→章节链不能旁路瞒某人边界。"""
+    db, state, content = game
+    ministers = [c for c in content.characters.values()
+                 if c.office_type not in ("后宫", "宗藩")
+                 and db.get_character_status(c.name)[0] == "active"]
+    knower, excluded = ministers[:2]
+    order = db.create_secret_order(
+        state, knower.name, "密查军饷", "核验欠饷", [],
+        excluded_names=[excluded.name],
+    )
+    db.record_public_knowledge_event(
+        state, "密令确认", "章节不得让被瞒者看见的标记",
+        source_id=f"secret_order:{order}",
+    )
+    db.save_chapter_memory(state, "本月朝局", "章节不得让被瞒者看见的标记")
+
+    excluded_knowledge = db.get_character_knowledge(state, excluded.name)
+    knower_knowledge = db.get_character_knowledge(state, knower.name)
+    excluded_text = " ".join(
+        item.get("body", "") for item in excluded_knowledge["public_events"]
+    )
+    knower_text = " ".join(
+        item.get("body", "") for item in knower_knowledge["public_events"]
+    )
+    assert "章节不得让被瞒者看见的标记" not in excluded_text
+    assert "章节不得让被瞒者看见的标记" in knower_text
+
+    db.conn.execute("UPDATE issues SET status='dropped' WHERE status='active'")
+    issue_id = db.insert_issue(
+        state, kind="initiative", title="仅知者可见事项", origin_kind="test",
+        origin_ref="test:scoped-issue", bar_value=20, inertia=0,
+        stage_text="核验", participants=[{"character_id": knower.name}],
+        resolve_condition="treasury >= 1", fail_condition="treasury < 1",
+    )
+    knower_tools = {f.__name__: f for f in build_minister_tools(knower, _ctx(game))}
+    excluded_tools = {f.__name__: f for f in build_minister_tools(excluded, _ctx(game))}
+    assert f"#{issue_id}" in knower_tools["list_memorials"]()
+    assert f"#{issue_id}" not in excluded_tools["list_memorials"]()
+    assert "结案条件" in knower_tools["inspect_memorial"](1)
+
+
+def test_inspect_treasury_ledger_honors_account_and_turn_window(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values()
+                    if c.office_type not in ("后宫", "宗藩"))
+    db.conn.execute(
+        "INSERT INTO economy_ledger "
+        "(turn,year,period,account,delta,balance_after,category,reason) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (state.turn - 3, state.year, state.period, "国库", 99, 999, "test", "过期流水"),
+    )
+    db.conn.execute(
+        "INSERT INTO economy_ledger "
+        "(turn,year,period,account,delta,balance_after,category,reason) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (state.turn, state.year, state.period, "国库", 7, 107, "test", "近期国库流水"),
+    )
+    db.conn.commit()
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game))}
+    rendered = tools["inspect_treasury_ledger"](account="国库", turns=1)
+    assert "近期国库流水" in rendered
+    assert "过期流水" not in rendered
+
+
 def test_final_minister_context_rejects_injected_abstract_values(game):
     """最终 instructions seam 不得把抽象分数重新带回上下文。"""
     db, _state, content = game

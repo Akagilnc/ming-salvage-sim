@@ -140,7 +140,11 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
     # the qualitative renderer above.
     for chapter in db.list_chapter_memories(upto_turn=state.turn):
         source_id = f"chapter:{chapter['turn']}"
-        inherited_exclusions = db.knowledge_exclusions_for_source(source_id) if hasattr(db, "knowledge_exclusions_for_source") else []
+        boundary = (db.knowledge_exclusion_boundary_for_turn(chapter["turn"])
+                    if hasattr(db, "knowledge_exclusion_boundary_for_turn") else {})
+        inherited_exclusions = list(boundary.get("people", []))
+        inherited_targets = {"people": inherited_exclusions,
+                             "offices": list(boundary.get("offices", []))}
         public_events.append({
             "turn": int(chapter["turn"]), "year": int(chapter["year"]),
             "period": int(chapter["period"]), "kind": "chapter_summary",
@@ -148,6 +152,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "body": chapter.get("body") or "",
             "source_id": source_id,
             "excluded_names": json.dumps(inherited_exclusions, ensure_ascii=False),
+            "excluded_targets": inherited_targets,
         })
     def is_excluded(row: Dict[str, object]) -> bool:
         try:
@@ -157,7 +162,11 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         if character_name in excluded_names:
             return True
         source_id = str(row.get("source_id") or "")
-        targets = db.knowledge_exclusion_targets_for_source(source_id) if hasattr(db, "knowledge_exclusion_targets_for_source") else {"people": [], "offices": []}
+        targets = row.get("excluded_targets") or (
+            db.knowledge_exclusion_targets_for_source(source_id)
+            if hasattr(db, "knowledge_exclusion_targets_for_source")
+            else {"people": [], "offices": []}
+        )
         return (character_name in excluded_names
                 or character_name in targets.get("people", [])
                 or office_type in targets.get("offices", [])
@@ -177,9 +186,22 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         }
         for row in public_events if not is_excluded(row)
     ]
+    known_source_ids = {
+        str(row.get("source_id") or "")
+        for row in [*events, *public_events]
+        if row.get("source_id")
+    }
     visible_issues = []
     for issue in db.list_active_issues() if hasattr(db, "list_active_issues") else []:
         source_id = f"issue:{issue['id']}"
+        try:
+            roster = json.loads(issue["participant_roster"] or "[]")
+        except (TypeError, ValueError, KeyError):
+            roster = []
+        # Unassigned issues are public; assigned issues are visible only when
+        # this character entered the durable source projection.
+        if roster and source_id not in known_source_ids:
+            continue
         if is_excluded({"source_id": source_id, "excluded_names": "[]"}):
             continue
         visible_issues.append({
@@ -189,6 +211,11 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "bar_bad_meaning": issue["bar_bad_meaning"],
             "stage_text": issue["stage_text"], "faction_hint": issue["faction_hint"],
             "severity": issue["severity"], "source_id": source_id,
+            "resolve_condition": issue["resolve_condition"],
+            "fail_condition": issue["fail_condition"],
+            "stop_condition": issue["stop_condition"],
+            "end_turn": issue["end_turn"],
+            "commitment_kind": issue["commitment_kind"],
         })
     return {
         "character_name": character_name,
