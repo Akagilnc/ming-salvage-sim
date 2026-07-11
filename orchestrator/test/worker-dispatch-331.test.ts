@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
 import {
   cleanupWorkerSpec,
@@ -538,6 +538,10 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
 });
 
 describe("#796 Coder-Rec host dispatch", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   class CoderRecDispatchBackend extends DispatchBackend {
     constructor(private readonly coderRecBody: string) {
       super();
@@ -559,6 +563,13 @@ describe("#796 Coder-Rec host dispatch", () => {
   }
 
   it("dispatches every Coder-Rec token with the host required by its registered provider", async () => {
+    // This fixture exercises host dispatch, not pool-separation rejection.
+    // Keep Terra out of the CMR gate slots so a one-token Terra Coder-Rec is
+    // dispatchable under the fail-closed roster rule.
+    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "opus");
+    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "opus");
+    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "opus");
+    vi.stubEnv("ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS", "opus,agy");
     for (const entry of CODER_ROSTER) {
       const backend = new CoderRecDispatchBackend(`Coder-Rec: ${entry.id}`);
       const result = await runOrchestrator({ issueNumber: 796, backend });
