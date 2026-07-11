@@ -42,6 +42,12 @@ def test_safe_historical_text_rejects_common_labeled_value_forms():
         assert "已略去" in safe_historical_text(injected), injected
 
 
+def test_qualitative_audience_text_rejects_compound_and_adverbial_raw_axes():
+    from ming_sim.qualitative import qualitative_audience_text
+    for injected in ("势力从30升到70", "忠诚度高达98分"):
+        assert "已略去" in qualitative_audience_text(injected), injected
+
+
 def test_qualitative_band_preserves_zero_and_uses_default_only_for_missing_or_invalid():
     words = ("low", "middle", "high", "very high", "max")
 

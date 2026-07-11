@@ -16,7 +16,7 @@ _ABSTRACT_VALUE_RE = re.compile(
     r"integrity|courage|satisfaction|leverage|military_strength|morale|"
     r"training|equipment|firearm_equipment|progress)"
     r"\s*(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
-    r"(?:[:：=]\s*|(?:由|为|达|至|是|从)\s*|[（(]\s*|(?=[-+]?\d))"
+    r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从)\s*|[（(]\s*|(?=[-+]?\d))"
     r"[-+]?\d+(?:\.\d+)?"
     r"(?:\s*/\s*100|\s*%)?\s*[）)]?",
     re.IGNORECASE,
@@ -70,9 +70,18 @@ def qualitative_audience_text(text: object, kind: str = "见闻记录") -> str:
     """Translate labeled abstract axes before applying the shared P4 rejector."""
     rendered = str(text or "")
     names = "|".join(re.escape(name) for name in _AUDIENCE_ABSTRACT_BANDS)
+    # A compound can contain two raw values ("势力从30升到70").  Translating
+    # only its first half would leave the second value exposed, so reject the
+    # original sentence before any local substitution.
+    compound_axis = re.compile(
+        rf"(?:{names})(?:度)?\s*(?:从\s*[-+]?\d+(?:\.\d+)?\s*(?:升到|降到|到)|高达\s*[-+]?\d+)",
+        re.IGNORECASE,
+    )
+    if compound_axis.search(rendered):
+        return safe_historical_text(rendered, kind)
     pattern = re.compile(
         rf"({names})\s*(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
-        r"(?:[:：=]\s*|(?:由|为|达|至|是|从)\s*|(?=[-+]?\d))"
+        r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从)\s*|(?=[-+]?\d))"
         r"([-+]?\d+(?:\.\d+)?)(?:\s*/\s*100|\s*%)?",
         re.IGNORECASE,
     )
