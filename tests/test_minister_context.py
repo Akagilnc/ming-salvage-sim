@@ -605,3 +605,26 @@ def test_minister_prompt_is_characterization_not_formal_constraint(game):
     assert "80-220" not in prompt
     assert "few-shot" not in prompt
     assert "不要" not in prompt
+
+
+def test_final_minister_context_teaches_heard_for_selection_as_recovery_candidate(game):
+    """荐起复提示必须覆盖人才池中的听用候铨对象。"""
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩"))
+    captured = {}
+
+    def fake_agent(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry._ctx", return_value=content), \
+         patch("ming_sim.registry._skills_for", return_value=None), \
+         patch("ming_sim.registry.build_minister_tools", return_value=[]):
+        create_minister_agent(minister, cfg, _ctx(game), db)
+
+    rendered = "\n".join(captured["instructions"])
+    assert "荐起复" in rendered
+    assert "居家、致仕、削籍或听用候铨" in rendered
