@@ -1139,38 +1139,55 @@ export class RealFamilyBackend implements FamilyBackend {
     // long as Vitest passed. Precedence: dedicated `typecheck` > `build` (the project's
     // real type-checking build) > nothing. So types are NEVER silently skipped.
     if (scripts.includes("typecheck")) {
-      this.runObservedVerification(_request, "typecheck", ["run", "typecheck"], cwd);
+      const typecheckIsTsc = this.packageScriptUses(cwd, "typecheck", "tsc");
+      this.runObservedVerification(
+        _request,
+        "typecheck",
+        typecheckIsTsc
+          ? ["run", "typecheck", "--", "--pretty", "false"]
+          : ["run", "typecheck"],
+        cwd,
+        typecheckIsTsc ? "tsc-diagnostics" : undefined,
+      );
     } else if (scripts.includes("build")) {
       this.runObservedVerification(_request, "typecheck", ["run", "build"], cwd);
     }
     if (scripts.includes("test")) {
+      const testIsVitest = this.packageScriptUses(cwd, "test", "vitest");
       this.runObservedVerification(
         _request,
         _request.phase === "wave" ? "unit" : "full",
-        ["test"],
+        testIsVitest ? ["test", "--", "--reporter=json"] : ["test"],
         cwd,
+        testIsVitest ? "vitest-json" : undefined,
       );
     }
   }
 
   /**
    * Narrow verification-result seam: observe the harness exit and monotonic
-   * duration, then append a raw sidecar row. Test counts are intentionally null
-   * until a harness provides a structured count; stdout/stderr prose is never
-   * parsed. The write is telemetry-only and cannot affect a verify result.
+   * duration, then append a raw sidecar row. Counts come only from an explicitly
+   * selected machine-readable reporter / compiler diagnostic stream; otherwise
+   * they stay null. The write is telemetry-only and cannot affect a verify result.
    */
   protected runObservedVerification(
     request: FamilyVerifyRequest,
     verification: "typecheck" | "unit" | "full",
     args: string[],
     cwd: string,
+    countSource?: "tsc-diagnostics" | "vitest-json",
   ): string {
     const startedAt = process.hrtime.bigint();
     let passed = false;
+    let output: string | undefined;
+    let commandError: unknown;
     try {
-      const output = this.sh("npm", args, cwd);
+      output = this.sh("npm", args, cwd);
       passed = true;
       return output;
+    } catch (err) {
+      commandError = err;
+      throw err;
     } finally {
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
       recordVerificationStamp(this.opts.ledgerDir, {
@@ -1178,8 +1195,7 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(request.issue !== undefined ? { issue: request.issue } : {}),
         verification,
         passed,
-        // No structured count is produced by the project command contract.
-        count: null,
+        count: structuredVerificationCount(countSource, passed, output, commandError),
         durationMs,
       });
     }
@@ -1210,6 +1226,18 @@ export class RealFamilyBackend implements FamilyBackend {
       return Object.keys(pkg.scripts ?? {});
     } catch {
       return [];
+    }
+  }
+
+  /** Whether a declared script invokes the named harness directly. */
+  protected packageScriptUses(cwd: string, script: string, harness: string): boolean {
+    try {
+      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
+        scripts?: Record<string, unknown>;
+      };
+      return typeof pkg.scripts?.[script] === "string" && pkg.scripts[script].includes(harness);
+    } catch {
+      return false;
     }
   }
 
@@ -3874,6 +3902,43 @@ function decodeChildOutput(v: unknown): string {
   if (typeof v === "string") return v.trim();
   if (v instanceof Buffer) return v.toString("utf8").trim();
   return "";
+}
+
+/** Count only explicitly selected machine-readable verification outputs. */
+function structuredVerificationCount(
+  source: "tsc-diagnostics" | "vitest-json" | undefined,
+  passed: boolean,
+  output: string | undefined,
+  commandError: unknown,
+): number | null {
+  if (source === undefined) return null;
+  if (source === "tsc-diagnostics") {
+    if (passed) return 0;
+    const text = output ?? childErrorOutput(commandError);
+    return [...text.matchAll(/^.+\(\d+,\d+\): error TS\d+:/gm)].length;
+  }
+  const text = output ?? childErrorOutput(commandError);
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      typeof (parsed as { numTotalTests?: unknown }).numTotalTests === "number" &&
+      Number.isSafeInteger((parsed as { numTotalTests: number }).numTotalTests) &&
+      (parsed as { numTotalTests: number }).numTotalTests >= 0
+    ) {
+      return (parsed as { numTotalTests: number }).numTotalTests;
+    }
+  } catch {
+    // A reporter that did not yield its JSON payload is unobtainable, not prose.
+  }
+  return null;
+}
+
+function childErrorOutput(err: unknown): string {
+  if (err === null || typeof err !== "object") return "";
+  const e = err as { stdout?: unknown; stderr?: unknown };
+  return [decodeChildOutput(e.stdout), decodeChildOutput(e.stderr)].filter(Boolean).join("\n");
 }
 
 /**
