@@ -80,6 +80,22 @@ import type {
 } from "../src/types.js";
 
 describe("#686 relay tag contract (fail-closed)", () => {
+  it("uses explicit resource and decision-gate signal bits without reading prose", () => {
+    expect(
+      parseRelayTag(
+        `<relay>{"resource":true,"phase":"build","state_summary":"partial","remaining":"continue"}</relay>`,
+      ),
+    ).toMatchObject({ kind: "phase_complete", phase: "build" });
+    expect(
+      parseRelayTag(
+        `<relay>{"decision_gate":true,"state_summary":"need a ruling"}</relay>`,
+      ),
+    ).toEqual({
+      kind: "decision_gate",
+      state_summary: "need a ruling",
+    });
+  });
+
   it("accepts phase_complete build|clear with state_summary + remaining", () => {
     const stdout = [
       "建造完成，待清障。",
