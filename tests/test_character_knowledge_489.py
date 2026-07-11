@@ -234,6 +234,28 @@ def test_turn_report_keeps_source_specific_secret_exclusion_boundary(game):
                    for item in view["public_events"])
 
 
+def test_turn_report_projects_public_and_secret_items_per_character(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    secret_marker = "MIXED_REPORT_SECRET_MARKER_490"
+    public_marker = "MIXED_REPORT_PUBLIC_MARKER_490"
+    db.record_public_knowledge_event(
+        state, "密事来源", secret_marker,
+        source_id="secret_order:mixed-report",
+        excluded_names=[minister.name],
+    )
+    db.record_public_knowledge_event(
+        state, "公开来源", public_marker,
+        source_id="public:mixed-report",
+    )
+    db.save_turn_report(state, f"公开事项：{public_marker}\n密事项：{secret_marker}")
+
+    view = db.get_character_knowledge(state, minister.name)
+
+    assert public_marker in view["world"]["public"]
+    assert secret_marker not in view["world"]["public"]
+
+
 def test_participation_survives_restore(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "内阁")

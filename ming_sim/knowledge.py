@@ -55,15 +55,49 @@ def _role_roster(db: Any, office_type: str) -> str:
 
 
 def _world(
-    db: Any, state: Any, office_type: str,
+    db: Any, state: Any, office_type: str, character_name: str, office_name: str,
 ) -> Dict[str, str]:
     reports = db.list_turn_reports() if hasattr(db, "list_turn_reports") else []
+
+    # A gazette is a rendered aggregation, so its text has no row-level
+    # exclusion metadata of its own.  Redact the bodies of source events that
+    # this character cannot hear before using the aggregation as context.  The
+    # public portions of the same report remain available.
+    hidden_fragments = []
+    if hasattr(db, "_character_knowledge_events"):
+        for event in db._character_knowledge_events("", include_exclusions=True):
+            try:
+                excluded_names = json.loads(str(event.get("excluded_names") or "[]"))
+            except (TypeError, ValueError):
+                excluded_names = []
+            source_id = str(event.get("source_id") or "")
+            targets = event.get("excluded_targets") or (
+                db.knowledge_exclusion_targets_for_source(source_id)
+                if hasattr(db, "knowledge_exclusion_targets_for_source")
+                else {"people": [], "offices": []}
+            )
+            excluded = (
+                character_name in excluded_names
+                or character_name in targets.get("people", [])
+                or office_type in targets.get("offices", [])
+                or office_name in targets.get("offices", [])
+            )
+            if excluded:
+                for key in ("body", "title"):
+                    fragment = str(event.get(key) or "").strip()
+                    if fragment:
+                        hidden_fragments.append(fragment)
+
     def fact(text: object) -> str:
         return _qualitative(text)
 
-    # A turn report is a separately persisted public projection, not a secret
-    # source.  Do not apply another source's exclusion list to the whole report.
-    public = "\n".join(fact(r.get("report")) for r in reports)
+    def report_for_character(report: object) -> str:
+        rendered = str(report or "")
+        for fragment in sorted(set(hidden_fragments), key=len, reverse=True):
+            rendered = rendered.replace(fragment, "（密事未向此人公开）")
+        return fact(rendered)
+
+    public = "\n".join(report_for_character(r.get("report")) for r in reports)
     result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
 
     visible_domains = _visible_domains(db, office_type)
@@ -115,7 +149,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         (current["office"] if current is not None else getattr(character, "office", ""))
         or ""
     )
-    world = _world(db, state, office_type)
+    world = _world(db, state, office_type, character_name, office_name)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     # Issued directives are public by their nature.  Read them here so old
