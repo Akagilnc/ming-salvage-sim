@@ -304,6 +304,27 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
     });
   });
 
+  it("can relay to the sol baton when its reviewer leg is not active", () => {
+    const order = resolveCoderRecOrder(
+      "Coder-Rec: grok-4.5 → sol@med → luna@med",
+    );
+    const next = selectNextRelayBaton({
+      currentModelId: "grok-4.5",
+      currentPool: "grok-build",
+      rosterOrder: order,
+      pools: [
+        deadPool("grok-build", ["grok-4.5"]),
+        livePool("codex-5h", ["sol@med"]),
+      ],
+      reviewerSlugs: ["opus", "agy"],
+    });
+    expect(next).toEqual({
+      modelId: "sol@med",
+      slug: "gpt-5.6-sol",
+      pool: "codex-5h",
+    });
+  });
+
   it("preserves pool-separation filter (skip reviewer-colliding slug)", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → terra@med → luna@med",

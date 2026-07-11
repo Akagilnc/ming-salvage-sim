@@ -96,6 +96,7 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
         "grok-4.5",
         "terra@med",
         "luna@med",
+        "sol@med",
         "sonnet-5",
         "haiku-4.5",
       ]),
@@ -104,6 +105,19 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
     expect(lookupCoderRosterEntry("Sonnet 5")?.slug).toBe("sonnet");
     expect(lookupCoderRosterEntry("Haiku 4.5")?.slug).toBe("haiku");
     expect(lookupCoderRosterEntry("haiku")?.id).toBe("haiku-4.5");
+  });
+
+  it("accepts sol@med as a difficult-slice convergence fallback", () => {
+    const sol = lookupCoderRosterEntry("sol@med");
+    expect(sol).toMatchObject({
+      id: "sol@med",
+      slug: "gpt-5.6-sol",
+      pool: "codex",
+    });
+    expect(lookupCoderRosterEntry("gpt-5.6-sol")?.id).toBe("sol@med");
+    expect(
+      resolveCoderRecOrder("Coder-Rec: terra@med → sol@med").map((e) => e.id),
+    ).toEqual(["terra@med", "sol@med"]);
   });
 
   it("keeps only roster-valid entries from a Coder-Rec line", () => {
@@ -199,6 +213,15 @@ describe("#767 Coder-Rec roster — pool separation", () => {
     });
     // terra@med doubles as reviewer → skip to grok-4.5
     expect(selected.id).toBe("grok-4.5");
+  });
+
+  it("blocks sol from reviewing a slice that sol produced", () => {
+    const order = resolveCoderRecOrder("Coder-Rec: sol@med → terra@med");
+    const selected = selectCoderRecEntry(order, 0, {
+      reviewerSlugs: ["gpt-5.6-sol"],
+    });
+    expect(selected.id).toBe("terra@med");
+    expect(poolSeparationViolation(selected, ["gpt-5.6-sol"])).toBeUndefined();
   });
 
   it("collects cmrCompleteness / cmrCorrectness / verify gate slots as reviewer pool slugs", () => {
