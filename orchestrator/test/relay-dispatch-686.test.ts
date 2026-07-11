@@ -62,7 +62,7 @@ import {
 } from "../src/relayDispatch.js";
 import { decideIdleAfterProbe, QuotaWaitForResetError } from "../src/quotaProbe.js";
 import { buildCliMonitorSpawnSpec } from "../src/cliMonitorHooks.js";
-import { legacyDispatchWorker } from "../src/dispatchWorker.js";
+import { dispatchWorkerWithMonitor, legacyDispatchWorker } from "../src/dispatchWorker.js";
 import { relayCandidateConflictSlugs, runOrchestrator } from "../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
@@ -2597,6 +2597,105 @@ describe("#686 R2 production seams", () => {
       state_summary: "half wired",
     });
     expect(tryParseActionableRelayTag("no tag")).toBeUndefined();
+  });
+
+  it("P1: a worker-log decision_gate tag parks the production dispatch path for a human ruling", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "relay-826-decision-gate-"));
+    const worktree: WorktreeHandle = {
+      branch: "fix/826-decision-gate",
+      base: "main",
+      path: tmp,
+    };
+    const workerLog = `<relay>{"decision_gate":true,"state_summary":"need product ruling","remaining":"choose policy"}</relay>`;
+    const backend = {
+      async smokeModelRoute(route: any): Promise<any> {
+        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      },
+      async findResumeState(): Promise<undefined> {
+        return undefined;
+      },
+      async cleanResidue(): Promise<void> {},
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5",
+        };
+      },
+      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+        return { number: n, body: "Coder-Rec: grok-4.5", comments: [], agentBrief: "" };
+      },
+      async prepareWorktree(): Promise<WorktreeHandle> {
+        return worktree;
+      },
+      async writeSnapshot(): Promise<void> {},
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      },
+      async push(): Promise<void> {},
+      async writeLedger(): Promise<void> {},
+      resolveCliMonitorDispatch: () => ({
+        command: process.execPath,
+        args: ["-e", `console.log(${JSON.stringify(workerLog)})`],
+        logDir: tmp,
+        poolId: "grok-build",
+        completionSignal: "STEP_COMPLETE",
+        stepId: "S2",
+        readInstanceId: () => "relay-826-test",
+      }),
+      async awaitMonitoredCliWorker(): Promise<WorkerResult> {
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      },
+    } as unknown as Backend;
+    const spec: WorkerSpec = {
+      id: "S2",
+      kind: "coder",
+      role: "coder",
+      host: "codex",
+      session: "fresh",
+      contextRetention: "retain",
+      promptFile: "coder.md",
+      completionSignal: "STEP_COMPLETE",
+      maxIter: 1,
+      model: "grok-4.5",
+      soul: "coder",
+      toolchain: [],
+    };
+    try {
+      await expect(
+        dispatchWorkerWithMonitor(backend, spec, {}, undefined, {
+          idleThresholdMs: 60_000,
+          pollIntervalMs: 5,
+          monitorDeps: { readInstanceId: () => "relay-826-test" },
+        }),
+      ).rejects.toMatchObject({
+        name: "SelfReportedRelayError",
+        tag: { kind: "decision_gate", state_summary: "need product ruling" },
+      });
+
+      const result = await runOrchestrator({
+        issueNumber: 826,
+        backend,
+        now: () => NOW,
+      });
+      expect(result.status).toBe("error");
+      expect(result.stopSummary).toMatchObject({
+        reason: "decision_gate_park",
+        summary: expect.stringContaining("need product ruling"),
+      });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("P3: no-baton park repairHint is byte-identical to #683", async () => {
