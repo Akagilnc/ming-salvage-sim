@@ -949,6 +949,7 @@ class FakeSeamsBackend extends RealFamilyBackend {
   public familyCoderConfig() {
     return this.familyCoderSandboxConfig(
       { codexAuthDir: "/tmp/codex", claudeToken: "tok" } as any,
+      "sonnet",
       {} as any,
       { path: "/tmp/land.json", sandboxPath: ".land.json" },
     );

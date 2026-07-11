@@ -767,6 +767,32 @@ export function appendGlmKeyEnv(
     env.GLM_KEY = process.env.GLM_KEY;
   }
 }
+
+/**
+ * Apply the complete OpenCode dispatch-auth invariant from the models that the
+ * dispatch will actually resolve. Callers provide slugs and the dispatch pool;
+ * this seam alone resolves providers, injects GLM_KEY, validates credential
+ * mutability, and conditionally mounts auth.json.
+ */
+export function applyDispatchOpenCodeAuth(input: {
+  env: Record<string, string>;
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[];
+  opencodeAuthFile?: string;
+  models: readonly string[];
+  billingPool?: BillingPoolDispatchId;
+}): void {
+  const resolved = input.models.map((model) =>
+    resolveModelSlugForPool(model, input.billingPool),
+  );
+  const openCodeModels = resolved
+    .filter((model) => model.provider === "opencode")
+    .map((model) =>
+      input.billingPool === "zai" ? `opencode-go/${model.model}` : model.model,
+    );
+  if (openCodeModels.length === 0) return;
+  appendGlmKeyEnv(input.env, "opencode");
+  appendOpenCodeAuthMount(input.mounts, input.opencodeAuthFile, openCodeModels);
+}
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -3182,8 +3208,6 @@ export class RealBackend implements Backend {
       [SANDBOX_SOUL_ENV]: soul,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    const resolved = spec.model === undefined ? undefined : resolveModelSlugForPool(spec.model, pool);
-    if (resolved !== undefined) appendGlmKeyEnv(env, resolved.provider);
     // Inject the Claude token only when present: a Codex coder (model gpt-5.6-terra)
     // needs no CLAUDE_CODE_OAUTH_TOKEN, and an empty/undefined value would defeat
     // the in-container Claude auth on a Codex-only host (#384 codex P2).
@@ -3221,13 +3245,13 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(
+    applyDispatchOpenCodeAuth({
+      env,
       mounts,
-      auth.opencodeAuthFile,
-      resolved?.provider === "opencode"
-        ? [pool === "zai" ? `opencode-go/${resolved.model}` : resolved.model]
-        : [],
-    );
+      opencodeAuthFile: auth.opencodeAuthFile,
+      models: spec.model === undefined ? [] : [spec.model],
+      billingPool: pool,
+    });
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
@@ -4167,7 +4191,7 @@ export class RealBackend implements Backend {
           name: `${spec.id}-ship`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
           cwd: worktree.path,
-          sandbox: this.shipSandbox(auth, outcomeLanding),
+          sandbox: this.shipSandbox(auth, outcomeLanding, spec.model, pool),
           agent: agentForSlug(
             spec.model,
             effortForLiveOfficer(spec.model, spec),
@@ -4295,8 +4319,10 @@ export class RealBackend implements Backend {
   protected shipSandbox(
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
+    model = "sonnet",
+    billingPool?: BillingPoolDispatchId,
   ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding));
+    return docker(this.shipSandboxConfig(auth, outcomeLanding, model, billingPool));
   }
 
   /**
@@ -4405,6 +4431,8 @@ export class RealBackend implements Backend {
   protected shipSandboxConfig(
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
+    model = "sonnet",
+    billingPool?: BillingPoolDispatchId,
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -4438,7 +4466,13 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, []);
+    applyDispatchOpenCodeAuth({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+      models: [model],
+      billingPool,
+    });
     // #372: souls mount for ship worker too (live source, shadows baked if any).
     // Shared helper forces readonly:true at all sites.
     mounts.push(soulsMount(this.opts.soulsDir));

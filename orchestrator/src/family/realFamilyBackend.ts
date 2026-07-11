@@ -81,8 +81,7 @@ import {
 } from "../modelRegistry.js";
 import {
   agentForSlug,
-  appendGlmKeyEnv,
-  appendOpenCodeAuthMount,
+  applyDispatchOpenCodeAuth,
   hostOpenCodeAuthFile,
   candidateBranches,
   extractCoderTag,
@@ -1104,7 +1103,6 @@ export class RealFamilyBackend implements FamilyBackend {
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
-    appendGlmKeyEnv(env, resolveModelSlugForPool(mergerModel(), undefined).provider);
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
@@ -1116,8 +1114,12 @@ export class RealFamilyBackend implements FamilyBackend {
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
-    const resolved = resolveModelSlugForPool(mergerModel(), undefined);
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, resolved.provider === "opencode" ? [resolved.model] : []);
+    applyDispatchOpenCodeAuth({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+      models: [mergerModel()],
+    });
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -1899,7 +1901,13 @@ export class RealFamilyBackend implements FamilyBackend {
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
-            sandbox: this.familyCoderSandbox(auth, ctx, outcomeLanding, fixFocusLanding),
+            sandbox: this.familyCoderSandbox(
+              auth,
+              spec.model,
+              ctx,
+              outcomeLanding,
+              fixFocusLanding,
+            ),
             agent: this.agentForSpec(spec, ctx),
             maxIterations: spec.maxIter,
             completionSignal: spec.completionSignal,
@@ -2007,17 +2015,19 @@ export class RealFamilyBackend implements FamilyBackend {
 
   protected familyCoderSandbox(
     auth: ShipAuth,
+    model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
     fixFocusLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
-      this.familyCoderSandboxConfig(auth, ctx, outcomeLanding, fixFocusLanding),
+      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding, fixFocusLanding),
     );
   }
 
   protected familyCoderSandboxConfig(
     auth: ShipAuth,
+    model: string,
     ctx: DispatchContext,
     outcomeLanding: { path: string; sandboxPath: string },
     fixFocusLanding?: { path: string; sandboxPath: string },
@@ -2034,8 +2044,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_OUTCOME_PATH_ENV]: outcomeLanding.sandboxPath,
     };
     const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
-    const resolved = resolveModelSlugForPool(modelForSlot("coderFix"), pool);
-    appendGlmKeyEnv(env, resolved.provider);
     if (fixFocusLanding !== undefined) {
       env[SANDBOX_FIX_FOCUS_PATH_ENV] = fixFocusLanding.sandboxPath;
     }
@@ -2062,7 +2070,13 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, resolved.provider === "opencode" ? [pool === "zai" ? `opencode-go/${resolved.model}` : resolved.model] : []);
+    applyDispatchOpenCodeAuth({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+      models: [model],
+      billingPool: pool,
+    });
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
@@ -2301,8 +2315,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
-    const resolved = resolveModelSlugForPool(spec.model, pool);
-    appendGlmKeyEnv(env, resolved.provider);
     if (onlineReviewLanding !== undefined) {
       env[SANDBOX_ONLINE_REVIEW_PATH_ENV] = onlineReviewLanding.sandboxPath;
     }
@@ -2346,7 +2358,13 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, resolved.provider === "opencode" ? [pool === "zai" ? `opencode-go/${resolved.model}` : resolved.model] : []);
+    applyDispatchOpenCodeAuth({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+      models: [spec.model],
+      billingPool: pool,
+    });
     mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
   }
@@ -2796,9 +2814,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_REPO_ENV]: this.opts.repo,
       ORCHESTRATOR_CMR_REVIEW_LEGS: JSON.stringify(reviewLegs),
     };
-    if (reviewLegs.some((leg) => resolveModelSlugForPool(leg.slug, undefined).provider === "opencode")) {
-      appendGlmKeyEnv(env, "opencode");
-    }
     const codexReviewLeg = reviewLegs.find((leg) => leg.family === "codex");
     if (codexReviewLeg !== undefined) {
       env.CMR_CODEX_MODEL = codexReviewLeg.slug;
@@ -2825,14 +2840,12 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(
+    applyDispatchOpenCodeAuth({
+      env,
       mounts,
-      auth.opencodeAuthFile,
-      reviewLegs
-        .map((leg) => resolveModelSlugForPool(leg.slug, undefined))
-        .filter((resolved) => resolved.provider === "opencode")
-        .map((resolved) => resolved.model),
-    );
+      opencodeAuthFile: auth.opencodeAuthFile,
+      models: reviewLegs.map((leg) => leg.slug),
+    });
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3037,7 +3050,7 @@ export class RealFamilyBackend implements FamilyBackend {
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
-      sandbox: this.shipSandbox(auth, outcomeLanding, ctx),
+      sandbox: this.shipSandbox(auth, outcomeLanding, spec.model, ctx),
       // Derive the model from the spec via the SAME validated mapping the
       // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
@@ -3132,9 +3145,10 @@ export class RealFamilyBackend implements FamilyBackend {
   protected shipSandbox(
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    model = modelForSlot("ship"),
     ctx?: Pick<DispatchContext, "billingPool">,
   ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding, ctx));
+    return docker(this.shipSandboxConfig(auth, outcomeLanding, model, ctx));
   }
 
   /**
@@ -3234,6 +3248,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected shipSandboxConfig(
     auth: ShipAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
+    model = modelForSlot("ship"),
     ctx?: Pick<DispatchContext, "billingPool">,
   ): {
     imageName: string;
@@ -3250,8 +3265,6 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
     const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
-    const resolved = resolveModelSlugForPool(modelForSlot("ship"), pool);
-    appendGlmKeyEnv(env, resolved.provider);
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
@@ -3267,7 +3280,13 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    appendOpenCodeAuthMount(mounts, auth.opencodeAuthFile, resolved.provider === "opencode" ? [pool === "zai" ? `opencode-go/${resolved.model}` : resolved.model] : []);
+    applyDispatchOpenCodeAuth({
+      env,
+      mounts,
+      opencodeAuthFile: auth.opencodeAuthFile,
+      models: [model],
+      billingPool: pool,
+    });
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
