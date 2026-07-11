@@ -64,9 +64,18 @@ def test_same_reply_is_read_through_different_three_source_ledgers(game):
     base = content.characters["温体仁"]
     reply = "臣愿担责。"
 
+    def persist_target_ledger(character):
+        db.conn.execute(
+            "UPDATE characters SET identity=?, loyalty=?, seed_guilt=? WHERE name=?",
+            (character.identity, character.loyalty, character.seed_guilt, character.name),
+        )
+        db.conn.commit()
+
     loyal_but_not_party = replace(base, identity=15, loyalty=92)
     party_but_not_loyal = replace(base, identity=92, loyalty=15)
+    persist_target_ledger(loyal_but_not_party)
     first = build_mindreading_payload(db, state, reader, loyal_but_not_party, reply)
+    persist_target_ledger(party_but_not_loyal)
     second = build_mindreading_payload(db, state, reader, party_but_not_loyal, reply)
 
     assert first["truths"]["潜台词"] != second["truths"]["潜台词"]
@@ -74,6 +83,7 @@ def test_same_reply_is_read_through_different_three_source_ledgers(game):
     assert "党账深" in second["truths"]["潜台词"]
 
     db.record_public_knowledge_event(state, "旧闻：有人替他遮掩", "内廷听闻此人旧日行止。")
+    persist_target_ledger(loyal_but_not_party)
     with_heard = build_mindreading_payload(db, state, reader, loyal_but_not_party, reply)
     assert with_heard["truths"]["潜台词"] != first["truths"]["潜台词"]
 
@@ -83,9 +93,18 @@ def test_identity_loyalty_are_two_readable_axes(game):
     reader = content.characters["王承恩"]
     base = content.characters["温体仁"]
 
+    def persist_target_ledger(character):
+        db.conn.execute(
+            "UPDATE characters SET identity=?, loyalty=? WHERE name=?",
+            (character.identity, character.loyalty, character.name),
+        )
+        db.conn.commit()
+
     loyal_but_not_party = replace(base, identity=15, loyalty=92)
     party_but_not_loyal = replace(base, identity=92, loyalty=15)
+    persist_target_ledger(loyal_but_not_party)
     first = build_mindreading_payload(db, state, reader, loyal_but_not_party, "臣愿担责。")
+    persist_target_ledger(party_but_not_loyal)
     second = build_mindreading_payload(db, state, reader, party_but_not_loyal, "臣愿担责。")
 
     assert first["truths"]["关系判断"] == "忠而不党"
