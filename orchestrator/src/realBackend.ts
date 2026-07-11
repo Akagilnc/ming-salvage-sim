@@ -3219,8 +3219,8 @@ export class RealBackend implements Backend {
       throw err;
     }
     if (typedOutputUsed && result.output !== undefined) return result.output;
-    // Stdout tags are legacy compatibility only; sidecar and typed output above
-    // are the primary machine channels.
+    // Stdout tags are the primary machine channel for multi-iteration coders;
+    // elsewhere they are compatibility for a missing typed result.
     const compatibility =
       spec.role === "coder"
         ? extractCoderTag(result.stdout)
@@ -3236,9 +3236,11 @@ export class RealBackend implements Backend {
                   ? extractDocReleaseTag(result.stdout)
                   : undefined;
     if (compatibility !== undefined) {
-      console.warn(
-        `[orchestrator] telemetry: ${spec.id}-${spec.role} used legacy stdout tag compatibility fallback`,
-      );
+      if (typedOutputUsed) {
+        console.warn(
+          `[orchestrator] telemetry: ${spec.id}-${spec.role} used legacy stdout tag compatibility fallback`,
+        );
+      }
       return compatibility;
     }
     // Git truth reconciles a coder's committed-ness only AFTER a typed outcome
