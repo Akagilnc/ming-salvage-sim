@@ -71,6 +71,7 @@ import {
   routeSmokeCacheKey,
   routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
+  SANDBOX_GROK_DIR,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
@@ -628,18 +629,25 @@ describe("realBackend auth mount paths", () => {
     expect(p.hostCodexAuthDir).toBe("/home/dev/.sc-orchestrator/auth-256");
     expect(p.srcCodexAuth).toBe("/home/dev/.codex/auth.json");
     expect(p.srcCodexConfig).toBe("/home/dev/.codex/config.toml");
+    expect(p.hostGrokAuthDir).toBe("/home/dev/.sc-orchestrator/grok-auth-256");
+    expect(p.srcGrokAuth).toBe("/home/dev/.grok/auth.json");
     expect(p.claudeTokenFile).toBe("/home/dev/.sc-claude-token");
   });
 
   it("the sandbox mount targets match the spike contract", () => {
-    // codex auth → /home/agent/.codex ; dev skills → /home/agent/.claude/skills
+    // codex auth → /home/agent/.codex ; grok auth → /home/agent/.grok ;
+    // dev skills → /home/agent/.claude/skills
     expect(SANDBOX_CODEX_DIR).toBe("/home/agent/.codex");
+    expect(SANDBOX_GROK_DIR).toBe("/home/agent/.grok");
     expect(SANDBOX_SKILLS_DIR).toBe("/home/agent/.claude/skills");
   });
 
   it("per-issue dirs are distinct so concurrent issues never collide", () => {
     expect(buildAuthPaths(256, "/h").hostCodexAuthDir).not.toBe(
       buildAuthPaths(257, "/h").hostCodexAuthDir,
+    );
+    expect(buildAuthPaths(256, "/h").hostGrokAuthDir).not.toBe(
+      buildAuthPaths(257, "/h").hostGrokAuthDir,
     );
   });
 

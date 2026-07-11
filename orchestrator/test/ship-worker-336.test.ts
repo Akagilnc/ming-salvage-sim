@@ -15,7 +15,15 @@
  * deleted-inline regression are asserted at the seam.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +34,7 @@ import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
+  SANDBOX_GROK_DIR,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SHIP_FOCUS_FILENAME,
@@ -675,5 +684,85 @@ describe("#378 RealBackend auth mounts — write a minimal danger-full-access co
     const auth = be.shipAuth(378);
     expect(auth.codexAuthDir).toBeTruthy();
     assertMinimalConfig(auth.codexAuthDir as string);
+  });
+});
+
+// ═══════════════════ #807 grok auth mount (agent-step mountAuth only) ═══════════════════
+
+describe("#807 mountAuth grok auth copy (fail-closed skip when host absent)", () => {
+  class GrokAuthBackend extends RealBackend {
+    protected override buildOrReuseClone(): string {
+      return mkdtempSync(join(tmpdir(), "grok-auth-clone-"));
+    }
+    protected override assertIndependentClone(): void {}
+    public agentAuth(issueNumber: number): {
+      authDir: string;
+      claudeToken?: string;
+      grokAuthDir?: string;
+    } {
+      return this.mountAuth(issueNumber);
+    }
+    public agentBoxConfig(auth: {
+      authDir: string;
+      claudeToken?: string;
+      grokAuthDir?: string;
+    }) {
+      return this.boxConfig(auth, { role: "coder", soul: "coder" }, 807);
+    }
+  }
+
+  function mkHome(withGrok: boolean): string {
+    const home = mkdtempSync(join(tmpdir(), "grok-auth-home-"));
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "auth.json"), '{"tok":"codex"}\n');
+    writeFileSync(join(home, ".sc-claude-token"), "sk-claude\n");
+    if (withGrok) {
+      mkdirSync(join(home, ".grok"), { recursive: true });
+      writeFileSync(join(home, ".grok", "auth.json"), '{"https://auth.x.ai::x":{"key":"g"}}\n');
+      chmodSync(join(home, ".grok", "auth.json"), 0o600);
+    }
+    return home;
+  }
+
+  function backend(home: string): GrokAuthBackend {
+    return new GrokAuthBackend({
+      sourceRepo: mkdtempSync(join(tmpdir(), "grok-auth-src-")),
+      repo: "Akagilnc/ming-salvage-sim",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "ming-orchestrator-coder:latest",
+      runKey: 807,
+      home,
+    });
+  }
+
+  it("copies host ~/.grok/auth.json into a per-issue dir when present", () => {
+    const home = mkHome(true);
+    const be = backend(home);
+    const auth = be.agentAuth(807);
+    expect(auth.grokAuthDir).toBe(join(home, ".sc-orchestrator", "grok-auth-807"));
+    expect(readFileSync(join(auth.grokAuthDir!, "auth.json"), "utf8")).toContain("auth.x.ai");
+  });
+
+  it("skips grokAuthDir (and the sandbox mount) when host auth is absent", () => {
+    const home = mkHome(false);
+    const be = backend(home);
+    const auth = be.agentAuth(807);
+    expect(auth.grokAuthDir).toBeUndefined();
+    expect(existsSync(join(home, ".sc-orchestrator", "grok-auth-807"))).toBe(false);
+    const cfg = be.agentBoxConfig({ authDir: auth.authDir });
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_GROK_DIR)).toBe(false);
+  });
+
+  it("boxConfig mounts the per-issue grok auth dir at SANDBOX_GROK_DIR when present", () => {
+    const home = mkHome(true);
+    const be = backend(home);
+    const auth = be.agentAuth(807);
+    const cfg = be.agentBoxConfig(auth);
+    expect(
+      cfg.mounts.some(
+        (m) => m.hostPath === auth.grokAuthDir && m.sandboxPath === SANDBOX_GROK_DIR,
+      ),
+    ).toBe(true);
   });
 });

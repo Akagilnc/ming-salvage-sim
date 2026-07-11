@@ -120,11 +120,17 @@ RUN set -eux; \
     test -x "$HOME/.grok/bin/grok"
 USER root
 RUN set -eux; \
-    ln -sf /home/agent/.grok/bin/grok /usr/local/bin/grok; \
-    # Optional alias: installer also links `agent` → same binary on host installs.
-    ln -sf /home/agent/.grok/bin/grok /usr/local/bin/grok-agent 2>/dev/null || true; \
+    # Real copy (not symlink into ~/.grok/bin): runtime mounts a per-issue
+    # auth dir over /home/agent/.grok (codex-style), which would break a
+    # PATH symlink whose target lives under that tree (#807 mountAuth).
+    cp -L /home/agent/.grok/bin/grok /usr/local/bin/grok; \
+    chmod 755 /usr/local/bin/grok; \
+    # Placeholder so a file bind-mount of auth.json is never mistaken for a dir.
+    install -d -o agent -g agent /home/agent/.grok; \
+    touch /home/agent/.grok/auth.json; \
+    chown agent:agent /home/agent/.grok/auth.json; \
+    chmod 600 /home/agent/.grok/auth.json; \
     grok --version
-
 # ── codex sandbox / userns note (spike constraint #3) ────────────────────────
 # codex ships its own bwrap sandbox. In a NON-privileged container bwrap cannot
 # create a user namespace ("No permissions to create a new namespace ... the
