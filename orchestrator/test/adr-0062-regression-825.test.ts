@@ -8,7 +8,7 @@
  * edit cannot restore a lie-detector gate by instruction alone.
  */
 
-import { readFileSync } from "node:fs";
+import { globSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -38,24 +38,27 @@ import type {
   MergeRequest,
 } from "../src/family/types.js";
 
-const CONTRACT_FILES = [
-  "prompts/coder_implement.md",
-  "prompts/coder_fix.md",
-  "prompts/reviewer_review.md",
-  "prompts/merger_resolve_conflict.md",
-  "prompts/ship.md",
-  "prompts/family_ship.md",
-  "prompts/fixer.md",
-  "prompts/verify.md",
-  "prompts/docRelease.md",
-  "prompts/integrated_cmr.md",
-  "prompts/integrated_cmr_completeness.md",
-  "prompts/integrated_cmr_correctness.md",
-  "image/souls/output_protocol.md",
-  "image/souls/fixer.md",
-  "image/souls/verify.md",
-  "image/souls/docRelease.md",
-] as const;
+const CONTRACT_FILES = globSync(
+  ["prompts/*.md", "image/souls/*.md"],
+  { cwd: process.cwd(), nodir: true },
+).sort();
+
+const COMPLETION_SENTINEL = "[A-Z][A-Z0-9_]*_STEP_COMPLETE";
+const OBLIGATION = "(?:must|required|always|shall|need\\s+to)";
+
+function hasRequiredSignalObligation(normalized: string): boolean {
+  const obligationNearSentinel = new RegExp(
+    `(?:\\b${OBLIGATION}\\b[\\s\\S]{0,120}\\b${COMPLETION_SENTINEL}\\b|\\b${COMPLETION_SENTINEL}\\b[\\s\\S]{0,120}\\b${OBLIGATION}\\b)`,
+    "i",
+  );
+  // Keep the proximity check inside a sentence / fenced example. Otherwise a
+  // sentinel-only example can be paired with an unrelated required field in
+  // the next paragraph. Explicit optional-telemetry wording remains allowed.
+  const prose = normalized.replace(/```[\s\S]*?```/g, "");
+  return prose
+    .split(/(?<=[.!?])\s+|```/)
+    .some((clause) => obligationNearSentinel.test(clause) && !/optional telemetry/i.test(clause));
+}
 
 describe("#825 ADR 0062 completion-sentinel contract sweep", () => {
   it.each(CONTRACT_FILES)("treats completion sentinels as optional telemetry in %s", (file) => {
@@ -75,11 +78,15 @@ describe("#825 ADR 0062 completion-sentinel contract sweep", () => {
       );
 
     expect(requiredSignalSentence).toBe(false);
+    expect(hasRequiredSignalObligation(normalized)).toBe(false);
     expect(normalized).not.toMatch(
       /(?:always\s+)?(?:print|emit|fire)\s+[`\w]*_STEP_COMPLETE.{0,180}(?:must|only|required|at the very end)/i,
     );
     expect(normalized).not.toMatch(
       /(?:must|required to)\s+(?:emit|print|fire).{0,180}_STEP_COMPLETE/i,
+    );
+    expect(normalized).not.toMatch(
+      /(?:end|finish)\s+(?:your\s+)?(?:output|response).{0,180}_STEP_COMPLETE/i,
     );
     expect(normalized).not.toMatch(
       /(?:need\s+not|do\s+not\s+need\s+to|does\s+not\s+need\s+to|do\s+not|don't)\s+(?:print|emit|fire)(?:\s+\w+){0,8}\s+(?:[A-Z][A-Z0-9_]*_STEP_COMPLETE|them|it)\b/i,
@@ -322,9 +329,11 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
         retriggerAfterFix: () => {},
       },
     );
-    expect(verifyCalls).toBe(2);
-    expect(result.ok).toBe(true);
-    expect(JSON.stringify(result)).not.toContain("lie-detector");
+    expect({ verifyCalls, ok: result.ok, terminalState: result.terminalState }).toEqual({
+      verifyCalls: 2,
+      ok: true,
+      terminalState: "mergeable",
+    });
   });
 });
 
