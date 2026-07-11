@@ -54,6 +54,43 @@ def _role_roster(db: Any, office_type: str) -> str:
     return f"{office_type}本职在册：{roster}。"
 
 
+def _hidden_fragments(
+    db: Any, character_name: str, office_type: str, office_name: str,
+) -> tuple[str, ...]:
+    """Return source text that must be removed from aggregate narratives."""
+    if not hasattr(db, "_character_knowledge_events"):
+        return ()
+    hidden = []
+    for event in db._character_knowledge_events("", include_exclusions=True):
+        try:
+            excluded_names = json.loads(str(event.get("excluded_names") or "[]"))
+        except (TypeError, ValueError):
+            excluded_names = []
+        source_id = str(event.get("source_id") or "")
+        targets = event.get("excluded_targets") or (
+            db.knowledge_exclusion_targets_for_source(source_id)
+            if hasattr(db, "knowledge_exclusion_targets_for_source")
+            else {"people": [], "offices": []}
+        )
+        if (character_name in excluded_names
+                or character_name in targets.get("people", [])
+                or office_type in targets.get("offices", [])
+                or office_name in targets.get("offices", [])):
+            for key in ("body", "title"):
+                fragment = str(event.get(key) or "").strip()
+                if fragment:
+                    hidden.append(fragment)
+    return tuple(sorted(set(hidden), key=len, reverse=True))
+
+
+def _project_narrative(text: object, hidden_fragments: tuple[str, ...]) -> str:
+    """Project aggregate prose without excluded source events."""
+    rendered = str(text or "")
+    for fragment in hidden_fragments:
+        rendered = rendered.replace(fragment, "（密事未向此人公开）")
+    return _qualitative(rendered)
+
+
 def _world(
     db: Any, state: Any, office_type: str, character_name: str, office_name: str,
 ) -> Dict[str, str]:
@@ -63,39 +100,13 @@ def _world(
     # exclusion metadata of its own.  Redact the bodies of source events that
     # this character cannot hear before using the aggregation as context.  The
     # public portions of the same report remain available.
-    hidden_fragments = []
-    if hasattr(db, "_character_knowledge_events"):
-        for event in db._character_knowledge_events("", include_exclusions=True):
-            try:
-                excluded_names = json.loads(str(event.get("excluded_names") or "[]"))
-            except (TypeError, ValueError):
-                excluded_names = []
-            source_id = str(event.get("source_id") or "")
-            targets = event.get("excluded_targets") or (
-                db.knowledge_exclusion_targets_for_source(source_id)
-                if hasattr(db, "knowledge_exclusion_targets_for_source")
-                else {"people": [], "offices": []}
-            )
-            excluded = (
-                character_name in excluded_names
-                or character_name in targets.get("people", [])
-                or office_type in targets.get("offices", [])
-                or office_name in targets.get("offices", [])
-            )
-            if excluded:
-                for key in ("body", "title"):
-                    fragment = str(event.get(key) or "").strip()
-                    if fragment:
-                        hidden_fragments.append(fragment)
+    hidden_fragments = _hidden_fragments(db, character_name, office_type, office_name)
 
     def fact(text: object) -> str:
         return _qualitative(text)
 
     def report_for_character(report: object) -> str:
-        rendered = str(report or "")
-        for fragment in sorted(set(hidden_fragments), key=len, reverse=True):
-            rendered = rendered.replace(fragment, "（密事未向此人公开）")
-        return fact(rendered)
+        return _project_narrative(report, hidden_fragments)
 
     public = "\n".join(report_for_character(r.get("report")) for r in reports)
     result: Dict[str, str] = {"public": public or "登基伊始，朝廷暂无前回合奏报。"}
@@ -150,6 +161,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         or ""
     )
     world = _world(db, state, office_type, character_name, office_name)
+    hidden_fragments = _hidden_fragments(db, character_name, office_type, office_name)
     events = db._character_knowledge_events(character_name, include_exclusions=True)
     public_events = db._character_knowledge_events("", include_exclusions=True)
     # Issued directives are public by their nature.  Read them here so old
@@ -166,7 +178,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
         public_events.append({
             "turn": int(report["turn"]), "year": int(report["year"]),
             "period": int(report["period"]), "kind": "public",
-            "title": "邸报", "body": _qualitative(report.get("report")),
+            "title": "邸报", "body": _project_narrative(report.get("report"), hidden_fragments),
             "source_id": f"turn_report:{report['turn']}",
             "excluded_names": "[]",
         })
@@ -180,7 +192,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "turn": int(chapter["turn"]), "year": int(chapter["year"]),
             "period": int(chapter["period"]), "kind": "chapter_summary",
             "title": chapter.get("title") or "朝局旧闻",
-            "body": chapter.get("body") or "",
+            "body": _project_narrative(chapter.get("body"), hidden_fragments),
             "source_id": source_id,
             "excluded_names": "[]",
         })
