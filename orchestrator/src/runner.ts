@@ -4401,6 +4401,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
                   }
+                  // The worker has already exited and its result is collected;
+                  // join the first-run environment side effect before this
+                  // runner advances or returns to an external caller. This
+                  // deliberately does not delay spawn / first output (#793).
+                  await outcome.telemetryEnvironmentStamp;
                   return outcome.result;
                 },
                 retryOpts,
@@ -4901,6 +4906,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               if (outcome.monitorHandle !== undefined) {
                 stepMonitorHandle = outcome.monitorHandle;
               }
+              // Join only at result collection, never on the spawn path.
+              await outcome.telemetryEnvironmentStamp;
               return outcome.result;
             },
             {
@@ -5454,6 +5461,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
                   }
+                  // Review-loop collection is also an external-run boundary;
+                  // keep the telemetry environment row durable before it
+                  // advances, without delaying worker spawn / first output.
+                  await outcome.telemetryEnvironmentStamp;
                 } catch (err) {
                   dispatchError = err;
                 }

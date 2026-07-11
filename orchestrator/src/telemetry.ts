@@ -81,7 +81,7 @@ export interface TelemetryRunEnvironment {
 }
 
 let telemetryRunEnvironment: TelemetryRunEnvironment = {};
-const pendingTelemetryEnvironmentStamps = new Set<string>();
+const pendingTelemetryEnvironmentStamps = new Map<string, Promise<void>>();
 
 /** Install / merge the process-level run environment used by stamp builders. */
 export function configureTelemetryRunEnvironment(
@@ -516,32 +516,44 @@ export function scheduleTelemetryEnvironmentStamp(
   ledgerDir: string | undefined,
   ctx: DispatchContext,
   backend: TelemetryEnvironmentProvider,
-): void {
+): Promise<void> {
   if (
     ledgerDir === undefined ||
     ledgerDir.length === 0 ||
-    hasEnvironmentStamp(ledgerDir) ||
-    pendingTelemetryEnvironmentStamps.has(ledgerDir)
+    hasEnvironmentStamp(ledgerDir)
   ) {
-    return;
+    return Promise.resolve();
   }
-  pendingTelemetryEnvironmentStamps.add(ledgerDir);
-  queueMicrotask(async () => {
-    try {
-      if (!hasEnvironmentStamp(ledgerDir)) {
-        await backend.installTelemetryRunEnvironment?.();
-        ensureEnvironmentStamp(ledgerDir, ctx);
-      }
-    } catch (err) {
-      console.warn(
-        `[orchestrator] telemetry environment stamp failed (fail-open): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    } finally {
-      pendingTelemetryEnvironmentStamps.delete(ledgerDir);
-    }
+  const pending = pendingTelemetryEnvironmentStamps.get(ledgerDir);
+  if (pending !== undefined) return pending;
+
+  let complete: () => void;
+  const completion = new Promise<void>((resolve) => {
+    complete = resolve;
   });
+  pendingTelemetryEnvironmentStamps.set(ledgerDir, completion);
+  queueMicrotask(() => {
+    void (async () => {
+      try {
+        if (!hasEnvironmentStamp(ledgerDir)) {
+          await backend.installTelemetryRunEnvironment?.();
+          ensureEnvironmentStamp(ledgerDir, ctx);
+        }
+      } catch (err) {
+        console.warn(
+          `[orchestrator] telemetry environment stamp failed (fail-open): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      } finally {
+        if (pendingTelemetryEnvironmentStamps.get(ledgerDir) === completion) {
+          pendingTelemetryEnvironmentStamps.delete(ledgerDir);
+        }
+        complete();
+      }
+    })();
+  });
+  return completion;
 }
 
 export type TelemetryWorkerOutcome =

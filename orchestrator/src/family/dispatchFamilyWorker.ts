@@ -193,6 +193,8 @@ export async function dispatchFamilyWorker(
 export interface DispatchFamilyWorkerWithMonitorOutcome {
   readonly result: WorkerResult;
   readonly monitorHandle?: WorkerMonitorHandle;
+  /** Completion handle for this run's fail-open environment telemetry stamp. */
+  readonly telemetryEnvironmentStamp: Promise<void>;
 }
 
 export interface DispatchFamilyWorkerWithMonitorOptions {
@@ -232,6 +234,7 @@ export async function dispatchFamilyWorkerWithMonitor(
   let logStartOffset: number | undefined;
   let monitorHandle: WorkerMonitorHandle | undefined;
   let firstOutputBaseline: number | undefined;
+  let telemetryEnvironmentStamp = Promise.resolve();
 
   const reconcileFirstOutputAt = (): void => {
     if (firstOutputAt !== null || monitorHandle === undefined || firstOutputBaseline === undefined) {
@@ -276,7 +279,11 @@ export async function dispatchFamilyWorkerWithMonitor(
       // Environment collection is intentionally lazy and non-blocking. It must
       // start before the persistence callback so a callback throw cannot erase
       // this run's environment row.
-      scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, familyBackend);
+      telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
+        ledgerDir,
+        ctx,
+        familyBackend,
+      );
       if (opts?.onMonitorHandleSpawned !== undefined) {
         try {
           await opts.onMonitorHandleSpawned(handle);
@@ -305,7 +312,7 @@ export async function dispatchFamilyWorkerWithMonitor(
           { kind: "result", result },
           { logPath, logStartOffset, firstOutputAt },
         );
-        return { result, monitorHandle: handle };
+        return { result, monitorHandle: handle, telemetryEnvironmentStamp };
       }
       const result = await familyBackend.awaitMonitoredCliWorker(
         handle,
@@ -319,22 +326,27 @@ export async function dispatchFamilyWorkerWithMonitor(
         { kind: "result", result },
         { logPath, logStartOffset, firstOutputAt },
       );
-      return { result, monitorHandle: handle };
+      return { result, monitorHandle: handle, telemetryEnvironmentStamp };
     }
     telemetry.stampDispatch(
       new Date().toISOString(),
       ctx.billingPool !== undefined ? ctx.billingPool : undefined,
     );
-    scheduleTelemetryEnvironmentStamp(ledgerDir, ctx, familyBackend);
+    telemetryEnvironmentStamp = scheduleTelemetryEnvironmentStamp(
+      ledgerDir,
+      ctx,
+      familyBackend,
+    );
     const result = await dispatchFamilyWorker(familyBackend, spec, ctx, landing);
     telemetry.stampCollect({ kind: "result", result });
-    return { result };
+    return { result, telemetryEnvironmentStamp };
   } catch (error) {
     reconcileFirstOutputAt();
     telemetry.stampCollect(
       { kind: "thrown", error },
       { logPath, logStartOffset, firstOutputAt },
     );
+    await telemetryEnvironmentStamp;
     throw error;
   }
 }
