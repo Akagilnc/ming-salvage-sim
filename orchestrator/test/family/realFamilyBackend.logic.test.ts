@@ -178,6 +178,38 @@ describe("RealFamilyBackend telemetry construction", () => {
   });
 });
 
+describe("RealFamilyBackend family coder-fix commit truth (#818)", () => {
+  class Probe extends RealFamilyBackend {
+    public finalCommitCountSince(headBefore: string | undefined): number {
+      return this.familyCoderGitCommitCount(headBefore);
+    }
+  }
+
+  it("counts only commits reachable from the final HEAD after the worker baseline", () => {
+    const repo = trackRepo();
+    const backend = new Probe(opts(repo));
+    const headBefore = git(repo, "rev-parse", "HEAD");
+
+    commitFile(repo, "repair.ts", "final repair");
+    // Model a worker squashing its first commit into a replacement. Sandcastle
+    // can retain both observed SHAs, but only the amended commit remains on the
+    // final graph.
+    writeFileSync(join(repo, "repair.ts"), "squashed final repair");
+    git(repo, "add", "repair.ts");
+    git(repo, "commit", "--amend", "--no-edit");
+
+    // Sandcastle may retain commits it observed before a rebase/squash/drop. The
+    // final graph, not that cumulative observation list, is the worker truth.
+    expect(backend.finalCommitCountSince(headBefore)).toBe(1);
+  });
+
+  it("fails closed when the family coder-fix baseline HEAD is unavailable", () => {
+    const backend = new Probe(opts(trackRepo()));
+
+    expect(() => backend.finalCommitCountSince(undefined)).toThrow(/headBefore/i);
+  });
+});
+
 // ═══════════════════════════════ 1. family ledger ═══════════════════════════
 
 describe("RealFamilyBackend appendFamilyLedger / readFamilyLedger (#291 sibling JSONL)", () => {

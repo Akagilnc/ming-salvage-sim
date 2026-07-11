@@ -79,7 +79,6 @@ import {
   extractCoderTag,
   lastSessionId,
   parseCoderSelfReport,
-  realCommitCount,
   reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
@@ -1703,6 +1702,10 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
+      // Keep the baseline before Sandcastle starts. `result.commits` is an
+      // observation log across iterations, so a later rebase/squash/drop can
+      // leave it containing SHAs that are no longer reachable from final HEAD.
+      const headBefore = this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo);
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
       const fixFocusLanding = this.writeFamilyFixFocusFile(landing);
       try {
@@ -1719,7 +1722,7 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
           });
-          return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
+          return this.familyCoderResultFromRun(result, spec, outcomeLanding.path, headBefore);
         } finally {
           this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
         }
@@ -1867,13 +1870,14 @@ export class RealFamilyBackend implements FamilyBackend {
     >,
     spec: WorkerSpec,
     outcomePath: string,
+    headBefore: string | undefined,
   ): WorkerResult {
     try {
       assertCompletionSignal(result, spec.completionSignal, "family-coder-fix");
       const raw = readRequiredWorkerOutcomeSidecar(outcomePath);
       const truth = reconcileCoderCommits(
         parseCoderSelfReport(raw),
-        realCommitCount(result),
+        this.familyCoderGitCommitCount(headBefore),
       );
       return {
         kind: "completed",
@@ -1889,6 +1893,30 @@ export class RealFamilyBackend implements FamilyBackend {
         sessionId: lastSessionId(result),
       };
     }
+  }
+
+  /**
+   * Derive family coder-fix commit truth from the final graph, not Sandcastle's
+   * cumulative observed-commit list. `headBefore..HEAD` counts commits reachable
+   * from final HEAD but not the pinned pre-worker baseline; that deliberately
+   * excludes commits subsequently made unreachable by rebase, squash, or drop.
+   * Merge commits remain one reachable commit each, matching git's default
+   * `rev-list --count` history-walk semantics.
+   */
+  protected familyCoderGitCommitCount(headBefore: string | undefined): number {
+    if (headBefore === undefined || headBefore.trim().length === 0) {
+      throw new Error("family coder-fix headBefore is required to derive git commit truth");
+    }
+    const rawCount = this.sh(
+      "git",
+      ["rev-list", "--count", `${headBefore.trim()}..HEAD`],
+      this.opts.workingRepo,
+    );
+    const count = Number(rawCount);
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new Error(`family coder-fix git rev-list returned invalid commit count: ${rawCount}`);
+    }
+    return count;
   }
 
   private familyCoderOutput(output: SelfReportedCoder): CoderResult {
