@@ -7369,8 +7369,17 @@ class GameDB:
         tlog(f"[MEM-IO/db.detail/OUTPUT] #{memory_id} ({len(out)}字):\n{out}")
         return out
 
-    def save_turn_report(self, state: GameState, report: str) -> None:
-        """每回合月末奏报单独存档（turn_reports），与 turn_logs 日志解耦。"""
+    def save_turn_report(
+        self, state: GameState, report: str,
+        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
+    ) -> None:
+        """每回合月末奏报单独存档（turn_reports），与 turn_logs 解耦。
+
+        ``report`` is a presentation aggregate and is not used for access
+        control.  Producers that mix public and restricted material may pass
+        the source-scoped ``knowledge_items`` projection; each item is then
+        durable independently for character reads.
+        """
         self.conn.execute(
             """
             INSERT INTO turn_reports (turn, year, period, report)
@@ -7382,6 +7391,14 @@ class GameDB:
             """,
             (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
         )
+        for item in knowledge_items or ():
+            self.record_public_knowledge_event(
+                state,
+                str(item.get("title") or "邸报事项"),
+                str(item.get("body") or ""),
+                source_id=str(item.get("source_id") or ""),
+                excluded_names=item.get("excluded_names") or (),
+            )
         self.conn.commit()
 
     def get_turn_report(self, turn: int) -> str:
@@ -7405,7 +7422,8 @@ class GameDB:
     # ── 章节记忆（event_memories 的 chapter_summary 类，每回合一条，importance=5 永久）──
 
     def save_chapter_memory(
-        self, state: GameState, title: str, body: str, tags: Optional[List[str]] = None
+        self, state: GameState, title: str, body: str, tags: Optional[List[str]] = None,
+        knowledge_items: Optional[Iterable[Mapping[str, object]]] = None,
     ) -> int:
         """落本回合章节记忆。subject 固定 court/chapter，event_type=chapter_summary，
         source_id=turn 保证每回合唯一。body 存整段叙事章节（不受 outcome 80 字限）。
@@ -7437,6 +7455,14 @@ class GameDB:
                 (str(body or ""), memory_id),
             )
             self.conn.commit()
+        for item in knowledge_items or ():
+            self.record_public_knowledge_event(
+                state,
+                str(item.get("title") or title or "朝局事项"),
+                str(item.get("body") or ""),
+                source_id=str(item.get("source_id") or ""),
+                excluded_names=item.get("excluded_names") or (),
+            )
         return memory_id
 
     def list_chapter_memories(
