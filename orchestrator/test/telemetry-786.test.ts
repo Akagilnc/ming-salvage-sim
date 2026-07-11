@@ -335,6 +335,37 @@ describe("#786 telemetry pure helpers", () => {
     expect(completed).toBe(true);
   });
 
+  it("serializes scheduled collections for one ledger in observation order", async () => {
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let firstBegun!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstBegun = resolve; });
+    const appendOrder: string[] = [];
+
+    const first = scheduleCommitTelemetry(
+      { ledgerDir: "/ledger", repoPath: "/unused", before: "before", after: "first" },
+      async () => {
+        firstBegun();
+        await firstBlocked;
+        appendOrder.push("first");
+      },
+    );
+    const second = scheduleCommitTelemetry(
+      { ledgerDir: "/ledger", repoPath: "/unused", before: "first", after: "second" },
+      async () => {
+        appendOrder.push("second");
+      },
+    );
+
+    await firstStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(appendOrder).toEqual([]);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(appendOrder).toEqual(["first", "second"]);
+  });
+
   it("excludes an escape hatch changed inside an existing post-image block comment", () => {
     const record = buildCommitStamp({
       commit: "abc123",

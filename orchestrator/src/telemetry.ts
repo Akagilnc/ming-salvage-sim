@@ -2116,7 +2116,25 @@ export interface CommitTelemetryScheduleInput {
   readonly runId?: string;
   readonly issue?: number | null;
   readonly before: string;
+  /**
+   * Callers with a previously observed post-step HEAD may provide it. Routing
+   * callers deliberately omit it: the deferred chain resolves HEAD with async
+   * git I/O after the route has yielded.
+   */
+  readonly after?: string;
+}
+
+interface CommitTelemetryCollectInput extends CommitTelemetryScheduleInput {
   readonly after: string;
+}
+
+/** One deferred collection chain per sidecar, preserving observation order. */
+const telemetryCollectionQueues = new Map<string, Promise<void>>();
+
+async function gitHeadAsync(repoPath: string): Promise<string | undefined> {
+  const output = await gitOutput(repoPath, ["rev-parse", "HEAD"]);
+  const head = output?.trim();
+  return head === undefined || head.length === 0 ? undefined : head;
 }
 
 /**
@@ -2125,20 +2143,39 @@ export interface CommitTelemetryScheduleInput {
  */
 export function scheduleCommitTelemetry(
   input: CommitTelemetryScheduleInput,
-  collect: (input: CommitTelemetryScheduleInput) => Promise<void> = collectCommitTelemetry,
+  collect: (input: CommitTelemetryCollectInput) => Promise<void> = collectCommitTelemetry,
 ): Promise<void> {
   return new Promise((resolve) => {
     setImmediate(() => {
-      void collect(input)
+      const collectObservedCommit = async (): Promise<void> => {
+        const after = input.after ?? await gitHeadAsync(input.repoPath);
+        if (after === undefined || after === input.before) return;
+        await collect({ ...input, after });
+      };
+      const prior = input.ledgerDir === undefined
+        ? undefined
+        : telemetryCollectionQueues.get(input.ledgerDir);
+      const queued = (prior ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(collectObservedCommit);
+      if (input.ledgerDir !== undefined) {
+        telemetryCollectionQueues.set(input.ledgerDir, queued);
+      }
+      void queued
         .catch((err: unknown) => {
           console.warn(`[orchestrator] commit telemetry failed (fail-open): ${err instanceof Error ? err.message : String(err)}`);
         })
-        .finally(resolve);
+        .finally(() => {
+          if (input.ledgerDir !== undefined && telemetryCollectionQueues.get(input.ledgerDir) === queued) {
+            telemetryCollectionQueues.delete(input.ledgerDir);
+          }
+          resolve();
+        });
     });
   });
 }
 
-async function collectCommitTelemetry(input: CommitTelemetryScheduleInput): Promise<void> {
+async function collectCommitTelemetry(input: CommitTelemetryCollectInput): Promise<void> {
   if (input.before === input.after) return;
   const commits = await commitsBetweenAsync(input.repoPath, input.before, input.after) ?? [input.after];
   for (const commit of commits) {
