@@ -2399,17 +2399,41 @@ describe("realBackend reconcileCoderCommits", () => {
     ).toThrow(/self-report/i);
   });
 
-  it("throws when the self-reported commitsAdded count disagrees with git", () => {
-    // Self-report says 3 commits; git made 1. A miscount is a contract violation.
-    expect(() =>
-      reconcileCoderCommits({ committed: true, commitsAdded: 3 }, 1),
-    ).toThrow(/git/i);
+  it("continues with a discrepancy when git has more commits than the coder reported", () => {
+    const out = reconcileCoderCommits(
+      { committed: true, commitsAdded: 1 },
+      2,
+    );
+
+    expect(out).toMatchObject({
+      committed: true,
+      commitsAdded: 2,
+      selfReportDiscrepancy: {
+        code: "coder_self_report_understated_git_commits",
+        selfReportedCommitted: true,
+        selfReportedCommitsAdded: 1,
+        gitCommitCount: 2,
+      },
+    });
   });
 
-  it("throws when the coder self-reports committed:false but git DID make commits", () => {
-    expect(() =>
-      reconcileCoderCommits({ committed: false, commitsAdded: 0 }, 1),
-    ).toThrow(/self-report/i);
+  it("emits no discrepancy when the self-report matches git truth", () => {
+    expect(reconcileCoderCommits({ committed: true, commitsAdded: 1 }, 1))
+      .not.toHaveProperty("selfReportDiscrepancy");
+  });
+
+  it("records an advisory discrepancy when the coder reports no commit but git has one", () => {
+    expect(reconcileCoderCommits({ committed: false, commitsAdded: 0 }, 1))
+      .toMatchObject({
+        committed: true,
+        commitsAdded: 1,
+        selfReportDiscrepancy: {
+          code: "coder_self_report_understated_git_commits",
+          selfReportedCommitted: false,
+          selfReportedCommitsAdded: 0,
+          gitCommitCount: 1,
+        },
+      });
   });
 
   it("escalate does not suppress a commit-count contradiction", () => {

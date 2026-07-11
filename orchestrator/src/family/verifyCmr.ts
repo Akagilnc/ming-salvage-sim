@@ -1272,7 +1272,12 @@ async function runCmrCoderFix(input: {
       reason:
         fixResult.output.committed && fixResult.output.commitsAdded >= 1
           ? `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
-            `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`
+            `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}` +
+            (fixResult.output.selfReportDiscrepancy !== undefined
+              ? `; warning ${fixResult.output.selfReportDiscrepancy.code} ` +
+                `(reported ${fixResult.output.selfReportDiscrepancy.selfReportedCommitsAdded}, ` +
+                `git observed ${fixResult.output.selfReportDiscrepancy.gitCommitCount})`
+              : "")
           : `${reasonPrefix}: coder-fix commit already landed; retry repaired required evidence only`,
     });
     return { result: { ok: true, ran: true }, familyHeadAfter };
