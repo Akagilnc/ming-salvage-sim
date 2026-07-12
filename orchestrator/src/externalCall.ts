@@ -148,19 +148,23 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
         : typeof e.statusCode === "number"
           ? e.statusCode
           : undefined;
+    // Structured HTTP status is exhaustive when present — do not fall through
+    // to free-text heuristics (401 "network auth" must stay durable).
     if (status === 429) return "quota";
     if (status !== undefined && status >= 500 && status <= 599) return "transient";
+    if (status !== undefined && status >= 100 && status <= 599) return "durable";
   }
   const msg = err instanceof Error ? err.message : String(err);
   const lower = msg.toLowerCase();
   // Status-first in free text (#884 cmr r8): explicit HTTP status tokens beat
   // quota vocabulary so "HTTP 503 … quota" stays transient (retry), while
-  // bare "429" stays quota (no retry).
-  const statusToken = lower.match(/\b(429|5\d\d)\b/);
+  // bare "429" stays quota (no retry). Non-429/5xx tokens (401/403/…) are durable.
+  const statusToken = lower.match(/\b(429|5\d\d|[1-5]\d\d)\b/);
   if (statusToken !== null) {
     const code = Number(statusToken[1]);
     if (code === 429) return "quota";
     if (code >= 500 && code <= 599) return "transient";
+    if (code >= 100 && code <= 599) return "durable";
   }
   if (
     lower.includes("etimedout") ||
