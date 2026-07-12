@@ -64,6 +64,16 @@ def test_p4_guard_rejects_supply_score_but_keeps_countable_people():
     assert safe_historical_text("前线补给尚余300石，足供三日") == "前线补给尚余300石，足供三日"
 
 
+def test_p4_guard_rejects_long_connective_and_complete_abstract_axes():
+    for injected in (
+        "补给前线保障仍在持续恶化至20",
+        "机动能力经连日奔袭后已降至20",
+        "军事压力在多路来攻下高达90",
+        "士绅阻力经多番劝谕仍为80",
+    ):
+        assert "已略去" in safe_historical_text(injected), injected
+
+
 def test_qualitative_band_preserves_zero_and_uses_default_only_for_missing_or_invalid():
     words = ("low", "middle", "high", "very high", "max")
 

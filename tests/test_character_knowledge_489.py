@@ -39,6 +39,26 @@ def test_secret_alias_exclusion_is_canonicalized_before_projection(game):
     assert "魏忠贤" in row["excluded_names"]
 
 
+def test_secret_order_commit_recovers_named_alias_and_office_targets_from_content(game):
+    """All issue paths share the commit boundary when tool fields are omitted."""
+    db, state, content = game
+    excluded = content.characters["魏忠贤"]
+    academy = next(c for c in content.characters.values() if c.office_type == "翰林院")
+
+    order = db.create_secret_order(
+        state, "毕自严", "密查", "密查账目，瞒住九千岁与翰林院诸官。", []
+    )
+
+    row = db.conn.execute(
+        "SELECT excluded_names, excluded_targets FROM secret_orders WHERE id=?", (order,)
+    ).fetchone()
+    assert excluded.name in json.loads(row["excluded_names"])
+    assert academy.name in json.loads(row["excluded_names"])
+    assert json.loads(row["excluded_targets"]) == {
+        "people": [excluded.name], "offices": ["翰林院"],
+    }
+
+
 def test_every_supported_office_type_has_a_role_specific_current_world_slice(game):
     db, state, content = game
     characters_by_type = {

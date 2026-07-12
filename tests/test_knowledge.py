@@ -278,3 +278,18 @@ def test_turn_report_counterpart_never_uses_aggregate_when_sources_exist(game):
     )
     assert public_marker in projected
     assert unscoped_marker not in projected
+
+
+def test_chapter_counterpart_does_not_repeat_derived_turn_report_source(game):
+    """The normal report→chapter sequence projects monthly prose only once."""
+    from ming_sim.memories import _public_chapter_counterpart
+
+    db, state, _content = game
+    marker = "本月独立公开来源"
+    db.record_public_knowledge_event(state, "公开事项", marker, source_id="test:monthly-source")
+    db.save_turn_report(state, "月结改写", knowledge_items=db.knowledge_items_for_turn(state.turn))
+
+    counterpart = _public_chapter_counterpart(db.knowledge_items_for_turn(state.turn))
+
+    assert marker in (counterpart or "")
+    assert "月结改写" not in (counterpart or "")

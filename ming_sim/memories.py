@@ -77,7 +77,10 @@ def _public_chapter_counterpart(
     turn items; the writer keeps legacy aggregate behaviour only when there
     are no source items to project.
     """
-    items = list(items)
+    items = [
+        item for item in items
+        if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))
+    ]
     if not items:
         return None
     return "\n".join(

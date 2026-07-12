@@ -99,6 +99,46 @@ def _snapshot_secret_order_people(
     return list(dict.fromkeys(names))
 
 
+_SECRET_EXCLUSION_CLAUSE_RE = re.compile(
+    r"(?:瞒住|瞒着|不可令|不得让|勿使|不要让)\s*([^，。；;\s]{2,40}?)(?=(?:知晓|知道|得知|过问|插手|，|。|；|\s|$))"
+)
+
+
+def _recover_secret_order_exclusions(
+    content: Any, text: object,
+) -> tuple[List[str], List[str]]:
+    """Recover explicit secrecy targets at the sole durable-order boundary.
+
+    Structured callers may omit an exclusion field, but an explicit ``瞒住``
+    clause in the order itself must survive every staging path.  Resolve names,
+    aliases, office types, and current office titles against the same content
+    registry that is used to snapshot the durable blacklist.
+    """
+    people: List[str] = []
+    offices: List[str] = []
+    characters = list(getattr(content, "characters", {}).values())
+    by_name = {
+        token: character.name
+        for character in characters
+        for token in [character.name, *(character.aliases or [])]
+        if token
+    }
+    office_types = {str(character.office_type).strip() for character in characters if character.office_type}
+    office_titles = {str(character.office).strip() for character in characters if character.office}
+    for clause in _SECRET_EXCLUSION_CLAUSE_RE.findall(str(text or "")):
+        for target in re.split(r"[、，,和与及]", clause):
+            target = target.strip("，。；、 ")
+            target = re.sub(r"(?:诸官|官员|诸司|诸人|上下|众人)$", "", target)
+            if not target or target in {"他们", "他", "她", "此人", "诸人"}:
+                continue
+            canonical_name = by_name.get(target)
+            if canonical_name:
+                people.append(canonical_name)
+            elif target in office_types or target in office_titles:
+                offices.append(target)
+    return list(dict.fromkeys(people)), list(dict.fromkeys(offices))
+
+
 class ProvinceFiscalTickOutcome(NamedTuple):
     region_id: str
     result: Any
@@ -10011,9 +10051,16 @@ class GameDB:
         ).fetchone()[0]
         if active_count >= 20:
             raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
-        raw_excluded_names = _snapshot_secret_order_people(self.content, excluded_names or [], [])
+        recovered_names, recovered_offices = _recover_secret_order_exclusions(
+            self.content, f"{title}\n{content}",
+        )
+        raw_excluded_names = _snapshot_secret_order_people(
+            self.content, [*(excluded_names or []), *recovered_names], [],
+        )
         excluded_offices = list(dict.fromkeys(
-            str(office).strip() for office in (excluded_offices or []) if str(office).strip()
+            str(office).strip()
+            for office in [*(excluded_offices or []), *recovered_offices]
+            if str(office).strip()
         ))
         # Institution-level secrecy is resolved at issuance.  The current
         # office/type is only a lookup key; retaining the matched people makes
