@@ -201,6 +201,26 @@ def test_chat_stream_sse_waits_for_sync_generator_in_executor(monkeypatch):
     assert "event: done" in first
 
 
+def test_stream_prompt_builder_internal_typeerror_is_not_retried_as_legacy_signature():
+    """签名兼容须在调用前判定，不能吞掉 production builder 内部 TypeError。"""
+    runtime, minister_name, _allow_finish, _settlement_attempting, _settlement = _runtime_for_stream_race()
+    calls = []
+
+    def prompt_builder(text, character, *, chat_turn_id=0):
+        calls.append((text, character, chat_turn_id))
+        raise TypeError("production prompt failure")
+
+    runtime.session._audience_prompt_for_message = prompt_builder
+
+    try:
+        runtime._chat_stream_payload(minister_name, "请奏", 7, {}, 1, lambda _delta: None)
+    except TypeError as exc:
+        assert str(exc) == "production prompt failure"
+    else:
+        raise AssertionError("prompt builder TypeError should propagate")
+    assert len(calls) == 1
+
+
 def test_streamed_secret_order_preserves_blacklist_through_commit_restore_transfer_and_disclosure(game):
     """Web tool capture must keep explicit secrecy exclusions through the full durable path."""
     db, state, content = game
