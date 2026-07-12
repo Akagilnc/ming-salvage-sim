@@ -496,9 +496,16 @@ async function runOpencodePongProbe(
         return { code: 0, stdout, stderr: "" };
       } catch (err) {
         if (err instanceof ExternalCallTimeoutError) throw err;
-        const msg = err instanceof Error ? err.message : String(err);
-        // Non-zero exit surfaces as code 1 + message so quota body scan still works.
-        return { code: 1, stdout: "", stderr: msg };
+        // Preserve stdout+stderr from the child (quota text may be stdout-only).
+        const e = err as Error & { stdout?: string; stderr?: string };
+        const stdout = typeof e.stdout === "string" ? e.stdout : "";
+        const stderr =
+          typeof e.stderr === "string" && e.stderr.length > 0
+            ? e.stderr
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        return { code: 1, stdout, stderr };
       }
     });
 

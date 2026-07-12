@@ -419,6 +419,23 @@ describe("#683 isQuotaLimitBody variants (via runPoolProbe)", () => {
     expect(result.kind).toBe("quota_limited");
     expect(fetches).toBe(1);
   });
+
+  it("#884 cmr r9: opencode exit≠0 with stdout-only 429 → quota_limited, no retry", async () => {
+    let runs = 0;
+    const result = await runPoolProbe("opencode-go", {
+      runCommand: async () => {
+        runs += 1;
+        // Production shape: non-zero exit, quota text only on stdout.
+        return {
+          code: 1,
+          stdout: "HTTP 429 rate limit — wait for reset",
+          stderr: "",
+        };
+      },
+    });
+    expect(result.kind).toBe("quota_limited");
+    expect(runs).toBe(1);
+  });
 });
 
 describe("#683 handleIdleThreshold (production composition)", () => {
