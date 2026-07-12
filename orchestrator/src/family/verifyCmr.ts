@@ -2316,9 +2316,16 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
+  // Three-channel findings count: prefer the constitutional `findings = x`
+  // sentinel (findingsCount) when present; else fall back to structured length.
+  // Live sidecar always sets findingsCount — treat 0 the same as "empty", not as
+  // "skip the thin not_converged branch" (r3 high: count=0 was falling through
+  // to recordCmrPassed).
+  const reportedFindingsCount =
+    cmrResult.output.findingsCount ?? cmrResult.output.findings?.length;
   if (
     !cmrResult.output.converged &&
-    cmrResult.output.findingsCount === undefined &&
+    (reportedFindingsCount === undefined || reportedFindingsCount === 0) &&
     (cmrResult.output.findings === undefined ||
       cmrResult.output.findings.length === 0)
   ) {
@@ -2394,9 +2401,35 @@ async function runIntegratedCmrPass(input: {
   // #875: early claimed-fixed / disposition coverage court demolished. Blocking
   // findings take the normal findings-count → coder-fix path regardless of
   // whether protected prior keys were "accounted for" in envelope prose.
+  if (
+    (reportedFindingsCount ?? 0) > 0 &&
+    (cmrResult.output.findings === undefined ||
+      cmrResult.output.findings.length === 0)
+  ) {
+    // Count channel is positive but structured findings are missing — cannot
+    // route coder-fix identities. Fail closed as outcome-protocol drift (not
+    // a claim/disposition court; not a silent pass).
+    const reason =
+      `integrated cmr ${pass} findings count channel reported ` +
+      `${reportedFindingsCount} but structured findings are missing`;
+    await persistFinalReviewRound("rejected", () =>
+      recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        stopSummary: contractDriftStopSummary({
+          summary: reason,
+          repairHint:
+            "emit structured findings matching the findings = x count, then rerun the family CMR gate",
+        }),
+      }),
+    );
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  }
   let cmrFindingClassification: CmrEnvelope | undefined;
   if (
-    (cmrResult.output.findingsCount ?? cmrResult.output.findings?.length ?? 0) > 0 &&
+    (reportedFindingsCount ?? 0) > 0 &&
     cmrResult.output.findings !== undefined
   ) {
     const priorDispositions = latestFamilyCmrDispositions(
@@ -2515,7 +2548,7 @@ async function runIntegratedCmrPass(input: {
   }
   if (
     !cmrResult.output.converged &&
-    cmrResult.output.findingsCount === undefined &&
+    (reportedFindingsCount === undefined || reportedFindingsCount === 0) &&
     (cmrFindingClassification === undefined ||
       (cmrFindingClassification.deferred.length === 0 &&
         cmrFindingClassification.dispositions.length === 0))
