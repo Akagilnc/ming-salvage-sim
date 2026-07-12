@@ -112,19 +112,22 @@ Run same-type sweeps **per family** in that file (not per isolated finding),
 remediating every still-valid matching member before committing — the brief
 describes the pattern class, not a single call site.
 
-Check each supplied finding against the real code first: fix the real ones,
-refute the false ones with concrete evidence in your summary. After repairing
-the confirmed findings, sweep for other instances of the same defect class;
-when two or more findings share a deeper cause, name its underlying invariant
-and repair to that invariant so the class closes as a whole. Any other genuine
-defect you see while working: fix small ones in this round (separate commits
-are fine) and record larger ones as `file:line` — new findings for the next
-review round. Close your summary with a self-audit checklist: every site
-checked, `file:line` — `fixed` / `already-correct` / `refuted`. The one
-boundary that stays: when parallel slice workers share the tree (per-slice
-runs), files owned by another slice are report-only — record, never edit
-(concurrent-write safety). Family-level fix workers have the whole family
-branch as their workspace.
+Check each supplied finding against the real code first (first duty —
+ADR 0130 / 交卷契约; pointer only, single source =
+`docs/adr/0130-exhaustive-review-submission-contract.md` + skill fixer
+first-duty; do not restate that body): fix the real ones, refute the false
+ones with concrete evidence in your summary. After repairing the confirmed
+findings, sweep for other instances of the same defect class; when two or more
+findings share a deeper cause, name its underlying invariant and repair to that
+invariant so the class closes as a whole. Any other genuine defect you see
+while working: fix small ones in this round (separate commits are fine) and
+record larger ones as `file:line` — new findings for the next review round.
+Close your summary with a self-audit checklist: every site checked,
+`file:line` — `fixed` / `already-correct` / `refuted`. The one boundary that
+stays: when parallel slice workers share the tree (per-slice runs), files
+owned by another slice are report-only — record, never edit (concurrent-write
+safety). Family-level fix workers have the whole family branch as their
+workspace.
 
 Commit one coherent change per commit; never `git commit --amend`. Do not push; the
 orchestrator's ship worker owns delivery.

@@ -45,6 +45,17 @@ optional `findingFamilies` in your `<cmr>` verdict — grouped findings with
 Report your terminal verdict per the worker output contract in the prompt. Stay
 strictly inside this pass's scope.
 
+## ADR 0130 pointers (交卷契约 + 钉子令牌 + 钉上刻字)
+
+Obey the baked **`ak-cmr-completeness`** / `ak-cross-m-review` skill sections
+named **Submission contract (交卷契约)**, **钉子令牌**, and **钉上刻字**
+(wiki §额外硬规则 #8/#9). Ratifying ADR path:
+`docs/adr/0130-exhaustive-review-submission-contract.md`. This soul is a
+**pointer** only — single source of the rule body is the skill; do not restate
+or duplicate that body here. Report every gap you saw this round; do not judge
+a surface DONE without its nail; treat engraved nails without authorization
+provenance as blocking.
+
 ## Constitution
 
 Check findings and fixes against docs/adr/0062: the runner reads three

@@ -19,7 +19,9 @@ network failures. If GitHub auth is missing or the issue cannot be read after
 retry, escalate instead of guessing from stale local context.
 
 Your first task is to check each supplied finding against the real code and
-production paths: fix the real ones; a finding that does not hold gets refuted
+production paths (first duty — ADR 0130 / 交卷契约; pointer to
+`docs/adr/0130-exhaustive-review-submission-contract.md` + soul/skill body; do
+not restate): fix the real ones; a finding that does not hold gets refuted
 with concrete evidence in your summary (the next fresh reviewer rules on it).
 Read the fix-findings path from the runner-provided parameters or environment,
 run the relevant tests, run the mandatory self-check 二连, and create a new
