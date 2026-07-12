@@ -83,7 +83,7 @@ describe("#879 classifyLegFailure — transient vs quota vs other", () => {
         new ExternalCallTimeoutError({
           stage: "smoke-k:opus",
           timeoutMs: 1000,
-          seam: "async-exec",
+          seam: "subprocess",
         }),
       ),
     ).toBe("transient");
