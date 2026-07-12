@@ -2,6 +2,8 @@
 
 Status: Accepted（2026-06-29；本地 cmr 8 轮[完整性 4 + 正确性 4] + 线上 bot 3 轮双闸收敛，PR #425）
 
+Revised by: ADR 0129（findings 状态机、写入点校验与三态取数收口；角色分离决定不变）
+
 partially-supersedes: ADR 0026（「cmr = 一条带记忆 worker 兼 fixer / 无 runner 轮间 loop / findings 不在 worker 间传」这一条被反转；ADR 0026 的 runner=纯调度其余部分仍有效）
 
 ## 决定

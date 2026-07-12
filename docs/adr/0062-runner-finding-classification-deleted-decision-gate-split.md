@@ -1,5 +1,7 @@
 Status: Accepted（2026-07-06：源于 #497/#498 实证与 #604；本地 kill-axis cmr + 线上 4-bot 收敛，PR #605 合入）
 
+Revised by: ADR 0129（findings 状态机与三态取数改由状态库定义；runner 纯调度边界不变）
+
 # 0062: 删除 runner 侧 finding 分类，失败 escalate 与人类决策门分家（回归 0026/0050，supersede #448/#449 路线）
 
 ## 决定
