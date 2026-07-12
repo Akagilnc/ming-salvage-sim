@@ -15,6 +15,7 @@ from ming_sim.models import Character
 from ming_sim.qualitative import safe_historical_text
 
 
+_INNER_COURT_ATTENDANT_OFFICES = frozenset({"信邸内官随驾", "御前近臣"})
 _IDENTITY_BANDS = ("几乎不染党色", "党色较淡", "党色不显", "党色较深", "党色极深")
 _LOYALTY_BANDS = ("未见深交", "略有隔膜", "尚可托付", "颇得倚重", "深受信任")
 
@@ -42,7 +43,19 @@ def is_inner_court_attendant(character: object) -> bool:
     # 内廷/司礼监是机构，不是御前唯一近臣位。读心权是由当前占据的
     # 槽位授予，而非职位描述中碰巧出现的词；例如「御前近臣候补」不能
     # 因包含槽名而取得旁人底账。名称可变，已登记的槽位标题不可泛化。
-    return office in {"信邸内官随驾", "御前近臣"}
+    return office in _INNER_COURT_ATTENDANT_OFFICES
+
+
+def current_inner_court_attendant_name(db: Any) -> str:
+    """返回当前唯一御前近臣位者；空缺或重位时不授权任何人读心。"""
+    if not hasattr(db, "conn"):
+        return ""
+    rows = db.conn.execute(
+        "SELECT name, office, office_type FROM characters "
+        "WHERE status='active' ORDER BY name"
+    ).fetchall()
+    eligible = [str(row["name"]) for row in rows if is_inner_court_attendant(row)]
+    return eligible[0] if len(eligible) == 1 else ""
 
 
 def intelligence_precision(target_factor: float = 1.0, channel_factor: float = 1.0) -> str:
