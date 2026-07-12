@@ -49,7 +49,10 @@ def test_qualitative_audience_text_rejects_compound_and_adverbial_raw_axes():
 
 
 def test_safe_historical_text_rejects_nearby_raw_axis_variants():
-    for injected in ("忠诚已达98分", "忠诚提高到98", "势力提升至70", "能力只有30分", "民心跌至20"):
+    for injected in (
+        "忠诚已达98分", "忠诚提高到98", "势力提升至70", "能力只有30分", "民心跌至20",
+        "忠诚骤降至20", "能力尚余30分", "势力已然达到70",
+    ):
         assert "已略去" in safe_historical_text(injected), injected
 
 
