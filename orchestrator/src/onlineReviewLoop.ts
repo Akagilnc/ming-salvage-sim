@@ -912,77 +912,28 @@ export function onlineReviewResumeHeadKeyFromLedger(
 }
 
 /**
- * Runner-owned recheck truth (#600 r26): round ≥2 verify is a post-fixer re-check
- * by construction. Worker omission is normalized; explicit contradiction fails closed.
+ * Runner-owned recheck truth (#600 r26 / #877): round ≥2 verify is a post-fixer
+ * re-check by construction. Worker `isRecheck` prose is forced to runner truth
+ * (routing plumbing) and never a fate-fork / contradiction kill.
  */
 export function enforceRunnerOwnedRecheck(
   verify: VerifyResult,
   onlineReviewRound: number,
-): VerifyResult | { readonly kind: "recheck_contradiction" } {
+): VerifyResult {
   const runnerRecheck = onlineReviewRound > 1;
-  if (verify.isRecheck === false && runnerRecheck) {
-    return { kind: "recheck_contradiction" };
-  }
-  if (verify.isRecheck === true && !runnerRecheck) {
-    return { kind: "recheck_contradiction" };
-  }
-  if (runnerRecheck) {
-    return { ...verify, isRecheck: true };
-  }
-  return verify;
+  return { ...verify, isRecheck: runnerRecheck };
 }
 
 /**
- * A post-fixer convergence is admissible only when the verifier explicitly
- * echoes the entire fix-marked identity set supplied in its landing (#743),
- * and that set has a complete one-to-one original-thread authorization.
- * This makes a bare `converged:true` fail closed instead of silently closing
- * findings the fixer merely claimed to have repaired.
- *
- * An empty rebuilt authorization set also fails closed on a post-fixer recheck
- * (resume with an all-empty marker / missing snapshot must not admit bare
- * converge). Round-1 non-recheck bare converge stays legal via the early return.
+ * #877: fix-marked identity echo is not a fate channel. Three-channel converge
+ * (`converged` + findings/decision) stands on its own — the runner does not
+ * audit whether the worker re-echoed landing fix-marked keys.
  */
 export function recheckConvergenceConfirmsFixMarkedKeys(
-  verify: VerifyResult,
-  landing: WorkerLandingPayload,
+  _verify: VerifyResult,
+  _landing: WorkerLandingPayload,
 ): boolean {
-  if (verify.isRecheck !== true || verify.converged !== true) return true;
-  const expected = landing.fixMarkedFindingIdentityKeys ?? [];
-  const expectedThreads = landing.fixMarkedFindingThreads ?? [];
-  const confirmed = verify.fixMarkedFindingIdentityKeys;
-  // Post-fixer recheck with no authorized identities is not a valid converge —
-  // empty rebuilds (legacy empty marker / missing S9) must not soft-admit.
-  if (expected.length === 0) return false;
-  if (confirmed === undefined) return false;
-  if (expected.length !== confirmed.length) return false;
-  const expectedKeys = new Set(expected);
-  const confirmedKeys = new Set(confirmed);
-  if (
-    expectedKeys.size !== expected.length ||
-    confirmedKeys.size !== confirmed.length ||
-    expectedKeys.size !== confirmedKeys.size
-  ) {
-    return false;
-  }
-  if (expectedThreads.length !== expectedKeys.size) return false;
-  const boundKeys = new Set<string>();
-  const boundThreads = new Set<string>();
-  for (const binding of expectedThreads) {
-    if (
-      !expectedKeys.has(binding.identityKey) ||
-      boundKeys.has(binding.identityKey) ||
-      boundThreads.has(binding.threadId)
-    ) {
-      return false;
-    }
-    boundKeys.add(binding.identityKey);
-    boundThreads.add(binding.threadId);
-  }
-  return (
-    boundKeys.size === expectedKeys.size &&
-    [...expectedKeys].every((key) => confirmedKeys.has(key) && boundKeys.has(key))
-  );
+  return true;
 }
 
 /** Family `shipped` ledger `ts` for the PR — round-1 freshness anchor (#600 r9). */
@@ -1569,41 +1520,15 @@ export async function runOnlineReviewLoopStage(
       }
       return decisionGateFromDispatchInfra(round, "verify", err);
     }
-    const recheckOutcome = enforceRunnerOwnedRecheck(verify, round);
-    if (recheckOutcome.kind === "recheck_contradiction") {
-      return {
-        ok: false,
-        terminalState: "decision_gate_raised",
-        round,
-        stopSummary: {
-          reason: "infra_failure",
-          summary:
-            "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
-          repairHint:
-            "omit isRecheck on round-1 verify; set isRecheck:true only on post-fixer re-check rounds",
-        },
-      };
-    }
-    verify = recheckOutcome;
+    // #877: isRecheck force-normalize is routing plumbing; fix-marked echo
+    // coverage court demolished (helper always admits three-channel converge).
+    verify = enforceRunnerOwnedRecheck(verify, round);
     if (verify.terminalState === "decision_gate_raised") {
       return {
         ok: false,
         terminalState: "decision_gate_raised",
         round,
         stopSummary: onlineReviewFixerNothingToFixStopSummary(),
-      };
-    }
-    if (!recheckConvergenceConfirmsFixMarkedKeys(verify, landing)) {
-      return {
-        ok: false,
-        terminalState: "decision_gate_raised",
-        round,
-        stopSummary: contractDriftStopSummary({
-          summary:
-            "post-fixer verify converged without confirming every fix-marked finding identity key",
-          repairHint:
-            "echo the landing fixMarkedFindingIdentityKeys exactly on a converged post-fixer recheck, or report unresolved findings",
-        }),
       };
     }
     // Pending CI only: re-poll — do not apply "all clear" side effects, do not fixer

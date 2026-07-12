@@ -47,7 +47,6 @@ import {
 } from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
 import {
-  adjudicatePriorClaimedFixedFindings,
   classifyFindings,
   findingIdentityKey,
 } from "./findings.js";
@@ -1772,90 +1771,33 @@ function replayS4AdjudicationState(
   let findingDispositions: FindingDisposition[] = [];
   const noProgressCounts = new Map<string, number>();
   let lastReviewerOutputForS4: StepOutput | undefined;
-  let lastReviewerStepForS4: StepId | undefined;
-  let lastCoderRepairEvidenceForS4: RepairEvidence | undefined;
-  let lastCoderActualRepairPathsForS4: ReadonlyArray<string> = [];
 
   for (const entry of ledger) {
     if (isBookkeepingEntry(entry)) {
       continue;
     }
-    if (entry.output?.kind === "coder") {
-      lastCoderRepairEvidenceForS4 = entry.output.repairEvidence;
-      lastCoderActualRepairPathsForS4 = entry.repairMovementPaths ?? [];
-    }
     if (entry.output?.kind === "reviewer") {
       if (!isStepId(entry.step)) continue;
       lastReviewerOutputForS4 = entry.output;
-      lastReviewerStepForS4 = entry.step;
       continue;
     }
     if (entry.step !== "S4" || lastReviewerOutputForS4?.kind !== "reviewer") {
       continue;
     }
 
+    // #877: findings-count channel only — disposition prose / still-active
+    // reopen / no-progress courts demolished. Prior keys absent from findings[]
+    // are closed by the three-channel envelope, not by runner adjudication.
     const classification = classifyFindings(
       lastReviewerOutputForS4.findings,
       findingDispositions,
     );
-    const reviewerBlocking = [...classification.blocking];
-    const reviewerBlockingIdentityKeys = reviewerBlocking.map(findingIdentityKey);
-    let blocking = [...classification.blocking];
-    let blockingIdentityKeys = blocking.map(findingIdentityKey);
+    const blocking = [...classification.blocking];
+    const blockingIdentityKeys = blocking.map(findingIdentityKey);
     findingDispositions = [
       ...(entry.findingDispositions ?? classification.dispositions),
     ];
-
-    if (
-      lastReviewerStepForS4 === "S6" &&
-      pendingBlockingFindingIdentityKeys.length > 0
-    ) {
-      const adjudication = adjudicatePriorClaimedFixedFindings({
-        priorFindings: pendingBlockingFindings,
-        priorIdentityKeys: pendingBlockingFindingIdentityKeys,
-        review: lastReviewerOutputForS4,
-      });
-      for (const key of adjudication.verifiedClosedIdentityKeys) {
-        noProgressCounts.delete(key);
-      }
-      const seenBlocking = new Set(blockingIdentityKeys);
-      for (const finding of adjudication.stillOpen) {
-        const key = findingIdentityKey(finding);
-        const previousFinding =
-          pendingBlockingFindings[
-            pendingBlockingFindingIdentityKeys.indexOf(key)
-          ] ?? finding;
-        const observedReviewerProgress = reviewerObservedProgress({
-          previousBlockingFindings: pendingBlockingFindings,
-          previousBlockingIdentityKeys: pendingBlockingFindingIdentityKeys,
-          currentBlockingFindings: reviewerBlocking,
-          currentBlockingIdentityKeys: reviewerBlockingIdentityKeys,
-          previousFinding,
-          previousIdentityKey: key,
-          previousNoProgressCount: noProgressCounts.get(key) ?? 0,
-        });
-        if (!seenBlocking.has(key)) {
-          blocking.push(finding);
-          blockingIdentityKeys.push(key);
-          seenBlocking.add(key);
-        }
-        if (
-          repairEvidenceMatchesKey(
-            lastCoderRepairEvidenceForS4,
-            lastCoderActualRepairPathsForS4,
-            finding,
-            key,
-            pendingBlockingFindings,
-            pendingBlockingFindingIdentityKeys,
-          ) ||
-          observedReviewerProgress
-        ) {
-          noProgressCounts.set(key, 0);
-        } else {
-          noProgressCounts.set(key, (noProgressCounts.get(key) ?? 0) + 1);
-        }
-      }
-    }
+    noProgressCounts.clear();
 
     const blockingKeys = new Set(blockingIdentityKeys);
     deferredFindings = deferredFindings.filter(
@@ -1871,11 +1813,6 @@ function replayS4AdjudicationState(
     }
     pendingBlockingFindings = blocking;
     pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
-    if (lastReviewerStepForS4 !== "S6") {
-      for (const key of blockingIdentityKeys) {
-        if (!noProgressCounts.has(key)) noProgressCounts.set(key, 0);
-      }
-    }
   }
 
   return {
@@ -3346,71 +3283,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     return { kind: "ok", record: mergeResult.record };
   }
 
+  /**
+   * #877: seed pending blocking from the findings-count channel only.
+   * Disposition prose / still-active reopen / no-progress courts demolished —
+   * return value is always empty (no runner no-progress escalate).
+   */
   function seedClassificationFromReviewerOutput(
     reviewerOutput: StepOutput | undefined,
-    afterFix: boolean,
+    _afterFix: boolean,
   ): string[] {
     if (reviewerOutput?.kind !== "reviewer") return [];
     const classification = classifyFindings(
       reviewerOutput.findings,
       findingDispositions,
     );
-    const reviewerBlocking = [...classification.blocking];
-    const reviewerBlockingIdentityKeys = reviewerBlocking.map(findingIdentityKey);
-    let blocking = [...classification.blocking];
-    let blockingIdentityKeys = blocking.map(findingIdentityKey);
+    const blocking = [...classification.blocking];
+    const blockingIdentityKeys = blocking.map(findingIdentityKey);
     findingDispositions = [...classification.dispositions];
-    const noProgressIdentityKeys: string[] = [];
-
-    if (afterFix && pendingBlockingFindingIdentityKeys.length > 0) {
-      const adjudication = adjudicatePriorClaimedFixedFindings({
-        priorFindings: pendingBlockingFindings,
-        priorIdentityKeys: pendingBlockingFindingIdentityKeys,
-        review: reviewerOutput,
-      });
-      for (const key of adjudication.verifiedClosedIdentityKeys) {
-        noProgressByFindingIdentityKey.delete(key);
-      }
-      const seenBlocking = new Set(blockingIdentityKeys);
-      for (const finding of adjudication.stillOpen) {
-        const key = findingIdentityKey(finding);
-        const previousFinding =
-          pendingBlockingFindings[
-            pendingBlockingFindingIdentityKeys.indexOf(key)
-          ] ?? finding;
-        const observedReviewerProgress = reviewerObservedProgress({
-          previousBlockingFindings: pendingBlockingFindings,
-          previousBlockingIdentityKeys: pendingBlockingFindingIdentityKeys,
-          currentBlockingFindings: reviewerBlocking,
-          currentBlockingIdentityKeys: reviewerBlockingIdentityKeys,
-          previousFinding,
-          previousIdentityKey: key,
-          previousNoProgressCount: noProgressByFindingIdentityKey.get(key) ?? 0,
-        });
-        if (!seenBlocking.has(key)) {
-          blocking.push(finding);
-          blockingIdentityKeys.push(key);
-          seenBlocking.add(key);
-        }
-        if (
-          repairEvidenceMatchesKey(
-            lastCoderRepairEvidence,
-            lastCoderActualRepairPaths,
-            finding,
-            key,
-            pendingBlockingFindings,
-            pendingBlockingFindingIdentityKeys,
-          ) ||
-          observedReviewerProgress
-        ) {
-          noProgressByFindingIdentityKey.set(key, 0);
-        } else {
-          const count = (noProgressByFindingIdentityKey.get(key) ?? 0) + 1;
-          noProgressByFindingIdentityKey.set(key, count);
-          if (count >= 2) noProgressIdentityKeys.push(key);
-        }
-      }
-    }
+    noProgressByFindingIdentityKey.clear();
 
     const blockingKeys = new Set(blockingIdentityKeys);
     deferredFindings = deferredFindings.filter(
@@ -3426,14 +3316,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     pendingBlockingFindings = blocking;
     pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
-    if (!afterFix) {
-      for (const key of blockingIdentityKeys) {
-        if (!noProgressByFindingIdentityKey.has(key)) {
-          noProgressByFindingIdentityKey.set(key, 0);
-        }
-      }
-    }
-    return noProgressIdentityKeys;
+    return [];
   }
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
@@ -5264,23 +5147,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S4": {
-        let noProgressIdentityKeys: string[];
-        try {
-          noProgressIdentityKeys = seedClassificationFromReviewerOutput(
-            lastOutput,
-            lastReviewerStepId === "S6",
-          );
-        } catch (err) {
-          return await errorTermination("S4", err);
-        }
-        if (noProgressIdentityKeys.length > 0) {
-          return await escalateTermination("S4", {
-            reason: "review/fix loop made no progress",
-            diagnosis:
-              "Fresh re-review reported the same claimed-fixed finding still active " +
-              `after repeated fix attempts: ${noProgressIdentityKeys.join(", ")}`,
-          });
-        }
+        // #877: findings-count channel only — no disposition/no-progress court.
+        seedClassificationFromReviewerOutput(
+          lastOutput,
+          lastReviewerStepId === "S6",
+        );
         break;
       }
 
@@ -6194,29 +6065,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               result.output,
               onlineReviewLanding?.onlineReviewSnapshot,
             );
-            const recheckOutcome = enforceRunnerOwnedRecheck(
+            // #877: isRecheck force-normalize is routing plumbing; fix-marked
+            // echo coverage court demolished (always admits).
+            verifyOutput = enforceRunnerOwnedRecheck(
               verifyOutput,
               onlineReviewRound,
             );
-            if (recheckOutcome.kind === "recheck_contradiction") {
-              return await errorTermination(
-                reviewStep,
-                new Error(
-                  "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
-                ),
-                {
-                  output: verifyOutput,
-                  stopSummary: {
-                    reason: "infra_failure",
-                    summary:
-                      "online review verify worker contradicted runner-owned recheck truth (isRecheck)",
-                    repairHint:
-                      "omit isRecheck on round-1 verify; set isRecheck:true only on post-fixer re-check rounds",
-                  },
-                },
-              );
-            }
-            verifyOutput = recheckOutcome;
             if (
               onlineReviewRound > 1 &&
               onlineReviewLanding !== undefined &&
@@ -6225,6 +6079,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 onlineReviewLanding,
               )
             ) {
+              // Unreachable after #877 (helper always returns true); kept as a
+              // three-channel guard rail if a future caller reintroduces checks.
               return await errorTermination(
                 reviewStep,
                 new Error(

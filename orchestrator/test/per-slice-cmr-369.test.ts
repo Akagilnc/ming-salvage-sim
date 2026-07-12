@@ -383,7 +383,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ).toEqual({ kind: "next", step: "S5" });
   });
 
-  it("fails closed when a fresh re-review omits disposition for a prior claimed-fixed finding", async () => {
+  it("#877: S6 empty findings without disposition ships (disposition court demolished)", async () => {
     const backend = new RetryReviewBackend([
       { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
       { kind: "completed", output: { kind: "reviewer", findings: [] } },
@@ -391,18 +391,20 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S4");
-    expect(result.errorPackage?.reason).toMatch(/omitted required disposition/i);
+    expect(result.status).toBe("success");
+    expect(result.errorPackage?.reason ?? "").not.toMatch(
+      /omitted required disposition/i,
+    );
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:reviewer",
       "S5:coder",
       "S6:reviewer",
+      "S7:ship",
     ]);
   });
 
-  it("fails closed when prior claimed-fixed finding keys and payloads drift", () => {
+  it("#877: prior key/payload drift never throws (disposition court demolished)", () => {
     const orphanKey = "correctness|src/runner.ts:404|missing finding payload";
 
     expect(() =>
@@ -417,7 +419,20 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           ],
         },
       }),
-    ).toThrow(/finding\/key count mismatch/);
+    ).not.toThrow();
+    const adjudication = adjudicatePriorClaimedFixedFindings({
+      priorFindings: [],
+      priorIdentityKeys: [orphanKey],
+      review: {
+        kind: "reviewer",
+        findings: [],
+        priorFindingDispositions: [
+          { identityKey: orphanKey, status: "still-active" },
+        ],
+      },
+    });
+    expect(adjudication.stillOpen).toEqual([]);
+    expect(adjudication.verifiedClosedIdentityKeys).toEqual([orphanKey]);
   });
 
   it("ships only after the fresh re-review explicitly verifies a claimed-fixed finding closed", async () => {
@@ -557,7 +572,10 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(firstS4Write?.findingDispositions).toEqual([]);
   });
 
-  it("bounds repeated still-active findings instead of looping forever", async () => {
+  it("#877: repeated still-active disposition prose no longer no-progress-kills; findings-count continues", async () => {
+    // Pre-#877: two still-active rounds without progress → escalate at S4.
+    // Post-#877: no-progress court demolished; loop follows findings count until
+    // the scripted backend falls through to empty findings and ships.
     const backend = new RetryReviewBackend([
       { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
       {
@@ -584,9 +602,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(result.errorPackage?.failedStep).toBe("S4");
-    expect(result.errorPackage?.reason).toMatch(/no progress/i);
+    expect(result.status).toBe("success");
+    expect(result.errorPackage?.reason ?? "").not.toMatch(/no progress/i);
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:reviewer",
@@ -594,14 +611,10 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
     ]);
-    expect(backend.ledgerWrites.at(-1)).toEqual(
-      expect.objectContaining({
-        step: "S8",
-        handoffStatus: "escalate",
-        escalationKind: "decision",
-      }),
-    );
   });
 
   it("requires observable scope-local repair evidence before counting a still-active round as progress", async () => {
@@ -887,7 +900,9 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
-  it("restores resume repair movement paths before judging still-active no-progress", async () => {
+  it("#877: empty S6 still-active disposition on resume closes via findings-count (no reopen court)", async () => {
+    // Pre-#877: still-active disposition reopened priors → S5 fix loop.
+    // Post-#877: findings=[] closes; resume after S5 ships without reopening.
     const resumeState: ResumeStateFixture = {
       worktree: WORKTREE,
       stateDir: "/resident/worktrees/.ledger-427",
@@ -940,16 +955,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             ],
           },
         },
-        {
-          kind: "completed",
-          output: {
-            kind: "reviewer",
-            findings: [],
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "verified-closed" },
-            ],
-          },
-        },
       ],
       resumeState,
     );
@@ -957,13 +962,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual([
-      "S6:reviewer",
-      "S5:coder",
-      "S6:reviewer",
-      "S7:ship",
-
-    ]);
+    expect(backend.dispatched).toEqual(["S6:reviewer", "S7:ship"]);
   });
 
   it.each([
@@ -1072,8 +1071,9 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(result.stopSummary.reason).toBe("same_module_still_red");
+    // #877: no-progress court demolished; findings-count continues until empty fallback ships.
+    expect(result.status).toBe("success");
+    expect(result.stopSummary.reason).not.toBe("same_module_still_red");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:reviewer",
@@ -1081,6 +1081,9 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
     ]);
   });
 
@@ -1139,8 +1142,10 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(result.stopSummary.reason).toBe("same_module_still_red");
+    // #877: omitted still-active disposition prose does not reopen or no-progress-kill.
+    // Secondary re-emitted findings keep the fix loop via findings-count until empty.
+    expect(result.status).toBe("success");
+    expect(result.stopSummary.reason).not.toBe("same_module_still_red");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:reviewer",
@@ -1148,6 +1153,9 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
     ]);
   });
 
@@ -2147,7 +2155,7 @@ describe("#369 runner resume/retry review fixes", () => {
     ]);
   });
 
-  it("preserves S6 adjudication requirements when resuming into S4", async () => {
+  it("#877: resume into S4 after empty S6 ships without disposition court", async () => {
     const finding: Finding = {
       severity: "high",
       category: "Correctness",
@@ -2173,13 +2181,14 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S4");
-    expect(result.errorPackage?.reason).toMatch(/omitted required disposition/i);
-    expect(backend.dispatched).toEqual([]);
+    expect(result.status).toBe("success");
+    expect(result.errorPackage?.reason ?? "").not.toMatch(
+      /omitted required disposition/i,
+    );
+    expect(backend.dispatched).toEqual(["S7:ship"]);
   });
 
-  it("routes a persisted S4 after still-active S6 back to S5 on resume", async () => {
+  it("#877: persisted S4 after empty still-active S6 ships (no disposition reopen)", async () => {
     const finding: Finding = {
       severity: "high",
       category: "Correctness",
@@ -2212,33 +2221,12 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S4" },
       ],
     };
-    const backend = new RetryReviewBackend(
-      [
-        {
-          kind: "completed",
-          output: {
-            kind: "reviewer",
-            findings: [],
-            priorFindingDispositions: [
-              { identityKey: key, status: "verified-closed" },
-            ],
-          },
-        },
-      ],
-      resumeState,
-    );
+    const backend = new RetryReviewBackend([], resumeState);
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual([
-      "S5:coder",
-      "S6:reviewer",
-      "S7:ship",
-
-    ]);
-    expect(backend.landings[0]?.blockingFindings).toEqual([finding]);
-    expect(backend.ctxs[0]?.blockingFindingIdentityKeys).toEqual([key]);
+    expect(backend.dispatched).toEqual(["S7:ship"]);
   });
 
   it("replays persisted S4 finding dispositions on resume", async () => {
@@ -2787,7 +2775,7 @@ describe("#369 finding identity and classification", () => {
     expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
   });
 
-  it("keeps high prior claimed-fixed findings open even with accepted_suppressed disposition", () => {
+  it("#877: high prior keys absent from findings[] close via findings-count (disposition prose ignored)", () => {
     const highFinding: Finding = {
       ...finding,
       severity: "high",
@@ -2823,11 +2811,11 @@ describe("#369 finding identity and classification", () => {
       },
     });
 
-    expect(adjudication.stillOpen).toEqual([highFinding]);
-    expect(adjudication.verifiedClosedIdentityKeys).toEqual([]);
+    expect(adjudication.stillOpen).toEqual([]);
+    expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
   });
 
-  it("does not treat reviewer-created accepted_suppressed prior dispositions as terminal closure", () => {
+  it("#877: reviewer-created accepted_suppressed disposition prose does not reopen findings[]=empty", () => {
     const key = findingIdentityKey(finding);
 
     const adjudication = adjudicatePriorClaimedFixedFindings({
@@ -2849,8 +2837,8 @@ describe("#369 finding identity and classification", () => {
       },
     });
 
-    expect(adjudication.stillOpen).toEqual([finding]);
-    expect(adjudication.verifiedClosedIdentityKeys).toEqual([]);
+    expect(adjudication.stillOpen).toEqual([]);
+    expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
   });
 
   it("requires accepted_suppressed prior dispositions to carry the suppression reason", () => {

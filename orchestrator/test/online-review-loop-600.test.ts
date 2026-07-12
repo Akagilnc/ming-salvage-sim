@@ -1013,14 +1013,14 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toBe(true);
   });
 
-  it("rejects contradictory converged:true with fix-marked findings", () => {
+  it("#877: converged:true with fix-marked keys is type-valid (content court demolished)", () => {
     expect(
       isValidVerifyResult({
         kind: "verify",
         converged: true,
         fixMarkedFindingIdentityKeys: ["t:1"],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("#743: accepts an explicit fix-marked confirmation set only on a recheck", () => {
@@ -1034,19 +1034,19 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toBe(true);
   });
 
-  it("#743 R6: empty authorization on a post-fixer recheck rejects bare converge", () => {
+  it("#877: empty authorization on a post-fixer recheck admits bare converge (echo court demolished)", () => {
     expect(
       recheckConvergenceConfirmsFixMarkedKeys(
         { kind: "verify", converged: true, isRecheck: true },
         { fixMarkedFindingIdentityKeys: [], fixMarkedFindingThreads: [] },
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       recheckConvergenceConfirmsFixMarkedKeys(
         { kind: "verify", converged: true, isRecheck: true },
         {},
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("#743 R6: round-1 non-recheck bare converge stays legal", () => {
@@ -1058,7 +1058,7 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toBe(true);
   });
 
-  it("pin r24: rejects contradictory converged:false when fixMarked keys disagree with dispositions", () => {
+  it("#877 pin r24: disposition↔fixMarked set mismatch is type-valid (content court demolished)", () => {
     expect(
       isValidVerifyResult({
         kind: "verify",
@@ -1068,10 +1068,10 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
         ],
         fixMarkedFindingIdentityKeys: ["t:1"],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("pin r25: rejects empty fixMarked with fix-action dispositions (set equality)", () => {
+  it("#877 pin r25: empty fixMarked with fix-action dispositions is type-valid", () => {
     expect(
       isValidVerifyResult({
         kind: "verify",
@@ -1081,7 +1081,7 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
         ],
         fixMarkedFindingIdentityKeys: [],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("pin r25: accepts equal empty fixMarked and no fix dispositions", () => {
@@ -5200,13 +5200,13 @@ describe("#600 r26 runner-owned isRecheck", () => {
     expect(normalized).toEqual({ kind: "verify", converged: true, isRecheck: true });
   });
 
-  it("round ≥2 with explicit isRecheck:false fails closed", () => {
+  it("#877: round ≥2 with explicit isRecheck:false force-normalizes (no contradiction kill)", () => {
     expect(
       enforceRunnerOwnedRecheck(
         { kind: "verify", converged: true, isRecheck: false },
         2,
       ),
-    ).toEqual({ kind: "recheck_contradiction" });
+    ).toEqual({ kind: "verify", converged: true, isRecheck: true });
   });
 
   it("pin r26: stage post-fixer verify omitting isRecheck still applies fixing SHA", async () => {
@@ -5330,11 +5330,12 @@ describe("#600 r26 runner-owned isRecheck", () => {
     expect(recheckLanding?.fixMarkedFindingThreads).toEqual([
       { identityKey: expectedKey, threadId: "1" },
     ]);
+    // #877: bare post-fixer converge without echoing fix-marked keys ships —
+    // echo coverage court demolished.
     expect(result).toEqual({
-      ok: false,
-      terminalState: "decision_gate_raised",
+      ok: true,
+      terminalState: "mergeable",
       round: 2,
-      stopSummary: expect.objectContaining({ reason: "contract_drift" }),
     });
   });
 });
@@ -6636,10 +6637,9 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
         issueNumber: 600,
         backend: new RebuildGuardBackend(),
       });
-      expect(result.status).toBe("error");
-      expect(result.stopSummary).toEqual(
-        expect.objectContaining({ reason: "contract_drift" }),
-      );
+      // #877: bare converge without fix-marked echo no longer contract_drift.
+      expect(result.status).toBe("success");
+      expect(result.stopSummary?.reason).not.toBe("contract_drift");
     } finally {
       if (prev === undefined) delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
       else process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
@@ -7146,11 +7146,12 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
+      // #877: legacy key-only marker without thread authorization survives —
+      // fix-marked echo court demolished.
       expect(result).toEqual({
-        ok: false,
-        terminalState: "decision_gate_raised",
+        ok: true,
+        terminalState: "mergeable",
         round: 2,
-        stopSummary: expect.objectContaining({ reason: "contract_drift" }),
       });
       expect(backend.verifyRounds).toEqual([2]);
       expect(backend.verifyLandings[0]?.fixMarkedFindingIdentityKeys).toEqual([
@@ -7166,7 +7167,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("#743 R6: family resume fails closed when an all-empty marker admits bare converge", async () => {
+  it("#877: family resume admits bare converge when all-empty marker (echo court demolished)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     const fixSha = "fixsha2222222222222222222222222222222222";
@@ -7215,10 +7216,9 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ship: offlineShip,
       });
       expect(result).toEqual({
-        ok: false,
-        terminalState: "decision_gate_raised",
+        ok: true,
+        terminalState: "mergeable",
         round: 2,
-        stopSummary: expect.objectContaining({ reason: "contract_drift" }),
       });
       expect(backend.verifyLandings[0]?.fixMarkedFindingIdentityKeys).toEqual([]);
       expect(backend.verifyLandings[0]?.fixMarkedFindingThreads).toEqual([]);
