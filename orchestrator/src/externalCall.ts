@@ -19,6 +19,19 @@ export const DEFAULT_PROVIDER_TIMEOUT_MS = 90_000;
 export const DEFAULT_SUBPROCESS_TIMEOUT_MS = 120_000;
 
 /**
+ * Effective subprocess wall budget. Under vitest, clamp hard so a real-network
+ * hang cannot burn minutes of retry budget in unit tests (production stays 120s).
+ */
+export function effectiveSubprocessTimeoutMs(
+  requested: number = DEFAULT_SUBPROCESS_TIMEOUT_MS,
+): number {
+  if (process.env.VITEST === "true") {
+    return Math.min(requested, 2_000);
+  }
+  return requested;
+}
+
+/**
  * Total attempts for a transient external failure: 1 initial + 2 retries
  * (matches the #879 / S5 "瞬断重试 ×2" contract).
  */
@@ -202,7 +215,9 @@ export function execFileWithTimeout(
   args: readonly string[],
   opts: ExecFileTimeoutOptions,
 ): string {
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS;
+  const timeoutMs = effectiveSubprocessTimeoutMs(
+    opts.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS,
+  );
   try {
     // No stdin input → ignore stdin so git/gh never hang waiting on the pipe.
     const hasInput = opts.input !== undefined;
@@ -239,7 +254,9 @@ export function execFileAsyncWithTimeout(
   args: readonly string[],
   opts: ExecFileTimeoutOptions,
 ): Promise<string> {
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS;
+  const timeoutMs = effectiveSubprocessTimeoutMs(
+    opts.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS,
+  );
   const hasInput = opts.input !== undefined;
   return new Promise<string>((resolve, reject) => {
     const child = execFile(
@@ -391,10 +408,16 @@ export function shWithClock(
     () =>
       execFileWithTimeout(file, [...args], {
         stage,
-        timeoutMs: opts?.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS,
+        timeoutMs: effectiveSubprocessTimeoutMs(
+          opts?.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS,
+        ),
         cwd: opts?.cwd,
       }).trim(),
-    { record: defaultExternalCallRecorder },
+    {
+      // Vitest: no retry backoff burn on intentional fixture failures.
+      maxAttempts: process.env.VITEST === "true" ? 1 : EXTERNAL_CALL_MAX_ATTEMPTS,
+      record: defaultExternalCallRecorder,
+    },
   );
 }
 
