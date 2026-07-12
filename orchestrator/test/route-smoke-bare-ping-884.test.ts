@@ -137,39 +137,6 @@ class BarePingBackend extends RealBackend {
   }
 }
 
-describe("#884 smoke uniqueness is per model×pipe entry (not bare slug)", () => {
-  it("smokes each route entry key separately so pool-targeted pipes are not alias-passed", async () => {
-    const route = resolveRouteModels("normal", {});
-    // Force two entries that share a slug (common when coder and coderFix match).
-    const entries = routeSmokeEntries(route);
-    const bySlug = new Map<string, Array<(typeof entries)[number]>>();
-    for (const e of entries) {
-      const list = bySlug.get(e.slug) ?? [];
-      list.push(e);
-      bySlug.set(e.slug, list);
-    }
-    const shared = [...bySlug.values()].find((list) => list.length > 1);
-    // When the normal route has shared slugs, each key must be executed.
-    if (shared !== undefined) {
-      const home = tempHome();
-      const backend = new BarePingBackend(home, async (call) => call.nonce);
-      const smoked = await backend.smokeModelRoute(route);
-      const sharedSlug = shared[0]!.slug;
-      const pingsForSlug = backend.pingCalls.filter((c) => c.slug === sharedSlug);
-      expect(pingsForSlug.length).toBe(shared.length);
-      for (const e of shared) {
-        expect(smoked.smoke[e.key]?.state).toBe("passed");
-      }
-    } else {
-      // Route with all-distinct slugs: still one ping per entry key.
-      const home = tempHome();
-      const backend = new BarePingBackend(home, async (c) => c.nonce);
-      await backend.smokeModelRoute(route);
-      expect(backend.pingCalls.length).toBe(entries.length);
-    }
-  });
-});
-
 describe("#884 bare-ping pure helpers", () => {
   it("builds a nonce-echo prompt from the versioned route-smoke template", () => {
     const template = loadBarePingPromptTemplate(promptsDir);
@@ -202,8 +169,13 @@ describe("#884 bare-ping pure helpers", () => {
     expect(barePingArgv("grok", "grok-4.5", prompt)).toMatchObject({
       file: "grok",
     });
+    // Sandcastle uses standalone `agent` binary for the cursor provider.
+    expect(barePingArgv("cursor", "grok-4.5", prompt)).toMatchObject({
+      file: "agent",
+      args: expect.arrayContaining(["-p", prompt]),
+    });
     // Never references docker / sandcastle / worktree plumbing.
-    for (const p of ["codex", "claudeCode", "opencode", "grok"] as const) {
+    for (const p of ["codex", "claudeCode", "opencode", "grok", "cursor"] as const) {
       const built = barePingArgv(p, "m", prompt);
       expect(JSON.stringify(built)).not.toMatch(/docker|sandbox|worktree/i);
     }
@@ -223,8 +195,8 @@ describe("#884 bare-ping production smoke", () => {
       return `ack ${call.nonce}`;
     });
     const route = resolveRouteModels("normal", {});
-    // #884: smoke uniqueness is per route entry key (model×pipe / role), not bare slug.
-    const unique = new Set(routeSmokeEntries(route).map((e) => e.key)).size;
+    // Owner "六路": unique by model slug (shared roles fan out one status).
+    const unique = new Set(routeSmokeEntries(route).map((e) => e.slug)).size;
 
     const smoked = await backend.smokeModelRoute(route);
 

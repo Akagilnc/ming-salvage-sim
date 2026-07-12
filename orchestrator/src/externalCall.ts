@@ -400,9 +400,20 @@ export function shWithClock(
     readonly stage?: string;
     readonly cwd?: string;
     readonly timeoutMs?: number;
+    /**
+     * When false, do not transient-retry (mutating gh/git must be exactly-once
+     * per ADR 0062 — a lost response must not re-fire DELETE/close).
+     * Default true for read-ish ops.
+     */
+    readonly retry?: boolean;
   },
 ): string {
   const stage = opts?.stage ?? `subprocess:${file}`;
+  const allowRetry = opts?.retry !== false;
+  const maxAttempts =
+    process.env.VITEST === "true" || !allowRetry
+      ? 1
+      : EXTERNAL_CALL_MAX_ATTEMPTS;
   return withExternalCallRetrySync(
     stage,
     () =>
@@ -414,8 +425,7 @@ export function shWithClock(
         cwd: opts?.cwd,
       }).trim(),
     {
-      // Vitest: no retry backoff burn on intentional fixture failures.
-      maxAttempts: process.env.VITEST === "true" ? 1 : EXTERNAL_CALL_MAX_ATTEMPTS,
+      maxAttempts,
       record: defaultExternalCallRecorder,
     },
   );

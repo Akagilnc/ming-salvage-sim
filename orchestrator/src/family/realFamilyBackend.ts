@@ -1400,7 +1400,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (spec.kind === "cleanup") {
       if (landing?.cleanupDispatch !== undefined) {
         const ghSh: Sh = (file, args) =>
-          shWithClock(file, args, { stage: `dispatch:${file}` });
+          shWithClock(file, args, { stage: `dispatch:${file}`, retry: false });
         try {
           const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
           return { kind: "completed", output };

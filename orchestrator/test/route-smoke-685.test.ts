@@ -426,8 +426,8 @@ describe("#685 route tool smoke", () => {
     const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
     const home = mkdtempSync(join(tmpdir(), "route-smoke-production-"));
     const route = resolveRouteModels("normal", {});
-    // #884: one bare-ping per route entry key (model×pipe / role), not bare slug.
-    const smokeRunCount = new Set(routeSmokeEntries(route).map(({ key }) => key)).size;
+    // #884: one bare-ping per unique model slug ("六路").
+    const smokeRunCount = new Set(routeSmokeEntries(route).map(({ slug }) => slug)).size;
     try {
       const backend = productionSmokeBackend(home);
 

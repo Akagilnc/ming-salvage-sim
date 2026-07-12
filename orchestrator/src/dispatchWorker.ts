@@ -568,8 +568,9 @@ export async function legacyDispatchWorker(
   // pr_merged; offline/test without landing keeps the skeleton stub.
   if (spec.kind === "cleanup") {
     if (landing?.cleanupDispatch !== undefined) {
+      // Mutations (issue close / DELETE) must be exactly-once — no transient retry.
       const ghSh: Sh = (file, args) =>
-        shWithClock(file, args, { stage: `dispatch:${file}` });
+        shWithClock(file, args, { stage: `dispatch:${file}`, retry: false });
       try {
         const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
         return { kind: "completed", output };

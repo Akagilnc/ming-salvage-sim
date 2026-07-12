@@ -35,11 +35,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  execFileWithTimeout,
-  withExternalCallRetrySync,
-  DEFAULT_SUBPROCESS_TIMEOUT_MS,
-} from "./externalCall.js";
+import { shWithClock } from "./externalCall.js";
 import { RealBackend, type RealBackendOptions } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
 import {
@@ -386,15 +382,8 @@ function familyDiffFiles(
  */
 export type Sh = (file: string, args: string[]) => string;
 
-const defaultSh: Sh = (file, args) => {
-  const stage = `admission:${file}`;
-  return withExternalCallRetrySync(stage, () =>
-    execFileWithTimeout(file, args, {
-      stage,
-      timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
-    }).trim(),
-  );
-};
+const defaultSh: Sh = (file, args) =>
+  shWithClock(file, args, { stage: `admission:${file}` });
 
 /**
  * Read the epic's children (native sub-issues + each child's blocked_by) from
@@ -778,9 +767,8 @@ export async function runFamilyDriver(
     new RealFamilyBackend(familyBackendOptions);
 
   // 6. Assemble the run input + the resume seams, and run the spine.
-  // reconcile is entered inside runFamily on re-entry; mark the handoff here so
-  // a hang between driver assembly and spine entry is still attributable.
-  logDriverStage("reconcile", `family base ${options.familyBase}`);
+  // reconcile stage is logged inside runFamily immediately before the real
+  // reconcile work (not here) so a hang after smoke-k is still attributable.
   const input: FamilyRunInput = {
     epic,
     familyBackend,

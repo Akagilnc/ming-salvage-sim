@@ -19,6 +19,7 @@ import type { StepId } from "./types.js";
 import {
   ExternalCallExhaustedError,
   ExternalCallTimeoutError,
+  classifyExternalCallFailure,
   defaultExternalCallRecorder,
   execFileAsyncWithTimeout,
   withExternalCallRetry,
@@ -514,8 +515,12 @@ async function runOpencodePongProbe(
           };
         }
         if (result.code !== 0) {
-          // Treat exit non-zero as durable probe error (not auto-transient)
-          // unless the body looks like quota (handled above).
+          // Transient network/5xx must throw so withExternalCallRetry retries ×2.
+          if (classifyExternalCallFailure(combined) === "transient") {
+            throw new Error(
+              `opencode PONG transient exit ${result.code}: ${combined.slice(0, 200)}`,
+            );
+          }
           return {
             kind: "error" as const,
             cause: `opencode PONG exit ${result.code}: ${combined.slice(0, 200)}`,
