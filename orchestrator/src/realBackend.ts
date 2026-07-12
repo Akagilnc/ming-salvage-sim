@@ -109,6 +109,7 @@ import {
   smokeRouteModels,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import { withLegTransientRetry } from "./legTransientRetry.js";
 import type { CoderSelfReportDiscrepancy } from "./types.js";
 
 export function routeSmokeToolCallIsEchoOk(event: {
@@ -2289,58 +2290,73 @@ export class RealBackend implements Backend {
     const idleTimeoutSeconds = resolveRouteSmokeIdleTimeoutSeconds(
       process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
     );
+    // #879 / #861 D: each model×pipe availability probe is a "leg" at this
+    // backend encapsulation. Transient transport blips (reset/5xx) retry ×2
+    // before the smoke is recorded failed (and optional legs degrade); 429 /
+    // quota never retries — same classifier as CMR leg disposition.
     const smoked = await smokeRouteModels(route, async (entry) => {
-      let sawToolCallEchoOk = false;
       const entryPool = entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
       const resolved = resolveModelSlugForPool(entry.slug, entryPool);
       const provider = resolved.provider;
       const auth = this.mountAuth(this.opts.runKey);
-      const nonce = randomUUID();
-      const nonceFile = `.route-smoke-${nonce}.nonce`;
-      const noncePath = join(this.workingRepo, nonceFile);
-      const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
       try {
-        this.assertProviderAuth(entry.slug, entryPool, auth.providerAuth);
-        rmSync(noncePath, { force: true });
-        const result = await sc.run({
-          agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key }), entryPool),
-          sandbox: this.routeSmokeSandbox(auth),
-          cwd: this.workingRepo,
-          promptFile: join(this.opts.promptsDir, "route-smoke.md"),
-          promptArgs: { NONCE: nonce, NONCE_FILE: nonceFile },
-          maxIterations: 1,
-          idleTimeoutSeconds,
-          completionSignal: "ROUTE_SMOKE_COMPLETE",
-          logging: {
-            type: "file",
-            path: join(logDir, "run.log"),
-            onAgentStreamEvent: (event) => {
-              if (routeSmokeToolCallIsEchoOk(event)) {
-                sawToolCallEchoOk = true;
-              }
-            },
-          },
-        });
-        let nonceContents: string | undefined;
-        try {
-          nonceContents = readFileSync(noncePath, "utf8");
-        } catch {
-          nonceContents = undefined;
-        }
-        const bashOk = routeSmokeBashEvidenceSatisfied({
-          provider,
-          sawToolCallEchoOk,
-          sawNonceFile: routeSmokeNonceFileEvidence(nonceContents, nonce),
-        });
-        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !bashOk) {
-          throw new Error(
-            `model did not complete an observable bash smoke for ${entry.slug}`,
+        return await withLegTransientRetry(async () => {
+          let sawToolCallEchoOk = false;
+          const nonce = randomUUID();
+          const nonceFile = `.route-smoke-${nonce}.nonce`;
+          const noncePath = join(this.workingRepo, nonceFile);
+          const logDir = mkdtempSync(
+            join(this.opts.home ?? homedir(), "route-smoke-"),
           );
-        }
-        return { cliVersion: this.cliVersionForSlug(entry.slug, entryPool) };
+          try {
+            this.assertProviderAuth(entry.slug, entryPool, auth.providerAuth);
+            rmSync(noncePath, { force: true });
+            const result = await sc.run({
+              agent: agentForSlug(
+                entry.slug,
+                effortForLiveOfficer(entry.slug, { smokeKey: entry.key }),
+                entryPool,
+              ),
+              sandbox: this.routeSmokeSandbox(auth),
+              cwd: this.workingRepo,
+              promptFile: join(this.opts.promptsDir, "route-smoke.md"),
+              promptArgs: { NONCE: nonce, NONCE_FILE: nonceFile },
+              maxIterations: 1,
+              idleTimeoutSeconds,
+              completionSignal: "ROUTE_SMOKE_COMPLETE",
+              logging: {
+                type: "file",
+                path: join(logDir, "run.log"),
+                onAgentStreamEvent: (event) => {
+                  if (routeSmokeToolCallIsEchoOk(event)) {
+                    sawToolCallEchoOk = true;
+                  }
+                },
+              },
+            });
+            let nonceContents: string | undefined;
+            try {
+              nonceContents = readFileSync(noncePath, "utf8");
+            } catch {
+              nonceContents = undefined;
+            }
+            const bashOk = routeSmokeBashEvidenceSatisfied({
+              provider,
+              sawToolCallEchoOk,
+              sawNonceFile: routeSmokeNonceFileEvidence(nonceContents, nonce),
+            });
+            if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !bashOk) {
+              throw new Error(
+                `model did not complete an observable bash smoke for ${entry.slug}`,
+              );
+            }
+            return { cliVersion: this.cliVersionForSlug(entry.slug, entryPool) };
+          } finally {
+            rmSync(noncePath, { force: true });
+            rmSync(logDir, { recursive: true, force: true });
+          }
+        });
       } finally {
-        rmSync(noncePath, { force: true });
-        rmSync(logDir, { recursive: true, force: true });
         this.cleanupTempAuthDirs([auth.grokAuthDir]);
       }
     });
