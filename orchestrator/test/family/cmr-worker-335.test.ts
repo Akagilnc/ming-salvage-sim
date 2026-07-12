@@ -94,6 +94,8 @@ const VALID_CMR_VERDICT_FIELDS = {
   ...EMPTY_CMR_CLOSURE,
   ...CMR_EVIDENCE,
 } as const;
+/** Expected on successful parse/verdict output (derived; not a wire field). */
+const DERIVED_EMPTY_FINDINGS_COUNT = { findingsCount: 0 } as const;
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -439,6 +441,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         successfulLegs: ["gpt-5.6-sol", "agy"],
         ...EMPTY_CMR_CLOSURE,
         ...CMR_EVIDENCE,
+        ...DERIVED_EMPTY_FINDINGS_COUNT,
       });
     });
 
@@ -677,6 +680,7 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
       converged: true,
       successfulLegs: DEFAULT_CMR_LEGS,
       ...VALID_CMR_VERDICT_FIELDS,
+      ...DERIVED_EMPTY_FINDINGS_COUNT,
     });
   });
 });

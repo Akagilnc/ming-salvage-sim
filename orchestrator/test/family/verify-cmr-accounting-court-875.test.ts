@@ -17,6 +17,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
+import { findingIdentityKey } from "../../src/findings.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   FamilyBackend,
@@ -252,6 +253,75 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     ).toBe(false);
   });
 
+  it("required leg double-reported as successful+skipped still ships (sloppy prose, not unavailable)", async () => {
+    // #875: skippedLegs prose must not override a simultaneous successful report
+    // for the same required route leg — that was pure accounting death / milder
+    // re-court of double-report. claude-tight required = gpt-5.6-sol.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+      skippedLegs: [{ slug: "gpt-5.6-sol", reason: "quota (double-report noise)" }],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          /required CMR anchor leg/i.test(
+            typeof entry.reason === "string" ? entry.reason : "",
+          ),
+      ),
+    ).toBe(false);
+    expect(backend.ledger.some((entry) => entry.status === "cmr_passed")).toBe(
+      true,
+    );
+  });
+
+  it("floor still fails when only an undeclared strong leg is reported (no route-declared strong credit)", async () => {
+    // After accounting-court demolition, undeclared legs must not kill via
+    // routeAccounting — but they also must not *satisfy* the retained strong-leg
+    // floor. claude-tight declares gpt-5.6-sol (+ optional agy); opus alone is
+    // strong-but-undeclared and must still trip provider_degraded floor.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: true,
+      successfulLegs: ["opus"],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    const abort = backend.ledger.find((entry) => entry.status === "aborted");
+    expect(abort?.stopSummary?.reason).toBe("provider_degraded");
+    expect(String(abort?.reason ?? "")).toMatch(/floor failed/i);
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          entry.stopSummary?.metadata?.routeAccounting !== undefined,
+      ),
+    ).toBe(false);
+  });
+
   it("converged:false + findings:[] with dropped protected prior is ordinary not_converged, not court death", async () => {
     // Pre-#875 D2: coverage audit on empty not_converged → contract_drift court.
     // Post-#875: three-channel not_converged (findings=0, not converged) still aborts
@@ -283,5 +353,192 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
         reason: "did not converge",
       }),
     );
+  });
+
+  it("sidecar-shaped findingsCount:0 + !converged is ordinary not_converged (count channel, not pass)", async () => {
+    // Live sidecar path always attaches findingsCount from `findings = x`.
+    // Pre-fix: `findingsCount === undefined` guard skipped count=0 and fell
+    // through to recordCmrPassed — three-channel leak.
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "did not converge (sentinel count 0)",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 0,
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        reason: "did not converge (sentinel count 0)",
+      }),
+    );
+    expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
+  });
+
+  it("#875 Opus: open-count is array-derived — lying findingsCount is ignored at runner", async () => {
+    // Downstream never reconciles independent findingsCount vs array (Opus).
+    // findings=[one blocker] ⇒ openCount=1 ⇒ coder-fix, even if findingsCount lies.
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "array has one blocker",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 99,
+      findings: [NEW_BLOCKER],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    expect(
+      backend.ledger.some(
+        (e) =>
+          e.status === "aborted" && e.stopSummary?.reason === "infra_failure",
+      ),
+    ).toBe(false);
+  });
+
+  it("#875 Opus: non-empty structured findings drive open-count even if findingsCount field is 0", async () => {
+    // Array is single source of truth. findings=[blocker] ⇒ openCount=1 ⇒ coder-fix.
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "array drives count",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 0,
+      findings: [NEW_BLOCKER],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
+  });
+
+  it("#875 kill-axis: !converged + findingsCount>0 with only accepted_suppressed findings never cmr_passed", async () => {
+    // r11 high: when count>0 but deriveCmrEnvelope.blocking=[] (all suppressions),
+    // the old not_converged guard required count===0 / empty dispositions and
+    // fell through to recordCmrPassed — three-channel leak.
+    const suppressedBase = {
+      severity: "low" as const,
+      category: "correctness",
+      claim_quote: "accepted non-goal",
+      location: "orchestrator/src/family/verifyCmr.ts:1",
+      suggested_fix: "leave as accepted",
+      action: "wont_fix" as const,
+    };
+    const identity = findingIdentityKey(suppressedBase);
+    const suppressed: Finding = {
+      ...suppressedBase,
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #875 acceptance criteria",
+        scope: "orchestrator/src/family",
+        reason: "owner accepted as non-goal for this family",
+        findingIdentity: identity,
+        boundedReopen: "reopen if the non-goal is revoked",
+      },
+    };
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "not converged; only suppressions remain",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 1,
+      findings: [suppressed],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+      moduleContext: {
+        currentModules: [
+          {
+            module: "family-cmr",
+            moduleScope: ["orchestrator/src/family"],
+            source: "family_issue",
+            issue: 875,
+          },
+        ],
+        childModules: [],
+        acceptedSuppressionSources: [
+          {
+            source: "issue #875 acceptance criteria",
+            scope: "orchestrator/src/family",
+            reason: "owner accepted as non-goal for this family",
+            findingIdentity: identity,
+            boundedReopen: "reopen if the non-goal is revoked",
+          },
+        ],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatchedNonCmrKinds).toEqual([]);
+    expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    const abort = backend.ledger.find((e) => e.status === "aborted");
+    expect(String(abort?.reason ?? "")).toMatch(
+      /not converged; only suppressions remain/i,
+    );
+    expect(abort?.stopSummary?.reason).not.toBe("infra_failure");
+  });
+
+  it("#875 Opus: findingsCount field without structured array is empty open-count (array-derived)", async () => {
+    // Independent findingsCount is not authoritative. No findings[] ⇒ openCount=0
+    // ⇒ ordinary not_converged when !converged. No downstream shape court.
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "no structured findings array",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 1,
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatchedNonCmrKinds).toEqual([]);
+    expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    const abort = backend.ledger.find((e) => e.status === "aborted");
+    expect(abort?.stopSummary?.reason).not.toBe("infra_failure");
+    expect(String(abort?.reason ?? "")).toMatch(/no structured findings array/i);
   });
 });
