@@ -59,6 +59,20 @@ def test_secret_order_commit_recovers_named_alias_and_office_targets_from_conten
     }
 
 
+def test_secret_order_commit_recovers_non_disclosure_clause(game):
+    """持久化边界不能因措辞不同丢失具体官职排除。"""
+    db, state, _content = game
+
+    order = db.create_secret_order(
+        state, "毕自严", "密查", "不可令翰林院侍读学士知情。", []
+    )
+
+    row = db.conn.execute(
+        "SELECT excluded_targets FROM secret_orders WHERE id=?", (order,)
+    ).fetchone()
+    assert json.loads(row["excluded_targets"])["offices"] == ["翰林院侍读学士"]
+
+
 def test_secret_order_tool_path_canonicalizes_omitted_exclusions_before_staging(game):
     """Function callers may omit fields; prose still excludes the whole office."""
     from ming_sim.models import CourtContext

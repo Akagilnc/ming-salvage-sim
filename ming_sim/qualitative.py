@@ -91,7 +91,10 @@ _ABSTRACT_VALUE_RE = re.compile(
 # ``汉字{1,N}`` bridge here: it both misses longer prose and mistakes concrete
 # facts such as ``火器营新募3000人`` for an abstract axis.
 _ABSTRACT_STATE_NOUN = r"(?:整体|总体|水平|状况|情形|供应|保障)?"
-_ABSTRACT_STATE_CONNECTIVE = r"(?:[\u4e00-\u9fff]{0,40}?)"
+# Historical prose can insert a full causal clause between an abstract axis
+# and its raw score.  Bound the bridge generously enough for that prose while
+# still requiring the axis and a state/value verb on both sides.
+_ABSTRACT_STATE_CONNECTIVE = r"(?:[^\d]{0,120}?)"
 _ABSTRACT_STATE_MODIFIER = (
     r"(?:(?:已(?:经|然)?|正(?:在)?|仍(?:然)?|尚|逐步|明显|显著|大幅|持续|"
     r"不断|迅速|急剧|骤然|骤|略有|有所|日益|愈发|更为|相当|十分|极其))*"

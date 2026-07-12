@@ -1884,7 +1884,7 @@ def _secret_excluded_offices_from_command(text: str) -> List[str]:
     """Recover explicit institutional secrecy clauses the extractor may omit."""
     offices: List[str] = []
     for match in re.finditer(
-        r"(?:不走|不经|勿走|勿经|瞒住|瞒着|瞒过|不得告知|不许|严禁)\s*"
+        r"(?:不走|不经|勿走|勿经|瞒住|瞒着|瞒过|不可令|勿令|不得告知|不许|严禁)\s*"
         r"([^，。；;、\s]{2,20}?)(?=(?:知晓|知道|得知|知情|过问|插手|，|。|；|\s|$))",
         text or "",
     ):
@@ -1925,7 +1925,7 @@ def _canonical_secret_office_target(value: str) -> str:
 def _secret_excluded_people_from_command(command: str) -> List[str]:
     """Recover explicit named secrecy targets when the extractor omits them."""
     patterns = (
-        r"(?:瞒住|瞒着|不可令|不得让|勿使|不要让)([^，。；\s]{2,20}?)(?=(?:知晓|知道|得知|过问|插手|，|。|；|\s|$))",
+        r"(?:瞒住|瞒着|不得让|勿使|不要让)([^，。；\s]{2,20}?)(?=(?:知晓|知道|得知|过问|插手|，|。|；|\s|$))",
     )
     names = []
     for pattern in patterns:
