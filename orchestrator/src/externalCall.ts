@@ -292,9 +292,18 @@ export function execFileAsyncWithTimeout(
             );
             return;
           }
-          const enriched = err as Error & { readonly stderr?: string };
-          if (typeof stderr === "string" && stderr.length > 0) {
-            enriched.message = `${enriched.message}\n${stderr}`;
+          // Preserve both streams on non-zero exit so callers (opencode probe)
+          // can still scan stdout-only quota bodies (#884 cmr r9).
+          const enriched = err as Error & {
+            stdout?: string;
+            stderr?: string;
+          };
+          if (typeof stdout === "string") enriched.stdout = stdout;
+          if (typeof stderr === "string") {
+            enriched.stderr = stderr;
+            if (stderr.length > 0) {
+              enriched.message = `${enriched.message}\n${stderr}`;
+            }
           }
           reject(err);
           return;
