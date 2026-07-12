@@ -442,34 +442,40 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       });
     });
 
-    it("rejects successful legs that were not declared by the active route", () => {
+    it("#875: undeclared successful legs parse as a normal verdict (parse-time accounting court demolished)", () => {
       vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
 
-      expect(
-        parseCmrOutcome(
-          `<cmr>${JSON.stringify({
-            converged: true,
-            successfulLegs: ["agy", "opus"],
-            ...VALID_CMR_VERDICT_FIELDS,
-            skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
-          })}</cmr>`,
-        ).kind,
-      ).toBe("malformed");
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: ["agy", "opus"],
+          ...VALID_CMR_VERDICT_FIELDS,
+          skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
+        })}</cmr>`,
+      );
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.successfulLegs).toEqual(["agy", "opus"]);
+      }
     });
 
-    it("rejects skipped legs that were not declared by the active route", () => {
+    it("#875: undeclared skipped legs parse as a normal verdict (parse-time accounting court demolished)", () => {
       vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
 
-      expect(
-        parseCmrOutcome(
-          `<cmr>${JSON.stringify({
-            converged: true,
-            successfulLegs: ["gpt-5.6-sol", "agy"],
-            ...VALID_CMR_VERDICT_FIELDS,
-            skippedLegs: [{ slug: "opus", reason: "auth unavailable" }],
-          })}</cmr>`,
-        ).kind,
-      ).toBe("malformed");
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: ["gpt-5.6-sol", "agy"],
+          ...VALID_CMR_VERDICT_FIELDS,
+          skippedLegs: [{ slug: "opus", reason: "auth unavailable" }],
+        })}</cmr>`,
+      );
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.skippedLegs).toEqual([
+          { slug: "opus", reason: "auth unavailable" },
+        ]);
+      }
     });
 
     it("accepts a single surviving default leg only when the other declared legs are skipped", () => {
@@ -494,17 +500,22 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       }
     });
 
-    it("a declared leg cannot be both successful and skipped", () => {
-      expect(
-        parseCmrOutcome(
-          `<cmr>${JSON.stringify({
-            converged: true,
-            successfulLegs: DEFAULT_CMR_LEGS,
-            ...VALID_CMR_VERDICT_FIELDS,
-            skippedLegs: [{ slug: "agy", reason: "quota exhausted" }],
-          })}</cmr>`,
-        ).kind,
-      ).toBe("malformed");
+    it("#875: a leg listed as both successful and skipped still parses as a verdict (accounting court demolished)", () => {
+      const o = parseCmrOutcome(
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+          skippedLegs: [{ slug: "agy", reason: "quota exhausted" }],
+        })}</cmr>`,
+      );
+      expect(o.kind).toBe("verdict");
+      if (o.kind === "verdict") {
+        expect(o.successfulLegs).toEqual([...DEFAULT_CMR_LEGS]);
+        expect(o.skippedLegs).toEqual([
+          { slug: "agy", reason: "quota exhausted" },
+        ]);
+      }
     });
 
     it("still accepts the two LEGAL verdict shapes (regression)", () => {

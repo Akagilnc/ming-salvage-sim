@@ -2508,7 +2508,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
-  it("converged cmr with prior claimed-fixed keys but no dispositions fails closed", async () => {
+  it("#875: converged cmr with claimed-fixed keys but no dispositions still ships (coverage court demolished)", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
@@ -2529,18 +2529,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       priorCmrFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toEqual({ ok: true, ran: true });
     expect(backend.escalations).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      reason: expect.stringMatching(/missing explicit disposition/i),
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        repairHint: expect.stringContaining("claimed-fixed closure payload"),
-      }),
-    }));
-    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
   it("#861: converged cmr tolerates self-claimed keys when the runner supplied no closure context", async () => {
@@ -2619,7 +2610,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
-  it("converged cmr with a still-active prior disposition fails even when the claimed key list is empty", async () => {
+  it("#875: converged cmr with still-active prose disposition still ships when findings=0 (disposition court demolished)", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
@@ -2645,14 +2636,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toEqual({ ok: true, ran: true });
     expect(backend.escalations).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      reason: expect.stringMatching(/were not explicitly claimed fixed|not verified closed/i),
-    }));
-    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
   it("converged cmr with verified-closed dispositions may pass to ship", async () => {
@@ -2813,7 +2799,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(reviewed?.reason).not.toContain("accepted_suppressed");
   });
 
-  it("fails closed when prior accepted_suppressed closure lacks a trusted suppression source", async () => {
+  it("#875: untrusted accepted_suppressed disposition prose does not kill a converged pass", async () => {
     const priorKey = "correctness|src/x.ts:1|accepted without trusted source";
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
@@ -2845,19 +2831,11 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       priorCmrFindingIdentityKeys: [priorKey],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        summary: expect.stringContaining("accepted_suppressed"),
-      }),
-    }));
-    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
-  it("fails closed when a runner-protected prior blocker is closed by accepted_suppressed", async () => {
+  it("#875: protected prior closed by accepted_suppressed prose does not kill a converged pass", async () => {
     const priorKey = "correctness|src/x.ts:1|protected blocker";
     const trustedSuppression = {
       source: "issue #445 acceptance criteria",
@@ -2901,16 +2879,8 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       },
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      reason: expect.stringContaining("cannot be closed by accepted_suppressed"),
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-      }),
-    }));
-    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
   it("threads prior family CMR dispositions from the ledger into finding classification", async () => {

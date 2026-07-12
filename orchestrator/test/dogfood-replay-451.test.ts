@@ -448,13 +448,19 @@ describe("#451 dogfood replay fixture", () => {
         runStatus: "success",
       }),
     });
-    expect(rowsById.get("376-route-accounting-non-default")?.sourceEvidence).toMatchObject({
-      seam: "family_verify_cmr",
-      helperSeam: "family_cmr_accounting",
-      routeName: "claude-tight",
-      declaredLegs: ["gpt-5.6-sol", "agy"],
-      rejectedDefaultLeg: "opus",
-      dispatches: ["cmr:completeness"],
+    expect(rowsById.get("376-route-accounting-non-default")).toMatchObject({
+      source: "family",
+      classification: "success",
+      stopReason: "success",
+      sourceEvidence: expect.objectContaining({
+        seam: "family_verify_cmr",
+        helperSeam: "family_cmr_accounting",
+        routeName: "claude-tight",
+        declaredLegs: ["gpt-5.6-sol", "agy"],
+        rejectedDefaultLeg: "opus",
+        courtDemolished: true,
+        status: "success",
+      }),
     });
     expect(rowsById.get("376-route-env-format-mismatch")).toMatchObject({
       source: "family",
@@ -496,15 +502,15 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("376-closure-context-negative")).toMatchObject({
       source: "family",
-      classification: "contract_drift",
-      stopReason: "contract_drift",
-      sourceStopSummary: expect.objectContaining({ reason: "contract_drift" }),
+      classification: "success",
+      stopReason: "success",
+      sourceStopSummary: expect.objectContaining({ reason: "success" }),
       sourceEvidence: expect.objectContaining({
         seam: "family_cmr_closure",
-        rejectedStatuses: ["still-active", "unable-to-assess"],
-        rejectedShapes: expect.arrayContaining([
+        courtDemolished: true,
+        survivedStatuses: ["still-active", "unable-to-assess"],
+        survivedShapes: expect.arrayContaining([
           "missing-disposition",
-          "duplicate-disposition",
           "extra-stale-disposition",
         ]),
       }),

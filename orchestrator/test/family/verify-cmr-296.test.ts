@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { meetsCmrFloor, runVerifyCmr } from "../../src/family/verifyCmr.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../src/modelRoutes.js";
+import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   FamilyBackend,
   FamilyLedgerEntry,
@@ -631,14 +632,15 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     ).toBe(false);
   });
 
-  it("rejects route-undeclared strong legs before applying the CMR floor", async () => {
+  it("#875: undeclared successful legs no longer kill the run (leg-accounting court demolished)", async () => {
+    // Pre-#875: extra undeclared "opus" on claude-tight → infra_failure court death.
+    // Post-#875: leg lists are prose; strong-leg floor still sees gpt-5.6-sol.
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({
         converged: true,
-        successfulLegs: ["agy", "opus"],
-        skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
+        successfulLegs: ["gpt-5.6-sol", "agy", "opus"],
       }),
     });
 
@@ -648,45 +650,20 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.prCalls).toEqual([]);
+    expect(result).toEqual({ ok: true, ran: true });
     expect(backend.escalations).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      phase: "final",
-      cmrPass: "completeness",
-      familyHeadAfter: "head-1",
-      reason: expect.stringContaining("not declared"),
-      stopSummary: expect.objectContaining({
-        reason: "infra_failure",
-        repairHint: expect.stringContaining("leg accounting payload"),
-        metadata: expect.objectContaining({
-          routeAccounting: expect.objectContaining({
-            declaredLegs: ["gpt-5.6-sol", "agy"],
-            successfulLegs: ["agy", "opus"],
-            skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
-            routeFingerprint: expect.any(String),
-            routeArtifact: expect.objectContaining({
-              path: ".cmr-route.json",
-              content: expect.objectContaining({
-                legCollections: expect.objectContaining({
-                  cmrReview: expect.arrayContaining([
-                    expect.objectContaining({ slug: "gpt-5.6-sol" }),
-                    expect.objectContaining({ slug: "agy" }),
-                  ]),
-                }),
-              }),
-            }),
-            actualPayload: expect.objectContaining({
-              successfulLegs: ["agy", "opus"],
-              skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
-            }),
-            repairHint: expect.stringContaining("undeclared legs"),
-          }),
-        }),
-      }),
-    }));
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          /not declared|leg accounting/i.test(
+            typeof entry.reason === "string" ? entry.reason : "",
+          ),
+      ),
+    ).toBe(false);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_passed"),
+    ).toHaveLength(2);
   });
 
   it("rejects an anchor-leg skip through the integrated CMR wiring", async () => {
@@ -712,7 +689,10 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     }));
   });
 
-  it("does not rewrite CMR route-accounting malformed results", async () => {
+  it("#875: former route-accounting malformed payloads are ordinary rewrite candidates (no court short-circuit)", async () => {
+    // Pre-#875: cmrLegAccountingPayload short-circuited rewrite and killed the run.
+    // Post-#875: that special death payload is gone; a malformed CMR is rewritable
+    // like any other outcome-protocol failure.
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     class RouteAccountingRewriteBackend extends CapableFamilyBackend {
       readonly rewriteCalls: Array<{
@@ -731,6 +711,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         ctx: DispatchContext,
       ): Promise<WorkerResult> => {
         if (spec.kind === "cmr") {
+          // Each CMR pass first lands as a legacy-shaped accounting malformed;
+          // rewrite recovers to a clean converged verdict.
           return {
             kind: "malformed",
             reason: "successful leg opus is not declared in active route",
@@ -741,7 +723,21 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
             },
           };
         }
-        throw new Error(`unexpected worker after route-accounting failure: ${spec.kind}`);
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "ship",
+              branch: ctx.familyBase ?? "family/291-base",
+              status: "pr_opened",
+              pr: `pr://${ctx.familyBase ?? "family/291-base"}`,
+              prHead: this.currentFamilyHead,
+            },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        throw new Error(`unexpected worker after rewrite recovery: ${spec.kind}`);
       };
 
       async rewriteWorkerOutcome(
@@ -770,26 +766,15 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.rewriteCalls).toEqual([]);
-    expect(backend.prCalls).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      phase: "final",
-      cmrPass: "completeness",
-      reason: expect.stringContaining("not declared"),
-      stopSummary: expect.objectContaining({
-        reason: "infra_failure",
-        repairHint: expect.stringContaining("leg accounting payload"),
-        metadata: expect.objectContaining({
-          routeAccounting: expect.objectContaining({
-            successfulLegs: ["agy", "opus"],
-            skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
-          }),
-        }),
-      }),
-    }));
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.rewriteCalls.length).toBeGreaterThan(0);
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          entry.stopSummary?.metadata?.routeAccounting !== undefined,
+      ),
+    ).toBe(false);
   });
 
   it("fingerprints the resolved route without re-throwing an already accepted tight-route violation", async () => {
@@ -1068,7 +1053,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.ledger.some((entry) => entry.status === "shipped")).toBe(false);
   });
 
-  it("rejects converged CMR when runner-protected prior findings are not explicitly claimed fixed", async () => {
+  it("#875: converged CMR ships even when runner-protected priors are not claimed fixed (coverage court demolished)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
@@ -1082,21 +1067,20 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       priorCmrFindingIdentityKeys: ["medium|completeness|prior claim|scope"],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.prCalls).toEqual([]);
+    expect(result).toEqual({ ok: true, ran: true });
     expect(backend.escalations).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      phase: "final",
-      cmrPass: "completeness",
-      familyHeadAfter: "head-1",
-      reason: expect.stringContaining("were not explicitly claimed fixed"),
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        repairHint: expect.stringContaining("claimed-fixed closure payload"),
-      }),
-    }));
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          /were not explicitly claimed fixed/i.test(
+            typeof entry.reason === "string" ? entry.reason : "",
+          ),
+      ),
+    ).toBe(false);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_passed"),
+    ).toHaveLength(2);
   });
 
   it("resume skips a CMR pass that already passed for the current family HEAD", async () => {

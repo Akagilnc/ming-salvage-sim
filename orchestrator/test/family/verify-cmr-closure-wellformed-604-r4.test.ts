@@ -1,29 +1,14 @@
 /**
- * #604 correctness r4 — early closure guard is a WELL-FORMEDNESS gate, not a
- * "verified-closed" gate; not_converged/empty and first-pass self-report paths
- * also route malformed closure payloads to contract_drift.
+ * #604 correctness r4 — superseded in part by #875.
  *
- * D1 (regression, most important): the r2 C2 early closure guard ran the FULL
- * `cmrClosureFailureReason` — which fails if any prior disposition is
- * `still-active`/`unable-to-assess`. That over-fired: a prior blocker the
- * coder-fix loop is meant to repair (claimed-fixed but disposed still-active)
- * got aborted as contract_drift instead of routed to coder-fix. The early guard
- * must assert only that the payload is WELL-FORMED (every protected prior key is
- * claimed or disposed; no stale/duplicate/malformed dispositions) — NOT that
- * every prior finding is verified-closed. The LATE converged-path guard keeps
- * the full assertion.
+ * Pre-#875 D1/D2/D3 asserted an early well-formedness court on claimed-fixed /
+ * disposition coverage (abort as contract_drift when protected priors were
+ * unaccounted; still-active dispositions on the early path routed to coder-fix).
  *
- * D2: a `converged:false, findings:[]` payload on a RESTART barrier must still
- * run the well-formedness closure guard BEFORE the thin not_converged abort — a
- * reviewer that drops the protected prior keys (no claimedFixed / disposition)
- * must fail closed as contract_drift, not slip past as an ordinary not_converged
- * envelope.
- *
- * D3: on a FIRST pass (no protected prior keys) a reviewer that SELF-REPORTS a
- * closure payload (non-empty claimedFixed with no runner-supplied prior set) is
- * malformed (`closure_context_missing`). The early guard must run whenever any
- * closure payload is present, so this malformed self-report fails closed instead
- * of routing its NEW blocker to coder-fix.
+ * #875 demolishes the coverage/disposition court entirely. Still-active prior
+ * + active findings → coder-fix (findings-count). Unaccounted priors are
+ * prose. Thin not_converged is ordinary three-channel not_converged, not court
+ * death. First-pass self-report already survived under #861.
  *
  * Driven entirely by a zero-container injected-seam fake.
  */
@@ -70,11 +55,6 @@ const NEW_BLOCKER: Finding = {
   action: "fix_now",
 };
 
-/**
- * A scriptable backend that returns a single scripted cmr WORKER output, then
- * records + throws on any coder dispatch so the test can tell whether the runner
- * reached coder-fix or failed closed first.
- */
 class ScriptedCmrBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatchedNonCmrKinds: WorkerSpec["kind"][] = [];
@@ -106,22 +86,13 @@ class ScriptedCmrBackend implements FamilyBackend {
     if (spec.kind === "cmr") {
       return { kind: "completed", output: this.cmrOutput };
     }
-    // #598: a coder-fix that cannot fix returns a `failed` RESULT (a judged
-    // not-ok, not a process crash); the generic mechanical retry defers judged
-    // results to the gate — one dispatch, no retry — and reaching this path still
-    // proves the runner routed to coder-fix.
     this.dispatchedNonCmrKinds.push(spec.kind);
     return { kind: "failed", reason: `coder-fix reached (probe): ${spec.kind}` };
   }
 }
 
-describe("#604 r4 D1 — early closure guard is well-formed-only, not verified-closed", () => {
+describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
   it("a well-formed still-active prior key (claimed + disposed still-active) routes to coder-fix, NOT contract_drift", async () => {
-    // The fresh reviewer claims the protected prior key fixed AND discloses its
-    // disposition as still-active (the fix did not hold), re-raising it as an
-    // active finding. This is a WELL-FORMED closure payload — every protected
-    // prior key is accounted for. The early guard must let it through so the
-    // still-active finding drives coder-fix; it must NOT abort as contract_drift.
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
@@ -144,8 +115,6 @@ describe("#604 r4 D1 — early closure guard is well-formed-only, not verified-c
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    // Reached coder-fix (still-active finding routed) — the positive signal. The
-    // early closure guard did NOT abort as a closure-payload contract drift.
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(
       backend.ledger.some(
@@ -158,10 +127,7 @@ describe("#604 r4 D1 — early closure guard is well-formed-only, not verified-c
     ).toBe(false);
   });
 
-  it("a prior key left completely unaccounted still fails closed as contract_drift", async () => {
-    // Well-formedness violated: the protected prior key is neither claimed nor
-    // disposed. This must still abort as contract_drift — the well-formed guard
-    // is NOT weakened for coverage.
+  it("#875: a prior key left completely unaccounted still routes new blocker to coder-fix", async () => {
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
@@ -182,23 +148,20 @@ describe("#604 r4 D1 — early closure guard is well-formed-only, not verified-c
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual([]);
-    expect(backend.ledger).toContainEqual(
-      expect.objectContaining({
-        status: "aborted",
-        reason: expect.stringContaining("were not explicitly claimed fixed"),
-        stopSummary: expect.objectContaining({ reason: "contract_drift" }),
-      }),
-    );
+    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(
+      backend.ledger.some(
+        (e) =>
+          e.status === "aborted" &&
+          typeof (e as { reason?: unknown }).reason === "string" &&
+          /were not explicitly claimed fixed/.test((e as { reason: string }).reason),
+      ),
+    ).toBe(false);
   });
 });
 
-describe("#604 r4 D2 — not_converged/empty must run the well-formed closure guard", () => {
-  it("converged:false + findings:[] that drops a protected prior key fails closed as contract_drift", async () => {
-    // A thin not_converged envelope must not be a bypass: with protected prior
-    // keys present, a `converged:false, findings:[]` payload that neither claims
-    // nor disposes the prior key is malformed and must fail closed BEFORE the
-    // ordinary not_converged abort.
+describe("#604 r4 D2 / #875 — not_converged/empty is three-channel, not court", () => {
+  it("#875: converged:false + findings:[] that drops a protected prior key is ordinary not_converged", async () => {
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
@@ -220,20 +183,24 @@ describe("#604 r4 D2 — not_converged/empty must run the well-formed closure gu
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual([]);
+    expect(
+      backend.ledger.some(
+        (e) =>
+          typeof (e as { reason?: unknown }).reason === "string" &&
+          /were not explicitly claimed fixed|are not verified closed|closure_context_missing/.test(
+            (e as { reason: string }).reason,
+          ),
+      ),
+    ).toBe(false);
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({
         status: "aborted",
-        reason: expect.stringContaining("were not explicitly claimed fixed"),
-        stopSummary: expect.objectContaining({ reason: "contract_drift" }),
+        reason: "did not converge",
       }),
     );
   });
 
   it("converged:false + findings:[] that WELL-FORMEDLY closes the prior key aborts as ordinary not_converged", async () => {
-    // Coverage guard: a not_converged envelope that DOES account for the prior
-    // key (claimed + verified-closed) is well-formed → the D2 guard does not
-    // fire; it falls through to the ordinary not_converged abort (not
-    // contract_drift).
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
@@ -257,9 +224,6 @@ describe("#604 r4 D2 — not_converged/empty must run the well-formed closure gu
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual([]);
-    // Ordinary not_converged abort (its stopSummary shares the contract_drift
-    // reason code) — but NOT the closure-guard failure: the ledger reason is the
-    // not_converged reason, not a closure-payload violation.
     expect(
       backend.ledger.some(
         (e) =>
@@ -278,13 +242,8 @@ describe("#604 r4 D2 — not_converged/empty must run the well-formed closure gu
   });
 });
 
-describe("#604 r4 D3 — first-pass self-reported closure payload is guarded", () => {
+describe("#604 r4 D3 / #861/#875 — first-pass self-report is not court death", () => {
   it("#861: first pass (no protected keys) + new blocker + self-reported claimedFixed routes to coder-fix like any blocking round", async () => {
-    // #861 hotfix (ADR 0062): with no runner-supplied prior set there is nothing
-    // to audit coverage against — a chatty reviewer honestly reporting fixes it
-    // saw in older tree artifacts is worker prose, not contract drift. The NEW
-    // blocker takes the normal blocking→coder-fix path (same as the
-    // payload-free sibling below).
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
@@ -303,7 +262,6 @@ describe("#604 r4 D3 — first-pass self-reported closure payload is guarded", (
       familyBase: "family/604-base",
       familyBackend: backend,
       familyHeadAfter: "head-1",
-      // No priorCmrFindingIdentityKeys — a first pass, nothing protected.
     });
 
     expect(result).toEqual({ ok: false, ran: true });
@@ -317,8 +275,6 @@ describe("#604 r4 D3 — first-pass self-reported closure payload is guarded", (
   });
 
   it("first pass (no protected keys) + new blocker + NO closure payload still routes to coder-fix", async () => {
-    // Regression guard: a genuinely payload-free first pass (no claimed, no
-    // dispositions) must preserve the normal blocking→coder-fix path.
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
