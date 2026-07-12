@@ -653,30 +653,16 @@ class FamilyShipMalformedAfterCmrBackend implements FamilyBackend {
 // makes the first-occurrence abort wrong (a re-dispatch with a matched schema
 // converges).
 //
-// HONESTY NOTE (review R1 finding 1): the production family seam
-// (`dispatchOrAbort` in verifyCmr.ts) owns ALL resolved results via
-// `callerOwns: (o) => "result" in o` — so a resolved `malformed` is DEFERRED to
-// the gate, NOT retried by the generic layer. Write-capable worker crashes retry
-// on the current worktree like every other role (2026-07-08). This section is
-// therefore split into TWO tests:
-//   1. REAL-VALIDATION PIN — exercises the runner's ACTUAL downstream
-//      source/scope/boundedReopen re-validation (cmrClosureFailureReason →
-//      trustedAcceptedSuppressionDisposition → hasAcceptedSuppressionAuthority)
-//      through runVerifyCmr, and asserts the CURRENT production behavior: the
-//      closure failure DURABLE-ABORTS as contract_drift (NOT retried), pointing
-//      to #661 as the deferred retry-wiring. This keeps the gap visible.
-//   2. SEAM-LEVEL COVERAGE — proves the shared withMechanicalRetry MECHANISM
-//      covers the CMR closure role at the family seam (the same path every other
-//      role uses). This is labeled as seam-level, NOT a claim that production
-//      retries today.
+// #875: the disposition-enum court that re-validated accepted_suppressed
+// source/scope/boundedReopen and killed the run is demolished. This section now
+// pins survival (three-channel pass) for chatty/incomplete disposition prose,
+// plus seam-level mechanical-retry coverage for true malformed CMR outcomes.
 
 /**
- * Minimal FamilyBackend for the REAL-VALIDATION pin: dispatches a `completed` CMR
- * closure whose `priorFindingDispositions` carries an `accepted_suppressed`
- * disposition MISSING `source`/`scope`/`boundedReopen` (the guard/runner
- * version-skew — the worker's guard passed a looser field-set than the runner's
- * schema expects). The runner's downstream `cmrClosureFailureReason` validation
- * catches it. Mirrors ScriptedCmrBackend in verify-cmr-closure-wellformed-604-r4.
+ * Minimal FamilyBackend: dispatches a `completed` CMR whose disposition prose is
+ * incomplete (missing source/scope/boundedReopen). Pre-#875 the court killed the
+ * run; post-#875 the pass ships. Includes ship verification so survival can
+ * complete to ok:true.
  */
 class CmrClosureMissingFieldsFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
@@ -698,11 +684,28 @@ class CmrClosureMissingFieldsFamilyBackend implements FamilyBackend {
   async runFamilyVerify(): Promise<{ ok: true }> {
     return { ok: true };
   }
-  async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
+  async dispatchWorker(spec: WorkerSpec, ctx?: DispatchContext): Promise<WorkerResult> {
     if (spec.kind === "cmr") {
       this.cmrDispatches += 1;
       return { kind: "completed", output: this.cmrOutput };
     }
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx?.familyBase ?? "family/601-closure",
+          status: "pr_opened",
+          pr: `pr://${ctx?.familyBase ?? "family/601-closure"}`,
+          prHead: "family-head",
+        },
+      };
+    }
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
     return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
   }
 }
@@ -727,17 +730,11 @@ function cmrClosureWithMissingSuppressionFields(): CmrResult {
   };
 }
 
-describe("#601 AC#3 — a CMR closure whose downstream required-field re-validation fails", () => {
-  it("REAL-VALIDATION PIN: a converged CMR closure missing source/scope/boundedReopen fails the runner's ACTUAL downstream re-validation and currently DURABLE-ABORTS as contract_drift (#661 wires the retry)", async () => {
-    // Exercises the REAL downstream re-validation path: cmrClosureFailureReason →
-    // trustedAcceptedSuppressionDisposition → hasAcceptedSuppressionAuthority. The
-    // worker signalled completion (converged:true) and the <cmr> tag parsed fine
-    // (the guard passed a looser field-set), but the runner's re-validation of the
-    // accepted_suppressed disposition catches the missing source/scope/boundedReopen
-    // → closure failure → contract_drift durable abort. This is the CURRENT
-    // production behavior; the retry that #601 AC#3 mandates is deferred to #661
-    // (the family gate's write-worker reset idempotency). This test pins the gap so
-    // it stays visible until #661 lands.
+describe("#601 AC#3 / #875 — disposition-field re-validation court demolished", () => {
+  it("#875: a converged CMR closure missing source/scope/boundedReopen still ships (disposition court demolished)", async () => {
+    // Pre-#875: runner re-validated accepted_suppressed fields and killed the run
+    // as contract_drift. Post-#875: disposition prose is not a fate channel;
+    // findings=0 + converged + exit ok → ship.
     const backend = new CmrClosureMissingFieldsFamilyBackend(
       cmrClosureWithMissingSuppressionFields(),
     );
@@ -746,14 +743,19 @@ describe("#601 AC#3 — a CMR closure whose downstream required-field re-validat
       familyBase: "family/601-closure",
       familyBackend: backend,
     });
-    // CURRENT behavior: the closure re-validation failure DURABLE-ABORTS (not
-    // retried) — the gate owns the resolved `completed` via callerOwns and surfaces
-    // the closure failure as contract_drift.
-    expect(result.ok).toBe(false);
-    expect(backend.cmrDispatches).toBe(1);
-    const abort = backend.ledger.find((e) => e.status === "aborted");
-    expect(abort?.stopSummary?.reason).toBe("contract_drift");
-    expect(abort?.reason).toMatch(/source\/scope\/boundedReopen/);
+    expect(result.ok).toBe(true);
+    expect(
+      backend.ledger.some(
+        (e) =>
+          e.status === "aborted" &&
+          /source\/scope\/boundedReopen|contract_drift/.test(
+            typeof e.reason === "string" ? e.reason : "",
+          ),
+      ),
+    ).toBe(false);
+    expect(
+      backend.ledger.filter((e) => e.status === "cmr_passed").length,
+    ).toBeGreaterThan(0);
   });
 
   it("SEAM-LEVEL COVERAGE: the shared withMechanicalRetry MECHANISM covers the CMR closure role at the family seam (the retry #661 will wire into the production gate)", async () => {
@@ -803,10 +805,9 @@ describe("#601 AC#3 — a CMR closure whose downstream required-field re-validat
 //   - family-405 — FAMILY ship. #823 superseded the original first-occurrence
 //     abort: production now durably reserves and bounds every malformed retry,
 //     then escalates exhausted attempts as infrastructure failure.
-//   - dogfood-70 — FAMILY CMR closure. Unlike family-405, the production gate
-//     first-occurrence-aborts a closure re-validation failure as `contract_drift`
-//     (AC#3 real-validation pin above). This replay cross-references that pin +
-//     asserts seam-level mechanism coverage.
+//   - dogfood-70 — FAMILY CMR closure. Pre-#875 the production gate first-
+//     occurrence-aborted a disposition re-validation failure as `contract_drift`.
+//     #875 demolishes that court: incomplete disposition prose no longer kills.
 
 describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-405, dogfood-70", () => {
   it("dogfood-362 (PRODUCTION): a single-slice ship worker emitting no valid <ship> verdict retries through the shared path and reaches shipped (not first-occurrence abort)", async () => {
@@ -868,14 +869,9 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
     expect(backend.shipDispatches).toBe(2);
   });
 
-  it("dogfood-70 (CURRENT PRODUCTION PIN): a completeness worker whose closure is missing source/scope/boundedReopen DURABLE-ABORTS as contract_drift today (#661 wires the retry)", async () => {
-    // The real dogfood-70 incident: a completeness (CMR closure) worker returned
-    // no valid result and durably aborted. This replay PINS the current production
-    // behavior through the REAL family gate: the closure's downstream
-    // re-validation of source/scope/boundedReopen fails → contract_drift abort
-    // (NOT retried). The retry that #601 AC#4 mandates is deferred to #661. This
-    // is the same real-validation path as the AC#3 pin (cross-referenced here as
-    // the dogfood-70 incident grounding).
+  it("#875 dogfood-70: incomplete accepted_suppressed disposition prose no longer durable-aborts", async () => {
+    // Historical dogfood-70: completeness returned a chatty/incomplete disposition
+    // envelope and the court killed the run. Post-#875 the same envelope ships.
     const backend = new CmrClosureMissingFieldsFamilyBackend(
       cmrClosureWithMissingSuppressionFields(),
     );
@@ -884,18 +880,22 @@ describe("#601 AC#4 — dogfoodReplay-pattern regression: dogfood-362, family-40
       familyBase: "family/70-replay",
       familyBackend: backend,
     });
-    expect(result.ok).toBe(false);
-    expect(backend.cmrDispatches).toBe(1);
-    const abort = backend.ledger.find((e) => e.status === "aborted");
-    expect(abort?.stopSummary?.reason).toBe("contract_drift");
-    expect(abort?.reason).toMatch(/source\/scope\/boundedReopen/);
+    expect(result.ok).toBe(true);
+    expect(
+      backend.ledger.some(
+        (e) =>
+          e.status === "aborted" &&
+          /source\/scope\/boundedReopen/.test(
+            typeof e.reason === "string" ? e.reason : "",
+          ),
+      ),
+    ).toBe(false);
   });
 
-  it("dogfood-70 (SEAM-LEVEL COVERAGE): the shared withMechanicalRetry MECHANISM covers the CMR closure role at the family seam (#661 wires it into the gate)", async () => {
-    // SEAM-LEVEL (not a production claim): the shared MECHANISM retries a CMR
-    // closure `malformed` and converges. The production gate does NOT wire it this
-    // way yet (see the CURRENT PRODUCTION PIN above). Same coverage as the AC#3
-    // seam-level test, cross-referenced here as the dogfood-70 incident grounding.
+  it("dogfood-70 (SEAM-LEVEL COVERAGE): the shared withMechanicalRetry MECHANISM covers a structural CMR malformed", async () => {
+    // SEAM-LEVEL: shared MECHANISM retries a CMR process-level `malformed` and
+    // converges. Distinct from the demolished disposition court — this is true
+    // outcome-protocol failure recovery.
     const backend = new CmrClosureVersionSkewFamilyBackend(1);
     const result = await withMechanicalRetry(
       cmrClosureSpec(),
