@@ -1,5 +1,7 @@
 Status: Accepted（2026-07-06：源于 #497/#498 实证与 #604；本地 kill-axis cmr + 线上 4-bot 收敛，PR #605 合入）
 
+> **前向更正（ADR 0129，2026-07-12 owner 重申）**：三通道保留，但 runner 不再消费 worker outcome JSON，也不做 finding id/disposition、commit/head、测试或证据一致性校验。信号②直接查询 findings 状态库未决数；专业判断和材料核验留在 reviewer/fixer 之间。
+
 # 0062: 删除 runner 侧 finding 分类，失败 escalate 与人类决策门分家（回归 0026/0050，supersede #448/#449 路线）
 
 ## 决定

@@ -2,6 +2,8 @@
 
 Status: Accepted (#533/#553, 2026-07-03)
 
+> **前向更正（ADR 0129，2026-07-12 owner 重申）**：保留 reviewer/fixer 分离与 fresh re-review；撤销本 ADR 中 runner 校验 worker outcome JSON、commit/head、repair evidence、test logs 和 claimed-fix 覆盖的职责。findings 改由状态库在写入点校验，runner 只看“未决 0 / 未决 >0 / 需要人”的三态调度信号。
+
 Family CMR completeness/correctness workers are reviewer workers: they may gather review evidence, run the needed tests, dispatch review legs, and emit findings/outcome, but they must not repair blocking findings themselves. A blocking finding returns control to the runner, which dispatches a separate coder-fix worker; only after that worker produces a new fix commit and repair evidence does the runner dispatch a fresh CMR reviewer over the current full diff.
 
 Scope: this decision applies to family integrated CMR passes. It does not reopen the per-slice coder/reviewer/coder-fix separation already decided by 0030.

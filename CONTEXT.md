@@ -4,6 +4,36 @@
 
 ## Language
 
+### Orchestrator
+
+**执行面（Execution Plane）**:
+真正运行自主 agent session 的环境。当前唯一执行面是 Sandcastle 容器；host launcher、monitor/bridge，以及 Git、GitHub、构建等确定性动作属于控制、观察或外部能力，不因运行在 host 就构成第二执行面。
+_Avoid_: 把每个 host 子进程、监控器或桥接层都叫执行面
+
+**开工入口（Ignition Entry）**:
+使用者启动编排任务的唯一公开入口。使用者只提供 issue 号；入口负责更新并构建最新版编排器、重烤 worker image、挂载输入、定位或创建该 issue 的唯一工作现场，再把任务交给内部流程。
+_Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamilyDriver`、让使用者拼内部路径和参数
+
+**父工作树（Family Base Worktree）**:
+家族模式下一个父 issue 唯一的集成现场。由父流程启动的子 issue 都从它切出自己的工作树，完成后再合回这里；同一个未完成父 issue 重入时继续使用这个现场。直接单独启动某个子 issue 时不要求先建立父工作树。
+_Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue 建多个并行现场
+
+**家族子工作树（Family Child Worktree）**:
+家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 重入时继续使用原工作树、编排账与 agent session，不另建第二个现场。直接输入子 issue 号则走单片模式的独立 worktree 和 PR，不使用本术语。
+_Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
+
+**家族开工过滤（Family Admission Filter）**:
+父 issue 首次启动及每次重入的第一步：在检查旧的人类问题之前，重新读取 GitHub 原生子 issues 的当前成员、状态、`ready-for-agent` 标签、是否仍有自己的 sub-issues，以及依赖。已关闭的子 issue 退出当前调度并满足 `blocked_by`，但若已有 family worktree 则暂不删除；父流程最终 terminal-success + 显式 GC 前 reopen 且 ready 时复用原现场。只有父流程最终收尾才统一删除可清理 worktree。open 但未 ready 的不启动；open 且 ready 的叶子 issue 才进入依赖排序。父流程暂停期间新挂入的子 issue 会在下次重入加入候选集，从当前父工作树切出，不回到最初基线；已合并和正在等待恢复的旧现场保持原样。旧的 unanswered child decision 继续挂在原子 issue，只阻塞该子 issue、依赖它的下游和最终收尾，不得阻止独立的新子 issue 运行。原先属于该父 issue、后来从原生子列表移除的未合子 issue 视为明确取消其家族现场：停止调度并删除 worktree，但保留 branch、ledger、日志、耗时、模型/token 等统计记录；若它已经合回父工作树，不自动撤销已合代码。第一层子 issue 若自身还是父 issue，当前显式列为“不支持的嵌套家族”并跳过，不递归展开，也不冒充已完成。某子 issue 此前已按单片模式完成并关闭，会自然被跳过。过滤后没有可运行子 issue 时，本次运行正常空跑完成：报告各项跳过原因后退出，不建新 worktree、不派 worker、不建 PR，也不进入 park/resume；空跑不等于立刻 GC 旧现场。
+_Avoid_: 先建 worktree 再过滤、重做已关闭子 issue、close 即删现场、静默吞掉嵌套父 issue、用 commit hash 代替 GitHub 状态/标签、把无活可跑变成暂停或失败、移除成员时连统计和历史一起删、自动反转已合代码
+
+**合并工（Merger Worker）**:
+只在子分支机械合并回父工作树发生真实 Git 冲突时出场、负责解决该次冲突的 worker。无冲突时由确定性合并直接完成，不调用模型。
+_Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代替干净的 Git 合并
+
+**编排账（Orchestration Ledger）**:
+host Runner 持久化的步骤、结果与恢复索引，用来判定哪些步骤已完成、下一步去哪以及恢复哪个 agent session。它不是 agent 的对话记忆；真正的模型上下文留在 agent session，由编排账保存的 session identity 定位。
+_Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
+
 ### Runtime And LLM
 
 **探针**:
@@ -531,7 +561,7 @@ _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 _Avoid_: 配置、config(太泛)
 
 **runner**(纯调度器):
-驱动 step 序列的 TS 代码,**只做调度**——step 之间的流程决策(input gate / route / 排序 / step ledger / 续跑);由 `route()` 定下一步,agent 永不决定下一步、不跳步、不改流程。它**派 worker 步、收结果、据此路由,自己不干任何具体活**(具体纪律活在 worker invoke 的 skill 里,见 worker / 0026)。runner 不裁决 review finding 的语义真假,也不从 reviewer prose 里用正则/关键词猜路由;它只读稳定的 worker outcome 控制信封与硬证据(commit/head/test log/review artifact),据此做机械路由。
+驱动 step 序列的 TS 代码,**只做调度**——step 之间的流程决策(input gate / route / 排序 / step ledger / 续跑);由 `route()` 定下一步,agent 永不决定下一步、不跳步、不改流程。它**派 worker 步、等 worker、按三态交通灯叫下一位,自己不干也不评任何具体活**(具体纪律活在 worker invoke 的 skill 里,见 worker / 0026)。评审场景只看“未决 findings 为 0 / 大于 0 / 需要人”;不接 worker outcome JSON,不读 finding 内容,不比较 commit/head,不核测试或证据。
 _Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它当干活的(它只调度)、把 runner 当语义裁判、用自由文本/正则推断路由。
 
 **worker**:
@@ -539,11 +569,11 @@ wiki 流程里的**一步**(可大可小),由 runner 派出去执行。判据 = 
 _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worker 的判据)、subagent(worker 是顶层容器、不是 runner 的子代理)。
 
 **reviewer worker**:
-被 runner 派出、只负责评审与产出 findings/outcome 的 worker。它可以读 scope/issue/ADR、运行评审所需测试、派多模型 review legs、汇总原始评审证据,但不承担持久修复,不得提交修复 commit。CMR completeness/correctness worker 在发现 blocking finding 时也按 reviewer worker 边界处理:整理 finding、保留 artifacts、写 outcome 后交回 runner,由 runner 派 coder-fix 修。若它试图在 outcome 里写自修状态,由 outcome guard 拒绝;若它实际移动 family HEAD,runner 视为 contract drift。边界取舍见 0050。
+被 runner 派出、只负责评审并把 findings 写入状态库的 worker。它可以读 scope/issue/ADR、运行评审所需测试、派多模型 review legs、汇总原始评审证据,但不承担持久修复,不得提交修复 commit。CMR completeness/correctness worker 也遵守同一边界。它完成后只给调度层三种结果:未决 findings 为 0、未决 findings 大于 0、需要人类决定;finding 内容留给下一位专业 worker,不交给 runner 裁判。边界取舍见 0050、0129。
 _Avoid_: 自评自修、顺手修一下、把 CMR reviewer 当 coder-fix。
 
 **coder-fix worker**:
-被 runner 派出、专门修复上一轮 reviewer/CMR worker 给出的 blocking findings 的 worker。它必须产出独立新 commit,并留下修复证据;runner 只用这些硬证据判断能否进入 fresh re-review,不判断修复语义是否正确。证据缺失、不匹配或没有真实新 commit 时,runner 打回 coder-fix 补齐,而不是自己猜修好了没有。边界取舍见 0050。
+被 runner 派出、专门处理 findings 状态库中未决项的 worker。它逐项验真:真的就修复并写 commit,假的就写明反证；随后更新对应 finding 状态并交给 fresh reviewer 复核。commit、测试和说明由下一位 reviewer 检查,runner 不比较 hash、不核证据、不判断修复是否正确。边界取舍见 0050、0129。
 _Avoid_: reviewer 自修、amend 折叠、无 commit 修复、runner 代判修复正确。
 
 **文档发布 (docRelease)**:
@@ -555,7 +585,7 @@ _Avoid_: 把文档发布当成 merge 本身、runner 直接改文档、用路径
 _Avoid_: 把空跑当失败、为凑 commit 造空提交、把「没改文件」等同 skill 崩溃。
 
 **修复证据**:
-coder-fix worker 随本轮 fix 提供的可追踪材料:新增 commit/head 移动、对应 diff、finding scope 对应关系、focused test log、same-class bug scan、introduced-regression check。它是进入 fresh re-review 的机械门票,不是修复正确性的最终证明;正确性仍由下一轮 reviewer/CMR worker 判断。
+coder-fix worker 留给下一轮 reviewer 的可追踪材料:新增 commit、对应 diff、finding scope 对应关系、focused test log、same-class bug scan、introduced-regression check。它帮助 reviewer 复核,不是 runner 的机械门票；runner 不比较 commit/head、不检查材料一致性。
 _Avoid_: 口头说已修、只贴总结不落 commit/test、自查二连缺席、把修复证据当 reviewer concurrence。
 
 **smart zoom**(步的粒度):
@@ -565,17 +595,9 @@ _Avoid_: 口头说已修、只贴总结不落 commit/test、自查二连缺席�
 一个 step 完成时 agent 必须 emit 的固定串(如 `AK_STEP_COMPLETE:coder_implement`)。runner 靠它确认该步真跑完。
 _Avoid_: 结束标记、done(太泛)
 
-**worker outcome**:
-worker 步结束时交给 runner 的稳定控制信封,用于说明该步在流程上的终态(如 converged / needs_fix / escalate)并指向证据制品。它不是 review 正文,也不是 finding 语义真相;语义判断留在 reviewer/CMR worker 的原始评审产物里。runner 可验证 outcome 的格式/schema、完成信号、git head/commit 移动、测试日志是否存在,但不靠 outcome prose 或关键词裁案。
-_Avoid_: reviewer report、语义 verdict、自由文本状态、把 JSON 字段当事实本身。
-
-**outcome 协议失败**:
-worker 已经执行到终态附近,但交给 runner 的 worker outcome 缺失、JSON 不可解析、schema 不匹配或与硬证据对不上。它不是业务失败、不是 review finding、也不是 CMR 未收敛;runner 不猜语义,只把它当控制信封协议坏了,要求同一个产出方基于已有 review artifact / test log / commit evidence 重写合法 outcome(保留本轮记忆,暂定最多 2 次)。正常路径应由 worker 在 emit completionSignal 前按版本化报告模板/脚本自检 outcome 合规,runner 打回只是兜底。连续无法产出合法 outcome 才升级为 infra failure。
-_Avoid_: 把格式坏当 finding、runner 从 prose 里猜、丢掉已产出的评审/测试/提交证据、把协议失败说成实现失败、每次格式错都新开 worker。
-
-**outcome guard**:
-烤进 worker image 的统一完成前守门工具/包装器,作用点类似 pre-commit 但管的是 worker outcome 与 completionSignal。worker 交给它 outcome draft,由它做 JSON parse、role schema、必要字段与证据路径存在性检查;通过后统一写 `$ORCHESTRATOR_OUTCOME_PATH` 并发出兼容 tag/completionSignal。它不住在 prompt 里,也不靠每轮 prompt 手搓说明;prompt 最多引用它,理想状态由 worker 执行入口强制。分层: guard 查格式/schema/证据路径存在;runner 查 git truth 与 step 路由;reviewer/CMR worker 查语义对错。
-_Avoid_: 把校验逻辑塞进 prompt、每个角色复制一份 JSON 说明、让 runner 靠自由文本补救、让 guard 做语义裁决。
+**评审调度信号**:
+reviewer 完成专业判断后留给 runner 的最小交通灯,只有三种:未决 findings 为 0、未决 findings 大于 0、需要人类决定。0 继续,大于 0 派 fixer,需要人则 park。runner 不接收 worker outcome JSON,不读取 finding 内容,不比较 commit/head,不核测试或证据；这些由下一位专业 worker 处理。
+_Avoid_: outcome JSON、finding 分类器、commit hash 一致性闸、让 runner 管理或评价 worker。
 
 **step ledger**:
 每个 **worker 步**落一条的账本(step / promptFile / prompt_hash / agent / model / commits before-after / sessionId 等)。防跳步的事后真源 + 续跑真源(下一步只读 ledger,不靠 LLM 记忆)。同 0017 的「状态文件」是同一份。(runner 的纯调度决策不产 worker 制品、不落 StepSpec 字段,但其路由结果仍记入 ledger 供续跑。)
