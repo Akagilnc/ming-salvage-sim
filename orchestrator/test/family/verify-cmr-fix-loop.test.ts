@@ -2543,7 +2543,10 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
 
-  it("converged cmr cannot self-claim stale prior keys without runner closure context", async () => {
+  it("#861: converged cmr tolerates self-claimed keys when the runner supplied no closure context", async () => {
+    // A fresh reviewer that honestly reports pre-resume findings as fixed (it can
+    // see older review artifacts in the tree) must not kill the family: with no
+    // runner-supplied prior set there is nothing to audit coverage against.
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
@@ -2569,17 +2572,15 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toEqual({ ok: true, ran: true });
     expect(backend.escalations).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      reason: expect.stringMatching(/closure_context_missing/i),
-    }));
-    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
-  it("converged cmr rejects claimed-fixed keys outside the runner closure context", async () => {
+  it("#861: converged cmr ignores claimed-fixed keys outside the runner-supplied set when every supplied key is covered", async () => {
+    // The 485 night-run abort: reviewer claimed the runner-supplied key AND a
+    // genuinely-fixed pre-resume key. Extra honest claims are worker prose, not a
+    // closure failure — the runner audits only the keys it supplied.
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
@@ -2587,8 +2588,15 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
           kind: "cmr",
           converged: true,
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-          claimedFixedFindingIdentityKeys: ["correctness|stale.ts:1|not supplied by runner"],
+          claimedFixedFindingIdentityKeys: [
+            "correctness|src/x.ts:1|real closure",
+            "correctness|stale.ts:1|not supplied by runner",
+          ],
           priorFindingDispositions: [
+            {
+              identityKey: "correctness|src/x.ts:1|real closure",
+              status: "verified-closed",
+            },
             {
               identityKey: "correctness|stale.ts:1|not supplied by runner",
               status: "verified-closed",
@@ -2606,14 +2614,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       priorCmrFindingIdentityKeys: ["correctness|src/x.ts:1|real closure"],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toEqual({ ok: true, ran: true });
     expect(backend.escalations).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      reason: expect.stringMatching(/outside the runner-supplied/i),
-    }));
-    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
+    expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
   it("converged cmr with a still-active prior disposition fails even when the claimed key list is empty", async () => {
