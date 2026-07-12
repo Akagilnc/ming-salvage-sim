@@ -33,6 +33,7 @@ import {
   routeSmokeFailure,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import { logDriverStage } from "../stageLog.js";
 import { isStepId } from "../types.js";
 import type {
   Backend,
@@ -852,6 +853,7 @@ export async function runFamily(
   }
   let currentCliVersions: Readonly<Record<string, string | undefined>>;
   try {
+    logDriverStage("smoke-k", `route=${modelRoute.routeName}`);
     currentCliVersions = singleSliceBackend.currentCliVersions
       ? await singleSliceBackend.currentCliVersions(modelRoute)
       : {};
@@ -1440,6 +1442,10 @@ export async function runFamily(
     // `for…await` let the throw propagate. So after settling we RE-THROW the first
     // rejection before recording any wave result (nothing is merged on a thrown wave —
     // the cycle / admission external-blocker guards stay fail-closed).
+    logDriverStage(
+      "dispatch",
+      `wave n=${wave.length} issues=${wave.map((c) => c.issue).join(",")}`,
+    );
     for (const child of wave) attempted.add(child.issue);
     const settled = await Promise.allSettled(
       wave.map((child) =>
