@@ -536,7 +536,12 @@ def create_minister_agent(
         )
         army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
         use_roster_tool = active_char_count > 100
-        use_army_tool = army_count > 30
+        # The threshold may alter delivery, never authorization: a role without
+        # the military domain must not receive either the roster tool or skill.
+        projected_world = context.db.get_character_knowledge(
+            context.state, character.name,
+        ).get("world") or {}
+        use_army_tool = army_count > 30 and "military" in projected_world
         knowledge_brief = build_character_knowledge_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)
         recommendation_brief = build_recommendation_brief(context.db, context.state, character.name)
