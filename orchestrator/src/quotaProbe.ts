@@ -17,14 +17,12 @@
 
 import type { StepId } from "./types.js";
 import {
-  ExternalCallExhaustedError,
   ExternalCallTimeoutError,
   classifyExternalCallFailure,
-  defaultExternalCallRecorder,
   execFileAsyncWithTimeout,
-  withExternalCallRetry,
   withProviderTimeout,
 } from "./externalCall.js";
+import { withLegTransientRetry } from "./legTransientRetry.js";
 
 /** Provider quota pool the worker is drawing from. */
 export type QuotaPoolId = "zai" | "opencode-go" | "grok" | "unknown";
@@ -405,12 +403,8 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
   const model = deps.zaiModel ?? "glm-5.2";
   const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   try {
-    // #884: provider/HTTP seam + S5 disposition — timeout/5xx retry ×2; 429 no retry.
-    return await withExternalCallRetry(
-      "probe:zai",
-      async () => {
-      // Clock covers fetch AND body consumption — a headers-only hang on
-      // res.text() is still the #884 provider never-responds class.
+    // #884 clock on provider fetch; #879 leg retry only for transport/5xx.
+    return await withLegTransientRetry(async () => {
       const { status, body } = await withProviderTimeout(
         "probe:zai",
         async (signal) => {
@@ -432,9 +426,6 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
         },
         { timeoutMs },
       );
-      // Status-first disposition (#884 cmr r7): 429 = quota (no retry);
-      // 5xx = transient (retry ×2) even if body mentions "quota"/"rate limit";
-      // body-based quota inference only when status does not already decide.
       if (status === 429) {
         return {
           kind: "quota_limited" as const,
@@ -449,14 +440,11 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
         );
       }
       if (status < 200 || status >= 300) {
-        // Durable 4xx (auth etc.): surface as probe error, no retry.
-        // (Other non-2xx that are not 429/5xx.)
         return {
           kind: "error" as const,
           cause: `zai probe HTTP ${status}: ${body.slice(0, 200)}`,
         };
       }
-      // 2xx with quota-shaped body (some gateways return 200 + limit text).
       if (isQuotaLimitBody(body)) {
         return {
           kind: "quota_limited" as const,
@@ -465,16 +453,9 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
         };
       }
       return { kind: "ok" as const };
-    },
-      { record: defaultExternalCallRecorder },
-    );
+    });
   } catch (err) {
-    const cause =
-      err instanceof ExternalCallExhaustedError
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : String(err);
+    const cause = err instanceof Error ? err.message : String(err);
     return { kind: "error", cause };
   }
 }
@@ -510,67 +491,52 @@ async function runOpencodePongProbe(
     });
 
   try {
-    const out = await withExternalCallRetry(
-      "probe:opencode-go",
-      async () => {
-        const result = await run(
-          [
-            "opencode",
-            "run",
-            "--dangerously-skip-permissions",
-            "-m",
-            model,
-            "Reply with exactly: PONG",
-          ],
-          { timeoutMs },
-        );
-        const combined = `${result.stdout}\n${result.stderr}`;
-        if (result.code !== 0) {
-          // Status/exit-first (#884 cmr r7 same-type as zai): transient
-          // network/5xx retry ×2 even when stderr mentions quota text.
-          if (classifyExternalCallFailure(combined) === "transient") {
-            throw new Error(
-              `opencode PONG transient exit ${result.code}: ${combined.slice(0, 200)}`,
-            );
-          }
-          if (isQuotaLimitBody(combined)) {
-            return {
-              kind: "quota_limited" as const,
-              detail: combined.slice(0, 500),
-            };
-          }
-          return {
-            kind: "error" as const,
-            cause: `opencode PONG exit ${result.code}: ${combined.slice(0, 200)}`,
-          };
+    return await withLegTransientRetry(async () => {
+      const result = await run(
+        [
+          "opencode",
+          "run",
+          "--dangerously-skip-permissions",
+          "-m",
+          model,
+          "Reply with exactly: PONG",
+        ],
+        { timeoutMs },
+      );
+      const combined = `${result.stdout}\n${result.stderr}`;
+      if (result.code !== 0) {
+        if (classifyExternalCallFailure(combined) === "transient") {
+          throw new Error(
+            `opencode PONG transient exit ${result.code}: ${combined.slice(0, 200)}`,
+          );
         }
-        // Exit 0 with quota-shaped body (gateways that 200 with limit text).
         if (isQuotaLimitBody(combined)) {
           return {
             kind: "quota_limited" as const,
             detail: combined.slice(0, 500),
           };
         }
-        if (!/\bPONG\b/i.test(result.stdout)) {
-          // No PONG within a successful exit is treated as a soft wall (Go pool
-          // often returns empty stdout when rate-limited and silently retrying).
-          return {
-            kind: "quota_limited" as const,
-            detail: "opencode PONG missing from stdout (treat as quota wall)",
-          };
-        }
-        return { kind: "ok" as const };
-      },
-      { record: defaultExternalCallRecorder },
-    );
-    return out;
+        return {
+          kind: "error" as const,
+          cause: `opencode PONG exit ${result.code}: ${combined.slice(0, 200)}`,
+        };
+      }
+      if (isQuotaLimitBody(combined)) {
+        return {
+          kind: "quota_limited" as const,
+          detail: combined.slice(0, 500),
+        };
+      }
+      if (!/\bPONG\b/i.test(result.stdout)) {
+        return {
+          kind: "quota_limited" as const,
+          detail: "opencode PONG missing from stdout (treat as quota wall)",
+        };
+      }
+      return { kind: "ok" as const };
+    });
   } catch (err) {
-    const cause =
-      err instanceof ExternalCallExhaustedError
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : String(err);
+    const cause = err instanceof Error ? err.message : String(err);
     return { kind: "error", cause };
   }
 }

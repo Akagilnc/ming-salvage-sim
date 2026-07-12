@@ -2995,7 +2995,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // auto-retry on timeout — mutations must be exactly-once (#884 cmr r7).
     return shWithClock(file, args, {
       stage: `admission:${file}`,
-      retry: false,
     });
   }
 
@@ -5572,7 +5571,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ) => string = (file, args) =>
                 shWithClock(file, args, {
                   stage: `dispatch:${file}`,
-                  retry: false,
                 });
               const recheck = pollPrReviewState(ghSh, {
                 repo: defaultRepo(),
