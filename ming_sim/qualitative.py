@@ -8,33 +8,6 @@ import re
 # 历史邸报/章节正文是 LLM 产物，不能假定它已经遵守 P4。只拦截
 # ``字段 + 直接数值`` 这种明确的裸抽象轴写法；钱粮、兵额、欠饷月数等
 # 真实可数物不在这里列出，仍可随历史叙事传递。
-_ABSTRACT_VALUE_RE = re.compile(
-    r"(?:民心|动乱|皇威|忠诚(?:度)?|能力|操守|廉洁|清廉|胆略|勇气|满意度|态度|"
-    r"朝势|军力|财力|士气|训练|装备|火器|机动|士绅阻力|军事压力|"
-    r"满意|势力|威望|实力|经济|"
-    r"进度|进展|bar(?:_value)?|public_support|unrest|loyalty|ability|"
-    r"integrity|courage|satisfaction|leverage|military_strength|morale|"
-    r"training|equipment|firearm_equipment|progress)"
-    r"\s*(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
-    r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从)\s*|[（(]\s*|(?=[-+]?\d))"
-    r"[-+]?\d+(?:\.\d+)?"
-    r"(?:\s*/\s*100|\s*%)?\s*[）)]?",
-    re.IGNORECASE,
-)
-
-# LLM prose frequently inserts connective words between an axis and its score
-# ("忠诚已达98分", "民心跌至20").  This is deliberately fail-closed: all
-# listed axes are abstract, while concrete quantities are absent from the set.
-_ABSTRACT_NEARBY_NUMBER_RE = re.compile(
-    r"(?:民心|动乱|皇威|忠诚(?:度)?|能力|操守|廉洁|清廉|胆略|勇气|满意度|态度|朝势|军力|财力|士气|训练|装备|火器|补给|机动|士绅阻力|军事压力|满意|势力|威望|实力|经济|进度|进展)"
-    # LLM prose freely varies the short connective (骤降至 / 尚余 / 已然达到),
-    # so do not make the P4 boundary depend on an exhaustively maintained verb
-    # list.  The preceding axis is already an abstract-only allowlist.
-    r"\s*(?:[\u4e00-\u9fff]{1,8}\s*)?[-+]?\d+(?:\.\d+)?(?:\s*(?:分|%|/\s*100))?(?!\s*(?:名|人|门|匹|艘|座|处|条))",
-    re.IGNORECASE,
-)
-
-
 def safe_historical_text(text: object, kind: str = "历史记录") -> str:
     """Return historical prose only when it does not leak abstract raw scores.
 
@@ -76,6 +49,29 @@ _AUDIENCE_ABSTRACT_BANDS = {
     "进度": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
     "进展": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
 }
+
+# This registry is the single source of truth for Chinese abstract P4 axes.
+# The raw-score rejector and the renderer must agree on the same vocabulary;
+# concrete quantities are exempt only when their unit makes them observable
+# game facts rather than a hidden score.
+_ABSTRACT_AXIS_PATTERN = "|".join(
+    [*(re.escape(name) for name in _AUDIENCE_ABSTRACT_BANDS),
+     "bar(?:_value)?", "public_support", "unrest", "loyalty", "ability",
+     "integrity", "courage", "satisfaction", "leverage", "military_strength",
+     "morale", "training", "equipment", "firearm_equipment", "progress"]
+)
+_COUNTABLE_FACT_UNITS = r"名|人|门|匹|艘|座|处|条|石|斤|担|斛|日|月|年"
+_ABSTRACT_VALUE_RE = re.compile(
+    rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
+    r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从)\s*|[（(]\s*|(?=[-+]?\d))"
+    rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%)?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))\s*[）)]?",
+    re.IGNORECASE,
+)
+_ABSTRACT_NEARBY_NUMBER_RE = re.compile(
+    rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*(?:[\u4e00-\u9fff]{{1,8}}\s*)?"
+    rf"[-+]?\d+(?:\.\d+)?(?:\s*(?:分|%|/\s*100))?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))",
+    re.IGNORECASE,
+)
 
 
 def qualitative_audience_text(text: object, kind: str = "见闻记录") -> str:

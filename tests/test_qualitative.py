@@ -59,6 +59,7 @@ def test_safe_historical_text_rejects_nearby_raw_axis_variants():
 def test_p4_guard_rejects_supply_score_but_keeps_countable_people():
     assert "已略去" in safe_historical_text("补给已经明显恶化至20")
     assert safe_historical_text("能力出众的3名将领奉命整训") == "能力出众的3名将领奉命整训"
+    assert safe_historical_text("前线补给尚余300石，足供三日") == "前线补给尚余300石，足供三日"
 
 
 def test_qualitative_band_preserves_zero_and_uses_default_only_for_missing_or_invalid():
