@@ -233,9 +233,15 @@ def build_minister_tools(character: Character, context: CourtContext,
         return "\n".join(lines) if lines else f"见闻中未载{needle}。"
 
     def query_court_roster(names: List[str] = []) -> str:
-        """角色获准使用名册工具后，空查完整索引、具名查完整记录。"""
+        """按角色的本职、人事域与可见事件投影结构化在朝名册。"""
+        from ming_sim.knowledge import project_court_roster_rows
+
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
-        rows = context.db.current_court_roster_rows(context.state, wanted)
+        rows = project_court_roster_rows(
+            context.db.current_court_roster_rows(context.state, wanted),
+            projection(),
+            character.office_type,
+        )
         if not rows:
             return "见闻中未载所查人物。"
         if not wanted:
