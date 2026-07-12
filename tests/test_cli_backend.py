@@ -102,6 +102,18 @@ def test_secret_exclusion_recovery_splits_each_explicit_person(monkeypatch):
     assert result["excluded_names"] == ["魏忠贤", "王体乾", "曹化淳"]
 
 
+def test_secret_exclusion_recovery_covers_common_clause_and_shipped_office(monkeypatch):
+    """CLI recovery keeps an omitted institutional exclusion structured."""
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+
+    result = cb._extract_secret_order(
+        "密查此案，不得告知翰林院编修，亦不许户部尚书过问。", "臣领旨", "毕自严"
+    )
+
+    assert "翰林院编修" in result["excluded_offices"]
+    assert "户部尚书" in result["excluded_offices"]
+
+
 def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
     """PR #409 R1 Codex P2：密令按钮只补期限时，仍须从前文召对恢复任务正文。"""
     canned = json.dumps({
