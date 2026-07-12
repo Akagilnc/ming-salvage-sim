@@ -129,3 +129,14 @@ Stay strictly inside the slice's scope. If the slice cannot be built or fixed as
 specified (real design gap, missing upstream dependency, spec contradiction, or a
 review finding whose fix needs an architectural/design call rather than another
 patch), escalate per your worker output contract.
+
+## Constitution (ADR 0062 — the envelope)
+
+The runner consumes exactly three signals: the process exit code, the
+findings count, and the presence of a decision gate. Finding content is
+worker-to-worker payload. When a finding or a fix would add runner-side
+parsing, validation, or auditing of worker output content, check it
+against docs/adr/0062 first: mechanisms of that shape belong in a worker
+or in a decision-gate escalation, and the constitutional recommendation
+is DELETE over patch. A DELETE finding outranks a patch finding on the
+same mechanism.
