@@ -14,6 +14,7 @@ import {
   barePingArgv,
   barePingNonceSatisfied,
   buildBarePingPrompt,
+  loadBarePingPromptTemplate,
   RealBackend,
   resolveRouteSmokeIdleTimeoutSeconds,
 } from "../src/realBackend.js";
@@ -137,9 +138,12 @@ class BarePingBackend extends RealBackend {
 }
 
 describe("#884 bare-ping pure helpers", () => {
-  it("builds a nonce-echo prompt (oracle lives in the prompt, not a tool loop)", () => {
-    const prompt = buildBarePingPrompt("abc-nonce-1");
+  it("builds a nonce-echo prompt from the versioned route-smoke template", () => {
+    const template = loadBarePingPromptTemplate(promptsDir);
+    expect(template).toContain("{{NONCE}}");
+    const prompt = buildBarePingPrompt("abc-nonce-1", template);
     expect(prompt).toContain("abc-nonce-1");
+    expect(prompt).not.toContain("{{NONCE}}");
     expect(prompt.toLowerCase()).toMatch(/reply|exactly/);
   });
 

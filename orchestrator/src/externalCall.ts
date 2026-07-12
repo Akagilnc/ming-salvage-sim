@@ -214,7 +214,8 @@ export function execFileWithTimeout(
       stdio: hasInput ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
       timeout: timeoutMs,
       maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
-      killSignal: "SIGTERM",
+      // SIGKILL: hard clock. SIGTERM can be trapped → parent still waits (Node docs).
+      killSignal: "SIGKILL",
     }).toString();
   } catch (err) {
     if (isTimeoutLikeExecError(err)) {
@@ -250,7 +251,8 @@ export function execFileAsyncWithTimeout(
         encoding: "utf8",
         timeout: timeoutMs,
         maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
-        killSignal: "SIGTERM",
+        // SIGKILL: hard clock. SIGTERM can be trapped → parent still waits (Node docs).
+        killSignal: "SIGKILL",
       },
       (err, stdout, stderr) => {
         if (err !== null) {

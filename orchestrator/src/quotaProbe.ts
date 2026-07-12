@@ -16,6 +16,7 @@
  */
 
 import type { StepId } from "./types.js";
+import { withProviderTimeout } from "./externalCall.js";
 
 /** Provider quota pool the worker is drawing from. */
 export type QuotaPoolId = "zai" | "opencode-go" | "grok" | "unknown";
@@ -394,20 +395,27 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
   }
   const fetchFn = deps.fetch ?? fetch;
   const model = deps.zaiModel ?? "glm-5.2";
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   try {
-    const res = await fetchFn(ZAI_CHAT_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: "p" }],
-        max_tokens: 4,
-      }),
-      signal: AbortSignal.timeout(deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS),
-    });
+    // #884: in-process provider/HTTP seam — stage-named hard clock + AbortSignal.
+    const res = await withProviderTimeout(
+      "probe:zai",
+      async (signal) =>
+        fetchFn(ZAI_CHAT_URL, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: "user", content: "p" }],
+            max_tokens: 4,
+          }),
+          signal,
+        }),
+      { timeoutMs },
+    );
     const body = await res.text();
     if (res.status === 429 || isQuotaLimitBody(body)) {
       return {
