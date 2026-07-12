@@ -2321,39 +2321,9 @@ async function runIntegratedCmrPass(input: {
   // Live sidecar always sets findingsCount — treat 0 the same as "empty", not as
   // "skip the thin not_converged branch" (r3 high: count=0 was falling through
   // to recordCmrPassed).
-  // ADR 0062: when BOTH are present, wrong self-count (count ≠ array length) is
-  // a shape/protocol failure — never silent trust of one channel over the other.
-  if (
-    cmrResult.output.findingsCount !== undefined &&
-    cmrResult.output.findings !== undefined &&
-    cmrResult.output.findingsCount !== cmrResult.output.findings.length
-  ) {
-    const reason =
-      `family integrated cmr ${pass} outcome protocol failure: findings count ` +
-      `channel reported ${cmrResult.output.findingsCount} but structured findings ` +
-      `length is ${cmrResult.output.findings.length}`;
-    await persistFinalReviewRound("rejected", async () => {
-      await familyBackend.recordAborted?.({
-        phase: "final",
-        cmrPass: pass,
-        familyBase,
-        errorPackage: { reason },
-        familyHeadAfter: postWorkerFamilyHead,
-      });
-      await recordDurableAbort(familyBackend, {
-        phase: "final",
-        cmrPass: pass,
-        reason,
-        familyHeadAfter: postWorkerFamilyHead,
-        stopSummary: infraFailureStopSummary({
-          summary: reason,
-          repairHint:
-            "emit findings = x matching the structured findings array length, then rerun the family barrier",
-        }),
-      });
-    });
-    return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
-  }
+  // #875 kill-axis: count vs structured-length mismatch is sloppy prose, NOT a
+  // runner-side protocol court. Trust the count channel for emptiness; still use
+  // whatever structured findings exist for coder-fix identity routing.
   const reportedFindingsCount =
     cmrResult.output.findingsCount ?? cmrResult.output.findings?.length;
   if (
@@ -2441,35 +2411,24 @@ async function runIntegratedCmrPass(input: {
     (cmrResult.output.findings === undefined ||
       cmrResult.output.findings.length === 0)
   ) {
-    // ADR 0062 three-channel: count non-0 but structured findings missing —
-    // cannot route coder-fix identities. This is NOT a claim/disposition court
-    // and NOT a silent pass. outcome_rewrite.md only supplements the count
-    // fragment and cannot invent findings JSON, so we terminal here as
-    // outcome-protocol failure (infra) rather than a pretend rewrite loop.
+    // Three-channel: count non-0 ⇒ not a pass. Missing structured identities
+    // means we cannot dispatch coder-fix — ordinary not_converged, NOT an
+    // infra/protocol court that durable-kills the live family (#875 kill-axis:
+    // chatty/sloppy envelopes must not be re-framed as milder validators).
     const reason =
-      `family integrated cmr ${pass} outcome protocol failure: findings count ` +
-      `channel reported ${reportedFindingsCount} but structured findings are missing`;
-    await persistFinalReviewRound("rejected", async () => {
-      await familyBackend.recordAborted?.({
-        phase: "final",
-        cmrPass: pass,
-        familyBase,
-        errorPackage: { reason },
-        familyHeadAfter: postWorkerFamilyHead,
-      });
-      await recordDurableAbort(familyBackend, {
+      cmrResult.output.reason ??
+      `integrated cmr ${pass} reported findings count ${reportedFindingsCount} without structured findings`;
+    await persistFinalReviewRound("accepted", () =>
+      recordDurableAbort(familyBackend, {
         phase: "final",
         cmrPass: pass,
         reason,
         familyHeadAfter: postWorkerFamilyHead,
-        stopSummary: infraFailureStopSummary({
-          summary: reason,
-          repairHint:
-            "repair the worker outcome writer/guard or the outcome rewrite prompt so findings = x is accompanied by structured findings, then rerun the family barrier",
-        }),
-      });
-    });
-    return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
+        blockingFindingIdentityKeys: [],
+        stopSummary: notConvergedStopSummary(reason),
+      }),
+    );
+    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   let cmrFindingClassification: CmrEnvelope | undefined;
   if (
