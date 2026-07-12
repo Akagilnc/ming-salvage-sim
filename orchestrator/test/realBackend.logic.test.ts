@@ -68,7 +68,6 @@ import {
   soulForStep,
   REFERENCED_PROMPT_FILES,
   RealBackend,
-  routeSmokeToolCallIsEchoOk,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   SANDBOX_OPENCODE_AUTH_FILE,
@@ -129,16 +128,6 @@ afterEach(() => vi.restoreAllMocks());
 afterAll(cleanupTempHomes);
 
 describe("#685 route smoke hardening", () => {
-  it("accepts the quoted echo form emitted by a shell tool call", () => {
-    expect(
-      routeSmokeToolCallIsEchoOk({
-        type: "toolCall",
-        name: "bash",
-        formattedArgs: 'echo "OK"',
-      }),
-    ).toBe(true);
-  });
-
   it("turns a missing host CLI into an unknown version instead of throwing", () => {
     const backend = {
       sh: () => {

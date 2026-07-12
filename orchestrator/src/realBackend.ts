@@ -115,56 +115,9 @@ import {
 } from "./modelRoutes.js";
 import type { CoderSelfReportDiscrepancy } from "./types.js";
 
-export function routeSmokeToolCallIsEchoOk(event: {
-  readonly type?: unknown;
-  readonly name?: unknown;
-  readonly formattedArgs?: unknown;
-}): boolean {
-  return (
-    event.type === "toolCall" &&
-    typeof event.name === "string" &&
-    /^(bash|shell)$/i.test(event.name) &&
-    typeof event.formattedArgs === "string" &&
-    /echo\s+(?:"OK"|'OK'|OK)/i.test(event.formattedArgs)
-  );
-}
+// ── #884 bare-ping smoke only (credential oracle; no docker/tool loop) ───────
 
-/**
- * A nonce must be read back from the worktree after the agent returns. Text in
- * the agent stream is never execution evidence: a model can merely repeat it.
- *
- * @deprecated #884 bare-ping smoke uses {@link barePingNonceSatisfied} (stdout
- * echo oracle). Kept for older tests / any residual tool-smoke path.
- */
-export function routeSmokeNonceFileEvidence(
-  fileContents: string | undefined,
-  nonce: string,
-): boolean {
-  return fileContents?.trim() === nonce;
-}
-
-/**
- * Whether a smoke run produced observable bash evidence. The checked nonce file
- * is a filesystem side effect, so this is provider-independent and does not
- * trust model text or provider-specific stream formatting.
- *
- * @deprecated #884 bare-ping smoke uses {@link barePingNonceSatisfied}.
- */
-export function routeSmokeBashEvidenceSatisfied(input: {
-  readonly provider: string;
-  readonly sawToolCallEchoOk: boolean;
-  readonly sawNonceFile: boolean;
-}): boolean {
-  return input.sawNonceFile;
-}
-
-// ── #884 bare-ping smoke (credential oracle only; no docker/tool loop) ───────
-
-/**
- * Render the versioned bare-ping prompt (`prompts/route-smoke.md`) with the
- * nonce. Production and tests share this renderer so the file is the flow
- * source of truth — not a hard-coded string in the backend.
- */
+/** Fill `prompts/route-smoke.md` `{{NONCE}}` (or a one-line default). */
 export function buildBarePingPrompt(
   nonce: string,
   template: string = "Reply with exactly: {{NONCE}}",
@@ -177,16 +130,13 @@ export function buildBarePingPrompt(
   return template.split("{{NONCE}}").join(nonce);
 }
 
-/** Load the checked-in bare-ping prompt template from promptsDir. */
 export function loadBarePingPromptTemplate(promptsDir: string): string {
   return readFileSync(join(promptsDir, "route-smoke.md"), "utf8");
 }
 
 /**
- * True when stdout satisfies the bare-ping credential oracle.
- * Prompt contract is "Reply with exactly: {{NONCE}}". Accept a whole-stdout
- * exact match OR any full line that is exactly the nonce (models may emit a
- * short preface). Reject substring embedding (nonce mid-token).
+ * Credential oracle: stdout is exactly the nonce, or any full line is.
+ * Substring embedding (nonce mid-token) does not count.
  */
 export function barePingNonceSatisfied(stdout: string, nonce: string): boolean {
   if (nonce.length === 0) return false;

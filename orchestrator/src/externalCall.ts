@@ -1,13 +1,9 @@
 /**
- * #884 — external-call clocks + transient retry (S8 / 873 survival hygiene).
- *
- * Every wait that leaves the process must carry a clock:
- *   - subprocess seam: execFile(Sync) + timeout → kill child → typed error
- *   - in-process provider/HTTP seam: AbortSignal.timeout (probe band 60–120s)
- *
- * Timeout disposition (S5-family classification; self-contained until #879
- * merges): transient → retry ×2 (3 total attempts); quota → no retry (park);
- * durable → surface immediately. Durable records always carry a **stage name**.
+ * #884 — external-call clocks (S8 hygiene). Thin wrappers only:
+ *   - subprocess: execFile(Sync)/async + timeout → kill child → typed error
+ *   - provider: AbortSignal.timeout race (probe band 60–120s)
+ *   - simple failure class for S5 retry (transient / quota / durable)
+ * Not a second platform: no content courts, no smoke framework.
  */
 
 import {
@@ -114,9 +110,9 @@ export class ExternalCallExhaustedError extends Error {
 }
 
 /**
- * S5-family classification for external failures.
- * Transient (timeout / connection drop / 5xx) may retry; quota never retries;
- * everything else is durable and surfaces immediately.
+ * S5-family class: transient (retry), quota (no retry), durable (surface).
+ * Order: typed timeout/code → structured HTTP status → free-text timeout/conn
+ * before digits-as-status → simple HTTP token → quota words → network words.
  */
 export function classifyExternalCallFailure(err: unknown): ExternalFailureClass {
   if (err instanceof ExternalCallTimeoutError) return "transient";
@@ -124,11 +120,14 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     const e = err as {
       readonly name?: unknown;
       readonly code?: unknown;
-      readonly message?: unknown;
       readonly status?: unknown;
       readonly statusCode?: unknown;
     };
-    if (e.name === "ExternalCallTimeoutError" || e.name === "TimeoutError" || e.name === "AbortError") {
+    if (
+      e.name === "ExternalCallTimeoutError" ||
+      e.name === "TimeoutError" ||
+      e.name === "AbortError"
+    ) {
       return "transient";
     }
     if (
@@ -148,32 +147,43 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
         : typeof e.statusCode === "number"
           ? e.statusCode
           : undefined;
-    // Structured HTTP status is exhaustive when present — do not fall through
-    // to free-text heuristics (401 "network auth" must stay durable).
     if (status === 429) return "quota";
     if (status !== undefined && status >= 500 && status <= 599) return "transient";
     if (status !== undefined && status >= 100 && status <= 599) return "durable";
   }
-  // Include stdout/stderr so bare-ping CLI failures that only print ECONNRESET
-  // on a stream still classify as transient (#879).
+
   const msg = externalFailureText(err);
   const lower = msg.toLowerCase();
-  // Status-first in free text (#884 cmr r8 / ship-pre correctness): only when
-  // the number has HTTP/status context (or bare 429). NEVER treat duration
-  // numerals ("timeout after 120 seconds") as status codes.
-  const httpStatus =
-    lower.match(
-      /\b(?:http(?:\/\d+(?:\.\d+)?)?(?:\s+(?:code|error|response\s+code|status(?:\s+code)?))?|status(?:\s+code)?|response\s+(?:status(?:\s+code)?|code)|returned)\s*(?:is|was)?\s*(?:=|:)?\s*([1-5]\d\d)\b/,
-    ) ?? lower.match(/\bhttp\s*([1-5]\d\d)\b/) ?? lower.match(/\bstatus\s*([1-5]\d\d)\b/);
-  if (httpStatus !== null) {
-    const code = Number(httpStatus[1]);
+
+  // Transport words first so "timed out after 120 seconds" is never HTTP 120.
+  if (
+    lower.includes("etimedout") ||
+    lower.includes("econnreset") ||
+    lower.includes("econnrefused") ||
+    lower.includes("socket hang up") ||
+    lower.includes("connection reset") ||
+    lower.includes("connection closed") ||
+    lower.includes("connection aborted") ||
+    lower.includes("connection refused") ||
+    lower.includes("broken pipe") ||
+    lower.includes("timed out") ||
+    lower.includes("timeout") ||
+    lower.includes("aborted")
+  ) {
+    return "transient";
+  }
+
+  // Explicit HTTP/status tokens only (not bare duration digits).
+  const http =
+    lower.match(/\bhttp\s*([1-5]\d\d)\b/) ??
+    lower.match(/\bstatus(?:\s*code)?\s*[:=]?\s*([1-5]\d\d)\b/);
+  if (http !== null) {
+    const code = Number(http[1]);
     if (code === 429) return "quota";
     if (code >= 500 && code <= 599) return "transient";
     return "durable";
   }
-  // Bare "429" (rate-limit short form) without HTTP prefix.
   if (/\b429\b/.test(lower)) return "quota";
-  // Quota before generic "network" so "network error: rate limit" never retries.
   if (
     lower.includes("rate limit") ||
     lower.includes("rate-limit") ||
@@ -186,24 +196,7 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
   ) {
     return "quota";
   }
-  if (
-    lower.includes("etimedout") ||
-    lower.includes("econnreset") ||
-    lower.includes("econnrefused") ||
-    lower.includes("socket hang up") ||
-    lower.includes("connection reset") ||
-    lower.includes("connection closed") ||
-    lower.includes("connection aborted") ||
-    lower.includes("connection refused") ||
-    lower.includes("broken pipe") ||
-    lower.includes("network") ||
-    lower.includes("timed out") ||
-    lower.includes("timeout") ||
-    lower.includes("aborted") ||
-    lower.includes("http 5")
-  ) {
-    return "transient";
-  }
+  if (lower.includes("network") || lower.includes("http 5")) return "transient";
   return "durable";
 }
 

@@ -1,6 +1,6 @@
 /**
- * #807 — grok-build pool provider: custom AgentProvider + registry wiring +
- * route-smoke bash evidence (streaming-json omits tool_call events).
+ * #807 — grok-build pool provider: custom AgentProvider + registry wiring.
+ * Route smoke is bare-ping only (#884); old bash/nonce-file evidence helpers are gone.
  */
 
 import { readFileSync } from "node:fs";
@@ -19,11 +19,7 @@ import {
   resolveModelSlug,
   resolveModelSlugForPool,
 } from "../src/modelRegistry.js";
-import {
-  routeSmokeBashEvidenceSatisfied,
-  routeSmokeNonceFileEvidence,
-  routeSmokeToolCallIsEchoOk,
-} from "../src/realBackend.js";
+import { barePingArgv, barePingNonceSatisfied } from "../src/realBackend.js";
 import { routeSmokeEntries, resolveRouteModels } from "../src/modelRoutes.js";
 
 describe("#807 grokAgent AgentProvider", () => {
@@ -97,45 +93,23 @@ describe("#807 modelRegistry grok-build wiring", () => {
   });
 });
 
-describe("#807 route smoke bash evidence for grok", () => {
-  it("keeps a tool-call echo separate from the required nonce side effect", () => {
-    expect(
-      routeSmokeToolCallIsEchoOk({
-        type: "toolCall",
-        name: "bash",
-        formattedArgs: "echo OK",
-      }),
-    ).toBe(true);
-    expect(
-      routeSmokeBashEvidenceSatisfied({
-        provider: "codex",
-        sawToolCallEchoOk: true,
-        sawNonceFile: true,
-      }),
-    ).toBe(true);
+describe("#807 grok bare-ping smoke wiring", () => {
+  it("builds a one-shot grok CLI bare-ping argv (no docker/tool loop)", () => {
+    const built = barePingArgv("grok", "grok-4.5", "Reply with exactly: nonce-807");
+    expect(built.file).toBe("grok");
+    expect(built.args).toContain("-p");
+    expect(built.args).toContain("Reply with exactly: nonce-807");
+    expect(built.args).toContain("-m");
+    expect(built.args).toContain("grok-4.5");
   });
 
-  it("accepts only a nonce written by the bash side effect for grok", () => {
-    expect(routeSmokeNonceFileEvidence("nonce-807\n", "nonce-807")).toBe(true);
-    expect(routeSmokeNonceFileEvidence("nonce-807", "nonce-807")).toBe(true);
-    expect(routeSmokeNonceFileEvidence("OK", "nonce-807")).toBe(false);
-    expect(
-      routeSmokeBashEvidenceSatisfied({
-        provider: "grok",
-        sawToolCallEchoOk: false,
-        sawNonceFile: true,
-      }),
-    ).toBe(true);
-  });
-
-  it("does not let text-only output pass for any provider", () => {
-    expect(
-      routeSmokeBashEvidenceSatisfied({
-        provider: "codex",
-        sawToolCallEchoOk: false,
-        sawNonceFile: false,
-      }),
-    ).toBe(false);
+  it("accepts full-line nonce stdout and rejects bare chatter", () => {
+    expect(barePingNonceSatisfied("nonce-807\n", "nonce-807")).toBe(true);
+    expect(barePingNonceSatisfied("nonce-807", "nonce-807")).toBe(true);
+    expect(barePingNonceSatisfied("OK", "nonce-807")).toBe(false);
+    expect(barePingNonceSatisfied("prefix-nonce-807-suffix", "nonce-807")).toBe(
+      false,
+    );
   });
 
   it("keeps the model slug independent from its billing pool", () => {
