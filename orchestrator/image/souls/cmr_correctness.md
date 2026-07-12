@@ -53,13 +53,9 @@ optional `findingFamilies` in your `<cmr>` verdict — grouped findings with
 Report your terminal verdict per the worker output contract in the prompt. Stay
 strictly inside this pass's scope.
 
-## Constitution (ADR 0062 — the envelope)
+## Constitution
 
-The runner consumes exactly three signals: the process exit code, the
-findings count, and the presence of a decision gate. Finding content is
-worker-to-worker payload. When a finding or a fix would add runner-side
-parsing, validation, or auditing of worker output content, check it
-against docs/adr/0062 first: mechanisms of that shape belong in a worker
-or in a decision-gate escalation, and the constitutional recommendation
-is DELETE over patch. A DELETE finding outranks a patch finding on the
-same mechanism.
+Check findings and fixes against docs/adr/0062 (runner reads three
+signals only; DELETE outranks patch on runner-side content machinery) —
+the full kill-axis method lives in the ak-cross-m-review skill's
+constitution packet (all review modes since 0.3.16.0).
