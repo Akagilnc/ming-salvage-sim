@@ -385,6 +385,64 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
   });
 
+  it("findingsCount vs structured length mismatch is protocol failure (wrong self-count)", async () => {
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "count/array mismatch",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 2,
+      findings: [NEW_BLOCKER],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatchedNonCmrKinds).toEqual([]);
+    const abort = backend.ledger.find((e) => e.status === "aborted");
+    expect(String(abort?.reason ?? "")).toMatch(
+      /findings count channel reported 2 but structured findings length is 1/i,
+    );
+    expect(abort?.stopSummary?.reason).toBe("infra_failure");
+  });
+
+  it("findingsCount:0 with non-empty structured findings is protocol failure", async () => {
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "zero count with findings body",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 0,
+      findings: [NEW_BLOCKER],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatchedNonCmrKinds).toEqual([]);
+    expect(
+      backend.ledger.some(
+        (e) =>
+          e.status === "aborted" &&
+          /structured findings length is 1/i.test(
+            typeof e.reason === "string" ? e.reason : "",
+          ),
+      ),
+    ).toBe(true);
+  });
+
   it("findingsCount>0 without structured findings is shape/protocol failure (not court, not pass)", async () => {
     // ADR 0062: defective report shape → protocol failure terminal (same family
     // as exhausted rewrite), never fabricated cmr_passed and never a

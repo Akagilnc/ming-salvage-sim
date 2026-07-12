@@ -2321,6 +2321,39 @@ async function runIntegratedCmrPass(input: {
   // Live sidecar always sets findingsCount — treat 0 the same as "empty", not as
   // "skip the thin not_converged branch" (r3 high: count=0 was falling through
   // to recordCmrPassed).
+  // ADR 0062: when BOTH are present, wrong self-count (count ≠ array length) is
+  // a shape/protocol failure — never silent trust of one channel over the other.
+  if (
+    cmrResult.output.findingsCount !== undefined &&
+    cmrResult.output.findings !== undefined &&
+    cmrResult.output.findingsCount !== cmrResult.output.findings.length
+  ) {
+    const reason =
+      `family integrated cmr ${pass} outcome protocol failure: findings count ` +
+      `channel reported ${cmrResult.output.findingsCount} but structured findings ` +
+      `length is ${cmrResult.output.findings.length}`;
+    await persistFinalReviewRound("rejected", async () => {
+      await familyBackend.recordAborted?.({
+        phase: "final",
+        cmrPass: pass,
+        familyBase,
+        errorPackage: { reason },
+        familyHeadAfter: postWorkerFamilyHead,
+      });
+      await recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        stopSummary: infraFailureStopSummary({
+          summary: reason,
+          repairHint:
+            "emit findings = x matching the structured findings array length, then rerun the family barrier",
+        }),
+      });
+    });
+    return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
+  }
   const reportedFindingsCount =
     cmrResult.output.findingsCount ?? cmrResult.output.findings?.length;
   if (
