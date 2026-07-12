@@ -1899,7 +1899,10 @@ def _canonical_secret_office_target(value: str) -> str:
     preserving specific office titles for the DB's issuance-time lookup.
     """
     target = value.strip()
-    office_types = "吏部|户部|礼部|兵部|刑部|工部|都察院|大理寺|通政司|司礼监|内阁|东厂|锦衣卫"
+    office_types = (
+        "吏部|户部|礼部|兵部|刑部|工部|都察院|大理寺|通政司|司礼监|内阁|"
+        "东厂|锦衣卫|翰林院|詹事府"
+    )
     match = re.fullmatch(
         rf"(?P<office>{office_types})(?P<collective>诸官|官员|诸司|诸人|上下|众人)?", target,
     )
@@ -1907,7 +1910,8 @@ def _canonical_secret_office_target(value: str) -> str:
         return match.group("office")
     if re.fullmatch(
         r"[\u4e00-\u9fff]{0,8}(?:首辅|次辅|大学士|阁臣|辅臣|尚书|侍郎|郎中|员外郎|主事|"
-        r"巡抚|总督|总兵|督师|经略|提督|都御史|御史)",
+        r"巡抚|总督|总兵|督师|经略|提督|都御史|御史|侍读学士|侍讲学士|侍读|侍讲|"
+        r"编修|检讨|修撰|庶吉士|庶常|少詹事|詹事|中允|赞善)",
         target,
     ):
         return target

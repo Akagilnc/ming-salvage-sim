@@ -79,7 +79,12 @@ def _public_chapter_counterpart(
     """
     items = [
         item for item in items
-        if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))
+        # Archive rows are derived read-model projections, not independently
+        # authorizable source material.  A chapter counterpart may aggregate
+        # only the source rows that existed before either archive was written.
+        if not str(item.get("source_id") or "").startswith(
+            ("turn_report:", "chapter_source:", "projection:")
+        )
     ]
     if not items:
         return None

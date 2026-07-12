@@ -314,3 +314,21 @@ def test_character_projection_shows_monthly_public_source_once_after_chapter_wri
         for item in db.get_character_knowledge(state, reader.name)["public_events"]
     )
     assert projected.count(marker) == 1
+
+
+def test_chapter_counterpart_filters_derived_report_before_reaggregating_sources(game):
+    """A chapter counterpart receives only independent source rows, never its report projection."""
+    from ming_sim.memories import _public_chapter_counterpart
+
+    db, state, _content = game
+    source_marker = "本月独立源"
+    report_marker = "已经派生的邸报正文"
+    db.record_public_knowledge_event(state, "公开事项", source_marker, source_id="test:independent")
+    db.record_public_knowledge_event(
+        state, "邸报", report_marker, source_id=f"turn_report:{state.turn}:public",
+    )
+
+    counterpart = _public_chapter_counterpart(db.knowledge_items_for_turn(state.turn))
+
+    assert source_marker in (counterpart or "")
+    assert report_marker not in (counterpart or "")
