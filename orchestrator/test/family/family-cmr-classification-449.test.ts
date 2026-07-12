@@ -1290,13 +1290,13 @@ describe("#449 CMR worker output parsing", () => {
     });
   });
 
-  it("#598 a closure disposition missing a required field (boundedReopen) is MALFORMED, not a completed verdict", () => {
-    // #598 downstream required-field re-validation: a CMR output whose
-    // accepted_suppressed closure disposition omits a required field
-    // (source/scope/boundedReopen) fails the strict parse schema → `malformed`, so
-    // it is routed to the same-worker rewrite + the generic mechanical retry rather
-    // than silently accepted as a completed verdict. Schema/protocol-level checking,
-    // not content judgment.
+  it("#875 flips #598: incomplete prior disposition prose (missing boundedReopen) still parses as a verdict", () => {
+    // Pre-#875 / #598: parse-time court killed incomplete accepted_suppressed
+    // prior dispositions as malformed before three-channel routing.
+    // Post-#875: priorFindingDispositions are worker prose — incomplete fields
+    // must NOT become malformed death. Governance authority remains strict on
+    // finding.disposition (cmrDispositionEvidenceSchema) and incomplete prose
+    // simply does not govern (hasAcceptedSuppressionAuthority filters it).
     const parsed = parseCmrOutcome(
       `<cmr>${JSON.stringify({
         converged: true,
@@ -1309,13 +1309,25 @@ describe("#449 CMR worker output parsing", () => {
             source: "issue #448 acceptance criteria",
             scope: "same documented non-goal",
             reason: "accepted as outside this slice",
-            // boundedReopen intentionally OMITTED → schema fails → malformed.
+            // boundedReopen intentionally OMITTED — still a verdict, not death.
           },
         ],
         ...CMR_EVIDENCE,
       })}</cmr>`,
     );
-    expect(parsed.kind).toBe("malformed");
+    expect(parsed.kind).toBe("verdict");
+    if (parsed.kind === "verdict") {
+      expect(parsed.converged).toBe(true);
+      expect(parsed.priorFindingDispositions).toEqual([
+        {
+          identityKey: "correctness|src/x.ts:1|foo",
+          status: "accepted_suppressed",
+          source: "issue #448 acceptance criteria",
+          scope: "same documented non-goal",
+          reason: "accepted as outside this slice",
+        },
+      ]);
+    }
   });
 });
 
