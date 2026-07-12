@@ -386,16 +386,15 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
   });
 
-  it("#875 kill-axis: findingsCount vs structured length mismatch trusts count channel and routes available findings (no protocol court)", async () => {
-    // Pre-r9 residual court: mismatch → infra_failure durable abort.
-    // Post-kill-axis: count is the emptiness authority; structured array still
-    // supplies coder-fix identities. Sloppy self-count must not kill the run.
+  it("#875 Opus: open-count is array-derived — lying findingsCount is ignored at runner", async () => {
+    // Downstream never reconciles independent findingsCount vs array (Opus).
+    // findings=[one blocker] ⇒ openCount=1 ⇒ coder-fix, even if findingsCount lies.
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
-      reason: "count/array mismatch",
+      reason: "array has one blocker",
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      findingsCount: 2,
+      findingsCount: 99,
       findings: [NEW_BLOCKER],
       ...CMR_EVIDENCE,
     });
@@ -413,22 +412,17 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     expect(
       backend.ledger.some(
         (e) =>
-          e.status === "aborted" &&
-          e.stopSummary?.reason === "infra_failure" &&
-          /findings count channel reported|structured findings length/i.test(
-            typeof e.reason === "string" ? e.reason : "",
-          ),
+          e.status === "aborted" && e.stopSummary?.reason === "infra_failure",
       ),
     ).toBe(false);
   });
 
-  it("#875 kill-axis: findingsCount:0 with non-empty structured findings is ordinary not_converged (count authority)", async () => {
-    // Count channel is authoritative for emptiness. Extra structured body is
-    // prose — do not infra-kill on self-count mismatch.
+  it("#875 Opus: non-empty structured findings drive open-count even if findingsCount field is 0", async () => {
+    // Array is single source of truth. findings=[blocker] ⇒ openCount=1 ⇒ coder-fix.
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
-      reason: "zero count with findings body",
+      reason: "array drives count",
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       findingsCount: 0,
       findings: [NEW_BLOCKER],
@@ -443,12 +437,9 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual([]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(isCourtAbort(backend.ledger)).toBe(false);
     expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
-    const abort = backend.ledger.find((e) => e.status === "aborted");
-    expect(abort?.stopSummary?.reason).not.toBe("infra_failure");
-    expect(String(abort?.reason ?? "")).toMatch(/zero count with findings body/i);
   });
 
   it("#875 kill-axis: !converged + findingsCount>0 with only accepted_suppressed findings never cmr_passed", async () => {
@@ -523,13 +514,13 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     expect(abort?.stopSummary?.reason).not.toBe("infra_failure");
   });
 
-  it("#875 kill-axis: findingsCount>0 without structured findings is ordinary not_converged (not protocol court)", async () => {
-    // Count says blockers but no identities to route — three-channel not pass.
-    // Must NOT durable-abort as infra protocol failure (milder court residual).
+  it("#875 Opus: findingsCount field without structured array is empty open-count (array-derived)", async () => {
+    // Independent findingsCount is not authoritative. No findings[] ⇒ openCount=0
+    // ⇒ ordinary not_converged when !converged. No downstream shape court.
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
-      reason: "count says blockers but no structured findings",
+      reason: "no structured findings array",
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       findingsCount: 1,
       ...CMR_EVIDENCE,
@@ -543,12 +534,11 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     });
 
     expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatchedNonCmrKinds).toEqual([]);
     expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
     expect(isCourtAbort(backend.ledger)).toBe(false);
     const abort = backend.ledger.find((e) => e.status === "aborted");
     expect(abort?.stopSummary?.reason).not.toBe("infra_failure");
-    expect(String(abort?.reason ?? "")).not.toMatch(
-      /outcome protocol failure/i,
-    );
+    expect(String(abort?.reason ?? "")).toMatch(/no structured findings array/i);
   });
 });

@@ -3676,20 +3676,31 @@ export function cmrOutcomeFromResult(result: {
           "cmr worker outcome sidecar",
         );
         if (classified.kind !== "verdict") return classified;
-        const findingsCount = parseFindingsSentinel(result.stdout);
-        if (findingsCount === undefined) {
+        // Opus/#875/#ADR0129: structured findings array is the single source of
+        // truth; open-count is DERIVED (array length). Never trust an independent
+        // count field against the array.
+        const derivedCount = classified.findings?.length ?? 0;
+        const sentinel = parseFindingsSentinel(result.stdout);
+        if (sentinel === undefined) {
           return {
             kind: "malformed",
             reason: "cmr reviewer output omitted required findings = x fragment",
             priorVerdict: classified,
           };
         }
-        // #875: non-0 count with missing structured findings stays a verdict —
-        // outcome_rewrite.md is count-supplement only and cannot invent findings
-        // JSON. Three-channel routing in verifyCmr terminals that envelope as
-        // outcome-protocol failure (cannot route coder-fix identities). Never
-        // silent pass; never claim/disposition court; never a pretend rewrite.
-        return { ...classified, findingsCount };
+        // Write-point consistency (ADR 0129): findings = N must match array length.
+        // Mismatch → reject for rewrite at the write/parse entry — NOT a downstream
+        // runner court (those were the r5–r11 thrash).
+        if (sentinel !== derivedCount) {
+          return {
+            kind: "malformed",
+            reason:
+              `cmr reviewer findings = ${sentinel} does not match structured ` +
+              `findings length ${derivedCount} (write-point; count is derived)`,
+            priorVerdict: classified,
+          };
+        }
+        return { ...classified, findingsCount: derivedCount };
       }
     } catch (err) {
       return {
@@ -4080,6 +4091,9 @@ function classifyCmrOutcomePayload(
       ...(converged.findings !== undefined
         ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
         : {}),
+      // Opus: findingsCount is always derived from the structured array.
+      findingsCount:
+        converged.findings !== undefined ? converged.findings.length : 0,
       ...attachSanitizedFindingFamilies({}, converged.findingFamilies),
       evidencePaths: converged.evidencePaths,
     };
@@ -4095,6 +4109,10 @@ function classifyCmrOutcomePayload(
     const priorFindingDispositions = softParsePriorFindingDispositions(
       red.data.priorFindingDispositions,
     );
+    const redFindings =
+      red.data.findings !== undefined
+        ? red.data.findings.map(normalizeCmrReviewerFinding)
+        : undefined;
     return {
       kind: "verdict",
       converged: false,
@@ -4107,9 +4125,8 @@ function classifyCmrOutcomePayload(
       ...(priorFindingDispositions !== undefined
         ? { priorFindingDispositions }
         : {}),
-      ...(red.data.findings !== undefined
-        ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
-        : {}),
+      ...(redFindings !== undefined ? { findings: redFindings } : {}),
+      findingsCount: redFindings !== undefined ? redFindings.length : 0,
       ...attachSanitizedFindingFamilies({}, red.data.findingFamilies),
       evidencePaths: red.data.evidencePaths,
     };
