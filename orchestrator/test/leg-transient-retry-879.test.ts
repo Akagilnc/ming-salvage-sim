@@ -2,9 +2,9 @@
  * #879 / #861 D — CMR leg transient retry at the backend wrapper layer.
  *
  * Classification + bounded retry live in `legTransientRetry.ts` (the leg
- * backend encapsulation). Availability probes (route smoke) use the same
- * policy: connection reset/5xx → retry ×2 then degrade; 429/quota → immediate
- * degrade with zero retry.
+ * backend encapsulation). Availability probes (route smoke / bare-ping) use the
+ * same policy via `withExternalCallRetry` after #884: connection reset/5xx →
+ * retry ×2 then degrade; 429/quota → immediate degrade with zero retry.
  *
  * Positive / negative pair is the acceptance contract.
  */
@@ -13,8 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
-import type * as sc from "@ai-hero/sandcastle";
+import { describe, expect, it } from "vitest";
 import {
   MAX_LEG_TRANSIENT_ATTEMPTS,
   classifyLegFailure,
@@ -22,13 +21,6 @@ import {
 } from "../src/legTransientRetry.js";
 import { resolveRouteModels } from "../src/modelRoutes.js";
 import { RealBackend } from "../src/realBackend.js";
-
-const { runSpy } = vi.hoisted(() => ({ runSpy: vi.fn() }));
-
-vi.mock("@ai-hero/sandcastle", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@ai-hero/sandcastle")>();
-  return { ...actual, run: runSpy };
-});
 
 describe("#879 classifyLegFailure — transient vs quota vs other", () => {
   it("classifies connection reset / close / ECONNRESET / 5xx as transient", () => {
@@ -141,12 +133,37 @@ describe("#879 withLegTransientRetry — positive / negative pair", () => {
   });
 });
 
-describe("#879 availability probe (route smoke) uses the same classification", () => {
+
+describe("#879 availability probe (bare-ping smoke) uses the same classification", () => {
   const smokeFixtureDir = dirname(fileURLToPath(import.meta.url));
   const smokePromptsDir = join(smokeFixtureDir, "..", "prompts");
   const smokeSoulsDir = join(smokeFixtureDir, "..", "image", "souls");
 
-  class ProductionSmokeBackend extends RealBackend {
+  /** Injectable bare-ping backend (#884 smoke seam). */
+  class BarePingSmokeBackend extends RealBackend {
+    readonly pingCalls: Array<{ slug: string; nonce: string }> = [];
+    private readonly pingImpl: (input: {
+      slug: string;
+      nonce: string;
+    }) => Promise<string>;
+
+    constructor(
+      home: string,
+      pingImpl: (input: { slug: string; nonce: string }) => Promise<string>,
+    ) {
+      super({
+        sourceRepo: "/tmp/route-smoke-source-879",
+        remote: "https://github.com/owner/route-smoke-879.git",
+        runKey: 879,
+        repo: "owner/route-smoke-879",
+        imageName: "route-smoke-879-image",
+        promptsDir: smokePromptsDir,
+        soulsDir: smokeSoulsDir,
+        home,
+      });
+      this.pingImpl = pingImpl;
+    }
+
     protected override cloneDirExists(): boolean {
       return true;
     }
@@ -155,11 +172,35 @@ describe("#879 availability probe (route smoke) uses the same classification", (
       if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
         return ".git";
       }
+      if (
+        file === "codex" ||
+        file === "claude" ||
+        file === "opencode" ||
+        file === "grok" ||
+        file === "cursor"
+      ) {
+        return "cli-test-version";
+      }
       return "";
+    }
+
+    protected override async execBarePing(input: {
+      readonly slug: string;
+      readonly cwd: string;
+      readonly prompt: string;
+      readonly nonce: string;
+      readonly file: string;
+      readonly args: readonly string[];
+      readonly stdin?: string;
+      readonly timeoutMs: number;
+    }): Promise<string> {
+      this.pingCalls.push({ slug: input.slug, nonce: input.nonce });
+      return this.pingImpl({ slug: input.slug, nonce: input.nonce });
     }
   }
 
-  function productionSmokeBackend(home: string): ProductionSmokeBackend {
+  function prepareHome(): string {
+    const home = mkdtempSync(join(tmpdir(), "route-smoke-879-"));
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
     writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
@@ -172,175 +213,57 @@ describe("#879 availability probe (route smoke) uses the same classification", (
         "grok-4.5": { type: "api", key: "test-key" },
       }),
     );
-    return new ProductionSmokeBackend({
-      sourceRepo: "/tmp/route-smoke-source-879",
-      remote: "https://github.com/owner/route-smoke-879.git",
-      runKey: 879,
-      repo: "owner/route-smoke-879",
-      imageName: "route-smoke-879-image",
-      promptsDir: smokePromptsDir,
-      soulsDir: smokeSoulsDir,
-      home,
-    });
-  }
-
-  async function renderPromptForScriptedSmoke(
-    options: Parameters<typeof sc.run>[0],
-  ): Promise<string> {
-    const sandcastle = await vi.importActual<typeof import("@ai-hero/sandcastle")>(
-      "@ai-hero/sandcastle",
-    );
-    let renderedPrompt: string | undefined;
-    const sandboxHome = mkdtempSync(join(tmpdir(), "route-smoke-879-render-"));
-    try {
-      await sandcastle.run({
-        agent: {
-          name: "prompt-capture",
-          env: {},
-          captureSessions: false,
-          buildPrintCommand: ({ prompt }) => {
-            renderedPrompt = prompt;
-            return { command: "printf 'ROUTE_SMOKE_COMPLETE\\n'" };
-          },
-          parseStreamLine: (line) => [{ type: "text", text: line }],
-        },
-        sandbox: (
-          await import("@ai-hero/sandcastle/sandboxes/no-sandbox")
-        ).noSandbox({ env: { HOME: sandboxHome } }),
-        cwd: process.cwd(),
-        promptFile: options.promptFile,
-        promptArgs: options.promptArgs,
-        maxIterations: 1,
-        completionSignal: "ROUTE_SMOKE_COMPLETE",
-        logging: { type: "file", path: join(sandboxHome, "render.log") },
-      });
-    } finally {
-      rmSync(sandboxHome, { recursive: true, force: true });
-    }
-    if (renderedPrompt === undefined) {
-      throw new Error("scripted smoke did not receive a rendered prompt");
-    }
-    return renderedPrompt;
-  }
-
-  function evidenceFromPrompt(
-    prompt: string,
-  ): { readonly nonceFile: string; readonly nonce: string } | undefined {
-    const match =
-      /create the nonce evidence file at\s+(\S+)\s+\(relative\s+to\s+your\s+working\s+directory\)\s+containing\s+exactly\s+(\S+),\s+then\s+emit/i.exec(
-        prompt,
-      );
-    if (match === null) return undefined;
-    const [, nonceFile, nonce] = match;
-    if (nonceFile.includes("{{") || nonce.includes("{{")) return undefined;
-    return { nonceFile, nonce };
-  }
-
-  async function successfulSmoke(options: Parameters<typeof sc.run>[0]) {
-    const rendered = await renderPromptForScriptedSmoke(options);
-    const instruction = evidenceFromPrompt(rendered);
-    if (instruction !== undefined && options.cwd) {
-      mkdirSync(options.cwd, { recursive: true });
-      writeFileSync(
-        join(options.cwd, instruction.nonceFile),
-        `${instruction.nonce}\n`,
-      );
-    }
-    return {
-      completionSignal: "ROUTE_SMOKE_COMPLETE",
-    } as Awaited<ReturnType<typeof sc.run>>;
+    return home;
   }
 
   it("positive: availability probe recovers after two transient connection resets on a leg", async () => {
-    const home = mkdtempSync(join(tmpdir(), "route-smoke-879-transient-"));
-    // Per-leg attempt counters keyed by the smoke entry model in promptArgs is
-    // unavailable; count by sequential global runs and force only the first
-    // two calls (same first leg under serial-or-parallel start) to reset.
-    // The contract under test: with the wrapper, a leg that hits ECONNRESET
-    // twice still ends up "passed" after the third try, and total sc.run count
-    // exceeds unique-slug one-shot count.
-    const attemptsByCwd = new Map<string, number>();
-    runSpy.mockImplementation(async (options: Parameters<typeof sc.run>[0]) => {
-      // All smokes share the same workingRepo cwd; differentiate by log path.
-      const logPath =
-        typeof options.logging === "object" &&
-        options.logging !== null &&
-        "path" in options.logging
-          ? String((options.logging as { path: string }).path)
-          : "unknown";
-      // Each smoke invocation uses a unique logDir; group by parent of log path
-      // is unique per attempt. Count total calls per "logical leg" by reusing
-      // a single shared counter for the whole smoke pass is enough when we
-      // only fail the first two attempts of the ENTIRE batch for one slug —
-      // simpler: fail first 2 attempts of EVERY unique attempt-key, but only
-      // for keys that are still under 3. Actually: fail attempt 1 and 2 for
-      // each logDir parent (each invocation is unique). Use a global map of
-      // attempt ordinal across all runs for the first unique "wave":
-      const n = (attemptsByCwd.get("all") ?? 0) + 1;
-      attemptsByCwd.set("all", n);
-      // Force every leg's first two tries via a per-invocation id: each sc.run
-      // has a unique logDir, so we cannot key by leg easily. Instead inject by
-      // counting how many times we've seen this exact call site sequence:
-      // use a WeakMap-like approach — store attempt counts on a module map
-      // keyed by nothing: fail only when total runs so far for the "current
-      // wave" ... 
-      // Cleaner approach used below: track attempts by a rolling "leg key"
-      // derived from the NONCE in promptArgs (unique per attempt, not per leg).
-      // So we instead fail the first TWO sc.run calls overall, then succeed.
-      // With per-leg retry, those two failures may land on one or two legs;
-      // either way the route must still have passed entries and more runs
-      // than unique slugs.
-      void logPath;
-      if (n <= 2) {
-        throw new Error("read ECONNRESET");
-      }
-      return successfulSmoke(options);
-    });
-
+    const home = prepareHome();
+    const attemptsBySlug = new Map<string, number>();
     try {
-      const backend = productionSmokeBackend(home);
+      const backend = new BarePingSmokeBackend(home, async ({ slug, nonce }) => {
+        const n = (attemptsBySlug.get(slug) ?? 0) + 1;
+        attemptsBySlug.set(slug, n);
+        if (n <= 2) {
+          throw new Error("read ECONNRESET");
+        }
+        return `bare-ping ok ${nonce}\n`;
+      });
       const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
-      const totalRuns = attemptsByCwd.get("all") ?? 0;
+      const totalPings = backend.pingCalls.length;
       const uniqueSlugs = new Set(
         Object.keys(smoked.smoke).map((k) => k.split(":")[1]),
       );
 
       // Retried: more physical launches than one-shot unique slugs.
-      expect(totalRuns).toBeGreaterThan(uniqueSlugs.size);
+      expect(totalPings).toBeGreaterThan(uniqueSlugs.size);
       // Not all-failed solely from two resets — at least one leg passed.
       expect(Object.values(smoked.smoke).some((s) => s.state === "passed")).toBe(
         true,
       );
     } finally {
-      runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });
     }
   });
 
   it("negative: 429 on availability probe does not retry that leg", async () => {
-    const home = mkdtempSync(join(tmpdir(), "route-smoke-879-quota-"));
-    let globalRuns = 0;
-    runSpy.mockImplementation(async () => {
-      globalRuns += 1;
-      throw new Error("HTTP 429 rate limit exceeded");
-    });
-
+    const home = prepareHome();
     try {
-      const backend = productionSmokeBackend(home);
+      const backend = new BarePingSmokeBackend(home, async () => {
+        throw new Error("HTTP 429 rate limit exceeded");
+      });
       const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
       const uniqueSlugs = new Set(
         Object.keys(smoked.smoke).map((k) => k.split(":")[1]),
       );
 
       // Every unique slug fails once — no per-leg retry budget spent on 429.
-      expect(globalRuns).toBe(uniqueSlugs.size);
+      expect(backend.pingCalls.length).toBe(uniqueSlugs.size);
       expect(
         Object.values(smoked.smoke).every(
           (s) => s.state === "failed" && /429/.test(s.error),
         ),
       ).toBe(true);
     } finally {
-      runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });
     }
   });
