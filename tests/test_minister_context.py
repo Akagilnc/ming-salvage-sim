@@ -785,6 +785,16 @@ def test_p4_guard_redacts_comparator_score_without_erasing_countable_facts():
     assert "十二万两" in rendered
 
 
+def test_p4_guard_drops_only_unsafe_fragment_when_score_cannot_be_bucketed():
+    rendered = qualitative_audience_text(
+        "此人忠诚因久不见天颜而跌至30分；京营欠饷二十五月，须补银十二万两。", "奏报"
+    )
+    assert "30" not in rendered
+    assert "已略去" in rendered
+    assert "欠饷二十五月" in rendered
+    assert "十二万两" in rendered
+
+
 def test_final_minister_context_keeps_secret_order_tools_without_length_caps(game, monkeypatch):
     """在办密令仍说明工具语义，但不把进展/办结陈词截成形式硬顶。"""
     db, state, content = game
@@ -888,12 +898,33 @@ def test_scale_fallback_court_roster_uses_complete_structured_query(game, monkey
 
     assert "query_army_roster" not in tools
     roster = tools["query_court_roster"]([])
-    actual = db.conn.execute(
-        "SELECT name FROM characters WHERE power_id='ming' AND status != 'offstage' "
-        "AND office_type NOT IN ('后宫','宗藩','未仕') LIMIT 1"
-    ).fetchone()["name"]
+    actual = db.current_court_roster_rows(_state)[0]["name"]
     assert actual in roster
     assert actual in tools["query_court_roster"]([actual])
+
+
+def test_scale_fallback_court_roster_excludes_noncurrent_rows(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    names = [row["name"] for row in db.conn.execute(
+        "SELECT name FROM characters WHERE power_id='ming' AND status='active' "
+        "AND office_type NOT IN ('后宫','宗藩','未仕') LIMIT 4"
+    ).fetchall()]
+    fixtures = (
+        (names[0], "dismissed", 0, 0, "ming"),
+        (names[1], "retired", 0, 0, "ming"),
+        (names[2], "active", state.year + 1, 1, "ming"),
+        (names[3], "active", 0, 0, "qing"),
+    )
+    for name, status, debut_year, debut_month, power_id in fixtures:
+        db.conn.execute(
+            "UPDATE characters SET status=?, debut_year=?, debut_month=?, power_id=? WHERE name=?",
+            (status, debut_year, debut_month, power_id, name),
+        )
+    db.conn.commit()
+    tools = {f.__name__: f for f in build_minister_tools(minister, _ctx(game), use_roster_tool=True)}
+    rendered = tools["query_court_roster"]([])
+    assert all(name not in rendered for name, *_rest in fixtures)
 
 
 def test_scale_fallback_army_roster_uses_complete_structured_query(game, monkeypatch):
