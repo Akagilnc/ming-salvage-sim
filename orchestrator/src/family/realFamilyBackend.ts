@@ -139,7 +139,6 @@ import {
   readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
 import {
-  cmrLegAccountingFailure,
   modelForSlot,
   type CmrLegAccountingRoute,
 } from "../modelRoutes.js";
@@ -3672,7 +3671,6 @@ export function cmrOutcomeFromResult(result: {
       if (sidecar !== undefined) {
         const classified = classifyCmrOutcomePayload(
           sidecar,
-          result.cmrReviewLegs ?? process.env,
           "cmr worker outcome sidecar",
         );
         if (classified.kind !== "verdict") return classified;
@@ -3965,7 +3963,7 @@ function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<strin
  */
 export function parseCmrOutcome(
   stdout: string,
-  routeOrEnv: CmrLegAccountingRoute = process.env,
+  _routeOrEnv: CmrLegAccountingRoute = process.env,
 ): CmrWorkerOutcome {
   const re = /<cmr>([\s\S]*?)<\/cmr>/g;
   let last: string | undefined;
@@ -3979,12 +3977,13 @@ export function parseCmrOutcome(
   } catch {
     return { kind: "malformed", reason: "cmr worker <cmr> tag was not valid JSON" };
   }
-  return classifyCmrOutcomePayload(parsed, routeOrEnv, "cmr worker <cmr> tag");
+  // #875: routeOrEnv retained on the signature for call-site compatibility; parse
+  // no longer converts leg-accounting mismatches into malformed death payloads.
+  return classifyCmrOutcomePayload(parsed, "cmr worker <cmr> tag");
 }
 
 function classifyCmrOutcomePayload(
   parsed: unknown,
-  routeOrEnv: CmrLegAccountingRoute,
   source: string,
 ): CmrWorkerOutcome {
   // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
@@ -4015,21 +4014,12 @@ function classifyCmrOutcomePayload(
       diagnosis: escalate.data.escalate.diagnosis,
     };
   }
+  // #875: parse no longer converts leg-accounting shape mismatches into
+  // `malformed` death payloads. successfulLegs/skippedLegs remain on the
+  // verdict for the strong-leg / required-leg degradation floor; undeclared
+  // or incomplete lists are worker prose, not a parse-time kill.
   if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
     const converged = cmrConvergedSchema.parse(normalizedParsed);
-    const legAccountingFailure = cmrLegAccountingFailure(converged, routeOrEnv);
-    if (legAccountingFailure !== undefined) {
-      return {
-        kind: "malformed",
-        reason: legAccountingFailure,
-        cmrLegAccountingPayload: {
-          successfulLegs: converged.successfulLegs,
-          ...(converged.skippedLegs !== undefined
-            ? { skippedLegs: converged.skippedLegs }
-            : {}),
-        },
-      };
-    }
     return {
       kind: "verdict",
       converged: true,
@@ -4047,19 +4037,6 @@ function classifyCmrOutcomePayload(
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
   if (red.success) {
-    const legAccountingFailure = cmrLegAccountingFailure(red.data, routeOrEnv);
-    if (legAccountingFailure !== undefined) {
-      return {
-        kind: "malformed",
-        reason: legAccountingFailure,
-        cmrLegAccountingPayload: {
-          successfulLegs: red.data.successfulLegs,
-          ...(red.data.skippedLegs !== undefined
-            ? { skippedLegs: red.data.skippedLegs }
-            : {}),
-        },
-      };
-    }
     return {
       kind: "verdict",
       converged: false,

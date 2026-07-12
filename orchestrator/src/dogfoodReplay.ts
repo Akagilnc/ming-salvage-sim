@@ -1684,6 +1684,9 @@ async function withRouteEnv<T>(
 }
 
 async function routeAccountingReplay(): Promise<SeamReplay> {
+  // #875: leg-accounting court demolished. An undeclared extra successful leg is
+  // worker prose — the pure helper may still describe the mismatch, but
+  // runVerifyCmr must survive and ship (strong-leg floor still sees declared strong).
   const env = { ORCHESTRATOR_ROUTE: "claude-tight" };
   const route = resolveRouteModels("claude-tight", {});
   const declaredLegs = route.legCollections.cmrReview.map((leg) => leg.slug);
@@ -1693,7 +1696,7 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
     env,
   );
   if (failure === undefined || !failure.includes(rejectedDefaultLeg)) {
-    throw new Error("dogfood route accounting replay did not reject default legs");
+    throw new Error("dogfood route accounting helper did not flag undeclared legs");
   }
   const backend = new DogfoodCmrFamilyBackend("route-accounting-head", [], [
     {
@@ -1707,6 +1710,27 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
         ...CMR_EVIDENCE,
       },
     },
+    {
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: true,
+        successfulLegs: [...declaredLegs, rejectedDefaultLeg],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
+      },
+    },
+    {
+      kind: "completed",
+      output: {
+        kind: "ship",
+        branch: "family/376-route-accounting",
+        status: "pr_opened",
+        pr: "pr://family/376-route-accounting",
+        prHead: "route-accounting-head",
+      },
+    },
   ]);
   const result = await withRouteEnv(env, () =>
     runVerifyCmr({
@@ -1715,20 +1739,22 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
       familyBackend: backend,
     }),
   );
-  const abort = backend.ledger.find((entry) => entry.status === "aborted");
+  const pass = backend.ledger.find((entry) => entry.status === "cmr_passed");
   if (
-    result.ok ||
-    abort?.stopSummary?.reason !== "infra_failure" ||
-    abort.stopSummary.metadata?.routeAccounting?.successfulLegs.includes(
-      rejectedDefaultLeg,
-    ) !== true
+    !result.ok ||
+    pass?.stopSummary?.reason !== "success" ||
+    backend.ledger.some(
+      (entry) =>
+        entry.status === "aborted" &&
+        entry.stopSummary?.metadata?.routeAccounting !== undefined,
+    )
   ) {
     throw new Error(
-      "dogfood route accounting replay did not fail through runVerifyCmr",
+      "dogfood route accounting replay still killed the run after #875 court demolition",
     );
   }
   return {
-    stopSummary: abort.stopSummary,
+    stopSummary: pass.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr",
       helperSeam: "family_cmr_accounting",
@@ -1736,7 +1762,9 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
       declaredLegs,
       rejectedDefaultLeg,
       failure,
+      courtDemolished: true,
       dispatches: backend.dispatches,
+      status: "success",
     },
   };
 }
@@ -1835,7 +1863,7 @@ function cmrClosureWorkerResult(input: {
   };
 }
 
-async function familyClosureFailure(input: {
+async function familyClosureSurvives(input: {
   readonly shape: string;
   readonly claimedFixedFindingIdentityKeys: readonly string[];
   readonly priorFindingDispositions: ReadonlyArray<{
@@ -1856,14 +1884,27 @@ async function familyClosureFailure(input: {
   readonly reason: string;
   readonly stopSummary: StopSummary;
 }> {
+  // #875: former family closure court shapes must SURVIVE (ship), not fail.
+  const cmr = cmrClosureWorkerResult({
+    claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
+    priorFindingDispositions: input.priorFindingDispositions,
+  });
   const backend = new DogfoodCmrFamilyBackend(
     "closure-head",
     [],
     [
-      cmrClosureWorkerResult({
-        claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
-        priorFindingDispositions: input.priorFindingDispositions,
-      }),
+      cmr,
+      cmr,
+      {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: "family/376-closure",
+          status: "pr_opened",
+          pr: "pr://family/376-closure",
+          prHead: "closure-head",
+        },
+      },
     ],
   );
   const result = await runVerifyCmr({
@@ -1874,22 +1915,30 @@ async function familyClosureFailure(input: {
       ? { priorCmrFindingIdentityKeys: input.priorCmrFindingIdentityKeys }
       : {}),
   });
-  const reason =
-    backend.escalations[0]?.reason ??
-    backend.ledger.find((entry) => entry.status === "aborted")?.reason;
-  const stopSummary = backend.ledger.find(
-    (entry) => entry.status === "aborted" && entry.stopSummary != null,
-  )?.stopSummary;
-  if (result.ok || reason === undefined) {
-    throw new Error(`dogfood CMR closure replay ${input.shape} did not fail`);
+  const pass = backend.ledger.find(
+    (entry) => entry.status === "cmr_passed" && entry.stopSummary != null,
+  );
+  if (!result.ok || pass?.stopSummary == null) {
+    throw new Error(
+      `dogfood CMR closure replay ${input.shape} still failed after #875 court demolition`,
+    );
   }
-  if (stopSummary == null) {
-    throw new Error(`dogfood CMR closure replay ${input.shape} had no stop summary`);
+  if (
+    backend.ledger.some(
+      (entry) =>
+        entry.status === "aborted" &&
+        /claimed fixed|verified closed|disposition|closure/i.test(
+          typeof entry.reason === "string" ? entry.reason : "",
+        ),
+    )
+  ) {
+    throw new Error(`dogfood CMR closure replay ${input.shape} still court-aborted`);
   }
-  if (backend.dispatches.some((dispatch) => dispatch.startsWith("ship:"))) {
-    throw new Error(`dogfood CMR closure replay ${input.shape} shipped`);
-  }
-  return { shape: input.shape, reason, stopSummary };
+  return {
+    shape: input.shape,
+    reason: `survived_${input.shape}`,
+    stopSummary: pass.stopSummary,
+  };
 }
 
 async function runnerClosureFailure(input: {
@@ -1920,37 +1969,35 @@ async function runnerClosureFailure(input: {
 }
 
 async function closureNegativeReplay(): Promise<SeamReplay> {
+  // #875: family verifyCmr court shapes that used to kill now SURVIVE. Single-
+  // slice runner S6 may still adjudicate its own path; family shapes are the
+  // court this slice demolishes.
   const stillActiveKey = "correctness|src/closure.ts:1|still active";
   const unableKey = "correctness|src/closure.ts:2|unable";
   const missingKey = "correctness|src/closure.ts:3|missing";
   const staleKey = "correctness|src/closure.ts:4|stale";
-  const duplicateKey =
-    "correctness|orchestrator/src/runner.ts:376|closure failure duplicate-disposition";
-  const familyFailures = await Promise.all([
-    familyClosureFailure({
+  const familySurvivals = await Promise.all([
+    familyClosureSurvives({
       shape: "still-active",
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [
         { identityKey: stillActiveKey, status: "still-active" },
       ],
     }),
-    familyClosureFailure({
+    familyClosureSurvives({
       shape: "unable-to-assess",
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [
         { identityKey: unableKey, status: "unable-to-assess" },
       ],
     }),
-    familyClosureFailure({
+    familyClosureSurvives({
       shape: "missing-disposition",
       claimedFixedFindingIdentityKeys: [missingKey],
       priorFindingDispositions: [],
       priorCmrFindingIdentityKeys: [missingKey],
     }),
-    // #861: "stale-self-claimed" is no longer a rejected shape — claimed-fixed
-    // keys the runner never asked about are tolerated (honest over-reporting by a
-    // fresh reviewer that saw pre-resume artifacts must not kill the family).
-    familyClosureFailure({
+    familyClosureSurvives({
       shape: "extra-stale-disposition",
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [
@@ -1958,32 +2005,15 @@ async function closureNegativeReplay(): Promise<SeamReplay> {
       ],
     }),
   ]);
-  const duplicateFailure = await runnerClosureFailure({
-    shape: "duplicate-disposition",
-    reviewerOutput: {
-      kind: "reviewer",
-      findings: [],
-      priorFindingDispositions: [
-        { identityKey: duplicateKey, status: "verified-closed" },
-        { identityKey: duplicateKey, status: "verified-closed" },
-      ],
-    },
-  });
-  if (duplicateFailure.stopSummary.reason !== "contract_drift") {
-    throw new Error(
-      "dogfood duplicate closure replay did not produce contract_drift",
-    );
-  }
-  const failures = [...familyFailures, duplicateFailure];
   return {
-    stopSummary: familyFailures[0]!.stopSummary,
+    stopSummary: familySurvivals[0]!.stopSummary,
     sourceEvidence: {
       seam: "family_cmr_closure",
-      runnerSeam: "runner_s6_closure_adjudication",
-      rejectedStatuses: ["still-active", "unable-to-assess"],
-      rejectedShapes: failures.map((failure) => failure.shape),
-      failureReasons: Object.fromEntries(
-        failures.map((failure) => [failure.shape, failure.reason]),
+      courtDemolished: true,
+      survivedStatuses: ["still-active", "unable-to-assess"],
+      survivedShapes: familySurvivals.map((survival) => survival.shape),
+      survivalReasons: Object.fromEntries(
+        familySurvivals.map((survival) => [survival.shape, survival.reason]),
       ),
     },
   };
@@ -2815,8 +2845,8 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "376-route-accounting-non-default",
       issue: 376,
-      title: "non-default route accounting uses declared route legs",
-      classification: "infra_failure",
+      title: "non-default route undeclared legs no longer kill (#875 court demolished)",
+      classification: "success",
       stopSummary: routeAccountingSource.stopSummary,
       source: "family",
       sourceStopSummary: routeAccountingSource.stopSummary,
@@ -2855,8 +2885,8 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "376-closure-context-negative",
       issue: 376,
-      title: "active or duplicate prior finding dispositions cannot pass closure",
-      classification: "contract_drift",
+      title: "family disposition court shapes survive after #875 demolition",
+      classification: "success",
       stopSummary: closureNegativeSource.stopSummary,
       source: "family",
       sourceStopSummary: closureNegativeSource.stopSummary,
