@@ -3747,39 +3747,12 @@ const cmrFindingDispositionSchema = z
     scope: z.string().optional(),
     boundedReopen: z.string().optional(),
   })
-  .strict()
-  .superRefine((disposition, ctx) => {
-    if (disposition.status !== "accepted_suppressed") return;
-    for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
-      if (disposition[field] === undefined || disposition[field].trim() === "") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `accepted_suppressed prior finding disposition requires ${field}`,
-          path: [field],
-        });
-      }
-    }
-    if (
-      disposition.source !== undefined &&
-      !hasExplicitAcceptedSuppressionSource(disposition.source)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
-        path: ["source"],
-      });
-    }
-    if (
-      disposition.boundedReopen !== undefined &&
-      !hasBoundedReopenCondition(disposition.boundedReopen)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
-        path: ["boundedReopen"],
-      });
-    }
-  });
+  .strict();
+// #875: priorFindingDispositions are worker prose at parse time — incomplete
+// accepted_suppressed fields must NOT become malformed death payloads. Governance
+// authority for *finding* suppressions stays strict on cmrDispositionEvidenceSchema
+// below; pass-time acceptedSuppressions metadata still filters via
+// hasAcceptedSuppressionAuthority (incomplete prose simply does not govern).
 const cmrClosureSchema = {
   claimedFixedFindingIdentityKeys: z.array(nonEmpty),
   priorFindingDispositions: z.array(cmrFindingDispositionSchema),

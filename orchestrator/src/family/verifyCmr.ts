@@ -335,16 +335,37 @@ export function meetsCmrFloor(successfulLegs: readonly string[]): boolean {
   return successfulLegs.some(modelIsStrongLeg);
 }
 
+/**
+ * Strong-leg floor credit: only route-declared successful legs count.
+ * #875 demolished leg-accounting death (undeclared extras no longer kill), but
+ * the retained floor must still mean "a route-selected strong leg ran" — an
+ * undeclared strong slug cannot satisfy the floor by itself.
+ */
+function routeDeclaredSuccessfulLegs(
+  successfulLegs: readonly string[],
+  resolvedRoute: ResolvedModelRoute,
+): readonly string[] {
+  const declared = new Set(
+    resolvedRoute.legCollections.cmrReview.map((leg) => leg.slug),
+  );
+  return successfulLegs.filter((slug) => declared.has(slug));
+}
+
 function cmrFloorFailureReason(input: {
   readonly pass: IntegratedCmrPass;
   readonly successfulLegs: readonly string[] | undefined;
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+  readonly resolvedRoute: ResolvedModelRoute;
 }): string | undefined {
   const successfulLegs = input.successfulLegs;
   if (successfulLegs == null || successfulLegs.length === 0) {
     return `integrated cmr ${input.pass} floor failed: no successful leg set was reported`;
   }
-  if (meetsCmrFloor(successfulLegs)) return undefined;
+  const creditedLegs = routeDeclaredSuccessfulLegs(
+    successfulLegs,
+    input.resolvedRoute,
+  );
+  if (meetsCmrFloor(creditedLegs)) return undefined;
   const skipped =
     input.skippedLegs != null && input.skippedLegs.length > 0
       ? `; skipped legs: ${input.skippedLegs
@@ -352,8 +373,12 @@ function cmrFloorFailureReason(input: {
           .join(", ")}`
       : "";
   return (
-    `integrated cmr ${input.pass} floor failed: successful legs [` +
-    `${successfulLegs.join(", ")}] include no strong leg${skipped}`
+    `integrated cmr ${input.pass} floor failed: route-declared successful legs [` +
+    `${creditedLegs.join(", ")}] include no strong leg` +
+    (creditedLegs.length === successfulLegs.length
+      ? ""
+      : ` (reported [${successfulLegs.join(", ")}]; undeclared legs do not credit the floor)`) +
+    skipped
   );
 }
 
@@ -2326,11 +2351,13 @@ async function runIntegratedCmrPass(input: {
   }
   // #875: leg-accounting court demolished. successfulLegs/skippedLegs are worker
   // prose for the degradation floor below — undeclared/duplicate/omitted legs no
-  // longer abort the run.
+  // longer abort the run. Floor still credits only route-declared successful legs
+  // (undeclared strong must not satisfy ADR0032).
   const floorFailure = cmrFloorFailureReason({
     pass,
     successfulLegs: cmrResult.output.successfulLegs,
     skippedLegs: cmrResult.output.skippedLegs,
+    resolvedRoute,
   });
   if (floorFailure !== undefined) {
     const skippedLegs = cmrResult.output.skippedLegs;
