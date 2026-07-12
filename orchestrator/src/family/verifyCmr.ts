@@ -30,13 +30,15 @@
  *     verdict (`converged` | blocking findings | `escalate`). Blocking findings
  *     return to this runner, which records the review, dispatches a separate
  *     coder-fix worker for persistent repair commits, then dispatches a fresh CMR
- *     re-review over the current full diff. Escalate / malformed / contract-slip
- *     verdicts are recorded as durable aborts and stop before ship.
- *     `verifyCmr` owns pass ordering and the ADR0032 strong-leg / required-leg
- *     degradation floor. #875 demolished the accounting court (leg-accounting
- *     death, claimed-fixed coverage audit, disposition-enum kill): envelope prose
- *     no longer aborts a live run. Three-channel routing stays (exit / findings
- *     count / decision gate) plus real infra durable abort.
+ *     re-review over the current full diff. #878: when the fix leg completes but
+ *     the observed family head did not advance, skip re-review and redispatch
+ *     the fix leg (head position is scheduling plumbing, not judgment). Escalate
+ *     / malformed / contract-slip verdicts are recorded as durable aborts and
+ *     stop before ship. `verifyCmr` owns pass ordering and the ADR0032 strong-leg
+ *     / required-leg degradation floor. #875 demolished the accounting court
+ *     (leg-accounting death, claimed-fixed coverage audit, disposition-enum kill):
+ *     envelope prose no longer aborts a live run. Three-channel routing stays
+ *     (exit / findings count / decision gate) plus real infra durable abort.
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
  * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,
@@ -851,11 +853,15 @@ async function runCmrCoderFix(input: {
         ...(findingFamilies !== undefined ? { findingFamilies } : {}),
       },
     );
+    // #878: observation failure must surface as unknown, never as a false
+    // "head stuck" signal. Falling back to the pre-fix head would make
+    // before===after and spin the fix redispatch forever.
     const familyHeadAfter = await readPostCmrFamilyHead(
       familyBackend,
       familyBase,
-    currentFamilyHeadBefore,
-  );
+      currentFamilyHeadBefore,
+      "unknown",
+    );
 
     // Commit telemetry follows the independently observed family HEAD, never
     // the coder's self-report. The report remains for the repair gate below.
@@ -969,7 +975,11 @@ async function runCmrCoderFix(input: {
         : fixResult.output.committed && fixResult.output.commitsAdded >= 1
         ? `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
           `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`
-        : `${reasonPrefix}: coder-fix reported no commit; fresh reviewer will judge findings`,
+        : currentFamilyHeadBefore !== undefined &&
+            familyHeadAfter !== undefined &&
+            currentFamilyHeadBefore === familyHeadAfter
+          ? `${reasonPrefix}: coder-fix left family head unmoved; redispatch fix (skip re-review)`
+          : `${reasonPrefix}: coder-fix reported no commit; fresh reviewer will judge findings`,
   });
   return { result: { ok: true, ran: true }, familyHeadAfter };
 }
@@ -2407,7 +2417,13 @@ async function runIntegratedCmrPass(input: {
             stopSummary,
           }),
         );
-        const fixRound = await runCmrCoderFix({
+        // #878 head-not-moved short-circuit: after a completed fix leg, if the
+        // observed family head did not advance, skip the expensive re-review
+        // and redispatch the fix leg. Head position is scheduling plumbing
+        // (routing), not a court judgment. Unknown heads fall through to the
+        // normal re-review path rather than inventing a head-stuck signal.
+        let fixFamilyHeadBefore = postWorkerFamilyHead;
+        let fixRound = await runCmrCoderFix({
           pass,
           familyBackend,
           familyBase,
@@ -2417,11 +2433,36 @@ async function runIntegratedCmrPass(input: {
           ...(cmrResult.output.findingFamilies !== undefined
             ? { findingFamilies: cmrResult.output.findingFamilies }
             : {}),
-          familyHeadBefore: postWorkerFamilyHead,
+          familyHeadBefore: fixFamilyHeadBefore,
           escalationAnswer,
           familyIssue,
           resolvedRoute,
         });
+        // #878 head-not-moved short-circuit: while the fix leg completes without
+        // advancing family head, redispatch fix and skip re-review. Stop when
+        // head moves, head is unknown, or the fix leg fails/escalates.
+        while (
+          fixRound.result.ok &&
+          fixFamilyHeadBefore !== undefined &&
+          fixRound.familyHeadAfter !== undefined &&
+          fixFamilyHeadBefore === fixRound.familyHeadAfter
+        ) {
+          fixRound = await runCmrCoderFix({
+            pass,
+            familyBackend,
+            familyBase,
+            ...(runId !== undefined ? { runId } : {}),
+            classification,
+            blockingFindingIdentityKeys,
+            ...(cmrResult.output.findingFamilies !== undefined
+              ? { findingFamilies: cmrResult.output.findingFamilies }
+              : {}),
+            familyHeadBefore: fixFamilyHeadBefore,
+            escalationAnswer,
+            familyIssue,
+            resolvedRoute,
+          });
+        }
         if (!fixRound.result.ok) return fixRound;
         const updatedPriorKeys = [
             ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...blockingFindingIdentityKeys]),
