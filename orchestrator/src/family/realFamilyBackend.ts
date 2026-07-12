@@ -1378,10 +1378,12 @@ export class RealFamilyBackend implements FamilyBackend {
    * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL route-selected
    * reviewer for ONE ADR 0030 pass (completeness or correctness). It
    * `Skill`-invokes ak-cross-m-review in-container and returns a TERMINAL review
-   * verdict. The runner (`verifyCmr.ts`) owns pass order, route-leg accounting,
-   * ADR0032 strong-leg floor, blocking-finding classification, coder-fix dispatch,
-   * and fresh re-review before ship. A non-converged review outcome is a completed
-   * CMR payload the runner routes; it is NOT a failed worker.
+   * verdict. The runner (`verifyCmr.ts`) owns pass order, ADR0032 strong-leg /
+   * required-leg floor, three-channel routing (exit / findings count / decision
+   * gate), coder-fix dispatch, and fresh re-review before ship. #875 demolished
+   * the accounting court (leg-accounting death / claimed-fixed coverage /
+   * disposition-enum kill). A non-converged review outcome is a completed CMR
+   * payload the runner routes; it is NOT a failed worker.
    */
   async dispatchWorker(
     spec: WorkerSpec,

@@ -248,9 +248,12 @@ export interface VerifyCmrInput {
   /** Parsed module declarations for family-CMR scope classification (#449). */
   readonly moduleContext?: FamilyModuleContext;
   /**
-   * Runner-owned prior finding identity keys that the integrated CMR worker may
-   * close. If a worker claims fixed keys without this protected context, or
-   * claims keys outside it, the family gate fails closed.
+   * Runner-owned prior finding identity keys passed to the integrated CMR
+   * worker as artifact pointers (ADR 0130 case handoff). #875 demolished the
+   * verifyCmr accounting court: the runner does NOT parse claim/disposition
+   * coverage of these keys to abort a live run. Three-channel routing only
+   * (exit / findings count / decision gate) plus strong-leg floor, required-leg
+   * degradation, and real infra durable abort.
    */
   readonly priorCmrFindingIdentityKeys?: readonly string[];
   /** Pass-scoped prior finding identity keys; preferred over the legacy flat set. */
