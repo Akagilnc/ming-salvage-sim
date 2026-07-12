@@ -252,6 +252,41 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     ).toBe(false);
   });
 
+  it("required leg double-reported as successful+skipped still ships (sloppy prose, not unavailable)", async () => {
+    // #875: skippedLegs prose must not override a simultaneous successful report
+    // for the same required route leg — that was pure accounting death / milder
+    // re-court of double-report. claude-tight required = gpt-5.6-sol.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+      skippedLegs: [{ slug: "gpt-5.6-sol", reason: "quota (double-report noise)" }],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          /required CMR anchor leg/i.test(
+            typeof entry.reason === "string" ? entry.reason : "",
+          ),
+      ),
+    ).toBe(false);
+    expect(backend.ledger.some((entry) => entry.status === "cmr_passed")).toBe(
+      true,
+    );
+  });
+
   it("floor still fails when only an undeclared strong leg is reported (no route-declared strong credit)", async () => {
     // After accounting-court demolition, undeclared legs must not kill via
     // routeAccounting — but they also must not *satisfy* the retained strong-leg

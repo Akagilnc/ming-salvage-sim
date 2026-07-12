@@ -2383,6 +2383,8 @@ async function runIntegratedCmrPass(input: {
   const requiredLegFailure = requiredCmrLegSkipFailure(
     cmrResult.output.skippedLegs,
     resolvedRoute,
+    // #875: double-reported successful+skipped is prose — success wins.
+    cmrResult.output.successfulLegs,
   );
   if (requiredLegFailure !== undefined) {
     const skippedLegs = cmrResult.output.skippedLegs;
