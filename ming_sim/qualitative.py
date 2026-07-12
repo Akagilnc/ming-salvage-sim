@@ -46,6 +46,9 @@ _AUDIENCE_ABSTRACT_BANDS = {
     "装备": ("匮乏", "短缺", "尚可", "精良", "充足"),
     "火器": ("匮乏", "短缺", "尚可", "精良", "充足"),
     "补给": ("断绝", "吃紧", "尚可", "充足", "丰裕"),
+    "机动": ("迟滞", "受限", "尚可", "灵便", "迅捷"),
+    "军事压力": ("轻微", "有限", "可控", "沉重", "极重"),
+    "士绅阻力": ("轻微", "有限", "可控", "沉重", "极重"),
     "进度": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
     "进展": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
 }
@@ -58,7 +61,8 @@ _ABSTRACT_AXIS_PATTERN = "|".join(
     [*(re.escape(name) for name in _AUDIENCE_ABSTRACT_BANDS),
      "bar(?:_value)?", "public_support", "unrest", "loyalty", "ability",
      "integrity", "courage", "satisfaction", "leverage", "military_strength",
-     "morale", "training", "equipment", "firearm_equipment", "progress"]
+     "morale", "training", "equipment", "firearm_equipment", "mobility",
+     "military_pressure", "gentry_resistance", "progress"]
 )
 _COUNTABLE_FACT_UNITS = r"名|人|门|匹|艘|座|处|条|石|斤|担|斛|日|月|年"
 _ABSTRACT_VALUE_RE = re.compile(
@@ -73,6 +77,7 @@ _ABSTRACT_VALUE_RE = re.compile(
 # ``汉字{1,N}`` bridge here: it both misses longer prose and mistakes concrete
 # facts such as ``火器营新募3000人`` for an abstract axis.
 _ABSTRACT_STATE_NOUN = r"(?:整体|总体|水平|状况|情形|供应|保障)?"
+_ABSTRACT_STATE_CONNECTIVE = r"(?:[\u4e00-\u9fff]{0,16}?)"
 _ABSTRACT_STATE_MODIFIER = (
     r"(?:(?:已(?:经|然)?|正(?:在)?|仍(?:然)?|尚|逐步|明显|显著|大幅|持续|"
     r"不断|迅速|急剧|骤然|骤|略有|有所|日益|愈发|更为|相当|十分|极其))*"
@@ -83,7 +88,7 @@ _ABSTRACT_STATE_VERB = (
 )
 _ABSTRACT_NEARBY_NUMBER_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
-    rf"(?:{_ABSTRACT_STATE_NOUN}{_ABSTRACT_STATE_MODIFIER}{_ABSTRACT_STATE_VERB}\s*|(?=[-+]?\d))"
+    rf"(?:{_ABSTRACT_STATE_CONNECTIVE}{_ABSTRACT_STATE_NOUN}{_ABSTRACT_STATE_MODIFIER}{_ABSTRACT_STATE_VERB}\s*|(?=[-+]?\d))"
     rf"[-+]?\d+(?:\.\d+)?(?:\s*(?:分|%|/\s*100))?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))",
     re.IGNORECASE,
 )
