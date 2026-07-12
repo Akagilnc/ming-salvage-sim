@@ -34,9 +34,8 @@
  *   reaching for `runStep` / `resumeSession` / `push` directly.
  */
 
-import { execFileSync } from "node:child_process";
-
 import { mintRunId } from "./runId.js";
+import { shWithClock } from "./externalCall.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import {
   offlineSyntheticPollAdmissible,
@@ -1131,9 +1130,8 @@ function gitOutputLines(
 ): string[] {
   if (worktree === undefined) return [];
   try {
-    return execFileSync("git", ["-C", worktree.path, ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
+    return shWithClock("git", ["-C", worktree.path, ...args], {
+      stage: "reconcile:git",
     })
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -2993,10 +2991,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingCiS9Polls = 0;
 
   function ghSh(file: string, args: string[]): string {
-    return execFileSync(file, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
+    // Mixed read/write (poll + applyVerifySideEffects / auto-merge). No
+    // auto-retry on timeout — mutations must be exactly-once (#884 cmr r7).
+    return shWithClock(file, args, {
+      stage: `admission:${file}`,
+      retry: false,
+    });
   }
 
   function defaultRepo(): string {
@@ -3006,10 +3006,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return "Akagilnc/ming-salvage-sim";
     }
     try {
-      return execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
+      return shWithClock(
+        "gh",
+        ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        { stage: "admission:gh-repo" },
+      );
     } catch {
       return "Akagilnc/ming-salvage-sim";
     }
@@ -3738,6 +3739,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // recorded so the caller gets a clean error package rather than a raw reject.
   let resumeState: ResumeState | undefined;
   try {
+    // #884: reconcile = resume-residue / ledger discovery before productive work.
+    logDriverStage("reconcile", `issue #${issueNumber}`);
     resumeState = await backend.findResumeState(issueNumber);
   } catch (err) {
     return await errorTermination("S0", err);
@@ -4292,6 +4295,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // the brief, when present, is just the most-authoritative part of that.
         let meta: IssueMeta;
         try {
+          // #884: admission = S0 input gate / live issue metadata fetch.
+          logDriverStage("admission", `issue #${issueNumber}`);
           meta = await backend.fetchIssueMeta(issueNumber);
         } catch (err) {
           // No worktree yet → no sibling stateDir → cannot persist (inherent:
@@ -5565,10 +5570,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 file: string,
                 args: string[],
               ) => string = (file, args) =>
-                execFileSync(file, args, {
-                  encoding: "utf8",
-                  stdio: ["ignore", "pipe", "pipe"],
-                }).trim();
+                shWithClock(file, args, {
+                  stage: `dispatch:${file}`,
+                  retry: false,
+                });
               const recheck = pollPrReviewState(ghSh, {
                 repo: defaultRepo(),
                 prUrl: lastShipOutput.pr,

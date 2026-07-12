@@ -279,20 +279,21 @@ describe("#683 buildQuotaWaitForResetLedgerEntry (ledger 外显)", () => {
   });
 });
 
-describe("#683 opencode probe stream error listeners", () => {
-  it("default runCommand registers error listeners on stdout and stderr", () => {
-    // Readable stream 'error' without a listener becomes an uncaught exception
-    // and can crash the process; the default spawn path must log-and-continue.
+describe("#683/#884 opencode probe hard clock", () => {
+  it("default runCommand uses execFileAsyncWithTimeout + external-call retry", () => {
+    // #884: bare spawn+SIGTERM is not a hard clock; production path must use
+    // the subprocess seam (SIGKILL) and transient retry with stage name.
     const src = readFileSync(
       new URL("../src/quotaProbe.ts", import.meta.url),
       "utf8",
     );
-    const spawnBlock = src.slice(
+    const block = src.slice(
       src.indexOf("async function runOpencodePongProbe"),
       src.indexOf("function isQuotaLimitBody"),
     );
-    expect(spawnBlock).toMatch(/child\.stdout\?\.on\(\s*["']error["']/);
-    expect(spawnBlock).toMatch(/child\.stderr\?\.on\(\s*["']error["']/);
+    expect(block).toMatch(/execFileAsyncWithTimeout/);
+    expect(block).toMatch(/withExternalCallRetry/);
+    expect(block).toMatch(/probe:opencode-go/);
   });
 });
 
@@ -378,6 +379,62 @@ describe("#683 isQuotaLimitBody variants (via runPoolProbe)", () => {
       });
       expect(result.kind, body).toBe("quota_limited");
     }
+  });
+
+  it("#884: HTTP 5xx is transient even when body mentions quota (status-first)", async () => {
+    // Owner policy: 5xx → retry ×2; 429 → no retry. Body-based quota inference
+    // must not swallow a 503 before the status branch (would skip retries).
+    let fetches = 0;
+    const result = await runPoolProbe("zai", {
+      zaiApiKey: "test-key",
+      timeoutMs: 200,
+      fetch: async () => {
+        fetches += 1;
+        return new Response("upstream quota / rate limit text in 503 body", {
+          status: 503,
+          statusText: "Service Unavailable",
+        });
+      },
+    });
+    // Exhausted transient retries → error (not immediate quota_limited).
+    expect(result.kind).toBe("error");
+    expect(fetches).toBe(3);
+    expect(result.kind === "error" ? result.cause : "").toMatch(
+      /503|exhaust|probe:zai/i,
+    );
+  });
+
+  it("#884: pure 429 still no-retry (status 429 wins immediately)", async () => {
+    let fetches = 0;
+    const result = await runPoolProbe("zai", {
+      zaiApiKey: "test-key",
+      fetch: async () => {
+        fetches += 1;
+        return new Response("rate limit", {
+          status: 429,
+          statusText: "Too Many Requests",
+        });
+      },
+    });
+    expect(result.kind).toBe("quota_limited");
+    expect(fetches).toBe(1);
+  });
+
+  it("#884 cmr r9: opencode exit≠0 with stdout-only 429 → quota_limited, no retry", async () => {
+    let runs = 0;
+    const result = await runPoolProbe("opencode-go", {
+      runCommand: async () => {
+        runs += 1;
+        // Production shape: non-zero exit, quota text only on stdout.
+        return {
+          code: 1,
+          stdout: "HTTP 429 rate limit — wait for reset",
+          stderr: "",
+        };
+      },
+    });
+    expect(result.kind).toBe("quota_limited");
+    expect(runs).toBe(1);
   });
 });
 

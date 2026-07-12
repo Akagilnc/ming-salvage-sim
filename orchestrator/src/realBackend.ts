@@ -71,10 +71,10 @@ import {
 } from "./acceptedSuppression.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
+  defaultExternalCallRecorder,
   execFileAsyncWithTimeout,
-  execFileWithTimeout,
+  shWithClock,
   withExternalCallRetry,
-  DEFAULT_SUBPROCESS_TIMEOUT_MS,
 } from "./externalCall.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
@@ -161,14 +161,39 @@ export function routeSmokeBashEvidenceSatisfied(input: {
 
 // ── #884 bare-ping smoke (credential oracle only; no docker/tool loop) ───────
 
-/** Prompt that asks the model to echo a nonce — the bare-ping oracle. */
-export function buildBarePingPrompt(nonce: string): string {
-  return `Reply with exactly: ${nonce}`;
+/**
+ * Render the versioned bare-ping prompt (`prompts/route-smoke.md`) with the
+ * nonce. Production and tests share this renderer so the file is the flow
+ * source of truth — not a hard-coded string in the backend.
+ */
+export function buildBarePingPrompt(
+  nonce: string,
+  template: string = "Reply with exactly: {{NONCE}}",
+): string {
+  if (!template.includes("{{NONCE}}")) {
+    throw new Error(
+      "bare-ping prompt template must contain {{NONCE}} placeholder",
+    );
+  }
+  return template.split("{{NONCE}}").join(nonce);
 }
 
-/** True when stdout carries the nonce (credential-alive oracle). */
+/** Load the checked-in bare-ping prompt template from promptsDir. */
+export function loadBarePingPromptTemplate(promptsDir: string): string {
+  return readFileSync(join(promptsDir, "route-smoke.md"), "utf8");
+}
+
+/**
+ * True when stdout satisfies the bare-ping credential oracle.
+ * Prompt contract is "Reply with exactly: {{NONCE}}". Accept a whole-stdout
+ * exact match OR any full line that is exactly the nonce (models may emit a
+ * short preface). Reject substring embedding (nonce mid-token).
+ */
 export function barePingNonceSatisfied(stdout: string, nonce: string): boolean {
-  return stdout.includes(nonce);
+  if (nonce.length === 0) return false;
+  const trimmed = stdout.trim();
+  if (trimmed === nonce) return true;
+  return stdout.split(/\r?\n/).some((line) => line.trim() === nonce);
 }
 
 export interface BarePingArgv {
@@ -226,9 +251,10 @@ export function barePingArgv(
         ],
       };
     case "cursor":
+      // Sandcastle 0.10.0 invokes the standalone `agent` binary (not `cursor agent`).
       return {
-        file: "cursor",
-        args: ["agent", "-p", prompt, "--model", model],
+        file: "agent",
+        args: ["-p", prompt, "--model", model, "--print"],
       };
     case "copilot":
       return {
@@ -2346,8 +2372,10 @@ export class RealBackend implements Backend {
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const versions: Record<string, string | undefined> = {};
     for (const entry of routeSmokeEntries(route)) {
-      if (versions[entry.slug] === undefined) {
-        versions[entry.slug] = this.cliVersionForSlug(
+      // #884: key by entry.key so pool-rewritten pipes don't share a slug bucket
+      // with the default-provider entry (same class of aliasing as smoke uniqueness).
+      if (versions[entry.key] === undefined) {
+        versions[entry.key] = this.cliVersionForSlug(
           entry.slug,
           entry.key === relaySmokeEntryKey ? dispatchPool : undefined,
         );
@@ -2381,28 +2409,35 @@ export class RealBackend implements Backend {
     // legs then degrade; required anchors can still abort the run); 429 /
     // quota never retries — via withExternalCallRetry (same S5-family policy
     // as legTransientRetry). Worker-process crashes stay on #598.
-    const smoked = await smokeRouteModels(route, async (entry) => {
-      const entryPool = entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
+    const pingOne = async (
+      entry: { readonly key: string; readonly slug: string },
+      entryPool: BillingPoolDispatchId | undefined,
+    ): Promise<{ readonly cliVersion: string }> => {
       const resolved = resolveModelSlugForPool(entry.slug, entryPool);
       this.assertProviderAuth(entry.slug, entryPool, providerAuth);
-
       const nonce = randomUUID();
-      const prompt = buildBarePingPrompt(nonce);
+      const prompt = buildBarePingPrompt(
+        nonce,
+        loadBarePingPromptTemplate(this.opts.promptsDir),
+      );
       const built = barePingArgv(resolved.provider, resolved.model, prompt);
       const emptyDir = mkdtempSync(join(tmpdir(), "route-smoke-ping-"));
       try {
         const stage = `smoke-k:${entry.slug}`;
-        const stdout = await withExternalCallRetry(stage, async () =>
-          this.execBarePing({
-            slug: entry.slug,
-            cwd: emptyDir,
-            prompt,
-            nonce,
-            file: built.file,
-            args: built.args,
-            stdin: built.input,
-            timeoutMs,
-          }),
+        const stdout = await withExternalCallRetry(
+          stage,
+          async () =>
+            this.execBarePing({
+              slug: entry.slug,
+              cwd: emptyDir,
+              prompt,
+              nonce,
+              file: built.file,
+              args: built.args,
+              stdin: built.input,
+              timeoutMs,
+            }),
+          { record: defaultExternalCallRecorder },
         );
         if (!barePingNonceSatisfied(stdout, nonce)) {
           throw new Error(
@@ -2413,7 +2448,64 @@ export class RealBackend implements Backend {
       } finally {
         rmSync(emptyDir, { recursive: true, force: true });
       }
+    };
+
+    // Pool-rewritten pipe: dedicated ping for the relay entry so a same-slug
+    // default-provider result is never alias-passed as pool-smoked. Launch IN
+    // PARALLEL with unique-slug legs (P5 / #884 cmr r7) — never serialize after
+    // the full smoke wave (adds a whole timeout/retry budget before dispatch).
+    const relayEntry =
+      relaySmokeEntryKey !== undefined && dispatchPool !== undefined
+        ? routeSmokeEntries(route).find((e) => e.key === relaySmokeEntryKey)
+        : undefined;
+    const relayPingPromise =
+      relayEntry !== undefined
+        ? pingOne(relayEntry, dispatchPool).then(
+            (result) =>
+              ({ ok: true as const, result, at: new Date().toISOString() }),
+            (error: unknown) =>
+              ({ ok: false as const, error, at: new Date().toISOString() }),
+          )
+        : undefined;
+
+    // Unique-by-slug parallel legs (owner "六路") — always default pipe.
+    // Pool credentials for relaySmokeEntryKey are covered ONLY by the dedicated
+    // parallel relayPingPromise below (cmr r8: never let unique-wave pool ping
+    // fan out as "default pipe passed").
+    let smoked = await smokeRouteModels(route, async (entry) => {
+      void entry;
+      return pingOne(entry, undefined);
     });
+
+    if (relayEntry !== undefined && relayPingPromise !== undefined) {
+      const relayOutcome = await relayPingPromise;
+      if (relayOutcome.ok) {
+        smoked = {
+          ...smoked,
+          smoke: {
+            ...smoked.smoke,
+            [relayEntry.key]: {
+              state: "passed",
+              at: relayOutcome.at,
+              cliVersion: relayOutcome.result.cliVersion,
+            },
+          },
+        };
+      } else {
+        const err = relayOutcome.error;
+        smoked = {
+          ...smoked,
+          smoke: {
+            ...smoked.smoke,
+            [relayEntry.key]: {
+              state: "failed",
+              at: relayOutcome.at,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          },
+        };
+      }
+    }
     return smoked;
   }
 
@@ -2463,7 +2555,13 @@ export class RealBackend implements Backend {
       slug,
       isBillingPoolDispatchId(billingPool) ? billingPool : undefined,
     ).provider;
-    const command = provider === "claudeCode" ? "claude" : provider;
+    // Keep CLI binary identity aligned with barePingArgv / Sandcastle.
+    const command =
+      provider === "claudeCode"
+        ? "claude"
+        : provider === "cursor"
+          ? "agent"
+          : provider;
     try {
       return this.sh(command, ["--version"]).trim() || "unknown";
     } catch {
@@ -2569,13 +2667,15 @@ export class RealBackend implements Backend {
    * (integ-cmr 256 r3 reuse-fail-closed test).
    *
    * #884: every subprocess wait carries a clock (default 120s).
+   * Mixed read/write seam → retry:false (exactly-once on timeout for git
+   * clone/push/worktree remove and gh writes; cmr r7).
    */
   protected sh(file: string, args: string[], cwd?: string): string {
-    return execFileWithTimeout(file, args, {
+    return shWithClock(file, args, {
       stage: `subprocess:${file}`,
-      timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
       cwd,
-    }).trim();
+      retry: false,
+    });
   }
 
   // ── S0: lightweight metadata (host gh) ─────────────────────────────────────

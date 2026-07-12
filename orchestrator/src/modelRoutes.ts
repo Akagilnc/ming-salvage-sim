@@ -543,7 +543,9 @@ export function routeSmokeFailure(
     if (!Number.isFinite(at) || now - at > maxAgeMs) {
       return `route smoke expired for ${entry.key}; last passed at ${status.at}`;
     }
-    const currentCliVersion = currentCliVersions[entry.slug];
+    // Prefer entry.key (model×pipe / role); fall back to bare slug for older maps.
+    const currentCliVersion =
+      currentCliVersions[entry.key] ?? currentCliVersions[entry.slug];
     if (currentCliVersion !== undefined && currentCliVersion !== status.cliVersion) {
       return `route smoke expired for ${entry.key}; CLI version changed from ${status.cliVersion} to ${currentCliVersion}`;
     }
@@ -558,7 +560,12 @@ export async function smokeRouteModels(
 ): Promise<ResolvedModelRoute> {
   const smoke: Record<string, RouteSmokeStatus> = { ...route.smoke };
   const entries = routeSmokeEntries(route);
-  const uniqueEntries = [...new Map(entries.map((entry) => [entry.slug, entry])).values()];
+  // #884: unique by model slug (owner "六路" = unique models). Status fans out
+  // to every route entry sharing that slug. Pool-specific pings are forced by
+  // RealBackend.smokeModelRoute after this when relaySmokeEntryKey is set.
+  const uniqueEntries = [
+    ...new Map(entries.map((entry) => [entry.slug, entry])).values(),
+  ];
   const results = await Promise.all(
     uniqueEntries.map(async (entry) => {
       try {
@@ -584,7 +591,7 @@ export async function smokeRouteModels(
     }),
   );
   for (const { entry, status } of results) {
-    for (const target of entries.filter((candidate) => candidate.slug === entry.slug)) {
+    for (const target of entries.filter((c) => c.slug === entry.slug)) {
       smoke[target.key] = status;
     }
   }

@@ -576,9 +576,11 @@ describe("#786 telemetry pure helpers", () => {
     await vi.waitFor(() => {
       expect(gitExecControl.releaseHungGit).toBeTypeOf("function");
     });
+    // #884: telemetry git goes through execFileAsyncWithTimeout — hard SIGKILL
+    // clock; under vitest the wall is clamped by effectiveSubprocessTimeoutMs.
     expect(gitExecControl.timeoutOptions).toContainEqual(expect.objectContaining({
-      timeout: 5_000,
-      killSignal: "SIGTERM",
+      timeout: 2_000,
+      killSignal: "SIGKILL",
     }));
 
     gitExecControl.releaseHungGit!();

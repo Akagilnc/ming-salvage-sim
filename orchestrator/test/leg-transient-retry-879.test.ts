@@ -249,7 +249,8 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
         if (attempts <= 2) {
           throw new Error("read ECONNRESET");
         }
-        return `bare-ping ok ${nonce}\n`;
+        // #884 oracle: a full line equal to the nonce (optional short preface).
+        return `thought\n${nonce}\n`;
       });
       const smoked = await backend.smokeModelRoute(singleLegRoute);
       // 1 initial + 2 retries on the sole unique slug.
