@@ -889,21 +889,20 @@ class GameSession:
         # doubles that predate the optional character-aware audience context.
         audience_prompt = self._audience_prompt_for_message
         try:
-            accepts_character = any(
-                parameter.kind is inspect.Parameter.VAR_POSITIONAL
-                or parameter.kind is inspect.Parameter.VAR_KEYWORD
-                or parameter.name == "character"
-                for parameter in inspect.signature(audience_prompt).parameters.values()
-            )
+            prompt_signature = inspect.signature(audience_prompt)
         except (TypeError, ValueError):
-            accepts_character = True
-        if accepts_character:
-            try:
-                augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
-            except TypeError:
-                augmented = audience_prompt(message, character)
+            # The production bound method has an inspectable signature.  For
+            # opaque callables, preserve the character-aware production call;
+            # do not catch its runtime TypeError as a signature fallback.
+            augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
         else:
-            augmented = audience_prompt(message)
+            try:
+                prompt_signature.bind(message, character, chat_turn_id=chat_turn_id)
+            except TypeError:
+                prompt_signature.bind(message)
+                augmented = audience_prompt(message)
+            else:
+                augmented = audience_prompt(message, character, chat_turn_id=chat_turn_id)
         action_intent_future = self._start_cli_action_intent(character, message)
         run_output = agent.run(augmented)
         _dump_llm_messages(run_output, f"大臣对话/{minister_name}")

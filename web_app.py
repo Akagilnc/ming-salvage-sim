@@ -620,6 +620,26 @@ def in_talent_pool(character: Character, db, current_year: int, current_period: 
     return _character_power_id(character, db) == "ming"
 
 
+def _audience_prompt_for_web_chat(session: Any, text: str, character: Character, chat_turn_id: int) -> str:
+    """Build a minister prompt without mistaking production failures for legacy APIs.
+
+    Lightweight test doubles may still expose the old one-argument builder.
+    Choose that compatibility path by binding its signature *before* invoking
+    it, so a TypeError raised inside the real per-character builder propagates
+    to the normal chat-turn rollback path instead of causing an unscoped retry.
+    """
+    prompt_builder = getattr(session, "_audience_prompt_for_message", None)
+    if prompt_builder is None:
+        return text
+    signature = inspect.signature(prompt_builder)
+    try:
+        signature.bind(text, character, chat_turn_id=chat_turn_id)
+    except TypeError:
+        signature.bind(text)
+        return prompt_builder(text)
+    return prompt_builder(text, character, chat_turn_id=chat_turn_id)
+
+
 class WebGame:
     """Web 端会话包装：持一个 GameSession + 网页专属态（聊天历史、收藏）。"""
 
@@ -1534,11 +1554,14 @@ class WebGame:
             if chat_turn_id:
                 self.db.update_chat_turn_messages(chat_turn_id, user_message_id=message_id)
         try:
-            chat_parameters = inspect.signature(self.session.chat).parameters
-            if "chat_turn_id" in chat_parameters:
-                result = self.session.chat(minister_name, text, chat_turn_id=chat_turn_id)
-            else:
+            chat_signature = inspect.signature(self.session.chat)
+            try:
+                chat_signature.bind(minister_name, text, chat_turn_id=chat_turn_id)
+            except TypeError:
+                chat_signature.bind(minister_name, text)
                 result = self.session.chat(minister_name, text)
+            else:
+                result = self.session.chat(minister_name, text, chat_turn_id=chat_turn_id)
             proposed = None
             if result.proposed_directive is not None:
                 d = result.proposed_directive
@@ -1582,18 +1605,11 @@ class WebGame:
         agent = self.session.registry.get(character)
         action_intent_future = self.session._start_cli_action_intent(character, text)
         run_output = None
-        prompt_builder = getattr(self.session, "_audience_prompt_for_message", None)
-        if prompt_builder is None:
-            agent_prompt = text
-        else:
-            # The session audience seam is per-character: passing only the
-            # message makes a web-streamed question bypass that perspective.
-            try:
-                agent_prompt = prompt_builder(text, character, chat_turn_id=chat_turn_id)
-            except TypeError:
-                # Narrow compatibility for lightweight legacy test doubles;
-                # the production GameSession accepts the character argument.
-                agent_prompt = prompt_builder(text)
+        # The session audience seam is per-character: passing only the message
+        # makes a web-streamed question bypass that perspective.
+        agent_prompt = _audience_prompt_for_web_chat(
+            self.session, text, character, chat_turn_id,
+        )
         stream = agent.run(agent_prompt, stream=True, stream_events=True, yield_run_output=True)
         for event in stream:
             content = getattr(event, "content", None)

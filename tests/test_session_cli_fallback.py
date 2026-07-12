@@ -400,6 +400,27 @@ def test_secret_order_tool_progress_stages_pending_action_not_direct_write(game)
     assert pending[0]["action"] == "记进展"
 
 
+def test_chat_prompt_builder_internal_typeerror_is_not_retried_without_turn_scope(game):
+    """真实 builder 的 TypeError 不能被误判为旧签名兼容而改走无 turn 的调用。"""
+    _db, _state, content = game
+    minister = "毕自严"
+    calls = []
+    sess = GameSession.__new__(GameSession)
+    sess.content = content
+    sess.registry = SimpleNamespace(get=lambda _character: object())
+    sess.temporary_characters = set()
+
+    def prompt_builder(message, character, *, chat_turn_id=0):
+        calls.append((message, character.name, chat_turn_id))
+        raise TypeError("production prompt failure")
+
+    sess._audience_prompt_for_message = prompt_builder
+
+    with pytest.raises(TypeError, match="^production prompt failure$"):
+        GameSession.chat(sess, minister, "请奏", chat_turn_id=7)
+    assert calls == [("请奏", minister, 7)]
+
+
 def test_propose_directive_tool_arguments_stages_draft(game):
     """session 路 tool 参数兼容 arguments/tool_args，避免丢 Agno/Phidata decree_text。"""
     db, state, content = game
