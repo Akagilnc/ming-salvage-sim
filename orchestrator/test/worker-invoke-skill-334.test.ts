@@ -22,7 +22,7 @@
  */
 
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -784,48 +784,71 @@ describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the 
 // ─── launcher bootstrap smoke (item 3) ─────────────────────────────────────
 
 describe("launch-362.mjs bootstrap smoke (#372 unconditional)", () => {
-  it("mocks execFileSync and asserts tsc + build.sh (plus clean) are invoked (tsc before driver import)", async () => {
+  it("mocks execFileSync and asserts side-build tsc + swap + build.sh are invoked (tsc before driver import)", async () => {
     const cp = await import("node:child_process");
     const execMock = cp.execFileSync as unknown as ReturnType<typeof vi.fn>;
     execMock.mockClear();
 
-    // Pre-create a minimal stub dist/familyDriver.js so launcher's dynamic import
-    // (after its tsc) succeeds and we don't run real driver. Launcher 'rm dist'
-    // is also mocked so our stub persists for the import.
-    const distDir = join(here, "..", "dist");
-    const driverJs = join(distDir, "familyDriver.js");
-    mkdirSync(distDir, { recursive: true });
+    // #859 hermetic: the launcher derives ORCH from its own file location, so
+    // import a COPY inside a mkdtemp dir — the smoke must never write into (or
+    // clean up) the REAL serving orchestrator/dist. The old version of this
+    // test pre-created a stub in the real dist and its finally-block
+    // `rmSync(real dist, recursive)` was the #859 assassin: every full-suite
+    // run deleted the serving dist that live family runs resolve per-dispatch.
+    const orchTmp = mkdtempSync(join(tmpdir(), "launch-362-smoke-"));
+    const launcherCopy = join(orchTmp, "launch-362.mjs");
     writeFileSync(
-      driverJs,
+      launcherCopy,
+      readFileSync(join(here, "..", "launch-362.mjs"), "utf8"),
+      "utf8",
+    );
+    // Stub serving dist inside the tmpdir (mv/rm execs are mocked, so the stub
+    // stays in place for the launcher's dynamic import).
+    mkdirSync(join(orchTmp, "dist"), { recursive: true });
+    writeFileSync(
+      join(orchTmp, "dist", "familyDriver.js"),
       'export const runFamilyDriver = async () => ({});\nexport const resolveImageTag = (t) => t || "tag";\n',
       "utf8",
     );
 
     try {
-      // Trigger launcher top level: uses mocked execs (rm/tsc/build) + real dynamic import of our stub.
-      const launcherPath = join(here, "..", "launch-362.mjs");
-      await import(launcherPath);
+      await import(pathToFileURL(launcherCopy).href);
 
       const calls = execMock.mock.calls as any[][];
-      // dist clean
+      // side-build clean targets dist.new/dist.old, never the serving dist
       expect(
         calls.some(
           (c) =>
             c[0] === "rm" &&
             Array.isArray(c[1]) &&
-            c[1].some((a: string) => String(a).includes("dist")),
+            c[1].some((a: string) => String(a).includes("dist.new")),
         ),
       ).toBe(true);
-      // tsc
-      expect(calls.some((c) => c[0] === "npx" && c[1]?.[0] === "tsc")).toBe(true);
+      expect(
+        calls.some(
+          (c) => c[0] === "rm" && Array.isArray(c[1]) && c[1].includes("dist"),
+        ),
+      ).toBe(false);
+      // tsc builds BESIDE the serving dist
+      expect(
+        calls.some(
+          (c) =>
+            c[0] === "npx" &&
+            c[1]?.[0] === "tsc" &&
+            c[1]?.includes("dist.new"),
+        ),
+      ).toBe(true);
+      // swap step present
+      expect(
+        calls.some((c) => c[0] === "mv" && c[1]?.[0] === "dist.new" && c[1]?.[1] === "dist"),
+      ).toBe(true);
       // build.sh
       expect(
         calls.some((c) => c[0] === "bash" && String(c[1]?.[0] || "").includes("build.sh")),
       ).toBe(true);
     } finally {
       try {
-        rmSync(driverJs, { force: true });
-        rmSync(distDir, { recursive: true, force: true });
+        rmSync(orchTmp, { recursive: true, force: true });
       } catch {}
     }
   });

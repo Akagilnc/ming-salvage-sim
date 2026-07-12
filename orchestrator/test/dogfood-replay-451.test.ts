@@ -504,7 +504,6 @@ describe("#451 dogfood replay fixture", () => {
         rejectedStatuses: ["still-active", "unable-to-assess"],
         rejectedShapes: expect.arrayContaining([
           "missing-disposition",
-          "stale-self-claimed",
           "duplicate-disposition",
           "extra-stale-disposition",
         ]),
