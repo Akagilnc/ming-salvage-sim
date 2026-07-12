@@ -1729,6 +1729,30 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     );
   });
 
+  it("#875: converged verdict omitting claim/disposition prose fields still parses (no closure shape court)", () => {
+    // Pre-#875 / residual court: cmrClosureSchema required
+    // claimedFixedFindingIdentityKeys + priorFindingDispositions arrays; omitting
+    // them made the whole verdict malformed before three-channel routing.
+    // Post-#875: those fields are optional worker prose.
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      evidencePaths: ["cmr/review.json"],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome.kind).toBe("verdict");
+    if (outcome.kind === "verdict") {
+      expect(outcome.converged).toBe(true);
+      expect(outcome.successfulLegs).toEqual(["gpt-5.6-sol"]);
+      expect(outcome.claimedFixedFindingIdentityKeys).toBeUndefined();
+      expect(outcome.priorFindingDispositions).toBeUndefined();
+    }
+  });
+
   it("#875: incomplete accepted_suppressed prior disposition prose still parses as a verdict (not malformed death)", () => {
     // Pre-#875: parse-time superRefine killed incomplete accepted_suppressed
     // prior dispositions as malformed before verifyCmr could three-channel route.
