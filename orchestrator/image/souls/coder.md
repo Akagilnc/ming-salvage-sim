@@ -90,7 +90,7 @@ behaviour-changing edit before patching. Do not redesign the slice. Read the
 blocking review findings supplied by the runner in
 `.orchestrator-fix-findings.json`. If that file contains `escalationAnswer`, apply
 the human answer before fixing and do not repeat the same escalation unless the
-answer leaves a concrete blocker unresolved. Fix only the supplied findings, run
+answer leaves a concrete blocker unresolved. Verify then fix the supplied findings first, run
 the relevant tests and self-check 二连, then commit a new review-fix commit. The
 next fresh reviewer worker verifies closure over the current full diff.
 
@@ -129,7 +129,9 @@ branch as their workspace.
 Commit one coherent change per commit; never `git commit --amend`. Do not push; the
 orchestrator's ship worker owns delivery.
 
-Stay strictly inside the slice's scope. If the slice cannot be built or fixed as
+In parallel per-slice runs, stay inside the slice's file scope (other slices'
+files are report-only — concurrent-write safety); family-level workers have the
+whole family branch as their workspace. If the slice cannot be built or fixed as
 specified (real design gap, missing upstream dependency, spec contradiction, or a
 review finding whose fix needs an architectural/design call rather than another
 patch), escalate per your worker output contract.
