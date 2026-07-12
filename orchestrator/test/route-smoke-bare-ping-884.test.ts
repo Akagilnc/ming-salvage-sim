@@ -260,6 +260,40 @@ describe("#884 bare-ping production smoke", () => {
   it("maps ORCHESTRATOR_SMOKE_IDLE_SECONDS into bare-ping wall budget", () => {
     expect(resolveRouteSmokeIdleTimeoutSeconds("15")).toBe(15);
   });
+
+  it("pool-rewritten relay ping overlaps unique legs (not serialized after them)", async () => {
+    // #884 P5: dedicated pool ping for relaySmokeEntryKey must share the same
+    // Promise.all wave as ordinary unique-slug legs — never await the full
+    // smoke wave first and only then start the pool ping.
+    const home = tempHome();
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
+    let active = 0;
+    let peak = 0;
+    const starts: number[] = [];
+    const backend = new BarePingBackend(home, async (call) => {
+      starts.push(Date.now());
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 80));
+      active -= 1;
+      return `ack ${call.nonce}`;
+    });
+    const route = resolveRouteModels("normal", { coder: "grok-4.5" });
+    const unique = new Set(routeSmokeEntries(route).map((e) => e.slug)).size;
+
+    await backend.smokeModelRoute(route, {}, "grok-build", "coder:grok-4.5");
+
+    // Unique legs + one dedicated pool relay ping.
+    expect(backend.pingCalls.length).toBe(unique + 1);
+    // If relay were serial-after, peak would equal unique-leg peak only during
+    // the first wave (relay alone later). Overlap forces peak >= unique-wave
+    // concurrency and specifically > 1 with the extra leg in-flight.
+    expect(peak).toBeGreaterThan(1);
+    // All starts cluster: max-min start skew << leg duration (80ms) + margin.
+    const skew = Math.max(...starts) - Math.min(...starts);
+    expect(skew).toBeLessThan(60);
+  });
 });
 
 describe("#884 ignition→first-dispatch timing (scripted backend)", () => {

@@ -17,6 +17,8 @@ import {
   withProviderTimeout,
   DEFAULT_PROVIDER_TIMEOUT_MS,
   EXTERNAL_CALL_MAX_ATTEMPTS,
+  shWithClock,
+  hostSubprocessRetryAttempts,
   type ExternalCallAttemptRecord,
 } from "../src/externalCall.js";
 
@@ -305,5 +307,65 @@ describe("#884 external-call clocks", () => {
     ).toThrow(/429/);
     expect(attempts).toBe(1);
     expect(records.map((r) => r.outcome)).toEqual(["quota"]);
+  });
+
+  it("mutation seam defaults to no-retry (retry:false → 1 attempt even outside vitest)", () => {
+    const prev = process.env.VITEST;
+    delete process.env.VITEST;
+    try {
+      expect(hostSubprocessRetryAttempts({ retry: false })).toBe(1);
+      expect(hostSubprocessRetryAttempts({ retry: true })).toBe(
+        EXTERNAL_CALL_MAX_ATTEMPTS,
+      );
+      expect(hostSubprocessRetryAttempts({})).toBe(EXTERNAL_CALL_MAX_ATTEMPTS);
+    } finally {
+      if (prev === undefined) delete process.env.VITEST;
+      else process.env.VITEST = prev;
+    }
+  });
+
+  it("production shape: shWithClock({retry:false}) never re-fires a timed-out mutation", () => {
+    const prev = process.env.VITEST;
+    delete process.env.VITEST;
+    try {
+      // Point at a hanging node so the clock fires; retry:false must not re-spawn.
+      expect(() =>
+        shWithClock(
+          process.execPath,
+          ["-e", "setInterval(() => {}, 1000)"],
+          {
+            stage: "subprocess:git-push-mutation",
+            timeoutMs: 40,
+            retry: false,
+          },
+        ),
+      ).toThrow(/timed out|ExternalCallTimeout/i);
+    } finally {
+      if (prev === undefined) delete process.env.VITEST;
+      else process.env.VITEST = prev;
+    }
+  });
+
+  it("RealBackend/RealFamilyBackend mixed sh seam disables mutation retry", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const realBackend = readFileSync(
+      join(here, "../src/realBackend.ts"),
+      "utf8",
+    );
+    const familyBackend = readFileSync(
+      join(here, "../src/family/realFamilyBackend.ts"),
+      "utf8",
+    );
+    // Class-level sh is a mixed read/write seam — must default retry:false so
+    // git push/merge/clone and gh writes are exactly-once on timeout.
+    expect(realBackend).toMatch(
+      /protected sh\([\s\S]*?shWithClock\([\s\S]*?retry:\s*false/,
+    );
+    expect(familyBackend).toMatch(
+      /protected sh\([\s\S]*?shWithClock\([\s\S]*?retry:\s*false/,
+    );
   });
 });

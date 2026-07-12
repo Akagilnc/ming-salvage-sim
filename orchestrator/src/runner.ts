@@ -3056,7 +3056,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingCiS9Polls = 0;
 
   function ghSh(file: string, args: string[]): string {
-    return shWithClock(file, args, { stage: `admission:${file}` });
+    // Mixed read/write (poll + applyVerifySideEffects / auto-merge). No
+    // auto-retry on timeout — mutations must be exactly-once (#884 cmr r7).
+    return shWithClock(file, args, {
+      stage: `admission:${file}`,
+      retry: false,
+    });
   }
 
   function defaultRepo(): string {
@@ -5696,7 +5701,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 file: string,
                 args: string[],
               ) => string = (file, args) =>
-                shWithClock(file, args, { stage: `dispatch:${file}` });
+                shWithClock(file, args, {
+                  stage: `dispatch:${file}`,
+                  retry: false,
+                });
               const recheck = pollPrReviewState(ghSh, {
                 repo: defaultRepo(),
                 prUrl: lastShipOutput.pr,

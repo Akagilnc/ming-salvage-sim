@@ -1489,7 +1489,8 @@ export async function runFamilyOnlineReviewLoop(input: {
     return { ok: false, terminalState: "decision_gate_raised", round: 1 };
   }
   const ghSh = (file: string, args: string[]) =>
-    shWithClock(file, args, { stage: `dispatch:${file}` });
+    // Mixed poll + side-effect writes; no mutation auto-retry (#884 cmr r7).
+    shWithClock(file, args, { stage: `dispatch:${file}`, retry: false });
   let modelRoute: ResolvedModelRoute;
   try {
     modelRoute =

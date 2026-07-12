@@ -390,6 +390,21 @@ export function defaultExternalCallRecorder(
 }
 
 /**
+ * Attempt budget for host subprocess seams.
+ * - vitest: always 1 (keep unit tests fast / deterministic)
+ * - retry:false (mutations): always 1 (exactly-once — timeout must not re-fire
+ *   git push/merge/clone or gh writes; ADR 0062 / #884 cmr r7)
+ * - otherwise: EXTERNAL_CALL_MAX_ATTEMPTS (1 initial + 2 transient retries)
+ */
+export function hostSubprocessRetryAttempts(opts?: {
+  readonly retry?: boolean;
+}): number {
+  if (process.env.VITEST === "true") return 1;
+  if (opts?.retry === false) return 1;
+  return EXTERNAL_CALL_MAX_ATTEMPTS;
+}
+
+/**
  * Host subprocess with clock + S5 retry disposition + stage-named records.
  * Preferred entry for production `gh`/`git`/CLI one-shots.
  */
@@ -403,17 +418,15 @@ export function shWithClock(
     /**
      * When false, do not transient-retry (mutating gh/git must be exactly-once
      * per ADR 0062 — a lost response must not re-fire DELETE/close).
-     * Default true for read-ish ops.
+     * Default true for read-ish ops. Mixed class-level `sh` seams (RealBackend /
+     * RealFamilyBackend) MUST pass retry:false — they carry both reads and
+     * mutations and cannot safely default-retry.
      */
     readonly retry?: boolean;
   },
 ): string {
   const stage = opts?.stage ?? `subprocess:${file}`;
-  const allowRetry = opts?.retry !== false;
-  const maxAttempts =
-    process.env.VITEST === "true" || !allowRetry
-      ? 1
-      : EXTERNAL_CALL_MAX_ATTEMPTS;
+  const maxAttempts = hostSubprocessRetryAttempts({ retry: opts?.retry });
   return withExternalCallRetrySync(
     stage,
     () =>

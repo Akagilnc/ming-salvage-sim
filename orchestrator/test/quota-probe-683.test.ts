@@ -380,6 +380,45 @@ describe("#683 isQuotaLimitBody variants (via runPoolProbe)", () => {
       expect(result.kind, body).toBe("quota_limited");
     }
   });
+
+  it("#884: HTTP 5xx is transient even when body mentions quota (status-first)", async () => {
+    // Owner policy: 5xx → retry ×2; 429 → no retry. Body-based quota inference
+    // must not swallow a 503 before the status branch (would skip retries).
+    let fetches = 0;
+    const result = await runPoolProbe("zai", {
+      zaiApiKey: "test-key",
+      timeoutMs: 200,
+      fetch: async () => {
+        fetches += 1;
+        return new Response("upstream quota / rate limit text in 503 body", {
+          status: 503,
+          statusText: "Service Unavailable",
+        });
+      },
+    });
+    // Exhausted transient retries → error (not immediate quota_limited).
+    expect(result.kind).toBe("error");
+    expect(fetches).toBe(3);
+    expect(result.kind === "error" ? result.cause : "").toMatch(
+      /503|exhaust|probe:zai/i,
+    );
+  });
+
+  it("#884: pure 429 still no-retry (status 429 wins immediately)", async () => {
+    let fetches = 0;
+    const result = await runPoolProbe("zai", {
+      zaiApiKey: "test-key",
+      fetch: async () => {
+        fetches += 1;
+        return new Response("rate limit", {
+          status: 429,
+          statusText: "Too Many Requests",
+        });
+      },
+    });
+    expect(result.kind).toBe("quota_limited");
+    expect(fetches).toBe(1);
+  });
 });
 
 describe("#683 handleIdleThreshold (production composition)", () => {
