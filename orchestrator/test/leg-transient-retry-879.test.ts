@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { ExternalCallTimeoutError } from "../src/externalCall.js";
 import {
   MAX_LEG_TRANSIENT_ATTEMPTS,
   classifyLegFailure,
@@ -72,6 +73,35 @@ describe("#879 classifyLegFailure — transient vs quota vs other", () => {
         new Error("model did not complete an observable bash smoke for opus"),
       ),
     ).toBe("other");
+  });
+
+  it("classifies ExternalCallTimeoutError / timed-out text as transient (bare-ping path)", () => {
+    // Production bare-ping throws ExternalCallTimeoutError from externalCall.ts;
+    // must share status-first + timeout policy with classifyExternalCallFailure.
+    expect(
+      classifyLegFailure(
+        new ExternalCallTimeoutError({
+          stage: "smoke-k:opus",
+          timeoutMs: 1000,
+          seam: "async-exec",
+        }),
+      ),
+    ).toBe("transient");
+    expect(classifyLegFailure(new Error("external call timed out at stage x"))).toBe(
+      "transient",
+    );
+    const abortish = new Error("The operation was aborted");
+    abortish.name = "AbortError";
+    expect(classifyLegFailure(abortish)).toBe("transient");
+  });
+
+  it("status-first: explicit HTTP 5xx beats quota vocabulary (align externalCall)", () => {
+    expect(classifyLegFailure(new Error("HTTP 503 service overloaded quota"))).toBe(
+      "transient",
+    );
+    expect(classifyLegFailure(new Error("upstream returned 502 Bad Gateway"))).toBe(
+      "transient",
+    );
   });
 });
 

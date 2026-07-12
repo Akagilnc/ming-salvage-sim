@@ -159,6 +159,11 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     lower.includes("econnreset") ||
     lower.includes("econnrefused") ||
     lower.includes("socket hang up") ||
+    lower.includes("connection reset") ||
+    lower.includes("connection closed") ||
+    lower.includes("connection aborted") ||
+    lower.includes("connection refused") ||
+    lower.includes("broken pipe") ||
     lower.includes("network") ||
     lower.includes("timed out") ||
     lower.includes("timeout") ||
