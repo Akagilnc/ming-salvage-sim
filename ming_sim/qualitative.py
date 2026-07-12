@@ -67,8 +67,23 @@ _ABSTRACT_VALUE_RE = re.compile(
     rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%)?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))\s*[）)]?",
     re.IGNORECASE,
 )
+# A score may be wrapped in natural prose (``补给整体已经明显恶化至20``),
+# but that prose has a small, semantic grammar: a state noun, optional
+# adverbial modifiers, then a change/value verb.  Do not use a generic
+# ``汉字{1,N}`` bridge here: it both misses longer prose and mistakes concrete
+# facts such as ``火器营新募3000人`` for an abstract axis.
+_ABSTRACT_STATE_NOUN = r"(?:整体|总体|水平|状况|情形|供应|保障)?"
+_ABSTRACT_STATE_MODIFIER = (
+    r"(?:(?:已(?:经|然)?|正(?:在)?|仍(?:然)?|尚|逐步|明显|显著|大幅|持续|"
+    r"不断|迅速|急剧|骤然|骤|略有|有所|日益|愈发|更为|相当|十分|极其))*"
+)
+_ABSTRACT_STATE_VERB = (
+    r"(?:升(?:高|至|到)?|降(?:低|至|到)?|提高(?:至|到)?|提升(?:至|到)?|"
+    r"跌(?:至|到)?|恶化(?:至|到)?|改善(?:至|到)?|达到?|变为?|只有|仅有|为|至|有|余|剩)"
+)
 _ABSTRACT_NEARBY_NUMBER_RE = re.compile(
-    rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*(?:[\u4e00-\u9fff]{{1,8}}\s*)?"
+    rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
+    rf"(?:{_ABSTRACT_STATE_NOUN}{_ABSTRACT_STATE_MODIFIER}{_ABSTRACT_STATE_VERB}\s*|(?=[-+]?\d))"
     rf"[-+]?\d+(?:\.\d+)?(?:\s*(?:分|%|/\s*100))?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))",
     re.IGNORECASE,
 )
