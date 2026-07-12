@@ -255,6 +255,60 @@ describe("#875 T2 — malformed at write point (pos/neg pair)", () => {
     }
   });
 
+  it("stdout-only path: matching sentinel + structured findings → accepts (same write-point)", () => {
+    // Empty/missing sidecar falls through to stdout <cmr> — still ADR 0129 write-point.
+    const outcome = cmrOutcomeFromResult({
+      stdout:
+        `<cmr>${JSON.stringify({
+          converged: false,
+          reason: "stdout path one blocker",
+          successfulLegs: [...LEGS],
+          ...EVIDENCE,
+          findings: [ONE_BLOCKER],
+        })}</cmr>\nfindings = 1\nCMR_STEP_COMPLETE\n`,
+      cmrReviewLegs: LEGS.map((slug) => ({ slug })),
+    });
+    assertDerivedCount(outcome);
+    expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 1 });
+  });
+
+  it("NEGATIVE: stdout-only path lying findings=N with empty array → malformed (not cmr_passed)", () => {
+    // Ship-pre correctness r3: without sentinel check on stdout fallback,
+    // findings=3 + empty structured array could derive open-count 0.
+    const outcome = cmrOutcomeFromResult({
+      stdout:
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: [...LEGS],
+          ...EVIDENCE,
+        })}</cmr>\nfindings = 3\nCMR_STEP_COMPLETE\n`,
+      cmrReviewLegs: LEGS.map((slug) => ({ slug })),
+    });
+    expect(outcome.kind).toBe("malformed");
+    if (outcome.kind === "malformed") {
+      expect(outcome.reason).toMatch(
+        /does not match structured findings length|omitted required findings/i,
+      );
+    }
+  });
+
+  it("NEGATIVE: blank outcomePath sidecar falls through to stdout sentinel check", () => {
+    const dir = mkdtempSync(join(tmpdir(), "875-envelope-blank-"));
+    const path = join(dir, "outcome.json");
+    writeFileSync(path, "", "utf8"); // blank → readWorkerOutcomeSidecar undefined → stdout
+    const outcome = cmrOutcomeFromResult({
+      stdout:
+        `<cmr>${JSON.stringify({
+          converged: true,
+          successfulLegs: [...LEGS],
+          ...EVIDENCE,
+        })}</cmr>\nfindings = 2\nCMR_STEP_COMPLETE\n`,
+      outcomePath: path,
+      cmrReviewLegs: LEGS.map((slug) => ({ slug })),
+    });
+    expect(outcome.kind).toBe("malformed");
+  });
+
   it("write-point malformation is rewrite feedback, not verifyCmr thrash-court fate", async () => {
     // A malformed outcome never becomes a completed CmrResult happy path.
     // Scripted completed payloads that reach verifyCmr only carry derived

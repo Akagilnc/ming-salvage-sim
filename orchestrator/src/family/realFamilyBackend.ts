@@ -3678,6 +3678,37 @@ export interface MergerAuth {
  * completion proof and verdict source. Legacy/no-sidecar workers still require the
  * Sandcastle completion signal before stdout fallback is trusted.
  */
+/**
+ * ADR 0129 / #875 write-point: after a successful verdict classify, require
+ * `findings = N` on stdout to match the structured array length. Applies to
+ * BOTH the outcome sidecar path and the stdout-only fallback (blank sidecar /
+ * missing path) so neither entry can soft-pass a lying independent count.
+ */
+function enforceFindingsSentinelWritePoint(
+  classified: Extract<CmrWorkerOutcome, { kind: "verdict" }>,
+  stdout: string,
+): CmrWorkerOutcome {
+  const derivedCount = classified.findings?.length ?? 0;
+  const sentinel = parseFindingsSentinel(stdout);
+  if (sentinel === undefined) {
+    return {
+      kind: "malformed",
+      reason: "cmr reviewer output omitted required findings = x fragment",
+      priorVerdict: classified,
+    };
+  }
+  if (sentinel !== derivedCount) {
+    return {
+      kind: "malformed",
+      reason:
+        `cmr reviewer findings = ${sentinel} does not match structured ` +
+        `findings length ${derivedCount} (write-point; count is derived)`,
+      priorVerdict: classified,
+    };
+  }
+  return { ...classified, findingsCount: derivedCount };
+}
+
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
@@ -3696,28 +3727,7 @@ export function cmrOutcomeFromResult(result: {
         // Opus/#875/#ADR0129: structured findings array is the single source of
         // truth; open-count is DERIVED (array length). Never trust an independent
         // count field against the array.
-        const derivedCount = classified.findings?.length ?? 0;
-        const sentinel = parseFindingsSentinel(result.stdout);
-        if (sentinel === undefined) {
-          return {
-            kind: "malformed",
-            reason: "cmr reviewer output omitted required findings = x fragment",
-            priorVerdict: classified,
-          };
-        }
-        // Write-point consistency (ADR 0129): findings = N must match array length.
-        // Mismatch → reject for rewrite at the write/parse entry — NOT a downstream
-        // runner court (those were the r5–r11 thrash).
-        if (sentinel !== derivedCount) {
-          return {
-            kind: "malformed",
-            reason:
-              `cmr reviewer findings = ${sentinel} does not match structured ` +
-              `findings length ${derivedCount} (write-point; count is derived)`,
-            priorVerdict: classified,
-          };
-        }
-        return { ...classified, findingsCount: derivedCount };
+        return enforceFindingsSentinelWritePoint(classified, result.stdout);
       }
     } catch (err) {
       return {
@@ -3729,7 +3739,10 @@ export function cmrOutcomeFromResult(result: {
     }
   }
 
-  return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
+  // Stdout-only / blank-sidecar fallback: same write-point sentinel gate.
+  const fromStdout = parseCmrOutcome(result.stdout, result.cmrReviewLegs);
+  if (fromStdout.kind !== "verdict") return fromStdout;
+  return enforceFindingsSentinelWritePoint(fromStdout, result.stdout);
 }
 
 /** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
