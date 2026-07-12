@@ -1,10 +1,11 @@
 /**
  * #879 / #861 D — CMR leg transient retry at the backend wrapper layer.
  *
- * Classification + bounded retry live in `legTransientRetry.ts` (the leg
- * backend encapsulation). Availability probes (route smoke) use the same
- * policy: connection reset/5xx → retry ×2 then degrade; 429/quota → immediate
- * degrade with zero retry.
+ * Classification + bounded retry live in `legTransientRetry.ts`. The
+ * orchestrator-owned leg encapsulation is route smoke
+ * (`RealBackend.smokeModelRoute`): connection reset/5xx → retry ×2 then
+ * degrade; 429/quota → immediate degrade with zero retry. Worker-process
+ * crashes stay on #598; in-container skill legs are out of this module.
  *
  * Positive / negative pair is the acceptance contract.
  */
@@ -251,47 +252,34 @@ describe("#879 availability probe (route smoke) uses the same classification", (
     } as Awaited<ReturnType<typeof sc.run>>;
   }
 
-  it("positive: availability probe recovers after two transient connection resets on a leg", async () => {
+  it("positive: one leg recovers after exactly two transient resets (3 sc.run total)", async () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-879-transient-"));
-    // Per-leg attempt counters keyed by the smoke entry model in promptArgs is
-    // unavailable; count by sequential global runs and force only the first
-    // two calls (same first leg under serial-or-parallel start) to reset.
-    // The contract under test: with the wrapper, a leg that hits ECONNRESET
-    // twice still ends up "passed" after the third try, and total sc.run count
-    // exceeds unique-slug one-shot count.
-    const attemptsByCwd = new Map<string, number>();
+    // Single-slug route so every sc.run belongs to the same logical leg —
+    // agent.name is provider-level (claudeCode/codex) and not unique per slug.
+    const singleLegRoute = {
+      ...resolveRouteModels("normal", {}),
+      slots: {
+        coder: "opus",
+        reviewer: "opus",
+        coderFix: "opus",
+        ship: "opus",
+        merger: "opus",
+        cmrCompleteness: "opus",
+        cmrCorrectness: "opus",
+        verify: "opus",
+        fixer: "opus",
+        cleanup: "opus",
+        docRelease: "opus",
+      },
+      legCollections: {
+        cmrReview: [{ family: "claude" as const, slug: "opus" }],
+      },
+      smoke: {},
+    };
+    let attempts = 0;
     runSpy.mockImplementation(async (options: Parameters<typeof sc.run>[0]) => {
-      // All smokes share the same workingRepo cwd; differentiate by log path.
-      const logPath =
-        typeof options.logging === "object" &&
-        options.logging !== null &&
-        "path" in options.logging
-          ? String((options.logging as { path: string }).path)
-          : "unknown";
-      // Each smoke invocation uses a unique logDir; group by parent of log path
-      // is unique per attempt. Count total calls per "logical leg" by reusing
-      // a single shared counter for the whole smoke pass is enough when we
-      // only fail the first two attempts of the ENTIRE batch for one slug —
-      // simpler: fail first 2 attempts of EVERY unique attempt-key, but only
-      // for keys that are still under 3. Actually: fail attempt 1 and 2 for
-      // each logDir parent (each invocation is unique). Use a global map of
-      // attempt ordinal across all runs for the first unique "wave":
-      const n = (attemptsByCwd.get("all") ?? 0) + 1;
-      attemptsByCwd.set("all", n);
-      // Force every leg's first two tries via a per-invocation id: each sc.run
-      // has a unique logDir, so we cannot key by leg easily. Instead inject by
-      // counting how many times we've seen this exact call site sequence:
-      // use a WeakMap-like approach — store attempt counts on a module map
-      // keyed by nothing: fail only when total runs so far for the "current
-      // wave" ... 
-      // Cleaner approach used below: track attempts by a rolling "leg key"
-      // derived from the NONCE in promptArgs (unique per attempt, not per leg).
-      // So we instead fail the first TWO sc.run calls overall, then succeed.
-      // With per-leg retry, those two failures may land on one or two legs;
-      // either way the route must still have passed entries and more runs
-      // than unique slugs.
-      void logPath;
-      if (n <= 2) {
+      attempts += 1;
+      if (attempts <= 2) {
         throw new Error("read ECONNRESET");
       }
       return successfulSmoke(options);
@@ -299,18 +287,12 @@ describe("#879 availability probe (route smoke) uses the same classification", (
 
     try {
       const backend = productionSmokeBackend(home);
-      const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
-      const totalRuns = attemptsByCwd.get("all") ?? 0;
-      const uniqueSlugs = new Set(
-        Object.keys(smoked.smoke).map((k) => k.split(":")[1]),
-      );
-
-      // Retried: more physical launches than one-shot unique slugs.
-      expect(totalRuns).toBeGreaterThan(uniqueSlugs.size);
-      // Not all-failed solely from two resets — at least one leg passed.
-      expect(Object.values(smoked.smoke).some((s) => s.state === "passed")).toBe(
-        true,
-      );
+      const smoked = await backend.smokeModelRoute(singleLegRoute);
+      // 1 initial + 2 retries on the sole unique slug.
+      expect(attempts).toBe(MAX_LEG_TRANSIENT_ATTEMPTS);
+      expect(
+        Object.values(smoked.smoke).every((s) => s.state === "passed"),
+      ).toBe(true);
     } finally {
       runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });
