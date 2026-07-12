@@ -1905,7 +1905,11 @@ def _canonical_secret_office_target(value: str) -> str:
     )
     if match:
         return match.group("office")
-    if re.fullmatch(r"[\u4e00-\u9fff]{2,8}(?:尚书|侍郎|郎中|员外郎|主事|巡抚|总督|总兵)", target):
+    if re.fullmatch(
+        r"[\u4e00-\u9fff]{0,8}(?:首辅|次辅|大学士|阁臣|辅臣|尚书|侍郎|郎中|员外郎|主事|"
+        r"巡抚|总督|总兵|督师|经略|提督|都御史|御史)",
+        target,
+    ):
         return target
     return ""
 
