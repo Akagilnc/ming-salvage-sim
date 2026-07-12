@@ -1608,6 +1608,45 @@ class NoHeadMovementThenGoodBackend extends ReviewFixRereviewBackend {
   }
 }
 
+/** Coder always "succeeds" without moving family head — budget must stop thrash. */
+class AlwaysHeadStuckCoderBackend extends ReviewFixRereviewBackend {
+  override async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+  ): Promise<WorkerResult> {
+    if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      role: spec.role,
+      promptFile: spec.promptFile,
+      contextRetention: spec.contextRetention,
+      cmrPass: ctx.cmrPass,
+      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+    // Head stays at baseline; never advance.
+    return {
+      kind: "completed",
+      output: {
+        kind: "coder",
+        committed: false,
+        commitsAdded: 0,
+        repairEvidence: {
+          findingScope: {
+            identityKeys: [BLOCKING_FAMILY_CMR_KEY],
+            locations: [BLOCKING_FAMILY_CMR_FINDING.location],
+          },
+          changedFiles: [],
+          tests: [],
+          sameClassBugScan: "n/a",
+          introducedRegressionCheck: "n/a",
+        },
+      },
+    };
+  }
+}
+
 class OutcomeProtocolFailureCoderFixBackend extends ReviewFixRereviewBackend {
   override async dispatchWorker(
     spec: WorkerSpec,
@@ -2291,6 +2330,28 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
     expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(1);
+  });
+
+  it("#878 forever head-stuck coder → mechanical redispatch budget then re-review", async () => {
+    const backend = new AlwaysHeadStuckCoderBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/878-head-stuck-budget",
+      familyBackend: backend,
+    });
+    // Must not hang forever — mechanical budget ends stuck redispatches.
+    expect(result.ok === true || result.ok === false).toBe(true);
+    const coders = backend.dispatches.filter((d) => d.kind === "coder");
+    // 1 initial + MAX_HEAD_STUCK_REDISPATCHES(3) = 4, never unbounded.
+    expect(coders.length).toBeLessThanOrEqual(4);
+    expect(coders.length).toBeGreaterThanOrEqual(1);
+    // After budget, a fresh cmr re-review (or abort) must appear — not pure coder spin.
+    const afterFirstCoder = backend.dispatches.slice(
+      backend.dispatches.findIndex((d) => d.kind === "coder") + 1,
+    );
+    expect(
+      afterFirstCoder.some((d) => d.kind === "cmr") || result.ok === false,
+    ).toBe(true);
   });
 
   it("preserves coder-fix outcome protocol failure details in the durable abort after mechanical retries (#855 review)", async () => {

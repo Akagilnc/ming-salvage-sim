@@ -93,6 +93,18 @@ describe("#884 external-call clocks", () => {
         new Error("quota exceeded; remaining credits 500"),
       ),
     ).toBe("quota");
+    // Quota before generic "network" (never retry rate-limit).
+    expect(
+      classifyExternalCallFailure(
+        new Error("network error: rate limit exceeded"),
+      ),
+    ).toBe("quota");
+    // stdout-only transient evidence (bare-ping CLI often prints to stdout).
+    const stdoutOnly = Object.assign(new Error("Command failed: opencode"), {
+      stdout: "network error: ECONNRESET",
+      stderr: "",
+    });
+    expect(classifyExternalCallFailure(stdoutOnly)).toBe("transient");
   });
 
   it("provider hang: non-cooperative promise still times out (wrapper races abort)", async () => {

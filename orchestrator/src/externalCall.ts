@@ -154,7 +154,9 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     if (status !== undefined && status >= 500 && status <= 599) return "transient";
     if (status !== undefined && status >= 100 && status <= 599) return "durable";
   }
-  const msg = err instanceof Error ? err.message : String(err);
+  // Include stdout/stderr so bare-ping CLI failures that only print ECONNRESET
+  // on a stream still classify as transient (#879).
+  const msg = externalFailureText(err);
   const lower = msg.toLowerCase();
   // Status-first in free text (#884 cmr r8 / ship-pre correctness): only when
   // the number has HTTP/status context (or bare 429). NEVER treat duration
@@ -171,6 +173,19 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
   }
   // Bare "429" (rate-limit short form) without HTTP prefix.
   if (/\b429\b/.test(lower)) return "quota";
+  // Quota before generic "network" so "network error: rate limit" never retries.
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("rate-limit") ||
+    lower.includes("rate_limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("quota") ||
+    msg.includes("额度") ||
+    msg.includes("余额不足") ||
+    msg.includes("配额")
+  ) {
+    return "quota";
+  }
   if (
     lower.includes("etimedout") ||
     lower.includes("econnreset") ||
@@ -189,20 +204,31 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
   ) {
     return "transient";
   }
-  if (
-    lower.includes("429") ||
-    lower.includes("rate limit") ||
-    lower.includes("rate-limit") ||
-    lower.includes("rate_limit") ||
-    lower.includes("too many requests") ||
-    lower.includes("quota") ||
-    msg.includes("额度") ||
-    msg.includes("余额不足") ||
-    msg.includes("配额")
-  ) {
-    return "quota";
-  }
   return "durable";
+}
+
+/** Merge stderr/stdout off an exec-like error into classifiable text. */
+function externalFailureText(err: unknown): string {
+  if (err === null || typeof err !== "object") {
+    return err instanceof Error ? err.message : String(err);
+  }
+  const e = err as {
+    readonly message?: unknown;
+    readonly stdout?: unknown;
+    readonly stderr?: unknown;
+    readonly name?: unknown;
+  };
+  const parts: string[] = [];
+  if (typeof e.name === "string" && e.name.length > 0) parts.push(e.name);
+  if (typeof e.message === "string" && e.message.length > 0) parts.push(e.message);
+  for (const stream of [e.stdout, e.stderr] as const) {
+    if (typeof stream === "string" && stream.trim().length > 0) {
+      parts.push(stream);
+    } else if (Buffer.isBuffer(stream) && stream.length > 0) {
+      parts.push(stream.toString("utf8"));
+    }
+  }
+  return parts.join("\n");
 }
 
 function defaultSleepMs(ms: number): Promise<void> {

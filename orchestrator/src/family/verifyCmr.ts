@@ -2468,13 +2468,20 @@ async function runIntegratedCmrPass(input: {
         });
         // #878 head-not-moved short-circuit: while the fix leg completes without
         // advancing family head, redispatch fix and skip re-review. Stop when
-        // head moves, head is unknown, or the fix leg fails/escalates.
+        // head moves, head is unknown, the fix leg fails/escalates, OR the
+        // mechanical stuck budget is exhausted (scheduling plumbing — not a
+        // content court; prevents infinite redispatch when the coder keeps
+        // returning ok with no commit). Then fall through to fresh re-review.
+        const MAX_HEAD_STUCK_REDISPATCHES = 3;
+        let headStuckRedispatches = 0;
         while (
           fixRound.result.ok &&
+          headStuckRedispatches < MAX_HEAD_STUCK_REDISPATCHES &&
           fixFamilyHeadBefore !== undefined &&
           fixRound.familyHeadAfter !== undefined &&
           fixFamilyHeadBefore === fixRound.familyHeadAfter
         ) {
+          headStuckRedispatches += 1;
           fixRound = await runCmrCoderFix({
             pass,
             familyBackend,
