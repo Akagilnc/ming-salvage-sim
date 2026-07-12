@@ -31,7 +31,7 @@ _Avoid_: 先创建现场再过滤、用缓存或本地推断代替 live GitHub f
 _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代替干净的 Git 合并
 
 **编排账（Orchestration Ledger）**:
-host Runner 持久化的步骤、结果与恢复索引，用来判定哪些步骤已完成、下一步去哪以及恢复哪个 agent session。它不是 agent 的对话记忆；真正的模型上下文留在 agent session，由编排账保存的 session identity 定位。
+用于续跑与定位 agent session 的持久化编排状态与记录，记载已完成步骤、结果、下一步与 session identity。它不是 agent 的对话记忆；真正的模型上下文留在 agent session，由编排账中的 session identity 定位。
 _Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
 
 ### Runtime And LLM
