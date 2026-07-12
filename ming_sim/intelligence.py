@@ -53,7 +53,9 @@ def _query_domain(query: str) -> str:
         return "bandits"
     if any(word in text for word in ("军情", "敌情", "边情", "兵势", "战事")):
         return "military"
-    return "office"
+    if any(word in text for word in ("巡抚", "总督", "官缺", "虚悬", "在任")):
+        return "office"
+    return ""
 
 
 def source_kind_for_query(query: str) -> str:
@@ -74,6 +76,8 @@ def _safe_report_text(text: object) -> str:
 def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
     """Read the existing domain presentation seams, keeping values out of payload."""
     domain = _query_domain(query)
+    if not domain:
+        return "近臣暂不能据现有册档查明所问。", "unsupported"
     if domain == "office":
         return _vacancy_statement(db.list_office_vacancies(), query), "office_vacancies"
     if domain == "arrears":
@@ -192,6 +196,12 @@ def persist_return_report(
     # An emperor's question opens the inquiry channel by default.  Firsthand
     # is allowed only when a durable witness/scout record for this domain
     # already exists; wording alone may not manufacture provenance.
+    domain = _query_domain(query)
+    if not domain:
+        return {
+            "source_kind": "unsupported", "source_ref": "unsupported",
+            "subject": "未成报", "statement": "近臣暂不能据现有册档查明所问。",
+        }
     firsthand_record = _matching_firsthand_record(db, state, character_name, query)
     requested_kind = source_kind_for_query(query)
     source_kind = (

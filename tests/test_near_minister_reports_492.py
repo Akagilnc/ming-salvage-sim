@@ -165,6 +165,18 @@ def test_explicit_inquiry_overrides_matching_firsthand_witness(game):
     assert report["source_ref"] == "查访/powers"
 
 
+def test_unsupported_inquiry_is_not_persisted_as_false_office_report(game):
+    db, state, _content = game
+    minister = next(iter(db.content.characters))
+    before = db.conn.execute("SELECT COUNT(*) FROM character_knowledge_sources").fetchone()[0]
+
+    report = persist_return_report(db, state, minister, "请查访宫中流言真假。")
+
+    after = db.conn.execute("SELECT COUNT(*) FROM character_knowledge_sources").fetchone()[0]
+    assert report["source_kind"] == "unsupported"
+    assert after == before
+
+
 def test_bandit_inquiry_uses_shipped_inner_rebellion_kind(game):
     db, _state, _content = game
 

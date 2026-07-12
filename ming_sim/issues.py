@@ -4994,14 +4994,22 @@ def apply_issue_tracker_output(
         # A structured roster is an item-level contract.  In particular a
         # mapping is not an iterable roster: iterating it would persist its
         # keys (\"character_id\", \"tier\") as phantom participants.
-        roster_input = ni.get("participant_roster")
+        roster_input = next(
+            (ni.get(key) for key in ("participant_roster", "participants", "participant_names", "actors")
+             if ni.get(key) is not None),
+            None,
+        )
         if roster_input is not None:
             try:
                 if not isinstance(roster_input, (list, tuple)):
                     raise ValueError("participant_roster 须为列表")
                 for participant in roster_input:
+                    if isinstance(participant, str):
+                        if not participant.strip():
+                            raise ValueError("participant_roster 人名不得为空")
+                        continue
                     if not isinstance(participant, dict):
-                        raise ValueError("participant_roster 每项须为对象")
+                        raise ValueError("participant_roster 每项须为对象或人名")
                     if not str(participant.get("character_id") or participant.get("name") or "").strip():
                         raise ValueError("participant_roster 每项须有 character_id")
                     tier = str(participant.get("tier") or participant.get("档") or "知情").strip()
@@ -5034,13 +5042,7 @@ def apply_issue_tracker_output(
             # Keep ADR 0053's structured roster intact.  insert_issue writes the
             # compatibility name list and the durable roster together; reducing
             # dict entries to str(dict) creates phantom character names.
-            participants=(
-                ni.get("participant_roster")
-                or ni.get("participants")
-                or ni.get("participant_names")
-                or ni.get("actors")
-                or []
-            ),
+            participants=roster_input or [],
             ongoing_effects=ongoing_eff,
             cancellable="decree" if is_commitment else _normalize_cancellable(ni.get("cancellable")),
             cancel_cost=cancel_cost,

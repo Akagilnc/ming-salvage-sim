@@ -110,6 +110,8 @@ _COUNTABLE_STOP_FIELDS = {
 def _qualitative_stop_field(key: str) -> str:
     parts = key.split(".")
     field = parts[-1]
+    if field in _COUNTABLE_STOP_FIELDS:
+        return ""
     label = _ABSTRACT_STOP_FIELDS.get(field)
     if label is None:
         label = next((value for name, value in _ABSTRACT_STOP_FIELDS.items() if name in key), "")
@@ -191,7 +193,10 @@ def _commitment_tool_fields(db, state, row) -> str:
         elapsed = max(0, int(state.turn) - int(origin or state.turn))
     except (KeyError, TypeError, ValueError):
         elapsed = 0
+    rendered_progress = commitment_display_text(progress, row).strip()
     progress_text = f"已履行{elapsed}月"
+    if rendered_progress:
+        progress_text = f"{progress_text}；{rendered_progress}"
     stop_condition = _qualitative_stop_condition(row["stop_condition"] if "stop_condition" in keys else "")
     try:
         end_turn = int(row["end_turn"] if "end_turn" in keys else 0)
@@ -439,11 +444,13 @@ def build_minister_tools(character: Character, context: CourtContext,
 
     def audit_tax_arrears(target: str = "各省积欠") -> str:
         """清查积欠、估算可追收入库。"""
-        return filter_domain("regional", target)
+        needle = "" if target.strip() == "各省积欠" else target
+        return filter_domain("regional", needle)
 
     def allocate_payroll(target: str = f"本{TURN_UNIT}急需钱粮处") -> str:
         """核算军饷调度。"""
-        return filter_domain("military", target)
+        needle = "" if target.strip() == f"本{TURN_UNIT}急需钱粮处" else target
+        return filter_domain("military", needle)
 
     def propose_directive(decree_text: str) -> str:
         """把已定处置方案拟成一道圣旨草稿呈给皇帝审阅。decree_text 为完整圣旨正文。"""

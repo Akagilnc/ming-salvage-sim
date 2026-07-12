@@ -94,13 +94,16 @@ def _snapshot_secret_order_people(
     if not offices or content is None:
         return names
     for character in content.characters.values():
-        if character.office_type in offices or character.office in offices:
+        if character.office_type in offices or character.office in offices or any(
+            office and (office in str(character.office or "") or str(character.office or "") in office)
+            for office in offices
+        ):
             names.append(character.name)
     return list(dict.fromkeys(names))
 
 
 _SECRET_EXCLUSION_CLAUSE_RE = re.compile(
-    r"(?:瞒住|瞒着|瞒过|不可令|勿令|不得让|不得告知|勿使|不要让|不许|严禁)\s*"
+    r"(?:瞒住|瞒着|瞒过|不可令|勿令|不得让|不得告知|勿使|莫让|别让|不要让|不许|严禁)\s*"
     r"([^，。；;\s]{2,40}?)(?=(?:知晓|知道|得知|知情|过问|插手|，|。|；|\s|$))"
 )
 _SECRET_OFFICE_TYPES = (
@@ -152,7 +155,12 @@ def _recover_secret_order_exclusions(
     }
     office_types = {str(character.office_type).strip() for character in characters if character.office_type}
     office_titles = {str(character.office).strip() for character in characters if character.office}
-    for clause in _SECRET_EXCLUSION_CLAUSE_RE.findall(str(text or "")):
+    clauses = _SECRET_EXCLUSION_CLAUSE_RE.findall(str(text or ""))
+    clauses += re.findall(
+        r"(?:对|向)\s*([^，。；;\s]{2,40}?)\s*(?:保密|秘而不宣|不得透露)",
+        str(text or ""),
+    )
+    for clause in clauses:
         for target in re.split(r"[、，,和与及]", clause):
             target = target.strip("，。；、 ")
             if not target or target in {"他们", "他", "她", "此人", "诸人"}:
@@ -2295,8 +2303,8 @@ class GameDB:
                     INSERT INTO characters
                     (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
                      birth_year, historical_death_year, historical_death_month, debut_year, debut_month,
-                     status, status_reason, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     status, status_reason, reason_code, status_changed_turn, portrait_id, power_id, location, transit_to, summary)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         character.name,
@@ -2318,7 +2326,8 @@ class GameDB:
                         character.debut_year,
                         character.debut_month,
                         character.status,
-                        "",
+                        character.status_reason,
+                        character.reason_code,
                         0,
                         character.portrait_id,
                         character.power_id,
@@ -3600,14 +3609,15 @@ class GameDB:
             self.conn.execute(
                 """INSERT OR IGNORE INTO characters
                    (name, office, office_type, faction, aliases, personal_skills, loyalty, ability, integrity, courage, style, identity, seed_guilt,
-                    birth_year, historical_death_year, historical_death_month, debut_year, debut_month, status, status_reason, status_changed_turn,
+                    birth_year, historical_death_year, historical_death_month, debut_year, debut_month, status, status_reason, reason_code, status_changed_turn,
                     portrait_id, power_id, location, transit_to, summary)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
                 (character.name, office, office_type, character.faction,
                  json.dumps(character.aliases, ensure_ascii=False), json.dumps(character.personal_skills, ensure_ascii=False),
                  character.loyalty, character.ability, character.integrity, character.courage, character.style,
                  character.identity, character.seed_guilt, character.birth_year, character.historical_death_year,
                  character.historical_death_month, character.debut_year, character.debut_month, character.status,
+                 character.status_reason, character.reason_code,
                  character.portrait_id, character.power_id, character.location, character.transit_to, character.summary),
             )
         if not self._has_meta_flag("__identity_seed_v1"):
@@ -3617,6 +3627,25 @@ class GameDB:
                     (character.identity, character.seed_guilt, character.name),
                 )
             self._set_meta_flag("__identity_seed_v1")
+        # Retire only the shipped ambiguous alias collision from old saves and
+        # backfill approved static dismissal provenance without rewriting play.
+        for name in ("袁可立", "袁崇焕"):
+            row = self.conn.execute("SELECT aliases FROM characters WHERE name=?", (name,)).fetchone()
+            if row:
+                try:
+                    aliases = json.loads(row["aliases"] or "[]")
+                except (TypeError, ValueError):
+                    aliases = []
+                aliases = [alias for alias in aliases if alias != "袁巡抚"]
+                self.conn.execute("UPDATE characters SET aliases=? WHERE name=?",
+                                  (json.dumps(aliases, ensure_ascii=False), name))
+        hu = self.content.characters.get("胡廷宴")
+        if hu:
+            self.conn.execute(
+                "UPDATE characters SET status_reason=?, reason_code=? WHERE name=? "
+                "AND status='dismissed' AND COALESCE(status_reason,'')=''",
+                (hu.status_reason, hu.reason_code, hu.name),
+            )
         self.conn.commit()
 
     def _backfill_bandit_power_split(self) -> None:
@@ -7671,6 +7700,26 @@ class GameDB:
         the source-scoped ``knowledge_items`` projection; each item is then
         durable independently for character reads.
         """
+        self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
+        items = [item for item in self.knowledge_items_for_turn(state.turn)
+                 if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
+        has_restricted_source = any(item.get("excluded_names") for item in items)
+        source_snapshot_supplied = knowledge_items is not None
+        settlement_items = [
+            item for item in items
+            if str(item.get("source_id") or "") == f"settlement:narrative:{state.turn}"
+            and not item.get("excluded_names")
+        ]
+        if public_body is None:
+            public_report = (
+                "\n".join(str(item.get("body") or "") for item in settlement_items)
+                if settlement_items else
+                "\n".join(str(item.get("body") or item.get("title") or "")
+                          for item in items if not item.get("excluded_names"))
+                if source_snapshot_supplied or has_restricted_source else str(report or "")
+            )
+        else:
+            public_report = str(public_body or "")
         self.conn.execute(
             """
             INSERT INTO turn_reports (turn, year, period, report)
@@ -7680,25 +7729,12 @@ class GameDB:
                 period = excluded.period,
                 report = excluded.report
             """,
-            (state.turn, state.year, state.period, sanitize_sqlite_text(report)),
+            (state.turn, state.year, state.period, sanitize_sqlite_text(public_report)),
         )
-        self.persist_knowledge_items_for_turn(state, knowledge_items, commit=commit)
         # Aggregate prose cannot authorize an audience read: removing known
         # secret substrings is not safe against a paraphrase.  Persist a
         # separate public counterpart made from source-scoped public items.
         # Legacy callers with no restricted source retain their whole report.
-        items = [item for item in self.knowledge_items_for_turn(state.turn)
-                 if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
-        has_restricted_source = any(item.get("excluded_names") for item in items)
-        source_snapshot_supplied = knowledge_items is not None
-        if public_body is None:
-            public_report = (
-                "\n".join(str(item.get("body") or item.get("title") or "")
-                          for item in items if not item.get("excluded_names"))
-                if source_snapshot_supplied or has_restricted_source else str(report or "")
-            )
-        else:
-            public_report = str(public_body or "")
         if public_report:
             self.record_public_knowledge_event(
                 state, "邸报", sanitize_sqlite_text(public_report),
@@ -7744,6 +7780,21 @@ class GameDB:
             t = str(t).strip()
             if t and t not in base_tags:
                 base_tags.append(t)
+        self.persist_knowledge_items_for_turn(
+            state, knowledge_items, default_title=title, commit=commit
+        )
+        items = [item for item in self.knowledge_items_for_turn(state.turn)
+                 if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
+        has_restricted_source = any(item.get("excluded_names") for item in items)
+        source_snapshot_supplied = knowledge_items is not None
+        if public_body is None:
+            public_chapter = (
+                "\n".join(str(item.get("body") or item.get("title") or "")
+                          for item in items if not item.get("excluded_names"))
+                if source_snapshot_supplied or has_restricted_source else str(body or "")
+            )
+        else:
+            public_chapter = str(public_body or "")
         memory_id = self.upsert_event_memory(
             state,
             subject_type="court",
@@ -7762,26 +7813,11 @@ class GameDB:
         if memory_id:
             self.conn.execute(
                 "UPDATE event_memories SET body = ? WHERE id = ?",
-                (str(body or ""), memory_id),
+                (public_chapter, memory_id),
             )
-        self.persist_knowledge_items_for_turn(
-            state, knowledge_items, default_title=title, commit=commit
-        )
         # The public chapter counterpart is a separate, source-preserving
         # authorization record.  Never derive it by deleting secret strings
         # from an LLM aggregate: a paraphrase would evade that redaction.
-        items = [item for item in self.knowledge_items_for_turn(state.turn)
-                 if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
-        has_restricted_source = any(item.get("excluded_names") for item in items)
-        source_snapshot_supplied = knowledge_items is not None
-        if public_body is None:
-            public_chapter = (
-                "\n".join(str(item.get("body") or item.get("title") or "")
-                          for item in items if not item.get("excluded_names"))
-                if source_snapshot_supplied or has_restricted_source else str(body or "")
-            )
-        else:
-            public_chapter = str(public_body or "")
         if public_chapter:
             self.record_public_knowledge_event(
                 state, str(title or "朝局旧闻"), public_chapter,
@@ -10132,7 +10168,7 @@ class GameDB:
                 (turn_issued, due_turn, year_issued, period_issued, minister_name, title, content, tags, importance, status, excluded_names, excluded_targets)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
             """,
-            (state.turn, due_turn, state.year, state.period, minister_name, title[:20], content, tags_json, importance,
+            (state.turn, due_turn, state.year, state.period, minister_name, title, content, tags_json, importance,
              json.dumps(snapshot_excluded_names, ensure_ascii=False),
              json.dumps(exclusion_targets_payload, ensure_ascii=False)),
         )
@@ -10141,7 +10177,7 @@ class GameDB:
             state,
             [{"character_id": minister_name, "tier": "主办"}],
             "secret_order",
-            title[:20],
+            title,
             content,
             f"secret_order:{int(cur.lastrowid)}",
             excluded_names=snapshot_excluded_names,
@@ -10198,41 +10234,50 @@ class GameDB:
         ).fetchone()
         if row is None or row["status"] != "active":
             return False
-        persisted_title = title[:20]
+        persisted_title = title
         tags_json = json.dumps(tags, ensure_ascii=False) if tags is not None else (row["tags"] or "[]")
         deadline = max(0, min(int(deadline_months or 0), 36))
+        try:
+            prior_targets = json.loads(row["excluded_targets"] or "{}")
+        except (TypeError, ValueError):
+            prior_targets = {}
+        if not isinstance(prior_targets, dict):
+            prior_targets = {}
+        people, offices = canonical_secret_order_exclusions(
+            self.content, prior_targets.get("people", []), prior_targets.get("offices", []),
+            f"{title}\n{content}",
+        )
+        excluded_names = _snapshot_secret_order_people(self.content, people, offices)
+        excluded_targets = _secret_order_exclusion_targets(people, offices)
         with atomic(self):
             if deadline:
                 self.conn.execute(
-                    "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, "
+                    "UPDATE secret_orders SET title=?, content=?, tags=?, due_turn=?, excluded_names=?, excluded_targets=?, "
                     "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (persisted_title, content, tags_json, int(state.turn) + deadline, int(order_id)),
+                    (persisted_title, content, tags_json, int(state.turn) + deadline,
+                     json.dumps(excluded_names, ensure_ascii=False), json.dumps(excluded_targets, ensure_ascii=False), int(order_id)),
                 )
             else:
                 self.conn.execute(
-                    "UPDATE secret_orders SET title=?, content=?, tags=?, "
+                    "UPDATE secret_orders SET title=?, content=?, tags=?, excluded_names=?, excluded_targets=?, "
                     "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                    (persisted_title, content, tags_json, int(order_id)),
+                    (persisted_title, content, tags_json, json.dumps(excluded_names, ensure_ascii=False),
+                     json.dumps(excluded_targets, ensure_ascii=False), int(order_id)),
                 )
-            try:
-                excluded_names = json.loads(row["excluded_names"] or "[]")
-                excluded_targets = json.loads(row["excluded_targets"] or "{}")
-            except (TypeError, ValueError):
-                excluded_names, excluded_targets = [], {}
             self.register_character_knowledge_source(
                 state, [{"character_id": row["minister_name"], "tier": "主办"}], "secret_order",
                 persisted_title, content, f"secret_order:{int(order_id)}", excluded_names=excluded_names,
-                excluded_targets=excluded_targets if isinstance(excluded_targets, dict) else {}, commit=False,
+                excluded_targets=excluded_targets, commit=False,
             )
             # Replace only automatic/private mirrors of the canonical source.
             # A separately recorded public disclosure is historical evidence,
             # not a stale mirror, and must survive an order amendment.
             self.conn.execute(
-                "DELETE FROM character_knowledge_events WHERE source_id=? AND kind != 'public'",
+                "DELETE FROM character_knowledge_events WHERE source_id=?",
                 (f"secret_order:{int(order_id)}",),
             )
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
-        self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content[:60]}", state.year, state.period)
+        self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content}", state.year, state.period)
         if registry is not None:
             registry.refresh(str(row["minister_name"]))
         return True
@@ -10318,7 +10363,7 @@ class GameDB:
             "SELECT result FROM secret_orders WHERE id = ?", (int(order_id),)
         ).fetchone()["result"] or ""
         lines = [ln for ln in prev.split("\n") if ln.strip()]
-        lines.append(f"{stamp}{note[:300]}")
+        lines.append(f"{stamp}{note}")
         self.conn.execute(
             """
             UPDATE secret_orders

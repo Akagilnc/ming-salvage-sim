@@ -51,6 +51,9 @@ _AUDIENCE_ABSTRACT_BANDS = {
     "士绅阻力": ("轻微", "有限", "可控", "沉重", "极重"),
     "进度": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
     "进展": ("未见起色", "初有进展", "稳步推进", "近于收束", "已平"),
+    "风险": ("轻微", "有限", "可控", "沉重", "极重"),
+    "等级": ("低", "偏低", "平常", "偏高", "高"),
+    "完好度": ("残破", "欠佳", "尚可", "良好", "完好"),
     # Schema aliases are presentation aliases too.  Keep them in this one
     # registry so every player-facing P4 boundary rejects the same raw axes.
     "军心": ("低迷", "不足", "平常", "振作", "高涨"),
@@ -94,14 +97,14 @@ _ABSTRACT_STATE_NOUN = r"(?:整体|总体|水平|状况|情形|供应|保障)?"
 # Historical prose can insert a full causal clause between an abstract axis
 # and its raw score.  Bound the bridge generously enough for that prose while
 # still requiring the axis and a state/value verb on both sides.
-_ABSTRACT_STATE_CONNECTIVE = r"(?:[^\d]{0,120}?)"
+_ABSTRACT_STATE_CONNECTIVE = r"(?:[^\d。！？；;\n]{0,120}?)"
 _ABSTRACT_STATE_MODIFIER = (
     r"(?:(?:已(?:经|然)?|正(?:在)?|仍(?:然)?|尚|逐步|明显|显著|大幅|持续|"
     r"不断|迅速|急剧|骤然|骤|略有|有所|日益|愈发|更为|相当|十分|极其))*"
 )
 _ABSTRACT_STATE_VERB = (
     r"(?:升(?:高|至|到)?|降(?:低|至|到)?|提高(?:至|到)?|提升(?:至|到)?|"
-    r"跌(?:至|到)?|恶化(?:至|到)?|改善(?:至|到)?|达到?|变为?|只有|仅有|为|至|有|余|剩)"
+    r"跌(?:至|到)?|恶化(?:至|到)?|改善(?:至|到)?|达到?|变为?|只有|仅有|仅|为|至|有|余|剩)"
 )
 _ABSTRACT_NEARBY_NUMBER_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*"
