@@ -2408,26 +2408,36 @@ async function runIntegratedCmrPass(input: {
     (cmrResult.output.findings === undefined ||
       cmrResult.output.findings.length === 0)
   ) {
-    // Count channel is positive but structured findings are missing — cannot
-    // route coder-fix identities. Fail closed as outcome-protocol drift (not
-    // a claim/disposition court; not a silent pass).
+    // Shape failure (ADR 0062): count channel is non-0 but structured findings
+    // are missing — cannot route coder-fix identities. This is NOT a claim/
+    // disposition court and NOT a silent pass. Prefer parse/sidecar classification
+    // as malformed→findings-supplement rewrite; if a completed envelope still
+    // reaches here (injected/legacy), stop as outcome-protocol failure (infra),
+    // same terminal family as exhausted rewrite — never fabricated success.
     const reason =
-      `integrated cmr ${pass} findings count channel reported ` +
-      `${reportedFindingsCount} but structured findings are missing`;
-    await persistFinalReviewRound("rejected", () =>
-      recordDurableAbort(familyBackend, {
+      `family integrated cmr ${pass} outcome protocol failure: findings count ` +
+      `channel reported ${reportedFindingsCount} but structured findings are missing`;
+    await persistFinalReviewRound("rejected", async () => {
+      await familyBackend.recordAborted?.({
+        phase: "final",
+        cmrPass: pass,
+        familyBase,
+        errorPackage: { reason },
+        familyHeadAfter: postWorkerFamilyHead,
+      });
+      await recordDurableAbort(familyBackend, {
         phase: "final",
         cmrPass: pass,
         reason,
         familyHeadAfter: postWorkerFamilyHead,
-        stopSummary: contractDriftStopSummary({
+        stopSummary: infraFailureStopSummary({
           summary: reason,
           repairHint:
-            "emit structured findings matching the findings = x count, then rerun the family CMR gate",
+            "repair the worker outcome writer/guard or the outcome rewrite prompt so findings = x is accompanied by structured findings, then rerun the family barrier",
         }),
-      }),
-    );
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+      });
+    });
+    return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
   let cmrFindingClassification: CmrEnvelope | undefined;
   if (

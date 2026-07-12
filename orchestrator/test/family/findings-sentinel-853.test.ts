@@ -47,4 +47,24 @@ describe("#853 reviewer findings sentinel", () => {
 
     expect(result).toMatchObject({ kind: "verdict", findingsCount: 0 });
   });
+
+  it("#875: non-zero findings count without structured findings is shape malformed (supplement path)", () => {
+    // Verdict sidecar has no findings array; stdout says findings = 1.
+    // Shape failure → malformed + priorVerdict for findings-supplement rewrite,
+    // not a silent pass and not a disposition court.
+    const result = cmrOutcomeFromResult({
+      stdout: "findings = 1\nCMR_STEP_COMPLETE\n",
+      outcomePath: outcomePath(),
+      cmrReviewLegs: [{ slug: "opus" }, { slug: "gpt-5.6-sol" }, { slug: "agy" }],
+    });
+
+    expect(result).toMatchObject({
+      kind: "malformed",
+      reason: expect.stringMatching(/structured findings are missing/i),
+      priorVerdict: expect.objectContaining({
+        kind: "verdict",
+        findingsCount: 1,
+      }),
+    });
+  });
 });

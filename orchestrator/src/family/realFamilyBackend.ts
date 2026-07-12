@@ -3684,6 +3684,20 @@ export function cmrOutcomeFromResult(result: {
             priorVerdict: classified,
           };
         }
+        // #875 / ADR 0062: non-0 count with no structured findings is shape failure
+        // → findings-supplement rewrite (malformed + priorVerdict), not a semantic
+        // court abort and not a silent three-channel pass.
+        if (
+          findingsCount > 0 &&
+          (classified.findings === undefined || classified.findings.length === 0)
+        ) {
+          return {
+            kind: "malformed",
+            reason:
+              "cmr reviewer findings count is non-zero but structured findings are missing",
+            priorVerdict: { ...classified, findingsCount },
+          };
+        }
         return { ...classified, findingsCount };
       }
     } catch (err) {
