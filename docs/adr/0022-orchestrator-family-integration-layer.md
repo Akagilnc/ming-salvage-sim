@@ -17,6 +17,8 @@ Sandcastle 原生（文档/issues 优先核过、代码验证）：
 
 ## 决定
 
+公开入口以已有 family scene/ledger 优先，先认回 family；仅从未建立 family scene 的首次入口才以 live native sub-issue 数量区分 family 与 standalone。故最后一个成员被移除后重入仍留在 family 路径，执行成员取消与窄清理，不会因 live count 为 0 误建 standalone scene。
+
 1. **commander = 确定性波次调度（runner 步，非 LLM 分解器）**：父 epic 的子片由 `to-issues` 在**编排器外**切好、发成 GitHub native sub-issues + 显式 `blocked_by`（单一真相）。父流程开工第一步读取 live GitHub 状态、标签和 sub-issue 数量：`closed` 子片退出当前调度并满足依赖（包括此前按单片模式独立完成者），但已有 family worktree 保留到父流程 terminal-success + 显式 GC，期间 reopen + ready 可复用原现场；open 但无 `ready-for-agent` 的子片不启动；open + ready 但自身仍有 sub-issues 的子片显式列为 unsupported nested family 并跳过；只有 open + ready 的叶子子片进入显式 `blocked_by` DAG → 拓扑分波（未阻塞者并发为一波、被阻塞者下波）→ fan-out。当前只支持一层 family，不递归展开孙 issue。过滤后没有可运行叶子时，本次运行报告各项跳过原因并正常空跑完成；不建新 family worktree、不派 worker、不建 PR、不 park，也不因空跑立即 GC 旧现场。**不自分解、不用原生 Plan 的 LLM 依赖推断**（我们有显式 `blocked_by`，无需 LLM 再猜，且原生 Plan 只是 selector、会重推已有的边）。切片质量由切片那一步（design session 带 PRD/ADR 上下文）保证，非编排器职责。
 
 2. **fan-out = Sandcastle 原生 fork + 每子片 distinct branch**，跑在该 invocation 的独立 clone（ADR 0024）内故安全。每子片**复用单片 S0-S8 流程，但家族模式下 S7 的 `backend.push` 替换为本地 no-op**（子片只本地提交到自己分支、不 push 远端——共享 clone 内多个子片并发 push 会撞 `.git/refs/remotes` 引用锁；codex R3 指出「完整复用 S0-S8」含强制 S7 push、与「不 push」矛盾，故此处显式碰 S7）；只有家族 base 在末尾开 PR 时 push 一次。**家族 context（parentIssue / family ledger 引用）经 RunnerOptions 传入子片 runner**，使其 S0 走 ledger 口径（决定 6③）+ S7 走 no-op（agy R3）。base 从家族 base 切（家族模式闸适配见决定 6、base 取值见决定 7）。
@@ -32,6 +34,8 @@ Sandcastle 原生（文档/issues 优先核过、代码验证）：
 5. **family ledger**（家族 base worktree 的 sibling、worktree 外）= **append-only 事件账本**，每合一片即写一条（至少 `{childIssue, childBranch, childHead, wave, familyHeadBefore, familyHeadAfter, status}`），verify/cmr 失败写 `aborted` 事件（携带当时 family head）。**幂等不变式 + 崩溃窗口 reconcile**（cmr R2 三腿一致：merge 成功但 ledger 没写就崩的窗口须有可实现契约）：merger 只在该片 merge commit **已落家族 base 之后**才写其 `merged` 条。崩溃续跑先 reconcile，比对 ledger 末条 `familyHeadAfter` 与 live HEAD：① 一致 → 信已合集合、跳过已合、续合；② **live HEAD 领先 ledger（merge 成功、ledger 未写就崩的常规窗口）→ 不 abort**：对每个未记账子片查 `git merge-base --is-ancestor childHead liveHEAD`（**若该子片 branch/childHead 尚不存在——崩在它任何提交前——跳过 merge-base、当「未合」从头跑、不报错，agy R4**；存在且其合并已落）→ 补写一条 **`status:"merged"` + `event:"reconciled"`** 的 ledger 条（**保持 `status==merged`，使决定 6 的解阻塞谓词照样计入**——codex R3：若补成 `status:"reconciled"`，谓词 `status==merged` 不计、reconciled 的 blocker 仍被判未合、死锁）、续合；真有未落 / 不一致的 → fail-closed 升级。**即家族版 reconcile 比单片 `checkBranchHeadConsistency`「mismatch 直接 abort」更宽**，才兑现「幂等续合」（agy/codex R2）。字段级 JSON 留 TDD。
 
 6. **家族模式的闸适配（与单片 S0 闸三点差异）**：① 家族入口**接受父 epic**（单片 S0 闸「无 sub-issues 才放行」是单片规则，家族模式对 epic 反转该条）；直接输入某个子 issue 则仍可走单片流程，使用独立 worktree、独立 PR，不建立父 worktree。② **依赖满足判据 = GitHub-closed 或本 family ledger-merged**：父流程开始前已独立完成并 closed 的 blocker 已满足；本次 family 内刚合进家族 base、尚未 closed 的 blocker则由 ledger `merged` 满足。只看 closed 会让本次 family barrier 死锁，只看 ledger 会重做此前已独立完成的子片。③ **子片各自的家族 S0 依赖门使用同一联合判据**；rfa + 自己无 sub-issues 两项不变（`## Agent Brief` 可选、有则为最权威部分）。故 `to-issues` 发的待执行子片必须带 `ready-for-agent`。④ **家族外（external）`blocked_by` 在父 epic 进来时显式预检**：外部 blocker 不会进入本 family ledger，只能由 live GitHub `closed` 满足；凡仍 open 即拒整个 family run，并列出具体阻塞关系。admission 与每次 resume 都重新读取 live GitHub metadata。
+
+这里的 GitHub `closed` 只表示该 prerequisite 在 issue 工作流中已不再未决，包括 wontfix；它解除调度依赖，但不声称某个 commit 已存在于当前 family base。当前 base 上的代码可用性由接棒的专业 worker 与 family verify 判断，runner 不读取关闭原因，也不做 commit/head 对账。
 
 7. **家族 base = dedicated clone 上的本地分支**，merger 合并累积在本地。子片**从本地家族 base 切**（非 `origin/<family-base>`）——`cutRefFor` 当前对有远端的 base 取 `origin/<base>`，对本地家族分支会切到缺上波提交的陈旧 base（agy R1）；家族 base 须走本地引用。
 

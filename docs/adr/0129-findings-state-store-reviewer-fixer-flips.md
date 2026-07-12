@@ -10,7 +10,7 @@ Status: Proposed（2026-07-12 owner 亲授设计，值守誊录；待 doc-mode c
 
 runner 是交通警察，不是刑警：能力多大，责任才配多大——TS 代码没有判断能力，就不得在简单调度里妄图「接住」LLM 本就不稳定的输出；校验归写入点、由有判断力的写入方自纠。
 
-因此 runner 不比较 commit/head hash，不核对 commit、测试、报告或修复证据是否一致，也不判断 coder/reviewer/fixer 的专业工作是否合格。这些材料由下一位 reviewer/fixer 读取和判断；runner 只根据三态交通灯派下一棒。
+因此 runner 不为 review/fix 专业工作比较 commit/head hash，不核对 commit、测试、报告或修复证据是否一致，也不判断 coder/reviewer/fixer 的专业工作是否合格。这些材料由下一位 reviewer/fixer 读取和判断；runner 只根据三态交通灯派下一棒。此边界不禁止确定性 Git 自身为 merge、冲突落地或崩溃 reconcile 机械读取 refs；ADR 0022 的 merge-base/HEAD 检查不构成评审法庭。
 
 ## Supersede / 沿革
 
