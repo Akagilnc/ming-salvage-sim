@@ -318,4 +318,65 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
       }),
     );
   });
+
+  it("sidecar-shaped findingsCount:0 + !converged is ordinary not_converged (count channel, not pass)", async () => {
+    // Live sidecar path always attaches findingsCount from `findings = x`.
+    // Pre-fix: `findingsCount === undefined` guard skipped count=0 and fell
+    // through to recordCmrPassed — three-channel leak.
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "did not converge (sentinel count 0)",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 0,
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({
+        status: "aborted",
+        reason: "did not converge (sentinel count 0)",
+      }),
+    );
+    expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
+  });
+
+  it("findingsCount>0 without structured findings does not ship (count channel needs identities)", async () => {
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "count says blockers but no structured findings",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 1,
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
+    expect(
+      backend.ledger.some(
+        (e) =>
+          e.status === "aborted" &&
+          /findings count|structured findings|findingsCount/i.test(
+            typeof e.reason === "string" ? e.reason : "",
+          ),
+      ),
+    ).toBe(true);
+  });
 });
