@@ -70,6 +70,7 @@ def test_p4_guard_rejects_long_connective_and_complete_abstract_axes():
         "机动能力经连日奔袭后已降至20",
         "军事压力在多路来攻下高达90",
         "士绅阻力经多番劝谕仍为80",
+        "补给在道路断绝和军需转运迟滞的影响下高达20",
     ):
         assert "已略去" in safe_historical_text(injected), injected
 
