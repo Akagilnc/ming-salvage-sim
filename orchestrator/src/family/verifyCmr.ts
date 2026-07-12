@@ -32,9 +32,11 @@
  *     coder-fix worker for persistent repair commits, then dispatches a fresh CMR
  *     re-review over the current full diff. Escalate / malformed / contract-slip
  *     verdicts are recorded as durable aborts and stop before ship.
- *     `verifyCmr` owns pass ordering, route-leg accounting, ADR0032 strong-leg floor,
- *     and claimed-fixed closure checks; it does not inline reviewer grading or patch
- *     logic in this hook.
+ *     `verifyCmr` owns pass ordering and the ADR0032 strong-leg / required-leg
+ *     degradation floor. #875 demolished the accounting court (leg-accounting
+ *     death, claimed-fixed coverage audit, disposition-enum kill): envelope prose
+ *     no longer aborts a live run. Three-channel routing stays (exit / findings
+ *     count / decision gate) plus real infra durable abort.
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
  * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,
@@ -122,7 +124,6 @@ import {
   withMechanicalRetry,
 } from "../dispatchRetry.js";
 import {
-  cmrLegAccountingFailure,
   requiredCmrLegSkipFailure,
   modelRouteFingerprint,
   resolveActiveModelRoute,
@@ -735,70 +736,6 @@ function cmrEscalationStopSummary(reason: string): StopSummary {
   };
 }
 
-function legAccountingFailureStopSummary(input: {
-  readonly reason: string;
-  readonly resolvedRoute: ResolvedModelRoute;
-  readonly routeFingerprint: string;
-  readonly successfulLegs: readonly string[];
-  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-}): StopSummary {
-  return infraFailureStopSummary({
-    summary: input.reason,
-    repairHint:
-      "repair the CMR worker leg accounting payload so it matches the active route, then rerun the family CMR gate",
-    routeAccounting: {
-      declaredLegs: input.resolvedRoute.legCollections.cmrReview.map((leg) => leg.slug),
-      successfulLegs: input.successfulLegs,
-      skippedLegs: input.skippedLegs ?? [],
-      routeFingerprint: input.routeFingerprint,
-      routeArtifact: {
-        path: ".cmr-route.json",
-        content: {
-          legCollections: {
-            cmrReview: input.resolvedRoute.legCollections.cmrReview.map((leg) => ({
-              slug: leg.slug,
-              family: leg.family,
-            })),
-          },
-        },
-      },
-      actualPayload: {
-        successfulLegs: input.successfulLegs,
-        ...(input.skippedLegs !== undefined ? { skippedLegs: input.skippedLegs } : {}),
-      },
-      repairHint:
-        "every active-route CMR leg must appear exactly once as successful or skipped; undeclared legs must be removed from the worker verdict",
-    },
-  });
-}
-
-function trustedAcceptedSuppressionDisposition(
-  disposition: {
-    readonly identityKey: string;
-    readonly status: string;
-    readonly reason?: string;
-    readonly source?: string;
-    readonly scope?: string;
-    readonly boundedReopen?: string;
-  },
-  moduleContext: FamilyModuleContext | undefined,
-): boolean {
-  if (
-    disposition.status !== "accepted_suppressed" ||
-    !hasAcceptedSuppressionAuthority(disposition)
-  ) {
-    return false;
-  }
-  return (moduleContext?.acceptedSuppressionSources ?? []).some(
-    (source) =>
-      source.source === disposition.source &&
-      source.scope === disposition.scope &&
-      source.reason === disposition.reason &&
-      source.boundedReopen === disposition.boundedReopen &&
-      source.findingIdentity === disposition.identityKey,
-  );
-}
-
 export function latestFamilyCmrDispositions(
   ledger: ReadonlyArray<{
     readonly cmrDispositions?: ReadonlyArray<FindingDisposition>;
@@ -823,131 +760,6 @@ export function latestFamilyCmrDispositions(
     if (entry.cmrDispositions != null && entry.cmrDispositions.length > 0) {
       return entry.cmrDispositions;
     }
-  }
-  return undefined;
-}
-
-function cmrClosureFailureReason(input: {
-  readonly pass: IntegratedCmrPass;
-  readonly moduleContext?: FamilyModuleContext;
-  readonly claimedFixedFindingIdentityKeys?: readonly string[];
-  readonly protectedPriorFindingIdentityKeys?: readonly string[];
-  readonly priorFindingDispositions?: readonly {
-    readonly identityKey: string;
-    readonly status: string;
-    readonly reason?: string;
-    readonly source?: string;
-    readonly scope?: string;
-    readonly boundedReopen?: string;
-  }[];
-  // #604 correctness r4 (D1): the EARLY closure guard (run before the
-  // blocking→coder-fix branch on a RESTART barrier) must only assert the closure
-  // payload is WELL-FORMED — every protected prior key is claimed or disposed, no
-  // stale/duplicate/malformed dispositions. It must NOT assert every prior
-  // disposition is `verified-closed`: a prior finding that is still `still-active`
-  // / `unable-to-assess` is precisely what the coder-fix loop exists to repair, so
-  // aborting on it would over-fire and starve the fix loop (the r2 C2 regression).
-  // `allowStillActive: true` skips ONLY the `stillOpen` closed-status assertion;
-  // every shape/coverage check still runs. The LATE converged-path guard omits
-  // this flag, keeping its full `verified-closed` assertion intact.
-  readonly allowStillActive?: boolean;
-}): string | undefined {
-  const claimed = input.claimedFixedFindingIdentityKeys ?? [];
-  const priorDispositions = input.priorFindingDispositions ?? [];
-  // #861 hotfix (ADR 0062): claimed-fixed keys the runner never asked about are
-  // NOT a closure failure. A fresh reviewer legitimately sees older review
-  // artifacts in the tree and may honestly report pre-resume findings as fixed;
-  // the runner only audits coverage of the keys IT supplied. The former
-  // closure_context_missing / stale-claims aborts killed live family runs on
-  // exactly that honest over-reporting (485 night run, 2026-07-12).
-  const protectedPriorKeys = input.protectedPriorFindingIdentityKeys;
-  const protectedKeys =
-    protectedPriorKeys !== undefined ? new Set(protectedPriorKeys) : undefined;
-  if (protectedPriorKeys !== undefined) {
-    const claimedSet = new Set(claimed);
-    const unclaimedPriorKeys = protectedPriorKeys.filter((key) => !claimedSet.has(key));
-    if (unclaimedPriorKeys.length > 0) {
-      return (
-        `integrated cmr ${input.pass} closure failed: runner-supplied prior ` +
-        `findings were not explicitly claimed fixed: ${unclaimedPriorKeys.join(", ")}`
-      );
-    }
-  }
-  const dispositionKeys = priorDispositions.map((d) => d.identityKey);
-  const duplicateDispositions = dispositionKeys.filter(
-    (key, index, keys) => keys.indexOf(key) !== index,
-  );
-  if (duplicateDispositions.length > 0) {
-    return (
-      `integrated cmr ${input.pass} closure failed: duplicate prior finding ` +
-      `dispositions for ${[...new Set(duplicateDispositions)].join(", ")}`
-    );
-  }
-  const malformedAcceptedSuppressions = priorDispositions
-    .filter(
-      (disposition) =>
-        disposition.status === "accepted_suppressed" &&
-        !trustedAcceptedSuppressionDisposition(disposition, input.moduleContext),
-    )
-    .map((disposition) => disposition.identityKey);
-  if (malformedAcceptedSuppressions.length > 0) {
-    return (
-      `integrated cmr ${input.pass} closure failed: accepted_suppressed ` +
-      `dispositions missing source/scope/boundedReopen for ${malformedAcceptedSuppressions.join(", ")}`
-    );
-  }
-  const suppressedProtectedPriorKeys =
-    protectedKeys === undefined
-      ? []
-      : priorDispositions
-          .filter(
-            (disposition) =>
-              disposition.status === "accepted_suppressed" &&
-              protectedKeys.has(disposition.identityKey),
-          )
-          .map((disposition) => disposition.identityKey);
-  if (suppressedProtectedPriorKeys.length > 0) {
-    return (
-      `integrated cmr ${input.pass} closure failed: runner-protected prior ` +
-      `findings cannot be closed by accepted_suppressed: ${suppressedProtectedPriorKeys.join(", ")}`
-    );
-  }
-  if (input.allowStillActive !== true) {
-    const stillOpen = priorDispositions
-      .filter(
-        (disposition) =>
-          disposition.status !== "verified-closed" &&
-          !(
-            disposition.status === "accepted_suppressed" &&
-            trustedAcceptedSuppressionDisposition(disposition, input.moduleContext)
-          ),
-      )
-      .map((disposition) => disposition.identityKey);
-    if (stillOpen.length > 0) {
-      return (
-        `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
-        `findings are not verified closed: ${stillOpen.join(", ")}`
-      );
-    }
-  }
-  const dispositions = new Map(priorDispositions.map((d) => [d.identityKey, d.status]));
-  const claimedSet = new Set(claimed);
-  const extraDispositions = priorDispositions
-    .map((disposition) => disposition.identityKey)
-    .filter((key) => !claimedSet.has(key));
-  if (extraDispositions.length > 0) {
-    return (
-      `integrated cmr ${input.pass} closure failed: prior finding ` +
-      `dispositions without claimed-fixed keys: ${extraDispositions.join(", ")}`
-    );
-  }
-  if (claimed.length === 0) return undefined;
-  const missing = claimed.filter((key) => !dispositions.has(key));
-  if (missing.length > 0) {
-    return (
-      `integrated cmr ${input.pass} closure failed: prior claimed-fixed ` +
-      `findings missing explicit disposition: ${missing.join(", ")}`
-    );
   }
   return undefined;
 }
@@ -2044,9 +1856,8 @@ async function rewriteOutcomeProtocolFailure(input: {
   readonly result: WorkerResult;
 }): Promise<WorkerResult> {
   if (input.result.kind !== "malformed") return input.result;
-  if (input.result.cmrLegAccountingPayload !== undefined) {
-    return input.result;
-  }
+  // #875: former cmrLegAccountingPayload short-circuit removed with the court;
+  // sloppy leg lists no longer arrive as special malformed payloads.
   if (input.familyBackend.rewriteWorkerOutcome === undefined) {
     return {
       kind: "outcome_protocol_failure",
@@ -2458,16 +2269,6 @@ async function runIntegratedCmrPass(input: {
             reason,
             resolvedRoute,
           })
-        : cmrResult.kind === "malformed" &&
-            cmrResult.cmrLegAccountingPayload !== undefined
-        ? legAccountingFailureStopSummary({
-            reason,
-            resolvedRoute,
-            routeFingerprint,
-            successfulLegs:
-              cmrResult.cmrLegAccountingPayload.successfulLegs ?? [],
-            skippedLegs: cmrResult.cmrLegAccountingPayload.skippedLegs,
-          })
         : undefined;
     await persistFinalReviewRound("rejected", async () => {
       await familyBackend.recordAborted?.({
@@ -2493,52 +2294,9 @@ async function runIntegratedCmrPass(input: {
     (cmrResult.output.findings === undefined ||
       cmrResult.output.findings.length === 0)
   ) {
-    // #604 correctness r4 (D2): on a RESTART barrier the protected prior keys must
-    // be accounted for EVEN when the fresh reviewer returns `converged:false` with
-    // NO findings. Without this guard a reviewer could emit `{converged:false,
-    // findings:[]}` while silently dropping the protected prior keys (no
-    // claimedFixed, no disposition) and slip past the ADR 0030 coverage check as an
-    // ordinary thin not_converged envelope. Run the well-formedness closure guard
-    // (shape/coverage only — `allowStillActive:true`, matching the early guard)
-    // BEFORE the thin not_converged abort; a missing-coverage payload fails closed
-    // as contract_drift instead.
-    //
-    // #604 correctness r4 (D3): also run when the reviewer SELF-REPORTS a closure
-    // payload on a first pass (claimed-fixed keys / dispositions with no protected
-    // prior set) so a `converged:false, findings:[]` malformed self-report cannot
-    // masquerade as an ordinary not_converged abort.
-    const notConvergedHasClosurePayload =
-      priorCmrFindingIdentityKeys !== undefined ||
-      (cmrResult.output.claimedFixedFindingIdentityKeys?.length ?? 0) > 0 ||
-      (cmrResult.output.priorFindingDispositions?.length ?? 0) > 0;
-    if (notConvergedHasClosurePayload) {
-      const notConvergedClosureFailure = cmrClosureFailureReason({
-        pass,
-        moduleContext,
-        claimedFixedFindingIdentityKeys:
-          cmrResult.output.claimedFixedFindingIdentityKeys,
-        protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
-        priorFindingDispositions: cmrResult.output.priorFindingDispositions,
-        allowStillActive: true,
-      });
-      if (notConvergedClosureFailure !== undefined) {
-        await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
-          phase: "final",
-          cmrPass: pass,
-          reason: notConvergedClosureFailure,
-          familyHeadAfter: postWorkerFamilyHead,
-          stopSummary: contractDriftStopSummary({
-            summary: notConvergedClosureFailure,
-            repairHint:
-              "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
-          }),
-        }));
-        return {
-          result: { ok: false, ran: true },
-          familyHeadAfter: postWorkerFamilyHead,
-        };
-      }
-    }
+    // #875: no claimed-fixed coverage court on thin not_converged envelopes.
+    // Three-channel routing only — findings empty + not converged ⇒ ordinary
+    // not_converged durable abort (not a disposition/claim shape kill).
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
     // #604 slice 3 / ADR 0062: a not_converged abort carries NO blocking findings.
@@ -2563,32 +2321,9 @@ async function runIntegratedCmrPass(input: {
     }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  const legAccountingFailure = cmrLegAccountingFailure(
-    {
-      successfulLegs: cmrResult.output.successfulLegs ?? [],
-      skippedLegs: cmrResult.output.skippedLegs,
-    },
-    resolvedRoute,
-  );
-  if (legAccountingFailure !== undefined) {
-    const reason = `integrated cmr ${pass} leg accounting failed: ${legAccountingFailure}`;
-    const successfulLegs = cmrResult.output.successfulLegs ?? [];
-    const skippedLegs = cmrResult.output.skippedLegs;
-    await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: legAccountingFailureStopSummary({
-        reason,
-        resolvedRoute,
-        routeFingerprint,
-        successfulLegs,
-        skippedLegs,
-      }),
-    }));
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
+  // #875: leg-accounting court demolished. successfulLegs/skippedLegs are worker
+  // prose for the degradation floor below — undeclared/duplicate/omitted legs no
+  // longer abort the run.
   const floorFailure = cmrFloorFailureReason({
     pass,
     successfulLegs: cmrResult.output.successfulLegs,
@@ -2626,73 +2361,9 @@ async function runIntegratedCmrPass(input: {
     }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  // #604 correctness r2 (C2): on a RESTART barrier the runner carries protected
-  // prior finding identity keys (`priorCmrFindingIdentityKeys`) that the fresh
-  // reviewer MUST account for (claimed-fixed or explicitly disposed). If that
-  // closure payload is malformed — e.g. it leaves a protected prior key
-  // unaccounted — this is a contract drift that MUST fail closed and mechanically
-  // rerun, NEVER dispatch coder-fix. Pre-r2 the `blocking.length > 0` branch ran
-  // FIRST, so a fresh pass that also happened to raise a NEW blocker slipped the
-  // unrelated new blocker into coder-fix and bypassed this guard. Run the closure
-  // guard BEFORE the blocking branch whenever protected prior keys are present.
-  //
-  // #604 correctness r4 (D3): the early guard must ALSO run on a FIRST pass
-  // (`priorCmrFindingIdentityKeys === undefined`) whenever the reviewer SELF-REPORTS
-  // a closure payload — a non-empty `claimedFixedFindingIdentityKeys` or
-  // `priorFindingDispositions`. Pre-r4 the guard ran only when protected prior keys
-  // existed, so a first-pass reviewer that claimed to have fixed prior findings
-  // (with no runner-supplied prior set → `closure_context_missing`) slipped its NEW
-  // blocker into coder-fix and never tripped the malformed-payload guard. Running
-  // when ANY closure payload is present routes that malformed self-report to
-  // contract_drift. A genuinely payload-free first pass (no claimed, no
-  // dispositions, no protected keys) still skips the guard and preserves the normal
-  // blocking→coder-fix path (the late guard at the end still runs for the converged
-  // path).
-  const hasClosurePayload =
-    priorCmrFindingIdentityKeys !== undefined ||
-    (cmrResult.output.claimedFixedFindingIdentityKeys?.length ?? 0) > 0 ||
-    (cmrResult.output.priorFindingDispositions?.length ?? 0) > 0;
-  // #604 correctness r4 (D3): the early guard is scoped to the NON-converged path.
-  // A converged payload has its own LATE closure guard at the end (with the full
-  // `verified-closed` assertion), so the early guard must NOT preempt it — doing so
-  // would (a) let the early guard's `allowStillActive` skip the late guard's
-  // still-active rejection on the converged path, and (b) change which malformed-
-  // shape message wins there. On the converged path the early guard is a no-op; the
-  // late guard owns the complete assertion.
-  if (hasClosurePayload && !cmrResult.output.converged) {
-    const earlyClosureFailure = cmrClosureFailureReason({
-      pass,
-      moduleContext,
-      claimedFixedFindingIdentityKeys:
-        cmrResult.output.claimedFixedFindingIdentityKeys,
-      protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
-      priorFindingDispositions: cmrResult.output.priorFindingDispositions,
-      // #604 correctness r4 (D1): the EARLY guard is a WELL-FORMEDNESS gate only.
-      // A prior key that is claimed-fixed but disposed `still-active` /
-      // `unable-to-assess` is a legitimate coder-fix input, NOT a contract drift —
-      // aborting on it (the r2 C2 regression) starves the fix loop. Skip only the
-      // `stillOpen` verified-closed assertion here; the LATE converged-path guard
-      // (no flag) keeps the full closed assertion.
-      allowStillActive: true,
-    });
-    if (earlyClosureFailure !== undefined) {
-      await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
-        phase: "final",
-        cmrPass: pass,
-        reason: earlyClosureFailure,
-        familyHeadAfter: postWorkerFamilyHead,
-        stopSummary: contractDriftStopSummary({
-          summary: earlyClosureFailure,
-          repairHint:
-            "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
-        }),
-      }));
-      return {
-        result: { ok: false, ran: true },
-        familyHeadAfter: postWorkerFamilyHead,
-      };
-    }
-  }
+  // #875: early claimed-fixed / disposition coverage court demolished. Blocking
+  // findings take the normal findings-count → coder-fix path regardless of
+  // whether protected prior keys were "accounted for" in envelope prose.
   let cmrFindingClassification: CmrEnvelope | undefined;
   if (
     (cmrResult.output.findingsCount ?? cmrResult.output.findings?.length ?? 0) > 0 &&
@@ -2839,28 +2510,9 @@ async function runIntegratedCmrPass(input: {
     }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  const closureFailure = cmrClosureFailureReason({
-    pass,
-    moduleContext,
-    claimedFixedFindingIdentityKeys:
-      cmrResult.output.claimedFixedFindingIdentityKeys,
-    protectedPriorFindingIdentityKeys: priorCmrFindingIdentityKeys,
-    priorFindingDispositions: cmrResult.output.priorFindingDispositions,
-  });
-  if (closureFailure !== undefined) {
-    await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason: closureFailure,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: contractDriftStopSummary({
-        summary: closureFailure,
-        repairHint:
-          "repair the integrated CMR claimed-fixed closure payload and rerun the family barrier",
-      }),
-    }));
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
+  // #875: late claimed-fixed / disposition-enum court demolished. Converged +
+  // findings=0 is enough for three-channel pass; runner does not re-read
+  // disposition statuses or claim coverage to kill the run.
   const skippedLegs = cmrResult.output.skippedLegs;
   await persistFinalReviewRound("accepted", () => recordCmrPassed(familyBackend, {
     cmrPass: pass,
