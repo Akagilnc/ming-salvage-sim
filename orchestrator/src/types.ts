@@ -779,7 +779,7 @@ export type VerifyWorkerTerminalState =
   | "round_budget_exhausted"
   | "decision_gate_raised";
 
-/** Runner-internal online review terminals (adds contract_drift from HEAD drift). */
+/** Runner-internal online review terminals (contract_drift retained for non-git protocol failures). */
 export type OnlineReviewTerminalState =
   | VerifyWorkerTerminalState
   | "contract_drift";
