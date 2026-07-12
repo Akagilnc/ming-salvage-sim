@@ -1924,8 +1924,6 @@ async function closureNegativeReplay(): Promise<SeamReplay> {
   const unableKey = "correctness|src/closure.ts:2|unable";
   const missingKey = "correctness|src/closure.ts:3|missing";
   const staleKey = "correctness|src/closure.ts:4|stale";
-  const staleSelfClaimedKey =
-    "correctness|src/closure.ts:5|stale self-claimed";
   const duplicateKey =
     "correctness|orchestrator/src/runner.ts:376|closure failure duplicate-disposition";
   const familyFailures = await Promise.all([
@@ -1949,13 +1947,9 @@ async function closureNegativeReplay(): Promise<SeamReplay> {
       priorFindingDispositions: [],
       priorCmrFindingIdentityKeys: [missingKey],
     }),
-    familyClosureFailure({
-      shape: "stale-self-claimed",
-      claimedFixedFindingIdentityKeys: [staleSelfClaimedKey],
-      priorFindingDispositions: [
-        { identityKey: staleSelfClaimedKey, status: "verified-closed" },
-      ],
-    }),
+    // #861: "stale-self-claimed" is no longer a rejected shape — claimed-fixed
+    // keys the runner never asked about are tolerated (honest over-reporting by a
+    // fresh reviewer that saw pre-resume artifacts must not kill the family).
     familyClosureFailure({
       shape: "extra-stale-disposition",
       claimedFixedFindingIdentityKeys: [],

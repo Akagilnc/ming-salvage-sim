@@ -44,3 +44,13 @@ optional `findingFamilies` in your `<cmr>` verdict — grouped findings with
 
 Report your terminal verdict per the worker output contract in the prompt. Stay
 strictly inside this pass's scope.
+
+## Constitution
+
+Check findings and fixes against docs/adr/0062: the runner reads three
+envelope signals and never worker prose; DELETE outranks patch on
+mechanisms that fork on finding free text or park rich content
+runner-side. Typed shape/governance checks the ADR itself preserves
+(claimed-fix id coverage of runner-supplied keys, suppression-authority
+validation) are intended, not violations. Full kill-axis method: the
+ak-cross-m-review skill's constitution packet (all modes).

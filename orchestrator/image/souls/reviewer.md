@@ -76,3 +76,13 @@ and git state for the review scope.
 Do not invoke `ak-cross-m-review` here. Full cross-model CMR is a separate
 family-layer worker over the assembled family base. Do not run a fix loop; report
 findings per your worker output contract and stop.
+
+## Constitution
+
+Check findings and fixes against docs/adr/0062: the runner reads three
+envelope signals and never worker prose; DELETE outranks patch on
+mechanisms that fork on finding free text or park rich content
+runner-side. Typed shape/governance checks the ADR itself preserves
+(claimed-fix id coverage of runner-supplied keys, suppression-authority
+validation) are intended, not violations. Full kill-axis method: the
+ak-cross-m-review skill's constitution packet (all modes).
