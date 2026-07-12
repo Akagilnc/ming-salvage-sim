@@ -1325,6 +1325,8 @@ export async function runFamily(
   // in reconcile.ts; the spine only CALLS it + appends its补账条 (acceptance-4
   // seam boundary — the spine never carries the reconcile algorithm).
   if (input.reconcileGit !== undefined) {
+    // #884: log reconcile at the true entry, after smoke-k and before ledger work.
+    logDriverStage("reconcile", `family base ${input.familyBase}`);
     const ledger = await familyBackend.readFamilyLedger();
     const plan = await reconcileFamilyLedger(
       ledger,

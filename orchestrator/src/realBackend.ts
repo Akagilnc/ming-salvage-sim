@@ -245,9 +245,10 @@ export function barePingArgv(
         ],
       };
     case "cursor":
+      // Sandcastle 0.10.0 invokes the standalone `agent` binary (not `cursor agent`).
       return {
-        file: "cursor",
-        args: ["agent", "-p", prompt, "--model", model],
+        file: "agent",
+        args: ["-p", prompt, "--model", model, "--print"],
       };
     case "copilot":
       return {
@@ -2396,11 +2397,12 @@ export class RealBackend implements Backend {
         process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
       ) * 1000;
     const providerAuth = this.hostProviderAuthAvailability();
-    const smoked = await smokeRouteModels(route, async (entry) => {
-      const entryPool = entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
+    const pingOne = async (
+      entry: { readonly key: string; readonly slug: string },
+      entryPool: BillingPoolDispatchId | undefined,
+    ): Promise<{ readonly cliVersion: string }> => {
       const resolved = resolveModelSlugForPool(entry.slug, entryPool);
       this.assertProviderAuth(entry.slug, entryPool, providerAuth);
-
       const nonce = randomUUID();
       const prompt = buildBarePingPrompt(
         nonce,
@@ -2434,7 +2436,54 @@ export class RealBackend implements Backend {
       } finally {
         rmSync(emptyDir, { recursive: true, force: true });
       }
+    };
+
+    // Unique-by-slug parallel legs (owner "六路").
+    let smoked = await smokeRouteModels(route, async (entry) => {
+      const entryPool =
+        entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
+      return pingOne(entry, entryPool);
     });
+
+    // Pool-rewritten pipe: force a dedicated ping for the relay entry so a
+    // same-slug default-provider result is never alias-passed as pool-smoked.
+    if (
+      relaySmokeEntryKey !== undefined &&
+      dispatchPool !== undefined
+    ) {
+      const relayEntry = routeSmokeEntries(route).find(
+        (e) => e.key === relaySmokeEntryKey,
+      );
+      if (relayEntry !== undefined) {
+        const at = new Date().toISOString();
+        try {
+          const result = await pingOne(relayEntry, dispatchPool);
+          smoked = {
+            ...smoked,
+            smoke: {
+              ...smoked.smoke,
+              [relayEntry.key]: {
+                state: "passed",
+                at,
+                cliVersion: result.cliVersion,
+              },
+            },
+          };
+        } catch (error) {
+          smoked = {
+            ...smoked,
+            smoke: {
+              ...smoked.smoke,
+              [relayEntry.key]: {
+                state: "failed",
+                at,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            },
+          };
+        }
+      }
+    }
     return smoked;
   }
 
@@ -2484,7 +2533,13 @@ export class RealBackend implements Backend {
       slug,
       isBillingPoolDispatchId(billingPool) ? billingPool : undefined,
     ).provider;
-    const command = provider === "claudeCode" ? "claude" : provider;
+    // Keep CLI binary identity aligned with barePingArgv / Sandcastle.
+    const command =
+      provider === "claudeCode"
+        ? "claude"
+        : provider === "cursor"
+          ? "agent"
+          : provider;
     try {
       return this.sh(command, ["--version"]).trim() || "unknown";
     } catch {

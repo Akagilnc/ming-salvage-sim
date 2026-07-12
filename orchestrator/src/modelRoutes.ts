@@ -560,12 +560,11 @@ export async function smokeRouteModels(
 ): Promise<ResolvedModelRoute> {
   const smoke: Record<string, RouteSmokeStatus> = { ...route.smoke };
   const entries = routeSmokeEntries(route);
-  // #884: unique by route entry key (model×pipe / role), NOT by bare slug.
-  // Slug-only dedup could mark a pool-rewritten pipe (e.g. coderFix under
-  // grok-build) as smoked when only the default-provider entry for that slug
-  // was actually pinged. Bare-ping is cheap + parallel, so per-key is fine.
+  // #884: unique by model slug (owner "六路" = unique models). Status fans out
+  // to every route entry sharing that slug. Pool-specific pings are forced by
+  // RealBackend.smokeModelRoute after this when relaySmokeEntryKey is set.
   const uniqueEntries = [
-    ...new Map(entries.map((entry) => [entry.key, entry])).values(),
+    ...new Map(entries.map((entry) => [entry.slug, entry])).values(),
   ];
   const results = await Promise.all(
     uniqueEntries.map(async (entry) => {
@@ -592,7 +591,9 @@ export async function smokeRouteModels(
     }),
   );
   for (const { entry, status } of results) {
-    smoke[entry.key] = status;
+    for (const target of entries.filter((c) => c.slug === entry.slug)) {
+      smoke[target.key] = status;
+    }
   }
   return { ...route, smoke };
 }
