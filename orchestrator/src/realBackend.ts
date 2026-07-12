@@ -71,11 +71,10 @@ import {
 } from "./acceptedSuppression.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
-  defaultExternalCallRecorder,
   execFileAsyncWithTimeout,
   shWithClock,
-  withExternalCallRetry,
 } from "./externalCall.js";
+import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
 import {
@@ -2407,8 +2406,9 @@ export class RealBackend implements Backend {
     // encapsulation of a CMR/route *leg*. Transient transport blips
     // (reset/5xx) retry ×2 before the smoke is recorded failed (optional
     // legs then degrade; required anchors can still abort the run); 429 /
-    // quota never retries — via withExternalCallRetry (same S5-family policy
-    // as legTransientRetry). Worker-process crashes stay on #598.
+    // quota never retries — via withLegTransientRetry (production wire of
+    // legTransientRetry.ts). Worker-process crashes stay on #598; in-container
+    // ak-cross-m-review skill legs keep their own backend degrade chain.
     const pingOne = async (
       entry: { readonly key: string; readonly slug: string },
       entryPool: BillingPoolDispatchId | undefined,
@@ -2424,20 +2424,17 @@ export class RealBackend implements Backend {
       const emptyDir = mkdtempSync(join(tmpdir(), "route-smoke-ping-"));
       try {
         const stage = `smoke-k:${entry.slug}`;
-        const stdout = await withExternalCallRetry(
-          stage,
-          async () =>
-            this.execBarePing({
-              slug: entry.slug,
-              cwd: emptyDir,
-              prompt,
-              nonce,
-              file: built.file,
-              args: built.args,
-              stdin: built.input,
-              timeoutMs,
-            }),
-          { record: defaultExternalCallRecorder },
+        const stdout = await withLegTransientRetry(async () =>
+          this.execBarePing({
+            slug: entry.slug,
+            cwd: emptyDir,
+            prompt,
+            nonce,
+            file: built.file,
+            args: built.args,
+            stdin: built.input,
+            timeoutMs,
+          }),
         );
         if (!barePingNonceSatisfied(stdout, nonce)) {
           throw new Error(

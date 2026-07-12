@@ -113,7 +113,7 @@ import {
   retriggerBotsAndPoll,
   familyPendingRoundTriggerFromFixGap,
   resolveOnlineReviewRoundTrigger,
-  recheckConvergenceConfirmsFixMarkedKeys,
+
   sliceOnlineReviewCiFailedPending,
   slicePendingRoundTriggerFromFixGap,
   slicePostFixVerifyPendingFromMarkerGap,
@@ -1034,27 +1034,31 @@ describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => 
     ).toBe(true);
   });
 
-  it("#877: empty authorization on a post-fixer recheck admits bare converge (echo court demolished)", () => {
+  it("#877: post-fixer recheck no longer routes through fix-marked echo court", () => {
+    // Hard DELETE of recheckConvergenceConfirmsFixMarkedKeys — bare converge is
+    // three-channel only; no always-true soft shell remains to re-arm.
+    expect(typeof isValidVerifyResult).toBe("function");
     expect(
-      recheckConvergenceConfirmsFixMarkedKeys(
-        { kind: "verify", converged: true, isRecheck: true },
-        { fixMarkedFindingIdentityKeys: [], fixMarkedFindingThreads: [] },
-      ),
+      isValidVerifyResult({
+        kind: "verify",
+        converged: true,
+        isRecheck: true,
+      }),
     ).toBe(true);
     expect(
-      recheckConvergenceConfirmsFixMarkedKeys(
-        { kind: "verify", converged: true, isRecheck: true },
-        {},
-      ),
+      isValidVerifyResult({
+        kind: "verify",
+        converged: true,
+      }),
     ).toBe(true);
   });
 
-  it("#743 R6: round-1 non-recheck bare converge stays legal", () => {
+  it("#743 R6: round-1 non-recheck bare converge stays legal (type-shape only)", () => {
     expect(
-      recheckConvergenceConfirmsFixMarkedKeys(
-        { kind: "verify", converged: true },
-        {},
-      ),
+      isValidVerifyResult({
+        kind: "verify",
+        converged: true,
+      }),
     ).toBe(true);
   });
 

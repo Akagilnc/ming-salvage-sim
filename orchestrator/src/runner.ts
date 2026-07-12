@@ -123,7 +123,7 @@ import {
   onlineReviewResumeHeadKeyFromLedger,
   onlineReviewRoundFromLedger,
   onlineReviewRoundTriggerFromLedger,
-  recheckConvergenceConfirmsFixMarkedKeys,
+
   resolveOnlineReviewRoundTrigger,
   realBotPollClock,
   reconstructOnlineReviewLandingForResume,
@@ -6070,38 +6070,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               result.output,
               onlineReviewLanding?.onlineReviewSnapshot,
             );
-            // #877: isRecheck force-normalize is routing plumbing; fix-marked
-            // echo coverage court demolished (always admits).
+            // #877: isRecheck force-normalize is routing plumbing only.
+            // Fix-marked echo coverage court hard-deleted (ship-pre completeness
+            // kill-axis) — three-channel converge stands alone; no soft shell.
             verifyOutput = enforceRunnerOwnedRecheck(
               verifyOutput,
               onlineReviewRound,
             );
-            if (
-              onlineReviewRound > 1 &&
-              onlineReviewLanding !== undefined &&
-              !recheckConvergenceConfirmsFixMarkedKeys(
-                verifyOutput,
-                onlineReviewLanding,
-              )
-            ) {
-              // Unreachable after #877 (helper always returns true); kept as a
-              // three-channel guard rail if a future caller reintroduces checks.
-              return await errorTermination(
-                reviewStep,
-                new Error(
-                  "post-fixer verify converged without confirming every fix-marked finding identity key",
-                ),
-                {
-                  output: verifyOutput,
-                  stopSummary: contractDriftStopSummary({
-                    summary:
-                      "post-fixer verify converged without confirming every fix-marked finding identity key",
-                    repairHint:
-                      "echo the landing fixMarkedFindingIdentityKeys exactly on a converged post-fixer recheck, or report unresolved findings",
-                  }),
-                },
-              );
-            }
             // Pending CI only: re-poll S9 — do not fixer, do not merge, do not
             // apply "all clear" side effects (online R2 Codex P2).
             // Bound re-entry: bots may already be quiescent so poll returns
