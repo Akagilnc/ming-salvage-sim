@@ -3753,14 +3753,30 @@ const cmrFindingDispositionSchema = z
     boundedReopen: z.string().optional(),
   })
   .strict();
-// #875: claim/disposition arrays are optional worker prose at parse time —
-// omitting them or leaving accepted_suppressed fields incomplete must NOT become
-// malformed death. Governance for *finding* suppressions stays strict on
-// cmrDispositionEvidenceSchema; pass-time acceptedSuppressions metadata still
-// filters via hasAcceptedSuppressionAuthority (incomplete prose does not govern).
+// #875 kill-axis: priorFindingDispositions are opaque worker prose at parse.
+// Omitting the array, incomplete accepted_suppressed fields, unknown status
+// buckets, or extra chatty keys must NOT make the whole verdict malformed.
+// Keep only well-formed entries; drop the rest (they do not govern).
+// Governance for *finding* suppressions stays strict on
+// cmrDispositionEvidenceSchema; pass-time acceptedSuppressions still filters
+// via hasAcceptedSuppressionAuthority.
+function softParsePriorFindingDispositions(
+  raw: unknown,
+): PriorFindingDisposition[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const kept: PriorFindingDisposition[] = [];
+  for (const item of raw) {
+    const parsed = cmrFindingDispositionSchema.safeParse(item);
+    if (parsed.success) kept.push(parsed.data);
+  }
+  return kept;
+}
 const cmrClosureSchema = {
   claimedFixedFindingIdentityKeys: z.array(nonEmpty).optional(),
-  priorFindingDispositions: z.array(cmrFindingDispositionSchema).optional(),
+  // Opaque prose array — element shape is soft-parsed after the strict object
+  // validates so a single chatty disposition cannot kill the whole envelope.
+  priorFindingDispositions: z.array(z.unknown()).optional(),
 } as const;
 // #604 slice 4 (ADR 0062): the CMR reviewer contract no longer carries routing
 // disposition kinds — the only disposition a reviewer may emit is the
@@ -4000,6 +4016,9 @@ function classifyCmrOutcomePayload(
   // or incomplete lists are worker prose, not a parse-time kill.
   if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
     const converged = cmrConvergedSchema.parse(normalizedParsed);
+    const priorFindingDispositions = softParsePriorFindingDispositions(
+      converged.priorFindingDispositions,
+    );
     return {
       kind: "verdict",
       converged: true,
@@ -4011,8 +4030,8 @@ function classifyCmrOutcomePayload(
               converged.claimedFixedFindingIdentityKeys,
           }
         : {}),
-      ...(converged.priorFindingDispositions !== undefined
-        ? { priorFindingDispositions: converged.priorFindingDispositions }
+      ...(priorFindingDispositions !== undefined
+        ? { priorFindingDispositions }
         : {}),
       ...(converged.findings !== undefined
         ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
@@ -4023,6 +4042,9 @@ function classifyCmrOutcomePayload(
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
   if (red.success) {
+    const priorFindingDispositions = softParsePriorFindingDispositions(
+      red.data.priorFindingDispositions,
+    );
     return {
       kind: "verdict",
       converged: false,
@@ -4035,8 +4057,8 @@ function classifyCmrOutcomePayload(
               red.data.claimedFixedFindingIdentityKeys,
           }
         : {}),
-      ...(red.data.priorFindingDispositions !== undefined
-        ? { priorFindingDispositions: red.data.priorFindingDispositions }
+      ...(priorFindingDispositions !== undefined
+        ? { priorFindingDispositions }
         : {}),
       ...(red.data.findings !== undefined
         ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }

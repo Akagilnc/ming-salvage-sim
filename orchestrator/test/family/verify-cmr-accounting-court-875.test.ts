@@ -385,7 +385,10 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
   });
 
-  it("findingsCount vs structured length mismatch is protocol failure (wrong self-count)", async () => {
+  it("#875 kill-axis: findingsCount vs structured length mismatch trusts count channel and routes available findings (no protocol court)", async () => {
+    // Pre-r9 residual court: mismatch → infra_failure durable abort.
+    // Post-kill-axis: count is the emptiness authority; structured array still
+    // supplies coder-fix identities. Sloppy self-count must not kill the run.
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
@@ -404,15 +407,23 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual([]);
-    const abort = backend.ledger.find((e) => e.status === "aborted");
-    expect(String(abort?.reason ?? "")).toMatch(
-      /findings count channel reported 2 but structured findings length is 1/i,
-    );
-    expect(abort?.stopSummary?.reason).toBe("infra_failure");
+    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    expect(
+      backend.ledger.some(
+        (e) =>
+          e.status === "aborted" &&
+          e.stopSummary?.reason === "infra_failure" &&
+          /findings count channel reported|structured findings length/i.test(
+            typeof e.reason === "string" ? e.reason : "",
+          ),
+      ),
+    ).toBe(false);
   });
 
-  it("findingsCount:0 with non-empty structured findings is protocol failure", async () => {
+  it("#875 kill-axis: findingsCount:0 with non-empty structured findings is ordinary not_converged (count authority)", async () => {
+    // Count channel is authoritative for emptiness. Extra structured body is
+    // prose — do not infra-kill on self-count mismatch.
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
@@ -432,21 +443,16 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual([]);
-    expect(
-      backend.ledger.some(
-        (e) =>
-          e.status === "aborted" &&
-          /structured findings length is 1/i.test(
-            typeof e.reason === "string" ? e.reason : "",
-          ),
-      ),
-    ).toBe(true);
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
+    const abort = backend.ledger.find((e) => e.status === "aborted");
+    expect(abort?.stopSummary?.reason).not.toBe("infra_failure");
+    expect(String(abort?.reason ?? "")).toMatch(/zero count with findings body/i);
   });
 
-  it("findingsCount>0 without structured findings is shape/protocol failure (not court, not pass)", async () => {
-    // ADR 0062: defective report shape → protocol failure terminal (same family
-    // as exhausted rewrite), never fabricated cmr_passed and never a
-    // claim/disposition court contract_drift.
+  it("#875 kill-axis: findingsCount>0 without structured findings is ordinary not_converged (not protocol court)", async () => {
+    // Count says blockers but no identities to route — three-channel not pass.
+    // Must NOT durable-abort as infra protocol failure (milder court residual).
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
@@ -465,10 +471,11 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
+    expect(isCourtAbort(backend.ledger)).toBe(false);
     const abort = backend.ledger.find((e) => e.status === "aborted");
-    expect(String(abort?.reason ?? "")).toMatch(
-      /outcome protocol failure|structured findings are missing/i,
+    expect(abort?.stopSummary?.reason).not.toBe("infra_failure");
+    expect(String(abort?.reason ?? "")).not.toMatch(
+      /outcome protocol failure/i,
     );
-    expect(abort?.stopSummary?.reason).toBe("infra_failure");
   });
 });
