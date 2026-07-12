@@ -38,7 +38,7 @@ describe("#879 classifyLegFailure — transient vs quota vs other", () => {
     expect(classifyLegFailure(new Error("HTTP 503 service overloaded"))).toBe(
       "transient",
     );
-    expect(classifyLegFailure(new Error("upstream returned 502 Bad Gateway"))).toBe(
+    expect(classifyLegFailure(new Error("HTTP 502 Bad Gateway"))).toBe(
       "transient",
     );
     expect(classifyLegFailure(new Error("fetch failed: network error"))).toBe(
@@ -50,7 +50,7 @@ describe("#879 classifyLegFailure — transient vs quota vs other", () => {
     expect(classifyLegFailure(new Error("HTTP 429 rate limit exceeded"))).toBe(
       "quota",
     );
-    expect(classifyLegFailure(new Error("provider returned status 429"))).toBe(
+    expect(classifyLegFailure(new Error("provider status 429"))).toBe(
       "quota",
     );
     expect(classifyLegFailure(new Error("rate limit: resets at noon"))).toBe(
@@ -99,7 +99,7 @@ describe("#879 classifyLegFailure — transient vs quota vs other", () => {
     expect(classifyLegFailure(new Error("HTTP 503 service overloaded quota"))).toBe(
       "transient",
     );
-    expect(classifyLegFailure(new Error("upstream returned 502 Bad Gateway"))).toBe(
+    expect(classifyLegFailure(new Error("HTTP 502 Bad Gateway quota"))).toBe(
       "transient",
     );
   });
