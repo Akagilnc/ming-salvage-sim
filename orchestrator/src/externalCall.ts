@@ -156,16 +156,21 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
   }
   const msg = err instanceof Error ? err.message : String(err);
   const lower = msg.toLowerCase();
-  // Status-first in free text (#884 cmr r8): explicit HTTP status tokens beat
-  // quota vocabulary so "HTTP 503 … quota" stays transient (retry), while
-  // bare "429" stays quota (no retry). Non-429/5xx tokens (401/403/…) are durable.
-  const statusToken = lower.match(/\b(429|5\d\d|[1-5]\d\d)\b/);
-  if (statusToken !== null) {
-    const code = Number(statusToken[1]);
+  // Status-first in free text (#884 cmr r8 / ship-pre correctness): only when
+  // the number has HTTP/status context (or bare 429). NEVER treat duration
+  // numerals ("timeout after 120 seconds") as status codes.
+  const httpStatus =
+    lower.match(
+      /\b(?:http(?:\/\d+(?:\.\d+)?)?(?:\s+(?:code|error|response\s+code|status(?:\s+code)?))?|status(?:\s+code)?|response\s+(?:status(?:\s+code)?|code)|returned)\s*(?:is|was)?\s*(?:=|:)?\s*([1-5]\d\d)\b/,
+    ) ?? lower.match(/\bhttp\s*([1-5]\d\d)\b/) ?? lower.match(/\bstatus\s*([1-5]\d\d)\b/);
+  if (httpStatus !== null) {
+    const code = Number(httpStatus[1]);
     if (code === 429) return "quota";
     if (code >= 500 && code <= 599) return "transient";
-    if (code >= 100 && code <= 599) return "durable";
+    return "durable";
   }
+  // Bare "429" (rate-limit short form) without HTTP prefix.
+  if (/\b429\b/.test(lower)) return "quota";
   if (
     lower.includes("etimedout") ||
     lower.includes("econnreset") ||

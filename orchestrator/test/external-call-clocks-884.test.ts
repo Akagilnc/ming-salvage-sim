@@ -79,6 +79,20 @@ describe("#884 external-call clocks", () => {
     expect(classifyExternalCallFailure(new Error("HTTP 401 unauthorized"))).toBe(
       "durable",
     );
+    // Duration numerals are NOT HTTP status — keep timeout/connection transient.
+    expect(
+      classifyExternalCallFailure(new Error("request timed out after 120 seconds")),
+    ).toBe("transient");
+    expect(
+      classifyExternalCallFailure(
+        new Error("connection closed after 300 seconds"),
+      ),
+    ).toBe("transient");
+    expect(
+      classifyExternalCallFailure(
+        new Error("quota exceeded; remaining credits 500"),
+      ),
+    ).toBe("quota");
   });
 
   it("provider hang: non-cooperative promise still times out (wrapper races abort)", async () => {
