@@ -948,8 +948,12 @@ async function runnerTargetedResetReplay(): Promise<SeamReplay> {
     },
   ]);
   const result = await runOrchestrator({ issueNumber: 307, backend });
-  if (result.status !== "escalate") {
-    throw new Error(`dogfood runner targeted-reset replay ended ${result.status}`);
+  // #877: no-progress court demolished; continue_fixing + findings-count ships
+  // when the scripted sibling re-review falls through to empty findings.
+  if (result.status !== "success") {
+    throw new Error(
+      `dogfood runner targeted-reset replay ended ${result.status} after #877 court demolition`,
+    );
   }
   return {
     stopSummary: result.stopSummary,
@@ -958,6 +962,7 @@ async function runnerTargetedResetReplay(): Promise<SeamReplay> {
       mechanism: "continue_fixing_bookkeeping",
       resetScope: "single_identity_key",
       preservedSibling: true,
+      courtDemolished: true,
       status: result.status,
       dispatched: backend.dispatched,
       resetFindingIdentityKey: targetKey,
@@ -974,12 +979,16 @@ async function runnerNoProgressReplay(input: {
   const key = findingIdentityKey(input.finding);
   const backend = new DogfoodSingleSliceBackend(undefined, input.reviewerOutputs);
   const result = await runOrchestrator({ issueNumber: 307, backend });
-  if (result.status !== "escalate") {
-    throw new Error(`dogfood runner no-progress replay ended ${result.status}`);
-  }
-  if (result.stopSummary.reason !== "same_module_still_red") {
+  // #877: runner no-progress disposition court demolished. Findings-count
+  // continues until the scripted backend falls through to empty findings and ships.
+  if (result.status !== "success") {
     throw new Error(
-      `dogfood runner no-progress replay stopped with ${result.stopSummary.reason}`,
+      `dogfood runner no-progress replay ended ${result.status} after #877 court demolition`,
+    );
+  }
+  if (result.stopSummary.reason === "same_module_still_red") {
+    throw new Error(
+      "dogfood runner no-progress replay still produced same_module_still_red after #877",
     );
   }
   return {
@@ -989,6 +998,7 @@ async function runnerNoProgressReplay(input: {
       mechanism: input.mechanism,
       status: result.status,
       implementationMovement: false,
+      courtDemolished: true,
       dispatched: backend.dispatched,
       findingIdentityKey: key,
     },
@@ -2040,6 +2050,9 @@ async function closureNegativeReplay(): Promise<SeamReplay> {
 }
 
 async function closureContextMissingReplay(): Promise<SeamReplay> {
+  // #877: S6 empty findings without priorFindingDispositions used to kill as
+  // contract_drift. Disposition prose is not a fate channel — findings-count=0
+  // ships via the three channels.
   const closureFinding = runnerFinding({
     claimQuote: "S6 missing prior finding context must fail closed",
     location: "orchestrator/src/runner.ts:376",
@@ -2049,24 +2062,24 @@ async function closureContextMissingReplay(): Promise<SeamReplay> {
     { kind: "reviewer", findings: [] },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
-  if (result.status !== "error" || result.errorPackage === undefined) {
+  if (result.status !== "success") {
     throw new Error(
-      `dogfood closure-context-missing replay ended ${result.status}`,
+      `dogfood closure-context-missing replay ended ${result.status} after #877 court demolition`,
     );
   }
-  if (result.stopSummary.reason !== "contract_drift") {
+  if (result.stopSummary.reason === "contract_drift") {
     throw new Error(
-      "dogfood closure-context-missing replay did not produce contract_drift",
+      "dogfood closure-context-missing replay still produced contract_drift after #877",
     );
   }
   return {
     stopSummary: result.stopSummary,
     sourceEvidence: {
       seam: "runner",
-      mechanism: "s6_missing_prior_context",
+      mechanism: "s6_missing_prior_context_survives",
       status: result.status,
-      closureContext: "missing",
-      errorReason: result.errorPackage.reason,
+      closureContext: "missing_but_survived",
+      courtDemolished: true,
       dispatched: backend.dispatched,
     },
   };
@@ -2733,8 +2746,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "307-reviewer-text-only-change",
       issue: 307,
-      title: "reviewer wording changes without implementation progress",
-      classification: "same_module_still_red",
+      title:
+        "reviewer wording changes no longer no-progress-kill after #877 court demolition",
+      classification: "success",
       stopSummary: textOnlyNoProgressReplay.stopSummary,
       source: "runner",
       sourceStopSummary: textOnlyNoProgressReplay.stopSummary,
@@ -2743,8 +2757,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "307-no-observable-progress",
       issue: 307,
-      title: "worker claims attempted repair without scope-local diff/test/fixture movement",
-      classification: "same_module_still_red",
+      title:
+        "claimed repair without movement no longer no-progress-kills after #877",
+      classification: "success",
       stopSummary: noObservableProgressReplay.stopSummary,
       source: "runner",
       sourceStopSummary: noObservableProgressReplay.stopSummary,
@@ -2753,8 +2768,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "307-continue-fixing-targeted-reset",
       issue: 307,
-      title: "continue-fixing resets only the target finding group",
-      classification: "same_module_still_red",
+      title:
+        "continue-fixing + sibling findings-count ships after #877 no-progress demolition",
+      classification: "success",
       stopSummary: targetedResetReplay.stopSummary,
       source: "runner",
       sourceStopSummary: targetedResetReplay.stopSummary,
@@ -2916,8 +2932,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "376-closure-context-missing",
       issue: 376,
-      title: "fresh reviewer missing prior finding context fails with structured drift",
-      classification: "contract_drift",
+      title:
+        "S6 empty findings without disposition prose ships after #877 court demolition",
+      classification: "success",
       stopSummary: closureContextMissingSource.stopSummary,
       source: "runner",
       sourceStopSummary: closureContextMissingSource.stopSummary,
