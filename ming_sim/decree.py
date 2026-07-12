@@ -117,7 +117,22 @@ def _record_settlement_narrative_sources(
     counterparts provide the only readable material.
     """
     items = db.knowledge_items_for_turn(state.turn)
-    has_restricted_source = any(item.get("excluded_names") for item in items)
+    restricted_ids = [
+        str(item.get("source_id") or "")
+        for item in items if item.get("excluded_names")
+    ]
+    # Audience chat is not an input to the month-end simulator.  Its presence
+    # in the same turn therefore cannot taint an independently produced public
+    # settlement narrative.  Sources that can feed the simulator (notably
+    # active secret orders and scoped event records) still block the aggregate.
+    restricted_kinds = set()
+    for source_id in restricted_ids:
+        row = db.conn.execute(
+            "SELECT kind FROM character_knowledge_sources WHERE source_id=?",
+            (source_id,),
+        ).fetchone()
+        restricted_kinds.add(str(row["kind"] or "") if row is not None else "unknown")
+    has_restricted_source = any(kind != "audience" for kind in restricted_kinds)
     source_id = f"settlement:narrative:{state.turn}"
     if has_restricted_source:
         return

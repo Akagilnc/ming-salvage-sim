@@ -7868,12 +7868,24 @@ class GameDB:
         if items is None:
             items = self.knowledge_items_for_turn(state.turn)
         for item in items:
+            source_id = str(item.get("source_id") or "")
+            existing = self.conn.execute(
+                "SELECT kind FROM character_knowledge_events "
+                "WHERE character_name='' AND source_id=?",
+                (source_id,),
+            ).fetchone()
+            # An explicit disclosure is the authoritative event for this
+            # provenance.  Archive materialization may fill a missing ledger
+            # row, but must never downgrade public back to roster-scoped.
+            if existing is not None and str(existing["kind"] or "") == "public":
+                continue
             self.record_public_knowledge_event(
                 state,
                 str(item.get("title") or default_title),
                 str(item.get("body") or ""),
-                source_id=str(item.get("source_id") or ""),
+                source_id=source_id,
                 excluded_names=item.get("excluded_names") or (),
+                kind="source_projection",
                 commit=commit,
             )
 
@@ -10083,6 +10095,7 @@ class GameDB:
         body: str = "",
         source_id: str = "",
         excluded_names: Optional[Iterable[str]] = None,
+        kind: str = "public",
         *,
         commit: bool = True,
     ) -> None:
@@ -10093,7 +10106,7 @@ class GameDB:
         ))
         self.conn.execute(
             "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-            (state.turn, state.year, state.period, "", "public", title, body, source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
+            (state.turn, state.year, state.period, "", sanitize_sqlite_text(kind), title, body, source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
         )
         if commit:
             self.conn.commit()

@@ -157,6 +157,32 @@ def test_settle_persists_public_and_restricted_sources_before_archive_projection
     assert "生产链受限事项" not in excluded_text
 
 
+def test_private_audience_does_not_erase_independent_public_settlement(game):
+    db, state, content = game
+    people = [
+        c for c in content.characters.values()
+        if c.office_type not in ("后宫", "宗藩")
+        and db.get_character_status(c.name)[0] == "active"
+    ]
+    participant, nonparticipant = people[:2]
+    db.register_character_knowledge_source(
+        state, [{"character_id": participant.name}], "audience",
+        "私下召对", "私下所议", source_id="audience:private-current-turn",
+    )
+
+    settle_with_delta(
+        state, db, {}, before_turn=state.turn, content=content,
+        narrative="本月公开邸报",
+    )
+
+    rendered = " ".join(
+        item.get("body", "")
+        for item in db.get_character_knowledge(state, nonparticipant.name)["public_events"]
+    )
+    assert "本月公开邸报" in rendered
+    assert "私下所议" not in rendered
+
+
 def test_settlement_mixed_narrative_cannot_republish_restricted_source(game):
     """真实结算的混合邸报只把公开片段投影给未参与者。"""
     db, state, content = game

@@ -18,10 +18,13 @@ def safe_historical_text(text: object, kind: str = "历史记录") -> str:
     rendered = str(text or "").strip()
     if not rendered:
         return ""
-    parts = re.split(r"([；;。！？\n])", rendered)
+    # Chinese commas commonly join independent factual clauses.  Project at
+    # that fragment boundary so one unsafe score cannot erase a lawful money,
+    # head-count, or elapsed-time fact beside it.
+    parts = re.split(r"([，,；;。！？\n])", rendered)
     out: list[str] = []
     for fragment in parts:
-        if not fragment or re.fullmatch(r"[；;。！？\n]", fragment):
+        if not fragment or re.fullmatch(r"[，,；;。！？\n]", fragment):
             out.append(fragment)
         elif _ABSTRACT_VALUE_RE.search(fragment) or _ABSTRACT_NEARBY_NUMBER_RE.search(fragment):
             out.append(f"（{kind}含抽象指标原值，已略去）")
@@ -91,7 +94,7 @@ _ABSTRACT_AXIS_PATTERN = "|".join(
 _COUNTABLE_FACT_UNITS = r"名|人|门|匹|艘|座|处|条|石|斤|担|斛|日|月|年"
 _ABSTRACT_VALUE_RE = re.compile(
     rf"(?:{_ABSTRACT_AXIS_PATTERN})(?:度)?\s*(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
-    r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从)\s*|[（(]\s*|(?=[-+]?\d))"
+    r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从|不足|不到|低于|少于|不满|超过|高于|大于)\s*|[（(]\s*|(?=[-+]?\d))"
     rf"[-+]?\d+(?:\.\d+)?(?:\s*/\s*100|\s*%)?(?!\d|\s*(?:{_COUNTABLE_FACT_UNITS}))\s*[）)]?",
     re.IGNORECASE,
 )

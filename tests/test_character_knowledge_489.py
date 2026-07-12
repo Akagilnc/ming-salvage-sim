@@ -655,6 +655,26 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
     assert disclosed["body"] == "该案已奉明发"
 
 
+def test_public_disclosure_drops_private_roster_but_keeps_event_exclusion(game):
+    db, state, content = game
+    people = [c for c in content.characters.values() if c.office_type not in ("后宫", "宗藩")]
+    participant, allowed, excluded = people[:3]
+    source_id = "secret_order:public-disclosure-roster"
+    db.register_character_knowledge_source(
+        state, [{"character_id": participant.name}], "secret_order", "密查", "旧密令",
+        source_id=source_id,
+    )
+    db.record_public_knowledge_event(
+        state, "奉明公开", "公开案情", source_id=source_id,
+        excluded_names=[excluded.name],
+    )
+
+    allowed_view = db.get_character_knowledge(state, allowed.name)
+    excluded_view = db.get_character_knowledge(state, excluded.name)
+    assert any(item["body"] == "公开案情" for item in allowed_view["public_events"])
+    assert not any(item["body"] == "公开案情" for item in excluded_view["public_events"])
+
+
 def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
     db, state, content = game
     reader = next(iter(content.characters.values()))
