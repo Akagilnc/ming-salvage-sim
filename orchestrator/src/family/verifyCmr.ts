@@ -2408,13 +2408,11 @@ async function runIntegratedCmrPass(input: {
     (cmrResult.output.findings === undefined ||
       cmrResult.output.findings.length === 0)
   ) {
-    // Shape failure (ADR 0062): count channel is non-0 but structured findings
-    // are missing — cannot route coder-fix identities. This is NOT a claim/
-    // disposition court and NOT a silent pass. Live sidecar classifies this as
-    // malformed → FULL outcome rewrite (not findings-supplement, which cannot
-    // add structured findings). If a completed envelope still reaches here
-    // (injected/legacy), stop as outcome-protocol failure (infra), same terminal
-    // family as exhausted rewrite — never fabricated success.
+    // ADR 0062 three-channel: count non-0 but structured findings missing —
+    // cannot route coder-fix identities. This is NOT a claim/disposition court
+    // and NOT a silent pass. outcome_rewrite.md only supplements the count
+    // fragment and cannot invent findings JSON, so we terminal here as
+    // outcome-protocol failure (infra) rather than a pretend rewrite loop.
     const reason =
       `family integrated cmr ${pass} outcome protocol failure: findings count ` +
       `channel reported ${reportedFindingsCount} but structured findings are missing`;
