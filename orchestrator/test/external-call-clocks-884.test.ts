@@ -391,5 +391,12 @@ describe("#884 external-call clocks", () => {
     // Spawn acknowledgement must carry a stage-named clock (no infinite wait).
     expect(workerMonitor).toMatch(/dispatch:\$\{input\.stepId\}:spawn/);
     expect(workerMonitor).toMatch(/ExternalCallTimeoutError/);
+    // kill-axis: spawn-ack timer rejects with timeout only — no bare-PID kill
+    // between setTimeout callback open and its close (cmr r10).
+    const spawnTimer = workerMonitor.match(
+      /const timer = setTimeout\(\(\) => \{([\s\S]*?)\}, spawnTimeoutMs\)/,
+    );
+    expect(spawnTimer?.[1] ?? "").toMatch(/ExternalCallTimeoutError/);
+    expect(spawnTimer?.[1] ?? "").not.toMatch(/process\.kill\s*\(/);
   });
 });

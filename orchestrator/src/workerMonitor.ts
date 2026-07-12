@@ -260,15 +260,11 @@ export async function dispatchMonitoredCliWorker(
     const timer = setTimeout(() => {
       child.removeListener("spawn", onSpawn);
       child.removeListener("error", onError);
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          /* already gone */
-        }
-      }
+      // Clock fires → typed timeout only. Do NOT signal the child here
+      // (#873 kill-axis / cmr r10): spawn-ack timeout is not an idle/hang
+      // judgment, instance id is not yet captured, and a bare-pid signal
+      // can hit a reused PID. Termination stays on the post-handle idle
+      // path that verifies process identity.
       reject(
         new ExternalCallTimeoutError({
           stage: spawnStage,
