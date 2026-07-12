@@ -23,8 +23,8 @@ _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue �
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
 **家族开工过滤（Family Admission Filter）**:
-父 issue 首次启动及每次重入的第一步：在检查旧的人类问题之前，重新读取 GitHub 原生子 issues 的当前成员、状态、`ready-for-agent` 标签、是否仍有自己的 sub-issues，以及依赖。已关闭的子 issue 退出当前调度并满足 `blocked_by`，但若已有 family worktree 则暂不删除；父流程最终 terminal-success + 显式 GC 前 reopen 且 ready 时复用原现场。只有父流程最终收尾才统一删除可清理 worktree。open 但未 ready 的不启动；open 且 ready 的叶子 issue 才进入依赖排序。父流程暂停期间新挂入的子 issue 会在下次重入加入候选集，从当前父工作树切出，不回到最初基线；已合并和正在等待恢复的旧现场保持原样。旧的 unanswered child decision 继续挂在原子 issue，只阻塞该子 issue、依赖它的下游和最终收尾，不得阻止独立的新子 issue 运行。原先属于该父 issue、后来从原生子列表移除的未合子 issue 视为明确取消其家族现场：停止调度并删除 worktree，但保留 branch、ledger、日志、耗时、模型/token 等统计记录；若它已经合回父工作树，不自动撤销已合代码。第一层子 issue 若自身还是父 issue，当前显式列为“不支持的嵌套家族”并跳过，不递归展开，也不冒充已完成。某子 issue 此前已按单片模式完成并关闭，会自然被跳过。过滤后没有可运行子 issue 时，本次运行正常空跑完成：报告各项跳过原因后退出，不建新 worktree、不派 worker、不建 PR，也不进入 park/resume；空跑不等于立刻 GC 旧现场。
-_Avoid_: 先建 worktree 再过滤、重做已关闭子 issue、close 即删现场、静默吞掉嵌套父 issue、用 commit hash 代替 GitHub 状态/标签、把无活可跑变成暂停或失败、移除成员时连统计和历史一起删、自动反转已合代码
+父 issue 首次启动及每次重入时，在创建现场前根据 live GitHub facts 选择可运行的家族子 issue。行为契约见 ADR 0022 与 #871。
+_Avoid_: 先创建现场再过滤、用缓存或本地推断代替 live GitHub facts
 
 **合并工（Merger Worker）**:
 只在子分支机械合并回父工作树发生真实 Git 冲突时出场、负责解决该次冲突的 worker。无冲突时由确定性合并直接完成，不调用模型。
