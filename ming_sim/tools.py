@@ -233,29 +233,36 @@ def build_minister_tools(character: Character, context: CourtContext,
         return "\n".join(lines) if lines else f"见闻中未载{needle}。"
 
     def query_court_roster(names: List[str] = []) -> str:
-        """查本人见闻中的人事；规模 fallback 不扩大为全知名册。"""
-        knowledge = projection()
-        world = knowledge.get("world") or {}
-        parts = [str(world.get(key) or "") for key in ("role", "personnel")]
-        for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
-            parts.append("：".join(
-                str(value) for value in (item.get("title"), item.get("body")) if value
-            ))
-        rendered = "\n".join(part for part in parts if part) or "见闻中未载在朝名册。"
+        """角色获准使用名册工具后，空查完整索引、具名查完整记录。"""
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
+        rows = context.db.conn.execute(
+            "SELECT name, office, office_type, faction, status, status_reason "
+            "FROM characters WHERE power_id='ming' AND status != 'offstage' "
+            "AND office_type NOT IN ('后宫','宗藩','未仕') ORDER BY name"
+        ).fetchall()
+        if wanted:
+            rows = [row for row in rows if str(row["name"]) in wanted]
+        if not rows:
+            return "见闻中未载所查人物。"
         if not wanted:
-            return rendered
-        return "\n".join(line for line in rendered.splitlines()
-                          if any(name in line for name in wanted)) or "见闻中未载所查人物。"
+            return "【在朝人事索引】\n" + "\n".join(
+                f"{row['name']}：{row['office'] or '无现任官职'}，{row['status']}"
+                for row in rows
+            )
+        return "【在朝人事详情】\n" + "\n".join(
+            "|".join(str(value or "") for value in (
+                row["name"], row["office"], row["office_type"], row["faction"],
+                row["status_reason"] or row["status"],
+            )) for row in rows
+        )
 
     def query_army_roster(names: List[str] = []) -> str:
-        """查本人 military 授权域中的军情投影。"""
+        """角色获准使用军籍工具后，空查完整索引、具名查完整记录。"""
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
-        rendered = scoped_world("military")
         if not wanted:
-            return rendered
-        return "\n".join(line for line in rendered.splitlines()
-                          if any(name in line for name in wanted)) or "见闻中未载所查军队。"
+            return context.db.army_roster(qualitative_equipment=True)
+        return context.db.army_roster(filter_names=wanted, qualitative_equipment=True) \
+            or "见闻中未载所查军队。"
 
     def list_memorials() -> str:
         """查看当前在办的所有事项（issue）。"""

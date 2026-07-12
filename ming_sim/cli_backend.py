@@ -1926,6 +1926,8 @@ def _secret_excluded_people_from_command(command: str) -> List[str]:
     """Recover explicit named secrecy targets when the extractor omits them."""
     patterns = (
         r"(?:瞒住|瞒着|不得让|勿使|不要让)([^，。；\s]{2,20}?)(?=(?:知晓|知道|得知|过问|插手|，|。|；|\s|$))",
+        r"(?:对|向)([^，。；\s]{2,20}?)(?=(?:保密|秘而不宣|不得透露))",
+        r"(?:莫让|莫使)([^，。；\s]{2,20}?)(?=(?:知晓|知道|得知|过问|插手|，|。|；|\s|$))",
     )
     names = []
     for pattern in patterns:
