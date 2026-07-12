@@ -1041,9 +1041,54 @@ export function familyEscalationState(
 }
 
 /**
+ * Heads reachable from `fromHead` by walking ONLY phase:final
+ * `cmr_fix_committed` rows that appear AFTER `startIndex` and whose
+ * `familyHeadBefore` is already reachable. Used by the #881 live-semantic
+ * resume guard: barrier-internal coder-fix commits advance HEAD without
+ * invalidating an earlier pass (live final-barrier loop does the same).
+ *
+ * Fail closed: incomplete fix rows (missing before/after) never extend the
+ * set; pre-pass fix rows are ignored because the scan starts after the pass.
+ */
+function barrierInternalHeadsReachableFrom(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  startIndex: number,
+  fromHead: string,
+): Set<string> {
+  const reachable = new Set<string>([fromHead]);
+  for (let i = startIndex + 1; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (
+      e.status !== "cmr_fix_committed" ||
+      e.event !== "cmr_fix_committed" ||
+      e.phase !== "final"
+    ) {
+      continue;
+    }
+    const before =
+      typeof e.familyHeadBefore === "string" ? e.familyHeadBefore.trim() : "";
+    const after =
+      typeof e.familyHeadAfter === "string" ? e.familyHeadAfter.trim() : "";
+    if (before.length === 0 || after.length === 0) continue;
+    if (reachable.has(before)) reachable.add(after);
+  }
+  return reachable;
+}
+
+/**
  * Did a specific integrated CMR pass already pass for the CURRENT family base
- * HEAD? This is a resume guard, so it fails closed when the current head is
- * missing or the ledger row lacks the complete cmr_passed shape.
+ * HEAD (or an earlier head in the same final barrier whose subsequent advance
+ * is explained only by barrier-internal fix commits)?
+ *
+ * Resume guard (#434, revised #881 to match live barrier semantics):
+ *   - exact head match on a complete `cmr_passed` row → skip
+ *   - head advanced ONLY via phase:final `cmr_fix_committed` chain after that
+ *     pass marker → skip (live loop does not re-run an earlier pass after a
+ *     later pass's coder-fix advances HEAD)
+ *   - head advanced without such a chain (barrier-external) → re-verify
+ *
+ * Fails closed when the current head is missing or the ledger row lacks the
+ * complete cmr_passed shape (status/event/phase/pass/head/routeFingerprint).
  */
 export function cmrPassAlreadyPassed(
   entries: ReadonlyArray<FamilyLedgerEntry>,
@@ -1062,17 +1107,30 @@ export function cmrPassAlreadyPassed(
   ) {
     return false;
   }
-  return entries.some(
-    (e) =>
-      e.status === "cmr_passed" &&
-      e.event === "cmr_passed" &&
-      e.phase === "final" &&
-      e.cmrPass === input.cmrPass &&
-      e.familyHeadAfter != null &&
-      e.familyHeadAfter === input.familyHeadAfter &&
-      e.routeFingerprint != null &&
-      e.routeFingerprint === input.routeFingerprint,
-  );
+  const currentHead = input.familyHeadAfter.trim();
+  const routeFingerprint = input.routeFingerprint.trim();
+
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (
+      e.status !== "cmr_passed" ||
+      e.event !== "cmr_passed" ||
+      e.phase !== "final" ||
+      e.cmrPass !== input.cmrPass ||
+      e.familyHeadAfter == null ||
+      e.familyHeadAfter.trim().length === 0 ||
+      e.routeFingerprint == null ||
+      e.routeFingerprint !== routeFingerprint
+    ) {
+      continue;
+    }
+    const passHead = e.familyHeadAfter.trim();
+    if (passHead === currentHead) return true;
+    // #881: same final barrier, head advanced only by barrier-internal fixes.
+    const reachable = barrierInternalHeadsReachableFrom(entries, i, passHead);
+    if (reachable.has(currentHead)) return true;
+  }
+  return false;
 }
 
 /**
