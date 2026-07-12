@@ -10,7 +10,7 @@ per-slice 与 integrated cmr 的「评审 → 修复 → 复审」收敛 loop，
 
 跨轮发现及其裁定由 findings 状态库承接，不靠任一 worker 的 session 记忆。字段、状态跳转与 accepted suppression 授权在写入点校验；runner 不分类 finding，不管理 disposition，不比较 commit/head 或测试证据。
 
-**integrated cmr 拆分**：step5 完整性 与 step6 正确性 是两道**有序** runner-dispatched pass —— step5 先过才派 step6、step5 fail 即停、每 pass 判决落 ledger/landing file（细节见子片 #419；本 ADR 把它从纯指针升为决定）。
+**integrated cmr 拆分**：step5 完整性 与 step6 正确性 是两道**有序** runner-dispatched pass —— step5 先过才派 step6、step5 fail 即停、每 pass 判决落 findings 状态库（细节见子片 #419；本 ADR 把它从纯指针升为决定）。
 
 ## 为什么
 
@@ -18,7 +18,7 @@ ADR 0026 押注「一条带记忆的 worker 主 session 兼 fixer，凭 in-sessi
 
 ## Tradeoff（如实记，不粉饰 0026）
 
-代价 = 失去 0026 看重的 in-session 记忆（worker 记得上轮报过/改过啥、凭记忆收敛）。替代 = runner-visible ledger + landing file：跨轮状态写进可审制品而非藏在一条 session 记忆里。**「findings-as-data 跨 worker 传」在 0026 被判错架构，此处明确翻案**——它不是「模拟记忆」，是 reviewer 独立性 + 可观测性的载体（每轮 fresh reviewer 冷读当前全 diff，不复查自己旧 finding）。换言之：用**可观测 + 独立**换掉**会侵蚀的自律记忆**。coder 仍可兼 fixer（同一模型接 fix worker），但 review 是独立 worker、不是 coder 自评。
+代价 = 失去 0026 看重的 in-session 记忆（worker 记得上轮报过/改过啥、凭记忆收敛）。替代 = runner-visible findings 状态库：跨轮状态写进可审制品而非藏在一条 session 记忆里。**「findings-as-data 跨 worker 传」在 0026 被判错架构，此处明确翻案**——它不是「模拟记忆」，是 reviewer 独立性 + 可观测性的载体（每轮 fresh reviewer 冷读当前全 diff，不复查自己旧 finding）。换言之：用**可观测 + 独立**换掉**会侵蚀的自律记忆**。coder 仍可兼 fixer（同一模型接 fix worker），但 review 是独立 worker、不是 coder 自评。
 
 ## 追踪
 
