@@ -2,6 +2,8 @@
 
 Status: Accepted (#533/#553, 2026-07-03)
 
+Revised by: ADR 0129（findings 改由状态库行状态流转；reviewer/fixer 分离决定不变）
+
 Family CMR completeness/correctness workers are reviewer workers: they may gather review evidence, run the needed tests, dispatch review legs, and write findings to the findings state store, but they must not repair blocking findings themselves. A blocking finding returns control to the runner, which dispatches a separate coder-fix worker; after that worker updates the finding, the runner dispatches a fresh CMR reviewer over the current full diff.
 
 Scope: this decision applies to family integrated CMR passes. It does not reopen the per-slice coder/reviewer/coder-fix separation already decided by 0030.
