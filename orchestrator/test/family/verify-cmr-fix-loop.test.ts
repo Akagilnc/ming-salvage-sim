@@ -1627,6 +1627,9 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
   async readFamilyTrackedStatus(): Promise<readonly string[]> {
     return [];
   }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
   async runFamilyVerify(): Promise<FamilyVerifyResult> {
     return { ok: true };
   }
@@ -1701,6 +1704,7 @@ class MalformedReviewerMovesFamilyHeadBackend extends ReviewFixRereviewBackend {
 
 class MalformedReviewerWrongHeadBeforeRewriteBackend extends ReviewFixRereviewBackend {
   rewriteCalls = 0;
+  private firstCmrMalformed = true;
 
   async readFamilyCurrentHead(): Promise<string> {
     return this.currentFamilyHead;
@@ -1710,21 +1714,22 @@ class MalformedReviewerWrongHeadBeforeRewriteBackend extends ReviewFixRereviewBa
     return [];
   }
 
-  async dispatchWorker(
+  override async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<WorkerResult> {
-    this.dispatches.push({
-      kind: spec.kind,
-      session: spec.session,
-      role: spec.role,
-      promptFile: spec.promptFile,
-      contextRetention: spec.contextRetention,
-      cmrPass: ctx.cmrPass,
-      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
-      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
-    });
-    if (spec.kind === "cmr") {
+    if (spec.kind === "cmr" && this.firstCmrMalformed) {
+      this.firstCmrMalformed = false;
+      this.dispatches.push({
+        kind: spec.kind,
+        session: spec.session,
+        role: spec.role,
+        promptFile: spec.promptFile,
+        contextRetention: spec.contextRetention,
+        cmrPass: ctx.cmrPass,
+        priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
+        blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+      });
       this.currentFamilyHead = "detached-review-head";
       return {
         kind: "malformed",
@@ -1732,7 +1737,8 @@ class MalformedReviewerWrongHeadBeforeRewriteBackend extends ReviewFixRereviewBa
         sessionId: "cmr-session-wrong-head",
       };
     }
-    return onlineReviewLoopWorkerOrThrow(spec);
+    // Non-first cmr / ship / online-review: ordinary ReviewFixRereview path.
+    return super.dispatchWorker(spec, ctx);
   }
 
   async rewriteWorkerOutcome(): Promise<WorkerResult> {
@@ -2232,7 +2238,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ).toBe(false);
   });
 
-  it("fails closed when the CMR reviewer moves family HEAD before returning blocking findings", async () => {
+  it("#876 keeps the CMR loop alive when the reviewer moves family HEAD before findings", async () => {
     const backend = new ReviewerMutatesHeadBeforeFindingBackend();
 
     const result = await runVerifyCmr({
@@ -2241,33 +2247,31 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
+    // Head movement is routing plumbing, not a capital crime: findings channel
+    // still dispatches coder-fix and the barrier can converge.
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(
+      expect.arrayContaining(["cmr", "coder", "cmr", "ship"]),
+    );
     expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      cmrPass: "completeness",
-      reason: expect.stringMatching(/CMR .*reviewer moved family HEAD/i),
-      familyHeadAfter: "head-mutated-by-cmr-reviewer",
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        metadata: expect.objectContaining({
-          heads: expect.objectContaining({
-            reportedFamilyHead: "head-before-cmr-review",
-            actualFamilyHead: "head-mutated-by-cmr-reviewer",
-          }),
-        }),
-      }),
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: "cmr:completeness",
+      reason: expect.stringMatching(/reviewer moved family HEAD/i),
     }));
     expect(
-      backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          /reviewer moved family HEAD/i.test(entry.reason ?? ""),
+      ),
     ).toBe(false);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_passed"),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("#853 keeps reviewer tracked changes in the normal diff/review flow", async () => {
@@ -2296,7 +2300,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ).toBe(true);
   });
 
-  it("fails closed when the CMR reviewer checks out a different clean HEAD", async () => {
+  it("#876 keeps the CMR loop alive when the reviewer checks out a different clean HEAD", async () => {
     const backend = new ReviewerChecksOutOtherHeadBackend();
 
     const result = await runVerifyCmr({
@@ -2305,32 +2309,26 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatches).toEqual([
-      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
-    ]);
+    expect(result).toEqual({ ok: true, ran: true });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      cmrPass: "completeness",
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: "cmr:completeness",
       reason: expect.stringMatching(/checked out.*different HEAD/i),
-      familyHeadAfter: "detached-review-head",
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        metadata: expect.objectContaining({
-          heads: expect.objectContaining({
-            reportedFamilyHead: "family-head",
-            actualFamilyHead: "detached-review-head",
-          }),
-        }),
-      }),
     }));
     expect(
-      backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          /checked out.*different HEAD/i.test(entry.reason ?? ""),
+      ),
     ).toBe(false);
+    expect(
+      backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
+    ).toBe(true);
   });
 
-  it("checks reviewer HEAD movement before accepting a malformed CMR abort", async () => {
+  it("#876 does not convict HEAD movement ahead of a malformed CMR outcome", async () => {
     const backend = new MalformedReviewerMovesFamilyHeadBackend();
 
     const result = await runVerifyCmr({
@@ -2339,32 +2337,26 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatches).toEqual([
-      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
-    ]);
+    // HEAD movement is advisory; the malformed envelope still routes through the
+    // ordinary outcome-protocol / three-channel path (not a git-truth death).
+    expect(result.ran).toBe(true);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      cmrPass: "completeness",
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: "cmr:completeness",
       reason: expect.stringMatching(/reviewer moved family HEAD/i),
-      familyHeadAfter: "head-after-reviewer-commit",
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        metadata: expect.objectContaining({
-          heads: expect.objectContaining({
-            reportedFamilyHead: "head-before-cmr-review",
-            actualFamilyHead: "head-after-reviewer-commit",
-          }),
-        }),
-      }),
     }));
     expect(
-      backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          /reviewer moved family HEAD/i.test(entry.reason ?? "") &&
+          entry.stopSummary?.reason === "contract_drift",
+      ),
     ).toBe(false);
   });
 
-  it("checks reviewer HEAD movement before rewriting a malformed CMR outcome", async () => {
+  it("#876 still rewrites a malformed CMR outcome when the worktree HEAD drifted", async () => {
     const backend = new MalformedReviewerWrongHeadBeforeRewriteBackend();
 
     const result = await runVerifyCmr({
@@ -2372,31 +2364,17 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyBase: "family/550-base",
       familyBackend: backend,
     });
-
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.rewriteCalls).toBe(0);
-    expect(backend.dispatches).toEqual([
-      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
-    ]);
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.rewriteCalls).toBeGreaterThan(0);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      cmrPass: "completeness",
-      reason: expect.stringMatching(/reviewer moved family HEAD/i),
-      familyHeadAfter: "detached-review-head",
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        metadata: expect.objectContaining({
-          heads: expect.objectContaining({
-            reportedFamilyHead: "head-before-cmr-review",
-            actualFamilyHead: "detached-review-head",
-          }),
-        }),
-      }),
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: "cmr:completeness",
+      reason: expect.stringMatching(/checked out.*different HEAD|moved family HEAD/i),
     }));
     expect(
       backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("fails closed when the runner cannot read tracked status after CMR review", async () => {

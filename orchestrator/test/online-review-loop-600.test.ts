@@ -137,7 +137,6 @@ import {
   onlineReviewConvergedForHead,
   onlineReviewFixerNothingToFixStopSummary,
   verifyReadOnlyWorktreeDrift,
-  verifyReviewerHeadMovedStopSummary,
   verifyReviewerWorktreeDirtyStopSummary,
   verifySideEffectFailureStopSummary,
 } from "../src/onlineReviewLoop.js";
@@ -3367,10 +3366,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     expect(attempts).toBe(2);
   });
 
-  it("pin r27: verify that mutates HEAD then returns malformed is not reset-cleaned", async () => {
-    const { VerifyWorkerHeadMovedError } = await import(
-      "../src/onlineReviewLoop.js"
-    );
+  it("#876 pin r27: verify that mutates HEAD then returns malformed is not reset-cleaned and is not git-convicted", async () => {
     let attempts = 0;
     let resets = 0;
     let head = "head-before";
@@ -3384,26 +3380,26 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
         if (attempts === 1) {
           head = "head-after-mutation";
         }
-        const workerResult: WorkerResult =
-          attempts === 1
-            ? { kind: "malformed", reason: "missing verify tag" }
-            : { kind: "completed", output: { kind: "verify", converged: true } };
-        const headAfterAttempt = resolveHead();
-        if (headAfterAttempt !== headBefore) {
-          throw new VerifyWorkerHeadMovedError(headBefore, headAfterAttempt);
-        }
-        return workerResult;
+        // #876: HEAD drift is advisory plumbing — do not throw a contract_drift
+        // death. Malformed still routes through ordinary mechanical retry.
+        void resolveHead();
+        void headBefore;
+        return attempts === 1
+          ? { kind: "malformed" as const, reason: "missing verify tag" }
+          : {
+              kind: "completed" as const,
+              output: { kind: "verify" as const, converged: true },
+            };
       },
-      {
-        callerOwns: (o) =>
-          "kind" in o && o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
-        rethrowOnExhaustion: true,
-      },
-    ).catch((err) => err);
-    expect(attempts).toBe(1);
+      { rethrowOnExhaustion: true },
+    );
+    expect(attempts).toBe(2);
     expect(resets).toBe(0);
     expect(head).toBe("head-after-mutation");
-    expect(result).toBeInstanceOf(VerifyWorkerHeadMovedError);
+    expect(result).toMatchObject({
+      kind: "completed",
+      output: { kind: "verify", converged: true },
+    });
   });
 
   it("a persistently crashing verify exhausts the shared dispatch bound", async () => {
@@ -3423,13 +3419,11 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     });
   });
 
-  it("pin r10: verify that mutates HEAD then throws surfaces contract_drift (no retry on dirty tree)", async () => {
-    const { VerifyWorkerHeadMovedError } = await import(
-      "../src/onlineReviewLoop.js"
-    );
+  it("#876 pin r10: verify that mutates HEAD then throws retries the throw (no git-truth death)", async () => {
     let attempts = 0;
     let head = "head-before";
     const headBefore = head;
+    // #876: HEAD drift is advisory; only real worktree dirty remains caller-owned.
     const assertContract = async (): Promise<void> => {
       const drift = verifyReadOnlyWorktreeDrift({
         headBefore,
@@ -3437,23 +3431,26 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
         porcelainBefore: "",
         porcelainAfter: "",
       });
-      if (drift === "head") {
-        throw new VerifyWorkerHeadMovedError(headBefore, head);
-      }
+      // Head drift must not abort or short-circuit retries.
+      void drift;
     };
-    const result = await dispatchVerifyWithPerAttemptDriftGuard(
+    const result = await withMechanicalRetry(
+      verifyWorkerSpec(),
+      {} as DispatchContext,
       async () => {
         attempts += 1;
         head = "head-after-mutation";
+        // Observe post-attempt HEAD (advisory) then rethrow the process error.
+        await assertContract();
         throw new Error("verify worker threw on startup");
       },
-      assertContract,
-      (o) =>
-        "kind" in o && o.kind === "thrown" && o.error instanceof VerifyWorkerHeadMovedError,
-    ).catch((err) => err);
-    expect(attempts).toBe(1);
+    );
+    expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(head).toBe("head-after-mutation");
-    expect(result).toBeInstanceOf(VerifyWorkerHeadMovedError);
+    expect(result).toMatchObject({
+      kind: "failed",
+      reason: expect.stringContaining("after 3 dispatch attempts"),
+    });
   });
 
   it("pin r10: verify that dirties tracked worktree then throws surfaces contract_drift (no retry on dirty tree)", async () => {
@@ -3490,7 +3487,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
   });
 
   it("pin r37: verify that throws transient error without mutation still retries fresh (#598)", async () => {
-    const { VerifyWorkerHeadMovedError, VerifyWorkerWorktreeDirtyError } =
+    const { VerifyWorkerWorktreeDirtyError } =
       await import("../src/onlineReviewLoop.js");
     let attempts = 0;
     const assertContract = async (): Promise<void> => {
@@ -3500,9 +3497,6 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
         porcelainBefore: "",
         porcelainAfter: "",
       });
-      if (drift === "head") {
-        throw new VerifyWorkerHeadMovedError("stable-head", "stable-head");
-      }
       if (drift === "worktree") {
         throw new VerifyWorkerWorktreeDirtyError("", "");
       }
@@ -3519,8 +3513,7 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       assertContract,
       (o) =>
         "kind" in o && o.kind === "thrown" &&
-        (o.error instanceof VerifyWorkerHeadMovedError ||
-          o.error instanceof VerifyWorkerWorktreeDirtyError),
+        o.error instanceof VerifyWorkerWorktreeDirtyError,
     );
     expect(attempts).toBe(2);
     expect(result.kind).toBe("completed");
@@ -3690,13 +3683,24 @@ describe("#600 onlineReviewLoop helpers", () => {
     ).toBe(false);
   });
 
-  it("verifyReviewerHeadMovedStopSummary mirrors cmr read-only guard wording", () => {
-    const s = verifyReviewerHeadMovedStopSummary({
-      headBefore: "aaa",
-      headAfter: "bbb",
-    });
-    expect(s.reason).toBe("contract_drift");
-    expect(s.summary).toContain("verify worker moved HEAD");
+  it("#876 verifyReadOnlyWorktreeDrift no longer treats HEAD movement as a convictable drift class", () => {
+    // Head position is routing plumbing (#876); only tracked worktree residue remains.
+    expect(
+      verifyReadOnlyWorktreeDrift({
+        headBefore: "aaa",
+        headAfter: "bbb",
+        porcelainBefore: "",
+        porcelainAfter: "",
+      }),
+    ).toBeUndefined();
+    expect(
+      verifyReadOnlyWorktreeDrift({
+        headBefore: "aaa",
+        headAfter: "bbb",
+        porcelainBefore: "",
+        porcelainAfter: " M orchestrator/src/foo.ts",
+      }),
+    ).toBe("worktree");
   });
 
   it("pin r32: verifyReadOnlyWorktreeDrift flags tracked edits without HEAD movement", () => {
@@ -6748,7 +6752,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("family verify that moves HEAD terminates contract_drift without accepting converged output", async () => {
+  it("#876 family verify that moves HEAD stays in the normal review flow", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -6773,15 +6777,11 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
-      expect(result).toEqual({
-        ok: false,
-        terminalState: "contract_drift",
-        round: 1,
-        stopSummary: expect.objectContaining({
-          reason: "contract_drift",
-          summary: expect.stringContaining("verify worker moved HEAD"),
-        }),
-      });
+      expect(result).toEqual(expect.objectContaining({ ok: true, round: 1 }));
+      expect(backend.ledger).toContainEqual(expect.objectContaining({
+        workerStep: "online-verify:1",
+        reason: expect.stringContaining("moved HEAD"),
+      }));
       expect(headReadCount).toBeGreaterThanOrEqual(2);
     } finally {
       if (prev === undefined) {
@@ -6792,7 +6792,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r10: family verify that mutates HEAD then throws surfaces contract_drift (no retry on dirty tree)", async () => {
+  it("#876 family verify that mutates HEAD then throws retries the throw (no git-truth death)", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -6817,16 +6817,15 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         familyBase: "family/r7",
         ship: offlineShip,
       });
-      expect(attempts).toBe(1);
-      expect(result).toEqual({
-        ok: false,
-        terminalState: "contract_drift",
-        round: 1,
-        stopSummary: expect.objectContaining({
-          reason: "contract_drift",
-          summary: expect.stringContaining("verify worker moved HEAD"),
-        }),
-      });
+      // HEAD drift no longer short-circuits retries as contract_drift.
+      expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
+      expect(result).toEqual(expect.objectContaining({ ok: false, round: 1 }));
+      expect(result.terminalState).not.toBe("contract_drift");
+      expect(backend.ledger).toContainEqual(expect.objectContaining({
+        workerStep: "verify",
+        mechanicalRedispatchAttempt: 1,
+        reason: expect.stringContaining("verify worker threw on startup"),
+      }));
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

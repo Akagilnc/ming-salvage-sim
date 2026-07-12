@@ -30,6 +30,7 @@ import {
 import { runOrchestrator } from "./runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "./dispatchRetry.js";
 import {
+  successStopSummary,
   type StopReason,
   type StopSummary,
 } from "./stopSummary.js";
@@ -1320,30 +1321,40 @@ async function cmrReviewerSelfFixAttemptReplay(): Promise<SeamReplay> {
     familyBase: "family/258-reviewer-self-fix",
     familyBackend: backend,
   });
-  const abort = backend.ledger.find((entry) => entry.status === "aborted");
-  if (
-    result.ok ||
-    abort?.stopSummary?.reason !== "contract_drift" ||
-    !String(abort.reason).includes("reviewer moved family HEAD")
-  ) {
+  // #876: reviewer HEAD movement is advisory routing plumbing. Findings still
+  // enter the ordinary coder-fix channel; the run must not die as contract_drift.
+  const headAdvisory = backend.ledger.find(
+    (entry) =>
+      entry.status === "worker_dispatched" &&
+      String(entry.reason ?? "").includes("reviewer moved family HEAD"),
+  );
+  const coderFixDispatched = backend.dispatches.some((dispatch) =>
+    dispatch.startsWith("coder:"),
+  );
+  const headDeath = backend.ledger.some(
+    (entry) =>
+      entry.status === "aborted" &&
+      entry.stopSummary?.reason === "contract_drift" &&
+      String(entry.reason ?? "").includes("reviewer moved family HEAD"),
+  );
+  if (!result.ok || headAdvisory === undefined || !coderFixDispatched || headDeath) {
     throw new Error(
-      `dogfood #258 reviewer self-fix replay did not fail closed: ` +
-        `run.ok=${result.ok} statuses=${backend.ledger.map((entry) => entry.status).join(",")}`,
+      `dogfood #258 reviewer head-move replay did not survive via three channels: ` +
+        `run.ok=${result.ok} coderFix=${coderFixDispatched} headDeath=${headDeath} ` +
+        `statuses=${backend.ledger.map((entry) => entry.status).join(",")}`,
     );
   }
   return {
-    stopSummary: abort.stopSummary,
+    stopSummary: successStopSummary(),
     sourceEvidence: {
       seam: "family_verify_cmr",
-      mechanism: "cmr_reviewer_self_fix_head_movement",
-      reviewerSelfFixBlocked: true,
+      mechanism: "cmr_reviewer_head_movement_advisory",
+      reviewerSelfFixBlocked: false,
       familyHeadBefore: "head-before-reviewer",
       familyHeadAfter: "head-after-reviewer-self-fix",
       ledgerStatuses: backend.ledger.map((entry) => entry.status),
       dispatches: backend.dispatches,
-      coderFixDispatched: backend.dispatches.some((dispatch) =>
-        dispatch.startsWith("coder:"),
-      ),
+      coderFixDispatched,
       ...cmrWorkerParserEvidence(cmrOutput),
     },
   };
@@ -2743,8 +2754,9 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "258-cmr-reviewer-self-fix-attempt",
       issue: 258,
-      title: "family CMR reviewer cannot move into a same-session fix loop",
-      classification: "contract_drift",
+      // #876: HEAD movement is advisory; findings still route to coder-fix.
+      title: "family CMR reviewer HEAD movement stays on the three-channel path",
+      classification: "success",
       stopSummary: cmrReviewerSelfFixAttemptSource.stopSummary,
       source: "family",
       sourceStopSummary: cmrReviewerSelfFixAttemptSource.stopSummary,

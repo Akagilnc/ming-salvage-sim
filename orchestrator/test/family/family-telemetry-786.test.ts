@@ -334,14 +334,14 @@ describe("#786 family dispatch telemetry", () => {
     expect(result.status).toBe("success");
   });
 
-  it("preserves a green CMR verdict when the runner rejects its durable outcome", async () => {
+  it("#876 preserves a green CMR verdict when the reviewer worktree HEAD drifted", async () => {
     class HeadMovingReviewerBackend extends FamilyTelemetryBackend {
       async readFamilyCurrentHead(): Promise<string> {
         return `${FAMILY_HEAD}-reviewer-moved`;
       }
     }
 
-    const durable = join(tempDir("orch-786-review-round-rejected-"), ".ledger-809");
+    const durable = join(tempDir("orch-786-review-round-head-advisory-"), ".ledger-809");
     const result = await runFamily({
       epic: { issue: 809, children: [] },
       familyBackend: new HeadMovingReviewerBackend(durable),
@@ -349,15 +349,16 @@ describe("#786 family dispatch telemetry", () => {
       familyBase: "family/809-sidecar",
     });
 
-    expect(result.status).not.toBe("success");
+    // Head drift is advisory routing plumbing (#876), not a durable reject.
+    expect(result.status).toBe("success");
     const reviewRounds = readTelemetryRecords(durable).filter(
       (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
     );
-    expect(reviewRounds).toHaveLength(1);
+    expect(reviewRounds.length).toBeGreaterThanOrEqual(1);
     expect(reviewRounds[0]).toMatchObject({
       cmrPass: "completeness",
       verdict: "converged",
-      finalDisposition: "rejected",
+      finalDisposition: "accepted",
     });
   });
 
@@ -412,7 +413,7 @@ describe("#786 family dispatch telemetry", () => {
     );
   });
 
-  it("preserves a malformed worker verdict when the runner rejects its moved-HEAD abort", async () => {
+  it("#876 HEAD drift does not pre-empt a malformed CMR into a git-truth death", async () => {
     class MalformedHeadMovingReviewerBackend extends FamilyTelemetryBackend {
       override async dispatchWorker(
         spec: WorkerSpec,
@@ -430,7 +431,7 @@ describe("#786 family dispatch telemetry", () => {
       }
     }
 
-    const durable = join(tempDir("orch-786-malformed-rejected-"), ".ledger-809");
+    const durable = join(tempDir("orch-786-malformed-head-advisory-"), ".ledger-809");
     const result = await runFamily({
       epic: { issue: 809, children: [] },
       familyBackend: new MalformedHeadMovingReviewerBackend(durable),
@@ -438,6 +439,8 @@ describe("#786 family dispatch telemetry", () => {
       familyBase: "family/809-sidecar",
     });
 
+    // #876: HEAD movement is advisory; the malformed envelope still routes through
+    // the ordinary outcome-protocol path (protocol_failure after rewrite exhaustion).
     expect(result.status).not.toBe("success");
     expect(
       readTelemetryRecords(durable).filter(
@@ -445,7 +448,7 @@ describe("#786 family dispatch telemetry", () => {
       ),
     ).toContainEqual(
       expect.objectContaining({
-        verdict: "malformed",
+        verdict: "protocol_failure",
         finalDisposition: "rejected",
       }),
     );

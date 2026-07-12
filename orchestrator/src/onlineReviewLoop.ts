@@ -1385,21 +1385,6 @@ export function retriggerBotsAndPoll(
   return { snapshot, roundTrigger: snapshot.roundTriggerUsed };
 }
 
-/** Thrown when a read-only verify worker mutates HEAD (runner catches → contract drift). */
-export class VerifyWorkerHeadMovedError extends Error {
-  readonly headBefore: string;
-  readonly headAfter: string;
-
-  constructor(headBefore: string, headAfter: string) {
-    super(
-      `online review verify worker moved HEAD: ${headBefore} -> ${headAfter}`,
-    );
-    this.name = "VerifyWorkerHeadMovedError";
-    this.headBefore = headBefore;
-    this.headAfter = headAfter;
-  }
-}
-
 /** Thrown when a read-only verify worker dirties the tracked worktree (#600 r32). */
 export class VerifyWorkerWorktreeDirtyError extends Error {
   readonly porcelainBefore: string;
@@ -1422,46 +1407,29 @@ export function worktreePorcelainFingerprint(
   return lines.map((line) => line.trimEnd()).join("\n");
 }
 
-export type VerifyReadOnlyWorktreeDrift =
-  | "head"
-  | "worktree"
-  | undefined;
+/**
+ * Detect tracked-worktree residue after a read-only verify attempt.
+ *
+ * #876: HEAD movement is **not** a convictable drift class — head position is
+ * routing plumbing (diff scope). Only tracked porcelain residue remains.
+ */
+export type VerifyReadOnlyWorktreeDrift = "worktree" | undefined;
 
-/** Detect read-only verify contract drift from HEAD or tracked-worktree movement. */
+/** Detect tracked-worktree residue after a read-only verify attempt (#876). */
 export function verifyReadOnlyWorktreeDrift(input: {
   readonly headBefore: string;
   readonly headAfter: string;
   readonly porcelainBefore: string;
   readonly porcelainAfter: string;
 }): VerifyReadOnlyWorktreeDrift {
-  if (input.headAfter !== input.headBefore) {
-    return "head";
-  }
+  // headBefore/headAfter retained on the input so call sites keep feeding the
+  // routing observation without a second API break; they do not convict.
+  void input.headBefore;
+  void input.headAfter;
   if (input.porcelainAfter !== input.porcelainBefore) {
     return "worktree";
   }
   return undefined;
-}
-
-/** Stop summary when a read-only verify worker moved HEAD (mirrors cmr reviewer guard). */
-export function verifyReviewerHeadMovedStopSummary(input: {
-  readonly headBefore: string;
-  readonly headAfter: string;
-}): StopSummary {
-  return contractDriftStopSummary({
-    summary:
-      `online review verify worker moved HEAD: ${input.headBefore} -> ${input.headAfter}`,
-    repairHint:
-      "restore the verify/fixer role boundary so verify leaves HEAD unchanged, then rerun the online review loop",
-    heads: {
-      reportedFamilyHead: input.headBefore,
-      actualFamilyHead: input.headAfter,
-      sources: {
-        reportedFamilyHead: "pre-verify branch HEAD",
-        actualFamilyHead: "post-verify branch HEAD",
-      },
-    },
-  });
 }
 
 /** Stop summary when a read-only verify worker left tracked worktree residue (#600 r32). */
@@ -1515,7 +1483,7 @@ export interface OnlineReviewLoopStageResult {
   readonly ok: boolean;
   readonly terminalState: OnlineReviewTerminalState;
   readonly round: number;
-  /** Populated for contract-drift terminals (e.g. read-only verify moved HEAD). */
+  /** Optional stop summary for non-success terminals. */
   readonly stopSummary?: StopSummary;
 }
 

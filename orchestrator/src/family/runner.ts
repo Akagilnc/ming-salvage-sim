@@ -2066,7 +2066,7 @@ export async function runFamily(
         (reviewLoop.terminalState === "round_budget_exhausted"
           ? "family online review loop exhausted the 3-round budget during resume"
           : reviewLoop.terminalState === "contract_drift"
-            ? "family online review verify worker moved HEAD during resume"
+            ? "family online review loop stopped for contract drift during resume"
             : "family online review loop did not converge during resume");
       // #744: a true human park is answerable + re-feedable (escalationKind
       // "decision"); hard-writing "failure" made re-feed impossible.
