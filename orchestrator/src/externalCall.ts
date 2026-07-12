@@ -10,7 +10,15 @@
  * durable → surface immediately. Durable records always carry a **stage name**.
  */
 
-import { execFile, execFileSync } from "node:child_process";
+import {
+  execFile,
+  execFileSync,
+  spawn,
+  type ChildProcess,
+  type SpawnOptions,
+} from "node:child_process";
+
+export type { ChildProcess };
 
 /** Probe-class provider/HTTP wall budget (owner band 60–120s). */
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 90_000;
@@ -316,6 +324,39 @@ export function execFileAsyncWithTimeout(
     } else {
       child.stdin?.end();
     }
+  });
+}
+
+export interface SpawnDetachedOptions {
+  readonly stage: string;
+  readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly stdio?: SpawnOptions["stdio"];
+  /**
+   * Default true — monitored CLI workers get their own process-group boundary
+   * so kill goes through verified per-pid paths (#684).
+   */
+  readonly detached?: boolean;
+}
+
+/**
+ * Sole `spawn` import surface for production code. Launch itself is not a wait;
+ * callers still own spawn-ack / lifecycle clocks (see workerMonitor
+ * `dispatchMonitoredCliWorker` — spawn-ack races ExternalCallTimeoutError).
+ * Keeping spawn here closes the static chokepoint so a new bare `spawn(` is a
+ * red S8-T guard, not a reviewer finding.
+ */
+export function spawnDetached(
+  command: string,
+  args: readonly string[],
+  opts: SpawnDetachedOptions,
+): ChildProcess {
+  void opts.stage; // required: stage name documents the call site for kill/ack
+  return spawn(command, [...args], {
+    cwd: opts.cwd,
+    env: opts.env,
+    detached: opts.detached ?? true,
+    stdio: opts.stdio ?? "ignore",
   });
 }
 

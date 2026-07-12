@@ -5,11 +5,12 @@
  * {@link WorkerMonitorHandle}. No global process-name matching APIs are provided.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import {
   ExternalCallTimeoutError,
   effectiveSubprocessTimeoutMs,
   shWithClock,
+  spawnDetached,
   DEFAULT_SUBPROCESS_TIMEOUT_MS,
 } from "./externalCall.js";
 import {
@@ -225,9 +226,12 @@ export async function dispatchMonitoredCliWorker(
   const logFd = openSync(logPath, "a");
   const dispatchedAt = new Date().toISOString();
 
-  // detached:true gives the worker its own process-group boundary; termination
-  // still goes through individually verified killPid calls, #684 R2.
-  const child = spawn(input.command, [...input.args], {
+  // #884: spawn only via externalCall chokepoint. detached:true gives the
+  // worker its own process-group boundary; termination still goes through
+  // individually verified killPid calls, #684 R2. Spawn-ack wait below carries
+  // the wall clock (ExternalCallTimeoutError).
+  const child = spawnDetached(input.command, input.args, {
+    stage: `dispatch:${input.stepId}:spawn-launch`,
     cwd: input.cwd,
     env: input.env,
     detached: true,
