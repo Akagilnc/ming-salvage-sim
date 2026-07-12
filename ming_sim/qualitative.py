@@ -18,9 +18,16 @@ def safe_historical_text(text: object, kind: str = "历史记录") -> str:
     rendered = str(text or "").strip()
     if not rendered:
         return ""
-    if _ABSTRACT_VALUE_RE.search(rendered) or _ABSTRACT_NEARBY_NUMBER_RE.search(rendered):
-        return f"（{kind}含抽象指标原值，已略去；请以当时正式定性奏报为准。）"
-    return rendered
+    parts = re.split(r"([；;。！？\n])", rendered)
+    out: list[str] = []
+    for fragment in parts:
+        if not fragment or re.fullmatch(r"[；;。！？\n]", fragment):
+            out.append(fragment)
+        elif _ABSTRACT_VALUE_RE.search(fragment) or _ABSTRACT_NEARBY_NUMBER_RE.search(fragment):
+            out.append(f"（{kind}含抽象指标原值，已略去）")
+        else:
+            out.append(fragment)
+    return "".join(out)
 
 
 _AUDIENCE_ABSTRACT_BANDS = {

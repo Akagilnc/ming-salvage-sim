@@ -836,3 +836,21 @@ def test_participant_roster_is_discovered_from_any_persistent_table(game):
     view = db.get_character_knowledge(state, minister.name)
 
     assert any(item["source_id"] == "custom:1" for item in view["events"])
+
+
+def test_knowledge_titles_restore_without_persistence_truncation(game):
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    title = "密令长标题" * 20
+    db.register_character_knowledge_source(
+        state, [{"character_id": minister.name}], "secret_order", title, "内容", "secret_order:long-title",
+    )
+    db.record_public_knowledge_event(state, title, "公开内容", source_id="public:long-title")
+
+    source = db.conn.execute(
+        "SELECT title FROM character_knowledge_sources WHERE source_id='secret_order:long-title'"
+    ).fetchone()["title"]
+    public_event = db.conn.execute(
+        "SELECT title FROM character_knowledge_events WHERE source_id='public:long-title'"
+    ).fetchone()["title"]
+    assert source == public_event == title

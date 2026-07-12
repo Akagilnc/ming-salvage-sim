@@ -235,13 +235,7 @@ def build_minister_tools(character: Character, context: CourtContext,
     def query_court_roster(names: List[str] = []) -> str:
         """角色获准使用名册工具后，空查完整索引、具名查完整记录。"""
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
-        rows = context.db.conn.execute(
-            "SELECT name, office, office_type, faction, status, status_reason "
-            "FROM characters WHERE power_id='ming' AND status != 'offstage' "
-            "AND office_type NOT IN ('后宫','宗藩','未仕') ORDER BY name"
-        ).fetchall()
-        if wanted:
-            rows = [row for row in rows if str(row["name"]) in wanted]
+        rows = context.db.current_court_roster_rows(context.state, wanted)
         if not rows:
             return "见闻中未载所查人物。"
         if not wanted:

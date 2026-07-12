@@ -525,15 +525,7 @@ def create_minister_agent(
         # 月度动态上下文全挂 system 末尾——见闻投影是唯一世界输入；前面 game_world /
         # minister_agent / character 静态段仍命中前缀缓存。旧 registry 全知 builders
         # 保留给其他调用方，但不能从此处绕过角色见闻边界。
-        active_char_count = sum(
-            1 for ch in c.characters.values()
-            # 排除后宫+宗藩：本计数是 build_court_roster↔index 切换阈值，须与两 builder 同口径
-            # （都跳宗藩），否则宗藩多时虚高、误切索引路丢全名册上下文（CodeRabbit PR#130 R2 Minor）。
-            if ch.office_type not in ("后宫", "宗藩")
-            # status 先于 resolve_power_id：多数人物 offstage，先短路省一次 DB 查询（gemini PR#130 R1）
-            and context.db.get_character_status(ch.name)[0] != "offstage"
-            and context.db.resolve_power_id(ch) == "ming"  # DB 权威，同 court_roster
-        )
+        active_char_count = len(context.db.current_court_roster_rows(context.state))
         army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
         use_roster_tool = active_char_count > 100
         # The threshold may alter delivery, never authorization: a role without

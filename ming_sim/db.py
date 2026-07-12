@@ -4182,6 +4182,26 @@ class GameDB:
             return ("active", "")
         return (row["status"], row["status_reason"] or "")
 
+    def current_court_roster_rows(
+        self, state: GameState, names: Optional[Iterable[str]] = None,
+    ) -> List[sqlite3.Row]:
+        """Return the single current-court membership projection."""
+        wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
+        clauses = [
+            "power_id='ming'", "status='active'",
+            "office_type NOT IN ('后宫','宗藩','未仕')",
+            "(debut_year=0 OR debut_year<? OR (debut_year=? AND debut_month<=?))",
+        ]
+        params: List[object] = [int(state.year), int(state.year), int(state.period)]
+        if wanted:
+            clauses.append(f"name IN ({','.join('?' for _ in wanted)})")
+            params.extend(wanted)
+        return self.conn.execute(
+            "SELECT name, office, office_type, faction, status, status_reason "
+            f"FROM characters WHERE {' AND '.join(clauses)} ORDER BY name",
+            params,
+        ).fetchall()
+
     def resolve_power_id(self, character) -> str:
         """人物所属势力 id 的权威解析：DB 行 power_id 优先，回退内存 power_id，默认 ming。
 
@@ -10033,7 +10053,7 @@ class GameDB:
             "(turn,year,period,kind,title,body,source_id,participant_roster,excluded_names,excluded_targets) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (state.turn, state.year, state.period, sanitize_sqlite_text(kind),
-             sanitize_sqlite_text(title)[:80], sanitize_sqlite_text(body),
+             sanitize_sqlite_text(title), sanitize_sqlite_text(body),
              sanitize_sqlite_text(source_id),
              safe_json_dumps(roster, ensure_ascii=False),
              safe_json_dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
@@ -10051,7 +10071,7 @@ class GameDB:
         for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
             self.conn.execute(
                 "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-                (state.turn, state.year, state.period, name, kind, title[:80], body, source_id, excluded_json),
+                (state.turn, state.year, state.period, name, kind, title, body, source_id, excluded_json),
             )
         if commit:
             self.conn.commit()
@@ -10073,7 +10093,7 @@ class GameDB:
         ))
         self.conn.execute(
             "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-            (state.turn, state.year, state.period, "", "public", title[:80], body, source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
+            (state.turn, state.year, state.period, "", "public", title, body, source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
         )
         if commit:
             self.conn.commit()
