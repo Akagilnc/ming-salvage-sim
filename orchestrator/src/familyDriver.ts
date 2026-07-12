@@ -37,6 +37,7 @@ import { join } from "node:path";
 
 import {
   execFileWithTimeout,
+  withExternalCallRetrySync,
   DEFAULT_SUBPROCESS_TIMEOUT_MS,
 } from "./externalCall.js";
 import { RealBackend, type RealBackendOptions } from "./realBackend.js";
@@ -385,11 +386,15 @@ function familyDiffFiles(
  */
 export type Sh = (file: string, args: string[]) => string;
 
-const defaultSh: Sh = (file, args) =>
-  execFileWithTimeout(file, args, {
-    stage: `admission:${file}`,
-    timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
-  }).trim();
+const defaultSh: Sh = (file, args) => {
+  const stage = `admission:${file}`;
+  return withExternalCallRetrySync(stage, () =>
+    execFileWithTimeout(file, args, {
+      stage,
+      timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
+    }).trim(),
+  );
+};
 
 /**
  * Read the epic's children (native sub-issues + each child's blocked_by) from
