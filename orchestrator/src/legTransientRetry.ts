@@ -21,6 +21,8 @@
  * whether to retry or degrade, instead of retrying every process failure.
  */
 
+import { classifyExternalCallFailure } from "./externalCall.js";
+
 /** 1 initial + 2 retries ("重试 ×2") per #861 D / #879. */
 export const MAX_LEG_TRANSIENT_ATTEMPTS = 3;
 
@@ -34,105 +36,21 @@ const defaultSleepMs = (ms: number): Promise<void> =>
     ? Promise.resolve()
     : new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-function errorText(error: unknown): string {
-  if (error instanceof Error) {
-    const cause =
-      error.cause !== undefined && error.cause !== null
-        ? ` ${errorText(error.cause)}`
-        : "";
-    return `${error.name} ${error.message}${cause}`;
-  }
-  return String(error);
-}
-
-/**
- * True when free text names an HTTP 5xx status (500/502/503/504 and nearby).
- * Mirrors the spirit of telemetry's 429 matcher but for the 5xx band.
- */
-function mentionsHttp5xx(lower: string): boolean {
-  return (
-    /\b(?:http(?:\/\d+(?:\.\d+)?)?(?:\s+(?:code|error|response\s+code|status(?:\s+code)?))?|status(?:\s+code)?|response\s+(?:status(?:\s+code)?|code))\s*(?:is|was)?\s*(?:=|:)?\s*5\d\d\b(?!\.\d)/.test(
-      lower,
-    ) ||
-    // Common short forms: "HTTP 503", "502 Bad Gateway", "upstream returned 502"
-    /\b(?:http\s*)?5(?:0[0-4]|2[26]|3[0135])\b/.test(lower) ||
-    lower.includes("bad gateway") ||
-    lower.includes("service unavailable") ||
-    lower.includes("gateway timeout") ||
-    lower.includes("internal server error")
-  );
-}
-
-function isQuotaFailureText(lower: string, original: string): boolean {
-  // Prefer explicit quota / rate-limit phrases; bare "limit" is too broad.
-  if (
-    lower.includes("rate limit") ||
-    lower.includes("rate-limit") ||
-    lower.includes("rate_limit") ||
-    lower.includes("too many requests") ||
-    (lower.includes("quota") && !lower.includes("iteration limit")) ||
-    lower.includes("quota wait for reset") ||
-    original.includes("额度") ||
-    original.includes("余额不足") ||
-    original.includes("配额")
-  ) {
-    return true;
-  }
-  // HTTP-status 429 (and bare "status 429" / "returned 429")
-  if (
-    /\b(?:http(?:\/\d+(?:\.\d+)?)?(?:\s+(?:code|error|response\s+code|status(?:\s+code)?))?|status(?:\s+code)?|response\s+(?:status(?:\s+code)?|code)|returned)\s*(?:is|was)?\s*(?:=|:)?\s*429\b(?!\.\d)/.test(
-      lower,
-    ) ||
-    /\bhttp\s*429\b/.test(lower) ||
-    /\bstatus\s*429\b/.test(lower)
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function isTransientFailureText(lower: string): boolean {
-  if (
-    lower.includes("econnreset") ||
-    lower.includes("econnrefused") ||
-    lower.includes("etimedout") ||
-    lower.includes("enetunreach") ||
-    lower.includes("ehostunreach") ||
-    lower.includes("epipe") ||
-    lower.includes("socket hang up") ||
-    lower.includes("stream disconnect") ||
-    lower.includes("stream-disconnect") ||
-    lower.includes("connection reset") ||
-    lower.includes("connection closed") ||
-    lower.includes("connection aborted") ||
-    lower.includes("connection refused") ||
-    lower.includes("connection terminated") ||
-    lower.includes("connection interrupted") ||
-    lower.includes("network error") ||
-    lower.includes("network is unreachable") ||
-    lower.includes("fetch failed") ||
-    lower.includes("temporarily unavailable") ||
-    lower.includes("broken pipe")
-  ) {
-    return true;
-  }
-  return mentionsHttp5xx(lower);
-}
-
 /**
  * Classify a thrown provider / transport error for leg-level retry policy.
  *
  * - `quota` — 429 / rate-limit / quota wall → immediate degrade, no retry
- * - `transient` — connection reset/close / 5xx → retry up to ×2 then degrade
+ * - `transient` — connection reset/close / timeout / 5xx → retry up to ×2 then degrade
  * - `other` — auth missing, semantic smoke failure, etc. → no retry
  *
- * Quota is checked first so a "429 + connection closed" message never retries.
+ * Single source: {@link classifyExternalCallFailure} (typed timeout, status-first
+ * 5xx-over-quota text, structured status codes). Maps durable → other so the
+ * leg helper stays on the three #879 classes without a parallel text court.
  */
 export function classifyLegFailure(error: unknown): LegFailureClass {
-  const text = errorText(error);
-  const lower = text.toLowerCase();
-  if (isQuotaFailureText(lower, text)) return "quota";
-  if (isTransientFailureText(lower)) return "transient";
+  const klass = classifyExternalCallFailure(error);
+  if (klass === "transient") return "transient";
+  if (klass === "quota") return "quota";
   return "other";
 }
 
