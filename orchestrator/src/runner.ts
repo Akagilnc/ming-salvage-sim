@@ -1115,15 +1115,6 @@ function normalizeGitPath(path: string): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function normalizeRepairEvidencePath(path: string): string | undefined {
-  const normalized = normalizeGitPath(path);
-  if (normalized === undefined) return undefined;
-  if (/\s/.test(normalized)) return undefined;
-  return normalized.includes("/") || /\.[A-Za-z0-9]+$/.test(normalized)
-    ? normalized
-    : undefined;
-}
-
 function gitOutputLines(
   worktree: WorktreeHandle | undefined,
   args: ReadonlyArray<string>,
@@ -1184,94 +1175,8 @@ function actualRepairMovementPaths(
   return [...paths];
 }
 
-function repairEvidenceMatchesKey(
-  evidence: RepairEvidence | undefined,
-  actualChangedPaths: ReadonlyArray<string>,
-  finding: Finding,
-  identityKey: string,
-  activeFindings: ReadonlyArray<Finding>,
-  activeIdentityKeys: ReadonlyArray<string>,
-): boolean {
-  if (evidence === undefined || actualChangedPaths.length === 0) {
-    return false;
-  }
-  const matchingKeys = matchingContinueFixingKeys(
-    {
-      event: "runner_bookkeeping",
-      intent: "continue_fixing",
-      source: "resume_input",
-      ts: "repair-evidence",
-      findingScope: evidence.findingScope,
-    },
-    activeFindings,
-    activeIdentityKeys,
-  );
-  if (!matchingKeys.includes(identityKey)) return false;
-  const declaredChangedPaths = [
-    ...(evidence.changedFiles ?? []).map(normalizeGitPath),
-    ...(evidence.fixtures ?? []).map(normalizeGitPath),
-    ...(evidence.tests ?? []).map(normalizeRepairEvidencePath),
-  ].filter((path): path is string => path !== undefined);
-  const scopedActualMovement = actualChangedPaths.some((path) =>
-    locationScopeMatches(path, finding.location),
-  );
-  const declaredActualMovement =
-    declaredChangedPaths.length > 0 &&
-    declaredChangedPaths.some((declared) =>
-      actualChangedPaths.some(
-        (actual) =>
-          actual === declared ||
-          locationScopeMatches(actual, declared) ||
-          locationScopeMatches(declared, actual),
-      ),
-    );
-  if (!scopedActualMovement && !declaredActualMovement) return false;
-  return (
-    declaredChangedPaths.length === 0 ||
-    declaredActualMovement ||
-    declaredChangedPaths.some((path) => locationScopeMatches(path, finding.location))
-  );
-}
-
-const FINDING_SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
-  clarity: 0,
-  low: 1,
-  medium: 2,
-  high: 3,
-  critical: 4,
-};
-
-function sameFindingLineage(a: Finding, b: Finding): boolean {
-  return a.category === b.category && a.location === b.location;
-}
-
-function reviewerObservedProgress(input: {
-  readonly previousBlockingFindings: ReadonlyArray<Finding>;
-  readonly previousBlockingIdentityKeys: ReadonlyArray<string>;
-  readonly currentBlockingFindings: ReadonlyArray<Finding>;
-  readonly currentBlockingIdentityKeys: ReadonlyArray<string>;
-  readonly previousFinding: Finding;
-  readonly previousIdentityKey: string;
-  readonly previousNoProgressCount: number;
-}): boolean {
-  const currentBySameKey = input.currentBlockingFindings.find(
-    (finding) => findingIdentityKey(finding) === input.previousIdentityKey,
-  );
-  if (
-    currentBySameKey !== undefined &&
-    FINDING_SEVERITY_RANK[currentBySameKey.severity] <
-      FINDING_SEVERITY_RANK[input.previousFinding.severity]
-  ) {
-    return true;
-  }
-
-  return input.currentBlockingFindings.some(
-    (finding) =>
-      sameFindingLineage(input.previousFinding, finding) &&
-      FINDING_SEVERITY_RANK[finding.severity] <
-        FINDING_SEVERITY_RANK[input.previousFinding.severity],
-  );
-}
+// #877/#873: repairEvidenceMatchesKey + reviewerObservedProgress deleted —
+// zero callers after no-progress content courts demolished (Opus ship-pre low).
 
 interface LatestCoderRepair {
   readonly repairEvidence?: RepairEvidence;
