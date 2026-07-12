@@ -182,6 +182,30 @@ def render_character_knowledge(knowledge: Dict[str, object], character_name: str
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
+def project_court_roster_rows(
+    rows: list[Any], knowledge: Dict[str, object], office_type: str,
+) -> list[Any]:
+    """Project complete structured roster rows through one character's view.
+
+    The complete roster remains an internal query result.  A personnel-domain
+    capability may expose it; otherwise only the reader's current role roster
+    and people named in already-authorized events cross the output boundary.
+    """
+    world = knowledge.get("world") or {}
+    if "personnel" in world:
+        return list(rows)
+    current_office_type = str(knowledge.get("office_type") or office_type or "")
+    visible_event_text = "\n".join(
+        "：".join(str(value) for value in (item.get("title"), item.get("body")) if value)
+        for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]
+    )
+    return [
+        row for row in rows
+        if str(row["office_type"] or "") == current_office_type
+        or str(row["name"] or "") in visible_event_text
+    ]
+
+
 def _role_roster(db: Any, office_type: str, state: Any) -> str:
     """Return only the current roster for this office type.
 

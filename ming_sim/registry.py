@@ -20,7 +20,7 @@ from ming_sim.context import character_context_with_db, faction_context_with_db
 from ming_sim.models import Character, CourtContext, LLMConfig, MINISTER_CHAT_CLI_TIMEOUT_SECONDS
 from ming_sim.recommendations import build_recommendation_brief
 from ming_sim.llm_model import create_chat_model
-from ming_sim.knowledge import render_character_knowledge
+from ming_sim.knowledge import project_court_roster_rows, render_character_knowledge
 from ming_sim.qualitative import (
     building_output_effect,
     building_qualitative_fields,
@@ -525,14 +525,20 @@ def create_minister_agent(
         # 月度动态上下文全挂 system 末尾——见闻投影是唯一世界输入；前面 game_world /
         # minister_agent / character 静态段仍命中前缀缓存。旧 registry 全知 builders
         # 保留给其他调用方，但不能从此处绕过角色见闻边界。
-        active_char_count = len(context.db.current_court_roster_rows(context.state))
+        complete_roster = context.db.current_court_roster_rows(context.state)
         army_count = context.db.conn.execute("SELECT COUNT(*) FROM armies").fetchone()[0]
-        use_roster_tool = active_char_count > 100
-        # The threshold may alter delivery, never authorization: a role without
-        # the military domain must not receive either the roster tool or skill.
         projected_world = context.db.get_character_knowledge(
             context.state, character.name,
-        ).get("world") or {}
+        )
+        projected_roster = project_court_roster_rows(
+            complete_roster, projected_world, character.office_type,
+        )
+        # Scale thresholds operate on the authorized slice, never on the global
+        # backing set: a large court cannot manufacture a personnel capability.
+        use_roster_tool = len(projected_roster) > 100
+        projected_world = projected_world.get("world") or {}
+        # The threshold may alter delivery, never authorization: a role without
+        # the military domain must not receive either the roster tool or skill.
         use_army_tool = army_count > 30 and "military" in projected_world
         knowledge_brief = build_character_knowledge_brief(character, context)
         secret_brief = build_secret_order_brief(character, context)

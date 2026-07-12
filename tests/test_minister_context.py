@@ -903,6 +903,76 @@ def test_scale_fallback_court_roster_uses_complete_structured_query(game, monkey
     assert actual in tools["query_court_roster"]([actual])
 
 
+def test_scale_fallback_court_roster_rejects_poison_without_personnel_authorization(
+    game, monkeypatch,
+):
+    """>100 人不能给无 personnel 域的角色新造全朝名册 capability。"""
+    db, state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "工部")
+    poison = next(
+        row for row in db.current_court_roster_rows(state)
+        if row["office_type"] != minister.office_type
+    )
+    real_roster = db.current_court_roster_rows
+
+    def over_scale_roster(current_state, names=None):
+        rows = real_roster(current_state, names)
+        if names:
+            return rows
+        return (rows * (101 // len(rows) + 1))[:101]
+
+    monkeypatch.setattr(db, "current_court_roster_rows", over_scale_roster)
+    captured = {}
+    skill_calls = []
+
+    def fake_agent(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    def fake_skills(office_type, extra=[]):
+        skill_calls.append((office_type, tuple(extra)))
+        return None
+
+    cfg = LLMConfig(api_key="", base_url="", model="test", channel="cli", cli_runner="codex")
+    with patch("ming_sim.registry.Agent", side_effect=fake_agent), \
+         patch("ming_sim.registry.create_chat_model", return_value=MagicMock()), \
+         patch("ming_sim.registry._skills_for", side_effect=fake_skills):
+        create_minister_agent(minister, cfg, _ctx(game), db)
+
+    assert "query_court_roster" not in {tool.__name__ for tool in captured["tools"]}
+    assert all("court-roster" not in extra for _office_type, extra in skill_calls)
+
+    # 输出边界也必须守住：即使调用方误把 fallback 开关传为 true，完整
+    # 结构化名册只能投影出本职/获准人事/可见事件切片，不能吐出 poison。
+    forced_tools = {
+        tool.__name__: tool
+        for tool in build_minister_tools(minister, _ctx(game), use_roster_tool=True)
+    }
+    same_role = next(
+        row for row in real_roster(state)
+        if row["office_type"] == minister.office_type
+    )
+    event_visible = next(
+        row for row in real_roster(state)
+        if row["office_type"] != minister.office_type and row["name"] != poison["name"]
+    )
+    monkeypatch.setattr(
+        "ming_sim.knowledge.build_character_knowledge",
+        lambda _db, _state, _name: {
+            "office_type": minister.office_type,
+            "world": {"role": f"{minister.office_type}本职"},
+            "events": [{"title": "可见同案", "body": f"{event_visible['name']}参与其事"}],
+            "public_events": [],
+            "issues": [],
+        },
+    )
+    rendered = forced_tools["query_court_roster"]([])
+    assert same_role["name"] in rendered
+    assert event_visible["name"] in rendered
+    assert poison["name"] not in rendered
+    assert poison["name"] not in forced_tools["query_court_roster"]([poison["name"]])
+
+
 def test_scale_fallback_court_roster_excludes_noncurrent_rows(game):
     db, state, content = game
     minister = next(c for c in content.characters.values() if c.office_type == "礼部")
