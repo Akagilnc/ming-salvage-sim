@@ -1309,6 +1309,86 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     ]);
   });
 
+  // #881 (#434 live-semantic revision): align resume with the live final-barrier
+  // loop — after a later pass's coder-fix advances HEAD, completeness is NOT
+  // re-run live; resume must likewise skip when the advance is explained only by
+  // barrier-internal cmr_fix_committed rows.
+  it("#881: resume skips a prior pass when HEAD advanced only via barrier-internal fix commits", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+    });
+    backend.currentFamilyHead = "head-after-correctness-fix";
+    backend.ledger.push(
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-at-completeness-pass",
+        routeFingerprint: currentRouteFingerprint(),
+      },
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-at-completeness-pass",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadBefore: "head-at-completeness-pass",
+        familyHeadAfter: "head-after-correctness-fix",
+      },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-correctness-fix",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    // Completeness already passed; only correctness re-runs at the advanced head.
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
+  });
+
+  it("#881: resume re-verifies a prior pass when HEAD advanced outside the barrier (no fix chain)", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+    });
+    backend.currentFamilyHead = "head-from-external-advance";
+    backend.ledger.push({
+      status: "cmr_passed",
+      event: "cmr_passed",
+      phase: "final",
+      cmrPass: "completeness",
+      familyHeadAfter: "head-at-completeness-pass",
+      routeFingerprint: currentRouteFingerprint(),
+    });
+    // No cmr_fix_committed bridging the two heads → barrier-external advance.
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-from-external-advance",
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toEqual([
+      { familyBase: "family/291-base", cmrPass: "completeness" },
+      { familyBase: "family/291-base", cmrPass: "correctness" },
+    ]);
+  });
+
   it("resume reruns both passes when routeFingerprint changes even if the family HEAD matches", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
