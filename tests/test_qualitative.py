@@ -74,6 +74,19 @@ def test_p4_guard_rejects_long_connective_and_complete_abstract_axes():
         assert "已略去" in safe_historical_text(injected), injected
 
 
+def test_p4_guard_covers_machine_axis_aliases_without_hiding_countable_facts():
+    """Aliases accepted by the game schema are hidden by the same P4 registry."""
+    for injected in (
+        "军心高达90",
+        "凝聚力为20",
+        "影响力从30升到70",
+        "粮饷保障长期恶化至20",
+    ):
+        assert "已略去" in safe_historical_text(injected), injected
+
+    assert safe_historical_text("军心振作的3000人已抵营") == "军心振作的3000人已抵营"
+
+
 def test_qualitative_band_preserves_zero_and_uses_default_only_for_missing_or_invalid():
     words = ("low", "middle", "high", "very high", "max")
 

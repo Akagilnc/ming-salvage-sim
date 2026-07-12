@@ -139,6 +139,28 @@ def _recover_secret_order_exclusions(
     return list(dict.fromkeys(people)), list(dict.fromkeys(offices))
 
 
+def canonical_secret_order_exclusions(
+    content: Any, explicit_people: Iterable[str], explicit_offices: Iterable[str], text: object,
+) -> tuple[List[str], List[str]]:
+    """Canonicalize every secret-order exclusion before it enters staging or DB.
+
+    Explicit structured fields and natural-language clauses describe one
+    authorization invariant: excluded people and offices never receive a later
+    projection.  Resolve aliases and registry-backed office targets together so
+    function calls, CLI recovery, and durable issuance cannot drift apart.
+    """
+    recovered_people, recovered_offices = _recover_secret_order_exclusions(content, text)
+    people = _snapshot_secret_order_people(
+        content, [*explicit_people, *recovered_people], [],
+    )
+    offices = []
+    for value in [*explicit_offices, *recovered_offices]:
+        target = re.sub(r"(?:诸官|官员|诸司|诸人|上下|众人)$", "", str(value).strip())
+        if target:
+            offices.append(target)
+    return list(dict.fromkeys(people)), list(dict.fromkeys(offices))
+
+
 class ProvinceFiscalTickOutcome(NamedTuple):
     region_id: str
     result: Any
@@ -10051,17 +10073,9 @@ class GameDB:
         ).fetchone()[0]
         if active_count >= 20:
             raise ValueError(f"进行中密令已达上限（20条），请先结案部分密令再下新令。当前：{active_count} 条。")
-        recovered_names, recovered_offices = _recover_secret_order_exclusions(
-            self.content, f"{title}\n{content}",
+        raw_excluded_names, excluded_offices = canonical_secret_order_exclusions(
+            self.content, excluded_names or [], excluded_offices or [], f"{title}\n{content}",
         )
-        raw_excluded_names = _snapshot_secret_order_people(
-            self.content, [*(excluded_names or []), *recovered_names], [],
-        )
-        excluded_offices = list(dict.fromkeys(
-            str(office).strip()
-            for office in [*(excluded_offices or []), *recovered_offices]
-            if str(office).strip()
-        ))
         # Institution-level secrecy is resolved at issuance.  The current
         # office/type is only a lookup key; retaining the matched people makes
         # the blacklist stable when someone is transferred or the order later

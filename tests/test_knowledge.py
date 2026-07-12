@@ -293,3 +293,24 @@ def test_chapter_counterpart_does_not_repeat_derived_turn_report_source(game):
 
     assert marker in (counterpart or "")
     assert "月结改写" not in (counterpart or "")
+
+
+def test_character_projection_shows_monthly_public_source_once_after_chapter_write(game):
+    """A chapter counterpart must not re-aggregate its turn-report counterpart."""
+    from ming_sim.memories import _public_chapter_counterpart
+
+    db, state, content = game
+    reader = next(c for c in content.characters.values() if c.office_type == "礼部")
+    marker = "正常月结公开正文"
+    db.record_public_knowledge_event(state, "公开事项", marker, source_id="test:monthly-once")
+    db.save_turn_report(state, marker, knowledge_items=db.knowledge_items_for_turn(state.turn))
+    db.save_chapter_memory(
+        state, "朝局", "章节改写", knowledge_items=db.knowledge_items_for_turn(state.turn),
+        public_body=_public_chapter_counterpart(db.knowledge_items_for_turn(state.turn)),
+    )
+
+    projected = "\n".join(
+        str(item.get("body") or "")
+        for item in db.get_character_knowledge(state, reader.name)["public_events"]
+    )
+    assert projected.count(marker) == 1
