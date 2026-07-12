@@ -162,9 +162,26 @@ export function routeSmokeBashEvidenceSatisfied(input: {
 
 // ── #884 bare-ping smoke (credential oracle only; no docker/tool loop) ───────
 
-/** Prompt that asks the model to echo a nonce — the bare-ping oracle. */
-export function buildBarePingPrompt(nonce: string): string {
-  return `Reply with exactly: ${nonce}`;
+/**
+ * Render the versioned bare-ping prompt (`prompts/route-smoke.md`) with the
+ * nonce. Production and tests share this renderer so the file is the flow
+ * source of truth — not a hard-coded string in the backend.
+ */
+export function buildBarePingPrompt(
+  nonce: string,
+  template: string = "Reply with exactly: {{NONCE}}",
+): string {
+  if (!template.includes("{{NONCE}}")) {
+    throw new Error(
+      "bare-ping prompt template must contain {{NONCE}} placeholder",
+    );
+  }
+  return template.split("{{NONCE}}").join(nonce);
+}
+
+/** Load the checked-in bare-ping prompt template from promptsDir. */
+export function loadBarePingPromptTemplate(promptsDir: string): string {
+  return readFileSync(join(promptsDir, "route-smoke.md"), "utf8");
 }
 
 /** True when stdout carries the nonce (credential-alive oracle). */
@@ -2382,7 +2399,10 @@ export class RealBackend implements Backend {
       this.assertProviderAuth(entry.slug, entryPool, providerAuth);
 
       const nonce = randomUUID();
-      const prompt = buildBarePingPrompt(nonce);
+      const prompt = buildBarePingPrompt(
+        nonce,
+        loadBarePingPromptTemplate(this.opts.promptsDir),
+      );
       const built = barePingArgv(resolved.provider, resolved.model, prompt);
       const emptyDir = mkdtempSync(join(tmpdir(), "route-smoke-ping-"));
       try {
