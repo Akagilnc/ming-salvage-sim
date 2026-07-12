@@ -385,7 +385,10 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
   });
 
-  it("findingsCount>0 without structured findings does not ship (count channel needs identities)", async () => {
+  it("findingsCount>0 without structured findings is shape/protocol failure (not court, not pass)", async () => {
+    // ADR 0062: defective report shape → protocol failure terminal (same family
+    // as exhausted rewrite), never fabricated cmr_passed and never a
+    // claim/disposition court contract_drift.
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
@@ -404,14 +407,10 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
-    expect(
-      backend.ledger.some(
-        (e) =>
-          e.status === "aborted" &&
-          /findings count|structured findings|findingsCount/i.test(
-            typeof e.reason === "string" ? e.reason : "",
-          ),
-      ),
-    ).toBe(true);
+    const abort = backend.ledger.find((e) => e.status === "aborted");
+    expect(String(abort?.reason ?? "")).toMatch(
+      /outcome protocol failure|structured findings are missing/i,
+    );
+    expect(abort?.stopSummary?.reason).toBe("infra_failure");
   });
 });
