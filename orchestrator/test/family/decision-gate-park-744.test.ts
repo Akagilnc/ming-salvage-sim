@@ -271,17 +271,14 @@ describe("#744 family decision_gate parks for human (production seam)", () => {
     ).toBe(true);
   });
 
-  it("true infra terminal (contract_drift) still lands as failure — not a decision park", async () => {
+  it("true infra terminal still lands as failure — not a decision park", async () => {
     const familyBackend = new FakeFamilyBackend();
     seedShippedOnly(familyBackend);
     familyBackend.dispatchWorker = async (spec) => {
       if (spec.kind === "verify") {
-        // Moving family HEAD during verify triggers the read-only contract_drift terminal.
-        familyBackend.head = "family-base-drifted";
-        return {
-          kind: "completed",
-          output: { kind: "verify", converged: true },
-        };
+        // #876: HEAD drift is no longer a capital crime. Use a real process
+        // failure so the terminal remains a non-park failure.
+        throw new Error("verify worker infra hard failure");
       }
       const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
       return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
@@ -301,7 +298,7 @@ describe("#744 family decision_gate parks for human (production seam)", () => {
 
     // An answer must NOT reopen a failure-kind escalation.
     await recordFamilyEscalationAnswered(familyBackend, {
-      answer: "this answer should not reopen a contract_drift failure",
+      answer: "this answer should not reopen a failure-kind escalation",
       source: "human",
     });
     const reentry = await runFamily({

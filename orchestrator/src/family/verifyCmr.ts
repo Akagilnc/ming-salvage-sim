@@ -93,7 +93,6 @@ import {
   resolveOnlineReviewRoundTrigger,
   runOnlineReviewLoopStage,
   shipLedgerTriggeredAtFromFamilyLedger,
-  verifyReviewerHeadMovedStopSummary,
   waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
 } from "../onlineReviewLoop.js";
@@ -988,28 +987,6 @@ function coderFixFailureStopSummary(input: {
   });
 }
 
-function cmrReviewerHeadMovedStopSummary(input: {
-  readonly pass: IntegratedCmrPass;
-  readonly familyHeadBefore: string;
-  readonly familyHeadAfter: string;
-}): StopSummary {
-  return contractDriftStopSummary({
-    summary:
-      `integrated CMR ${input.pass} reviewer moved family HEAD: ` +
-      `${input.familyHeadBefore} -> ${input.familyHeadAfter}`,
-    repairHint:
-      "restore the reviewer/coder role boundary so CMR review leaves HEAD unchanged, then rerun the family CMR gate",
-    heads: {
-      reportedFamilyHead: input.familyHeadBefore,
-      actualFamilyHead: input.familyHeadAfter,
-      sources: {
-        reportedFamilyHead: "pre-CMR family head",
-        actualFamilyHead: "post-CMR family head",
-      },
-    },
-  });
-}
-
 async function runCmrCoderFix(input: {
   readonly pass: IntegratedCmrPass;
   readonly familyBackend: FamilyBackend;
@@ -1235,6 +1212,17 @@ async function readPostCmrCurrentHead(
   return liveHead.length > 0 ? liveHead : undefined;
 }
 
+/**
+ * Post-CMR git observation helper (#876 / #853).
+ *
+ * Head position + tracked residue are **routing / advisory plumbing**, never a
+ * capital crime. Mismatches are ledger-visible so operators can see them, but
+ * the pass continues on the three channels (exit / findings count / decision
+ * gate). Only a broken reader (true infra) still durable-aborts.
+ *
+ * Returns an abort outcome only for infra read failures; otherwise `undefined`
+ * so the caller keeps the normal finding/fix/re-review path.
+ */
 async function guardPostCmrReviewerGitState(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
@@ -1273,21 +1261,15 @@ async function guardPostCmrReviewerGitState(input: {
     familyHeadAfter !== undefined &&
     currentHead !== familyHeadAfter
   ) {
-    const reason =
-      `integrated CMR ${pass} reviewer checked out a different HEAD: ` +
-      `family base ${familyHeadAfter}, current HEAD ${currentHead}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: currentHead,
-      stopSummary: cmrReviewerHeadMovedStopSummary({
-        pass,
-        familyHeadBefore: familyHeadAfter,
-        familyHeadAfter: currentHead,
-      }),
+    // #876: checkout ≠ family base is advisory routing telemetry, not conviction.
+    await familyBackend.appendFamilyLedger({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: `cmr:${pass}`,
+      reason:
+        `integrated CMR ${pass} reviewer checked out a different HEAD: ` +
+        `family base ${familyHeadAfter}, current HEAD ${currentHead}`,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter: currentHead };
   }
   let trackedStatus: readonly string[];
   try {
@@ -1313,21 +1295,16 @@ async function guardPostCmrReviewerGitState(input: {
     familyHeadAfter !== undefined &&
     familyHeadAfter !== expectedFamilyHead
   ) {
-    const reason =
-      `integrated CMR ${pass} reviewer moved family HEAD: ` +
-      `${expectedFamilyHead} -> ${familyHeadAfter}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter,
-      stopSummary: cmrReviewerHeadMovedStopSummary({
-        pass,
-        familyHeadBefore: expectedFamilyHead,
-        familyHeadAfter,
-      }),
+    // #876: family-base HEAD advancement is routing plumbing (diff scope for the
+    // next pass / coder-fix), never a contract_drift death.
+    await familyBackend.appendFamilyLedger({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: `cmr:${pass}`,
+      reason:
+        `integrated CMR ${pass} reviewer moved family HEAD: ` +
+        `${expectedFamilyHead} -> ${familyHeadAfter}`,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
   }
   if (trackedStatus.length > 0) {
     const reason =
@@ -1341,7 +1318,6 @@ async function guardPostCmrReviewerGitState(input: {
     });
     // #853: reviewer edits are ordinary diff content. Preserve them for the
     // current round's normal finding/fix/re-review path; never abort or discard.
-    return undefined;
   }
   return undefined;
 }
@@ -1643,19 +1619,19 @@ export async function runFamilyOnlineReviewLoop(input: {
           input.familyBackend,
           input.familyBase,
         );
+        // #876: HEAD movement is routing plumbing (diff scope for the next
+        // fixer/verify round), never a contract_drift capital crime.
         if (
           headBefore !== undefined &&
           headAfter !== undefined &&
           headAfter !== headBefore
         ) {
-          throw new OnlineReviewLoopTerminal({
-            ok: false,
-            terminalState: "contract_drift",
-            round,
-            stopSummary: verifyReviewerHeadMovedStopSummary({
-              headBefore,
-              headAfter,
-            }),
+          await input.familyBackend.appendFamilyLedger({
+            status: "worker_dispatched",
+            event: "worker_dispatched",
+            workerStep: `online-verify:${round}`,
+            reason:
+              `online review verify worker moved HEAD: ${headBefore} -> ${headAfter}`,
           });
         }
         if (
@@ -1678,11 +1654,6 @@ export async function runFamilyOnlineReviewLoop(input: {
         landing,
         {
           afterEachAttempt: assertFamilyVerifyReadOnlyContract,
-          extraCallerOwns: (o) =>
-            "kind" in o &&
-            o.kind === "thrown" &&
-            o.error instanceof OnlineReviewLoopTerminal &&
-            o.error.result.terminalState === "contract_drift",
         },
       );
       // Cursor R11 medium + self-check: escalated must park with decision_gate_park
@@ -2368,11 +2339,9 @@ async function runIntegratedCmrPass(input: {
       cmrResult.kind === "outcome_protocol_failure" &&
       cmrAttempt < MAX_DISPATCH_ATTEMPTS
     ) {
-      // #598 r3 (codexA): an `outcome_protocol_failure` can also come from the
-      // rewrite worker MOVING HEAD / leaving tracked changes (outcomeRewriteGitFailure).
-      // Guard git state BEFORE the fresh re-dispatch so the next cmr attempt never runs
-      // on top of a moved/dirty family base — if the reviewer moved HEAD, abort (not a
-      // retryable state); otherwise re-dispatch on the clean expected head.
+      // #598 r3 / #876: observe git state before re-dispatch (head position is
+      // routing plumbing). HEAD/tracked residue is advisory — never a capital
+      // crime that skips the ordinary mechanical retry path.
       const reDispatchFamilyHead = await readPostCmrFamilyHead(
         familyBackend,
         familyBase,

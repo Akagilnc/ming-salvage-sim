@@ -136,10 +136,8 @@ import {
   slicePendingRoundTriggerFromFixGap,
   slicePostFixVerifyPendingFromMarkerGap,
   onlineReviewFixerNothingToFixStopSummary,
-  VerifyWorkerHeadMovedError,
   VerifyWorkerWorktreeDirtyError,
   verifyReadOnlyWorktreeDrift,
-  verifyReviewerHeadMovedStopSummary,
   verifyReviewerWorktreeDirtyStopSummary,
   worktreePorcelainFingerprint,
   verifySideEffectFailureStopSummary,
@@ -5825,15 +5823,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     gitOutputLines(worktree, ["status", "--porcelain"]),
                   )
                 : "";
+            // #876: HEAD position is routing plumbing (diff scope), never a
+            // capital crime. Only tracked worktree residue remains caller-owned
+            // observability for the read-only verify role (#853 / #600 r32).
             const drift = verifyReadOnlyWorktreeDrift({
               headBefore,
               headAfter: headAfterAttempt,
               porcelainBefore: porcelainBefore ?? "",
               porcelainAfter,
             });
-            if (drift === "head") {
-              throw new VerifyWorkerHeadMovedError(headBefore, headAfterAttempt);
-            }
             if (drift === "worktree") {
               throw new VerifyWorkerWorktreeDirtyError(
                 porcelainBefore ?? "",
@@ -5841,9 +5839,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
             }
           };
-          // S9: read-only contract drift is caller-owned (no cleanResidue on
-          // retry — verify must not rewrite the tree). S12 与全角色一致：crash
-          // 重试 continue-on-current-worktree AS-IS（user override 2026-07-10，
+          // S9: tracked-worktree residue is caller-owned (no cleanResidue on
+          // retry — verify must not rewrite the tree). HEAD movement is NOT
+          // caller-owned (#876). S12 与全角色一致：crash 重试
+          // continue-on-current-worktree AS-IS（user override 2026-07-10，
           // 同 21906adf / #600）；已提交 HEAD 与未提交残渣均保留，soul 的
           // residual-HEAD-push 契约负责收尾。勿再单侧加 reset（#740）。
           const reviewResetOpt: MechanicalRetryOptions =
@@ -5852,8 +5851,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   callerOwns: (o) =>
                     "kind" in o &&
                     o.kind === "thrown" &&
-                    (o.error instanceof VerifyWorkerHeadMovedError ||
-                      o.error instanceof VerifyWorkerWorktreeDirtyError),
+                    o.error instanceof VerifyWorkerWorktreeDirtyError,
                   rethrowOnExhaustion: true,
                 }
               : {};
@@ -6003,8 +6001,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 } catch (err) {
                   dispatchError = err;
                 }
-                // Always assert (online R10 Codex P1): mutate-then-throw must
-                // surface contract_drift, not mechanical-retry on a dirty tree.
+                // Always observe post-attempt worktree state. Tracked residue
+                // remains caller-owned; HEAD movement is advisory (#876).
                 await assertVerifyReadOnlyContract();
                 if (dispatchError !== undefined) throw dispatchError;
                 const result = workerResult!;
@@ -6031,13 +6029,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               durableMechanicalRetryOptions(reviewStep, reviewResetOpt),
             );
           } catch (err) {
-            if (err instanceof VerifyWorkerHeadMovedError) {
-              const stopSummary = verifyReviewerHeadMovedStopSummary({
-                headBefore: err.headBefore,
-                headAfter: err.headAfter,
-              });
-              return await errorTermination(reviewStep, err, { stopSummary });
-            }
             if (err instanceof VerifyWorkerWorktreeDirtyError) {
               const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
                 trackedStatus: err.porcelainAfter
@@ -6337,13 +6328,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             try {
               await assertVerifyReadOnlyContract();
             } catch (err) {
-              if (err instanceof VerifyWorkerHeadMovedError) {
-                const stopSummary = verifyReviewerHeadMovedStopSummary({
-                  headBefore: err.headBefore,
-                  headAfter: err.headAfter,
-                });
-                return await errorTermination(reviewStep, err, { stopSummary });
-              }
               if (err instanceof VerifyWorkerWorktreeDirtyError) {
                 const stopSummary = verifyReviewerWorktreeDirtyStopSummary({
                   trackedStatus: err.porcelainAfter
@@ -7038,9 +7022,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ? {
                       reason: "contract_drift",
                       summary:
-                        "online review verify worker moved HEAD (contract_drift)",
+                        "online review loop stopped for contract drift",
                       repairHint:
-                        "restore the verify/fixer role boundary so verify leaves HEAD unchanged, then rerun the online review loop",
+                        "inspect the online-review stop summary and repair the underlying protocol failure, then rerun the online review loop",
                     }
                   : stopSummaryForEscalation(
                       escalateOf(lastOutput) ?? {
