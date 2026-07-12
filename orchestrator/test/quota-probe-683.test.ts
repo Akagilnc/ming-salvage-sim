@@ -1062,3 +1062,16 @@ describe("#683 S9 online-review leg: 429 parks + re-feed re-fires verify (not em
     expect(result.status).not.toBe("error");
   });
 });
+
+describe("#883 codex capture ritual deleted", () => {
+  it("every codex-provider agent has session capture disabled (ephemeral legs never write session files)", async () => {
+    const { agentForSlug } = await import("../src/modelRegistry.js");
+    for (const slug of ["gpt-5.6-sol", "gpt-5.6-sol-high", "gpt-5.6-luna"]) {
+      expect(agentForSlug(slug).captureSessions).toBe(false);
+    }
+  });
+  it("claude legs keep capture (working path: resume + usage parsing)", async () => {
+    const { agentForSlug } = await import("../src/modelRegistry.js");
+    expect(agentForSlug("opus").captureSessions).toBe(true);
+  });
+});
