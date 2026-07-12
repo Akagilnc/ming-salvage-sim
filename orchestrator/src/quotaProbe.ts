@@ -16,6 +16,15 @@
  */
 
 import type { StepId } from "./types.js";
+import {
+  ExternalCallExhaustedError,
+  ExternalCallTimeoutError,
+  classifyExternalCallFailure,
+  defaultExternalCallRecorder,
+  execFileAsyncWithTimeout,
+  withExternalCallRetry,
+  withProviderTimeout,
+} from "./externalCall.js";
 
 /** Provider quota pool the worker is drawing from. */
 export type QuotaPoolId = "zai" | "opencode-go" | "grok" | "unknown";
@@ -394,41 +403,79 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
   }
   const fetchFn = deps.fetch ?? fetch;
   const model = deps.zaiModel ?? "glm-5.2";
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   try {
-    const res = await fetchFn(ZAI_CHAT_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: "p" }],
-        max_tokens: 4,
-      }),
-      signal: AbortSignal.timeout(deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS),
-    });
-    const body = await res.text();
-    if (res.status === 429 || isQuotaLimitBody(body)) {
-      return {
-        kind: "quota_limited",
-        resetAt: parseZaiResetAt(body),
-        detail: body.slice(0, 500),
-      };
-    }
-    if (!res.ok) {
-      // Non-429 HTTP failure: fail-safe hang (not a quota wall we can wait on).
-      return {
-        kind: "error",
-        cause: `zai probe HTTP ${res.status}: ${body.slice(0, 200)}`,
-      };
-    }
-    return { kind: "ok" };
+    // #884: provider/HTTP seam + S5 disposition — timeout/5xx retry ×2; 429 no retry.
+    return await withExternalCallRetry(
+      "probe:zai",
+      async () => {
+      // Clock covers fetch AND body consumption — a headers-only hang on
+      // res.text() is still the #884 provider never-responds class.
+      const { status, body } = await withProviderTimeout(
+        "probe:zai",
+        async (signal) => {
+          const res = await fetchFn(ZAI_CHAT_URL, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${key}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model,
+              messages: [{ role: "user", content: "p" }],
+              max_tokens: 4,
+            }),
+            signal,
+          });
+          const text = await res.text();
+          return { status: res.status, body: text };
+        },
+        { timeoutMs },
+      );
+      // Status-first disposition (#884 cmr r7): 429 = quota (no retry);
+      // 5xx = transient (retry ×2) even if body mentions "quota"/"rate limit";
+      // body-based quota inference only when status does not already decide.
+      if (status === 429) {
+        return {
+          kind: "quota_limited" as const,
+          resetAt: parseZaiResetAt(body),
+          detail: body.slice(0, 500),
+        };
+      }
+      if (status >= 500 && status <= 599) {
+        throw Object.assign(
+          new Error(`zai probe HTTP ${status}: ${body.slice(0, 200)}`),
+          { status },
+        );
+      }
+      if (status < 200 || status >= 300) {
+        // Durable 4xx (auth etc.): surface as probe error, no retry.
+        // (Other non-2xx that are not 429/5xx.)
+        return {
+          kind: "error" as const,
+          cause: `zai probe HTTP ${status}: ${body.slice(0, 200)}`,
+        };
+      }
+      // 2xx with quota-shaped body (some gateways return 200 + limit text).
+      if (isQuotaLimitBody(body)) {
+        return {
+          kind: "quota_limited" as const,
+          resetAt: parseZaiResetAt(body),
+          detail: body.slice(0, 500),
+        };
+      }
+      return { kind: "ok" as const };
+    },
+      { record: defaultExternalCallRecorder },
+    );
   } catch (err) {
-    return {
-      kind: "error",
-      cause: err instanceof Error ? err.message : String(err),
-    };
+    const cause =
+      err instanceof ExternalCallExhaustedError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    return { kind: "error", cause };
   }
 }
 
@@ -440,90 +487,91 @@ async function runOpencodePongProbe(
   const run =
     deps.runCommand ??
     (async (argv, opts) => {
-      const { spawn } = await import("node:child_process");
-      return await new Promise<{
-        code: number;
-        stdout: string;
-        stderr: string;
-      }>((resolve, reject) => {
-        const child = spawn(argv[0]!, argv.slice(1), {
-          stdio: ["ignore", "pipe", "pipe"],
+      // #884: hard-clocked subprocess (SIGKILL) with stage name.
+      try {
+        const stdout = await execFileAsyncWithTimeout(argv[0]!, argv.slice(1), {
+          stage: "probe:opencode-go",
+          timeoutMs: opts.timeoutMs,
         });
-        let stdout = "";
-        let stderr = "";
-        const timer = setTimeout(() => {
-          child.kill("SIGTERM");
-          reject(new Error(`opencode PONG probe timed out after ${opts.timeoutMs}ms`));
-        }, opts.timeoutMs);
-        child.stdout?.on("data", (c: Buffer) => {
-          stdout += c.toString("utf8");
-        });
-        child.stderr?.on("data", (c: Buffer) => {
-          stderr += c.toString("utf8");
-        });
-        // Readable 'error' without a listener becomes an uncaught exception and
-        // can crash the process — log-and-continue; close/error on the ChildProcess
-        // still settle the promise.
-        child.stdout?.on("error", (err: Error) => {
-          console.warn(
-            `[orchestrator] opencode probe stdout error: ${err.message}`,
-          );
-        });
-        child.stderr?.on("error", (err: Error) => {
-          console.warn(
-            `[orchestrator] opencode probe stderr error: ${err.message}`,
-          );
-        });
-        child.on("error", (err) => {
-          clearTimeout(timer);
-          reject(err);
-        });
-        child.on("close", (code) => {
-          clearTimeout(timer);
-          resolve({ code: code ?? 1, stdout, stderr });
-        });
-      });
+        return { code: 0, stdout, stderr: "" };
+      } catch (err) {
+        if (err instanceof ExternalCallTimeoutError) throw err;
+        // Preserve stdout+stderr from the child (quota text may be stdout-only).
+        const e = err as Error & { stdout?: string; stderr?: string };
+        const stdout = typeof e.stdout === "string" ? e.stdout : "";
+        const stderr =
+          typeof e.stderr === "string" && e.stderr.length > 0
+            ? e.stderr
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        return { code: 1, stdout, stderr };
+      }
     });
 
   try {
-    const out = await run(
-      [
-        "opencode",
-        "run",
-        "--dangerously-skip-permissions",
-        "-m",
-        model,
-        "Reply with exactly: PONG",
-      ],
-      { timeoutMs },
+    const out = await withExternalCallRetry(
+      "probe:opencode-go",
+      async () => {
+        const result = await run(
+          [
+            "opencode",
+            "run",
+            "--dangerously-skip-permissions",
+            "-m",
+            model,
+            "Reply with exactly: PONG",
+          ],
+          { timeoutMs },
+        );
+        const combined = `${result.stdout}\n${result.stderr}`;
+        if (result.code !== 0) {
+          // Status/exit-first (#884 cmr r7 same-type as zai): transient
+          // network/5xx retry ×2 even when stderr mentions quota text.
+          if (classifyExternalCallFailure(combined) === "transient") {
+            throw new Error(
+              `opencode PONG transient exit ${result.code}: ${combined.slice(0, 200)}`,
+            );
+          }
+          if (isQuotaLimitBody(combined)) {
+            return {
+              kind: "quota_limited" as const,
+              detail: combined.slice(0, 500),
+            };
+          }
+          return {
+            kind: "error" as const,
+            cause: `opencode PONG exit ${result.code}: ${combined.slice(0, 200)}`,
+          };
+        }
+        // Exit 0 with quota-shaped body (gateways that 200 with limit text).
+        if (isQuotaLimitBody(combined)) {
+          return {
+            kind: "quota_limited" as const,
+            detail: combined.slice(0, 500),
+          };
+        }
+        if (!/\bPONG\b/i.test(result.stdout)) {
+          // No PONG within a successful exit is treated as a soft wall (Go pool
+          // often returns empty stdout when rate-limited and silently retrying).
+          return {
+            kind: "quota_limited" as const,
+            detail: "opencode PONG missing from stdout (treat as quota wall)",
+          };
+        }
+        return { kind: "ok" as const };
+      },
+      { record: defaultExternalCallRecorder },
     );
-    const combined = `${out.stdout}\n${out.stderr}`;
-    if (isQuotaLimitBody(combined)) {
-      return {
-        kind: "quota_limited",
-        detail: combined.slice(0, 500),
-      };
-    }
-    if (out.code !== 0) {
-      return {
-        kind: "error",
-        cause: `opencode PONG exit ${out.code}: ${combined.slice(0, 200)}`,
-      };
-    }
-    if (!/\bPONG\b/i.test(out.stdout)) {
-      // No PONG within a successful exit is treated as a soft wall (Go pool
-      // often returns empty stdout when rate-limited and silently retrying).
-      return {
-        kind: "quota_limited",
-        detail: "opencode PONG missing from stdout (treat as quota wall)",
-      };
-    }
-    return { kind: "ok" };
+    return out;
   } catch (err) {
-    return {
-      kind: "error",
-      cause: err instanceof Error ? err.message : String(err),
-    };
+    const cause =
+      err instanceof ExternalCallExhaustedError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    return { kind: "error", cause };
   }
 }
 

@@ -13,9 +13,12 @@ import {
   execFileAsyncWithTimeout,
   execFileWithTimeout,
   withExternalCallRetry,
+  withExternalCallRetrySync,
   withProviderTimeout,
   DEFAULT_PROVIDER_TIMEOUT_MS,
   EXTERNAL_CALL_MAX_ATTEMPTS,
+  shWithClock,
+  hostSubprocessRetryAttempts,
   type ExternalCallAttemptRecord,
 } from "../src/externalCall.js";
 
@@ -48,30 +51,66 @@ describe("#884 external-call clocks", () => {
     expect(classifyExternalCallFailure(new Error("auth token expired"))).toBe(
       "durable",
     );
+    // Status-first free text: 5xx token beats quota vocabulary (opencode path).
+    expect(
+      classifyExternalCallFailure(
+        "HTTP 503 upstream quota / rate limit text in 503 body",
+      ),
+    ).toBe("transient");
+    expect(
+      classifyExternalCallFailure("exit 1: HTTP 429 rate limit exceeded"),
+    ).toBe("quota");
   });
 
-  it("provider hang: AbortSignal.timeout fires a stage-named timeout error", async () => {
+  it("provider hang: non-cooperative promise still times out (wrapper races abort)", async () => {
+    // #884 hang class: provider never settles AND ignores AbortSignal.
+    // The wrapper must still reject — cooperative signal handling alone is not enough.
     await expect(
       withProviderTimeout(
         "probe:zai",
-        async (signal) =>
-          await new Promise<void>((_resolve, reject) => {
-            signal.addEventListener("abort", () => {
-              reject(
-                signal.reason instanceof Error
-                  ? signal.reason
-                  : new Error(String(signal.reason)),
-              );
-            });
-            // never resolve — pure hang
+        async (_signal) =>
+          await new Promise<void>(() => {
+            // never resolve, never listen to signal
           }),
-        { timeoutMs: 30 },
+        { timeoutMs: 40 },
       ),
     ).rejects.toMatchObject({
       name: "ExternalCallTimeoutError",
       stage: "probe:zai",
       seam: "provider",
     });
+  });
+
+  it("provider hang through retry: timeout → transient ×2 → stage-named exhaust", async () => {
+    const records: ExternalCallAttemptRecord[] = [];
+    await expect(
+      withExternalCallRetry(
+        "probe:never",
+        () =>
+          withProviderTimeout(
+            "probe:never",
+            async () =>
+              await new Promise<void>(() => {
+                /* hang */
+              }),
+            { timeoutMs: 25 },
+          ),
+        {
+          sleepMs: async () => {},
+          record: (r) => records.push(r),
+        },
+      ),
+    ).rejects.toMatchObject({
+      name: "ExternalCallExhaustedError",
+      stage: "probe:never",
+      attempts: EXTERNAL_CALL_MAX_ATTEMPTS,
+    });
+    expect(records.map((r) => r.outcome)).toEqual([
+      "retry",
+      "retry",
+      "exhausted",
+    ]);
+    expect(records.every((r) => r.stage === "probe:never")).toBe(true);
   });
 
   it("subprocess hang: execFileAsyncWithTimeout kills the child and throws typed error", async () => {
@@ -228,5 +267,136 @@ describe("#884 external-call clocks", () => {
         outcome: "ok",
       }),
     ]);
+  });
+
+  it("sync seam: transient timeout retries ×2 then exhausts with stage name", () => {
+    let attempts = 0;
+    const records: ExternalCallAttemptRecord[] = [];
+    expect(() =>
+      withExternalCallRetrySync(
+        "admission:gh",
+        () => {
+          attempts += 1;
+          throw new ExternalCallTimeoutError({
+            stage: "admission:gh",
+            timeoutMs: 10,
+            seam: "subprocess",
+          });
+        },
+        {
+          sleepMs: () => {},
+          record: (r) => records.push(r),
+        },
+      ),
+    ).toThrow(ExternalCallExhaustedError);
+    expect(attempts).toBe(EXTERNAL_CALL_MAX_ATTEMPTS);
+    expect(records.map((r) => r.outcome)).toEqual([
+      "retry",
+      "retry",
+      "exhausted",
+    ]);
+    expect(records.every((r) => r.stage === "admission:gh")).toBe(true);
+  });
+
+  it("sync seam: 429/quota is NOT retried", () => {
+    let attempts = 0;
+    const records: ExternalCallAttemptRecord[] = [];
+    expect(() =>
+      withExternalCallRetrySync(
+        "admission:gh",
+        () => {
+          attempts += 1;
+          throw new Error("HTTP 429 rate limit");
+        },
+        {
+          sleepMs: () => {},
+          record: (r) => records.push(r),
+        },
+      ),
+    ).toThrow(/429/);
+    expect(attempts).toBe(1);
+    expect(records.map((r) => r.outcome)).toEqual(["quota"]);
+  });
+
+  it("mutation seam defaults to no-retry (retry:false → 1 attempt even outside vitest)", () => {
+    const prev = process.env.VITEST;
+    delete process.env.VITEST;
+    try {
+      expect(hostSubprocessRetryAttempts({ retry: false })).toBe(1);
+      expect(hostSubprocessRetryAttempts({ retry: true })).toBe(
+        EXTERNAL_CALL_MAX_ATTEMPTS,
+      );
+      expect(hostSubprocessRetryAttempts({})).toBe(EXTERNAL_CALL_MAX_ATTEMPTS);
+    } finally {
+      if (prev === undefined) delete process.env.VITEST;
+      else process.env.VITEST = prev;
+    }
+  });
+
+  it("production shape: shWithClock({retry:false}) never re-fires a timed-out mutation", () => {
+    const prev = process.env.VITEST;
+    delete process.env.VITEST;
+    try {
+      // Point at a hanging node so the clock fires; retry:false must not re-spawn.
+      expect(() =>
+        shWithClock(
+          process.execPath,
+          ["-e", "setInterval(() => {}, 1000)"],
+          {
+            stage: "subprocess:git-push-mutation",
+            timeoutMs: 40,
+            retry: false,
+          },
+        ),
+      ).toThrow(/timed out|ExternalCallTimeout/i);
+    } finally {
+      if (prev === undefined) delete process.env.VITEST;
+      else process.env.VITEST = prev;
+    }
+  });
+
+  it("RealBackend/RealFamilyBackend mixed sh seam disables mutation retry", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const realBackend = readFileSync(
+      join(here, "../src/realBackend.ts"),
+      "utf8",
+    );
+    const familyBackend = readFileSync(
+      join(here, "../src/family/realFamilyBackend.ts"),
+      "utf8",
+    );
+    const familyDriver = readFileSync(
+      join(here, "../src/familyDriver.ts"),
+      "utf8",
+    );
+    const workerMonitor = readFileSync(
+      join(here, "../src/workerMonitor.ts"),
+      "utf8",
+    );
+    // Class-level sh is a mixed read/write seam — must default retry:false so
+    // git push/merge/clone and gh writes are exactly-once on timeout.
+    expect(realBackend).toMatch(
+      /protected sh\([\s\S]*?shWithClock\([\s\S]*?retry:\s*false/,
+    );
+    expect(familyBackend).toMatch(
+      /protected sh\([\s\S]*?shWithClock\([\s\S]*?retry:\s*false/,
+    );
+    // familyDriver defaultSh also cuts git branches — same exactly-once rule.
+    expect(familyDriver).toMatch(
+      /defaultSh[\s\S]*?shWithClock\([\s\S]*?retry:\s*false/,
+    );
+    // Spawn acknowledgement must carry a stage-named clock (no infinite wait).
+    expect(workerMonitor).toMatch(/dispatch:\$\{input\.stepId\}:spawn/);
+    expect(workerMonitor).toMatch(/ExternalCallTimeoutError/);
+    // kill-axis: spawn-ack timer rejects with timeout only — no bare-PID kill
+    // between setTimeout callback open and its close (cmr r10).
+    const spawnTimer = workerMonitor.match(
+      /const timer = setTimeout\(\(\) => \{([\s\S]*?)\}, spawnTimeoutMs\)/,
+    );
+    expect(spawnTimer?.[1] ?? "").toMatch(/ExternalCallTimeoutError/);
+    expect(spawnTimer?.[1] ?? "").not.toMatch(/process\.kill\s*\(/);
   });
 });

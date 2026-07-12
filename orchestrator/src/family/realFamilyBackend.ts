@@ -43,7 +43,7 @@
  * end-to-end — that is the下一个 unit.
  */
 
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "../externalCall.js";
 import {
   appendFileSync,
   chmodSync,
@@ -487,11 +487,13 @@ export class RealFamilyBackend implements FamilyBackend {
    * dedicated clone (every family git op anchors there).
    */
   protected sh(file: string, args: string[], cwd?: string): string {
-    return execFileSync(file, args, {
+    // Mixed read/write seam (merge/push/pr create + rev-parse). Default
+    // no-retry so a timed-out mutation is never auto-replayed (#884 cmr r7).
+    return shWithClock(file, args, {
+      stage: `subprocess:${file}`,
       cwd: cwd ?? this.opts.workingRepo,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
+      retry: false,
+    });
   }
 
   protected verifyFamilyShipPr(input: {
@@ -1402,10 +1404,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (spec.kind === "cleanup") {
       if (landing?.cleanupDispatch !== undefined) {
         const ghSh: Sh = (file, args) =>
-          execFileSync(file, args, {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-          }).trim();
+          shWithClock(file, args, { stage: `dispatch:${file}`, retry: false });
         try {
           const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
           return { kind: "completed", output };

@@ -14,6 +14,7 @@ import {
   barePingArgv,
   barePingNonceSatisfied,
   buildBarePingPrompt,
+  loadBarePingPromptTemplate,
   RealBackend,
   resolveRouteSmokeIdleTimeoutSeconds,
 } from "../src/realBackend.js";
@@ -137,17 +138,25 @@ class BarePingBackend extends RealBackend {
 }
 
 describe("#884 bare-ping pure helpers", () => {
-  it("builds a nonce-echo prompt (oracle lives in the prompt, not a tool loop)", () => {
-    const prompt = buildBarePingPrompt("abc-nonce-1");
+  it("builds a nonce-echo prompt from the versioned route-smoke template", () => {
+    const template = loadBarePingPromptTemplate(promptsDir);
+    expect(template).toContain("{{NONCE}}");
+    const prompt = buildBarePingPrompt("abc-nonce-1", template);
     expect(prompt).toContain("abc-nonce-1");
+    expect(prompt).not.toContain("{{NONCE}}");
     expect(prompt.toLowerCase()).toMatch(/reply|exactly/);
   });
 
-  it("accepts stdout that echoes the nonce", () => {
+  it("accepts exact reply or a full line equal to the nonce (not substring embed)", () => {
+    expect(barePingNonceSatisfied("abc-nonce-1", "abc-nonce-1")).toBe(true);
     expect(barePingNonceSatisfied("thought...\nabc-nonce-1\n", "abc-nonce-1")).toBe(
       true,
     );
     expect(barePingNonceSatisfied("nope", "abc-nonce-1")).toBe(false);
+    // Embedded mid-token must not certify the credential.
+    expect(barePingNonceSatisfied("prefix-abc-nonce-1-suffix", "abc-nonce-1")).toBe(
+      false,
+    );
   });
 
   it("builds one-shot CLI argv per provider (no docker, no repo, no tools)", () => {
@@ -165,8 +174,13 @@ describe("#884 bare-ping pure helpers", () => {
     expect(barePingArgv("grok", "grok-4.5", prompt)).toMatchObject({
       file: "grok",
     });
+    // Sandcastle uses standalone `agent` binary for the cursor provider.
+    expect(barePingArgv("cursor", "grok-4.5", prompt)).toMatchObject({
+      file: "agent",
+      args: expect.arrayContaining(["-p", prompt]),
+    });
     // Never references docker / sandcastle / worktree plumbing.
-    for (const p of ["codex", "claudeCode", "opencode", "grok"] as const) {
+    for (const p of ["codex", "claudeCode", "opencode", "grok", "cursor"] as const) {
       const built = barePingArgv(p, "m", prompt);
       expect(JSON.stringify(built)).not.toMatch(/docker|sandbox|worktree/i);
     }
@@ -183,9 +197,11 @@ describe("#884 bare-ping production smoke", () => {
       peak = Math.max(peak, active);
       await new Promise((r) => setTimeout(r, 30));
       active -= 1;
-      return `ack ${call.nonce}`;
+      // Full-line nonce (oracle accepts exact line; not mid-token embed).
+      return `thought\n${call.nonce}\n`;
     });
     const route = resolveRouteModels("normal", {});
+    // Owner "六路": unique by model slug (shared roles fan out one status).
     const unique = new Set(routeSmokeEntries(route).map((e) => e.slug)).size;
 
     const smoked = await backend.smokeModelRoute(route);
@@ -249,6 +265,55 @@ describe("#884 bare-ping production smoke", () => {
 
   it("maps ORCHESTRATOR_SMOKE_IDLE_SECONDS into bare-ping wall budget", () => {
     expect(resolveRouteSmokeIdleTimeoutSeconds("15")).toBe(15);
+  });
+
+  it("pool-rewritten relay ping overlaps unique legs and does not alias default pipe", async () => {
+    // #884 P5 + cmr r8: dedicated pool ping for relaySmokeEntryKey shares the
+    // same wave as unique-slug default-pipe legs; unique wave never uses the
+    // dispatch pool (would fan out pool-passed as default-passed).
+    const home = tempHome();
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
+    let active = 0;
+    let peak = 0;
+    const starts: number[] = [];
+    const pools: Array<string | undefined> = [];
+    class RelayAwareBackend extends BarePingBackend {
+      protected override async execBarePing(input: {
+        readonly slug: string;
+        readonly cwd: string;
+        readonly prompt: string;
+        readonly nonce: string;
+        readonly file: string;
+        readonly args: readonly string[];
+        readonly stdin?: string;
+        readonly timeoutMs: number;
+      }): Promise<string> {
+        // file === "grok" ⇒ pool-selected grok CLI; otherwise default pipe.
+        pools.push(input.file === "grok" ? "grok-build" : undefined);
+        return super.execBarePing(input);
+      }
+    }
+    const backend = new RelayAwareBackend(home, async (call) => {
+      starts.push(Date.now());
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 80));
+      active -= 1;
+      return call.nonce;
+    });
+    const route = resolveRouteModels("normal", { coder: "grok-4.5" });
+    const unique = new Set(routeSmokeEntries(route).map((e) => e.slug)).size;
+
+    await backend.smokeModelRoute(route, {}, "grok-build", "coder:grok-4.5");
+
+    // Unique default-pipe legs + exactly one dedicated pool relay ping.
+    expect(backend.pingCalls.length).toBe(unique + 1);
+    expect(pools.filter((p) => p === "grok-build")).toHaveLength(1);
+    expect(pools.filter((p) => p === undefined).length).toBe(unique);
+    expect(peak).toBeGreaterThan(1);
+    const skew = Math.max(...starts) - Math.min(...starts);
+    expect(skew).toBeLessThan(60);
   });
 });
 
@@ -371,14 +436,25 @@ describe("#884 driver stage line logs", () => {
     try {
       await runOrchestrator({ issueNumber: 884, backend: new StageBackend() });
       const lines = log.mock.calls.map((c) => String(c[0]));
+      const reconcileIdx = lines.findIndex((l) =>
+        /\[orchestrator:stage\] reconcile/.test(l),
+      );
+      const admissionIdx = lines.findIndex((l) =>
+        /\[orchestrator:stage\] admission/.test(l),
+      );
       const smokeIdx = lines.findIndex((l) =>
         /\[orchestrator:stage\] smoke-k/.test(l),
       );
       const dispatchIdx = lines.findIndex((l) =>
         /\[orchestrator:stage\] dispatch/.test(l),
       );
+      // Owner-named four stages must all appear on the single-slice path so a
+      // silent hang is attributable to the last entered phase.
+      expect(reconcileIdx).toBeGreaterThanOrEqual(0);
+      expect(admissionIdx).toBeGreaterThanOrEqual(0);
       expect(smokeIdx).toBeGreaterThanOrEqual(0);
       expect(dispatchIdx).toBeGreaterThan(smokeIdx);
+      expect(admissionIdx).toBeLessThan(dispatchIdx);
     } finally {
       log.mockRestore();
     }
