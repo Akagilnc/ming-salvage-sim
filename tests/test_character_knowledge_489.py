@@ -655,6 +655,42 @@ def test_disclosed_secret_source_keeps_its_public_projection(game):
     assert disclosed["body"] == "该案已奉明发"
 
 
+def test_long_knowledge_bodies_survive_storage_without_brief_card_cap(game):
+    db, state, content = game
+    reader = next(iter(content.characters.values()))
+    body = "甲" * 450 + "完整结尾"
+    db.register_character_knowledge_source(
+        state, [{"character_id": reader.name}], "audience", "长奏报", body,
+        source_id="test:long-source",
+    )
+    row = db.conn.execute(
+        "SELECT body FROM character_knowledge_sources WHERE source_id='test:long-source'"
+    ).fetchone()
+    assert row["body"].endswith("完整结尾")
+
+
+def test_secret_amendment_preserves_legacy_blacklist_and_public_disclosure(game):
+    db, state, _content = game
+    order = db.create_secret_order(state, "毕自严", "密查", "查账", [])
+    db.conn.execute(
+        "UPDATE secret_orders SET excluded_names=?, excluded_targets='{}' WHERE id=?",
+        (json.dumps(["魏忠贤"], ensure_ascii=False), order),
+    )
+    db.record_public_knowledge_event(
+        state, "密查公开", "该案已奉明发", source_id=f"secret_order:{order}"
+    )
+    assert db.update_secret_order_by_id(state, order, "续查", "继续查账")
+    saved = db.conn.execute(
+        "SELECT excluded_names FROM secret_orders WHERE id=?", (order,)
+    ).fetchone()
+    assert "魏忠贤" in json.loads(saved["excluded_names"])
+    public = db.conn.execute(
+        "SELECT body FROM character_knowledge_events WHERE source_id=? AND character_name=''",
+        (f"secret_order:{order}",),
+    ).fetchone()
+    assert public["body"] == "该案已奉明发"
+
+
 def test_secret_exclusion_is_source_scoped_not_global_for_same_bucket(game):
     db, state, content = game
     treasury_ministers = [c for c in content.characters.values() if c.office_type == "户部"]

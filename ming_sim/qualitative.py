@@ -129,7 +129,7 @@ def qualitative_audience_text(text: object, kind: str = "见闻记录") -> str:
         return safe_historical_text(rendered, kind)
     pattern = re.compile(
         rf"({names})\s*(?:(?:值|评分|分数|得分|指标|数值)\s*)?"
-        r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从)\s*|(?=[-+]?\d))"
+        r"(?:[:：=]\s*|(?:由|为|达|高达|至|是|从|不足|不到|低于|少于|不满|超过|高于|大于)\s*|(?=[-+]?\d))"
         r"([-+]?\d+(?:\.\d+)?)(?:\s*/\s*100|\s*%)?",
         re.IGNORECASE,
     )

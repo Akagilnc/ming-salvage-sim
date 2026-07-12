@@ -154,7 +154,7 @@ def test_hearing_exclusion_hides_candidate_by_current_position(game, excluded_ta
 
 
 @pytest.mark.parametrize("excluded_target", ["office_type", "office"])
-def test_hearing_exclusion_overrides_same_faction_network_candidate(game, excluded_target):
+def test_source_local_exclusion_preserves_same_faction_network_candidate(game, excluded_target):
     db, state, content = game
     recommender = next(c for c in content.characters.values() if c.office_type == "兵部")
     candidate = next(c for c in content.characters.values()
@@ -184,7 +184,7 @@ def test_hearing_exclusion_overrides_same_faction_network_candidate(game, exclud
 
     names = {row["name"] for row in db.list_recommendation_candidates(state, recommender.name)}
 
-    assert candidate.name not in names
+    assert candidate.name in names
 
 
 def test_same_faction_future_debut_is_not_recommendable(game):

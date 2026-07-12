@@ -93,26 +93,6 @@ def _visible_sources(db: Any, recommender: str) -> Iterable[tuple[Any, Any]]:
         yield source, None
 
 
-def _excluded_from_visible_source(db: Any, recommender: str, target: Any) -> bool:
-    """Return whether a source about *this* target excludes it.
-
-    An exclusion is a boundary on one source's participant roster, not a
-    global office-wide veto over candidates independently known elsewhere.
-    """
-    for source, event in _visible_sources(db, recommender):
-        if source is None or not _source_visible_to(source, recommender, db=db):
-            continue
-        if event is not None and not _source_visible_to(event, recommender, db=db):
-            continue
-        if str(target["name"]) not in _roster_names(source["participant_roster"]):
-            continue
-        if not _source_visible_to(source, recommender, target=target, db=db):
-            return True
-        if event is not None and not _source_visible_to(event, recommender, target=target, db=db):
-            return True
-    return False
-
-
 def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> List[Dict[str, object]]:
     """Build the two recommendation slices visible to one minister.
 
@@ -143,8 +123,6 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     ).fetchall()
     result: List[Dict[str, object]] = []
     for row in rows:
-        if _excluded_from_visible_source(db, recommender, row):
-            continue
         same_faction = str(row["faction"] or "") == faction
         if (
             same_faction

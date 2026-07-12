@@ -5728,7 +5728,7 @@ class GameDB:
                         _qualitative_army_stat("mobility", row["mobility"]),
                         _qualitative_army_stat("loyalty", row["loyalty"]),
                         arrears_text, row["status"],
-                        _qualitative_army_stat("equipment", row["firearm_equipment"])
+                        f"火器：{_qualitative_army_stat('equipment', row['firearm_equipment']).removeprefix('装备：')}"
                         if qualitative_equipment else row["firearm_equipment"],
                         row["cannon_equipment"],
                     ))
@@ -10033,7 +10033,7 @@ class GameDB:
             "(turn,year,period,kind,title,body,source_id,participant_roster,excluded_names,excluded_targets) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (state.turn, state.year, state.period, sanitize_sqlite_text(kind),
-             sanitize_sqlite_text(title)[:80], sanitize_sqlite_text(body)[:400],
+             sanitize_sqlite_text(title)[:80], sanitize_sqlite_text(body),
              sanitize_sqlite_text(source_id),
              safe_json_dumps(roster, ensure_ascii=False),
              safe_json_dumps(list(dict.fromkeys(str(x).strip() for x in (excluded_names or []) if str(x).strip())), ensure_ascii=False),
@@ -10051,7 +10051,7 @@ class GameDB:
         for name in dict.fromkeys(str(p).strip() for p in participants if str(p).strip()):
             self.conn.execute(
                 "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-                (state.turn, state.year, state.period, name, kind, title[:80], body[:400], source_id, excluded_json),
+                (state.turn, state.year, state.period, name, kind, title[:80], body, source_id, excluded_json),
             )
         if commit:
             self.conn.commit()
@@ -10073,7 +10073,7 @@ class GameDB:
         ))
         self.conn.execute(
             "INSERT OR REPLACE INTO character_knowledge_events (turn,year,period,character_name,kind,title,body,source_id,excluded_names) VALUES (?,?,?,?,?,?,?,?,?)",
-            (state.turn, state.year, state.period, "", "public", title[:80], body[:400], source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
+            (state.turn, state.year, state.period, "", "public", title[:80], body, source_id, json.dumps(merged_exclusions, ensure_ascii=False)),
         )
         if commit:
             self.conn.commit()
@@ -10243,8 +10243,15 @@ class GameDB:
             prior_targets = {}
         if not isinstance(prior_targets, dict):
             prior_targets = {}
+        try:
+            legacy_people = json.loads(row["excluded_names"] or "[]")
+        except (TypeError, ValueError):
+            legacy_people = []
+        if not isinstance(legacy_people, list):
+            legacy_people = []
         people, offices = canonical_secret_order_exclusions(
-            self.content, prior_targets.get("people", []), prior_targets.get("offices", []),
+            self.content, [*legacy_people, *prior_targets.get("people", [])],
+            prior_targets.get("offices", []),
             f"{title}\n{content}",
         )
         excluded_names = _snapshot_secret_order_people(self.content, people, offices)
@@ -10273,7 +10280,7 @@ class GameDB:
             # A separately recorded public disclosure is historical evidence,
             # not a stale mirror, and must survive an order amendment.
             self.conn.execute(
-                "DELETE FROM character_knowledge_events WHERE source_id=?",
+                "DELETE FROM character_knowledge_events WHERE source_id=? AND character_name != ''",
                 (f"secret_order:{int(order_id)}",),
             )
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")

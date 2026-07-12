@@ -102,6 +102,13 @@ def test_secret_exclusion_recovery_splits_each_explicit_person(monkeypatch):
     assert result["excluded_names"] == ["魏忠贤", "王体乾", "曹化淳"]
 
 
+@pytest.mark.parametrize("wording", ["对魏忠贤保密", "莫让魏忠贤知晓"])
+def test_secret_exclusion_recovery_covers_target_first_and_imperative(wording, monkeypatch):
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+    result = cb._extract_secret_order(f"密查此案，{wording}。", "臣领旨", "毕自严")
+    assert result["excluded_names"] == ["魏忠贤"]
+
+
 def test_secret_exclusion_recovery_covers_common_clause_and_shipped_office(monkeypatch):
     """CLI recovery keeps an omitted institutional exclusion structured."""
     monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
