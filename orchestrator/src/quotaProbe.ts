@@ -16,7 +16,11 @@
  */
 
 import type { StepId } from "./types.js";
-import { withProviderTimeout } from "./externalCall.js";
+import {
+  ExternalCallExhaustedError,
+  withExternalCallRetry,
+  withProviderTimeout,
+} from "./externalCall.js";
 
 /** Provider quota pool the worker is drawing from. */
 export type QuotaPoolId = "zai" | "opencode-go" | "grok" | "unknown";
@@ -397,46 +401,59 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
   const model = deps.zaiModel ?? "glm-5.2";
   const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   try {
-    // #884: in-process provider/HTTP seam — stage-named hard clock + AbortSignal.
-    const res = await withProviderTimeout(
-      "probe:zai",
-      async (signal) =>
-        fetchFn(ZAI_CHAT_URL, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${key}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: "p" }],
-            max_tokens: 4,
+    // #884: provider/HTTP seam + S5 disposition — timeout/5xx retry ×2; 429 no retry.
+    return await withExternalCallRetry("probe:zai", async () => {
+      const res = await withProviderTimeout(
+        "probe:zai",
+        async (signal) =>
+          fetchFn(ZAI_CHAT_URL, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${key}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model,
+              messages: [{ role: "user", content: "p" }],
+              max_tokens: 4,
+            }),
+            signal,
           }),
-          signal,
-        }),
-      { timeoutMs },
-    );
-    const body = await res.text();
-    if (res.status === 429 || isQuotaLimitBody(body)) {
-      return {
-        kind: "quota_limited",
-        resetAt: parseZaiResetAt(body),
-        detail: body.slice(0, 500),
-      };
-    }
-    if (!res.ok) {
-      // Non-429 HTTP failure: fail-safe hang (not a quota wall we can wait on).
-      return {
-        kind: "error",
-        cause: `zai probe HTTP ${res.status}: ${body.slice(0, 200)}`,
-      };
-    }
-    return { kind: "ok" };
+        { timeoutMs },
+      );
+      const body = await res.text();
+      if (res.status === 429 || isQuotaLimitBody(body)) {
+        // Successful classification (not a throw) → no retry; park path.
+        return {
+          kind: "quota_limited" as const,
+          resetAt: parseZaiResetAt(body),
+          detail: body.slice(0, 500),
+        };
+      }
+      if (!res.ok) {
+        if (res.status >= 500 && res.status <= 599) {
+          // Transient: throw so withExternalCallRetry retries ×2.
+          throw Object.assign(
+            new Error(`zai probe HTTP ${res.status}: ${body.slice(0, 200)}`),
+            { status: res.status },
+          );
+        }
+        // Durable 4xx (auth etc.): surface as probe error, no retry.
+        return {
+          kind: "error" as const,
+          cause: `zai probe HTTP ${res.status}: ${body.slice(0, 200)}`,
+        };
+      }
+      return { kind: "ok" as const };
+    });
   } catch (err) {
-    return {
-      kind: "error",
-      cause: err instanceof Error ? err.message : String(err),
-    };
+    const cause =
+      err instanceof ExternalCallExhaustedError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    return { kind: "error", cause };
   }
 }
 
