@@ -34,9 +34,8 @@
  *   reaching for `runStep` / `resumeSession` / `push` directly.
  */
 
-import { execFileSync } from "node:child_process";
-
 import { mintRunId } from "./runId.js";
+import { shWithClock } from "./externalCall.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import {
   offlineSyntheticPollAdmissible,
@@ -1134,9 +1133,8 @@ function gitOutputLines(
 ): string[] {
   if (worktree === undefined) return [];
   try {
-    return execFileSync("git", ["-C", worktree.path, ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
+    return shWithClock("git", ["-C", worktree.path, ...args], {
+      stage: "reconcile:git",
     })
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -3058,10 +3056,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingCiS9Polls = 0;
 
   function ghSh(file: string, args: string[]): string {
-    return execFileSync(file, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
+    return shWithClock(file, args, { stage: `admission:${file}` });
   }
 
   function defaultRepo(): string {
@@ -3071,10 +3066,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return "Akagilnc/ming-salvage-sim";
     }
     try {
-      return execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
+      return shWithClock(
+        "gh",
+        ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        { stage: "admission:gh-repo" },
+      );
     } catch {
       return "Akagilnc/ming-salvage-sim";
     }
@@ -5700,10 +5696,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 file: string,
                 args: string[],
               ) => string = (file, args) =>
-                execFileSync(file, args, {
-                  encoding: "utf8",
-                  stdio: ["ignore", "pipe", "pipe"],
-                }).trim();
+                shWithClock(file, args, { stage: `dispatch:${file}` });
               const recheck = pollPrReviewState(ghSh, {
                 repo: defaultRepo(),
                 prUrl: lastShipOutput.pr,

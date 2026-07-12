@@ -54,7 +54,7 @@ import {
   type CmrEnvelope,
 } from "./cmrClassification.js";
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "../externalCall.js";
 
 import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
 import {
@@ -1489,10 +1489,7 @@ export async function runFamilyOnlineReviewLoop(input: {
     return { ok: false, terminalState: "decision_gate_raised", round: 1 };
   }
   const ghSh = (file: string, args: string[]) =>
-    execFileSync(file, args, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
+    shWithClock(file, args, { stage: `dispatch:${file}` });
   let modelRoute: ResolvedModelRoute;
   try {
     modelRoute =

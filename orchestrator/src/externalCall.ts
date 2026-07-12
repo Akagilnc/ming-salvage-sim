@@ -355,6 +355,50 @@ export interface ExternalCallRetryOptions {
 }
 
 /**
+ * Default production recorder: stage-named line on every non-trivial outcome
+ * (retry / exhausted / quota / durable / multi-attempt ok). First-attempt ok
+ * stays quiet so hot paths are not log-spam.
+ */
+export function defaultExternalCallRecorder(
+  event: ExternalCallAttemptRecord,
+): void {
+  if (event.outcome === "ok" && event.attempt === 1) return;
+  const err =
+    event.error !== undefined && event.error.length > 0
+      ? ` error=${event.error}`
+      : "";
+  console.warn(
+    `[orchestrator:external-call] stage=${event.stage} attempt=${event.attempt} outcome=${event.outcome}${err}`,
+  );
+}
+
+/**
+ * Host subprocess with clock + S5 retry disposition + stage-named records.
+ * Preferred entry for production `gh`/`git`/CLI one-shots.
+ */
+export function shWithClock(
+  file: string,
+  args: readonly string[],
+  opts?: {
+    readonly stage?: string;
+    readonly cwd?: string;
+    readonly timeoutMs?: number;
+  },
+): string {
+  const stage = opts?.stage ?? `subprocess:${file}`;
+  return withExternalCallRetrySync(
+    stage,
+    () =>
+      execFileWithTimeout(file, [...args], {
+        stage,
+        timeoutMs: opts?.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS,
+        cwd: opts?.cwd,
+      }).trim(),
+    { record: defaultExternalCallRecorder },
+  );
+}
+
+/**
  * Run an external call with S5-family transient retry. Exhaustion raises
  * {@link ExternalCallExhaustedError} with the stage name for degrade/park paths.
  */
