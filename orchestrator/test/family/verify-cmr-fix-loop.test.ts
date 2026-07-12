@@ -1424,6 +1424,8 @@ class UnknownFamilyBaselineThenGoodBackend extends ReviewFixRereviewBackend {
 }
 
 class KnownCoderGitMismatchThenGoodBackend extends ReviewFixRereviewBackend {
+  private coderFixRound = 0;
+
   override async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -1439,17 +1441,43 @@ class KnownCoderGitMismatchThenGoodBackend extends ReviewFixRereviewBackend {
       priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
       blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
     });
+    // #878: first fix leaves head unmoved (empty-handed + self-report
+    // discrepancy) → short-circuit redispatch; second fix advances head so
+    // re-review can run. Never hang on permanent head-stuck scripted backends.
+    if (this.coderFixRound++ === 0) {
+      return {
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: false,
+          commitsAdded: 0,
+          selfReportDiscrepancy: {
+            code: "coder_self_report_disagrees_with_git_commits",
+            selfReportedCommitted: true,
+            selfReportedCommitsAdded: 1,
+            gitCommitCount: 0,
+          },
+        },
+      };
+    }
+    this.currentFamilyHead = "head-after-coder-fix";
     return {
       kind: "completed",
       output: {
         kind: "coder",
-        committed: false,
-        commitsAdded: 0,
-        selfReportDiscrepancy: {
-          code: "coder_self_report_disagrees_with_git_commits",
-          selfReportedCommitted: true,
-          selfReportedCommitsAdded: 1,
-          gitCommitCount: 0,
+        committed: true,
+        commitsAdded: 1,
+        repairEvidence: {
+          findingScope: {
+            identityKeys: [BLOCKING_FAMILY_CMR_KEY],
+            locations: [BLOCKING_FAMILY_CMR_FINDING.location],
+          },
+          changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
+          tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
+          sameClassBugScan:
+            "rg \"runCmrCoderFix|cmr_fix_committed\" orchestrator/src/family orchestrator/test/family",
+          introducedRegressionCheck:
+            "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
         },
       },
     };
@@ -2114,7 +2142,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     }));
   });
 
-  it("records a known coder/git mismatch as telemetry and lets fresh CMR judge the attempted fix", async () => {
+  it("records a known coder/git mismatch as telemetry; #878 redispatches fix until head moves then re-reviews", async () => {
     const backend = new KnownCoderGitMismatchThenGoodBackend();
 
     const result = await runVerifyCmr({
@@ -2124,15 +2152,27 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result.ran).toBe(true);
-    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "coder")).toHaveLength(1);
+    // #878: first empty-handed fix (head stuck) → second fix (head moves) → re-review.
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "coder")).toHaveLength(2);
     expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr").length).toBeGreaterThan(1);
     expect(backend.ledger.some(
       (entry) => entry.status === "aborted" && /repair evidence gate failed/.test(entry.reason ?? ""),
     )).toBe(false);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_fix_committed",
-      reason: expect.stringMatching(/telemetry family\/git baseline unknown|warning coder_self_report/),
+      reason: expect.stringMatching(
+        /telemetry family\/git baseline unknown|warning coder_self_report|left family head unmoved/,
+      ),
     }));
+    // No cmr between the two coder-fix redispatches (head-not-moved short-circuit).
+    const coderIndexes = backend.dispatches
+      .map((d, i) => (d.kind === "coder" ? i : -1))
+      .filter((i) => i >= 0);
+    expect(
+      backend.dispatches
+        .slice(coderIndexes[0]! + 1, coderIndexes[1]!)
+        .every((d) => d.kind !== "cmr"),
+    ).toBe(true);
   });
 
   it("does not retry coder-fix in the observation layer when repair evidence is incomplete", async () => {
@@ -2171,19 +2211,36 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.telemetryRepoResolutions).toBe(2);
   });
 
-  it("lets fresh re-review judge a coder-fix when family HEAD did not move", async () => {
+  /**
+   * #878 head-not-moved short-circuit (positive):
+   * fix leg completed but family head did not advance → skip re-review
+   * (no S3/cmr between) and redispatch the fix leg (S5/coder) until head moves.
+   * Head position is scheduling plumbing, not judgment.
+   */
+  it("#878 head not moved → no re-review dispatch, redispatch coder-fix (positive)", async () => {
     const backend = new NoHeadMovementThenGoodBackend();
 
     const result = await runVerifyCmr({
       phase: "final",
-      familyBase: "family/551-base",
+      familyBase: "family/878-head-not-moved",
       familyBackend: backend,
     });
 
     expect(result).toEqual({ ok: true, ran: true });
+    // Positive schedule: cmr → coder (head stuck) → coder (head moves) → cmr re-review …
+    // NO cmr between the two coder-fix dispatches.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
-      expect.objectContaining({ kind: "coder" }),
+      expect.objectContaining({
+        kind: "coder",
+        promptFile: "coder_fix.md",
+        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "coder",
+        promptFile: "coder_fix.md",
+        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
       expect.objectContaining({
         kind: "cmr",
         cmrPass: "completeness",
@@ -2193,6 +2250,47 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({ kind: "ship" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
+    const coderIndexes = backend.dispatches
+      .map((d, i) => (d.kind === "coder" ? i : -1))
+      .filter((i) => i >= 0);
+    expect(coderIndexes).toHaveLength(2);
+    // No re-review (cmr) may land between the two fix redispatches.
+    const between = backend.dispatches.slice(coderIndexes[0]! + 1, coderIndexes[1]!);
+    expect(between.every((d) => d.kind !== "cmr")).toBe(true);
+  });
+
+  /**
+   * #878 head-not-moved short-circuit (negative):
+   * fix leg advanced family head → normal path: one coder-fix then re-review,
+   * no second coder-fix redispatch from the head-stuck short-circuit.
+   */
+  it("#878 head moved → re-review after single coder-fix, no fix redispatch (negative)", async () => {
+    const backend = new ReviewFixRereviewBackend();
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/878-head-moved",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches).toEqual([
+      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
+      expect.objectContaining({
+        kind: "coder",
+        promptFile: "coder_fix.md",
+        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({
+        kind: "cmr",
+        cmrPass: "completeness",
+        priorCmrFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
+      }),
+      expect.objectContaining({ kind: "cmr", cmrPass: "correctness" }),
+      expect.objectContaining({ kind: "ship" }),
+      ...ONLINE_REVIEW_DISPATCH_TAIL,
+    ]);
+    expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(1);
   });
 
   it("preserves coder-fix outcome protocol failure details in the durable abort after mechanical retries (#855 review)", async () => {
