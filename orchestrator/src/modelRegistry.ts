@@ -103,7 +103,14 @@ type ProviderFactory = (model: string, options?: ModelProviderOptions) => sc.Age
 
 const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFactory>> = {
   claudeCode: (model, options) => sc.claudeCode(model, options as sc.ClaudeCodeOptions | undefined),
-  codex: (model, options) => sc.codex(model, options as sc.CodexOptions | undefined),
+  // #883 owner order (2026-07-12 「删了它」): session capture is structurally
+  // dead for codex legs — the cmr rules mandate --ephemeral (no session file is
+  // ever written), so the post-run capture ritual can only throw, which killed
+  // two completed #883 coder iterations (completion unrecognized → idle-hang
+  // SIGKILL). Disable capture at the single codex factory seam; Claude legs
+  // keep capture (theirs works and feeds resume/usage parsing).
+  codex: (model, options) =>
+    sc.codex(model, { ...(options as sc.CodexOptions | undefined), captureSessions: false }),
   opencode: (model, options) => sc.opencode(model, options as sc.OpenCodeOptions | undefined),
   copilot: (model, options) => sc.copilot(model, options as sc.CopilotOptions | undefined),
   cursor: (model, options) => sc.cursor(model, options as sc.CursorOptions | undefined),
