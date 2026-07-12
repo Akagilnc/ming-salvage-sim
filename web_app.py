@@ -68,6 +68,7 @@ from ming_sim.llm_contract import fail_if_llm_error
 from ming_sim.decree import advance_without_edict
 from ming_sim.issues import _format_issue_ongoing, commitment_display_text, commitment_progress_payload, commitment_timed_bar_value
 from ming_sim.memories import effect_brief
+from ming_sim.mindreading import build_mindreading_payload, current_inner_court_attendant_name
 from ming_sim.session import GameSession
 from ming_sim.session import AUTO_SAVE_PREFIX, _pending_action_failure_payload
 from ming_sim.skills import available_skill_ids, skill_display_name, skill_source_labels
@@ -1506,6 +1507,16 @@ class WebGame:
         accepted_turn: Optional[int] = None,
     ) -> Dict[str, Any]:
         character = self.session._character(minister_name)
+        mindreading_payload = None
+        reader_name = current_inner_court_attendant_name(self.db)
+        reader = self.content.characters.get(reader_name) if reader_name else None
+        if reader is not None and reader_name != minister_name:
+            mindreading_payload = build_mindreading_payload(
+                self.db, self.state, reader, character, answer,
+            )
+            truths = mindreading_payload.get("truths") if isinstance(mindreading_payload, dict) else None
+            if not isinstance(truths, dict) or not truths:
+                raise RuntimeError("读心 payload 为空或缺少真相投影")
         self.chat_history[minister_name].append({"role": "minister", "content": answer})
         if minister_name not in self.session.temporary_characters:
             turn = int(self.state.turn if accepted_turn is None else accepted_turn)
@@ -1515,6 +1526,7 @@ class WebGame:
         return {
             "minister": minister_name,
             "answer": answer,
+            "mindreading": mindreading_payload,
             "history": self.chat_history[minister_name],
             "court_action": court_action,
             "next_minister": next_minister,

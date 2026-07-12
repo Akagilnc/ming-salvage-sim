@@ -7,7 +7,8 @@ import types
 from types import SimpleNamespace
 
 import ming_sim.cli_backend as cb
-from ming_sim.session import GameSession
+import web_app as web_module
+from ming_sim.session import ChatTurnResult, GameSession
 from ming_sim.skills import bind_content as bind_skills_content
 from web_app import WebGame
 
@@ -586,6 +587,79 @@ def test_llm_failure_does_not_leave_half_chat_in_history(game):
     assert db.conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0] == 0
     row = db.conn.execute("SELECT status FROM chat_turns").fetchone()
     assert row["status"] == "failed"
+
+
+def test_nonstream_audience_returns_mindreading_from_completed_reply(game, monkeypatch):
+    """非流式入口也必须经过召对完成 seam，不能只在 streaming 路径补读心。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    web_game = _web_game(db, state, content, _FakeAgent())
+    web_game.session.chat = lambda *_args, **_kwargs: ChatTurnResult(answer="臣愿担责。")
+    db.conn.execute("UPDATE characters SET office='司礼监随堂' WHERE name='王承恩'")
+    db.conn.execute("UPDATE characters SET office='御前近臣' WHERE name='曹化淳'")
+    db.conn.commit()
+    sentinel = {"truths": {"潜台词": "他愿担责，却仍留了一层余地。"}}
+    seen = {}
+
+    def injected_builder(db_arg, state_arg, reader, target, minister_reply):
+        seen.update(
+            db=db_arg,
+            state=state_arg,
+            reader=reader.name,
+            target=target.name,
+            reply=minister_reply,
+        )
+        return sentinel
+
+    monkeypatch.setattr(web_module, "build_mindreading_payload", injected_builder)
+
+    payload = web_game.chat(minister_name, "户部钱粮如何？")
+
+    assert payload["mindreading"] == sentinel
+    assert seen == {
+        "db": db,
+        "state": state,
+        "reader": "曹化淳",
+        "target": minister_name,
+        "reply": "臣愿担责。",
+    }
+
+
+def test_stream_audience_emits_reply_before_mindreading_payload(game, monkeypatch):
+    """流式回话先出，完成事件再携带以完整回话生成的近臣读心。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    web_game = _web_game(db, state, content, _FakeAgent(chunks=["臣愿", "担责。"]))
+    sentinel = {"truths": {"潜台词": "这句担责是在向皇爷表明心迹。"}}
+
+    monkeypatch.setattr(
+        web_module,
+        "build_mindreading_payload",
+        lambda _db, _state, _reader, _target, reply: sentinel if reply == "臣愿担责。" else {},
+    )
+
+    events = list(web_game.chat_stream(minister_name, "辽饷如何？"))
+
+    assert events[:-1] == [
+        {"type": "delta", "content": "臣愿"},
+        {"type": "delta", "content": "担责。"},
+    ]
+    assert events[-1]["type"] == "done"
+    assert events[-1]["payload"]["mindreading"] == sentinel
+
+
+def test_stream_audience_rejects_empty_mindreading_builder_payload(game, monkeypatch):
+    """真实 web 完成 seam 对空壳 builder 必须响亮失败，防止接线退化成假绿。"""
+    db, state, content = game
+    minister_name = "毕自严"
+    web_game = _web_game(db, state, content, _FakeAgent())
+    monkeypatch.setattr(web_module, "build_mindreading_payload", lambda *_args: {})
+
+    events = list(web_game.chat_stream(minister_name, "辽饷如何？"))
+
+    assert events[-1]["type"] == "error"
+    assert "读心 payload" in events[-1]["message"]
+    assert all(event["type"] != "done" for event in events)
 
 
 class _RaisingActionSession(_FakeSession):
