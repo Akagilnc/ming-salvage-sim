@@ -586,6 +586,13 @@ def build_minister_tools(character: Character, context: CourtContext,
             excluded_offices = [str(k).strip() for k in excluded_offices if str(k).strip()] if isinstance(excluded_offices, list) else []
         except (ValueError, TypeError):
             excluded_offices = []
+        # Stage the same canonical targets that the durable write boundary
+        # enforces.  This keeps function-calling's optional fields from
+        # producing a visibly unscoped candidate before confirmation.
+        from ming_sim.db import canonical_secret_order_exclusions
+        excluded, excluded_offices = canonical_secret_order_exclusions(
+            context.db.content, excluded, excluded_offices, f"{t}\n{c}",
+        )
         real_assignee = (assignee or "").strip() or character.name
         try:
             deadline = max(0, min(int(deadline_months or 0), 36))
