@@ -418,7 +418,8 @@ describe("#685 route tool smoke", () => {
     const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
     const home = mkdtempSync(join(tmpdir(), "route-smoke-production-"));
     const route = resolveRouteModels("normal", {});
-    const smokeRunCount = new Set(routeSmokeEntries(route).map(({ slug }) => slug)).size;
+    // #884: one bare-ping per route entry key (model×pipe / role), not bare slug.
+    const smokeRunCount = new Set(routeSmokeEntries(route).map(({ key }) => key)).size;
     try {
       const backend = productionSmokeBackend(home);
 
