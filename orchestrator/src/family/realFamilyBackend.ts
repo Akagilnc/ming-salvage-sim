@@ -3748,14 +3748,14 @@ const cmrFindingDispositionSchema = z
     boundedReopen: z.string().optional(),
   })
   .strict();
-// #875: priorFindingDispositions are worker prose at parse time — incomplete
-// accepted_suppressed fields must NOT become malformed death payloads. Governance
-// authority for *finding* suppressions stays strict on cmrDispositionEvidenceSchema
-// below; pass-time acceptedSuppressions metadata still filters via
-// hasAcceptedSuppressionAuthority (incomplete prose simply does not govern).
+// #875: claim/disposition arrays are optional worker prose at parse time —
+// omitting them or leaving accepted_suppressed fields incomplete must NOT become
+// malformed death. Governance for *finding* suppressions stays strict on
+// cmrDispositionEvidenceSchema; pass-time acceptedSuppressions metadata still
+// filters via hasAcceptedSuppressionAuthority (incomplete prose does not govern).
 const cmrClosureSchema = {
-  claimedFixedFindingIdentityKeys: z.array(nonEmpty),
-  priorFindingDispositions: z.array(cmrFindingDispositionSchema),
+  claimedFixedFindingIdentityKeys: z.array(nonEmpty).optional(),
+  priorFindingDispositions: z.array(cmrFindingDispositionSchema).optional(),
 } as const;
 // #604 slice 4 (ADR 0062): the CMR reviewer contract no longer carries routing
 // disposition kinds — the only disposition a reviewer may emit is the
@@ -4000,9 +4000,15 @@ function classifyCmrOutcomePayload(
       converged: true,
       successfulLegs: converged.successfulLegs,
       ...(converged.skippedLegs !== undefined ? { skippedLegs: converged.skippedLegs } : {}),
-      claimedFixedFindingIdentityKeys:
-        converged.claimedFixedFindingIdentityKeys,
-      priorFindingDispositions: converged.priorFindingDispositions,
+      ...(converged.claimedFixedFindingIdentityKeys !== undefined
+        ? {
+            claimedFixedFindingIdentityKeys:
+              converged.claimedFixedFindingIdentityKeys,
+          }
+        : {}),
+      ...(converged.priorFindingDispositions !== undefined
+        ? { priorFindingDispositions: converged.priorFindingDispositions }
+        : {}),
       ...(converged.findings !== undefined
         ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
         : {}),
@@ -4018,8 +4024,15 @@ function classifyCmrOutcomePayload(
       reason: red.data.reason,
       successfulLegs: red.data.successfulLegs,
       ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
-      claimedFixedFindingIdentityKeys: red.data.claimedFixedFindingIdentityKeys,
-      priorFindingDispositions: red.data.priorFindingDispositions,
+      ...(red.data.claimedFixedFindingIdentityKeys !== undefined
+        ? {
+            claimedFixedFindingIdentityKeys:
+              red.data.claimedFixedFindingIdentityKeys,
+          }
+        : {}),
+      ...(red.data.priorFindingDispositions !== undefined
+        ? { priorFindingDispositions: red.data.priorFindingDispositions }
+        : {}),
       ...(red.data.findings !== undefined
         ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
         : {}),
@@ -4031,8 +4044,8 @@ function classifyCmrOutcomePayload(
     kind: "malformed",
     reason:
       `${source} matched no valid shape (expected one of: ` +
-      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
-      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
+      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys?,priorFindingDispositions?,evidencePaths}, " +
+      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys?,priorFindingDispositions?,evidencePaths}, " +
       "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
   };
 }
