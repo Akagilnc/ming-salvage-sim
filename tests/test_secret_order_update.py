@@ -6,6 +6,32 @@
 
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.mark.parametrize(
+    ("clause", "expected_kind", "expected_target"),
+    [
+        ("对魏忠贤保密", "people", "魏忠贤"),
+        ("别让户部知道", "offices", "户部"),
+        ("莫让魏忠贤知晓", "people", "魏忠贤"),
+    ],
+)
+def test_secret_order_persists_explicit_secrecy_wording(
+    game, clause, expected_kind, expected_target,
+):
+    db, state, _content = game
+    minister = db.conn.execute(
+        "SELECT name FROM characters WHERE office_type NOT IN ('后宫','宗藩','未仕') LIMIT 1"
+    ).fetchone()["name"]
+
+    order_id = db.create_secret_order(
+        state, minister, "密查账目", f"核清旧账，{clause}。", [],
+    )
+
+    order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
+    assert expected_target in order["excluded_targets"][expected_kind]
+
 
 def test_upsert_creates_then_updates(game):
     db, state, _ = game
