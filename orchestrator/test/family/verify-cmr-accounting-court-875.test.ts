@@ -252,6 +252,40 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     ).toBe(false);
   });
 
+  it("floor still fails when only an undeclared strong leg is reported (no route-declared strong credit)", async () => {
+    // After accounting-court demolition, undeclared legs must not kill via
+    // routeAccounting — but they also must not *satisfy* the retained strong-leg
+    // floor. claude-tight declares gpt-5.6-sol (+ optional agy); opus alone is
+    // strong-but-undeclared and must still trip provider_degraded floor.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: true,
+      successfulLegs: ["opus"],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    const abort = backend.ledger.find((entry) => entry.status === "aborted");
+    expect(abort?.stopSummary?.reason).toBe("provider_degraded");
+    expect(String(abort?.reason ?? "")).toMatch(/floor failed/i);
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          entry.stopSummary?.metadata?.routeAccounting !== undefined,
+      ),
+    ).toBe(false);
+  });
+
   it("converged:false + findings:[] with dropped protected prior is ordinary not_converged, not court death", async () => {
     // Pre-#875 D2: coverage audit on empty not_converged → contract_drift court.
     // Post-#875: three-channel not_converged (findings=0, not converged) still aborts

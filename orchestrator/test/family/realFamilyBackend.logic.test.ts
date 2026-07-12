@@ -1729,7 +1729,11 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     );
   });
 
-  it("rejects accepted_suppressed prior dispositions that omit reason", () => {
+  it("#875: incomplete accepted_suppressed prior disposition prose still parses as a verdict (not malformed death)", () => {
+    // Pre-#875: parse-time superRefine killed incomplete accepted_suppressed
+    // prior dispositions as malformed before verifyCmr could three-channel route.
+    // Post-#875: prior dispositions are worker prose at parse; finding.disposition
+    // governance (cmrDispositionEvidenceSchema) stays strict.
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: true,
       successfulLegs: ["gpt-5.6-sol"],
@@ -1743,19 +1747,21 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         {
           identityKey: "correctness|src/x.ts:1|accepted",
           status: "accepted_suppressed",
-          source: "#445 owner answer",
-          scope: "runner review/fix loop",
-          boundedReopen: "reopen if the same scope regresses",
+          // deliberately incomplete — missing reason/source/scope/boundedReopen
         },
       ],
     })}</cmr>\nCMR_STEP_COMPLETE`);
 
-    expect(outcome).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringContaining(
-        "cmr worker <cmr> tag matched no valid shape",
-      ),
-    });
+    expect(outcome.kind).toBe("verdict");
+    if (outcome.kind === "verdict") {
+      expect(outcome.converged).toBe(true);
+      expect(outcome.priorFindingDispositions).toEqual([
+        {
+          identityKey: "correctness|src/x.ts:1|accepted",
+          status: "accepted_suppressed",
+        },
+      ]);
+    }
   });
 
   it("rejects converged CMR verdicts that omit evidence paths", () => {
