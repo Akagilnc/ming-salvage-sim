@@ -854,23 +854,16 @@ function cmrClosureFailureReason(input: {
 }): string | undefined {
   const claimed = input.claimedFixedFindingIdentityKeys ?? [];
   const priorDispositions = input.priorFindingDispositions ?? [];
-  if (claimed.length > 0 && input.protectedPriorFindingIdentityKeys === undefined) {
-    return (
-      `integrated cmr ${input.pass} closure_context_missing: worker claimed fixed ` +
-      `prior findings but the runner supplied no protected prior finding identity set`
-    );
-  }
+  // #861 hotfix (ADR 0062): claimed-fixed keys the runner never asked about are
+  // NOT a closure failure. A fresh reviewer legitimately sees older review
+  // artifacts in the tree and may honestly report pre-resume findings as fixed;
+  // the runner only audits coverage of the keys IT supplied. The former
+  // closure_context_missing / stale-claims aborts killed live family runs on
+  // exactly that honest over-reporting (485 night run, 2026-07-12).
   const protectedPriorKeys = input.protectedPriorFindingIdentityKeys;
   const protectedKeys =
     protectedPriorKeys !== undefined ? new Set(protectedPriorKeys) : undefined;
-  if (protectedKeys !== undefined && protectedPriorKeys !== undefined) {
-    const staleClaims = claimed.filter((key) => !protectedKeys.has(key));
-    if (staleClaims.length > 0) {
-      return (
-        `integrated cmr ${input.pass} closure failed: claimed-fixed keys outside ` +
-        `the runner-supplied prior finding set: ${staleClaims.join(", ")}`
-      );
-    }
+  if (protectedPriorKeys !== undefined) {
     const claimedSet = new Set(claimed);
     const unclaimedPriorKeys = protectedPriorKeys.filter((key) => !claimedSet.has(key));
     if (unclaimedPriorKeys.length > 0) {

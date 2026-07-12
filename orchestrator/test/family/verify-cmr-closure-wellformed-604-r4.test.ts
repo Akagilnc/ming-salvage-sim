@@ -279,18 +279,21 @@ describe("#604 r4 D2 — not_converged/empty must run the well-formed closure gu
 });
 
 describe("#604 r4 D3 — first-pass self-reported closure payload is guarded", () => {
-  it("first pass (no protected keys) + new blocker + self-reported claimedFixed fails closed, NOT coder-fix", async () => {
-    // No runner-supplied prior set, yet the reviewer claims to have fixed a prior
-    // finding: `closure_context_missing`. Pre-r4 the guard was skipped on a first
-    // pass, so the NEW blocker slipped into coder-fix. The guard must now run
-    // because a closure payload is present.
+  it("#861: first pass (no protected keys) + new blocker + self-reported claimedFixed routes to coder-fix like any blocking round", async () => {
+    // #861 hotfix (ADR 0062): with no runner-supplied prior set there is nothing
+    // to audit coverage against — a chatty reviewer honestly reporting fixes it
+    // saw in older tree artifacts is worker prose, not contract drift. The NEW
+    // blocker takes the normal blocking→coder-fix path (same as the
+    // payload-free sibling below).
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,
       reason: "fresh review",
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       claimedFixedFindingIdentityKeys: ["some|self|reported|key"],
-      priorFindingDispositions: [],
+      priorFindingDispositions: [
+        { identityKey: "some|self|reported|key", status: "verified-closed" },
+      ],
       findings: [NEW_BLOCKER],
       ...CMR_EVIDENCE,
     });
@@ -304,12 +307,11 @@ describe("#604 r4 D3 — first-pass self-reported closure payload is guarded", (
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual([]);
-    expect(backend.ledger).toContainEqual(
+    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(backend.ledger).not.toContainEqual(
       expect.objectContaining({
         status: "aborted",
         reason: expect.stringContaining("closure_context_missing"),
-        stopSummary: expect.objectContaining({ reason: "contract_drift" }),
       }),
     );
   });
