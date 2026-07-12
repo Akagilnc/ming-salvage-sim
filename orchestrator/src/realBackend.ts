@@ -2364,8 +2364,10 @@ export class RealBackend implements Backend {
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const versions: Record<string, string | undefined> = {};
     for (const entry of routeSmokeEntries(route)) {
-      if (versions[entry.slug] === undefined) {
-        versions[entry.slug] = this.cliVersionForSlug(
+      // #884: key by entry.key so pool-rewritten pipes don't share a slug bucket
+      // with the default-provider entry (same class of aliasing as smoke uniqueness).
+      if (versions[entry.key] === undefined) {
+        versions[entry.key] = this.cliVersionForSlug(
           entry.slug,
           entry.key === relaySmokeEntryKey ? dispatchPool : undefined,
         );

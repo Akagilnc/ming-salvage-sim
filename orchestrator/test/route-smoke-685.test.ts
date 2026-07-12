@@ -305,7 +305,15 @@ describe("#685 route tool smoke", () => {
   it("rejects a passed smoke when the selected CLI version changes", async () => {
     const route = resolveRouteModels("normal", {});
     const smoked = await smokeRouteModels(route, async () => ({ cliVersion: "cli-1" }));
+    const sonnetKey = routeSmokeEntries(route).find((e) => e.slug === "sonnet")?.key;
+    expect(sonnetKey).toBeDefined();
 
+    // #884: freshness is entry-key scoped (with slug fallback for older maps).
+    expect(
+      routeSmokeFailure(smoked, Date.now(), 24 * 60 * 60 * 1000, {
+        [sonnetKey!]: "cli-2",
+      }),
+    ).toMatch(/CLI version changed/i);
     expect(
       routeSmokeFailure(smoked, Date.now(), 24 * 60 * 60 * 1000, { sonnet: "cli-2" }),
     ).toMatch(/CLI version changed/i);

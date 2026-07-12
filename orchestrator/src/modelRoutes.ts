@@ -543,7 +543,9 @@ export function routeSmokeFailure(
     if (!Number.isFinite(at) || now - at > maxAgeMs) {
       return `route smoke expired for ${entry.key}; last passed at ${status.at}`;
     }
-    const currentCliVersion = currentCliVersions[entry.slug];
+    // Prefer entry.key (model×pipe / role); fall back to bare slug for older maps.
+    const currentCliVersion =
+      currentCliVersions[entry.key] ?? currentCliVersions[entry.slug];
     if (currentCliVersion !== undefined && currentCliVersion !== status.cliVersion) {
       return `route smoke expired for ${entry.key}; CLI version changed from ${status.cliVersion} to ${currentCliVersion}`;
     }
