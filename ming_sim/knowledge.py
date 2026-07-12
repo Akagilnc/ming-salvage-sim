@@ -463,6 +463,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             "resolve_condition": issue["resolve_condition"],
             "fail_condition": issue["fail_condition"],
             "stop_condition": issue["stop_condition"],
+            "origin_turn": issue["origin_turn"],
             "end_turn": issue["end_turn"],
             "commitment_kind": issue["commitment_kind"],
         })

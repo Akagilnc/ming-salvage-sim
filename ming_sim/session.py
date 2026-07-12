@@ -1051,10 +1051,15 @@ class GameSession:
         augmented = message
         try:
             knowledge = self.db.get_character_knowledge(self.state, character.name)
-            if (
-                is_inner_court_attendant(character)
-                and any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情", "查访"))
-            ):
+        except Exception:
+            # Legacy projection trouble may fall back to ordinary chat, but it
+            # must be visible rather than silently authorising a factual reply.
+            return "【近臣回奏暂不可用：见闻记录读取失败；不得据此臆答事实。】\n\n" + message
+        if (
+            is_inner_court_attendant(character)
+            and any(word in message for word in ("官缺", "巡抚", "总督", "督抚", "欠饷", "军情", "敌情", "流寇", "贼情", "查访"))
+        ):
+            try:
                 # The report is written to the durable, character-scoped
                 # knowledge source before rebuilding the projection.  This
                 # prevents a keyword hit from injecting a global snapshot into
@@ -1065,12 +1070,14 @@ class GameSession:
                     chat_turn_id=chat_turn_id,
                 )
                 knowledge = self.db.get_character_knowledge(self.state, character.name)
+            except Exception:
+                return "【近臣回奏暂不可用：查访未能持久留档；不得据此臆答事实。】\n\n" + message
+        try:
             brief = render_character_knowledge(knowledge, character.name)
-            if brief:
-                augmented = brief + "\n\n" + augmented
         except Exception:
-            # A corrupt legacy save must not prevent ordinary audience chat.
-            pass
+            return "【近臣回奏暂不可用：见闻投影失败；不得据此臆答事实。】\n\n" + message
+        if brief:
+            augmented = brief + "\n\n" + augmented
         # 未明发草案不属于公开层；参与者/知情圈须通过持久见闻事件投影进入提示。
         # 这里不能直接读取 registry 的全局草案列表，否则未参与大臣会越过排除边界获知密事。
         return augmented

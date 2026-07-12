@@ -83,7 +83,9 @@ def _qualitative_domain_statement(db: Any, query: str) -> tuple[str, str]:
         # use its domain filter so a bandit question cannot receive every
         # foreign power's report.
         return _safe_report_text(db.power_report(
-            exclude_self=True, kinds={"bandit", "bandits"}, audience=True,
+            # Content identifies the three rebel powers by id while their
+            # display kind is \"内乱\".  power_report accepts either form.
+            exclude_self=True, kinds={"bandit", "bandits", "内乱"}, audience=True,
         )), "powers"
     return _safe_report_text(db.power_report(exclude_self=True, audience=True)), "powers"
 
@@ -140,15 +142,16 @@ def _matching_firsthand_record(
     """
     terms = _domain_terms(_query_domain(query))
     knowledge = db.get_character_knowledge(state, character_name)
-    return next(
-        (
-            item for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
-            if str(item.get("kind") or "") in {"witness", "scout", "firsthand"}
-            and any(term in f"{item.get('title') or ''}{item.get('body') or ''}" for term in terms)
-            and str(item.get("body") or "").strip()
-        ),
-        None,
-    )
+    matches = [
+        item for item in [*(knowledge.get("events") or []), *(knowledge.get("public_events") or [])]
+        if str(item.get("kind") or "") in {"witness", "scout", "firsthand"}
+        and any(term in f"{item.get('title') or ''}{item.get('body') or ''}" for term in terms)
+        and str(item.get("body") or "").strip()
+    ]
+    # Knowledge readers are chronological, so next() selected the oldest
+    # witness after an update.  Turn plus ledger order is the durable recency
+    # contract; enumeration makes equal-turn records deterministic.
+    return max(enumerate(matches), key=lambda pair: (int(pair[1].get("turn") or 0), pair[0]))[1] if matches else None
 
 
 def build_return_report(

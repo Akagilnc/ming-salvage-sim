@@ -163,3 +163,22 @@ def test_explicit_inquiry_overrides_matching_firsthand_witness(game):
 
     assert report["source_kind"] == "inquiry"
     assert report["source_ref"] == "查访/powers"
+
+
+def test_bandit_inquiry_uses_shipped_inner_rebellion_kind(game):
+    db, _state, _content = game
+
+    report = build_return_report(db, "流寇势如何？")
+
+    assert "势力未建档" not in report["statement"]
+    assert "流寇" in report["statement"]
+
+
+def test_firsthand_report_prefers_newest_matching_durable_witness(game):
+    db, state, _content = game
+    minister = next(iter(db.content.characters))
+    db.register_character_knowledge_source(state, [{"character_id": minister}], "witness", "边地见闻", "辽东旧报", source_id="witness:old")
+    state.turn += 1
+    db.register_character_knowledge_source(state, [{"character_id": minister}], "witness", "边地见闻", "辽东新报", source_id="witness:new")
+
+    assert persist_return_report(db, state, minister, "军情如何？")["statement"] == "辽东新报"

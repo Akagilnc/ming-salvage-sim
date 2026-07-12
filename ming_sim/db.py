@@ -4752,7 +4752,13 @@ class GameDB:
         rows = self.power_rows(exclude_self=exclude_self)
         if kinds is not None:
             allowed = {str(kind).strip().lower() for kind in kinds}
-            rows = [row for row in rows if str(row["kind"] or "").strip().lower() in allowed]
+            # Callers may hold canonical power ids (the content contract) or
+            # display kinds (the presentation contract); both denote the same
+            # filtered report set.
+            rows = [row for row in rows if (
+                str(row["kind"] or "").strip().lower() in allowed
+                or str(row["id"] or "").strip().lower() in allowed
+            )]
         if not rows:
             return "势力未建档。"
         if audience:
@@ -7585,7 +7591,8 @@ class GameDB:
         # secret substrings is not safe against a paraphrase.  Persist a
         # separate public counterpart made from source-scoped public items.
         # Legacy callers with no restricted source retain their whole report.
-        items = self.knowledge_items_for_turn(state.turn)
+        items = [item for item in self.knowledge_items_for_turn(state.turn)
+                 if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
         has_restricted_source = any(item.get("excluded_names") for item in items)
         source_snapshot_supplied = knowledge_items is not None
         if public_body is None:
@@ -7667,7 +7674,8 @@ class GameDB:
         # The public chapter counterpart is a separate, source-preserving
         # authorization record.  Never derive it by deleting secret strings
         # from an LLM aggregate: a paraphrase would evade that redaction.
-        items = self.knowledge_items_for_turn(state.turn)
+        items = [item for item in self.knowledge_items_for_turn(state.turn)
+                 if not str(item.get("source_id") or "").startswith(("turn_report:", "chapter_source:"))]
         has_restricted_source = any(item.get("excluded_names") for item in items)
         source_snapshot_supplied = knowledge_items is not None
         if public_body is None:
@@ -10038,7 +10046,7 @@ class GameDB:
             state,
             [{"character_id": minister_name, "tier": "主办"}],
             "secret_order",
-            title,
+            title[:20],
             content,
             f"secret_order:{int(cur.lastrowid)}",
             excluded_names=snapshot_excluded_names,
@@ -10120,6 +10128,13 @@ class GameDB:
                 state, [{"character_id": row["minister_name"], "tier": "主办"}], "secret_order",
                 persisted_title, content, f"secret_order:{int(order_id)}", excluded_names=excluded_names,
                 excluded_targets=excluded_targets if isinstance(excluded_targets, dict) else {}, commit=False,
+            )
+            # Replace only automatic/private mirrors of the canonical source.
+            # A separately recorded public disclosure is historical evidence,
+            # not a stale mirror, and must survive an order amendment.
+            self.conn.execute(
+                "DELETE FROM character_knowledge_events WHERE source_id=? AND kind != 'public'",
+                (f"secret_order:{int(order_id)}",),
             )
         tlog(f"[secret_order] update id={order_id} title={title[:20]}")
         self.update_secret_order_progress(int(order_id), f"奉旨更新密令要旨：{content[:60]}", state.year, state.period)
