@@ -32,10 +32,13 @@
  *     behind the RealFamilyBackend's protected seams; the driver only assembles.
  */
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+  execFileWithTimeout,
+  DEFAULT_SUBPROCESS_TIMEOUT_MS,
+} from "./externalCall.js";
 import { RealBackend, type RealBackendOptions } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
 import {
@@ -48,6 +51,7 @@ import {
   sourcedModuleDeclaration,
   type SourcedModuleDeclaration,
 } from "./family/moduleDeclaration.js";
+import { logDriverStage } from "./stageLog.js";
 import type { Backend } from "./types.js";
 import type {
   ChildSlice,
@@ -382,9 +386,9 @@ function familyDiffFiles(
 export type Sh = (file: string, args: string[]) => string;
 
 const defaultSh: Sh = (file, args) =>
-  execFileSync(file, args, {
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf8",
+  execFileWithTimeout(file, args, {
+    stage: `admission:${file}`,
+    timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
   }).trim();
 
 /**
@@ -681,6 +685,7 @@ export async function runFamilyDriver(
 
   // 1. Read the already-cut children from live GitHub (the explicit dependency
   //    edges a `to-issues` step wrote — decision 1, no LLM inference).
+  logDriverStage("admission", `epic #${options.epicIssue}`);
   const epic = readFamilyEpic(options.epicIssue, options.repo, sh);
 
   // 2. The single-slice RealBackend: keyed on the PARENT epic so all children
@@ -768,6 +773,9 @@ export async function runFamilyDriver(
     new RealFamilyBackend(familyBackendOptions);
 
   // 6. Assemble the run input + the resume seams, and run the spine.
+  // reconcile is entered inside runFamily on re-entry; mark the handoff here so
+  // a hang between driver assembly and spine entry is still attributable.
+  logDriverStage("reconcile", `family base ${options.familyBase}`);
   const input: FamilyRunInput = {
     epic,
     familyBackend,
@@ -778,7 +786,10 @@ export async function runFamilyDriver(
     reconcileGit: familyBackend.reconcileGit(),
     // The escalate-resume rebuild hook (decision 4): a re-entry rebuilds the
     // dependency graph from LIVE GitHub, not the cached epic.
-    refetchEpic: async () => readFamilyEpic(options.epicIssue, options.repo, sh),
+    refetchEpic: async () => {
+      logDriverStage("admission", `refetch epic #${options.epicIssue}`);
+      return readFamilyEpic(options.epicIssue, options.repo, sh);
+    },
   };
   return runFamily(input);
 }

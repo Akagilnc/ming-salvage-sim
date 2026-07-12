@@ -45,7 +45,6 @@
  *     proving the cut derives from the just-fetched remote ref (cutRefFor).
  */
 
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -59,7 +58,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
@@ -71,6 +70,12 @@ import {
   hasExplicitAcceptedSuppressionSource,
 } from "./acceptedSuppression.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
+import {
+  execFileAsyncWithTimeout,
+  execFileWithTimeout,
+  withExternalCallRetry,
+  DEFAULT_SUBPROCESS_TIMEOUT_MS,
+} from "./externalCall.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
 import {
@@ -109,7 +114,6 @@ import {
   smokeRouteModels,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
-import { withLegTransientRetry } from "./legTransientRetry.js";
 import type { CoderSelfReportDiscrepancy } from "./types.js";
 
 export function routeSmokeToolCallIsEchoOk(event: {
@@ -129,6 +133,9 @@ export function routeSmokeToolCallIsEchoOk(event: {
 /**
  * A nonce must be read back from the worktree after the agent returns. Text in
  * the agent stream is never execution evidence: a model can merely repeat it.
+ *
+ * @deprecated #884 bare-ping smoke uses {@link barePingNonceSatisfied} (stdout
+ * echo oracle). Kept for older tests / any residual tool-smoke path.
  */
 export function routeSmokeNonceFileEvidence(
   fileContents: string | undefined,
@@ -141,6 +148,8 @@ export function routeSmokeNonceFileEvidence(
  * Whether a smoke run produced observable bash evidence. The checked nonce file
  * is a filesystem side effect, so this is provider-independent and does not
  * trust model text or provider-specific stream formatting.
+ *
+ * @deprecated #884 bare-ping smoke uses {@link barePingNonceSatisfied}.
  */
 export function routeSmokeBashEvidenceSatisfied(input: {
   readonly provider: string;
@@ -148,6 +157,90 @@ export function routeSmokeBashEvidenceSatisfied(input: {
   readonly sawNonceFile: boolean;
 }): boolean {
   return input.sawNonceFile;
+}
+
+// ── #884 bare-ping smoke (credential oracle only; no docker/tool loop) ───────
+
+/** Prompt that asks the model to echo a nonce — the bare-ping oracle. */
+export function buildBarePingPrompt(nonce: string): string {
+  return `Reply with exactly: ${nonce}`;
+}
+
+/** True when stdout carries the nonce (credential-alive oracle). */
+export function barePingNonceSatisfied(stdout: string, nonce: string): boolean {
+  return stdout.includes(nonce);
+}
+
+export interface BarePingArgv {
+  readonly file: string;
+  readonly args: readonly string[];
+  /** When set, fed on stdin (codex `exec … -` pattern). */
+  readonly input?: string;
+}
+
+/**
+ * One-shot host CLI argv per provider. Empty-cwd / no docker / no tool loop —
+ * ignition only answers "is this credential alive?".
+ */
+export function barePingArgv(
+  provider: ModelProviderFactory,
+  model: string,
+  prompt: string,
+): BarePingArgv {
+  switch (provider) {
+    case "codex":
+      // README auth probe: `echo "…" | codex exec --skip-git-repo-check -m <model> -`
+      return {
+        file: "codex",
+        args: ["exec", "--skip-git-repo-check", "--ephemeral", "-m", model, "-"],
+        input: prompt,
+      };
+    case "claudeCode":
+      return {
+        file: "claude",
+        args: [
+          "-p",
+          prompt,
+          "--model",
+          model,
+          "--permission-mode",
+          "bypassPermissions",
+        ],
+      };
+    case "opencode":
+      return {
+        file: "opencode",
+        args: ["run", "--dangerously-skip-permissions", "-m", model, prompt],
+      };
+    case "grok":
+      return {
+        file: "grok",
+        args: [
+          "-p",
+          prompt,
+          "-m",
+          model,
+          "--always-approve",
+          "--permission-mode",
+          "bypassPermissions",
+        ],
+      };
+    case "cursor":
+      return {
+        file: "cursor",
+        args: ["agent", "-p", prompt, "--model", model],
+      };
+    case "copilot":
+      return {
+        file: "copilot",
+        args: ["-p", prompt, "--model", model],
+      };
+    case "pi":
+      return {
+        file: "pi",
+        args: ["-p", prompt, "--mode", "json", "--model", model],
+      };
+  }
 }
 export {
   agentForSlug,
@@ -2161,38 +2254,22 @@ export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
   return coderOutputSchema.parse(raw);
 }
 
+/**
+ * #884 bare-ping wall budget (seconds). Owner target is ~5–10s total across
+ * parallel legs; per-leg ceiling defaults to 60s so a single hung provider
+ * still fails closed rather than sleeping the driver for minutes.
+ *
+ * Tunable via `ORCHESTRATOR_SMOKE_IDLE_SECONDS` (positive integer). Name kept
+ * for env-compat with the pre-#884 sandcastle idle knob.
+ */
 const DEFAULT_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS = 60;
 
-/**
- * Hard upper bound the resolver enforces. Sandcastle multiplies the idle
- * seconds by 1e3 before feeding a signed 32-bit timer (see the
- * WORKER_IDLE_TIMEOUT_SECONDS note above), so any override above 2_147_483
- * would overflow that timer; the resolver treats such values as illegal and
- * falls back to the default instead of relying on the operator to stay under
- * the bound.
- */
+/** Hard upper bound the resolver enforces (same 32-bit-safe ceiling as before). */
 const MAX_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS = 2_147_483;
 
 /**
- * #685 route-smoke idle budget — the per-model `sc.run` that proves a route can
- * invoke bash before a productive dispatch is spent on it.
- *
- * The smoke covers EVERY route leg (codex, claude, opencode, …), not just one:
- * each unique model×pipe entry gets its own smoke run, and the resolved budget
- * is applied as the `idleTimeoutSeconds` ceiling for all of them. The
- * first-token latency evidence was measured on container `codex exec` — the
- * worst case observed (8–11s to first token on a warm container, longer under
- * load) — which is the motivating example, not a special case. The old
- * hard-coded `idleTimeoutSeconds: 10` killed two consecutive W1-family runs
- * with a spurious "Agent idle for 10 seconds" before that model could emit
- * anything; the same ceiling guards the claude/opencode/… legs too.
- *
- * COST IS ONE-TIME: a passed smoke is cached by sandbox fingerprint and reused
- * for the whole run, so a generous one-time wait beats re-failing the run.
- *
- * Tunable via `ORCHESTRATOR_SMOKE_IDLE_SECONDS` (a positive integer within the
- * 32-bit-safe bound above); illegal, missing, blank, non-integer, or
- * out-of-range values all fall back to the default.
+ * Resolve the bare-ping per-leg wall budget (seconds). Illegal / missing values
+ * fall back to the default.
  */
 export function resolveRouteSmokeIdleTimeoutSeconds(
   envValue: string | undefined,
@@ -2258,9 +2335,8 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * #685: prove every selected model×pipe can actually invoke bash before the
-   * runner spends a productive dispatch on it. This deliberately uses the
-   * selected Sandcastle provider, not a generic shell or a silent fallback.
+   * #685/#884: report host CLI versions for smoke TTL invalidation. Cheap
+   * `--version` only — not a live model call.
    */
   async currentCliVersions(
     route: ResolvedModelRoute,
@@ -2280,87 +2356,100 @@ export class RealBackend implements Backend {
     return versions;
   }
 
+  /**
+   * #884 bare-ping route smoke: one-shot host CLI per unique model×pipe, empty
+   * cwd, no docker/repo/tool loop. Nonce echo in stdout is the credential
+   * oracle. Unique legs run in parallel via {@link smokeRouteModels}.
+   * Tool-capability verification is intentionally out of the ignition path.
+   */
   async smokeModelRoute(
     route: ResolvedModelRoute,
     currentCliVersions: Readonly<Record<string, string | undefined>> = {},
     billingPool?: string,
     relaySmokeEntryKey?: string,
   ): Promise<ResolvedModelRoute> {
+    void currentCliVersions;
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
-    const idleTimeoutSeconds = resolveRouteSmokeIdleTimeoutSeconds(
-      process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
-    );
-    // #879 / #861 D: each model×pipe availability probe is a "leg" at this
-    // backend encapsulation. Transient transport blips (reset/5xx) retry ×2
-    // before the smoke is recorded failed (and optional legs degrade); 429 /
-    // quota never retries — same classifier as CMR leg disposition.
+    const timeoutMs =
+      resolveRouteSmokeIdleTimeoutSeconds(
+        process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
+      ) * 1000;
+    const providerAuth = this.hostProviderAuthAvailability();
     const smoked = await smokeRouteModels(route, async (entry) => {
       const entryPool = entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
       const resolved = resolveModelSlugForPool(entry.slug, entryPool);
-      const provider = resolved.provider;
-      const auth = this.mountAuth(this.opts.runKey);
+      this.assertProviderAuth(entry.slug, entryPool, providerAuth);
+
+      const nonce = randomUUID();
+      const prompt = buildBarePingPrompt(nonce);
+      const built = barePingArgv(resolved.provider, resolved.model, prompt);
+      const emptyDir = mkdtempSync(join(tmpdir(), "route-smoke-ping-"));
       try {
-        return await withLegTransientRetry(async () => {
-          let sawToolCallEchoOk = false;
-          const nonce = randomUUID();
-          const nonceFile = `.route-smoke-${nonce}.nonce`;
-          const noncePath = join(this.workingRepo, nonceFile);
-          const logDir = mkdtempSync(
-            join(this.opts.home ?? homedir(), "route-smoke-"),
+        const stage = `smoke-k:${entry.slug}`;
+        const stdout = await withExternalCallRetry(stage, async () =>
+          this.execBarePing({
+            slug: entry.slug,
+            cwd: emptyDir,
+            prompt,
+            nonce,
+            file: built.file,
+            args: built.args,
+            stdin: built.input,
+            timeoutMs,
+          }),
+        );
+        if (!barePingNonceSatisfied(stdout, nonce)) {
+          throw new Error(
+            `bare ping nonce missing for ${entry.slug} at stage ${stage}`,
           );
-          try {
-            this.assertProviderAuth(entry.slug, entryPool, auth.providerAuth);
-            rmSync(noncePath, { force: true });
-            const result = await sc.run({
-              agent: agentForSlug(
-                entry.slug,
-                effortForLiveOfficer(entry.slug, { smokeKey: entry.key }),
-                entryPool,
-              ),
-              sandbox: this.routeSmokeSandbox(auth),
-              cwd: this.workingRepo,
-              promptFile: join(this.opts.promptsDir, "route-smoke.md"),
-              promptArgs: { NONCE: nonce, NONCE_FILE: nonceFile },
-              maxIterations: 1,
-              idleTimeoutSeconds,
-              completionSignal: "ROUTE_SMOKE_COMPLETE",
-              logging: {
-                type: "file",
-                path: join(logDir, "run.log"),
-                onAgentStreamEvent: (event) => {
-                  if (routeSmokeToolCallIsEchoOk(event)) {
-                    sawToolCallEchoOk = true;
-                  }
-                },
-              },
-            });
-            let nonceContents: string | undefined;
-            try {
-              nonceContents = readFileSync(noncePath, "utf8");
-            } catch {
-              nonceContents = undefined;
-            }
-            const bashOk = routeSmokeBashEvidenceSatisfied({
-              provider,
-              sawToolCallEchoOk,
-              sawNonceFile: routeSmokeNonceFileEvidence(nonceContents, nonce),
-            });
-            if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !bashOk) {
-              throw new Error(
-                `model did not complete an observable bash smoke for ${entry.slug}`,
-              );
-            }
-            return { cliVersion: this.cliVersionForSlug(entry.slug, entryPool) };
-          } finally {
-            rmSync(noncePath, { force: true });
-            rmSync(logDir, { recursive: true, force: true });
-          }
-        });
+        }
+        return { cliVersion: this.cliVersionForSlug(entry.slug, entryPool) };
       } finally {
-        this.cleanupTempAuthDirs([auth.grokAuthDir]);
+        rmSync(emptyDir, { recursive: true, force: true });
       }
     });
     return smoked;
+  }
+
+  /**
+   * Host-side bare-ping exec seam. `protected` so tests inject a scripted
+   * responder without launching real model CLIs. Production uses
+   * {@link execFileAsyncWithTimeout} so parallel smoke actually overlaps.
+   */
+  protected async execBarePing(input: {
+    readonly slug: string;
+    readonly cwd: string;
+    readonly prompt: string;
+    readonly nonce: string;
+    readonly file: string;
+    readonly args: readonly string[];
+    readonly stdin?: string;
+    readonly timeoutMs: number;
+  }): Promise<string> {
+    return execFileAsyncWithTimeout(input.file, input.args, {
+      stage: `smoke-k:${input.slug}`,
+      timeoutMs: input.timeoutMs,
+      cwd: input.cwd,
+      input: input.stdin,
+      env: process.env,
+    });
+  }
+
+  /**
+   * Lightweight host credential presence for bare-ping auth gates — no
+   * per-issue temp copy (those are for container mounts only).
+   */
+  protected hostProviderAuthAvailability(): ProviderAuthAvailability {
+    const home = this.opts.home ?? homedir();
+    let claude = false;
+    try {
+      const token = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      claude = token.length > 0;
+    } catch {
+      claude = false;
+    }
+    const grok = existsSync(join(home, ".grok", "auth.json"));
+    return { claude, grok };
   }
 
   private cliVersionForSlug(slug: string, billingPool?: string): string {
@@ -2374,20 +2463,6 @@ export class RealBackend implements Backend {
     } catch {
       return "unknown";
     }
-  }
-
-  /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
-  private routeSmokeSandbox(
-    auth: ReturnType<RealBackend["mountAuth"]>,
-  ): sc.SandboxProvider {
-    return docker(
-      this.boxConfig(
-        { ...auth, ghToken: this.readGhToken() },
-        { role: "reviewer", soul: "READ-ONLY" },
-        undefined,
-        undefined,
-      ),
-    );
   }
 
   /**
@@ -2486,12 +2561,14 @@ export class RealBackend implements Backend {
    * Run a host `gh`/`git` command, returning trimmed stdout. `protected` so a
    * test subclass can intercept the git/gh seam without a real container or repo
    * (integ-cmr 256 r3 reuse-fail-closed test).
+   *
+   * #884: every subprocess wait carries a clock (default 120s).
    */
   protected sh(file: string, args: string[], cwd?: string): string {
-    return execFileSync(file, args, {
+    return execFileWithTimeout(file, args, {
+      stage: `subprocess:${file}`,
+      timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
       cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
     }).trim();
   }
 
