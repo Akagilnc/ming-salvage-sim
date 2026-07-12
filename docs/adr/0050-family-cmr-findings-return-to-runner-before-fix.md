@@ -23,7 +23,7 @@ Professional workers inspect commits, tests, and repair evidence. The runner is 
 
 ## Tradeoff
 
-Rejected alternative: let CMR workers fix cheap same-module findings themselves. That reduces orchestration overhead, but it recreates the exact class of hidden self-fix loops the orchestrator exists to prevent. The chosen design spends extra worker launches and ledger entries to preserve role separation, auditability, resumability, and independent review.
+Rejected alternative: let CMR workers fix cheap same-module findings themselves. That reduces orchestration overhead, but it recreates the exact class of hidden self-fix loops the orchestrator exists to prevent. The chosen design spends extra worker launches and findings state store entries to preserve role separation, auditability, resumability, and independent review.
 
 ## Consequences
 
