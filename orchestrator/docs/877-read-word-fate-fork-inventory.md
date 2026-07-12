@@ -10,9 +10,9 @@ Principle (#861 / #873): runner is a traffic cop — **exit code / findings coun
 |----|------|---------------|--------|---------------|
 | R1 | `adjudicatePriorClaimedFixedFindings` (missing disposition / still-active reopen / key-payload throw) | contract_drift / reopen without findings[] | **Deleted** — findings-count only; never throws | `read-word-fate-fork-877.test.ts` R1; flipped `per-slice-cmr-369` |
 | R2 | S4 no-progress escalate (still-active ×2 without repair evidence) | escalate `same_module_still_red` | **Deleted** | `read-word-fate-fork-877` R2; dogfood 307 no-progress scenarios |
-| R3 | `recheckConvergenceConfirmsFixMarkedKeys` | contract_drift on bare post-fixer converge | **Deleted** (always admits) | R3 unit + flipped online-review #743 tests |
+| R3 | `recheckConvergenceConfirmsFixMarkedKeys` | contract_drift on bare post-fixer converge | **Hard DELETE** (function + runner court branch; not always-true shell) | R3 static absence nail + flipped online-review #743 tests |
 | R4 | `enforceRunnerOwnedRecheck` contradiction kill | infra_failure / decision_gate on isRecheck mismatch | **Deleted kill** — force-normalize only | R4 unit; flipped r26 fails-closed |
-| R5 | `verifyResultSemanticallyConsistent` disposition↔fixMarked set-equality | malformed verify → fail path | **Deleted** content court; type-shape remains | R5 unit; flipped pin r24/r25 |
+| R5 | `verifyResultSemanticallyConsistent` disposition↔fixMarked set-equality | malformed verify → fail path | **Hard DELETE** semantic helper; type-shape only in `isValidVerifyResult` | R5 static absence + type-valid pins r24/r25 |
 | R6 | dogfood `376-closure-context-missing` | contract_drift kill assert | **Flipped** to ship | dogfood-replay-451 |
 
 ## Left intentionally (not conviction courts)

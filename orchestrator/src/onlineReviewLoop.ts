@@ -924,18 +924,6 @@ export function enforceRunnerOwnedRecheck(
   return { ...verify, isRecheck: runnerRecheck };
 }
 
-/**
- * #877: fix-marked identity echo is not a fate channel. Three-channel converge
- * (`converged` + findings/decision) stands on its own — the runner does not
- * audit whether the worker re-echoed landing fix-marked keys.
- */
-export function recheckConvergenceConfirmsFixMarkedKeys(
-  _verify: VerifyResult,
-  _landing: WorkerLandingPayload,
-): boolean {
-  return true;
-}
-
 /** Family `shipped` ledger `ts` for the PR — round-1 freshness anchor (#600 r9). */
 export function shipLedgerTriggeredAtFromFamilyLedger(
   entries: ReadonlyArray<{

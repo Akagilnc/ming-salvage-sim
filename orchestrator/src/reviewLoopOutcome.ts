@@ -53,23 +53,17 @@ function isThreadReplyArray(
 }
 
 /**
- * #877: disposition ↔ fixMarked set-equality and "converged with fix marks"
- * content courts demolished. Type-shape of optional arrays is checked in
- * isValidVerifyResult; this helper no longer reads disposition prose for fate.
+ * #877 / ship-pre completeness: disposition ↔ fixMarked set-equality and
+ * "converged with fix marks" content courts demolished — hard DELETE, not an
+ * always-true soft shell (kill-axis: no milder replacement validator).
+ * Type-shape of optional arrays is checked below; no semantic helper remains.
  */
-function verifyResultSemanticallyConsistent(
-  _obj: Record<string, unknown>,
-): boolean {
-  return true;
-}
-
 export function isValidVerifyResult(
   o: StepOutput | undefined,
 ): o is VerifyResult {
   if (o == null || typeof o !== "object") return false;
   const obj = o as unknown as Record<string, unknown>;
   if (obj.kind !== "verify" || typeof obj.converged !== "boolean") return false;
-  if (!verifyResultSemanticallyConsistent(obj)) return false;
   if (
     obj.findingDispositions !== undefined &&
     !isFindingDispositionArray(obj.findingDispositions)

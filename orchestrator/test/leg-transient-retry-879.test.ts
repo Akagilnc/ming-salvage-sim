@@ -2,11 +2,11 @@
  * #879 / #861 D — CMR leg transient retry at the backend wrapper layer.
  *
  * Classification + bounded retry live in `legTransientRetry.ts` (the leg
- * backend encapsulation). Availability probes (route smoke / bare-ping) use the
- * same policy via `withExternalCallRetry` after #884: connection reset/5xx →
- * retry ×2 then degrade; 429/quota → immediate degrade with zero retry.
- * Worker-process crashes stay on #598; in-container skill legs are out of this
- * module.
+ * backend encapsulation). Availability probes (route smoke / bare-ping) call
+ * `withLegTransientRetry` in production (`RealBackend.smokeModelRoute`):
+ * connection reset/5xx → retry ×2 then degrade; 429/quota → immediate degrade
+ * with zero retry. Worker-process crashes stay on #598; in-container skill
+ * legs are out of this module.
  *
  * Positive / negative pair is the acceptance contract.
  */
