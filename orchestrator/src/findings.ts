@@ -2,7 +2,6 @@ import type {
   Finding,
   FindingDisposition,
   FindingDispositionEvidence,
-  PriorFindingDisposition,
   ReviewerOutput,
 } from "./types.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
@@ -315,34 +314,19 @@ export interface PriorFindingAdjudication {
   readonly verifiedClosedIdentityKeys: ReadonlyArray<string>;
 }
 
+/**
+ * #877: disposition prose is not a fate channel. Still-open = prior keys that
+ * reappear as blocking findings (findings-count channel). Missing / duplicate /
+ * still-active / accepted_suppressed disposition prose never aborts and never
+ * reopens a finding that the reviewer did not re-emit in `findings[]`.
+ */
 export function adjudicatePriorClaimedFixedFindings(input: {
   readonly priorFindings: ReadonlyArray<Finding>;
   readonly priorIdentityKeys: ReadonlyArray<string>;
   readonly review: ReviewerOutput;
   readonly acceptedSuppressionSources?: ReadonlyArray<TrustedAcceptedSuppressionSource>;
 }): PriorFindingAdjudication {
-  if (input.priorFindings.length !== input.priorIdentityKeys.length) {
-    throw new Error(
-      `prior claimed-fixed finding/key count mismatch: ` +
-        `${input.priorFindings.length} findings for ${input.priorIdentityKeys.length} keys`,
-    );
-  }
-  const dispositionByKey = new Map<string, PriorFindingDisposition>();
-  for (const disposition of input.review.priorFindingDispositions ?? []) {
-    if (dispositionByKey.has(disposition.identityKey)) {
-      throw new Error(
-        `reviewer provided duplicate prior finding disposition for ${disposition.identityKey}`,
-      );
-    }
-    dispositionByKey.set(disposition.identityKey, disposition);
-  }
-
-  const priorByKey = new Map<string, Finding>();
-  input.priorFindings.forEach((finding, index) => {
-    const key = input.priorIdentityKeys[index] ?? findingIdentityKey(finding);
-    priorByKey.set(key, finding);
-  });
-
+  void input.priorFindings;
   const activeFindingsByKey = new Map<string, Finding>();
   for (const finding of classifyFindings(input.review.findings, [], {
     acceptedSuppressionSources: input.acceptedSuppressionSources,
@@ -353,43 +337,12 @@ export function adjudicatePriorClaimedFixedFindings(input: {
   const stillOpen: Finding[] = [];
   const verifiedClosedIdentityKeys: string[] = [];
   for (const key of input.priorIdentityKeys) {
-    const disposition = dispositionByKey.get(key);
-    const priorFinding = priorByKey.get(key);
-    if (disposition === undefined) {
-      throw new Error(
-        `reviewer omitted required disposition for prior claimed-fixed finding ${key}`,
-      );
-    }
-    if (
-      disposition.status === "verified-closed" ||
-      (disposition.status === "accepted_suppressed" &&
-        isSourcedAcceptedSuppression(
-          {
-            identityKey: disposition.identityKey,
-            status: disposition.status,
-            reason: disposition.reason ?? "",
-            severity: priorFinding?.severity ?? "medium",
-            reopenAttempts: 0,
-            source: disposition.source,
-            scope: disposition.scope,
-            boundedReopen: disposition.boundedReopen,
-          },
-          input.acceptedSuppressionSources ?? [],
-        ) &&
-        priorFinding !== undefined &&
-        priorFinding.severity !== "critical" &&
-        priorFinding.severity !== "high")
-    ) {
+    const active = activeFindingsByKey.get(key);
+    if (active !== undefined) {
+      stillOpen.push(active);
+    } else {
       verifiedClosedIdentityKeys.push(key);
-      continue;
     }
-    const finding = activeFindingsByKey.get(key) ?? priorFinding;
-    if (finding === undefined) {
-      throw new Error(
-        `reviewer marked prior claimed-fixed finding ${key} still-active, but no active or prior finding payload exists`,
-      );
-    }
-    stillOpen.push(finding);
   }
   return { stillOpen, verifiedClosedIdentityKeys };
 }

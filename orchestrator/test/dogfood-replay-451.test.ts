@@ -21,8 +21,9 @@ describe("#451 dogfood replay fixture", () => {
         expect.objectContaining({
           id: "307-no-observable-progress",
           issue: 307,
-          classification: "same_module_still_red",
-          stopReason: "same_module_still_red",
+          // #877: no-progress court demolished — ships via findings-count.
+          classification: "success",
+          stopReason: "success",
         }),
         expect.objectContaining({
           id: "287-same-module-cmr-gap",
@@ -174,16 +175,18 @@ describe("#451 dogfood replay fixture", () => {
     // #604 slice 4 (ADR 0062): the `cross_module_defer` and `owning_issue_still_red`
     // stop reasons are no longer produced by any replay scenario — blocking family
     // findings all stop with the retained `same_module_still_red` word.
+    // #877: residual read-word contract_drift courts demolished (disposition /
+    // fix-marked echo / no-progress); no dogfood scenario produces contract_drift.
     expect(replay.coveredStopReasons).toEqual([
       "already_done",
-      "contract_drift",
       "infra_failure",
       "provider_degraded",
       "same_module_still_red",
       "spec_conflict",
       "success",
     ]);
-    expect(replay.summary).toContain("7 stop reasons");
+    // #877: contract_drift no longer covered by dogfood scenarios.
+    expect(replay.summary).toContain("6 stop reasons");
   });
 
   it("keeps scripted family CMR finding fixtures valid for the real worker parser", async () => {
@@ -224,12 +227,13 @@ describe("#451 dogfood replay fixture", () => {
     }
     expect(rowsById.get("307-continue-fixing-targeted-reset")).toMatchObject({
       source: "runner",
-      classification: "same_module_still_red",
-      stopReason: "same_module_still_red",
-      sourceStopSummary: expect.objectContaining({ reason: "same_module_still_red" }),
+      classification: "success",
+      stopReason: "success",
+      sourceStopSummary: expect.objectContaining({ reason: "success" }),
       sourceEvidence: expect.objectContaining({
         seam: "runner",
-        status: "escalate",
+        status: "success",
+        courtDemolished: true,
       }),
     });
 
@@ -348,25 +352,27 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("307-reviewer-text-only-change")).toMatchObject({
       source: "runner",
-      classification: "same_module_still_red",
-      stopReason: "same_module_still_red",
-      sourceStopSummary: expect.objectContaining({ reason: "same_module_still_red" }),
+      classification: "success",
+      stopReason: "success",
+      sourceStopSummary: expect.objectContaining({ reason: "success" }),
       sourceEvidence: expect.objectContaining({
         seam: "runner",
         mechanism: "reviewer_text_only_no_progress",
-        status: "escalate",
+        status: "success",
+        courtDemolished: true,
         implementationMovement: false,
       }),
     });
     expect(rowsById.get("307-no-observable-progress")).toMatchObject({
       source: "runner",
-      classification: "same_module_still_red",
-      stopReason: "same_module_still_red",
-      sourceStopSummary: expect.objectContaining({ reason: "same_module_still_red" }),
+      classification: "success",
+      stopReason: "success",
+      sourceStopSummary: expect.objectContaining({ reason: "success" }),
       sourceEvidence: expect.objectContaining({
         seam: "runner",
         mechanism: "claimed_attempt_without_observable_progress",
-        status: "escalate",
+        status: "success",
+        courtDemolished: true,
         implementationMovement: false,
       }),
     });
@@ -578,14 +584,15 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("376-closure-context-missing")).toMatchObject({
       source: "runner",
-      classification: "contract_drift",
-      stopReason: "contract_drift",
-      sourceStopSummary: expect.objectContaining({ reason: "contract_drift" }),
+      classification: "success",
+      stopReason: "success",
+      sourceStopSummary: expect.objectContaining({ reason: "success" }),
       sourceEvidence: expect.objectContaining({
         seam: "runner",
-        mechanism: "s6_missing_prior_context",
-        status: "error",
-        closureContext: "missing",
+        mechanism: "s6_missing_prior_context_survives",
+        status: "success",
+        closureContext: "missing_but_survived",
+        courtDemolished: true,
       }),
     });
     expect(rowsById.get("440-coder-trust-boundary")).toMatchObject({

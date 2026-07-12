@@ -52,63 +52,14 @@ function isThreadReplyArray(
   });
 }
 
-function verifyResultSemanticallyConsistent(obj: Record<string, unknown>): boolean {
-  const fixKeys = obj.fixMarkedFindingIdentityKeys;
-  const dispositions = obj.findingDispositions;
-  const isRecheck = obj.isRecheck === true;
-  const hasExplicitFixKeys = fixKeys !== undefined;
-  const hasDispositions =
-    Array.isArray(dispositions) && dispositions.length > 0;
-
-  // Set-equality when the worker explicitly carries fixMarkedFindingIdentityKeys
-  // (fail-closed regardless of converged): the array and fix-action dispositions
-  // must be the same set — both directions, including empty ([] ↔ no fix
-  // dispositions). Omitted fixMarked keys derive from dispositions only after
-  // validation passes (host-side fixMarkedKeysFromVerify).
-  if (hasExplicitFixKeys && !isRecheck) {
-    if (!isStringArray(fixKeys)) {
-      return false;
-    }
-    if (hasDispositions && !isFindingDispositionArray(dispositions)) {
-      return false;
-    }
-    const markedKeys = new Set(fixKeys);
-    const fixDispositionKeys = new Set(
-      (hasDispositions ? dispositions : [])
-        .filter((d) => d.action === "fix")
-        .map((d) => d.identityKey),
-    );
-    if (markedKeys.size !== fixDispositionKeys.size) {
-      return false;
-    }
-    for (const key of markedKeys) {
-      if (!fixDispositionKeys.has(key)) {
-        return false;
-      }
-    }
-  }
-
-  if (obj.converged !== true) return true;
-  if (
-    !isRecheck &&
-    hasExplicitFixKeys &&
-    isStringArray(fixKeys) &&
-    fixKeys.length > 0
-  ) {
-    return false;
-  }
-  if (
-    !isRecheck &&
-    Array.isArray(dispositions) &&
-    dispositions.some(
-      (item) =>
-        item != null &&
-        typeof item === "object" &&
-        (item as { action?: unknown }).action === "fix",
-    )
-  ) {
-    return false;
-  }
+/**
+ * #877: disposition ↔ fixMarked set-equality and "converged with fix marks"
+ * content courts demolished. Type-shape of optional arrays is checked in
+ * isValidVerifyResult; this helper no longer reads disposition prose for fate.
+ */
+function verifyResultSemanticallyConsistent(
+  _obj: Record<string, unknown>,
+): boolean {
   return true;
 }
 

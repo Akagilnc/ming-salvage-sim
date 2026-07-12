@@ -62,13 +62,9 @@ export interface RouteContext {
    */
   readonly output?: StepOutput;
   /**
-   * Runner-adjudicated blocking findings selected at S4.
-   *
-   * For S6 re-reviews, ADR 0030 closure can re-open a prior claimed-fixed
-   * finding even when the reviewer omits it from `findings[]` and marks it
-   * still-active/unable-to-assess. S4 routing must follow the runner's
-   * adjudicated state, not reclassify the raw reviewer payload as if absence
-   * were closure.
+   * Blocking findings selected at S4 from the findings-count channel (#877).
+   * Disposition prose (still-active / verified-closed) is not a fate channel —
+   * only findings re-emitted in `findings[]` keep the fix loop open.
    */
   readonly pendingBlockingFindings?: ReadonlyArray<Finding>;
   /** Worker-reported S7 status, retained as telemetry only. */
