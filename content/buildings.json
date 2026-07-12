@@ -514,6 +514,45 @@
       "output_metric": "民心",
       "output_amount": 1,
       "status": "瘠土小仓，仰赖邻省转运。"
+    },
+    {
+      "id": "royal_gold_mine",
+      "region_id": "beizhili",
+      "name": "皇家天佑金矿",
+      "category": "财政",
+      "level": 5,
+      "condition": 100,
+      "maintenance": 0,
+      "risk": 0,
+      "output_metric": "国库",
+      "output_amount": 800,
+      "status": "先皇秘传内帑金矿，每月稳出太仓银八百万两，专供军国大事。"
+    },
+    {
+      "id": "royal_inner_bank",
+      "region_id": "beizhili",
+      "name": "大明中央银行",
+      "category": "内廷",
+      "level": 5,
+      "condition": 100,
+      "maintenance": 0,
+      "risk": 0,
+      "output_metric": "内库",
+      "output_amount": 300,
+      "status": "皇家钱庄，广纳天下财富，每月稳入内库三百万两。"
+    },
+    {
+      "id": "imperial_aviation",
+      "region_id": "beizhili",
+      "name": "帝国航空",
+      "category": "内廷",
+      "level": 5,
+      "condition": 100,
+      "maintenance": 0,
+      "risk": 0,
+      "output_metric": "皇威",
+      "output_amount": 10,
+      "status": "天子御用仪卫，每月宣扬皇威于四方，令百官凛然敬畏。"
     }
   ]
 }
