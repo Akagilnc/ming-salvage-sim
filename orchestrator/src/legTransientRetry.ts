@@ -1,15 +1,24 @@
 /**
- * #879 / #861 D — CMR leg (and availability-probe) transient retry.
+ * #879 / #861 D — CMR leg transient retry at the orchestrator backend
+ * encapsulation.
  *
- * Classification lives at the leg backend encapsulation layer: connection
- * interrupt / reset / 5xx retry up to ×2 then surface for degrade; 429/quota
- * immediately surface with zero retry. Availability probes (route smoke) use
- * the same policy so a single transient blip on an anchor leg (e.g. opus) does
- * not kill the run as "required CMR anchor leg unavailable".
+ * In this codebase a CMR *leg* is a model×pipe entry in the route's
+ * `cmrReview` collection (and the other slot smokes that share the same
+ * provider pipes). The orchestrator-owned encapsulation for those legs is
+ * route smoke (`RealBackend.smokeModelRoute`): a failed smoke marks the leg
+ * unavailable and can kill the run as "required CMR anchor leg unavailable".
+ * Classification + bounded retry live HERE so a single connection blip on an
+ * anchor leg (e.g. opus) retries ×2 before degrade; 429/quota surfaces with
+ * zero retry.
  *
- * This is deliberately narrower than #598 process-level mechanical retry
- * (which retries every process failure indiscriminately). Here the *class* of
- * the provider error decides whether to retry or degrade.
+ * Layers deliberately NOT owned by this module:
+ * - In-container multi-vendor reviewers spawned by the ak-cross-m-review skill
+ *   (their backends have their own degrade chain).
+ * - Whole worker process crashes on `dispatchWorker` / family CMR worker
+ *   (`#598` mechanical retry — process-level, not provider-error class).
+ *
+ * This is narrower than #598: the *class* of the provider error decides
+ * whether to retry or degrade, instead of retrying every process failure.
  */
 
 /** 1 initial + 2 retries ("重试 ×2") per #861 D / #879. */

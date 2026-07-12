@@ -5,6 +5,8 @@
  * backend encapsulation). Availability probes (route smoke / bare-ping) use the
  * same policy via `withExternalCallRetry` after #884: connection reset/5xx →
  * retry ×2 then degrade; 429/quota → immediate degrade with zero retry.
+ * Worker-process crashes stay on #598; in-container skill legs are out of this
+ * module.
  *
  * Positive / negative pair is the acceptance contract.
  */
@@ -216,30 +218,46 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
     return home;
   }
 
-  it("positive: availability probe recovers after two transient connection resets on a leg", async () => {
+  it("positive: one leg recovers after exactly two transient resets (3 bare-pings total)", async () => {
     const home = prepareHome();
-    const attemptsBySlug = new Map<string, number>();
+    // Single-slug route so every bare-ping belongs to the same logical leg
+    // (S5 r1 tight assertion, adapted to #884 bare-ping seam).
+    const singleLegRoute = {
+      ...resolveRouteModels("normal", {}),
+      slots: {
+        coder: "opus",
+        reviewer: "opus",
+        coderFix: "opus",
+        ship: "opus",
+        merger: "opus",
+        cmrCompleteness: "opus",
+        cmrCorrectness: "opus",
+        verify: "opus",
+        fixer: "opus",
+        cleanup: "opus",
+        docRelease: "opus",
+      },
+      legCollections: {
+        cmrReview: [{ family: "claude" as const, slug: "opus" }],
+      },
+      smoke: {},
+    };
+    let attempts = 0;
     try {
-      const backend = new BarePingSmokeBackend(home, async ({ slug, nonce }) => {
-        const n = (attemptsBySlug.get(slug) ?? 0) + 1;
-        attemptsBySlug.set(slug, n);
-        if (n <= 2) {
+      const backend = new BarePingSmokeBackend(home, async ({ nonce }) => {
+        attempts += 1;
+        if (attempts <= 2) {
           throw new Error("read ECONNRESET");
         }
         return `bare-ping ok ${nonce}\n`;
       });
-      const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
-      const totalPings = backend.pingCalls.length;
-      const uniqueSlugs = new Set(
-        Object.keys(smoked.smoke).map((k) => k.split(":")[1]),
-      );
-
-      // Retried: more physical launches than one-shot unique slugs.
-      expect(totalPings).toBeGreaterThan(uniqueSlugs.size);
-      // Not all-failed solely from two resets — at least one leg passed.
-      expect(Object.values(smoked.smoke).some((s) => s.state === "passed")).toBe(
-        true,
-      );
+      const smoked = await backend.smokeModelRoute(singleLegRoute);
+      // 1 initial + 2 retries on the sole unique slug.
+      expect(attempts).toBe(MAX_LEG_TRANSIENT_ATTEMPTS);
+      expect(backend.pingCalls.length).toBe(MAX_LEG_TRANSIENT_ATTEMPTS);
+      expect(
+        Object.values(smoked.smoke).every((s) => s.state === "passed"),
+      ).toBe(true);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

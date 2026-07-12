@@ -2375,6 +2375,12 @@ export class RealBackend implements Backend {
         process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
       ) * 1000;
     const providerAuth = this.hostProviderAuthAvailability();
+    // #879 / #861 D: each model×pipe smoke is the orchestrator-owned
+    // encapsulation of a CMR/route *leg*. Transient transport blips
+    // (reset/5xx) retry ×2 before the smoke is recorded failed (optional
+    // legs then degrade; required anchors can still abort the run); 429 /
+    // quota never retries — via withExternalCallRetry (same S5-family policy
+    // as legTransientRetry). Worker-process crashes stay on #598.
     const smoked = await smokeRouteModels(route, async (entry) => {
       const entryPool = entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
       const resolved = resolveModelSlugForPool(entry.slug, entryPool);
