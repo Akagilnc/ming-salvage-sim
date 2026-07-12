@@ -1833,18 +1833,36 @@ export class RealFamilyBackend implements FamilyBackend {
           },
         });
         if (protocolFailure.cmrPriorOutput !== undefined) {
-          const findingsCount = parseFindingsSentinel(result.stdout);
-          if (findingsCount === undefined) {
+          // Opus/#875/ADR 0129: count is never an independent setter — even on the
+          // findings-supplement rewrite path. Derive from structured array; reject
+          // sentinel mismatch at write-point for full rewrite (no lying count).
+          const priorVerdict = cmrResultToWorkerVerdict(
+            protocolFailure.cmrPriorOutput,
+          );
+          const derivedCount = priorVerdict.findings?.length ?? 0;
+          const sentinel = parseFindingsSentinel(result.stdout);
+          if (sentinel === undefined) {
             return {
               kind: "malformed",
               reason: `same reviewer supplement attempt ${attempt} omitted findings = x`,
               sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-              priorVerdict: cmrResultToWorkerVerdict(protocolFailure.cmrPriorOutput),
+              priorVerdict,
+            };
+          }
+          if (sentinel !== derivedCount) {
+            return {
+              kind: "malformed",
+              reason:
+                `same reviewer supplement attempt ${attempt}: findings = ${sentinel} ` +
+                `does not match structured findings length ${derivedCount} ` +
+                `(write-point; count is derived)`,
+              sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
+              priorVerdict,
             };
           }
           return {
-            ...cmrResultToWorkerVerdict(protocolFailure.cmrPriorOutput),
-            findingsCount,
+            ...priorVerdict,
+            findingsCount: derivedCount,
             sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
           };
         }
