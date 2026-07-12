@@ -1,4 +1,4 @@
-Status: Proposed（2026-07-12 owner 亲授设计，值守誊录；待 doc-mode cmr 收敛）
+Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive clear）
 
 # 0129: findings 状态库——复审写行、修复翻状态、复审再验再翻；纠错在写入点
 
