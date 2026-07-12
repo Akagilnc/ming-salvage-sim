@@ -279,20 +279,21 @@ describe("#683 buildQuotaWaitForResetLedgerEntry (ledger 外显)", () => {
   });
 });
 
-describe("#683 opencode probe stream error listeners", () => {
-  it("default runCommand registers error listeners on stdout and stderr", () => {
-    // Readable stream 'error' without a listener becomes an uncaught exception
-    // and can crash the process; the default spawn path must log-and-continue.
+describe("#683/#884 opencode probe hard clock", () => {
+  it("default runCommand uses execFileAsyncWithTimeout + external-call retry", () => {
+    // #884: bare spawn+SIGTERM is not a hard clock; production path must use
+    // the subprocess seam (SIGKILL) and transient retry with stage name.
     const src = readFileSync(
       new URL("../src/quotaProbe.ts", import.meta.url),
       "utf8",
     );
-    const spawnBlock = src.slice(
+    const block = src.slice(
       src.indexOf("async function runOpencodePongProbe"),
       src.indexOf("function isQuotaLimitBody"),
     );
-    expect(spawnBlock).toMatch(/child\.stdout\?\.on\(\s*["']error["']/);
-    expect(spawnBlock).toMatch(/child\.stderr\?\.on\(\s*["']error["']/);
+    expect(block).toMatch(/execFileAsyncWithTimeout/);
+    expect(block).toMatch(/withExternalCallRetry/);
+    expect(block).toMatch(/probe:opencode-go/);
   });
 });
 

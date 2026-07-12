@@ -5,7 +5,7 @@
  * re-queries live GitHub state (mergeStateStatus / threads / CI), never a cache.
  */
 
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "./externalCall.js";
 
 import {
   offlineSyntheticPollAdmissible,
@@ -208,7 +208,7 @@ export function docReleasePathsFromCommit(
   const oid = commitOid.trim();
   if (oid.length === 0) return undefined;
   try {
-    const raw = execFileSync(
+    const raw = shWithClock(
       "git",
       [
         "-C",
@@ -220,7 +220,7 @@ export function docReleasePathsFromCommit(
         "-r",
         oid,
       ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      { stage: "reconcile:git-diff-tree" },
     );
     const paths = raw
       .split(/\r?\n/)

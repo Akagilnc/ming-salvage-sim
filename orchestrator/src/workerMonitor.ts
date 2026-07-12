@@ -6,7 +6,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "./externalCall.js";
 import {
   appendFileSync,
   closeSync,
@@ -91,10 +91,11 @@ const defaultDeps: Required<WorkerMonitorDeps> = {
   listChildPids: (pid) => {
     if (!Number.isInteger(pid) || pid <= 0) return [];
     try {
-      const out = execFileSync("ps", ["-o", "pid=", "-ppid", String(pid)], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      const out = shWithClock(
+        "ps",
+        ["-o", "pid=", "-ppid", String(pid)],
+        { stage: "dispatch:ps-children" },
+      );
       return out
         .split(/\r?\n/)
         .map((line) => Number.parseInt(line.trim(), 10))
@@ -106,10 +107,11 @@ const defaultDeps: Required<WorkerMonitorDeps> = {
   readParentPid: (pid) => {
     if (!Number.isInteger(pid) || pid <= 0) return undefined;
     try {
-      const out = execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
+      const out = shWithClock(
+        "ps",
+        ["-o", "ppid=", "-p", String(pid)],
+        { stage: "dispatch:ps-parent" },
+      );
       const ppid = Number.parseInt(out, 10);
       return Number.isInteger(ppid) && ppid > 0 ? ppid : undefined;
     } catch {
@@ -132,10 +134,11 @@ const defaultDeps: Required<WorkerMonitorDeps> = {
 export function readProcessInstanceId(pid: number): string | undefined {
   if (!Number.isInteger(pid) || pid <= 0) return undefined;
   try {
-    const out = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    const out = shWithClock(
+      "ps",
+      ["-p", String(pid), "-o", "lstart="],
+      { stage: "dispatch:ps-lstart" },
+    );
     return out.length > 0 ? out : undefined;
   } catch {
     return undefined;

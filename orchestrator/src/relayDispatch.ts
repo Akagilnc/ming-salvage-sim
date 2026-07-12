@@ -8,7 +8,7 @@
  * the next baton via the same roster + ADR 0124 pool-orthogonal lookup.
  */
 
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "./externalCall.js";
 import {
   appendFileSync,
   existsSync,
@@ -203,11 +203,11 @@ export const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 /** Keep runner-owned relay focus out of worker commits, like ship focus/snapshots. */
 function excludeRelayFocusFromGit(worktreePath: string): void {
   try {
-    const excludePath = execFileSync(
+    const excludePath = shWithClock(
       "git",
       ["-C", worktreePath, "rev-parse", "--git-path", "info/exclude"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
+      { stage: "dispatch:git-exclude" },
+    );
     if (excludePath.length === 0) return;
     const absolutePath = resolve(worktreePath, excludePath);
     mkdirSync(join(absolutePath, ".."), { recursive: true });

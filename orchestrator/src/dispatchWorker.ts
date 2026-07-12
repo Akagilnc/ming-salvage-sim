@@ -22,7 +22,8 @@
  *     control flow consumes, so the prefactor does not touch route()/validate().
  */
 
-import { execFileSync, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { shWithClock } from "./externalCall.js";
 import {
   appendFileSync,
   existsSync,
@@ -156,11 +157,11 @@ function retentionForKind(kind: WorkerKind): WorkerContextRetention {
 
 function ensureGitExcluded(worktreePath: string, pattern: string): void {
   try {
-    const excludePath = execFileSync(
+    const excludePath = shWithClock(
       "git",
       ["-C", worktreePath, "rev-parse", "--git-path", "info/exclude"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
+      { stage: "dispatch:git-exclude" },
+    );
     if (excludePath.length === 0) return;
     const resolvedPath = resolve(worktreePath, excludePath);
     mkdirSync(join(resolvedPath, ".."), { recursive: true });
@@ -568,10 +569,7 @@ export async function legacyDispatchWorker(
   if (spec.kind === "cleanup") {
     if (landing?.cleanupDispatch !== undefined) {
       const ghSh: Sh = (file, args) =>
-        execFileSync(file, args, {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        }).trim();
+        shWithClock(file, args, { stage: `dispatch:${file}` });
       try {
         const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
         return { kind: "completed", output };

@@ -18,6 +18,9 @@
 import type { StepId } from "./types.js";
 import {
   ExternalCallExhaustedError,
+  ExternalCallTimeoutError,
+  defaultExternalCallRecorder,
+  execFileAsyncWithTimeout,
   withExternalCallRetry,
   withProviderTimeout,
 } from "./externalCall.js";
@@ -402,7 +405,9 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   try {
     // #884: provider/HTTP seam + S5 disposition — timeout/5xx retry ×2; 429 no retry.
-    return await withExternalCallRetry("probe:zai", async () => {
+    return await withExternalCallRetry(
+      "probe:zai",
+      async () => {
       // Clock covers fetch AND body consumption — a headers-only hang on
       // res.text() is still the #884 provider never-responds class.
       const { status, body } = await withProviderTimeout(
@@ -449,7 +454,9 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
         };
       }
       return { kind: "ok" as const };
-    });
+    },
+      { record: defaultExternalCallRecorder },
+    );
   } catch (err) {
     const cause =
       err instanceof ExternalCallExhaustedError
@@ -469,90 +476,72 @@ async function runOpencodePongProbe(
   const run =
     deps.runCommand ??
     (async (argv, opts) => {
-      const { spawn } = await import("node:child_process");
-      return await new Promise<{
-        code: number;
-        stdout: string;
-        stderr: string;
-      }>((resolve, reject) => {
-        const child = spawn(argv[0]!, argv.slice(1), {
-          stdio: ["ignore", "pipe", "pipe"],
+      // #884: hard-clocked subprocess (SIGKILL) with stage name.
+      try {
+        const stdout = await execFileAsyncWithTimeout(argv[0]!, argv.slice(1), {
+          stage: "probe:opencode-go",
+          timeoutMs: opts.timeoutMs,
         });
-        let stdout = "";
-        let stderr = "";
-        const timer = setTimeout(() => {
-          child.kill("SIGTERM");
-          reject(new Error(`opencode PONG probe timed out after ${opts.timeoutMs}ms`));
-        }, opts.timeoutMs);
-        child.stdout?.on("data", (c: Buffer) => {
-          stdout += c.toString("utf8");
-        });
-        child.stderr?.on("data", (c: Buffer) => {
-          stderr += c.toString("utf8");
-        });
-        // Readable 'error' without a listener becomes an uncaught exception and
-        // can crash the process — log-and-continue; close/error on the ChildProcess
-        // still settle the promise.
-        child.stdout?.on("error", (err: Error) => {
-          console.warn(
-            `[orchestrator] opencode probe stdout error: ${err.message}`,
-          );
-        });
-        child.stderr?.on("error", (err: Error) => {
-          console.warn(
-            `[orchestrator] opencode probe stderr error: ${err.message}`,
-          );
-        });
-        child.on("error", (err) => {
-          clearTimeout(timer);
-          reject(err);
-        });
-        child.on("close", (code) => {
-          clearTimeout(timer);
-          resolve({ code: code ?? 1, stdout, stderr });
-        });
-      });
+        return { code: 0, stdout, stderr: "" };
+      } catch (err) {
+        if (err instanceof ExternalCallTimeoutError) throw err;
+        const msg = err instanceof Error ? err.message : String(err);
+        // Non-zero exit surfaces as code 1 + message so quota body scan still works.
+        return { code: 1, stdout: "", stderr: msg };
+      }
     });
 
   try {
-    const out = await run(
-      [
-        "opencode",
-        "run",
-        "--dangerously-skip-permissions",
-        "-m",
-        model,
-        "Reply with exactly: PONG",
-      ],
-      { timeoutMs },
+    const out = await withExternalCallRetry(
+      "probe:opencode-go",
+      async () => {
+        const result = await run(
+          [
+            "opencode",
+            "run",
+            "--dangerously-skip-permissions",
+            "-m",
+            model,
+            "Reply with exactly: PONG",
+          ],
+          { timeoutMs },
+        );
+        const combined = `${result.stdout}\n${result.stderr}`;
+        if (isQuotaLimitBody(combined)) {
+          return {
+            kind: "quota_limited" as const,
+            detail: combined.slice(0, 500),
+          };
+        }
+        if (result.code !== 0) {
+          // Treat exit non-zero as durable probe error (not auto-transient)
+          // unless the body looks like quota (handled above).
+          return {
+            kind: "error" as const,
+            cause: `opencode PONG exit ${result.code}: ${combined.slice(0, 200)}`,
+          };
+        }
+        if (!/\bPONG\b/i.test(result.stdout)) {
+          // No PONG within a successful exit is treated as a soft wall (Go pool
+          // often returns empty stdout when rate-limited and silently retrying).
+          return {
+            kind: "quota_limited" as const,
+            detail: "opencode PONG missing from stdout (treat as quota wall)",
+          };
+        }
+        return { kind: "ok" as const };
+      },
+      { record: defaultExternalCallRecorder },
     );
-    const combined = `${out.stdout}\n${out.stderr}`;
-    if (isQuotaLimitBody(combined)) {
-      return {
-        kind: "quota_limited",
-        detail: combined.slice(0, 500),
-      };
-    }
-    if (out.code !== 0) {
-      return {
-        kind: "error",
-        cause: `opencode PONG exit ${out.code}: ${combined.slice(0, 200)}`,
-      };
-    }
-    if (!/\bPONG\b/i.test(out.stdout)) {
-      // No PONG within a successful exit is treated as a soft wall (Go pool
-      // often returns empty stdout when rate-limited and silently retrying).
-      return {
-        kind: "quota_limited",
-        detail: "opencode PONG missing from stdout (treat as quota wall)",
-      };
-    }
-    return { kind: "ok" };
+    return out;
   } catch (err) {
-    return {
-      kind: "error",
-      cause: err instanceof Error ? err.message : String(err),
-    };
+    const cause =
+      err instanceof ExternalCallExhaustedError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    return { kind: "error", cause };
   }
 }
 

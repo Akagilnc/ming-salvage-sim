@@ -71,6 +71,7 @@ import {
 } from "./acceptedSuppression.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
+  defaultExternalCallRecorder,
   execFileAsyncWithTimeout,
   execFileWithTimeout,
   withExternalCallRetry,
@@ -2409,17 +2410,20 @@ export class RealBackend implements Backend {
       const emptyDir = mkdtempSync(join(tmpdir(), "route-smoke-ping-"));
       try {
         const stage = `smoke-k:${entry.slug}`;
-        const stdout = await withExternalCallRetry(stage, async () =>
-          this.execBarePing({
-            slug: entry.slug,
-            cwd: emptyDir,
-            prompt,
-            nonce,
-            file: built.file,
-            args: built.args,
-            stdin: built.input,
-            timeoutMs,
-          }),
+        const stdout = await withExternalCallRetry(
+          stage,
+          async () =>
+            this.execBarePing({
+              slug: entry.slug,
+              cwd: emptyDir,
+              prompt,
+              nonce,
+              file: built.file,
+              args: built.args,
+              stdin: built.input,
+              timeoutMs,
+            }),
+          { record: defaultExternalCallRecorder },
         );
         if (!barePingNonceSatisfied(stdout, nonce)) {
           throw new Error(
