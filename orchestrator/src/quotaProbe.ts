@@ -432,26 +432,36 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
         },
         { timeoutMs },
       );
-      if (status === 429 || isQuotaLimitBody(body)) {
-        // Successful classification (not a throw) → no retry; park path.
+      // Status-first disposition (#884 cmr r7): 429 = quota (no retry);
+      // 5xx = transient (retry ×2) even if body mentions "quota"/"rate limit";
+      // body-based quota inference only when status does not already decide.
+      if (status === 429) {
         return {
           kind: "quota_limited" as const,
           resetAt: parseZaiResetAt(body),
           detail: body.slice(0, 500),
         };
       }
+      if (status >= 500 && status <= 599) {
+        throw Object.assign(
+          new Error(`zai probe HTTP ${status}: ${body.slice(0, 200)}`),
+          { status },
+        );
+      }
       if (status < 200 || status >= 300) {
-        if (status >= 500 && status <= 599) {
-          // Transient: throw so withExternalCallRetry retries ×2.
-          throw Object.assign(
-            new Error(`zai probe HTTP ${status}: ${body.slice(0, 200)}`),
-            { status },
-          );
-        }
         // Durable 4xx (auth etc.): surface as probe error, no retry.
+        // (Other non-2xx that are not 429/5xx.)
         return {
           kind: "error" as const,
           cause: `zai probe HTTP ${status}: ${body.slice(0, 200)}`,
+        };
+      }
+      // 2xx with quota-shaped body (some gateways return 200 + limit text).
+      if (isQuotaLimitBody(body)) {
+        return {
+          kind: "quota_limited" as const,
+          resetAt: parseZaiResetAt(body),
+          detail: body.slice(0, 500),
         };
       }
       return { kind: "ok" as const };
@@ -508,22 +518,30 @@ async function runOpencodePongProbe(
           { timeoutMs },
         );
         const combined = `${result.stdout}\n${result.stderr}`;
-        if (isQuotaLimitBody(combined)) {
-          return {
-            kind: "quota_limited" as const,
-            detail: combined.slice(0, 500),
-          };
-        }
         if (result.code !== 0) {
-          // Transient network/5xx must throw so withExternalCallRetry retries ×2.
+          // Status/exit-first (#884 cmr r7 same-type as zai): transient
+          // network/5xx retry ×2 even when stderr mentions quota text.
           if (classifyExternalCallFailure(combined) === "transient") {
             throw new Error(
               `opencode PONG transient exit ${result.code}: ${combined.slice(0, 200)}`,
             );
           }
+          if (isQuotaLimitBody(combined)) {
+            return {
+              kind: "quota_limited" as const,
+              detail: combined.slice(0, 500),
+            };
+          }
           return {
             kind: "error" as const,
             cause: `opencode PONG exit ${result.code}: ${combined.slice(0, 200)}`,
+          };
+        }
+        // Exit 0 with quota-shaped body (gateways that 200 with limit text).
+        if (isQuotaLimitBody(combined)) {
+          return {
+            kind: "quota_limited" as const,
+            detail: combined.slice(0, 500),
           };
         }
         if (!/\bPONG\b/i.test(result.stdout)) {

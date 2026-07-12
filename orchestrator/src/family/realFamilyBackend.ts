@@ -488,9 +488,12 @@ export class RealFamilyBackend implements FamilyBackend {
    * dedicated clone (every family git op anchors there).
    */
   protected sh(file: string, args: string[], cwd?: string): string {
+    // Mixed read/write seam (merge/push/pr create + rev-parse). Default
+    // no-retry so a timed-out mutation is never auto-replayed (#884 cmr r7).
     return shWithClock(file, args, {
       stage: `subprocess:${file}`,
       cwd: cwd ?? this.opts.workingRepo,
+      retry: false,
     });
   }
 

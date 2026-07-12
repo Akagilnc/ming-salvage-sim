@@ -73,10 +73,8 @@ import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
   defaultExternalCallRecorder,
   execFileAsyncWithTimeout,
-  execFileWithTimeout,
+  shWithClock,
   withExternalCallRetry,
-  withExternalCallRetrySync,
-  DEFAULT_SUBPROCESS_TIMEOUT_MS,
 } from "./externalCall.js";
 import { runExclusive } from "./gitMutex.js";
 import { findingIdentityKey } from "./findings.js";
@@ -2438,50 +2436,58 @@ export class RealBackend implements Backend {
       }
     };
 
-    // Unique-by-slug parallel legs (owner "六路").
+    // Pool-rewritten pipe: dedicated ping for the relay entry so a same-slug
+    // default-provider result is never alias-passed as pool-smoked. Launch IN
+    // PARALLEL with unique-slug legs (P5 / #884 cmr r7) — never serialize after
+    // the full smoke wave (adds a whole timeout/retry budget before dispatch).
+    const relayEntry =
+      relaySmokeEntryKey !== undefined && dispatchPool !== undefined
+        ? routeSmokeEntries(route).find((e) => e.key === relaySmokeEntryKey)
+        : undefined;
+    const relayPingPromise =
+      relayEntry !== undefined
+        ? pingOne(relayEntry, dispatchPool).then(
+            (result) =>
+              ({ ok: true as const, result, at: new Date().toISOString() }),
+            (error: unknown) =>
+              ({ ok: false as const, error, at: new Date().toISOString() }),
+          )
+        : undefined;
+
+    // Unique-by-slug parallel legs (owner "六路") — overlap with relay ping.
     let smoked = await smokeRouteModels(route, async (entry) => {
       const entryPool =
         entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
       return pingOne(entry, entryPool);
     });
 
-    // Pool-rewritten pipe: force a dedicated ping for the relay entry so a
-    // same-slug default-provider result is never alias-passed as pool-smoked.
-    if (
-      relaySmokeEntryKey !== undefined &&
-      dispatchPool !== undefined
-    ) {
-      const relayEntry = routeSmokeEntries(route).find(
-        (e) => e.key === relaySmokeEntryKey,
-      );
-      if (relayEntry !== undefined) {
-        const at = new Date().toISOString();
-        try {
-          const result = await pingOne(relayEntry, dispatchPool);
-          smoked = {
-            ...smoked,
-            smoke: {
-              ...smoked.smoke,
-              [relayEntry.key]: {
-                state: "passed",
-                at,
-                cliVersion: result.cliVersion,
-              },
+    if (relayEntry !== undefined && relayPingPromise !== undefined) {
+      const relayOutcome = await relayPingPromise;
+      if (relayOutcome.ok) {
+        smoked = {
+          ...smoked,
+          smoke: {
+            ...smoked.smoke,
+            [relayEntry.key]: {
+              state: "passed",
+              at: relayOutcome.at,
+              cliVersion: relayOutcome.result.cliVersion,
             },
-          };
-        } catch (error) {
-          smoked = {
-            ...smoked,
-            smoke: {
-              ...smoked.smoke,
-              [relayEntry.key]: {
-                state: "failed",
-                at,
-                error: error instanceof Error ? error.message : String(error),
-              },
+          },
+        };
+      } else {
+        const err = relayOutcome.error;
+        smoked = {
+          ...smoked,
+          smoke: {
+            ...smoked.smoke,
+            [relayEntry.key]: {
+              state: "failed",
+              at: relayOutcome.at,
+              error: err instanceof Error ? err.message : String(err),
             },
-          };
-        }
+          },
+        };
       }
     }
     return smoked;
@@ -2645,16 +2651,15 @@ export class RealBackend implements Backend {
    * (integ-cmr 256 r3 reuse-fail-closed test).
    *
    * #884: every subprocess wait carries a clock (default 120s).
+   * Mixed read/write seam → retry:false (exactly-once on timeout for git
+   * clone/push/worktree remove and gh writes; cmr r7).
    */
   protected sh(file: string, args: string[], cwd?: string): string {
-    const stage = `subprocess:${file}`;
-    return withExternalCallRetrySync(stage, () =>
-      execFileWithTimeout(file, args, {
-        stage,
-        timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
-        cwd,
-      }).trim(),
-    );
+    return shWithClock(file, args, {
+      stage: `subprocess:${file}`,
+      cwd,
+      retry: false,
+    });
   }
 
   // ── S0: lightweight metadata (host gh) ─────────────────────────────────────
