@@ -403,10 +403,12 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
   try {
     // #884: provider/HTTP seam + S5 disposition — timeout/5xx retry ×2; 429 no retry.
     return await withExternalCallRetry("probe:zai", async () => {
-      const res = await withProviderTimeout(
+      // Clock covers fetch AND body consumption — a headers-only hang on
+      // res.text() is still the #884 provider never-responds class.
+      const { status, body } = await withProviderTimeout(
         "probe:zai",
-        async (signal) =>
-          fetchFn(ZAI_CHAT_URL, {
+        async (signal) => {
+          const res = await fetchFn(ZAI_CHAT_URL, {
             method: "POST",
             headers: {
               Authorization: `Bearer ${key}`,
@@ -418,11 +420,13 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
               max_tokens: 4,
             }),
             signal,
-          }),
+          });
+          const text = await res.text();
+          return { status: res.status, body: text };
+        },
         { timeoutMs },
       );
-      const body = await res.text();
-      if (res.status === 429 || isQuotaLimitBody(body)) {
+      if (status === 429 || isQuotaLimitBody(body)) {
         // Successful classification (not a throw) → no retry; park path.
         return {
           kind: "quota_limited" as const,
@@ -430,18 +434,18 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
           detail: body.slice(0, 500),
         };
       }
-      if (!res.ok) {
-        if (res.status >= 500 && res.status <= 599) {
+      if (status < 200 || status >= 300) {
+        if (status >= 500 && status <= 599) {
           // Transient: throw so withExternalCallRetry retries ×2.
           throw Object.assign(
-            new Error(`zai probe HTTP ${res.status}: ${body.slice(0, 200)}`),
-            { status: res.status },
+            new Error(`zai probe HTTP ${status}: ${body.slice(0, 200)}`),
+            { status },
           );
         }
         // Durable 4xx (auth etc.): surface as probe error, no retry.
         return {
           kind: "error" as const,
-          cause: `zai probe HTTP ${res.status}: ${body.slice(0, 200)}`,
+          cause: `zai probe HTTP ${status}: ${body.slice(0, 200)}`,
         };
       }
       return { kind: "ok" as const };
