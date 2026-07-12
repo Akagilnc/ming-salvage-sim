@@ -13,6 +13,7 @@ import {
   execFileAsyncWithTimeout,
   execFileWithTimeout,
   withExternalCallRetry,
+  withExternalCallRetrySync,
   withProviderTimeout,
   DEFAULT_PROVIDER_TIMEOUT_MS,
   EXTERNAL_CALL_MAX_ATTEMPTS,
@@ -50,28 +51,55 @@ describe("#884 external-call clocks", () => {
     );
   });
 
-  it("provider hang: AbortSignal.timeout fires a stage-named timeout error", async () => {
+  it("provider hang: non-cooperative promise still times out (wrapper races abort)", async () => {
+    // #884 hang class: provider never settles AND ignores AbortSignal.
+    // The wrapper must still reject — cooperative signal handling alone is not enough.
     await expect(
       withProviderTimeout(
         "probe:zai",
-        async (signal) =>
-          await new Promise<void>((_resolve, reject) => {
-            signal.addEventListener("abort", () => {
-              reject(
-                signal.reason instanceof Error
-                  ? signal.reason
-                  : new Error(String(signal.reason)),
-              );
-            });
-            // never resolve — pure hang
+        async (_signal) =>
+          await new Promise<void>(() => {
+            // never resolve, never listen to signal
           }),
-        { timeoutMs: 30 },
+        { timeoutMs: 40 },
       ),
     ).rejects.toMatchObject({
       name: "ExternalCallTimeoutError",
       stage: "probe:zai",
       seam: "provider",
     });
+  });
+
+  it("provider hang through retry: timeout → transient ×2 → stage-named exhaust", async () => {
+    const records: ExternalCallAttemptRecord[] = [];
+    await expect(
+      withExternalCallRetry(
+        "probe:never",
+        () =>
+          withProviderTimeout(
+            "probe:never",
+            async () =>
+              await new Promise<void>(() => {
+                /* hang */
+              }),
+            { timeoutMs: 25 },
+          ),
+        {
+          sleepMs: async () => {},
+          record: (r) => records.push(r),
+        },
+      ),
+    ).rejects.toMatchObject({
+      name: "ExternalCallExhaustedError",
+      stage: "probe:never",
+      attempts: EXTERNAL_CALL_MAX_ATTEMPTS,
+    });
+    expect(records.map((r) => r.outcome)).toEqual([
+      "retry",
+      "retry",
+      "exhausted",
+    ]);
+    expect(records.every((r) => r.stage === "probe:never")).toBe(true);
   });
 
   it("subprocess hang: execFileAsyncWithTimeout kills the child and throws typed error", async () => {
@@ -228,5 +256,54 @@ describe("#884 external-call clocks", () => {
         outcome: "ok",
       }),
     ]);
+  });
+
+  it("sync seam: transient timeout retries ×2 then exhausts with stage name", () => {
+    let attempts = 0;
+    const records: ExternalCallAttemptRecord[] = [];
+    expect(() =>
+      withExternalCallRetrySync(
+        "admission:gh",
+        () => {
+          attempts += 1;
+          throw new ExternalCallTimeoutError({
+            stage: "admission:gh",
+            timeoutMs: 10,
+            seam: "subprocess",
+          });
+        },
+        {
+          sleepMs: () => {},
+          record: (r) => records.push(r),
+        },
+      ),
+    ).toThrow(ExternalCallExhaustedError);
+    expect(attempts).toBe(EXTERNAL_CALL_MAX_ATTEMPTS);
+    expect(records.map((r) => r.outcome)).toEqual([
+      "retry",
+      "retry",
+      "exhausted",
+    ]);
+    expect(records.every((r) => r.stage === "admission:gh")).toBe(true);
+  });
+
+  it("sync seam: 429/quota is NOT retried", () => {
+    let attempts = 0;
+    const records: ExternalCallAttemptRecord[] = [];
+    expect(() =>
+      withExternalCallRetrySync(
+        "admission:gh",
+        () => {
+          attempts += 1;
+          throw new Error("HTTP 429 rate limit");
+        },
+        {
+          sleepMs: () => {},
+          record: (r) => records.push(r),
+        },
+      ),
+    ).toThrow(/429/);
+    expect(attempts).toBe(1);
+    expect(records.map((r) => r.outcome)).toEqual(["quota"]);
   });
 });

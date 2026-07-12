@@ -3857,6 +3857,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // recorded so the caller gets a clean error package rather than a raw reject.
   let resumeState: ResumeState | undefined;
   try {
+    // #884: reconcile = resume-residue / ledger discovery before productive work.
+    logDriverStage("reconcile", `issue #${issueNumber}`);
     resumeState = await backend.findResumeState(issueNumber);
   } catch (err) {
     return await errorTermination("S0", err);
@@ -4411,6 +4413,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // the brief, when present, is just the most-authoritative part of that.
         let meta: IssueMeta;
         try {
+          // #884: admission = S0 input gate / live issue metadata fetch.
+          logDriverStage("admission", `issue #${issueNumber}`);
           meta = await backend.fetchIssueMeta(issueNumber);
         } catch (err) {
           // No worktree yet → no sibling stateDir → cannot persist (inherent:

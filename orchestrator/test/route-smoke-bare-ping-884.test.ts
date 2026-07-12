@@ -364,14 +364,25 @@ describe("#884 driver stage line logs", () => {
     try {
       await runOrchestrator({ issueNumber: 884, backend: new StageBackend() });
       const lines = log.mock.calls.map((c) => String(c[0]));
+      const reconcileIdx = lines.findIndex((l) =>
+        /\[orchestrator:stage\] reconcile/.test(l),
+      );
+      const admissionIdx = lines.findIndex((l) =>
+        /\[orchestrator:stage\] admission/.test(l),
+      );
       const smokeIdx = lines.findIndex((l) =>
         /\[orchestrator:stage\] smoke-k/.test(l),
       );
       const dispatchIdx = lines.findIndex((l) =>
         /\[orchestrator:stage\] dispatch/.test(l),
       );
+      // Owner-named four stages must all appear on the single-slice path so a
+      // silent hang is attributable to the last entered phase.
+      expect(reconcileIdx).toBeGreaterThanOrEqual(0);
+      expect(admissionIdx).toBeGreaterThanOrEqual(0);
       expect(smokeIdx).toBeGreaterThanOrEqual(0);
       expect(dispatchIdx).toBeGreaterThan(smokeIdx);
+      expect(admissionIdx).toBeLessThan(dispatchIdx);
     } finally {
       log.mockRestore();
     }

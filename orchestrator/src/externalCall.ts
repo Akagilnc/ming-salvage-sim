@@ -159,6 +159,15 @@ function defaultSleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function defaultSleepSync(ms: number): void {
+  if (process.env.VITEST === "true") return;
+  // Busy-wait is avoided; Atomics.wait on a SharedArrayBuffer is the portable
+  // sync sleep without pulling in child_process. 1 Int32 is enough.
+  const sab = new SharedArrayBuffer(4);
+  const view = new Int32Array(sab);
+  Atomics.wait(view, 0, 0, ms);
+}
+
 function isTimeoutLikeExecError(err: unknown): boolean {
   if (err === null || typeof err !== "object") return false;
   const e = err as {
@@ -276,7 +285,11 @@ export function execFileAsyncWithTimeout(
 
 /**
  * In-process provider/HTTP seam: race the work against AbortSignal.timeout.
- * The runner must honour `signal` (fetch, undici, etc.).
+ *
+ * The runner SHOULD honour `signal` (fetch, undici, …) so the underlying work
+ * can cancel. The wrapper ALSO races an abort reject so a non-cooperative
+ * provider that ignores the signal still cannot hang the process forever —
+ * that is the #884 hang class (provider never responds, no thrown error).
  */
 export async function withProviderTimeout<T>(
   stage: string,
@@ -285,9 +298,29 @@ export async function withProviderTimeout<T>(
 ): Promise<T> {
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
   const signal = AbortSignal.timeout(timeoutMs);
+  let onAbort: (() => void) | undefined;
   try {
-    return await run(signal);
+    const abortPromise = new Promise<never>((_resolve, reject) => {
+      const fire = () => {
+        reject(
+          new ExternalCallTimeoutError({
+            stage,
+            timeoutMs,
+            seam: "provider",
+            cause: signal.reason,
+          }),
+        );
+      };
+      if (signal.aborted) {
+        fire();
+        return;
+      }
+      onAbort = fire;
+      signal.addEventListener("abort", fire, { once: true });
+    });
+    return await Promise.race([run(signal), abortPromise]);
   } catch (err) {
+    if (err instanceof ExternalCallTimeoutError) throw err;
     if (
       signal.aborted ||
       (err !== null &&
@@ -303,6 +336,10 @@ export async function withProviderTimeout<T>(
       });
     }
     throw err;
+  } finally {
+    if (onAbort !== undefined) {
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 }
 
@@ -390,6 +427,99 @@ export async function withExternalCallRetry<T>(
           Math.min(attempt - 1, EXTERNAL_CALL_RETRY_BACKOFF_MS.length - 1)
         ] ?? 1_000;
       await sleepMs(backoff);
+    }
+  }
+
+  throw new ExternalCallExhaustedError({
+    stage,
+    attempts: maxAttempts,
+    lastError,
+  });
+}
+
+export interface ExternalCallRetrySyncOptions {
+  readonly maxAttempts?: number;
+  readonly sleepMs?: (ms: number) => void;
+  readonly onAttempt?: (attempt: number, stage: string) => void;
+  readonly record?: (event: ExternalCallAttemptRecord) => void;
+  readonly now?: () => Date;
+}
+
+/**
+ * Sync counterpart of {@link withExternalCallRetry} for host `gh`/`git`
+ * seams that remain synchronous (`Sh` / `RealBackend.sh`). Same S5-family
+ * disposition: transient → retry ×2; quota → no retry; durable → surface.
+ */
+export function withExternalCallRetrySync<T>(
+  stage: string,
+  run: () => T,
+  opts?: ExternalCallRetrySyncOptions,
+): T {
+  const maxAttempts = opts?.maxAttempts ?? EXTERNAL_CALL_MAX_ATTEMPTS;
+  const sleepMs = opts?.sleepMs ?? defaultSleepSync;
+  const now = opts?.now ?? (() => new Date());
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    opts?.onAttempt?.(attempt, stage);
+    try {
+      const value = run();
+      opts?.record?.({
+        stage,
+        attempt,
+        outcome: "ok",
+        ts: now().toISOString(),
+      });
+      return value;
+    } catch (err) {
+      lastError = err;
+      const klass = classifyExternalCallFailure(err);
+      if (klass === "quota") {
+        opts?.record?.({
+          stage,
+          attempt,
+          outcome: "quota",
+          error: err instanceof Error ? err.message : String(err),
+          ts: now().toISOString(),
+        });
+        throw err;
+      }
+      if (klass === "durable") {
+        opts?.record?.({
+          stage,
+          attempt,
+          outcome: "durable",
+          error: err instanceof Error ? err.message : String(err),
+          ts: now().toISOString(),
+        });
+        throw err;
+      }
+      if (attempt >= maxAttempts) {
+        opts?.record?.({
+          stage,
+          attempt,
+          outcome: "exhausted",
+          error: err instanceof Error ? err.message : String(err),
+          ts: now().toISOString(),
+        });
+        throw new ExternalCallExhaustedError({
+          stage,
+          attempts: maxAttempts,
+          lastError: err,
+        });
+      }
+      opts?.record?.({
+        stage,
+        attempt,
+        outcome: "retry",
+        error: err instanceof Error ? err.message : String(err),
+        ts: now().toISOString(),
+      });
+      const backoff =
+        EXTERNAL_CALL_RETRY_BACKOFF_MS[
+          Math.min(attempt - 1, EXTERNAL_CALL_RETRY_BACKOFF_MS.length - 1)
+        ] ?? 1_000;
+      sleepMs(backoff);
     }
   }
 

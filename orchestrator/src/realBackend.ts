@@ -74,6 +74,7 @@ import {
   execFileAsyncWithTimeout,
   execFileWithTimeout,
   withExternalCallRetry,
+  withExternalCallRetrySync,
   DEFAULT_SUBPROCESS_TIMEOUT_MS,
 } from "./externalCall.js";
 import { runExclusive } from "./gitMutex.js";
@@ -2565,11 +2566,14 @@ export class RealBackend implements Backend {
    * #884: every subprocess wait carries a clock (default 120s).
    */
   protected sh(file: string, args: string[], cwd?: string): string {
-    return execFileWithTimeout(file, args, {
-      stage: `subprocess:${file}`,
-      timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
-      cwd,
-    }).trim();
+    const stage = `subprocess:${file}`;
+    return withExternalCallRetrySync(stage, () =>
+      execFileWithTimeout(file, args, {
+        stage,
+        timeoutMs: DEFAULT_SUBPROCESS_TIMEOUT_MS,
+        cwd,
+      }).trim(),
+    );
   }
 
   // ── S0: lightweight metadata (host gh) ─────────────────────────────────────
