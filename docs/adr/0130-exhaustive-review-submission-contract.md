@@ -1,4 +1,4 @@
-Status: Proposed（2026-07-12 grill 三裁决收口 + r1 评审修订：改号 0100→0130、契约落到 0129 状态库形态；待 doc-mode cmr 收敛）
+Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive clear）
 
 # 0130: 评审交卷契约——看见的都写行，fixer 首务验真翻状态，一切评审模式统一
 
