@@ -6,7 +6,12 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { shWithClock } from "./externalCall.js";
+import {
+  ExternalCallTimeoutError,
+  effectiveSubprocessTimeoutMs,
+  shWithClock,
+  DEFAULT_SUBPROCESS_TIMEOUT_MS,
+} from "./externalCall.js";
 import {
   appendFileSync,
   closeSync,
@@ -21,6 +26,9 @@ import { join } from "node:path";
 import type { LedgerEntry, WorkerMonitorHandle, WorkerSpec } from "./types.js";
 
 export type { WorkerMonitorHandle } from "./types.js";
+
+/** Spawn-ack wall budget (#884 cmr r8 — every external wait carries a clock). */
+export const SPAWN_ACK_TIMEOUT_MS = DEFAULT_SUBPROCESS_TIMEOUT_MS;
 
 export interface LogActivitySnapshot {
   readonly sizeBytes: number;
@@ -237,14 +245,46 @@ export async function dispatchMonitoredCliWorker(
   // `child.pid` is assigned before the OS process is necessarily visible to
   // `ps`. Wait for Node's spawn notification before capturing the identity so
   // a freshly spawned worker does not get an artificial fallback identity
-  // that can never match a later liveness check.
+  // that can never match a later liveness check. Clocked (#884 cmr r8).
+  const spawnStage = `dispatch:${input.stepId}:spawn`;
+  const spawnTimeoutMs = effectiveSubprocessTimeoutMs(SPAWN_ACK_TIMEOUT_MS);
   await new Promise<void>((resolve, reject) => {
     if (child.exitCode !== null) {
       resolve();
       return;
     }
-    child.once("spawn", resolve);
-    child.once("error", reject);
+    const timer = setTimeout(() => {
+      child.removeListener("spawn", onSpawn);
+      child.removeListener("error", onError);
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+      reject(
+        new ExternalCallTimeoutError({
+          stage: spawnStage,
+          timeoutMs: spawnTimeoutMs,
+          seam: "subprocess",
+        }),
+      );
+    }, spawnTimeoutMs);
+    const onSpawn = (): void => {
+      clearTimeout(timer);
+      child.removeListener("error", onError);
+      resolve();
+    };
+    const onError = (err: Error): void => {
+      clearTimeout(timer);
+      child.removeListener("spawn", onSpawn);
+      reject(err);
+    };
+    child.once("spawn", onSpawn);
+    child.once("error", onError);
   });
 
   // Capture OS start identity immediately so resume/kill can refuse PID reuse.

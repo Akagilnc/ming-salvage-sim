@@ -383,7 +383,9 @@ function familyDiffFiles(
 export type Sh = (file: string, args: string[]) => string;
 
 const defaultSh: Sh = (file, args) =>
-  shWithClock(file, args, { stage: `admission:${file}` });
+  // Mixed read/write (gh epic read + git branch cut). No mutation auto-retry
+  // on timeout — exactly-once for `git branch` / fetch (#884 cmr r8).
+  shWithClock(file, args, { stage: `admission:${file}`, retry: false });
 
 /**
  * Read the epic's children (native sub-issues + each child's blocked_by) from

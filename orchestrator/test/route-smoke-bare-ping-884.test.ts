@@ -147,11 +147,16 @@ describe("#884 bare-ping pure helpers", () => {
     expect(prompt.toLowerCase()).toMatch(/reply|exactly/);
   });
 
-  it("accepts stdout that echoes the nonce", () => {
+  it("accepts exact reply or a full line equal to the nonce (not substring embed)", () => {
+    expect(barePingNonceSatisfied("abc-nonce-1", "abc-nonce-1")).toBe(true);
     expect(barePingNonceSatisfied("thought...\nabc-nonce-1\n", "abc-nonce-1")).toBe(
       true,
     );
     expect(barePingNonceSatisfied("nope", "abc-nonce-1")).toBe(false);
+    // Embedded mid-token must not certify the credential.
+    expect(barePingNonceSatisfied("prefix-abc-nonce-1-suffix", "abc-nonce-1")).toBe(
+      false,
+    );
   });
 
   it("builds one-shot CLI argv per provider (no docker, no repo, no tools)", () => {
@@ -192,7 +197,8 @@ describe("#884 bare-ping production smoke", () => {
       peak = Math.max(peak, active);
       await new Promise((r) => setTimeout(r, 30));
       active -= 1;
-      return `ack ${call.nonce}`;
+      // Full-line nonce (oracle accepts exact line; not mid-token embed).
+      return `thought\n${call.nonce}\n`;
     });
     const route = resolveRouteModels("normal", {});
     // Owner "六路": unique by model slug (shared roles fan out one status).
@@ -261,36 +267,51 @@ describe("#884 bare-ping production smoke", () => {
     expect(resolveRouteSmokeIdleTimeoutSeconds("15")).toBe(15);
   });
 
-  it("pool-rewritten relay ping overlaps unique legs (not serialized after them)", async () => {
-    // #884 P5: dedicated pool ping for relaySmokeEntryKey must share the same
-    // Promise.all wave as ordinary unique-slug legs — never await the full
-    // smoke wave first and only then start the pool ping.
+  it("pool-rewritten relay ping overlaps unique legs and does not alias default pipe", async () => {
+    // #884 P5 + cmr r8: dedicated pool ping for relaySmokeEntryKey shares the
+    // same wave as unique-slug default-pipe legs; unique wave never uses the
+    // dispatch pool (would fan out pool-passed as default-passed).
     const home = tempHome();
     mkdirSync(join(home, ".grok"), { recursive: true });
     writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
     let active = 0;
     let peak = 0;
     const starts: number[] = [];
-    const backend = new BarePingBackend(home, async (call) => {
+    const pools: Array<string | undefined> = [];
+    class RelayAwareBackend extends BarePingBackend {
+      protected override async execBarePing(input: {
+        readonly slug: string;
+        readonly cwd: string;
+        readonly prompt: string;
+        readonly nonce: string;
+        readonly file: string;
+        readonly args: readonly string[];
+        readonly stdin?: string;
+        readonly timeoutMs: number;
+      }): Promise<string> {
+        // file === "grok" ⇒ pool-selected grok CLI; otherwise default pipe.
+        pools.push(input.file === "grok" ? "grok-build" : undefined);
+        return super.execBarePing(input);
+      }
+    }
+    const backend = new RelayAwareBackend(home, async (call) => {
       starts.push(Date.now());
       active += 1;
       peak = Math.max(peak, active);
       await new Promise((r) => setTimeout(r, 80));
       active -= 1;
-      return `ack ${call.nonce}`;
+      return call.nonce;
     });
     const route = resolveRouteModels("normal", { coder: "grok-4.5" });
     const unique = new Set(routeSmokeEntries(route).map((e) => e.slug)).size;
 
     await backend.smokeModelRoute(route, {}, "grok-build", "coder:grok-4.5");
 
-    // Unique legs + one dedicated pool relay ping.
+    // Unique default-pipe legs + exactly one dedicated pool relay ping.
     expect(backend.pingCalls.length).toBe(unique + 1);
-    // If relay were serial-after, peak would equal unique-leg peak only during
-    // the first wave (relay alone later). Overlap forces peak >= unique-wave
-    // concurrency and specifically > 1 with the extra leg in-flight.
+    expect(pools.filter((p) => p === "grok-build")).toHaveLength(1);
+    expect(pools.filter((p) => p === undefined).length).toBe(unique);
     expect(peak).toBeGreaterThan(1);
-    // All starts cluster: max-min start skew << leg duration (80ms) + margin.
     const skew = Math.max(...starts) - Math.min(...starts);
     expect(skew).toBeLessThan(60);
   });

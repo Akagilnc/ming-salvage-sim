@@ -51,6 +51,15 @@ describe("#884 external-call clocks", () => {
     expect(classifyExternalCallFailure(new Error("auth token expired"))).toBe(
       "durable",
     );
+    // Status-first free text: 5xx token beats quota vocabulary (opencode path).
+    expect(
+      classifyExternalCallFailure(
+        "HTTP 503 upstream quota / rate limit text in 503 body",
+      ),
+    ).toBe("transient");
+    expect(
+      classifyExternalCallFailure("exit 1: HTTP 429 rate limit exceeded"),
+    ).toBe("quota");
   });
 
   it("provider hang: non-cooperative promise still times out (wrapper races abort)", async () => {
@@ -359,6 +368,14 @@ describe("#884 external-call clocks", () => {
       join(here, "../src/family/realFamilyBackend.ts"),
       "utf8",
     );
+    const familyDriver = readFileSync(
+      join(here, "../src/familyDriver.ts"),
+      "utf8",
+    );
+    const workerMonitor = readFileSync(
+      join(here, "../src/workerMonitor.ts"),
+      "utf8",
+    );
     // Class-level sh is a mixed read/write seam — must default retry:false so
     // git push/merge/clone and gh writes are exactly-once on timeout.
     expect(realBackend).toMatch(
@@ -367,5 +384,12 @@ describe("#884 external-call clocks", () => {
     expect(familyBackend).toMatch(
       /protected sh\([\s\S]*?shWithClock\([\s\S]*?retry:\s*false/,
     );
+    // familyDriver defaultSh also cuts git branches — same exactly-once rule.
+    expect(familyDriver).toMatch(
+      /defaultSh[\s\S]*?shWithClock\([\s\S]*?retry:\s*false/,
+    );
+    // Spawn acknowledgement must carry a stage-named clock (no infinite wait).
+    expect(workerMonitor).toMatch(/dispatch:\$\{input\.stepId\}:spawn/);
+    expect(workerMonitor).toMatch(/ExternalCallTimeoutError/);
   });
 });
