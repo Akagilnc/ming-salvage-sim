@@ -77,8 +77,9 @@ def _public_chapter_counterpart(
     turn items; the writer keeps legacy aggregate behaviour only when there
     are no source items to project.
     """
+    source_items = list(items)
     items = [
-        item for item in items
+        item for item in source_items
         # Archive rows are derived read-model projections, not independently
         # authorizable source material.  A chapter counterpart may aggregate
         # only the source rows that existed before either archive was written.
@@ -87,7 +88,10 @@ def _public_chapter_counterpart(
         )
     ]
     if not items:
-        return None
+        # ``None`` means no source snapshot exists, retaining the legacy body
+        # fallback.  An empty string means this turn has only derived rows and
+        # must not publish the chapter aggregate a second time.
+        return "" if source_items else None
     return "\n".join(
         str(item.get("body") or item.get("title") or "")
         for item in items

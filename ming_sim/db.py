@@ -100,8 +100,35 @@ def _snapshot_secret_order_people(
 
 
 _SECRET_EXCLUSION_CLAUSE_RE = re.compile(
-    r"(?:瞒住|瞒着|不可令|不得让|勿使|不要让)\s*([^，。；;\s]{2,40}?)(?=(?:知晓|知道|得知|过问|插手|，|。|；|\s|$))"
+    r"(?:瞒住|瞒着|瞒过|不可令|不得让|不得告知|勿使|不要让|不许|严禁)\s*"
+    r"([^，。；;\s]{2,40}?)(?=(?:知晓|知道|得知|知情|过问|插手|，|。|；|\s|$))"
 )
+_SECRET_OFFICE_TYPES = (
+    "吏部", "户部", "礼部", "兵部", "刑部", "工部", "都察院", "大理寺", "通政司",
+    "司礼监", "内阁", "东厂", "锦衣卫", "翰林院", "詹事府",
+)
+_SECRET_OFFICE_TITLE_SUFFIX_RE = re.compile(
+    r"[\u4e00-\u9fff]{0,12}(?:首辅|次辅|大学士|阁臣|辅臣|尚书|侍郎|郎中|员外郎|主事|"
+    r"巡抚|总督|总兵|督师|经略|提督|都御史|御史|侍读学士|侍讲学士|侍读|侍讲|"
+    r"编修|检讨|修撰|庶吉士|庶常|少詹事|詹事|中允|赞善)$"
+)
+
+
+def _canonical_secret_exclusion_target(
+    target: str, office_types: set[str], office_titles: set[str],
+) -> tuple[str, str]:
+    """Classify a secrecy target using the shipped registry before fallback vocabulary."""
+    target = re.sub(r"(?:诸官|官员|诸司|诸人|上下|众人)$", "", target).strip()
+    if target in office_titles:
+        return "office", target
+    if target in office_types:
+        return "office", target
+    if _SECRET_OFFICE_TITLE_SUFFIX_RE.fullmatch(target):
+        return "office", target
+    for office_type in sorted(office_types | set(_SECRET_OFFICE_TYPES), key=len, reverse=True):
+        if target.startswith(office_type):
+            return "office", office_type if target != office_type else target
+    return "", target
 
 
 def _recover_secret_order_exclusions(
@@ -128,14 +155,17 @@ def _recover_secret_order_exclusions(
     for clause in _SECRET_EXCLUSION_CLAUSE_RE.findall(str(text or "")):
         for target in re.split(r"[、，,和与及]", clause):
             target = target.strip("，。；、 ")
-            target = re.sub(r"(?:诸官|官员|诸司|诸人|上下|众人)$", "", target)
             if not target or target in {"他们", "他", "她", "此人", "诸人"}:
                 continue
             canonical_name = by_name.get(target)
             if canonical_name:
                 people.append(canonical_name)
-            elif target in office_types or target in office_titles:
-                offices.append(target)
+            else:
+                kind, canonical_target = _canonical_secret_exclusion_target(
+                    target, office_types, office_titles,
+                )
+                if kind == "office":
+                    offices.append(canonical_target)
     return list(dict.fromkeys(people)), list(dict.fromkeys(offices))
 
 
@@ -153,10 +183,14 @@ def canonical_secret_order_exclusions(
     people = _snapshot_secret_order_people(
         content, [*explicit_people, *recovered_people], [],
     )
+    office_types = {str(character.office_type).strip() for character in getattr(content, "characters", {}).values()
+                    if character.office_type}
+    office_titles = {str(character.office).strip() for character in getattr(content, "characters", {}).values()
+                     if character.office}
     offices = []
     for value in [*explicit_offices, *recovered_offices]:
-        target = re.sub(r"(?:诸官|官员|诸司|诸人|上下|众人)$", "", str(value).strip())
-        if target:
+        kind, target = _canonical_secret_exclusion_target(str(value), office_types, office_titles)
+        if kind == "office":
             offices.append(target)
     return list(dict.fromkeys(people)), list(dict.fromkeys(offices))
 

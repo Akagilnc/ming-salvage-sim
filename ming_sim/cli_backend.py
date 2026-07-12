@@ -1849,11 +1849,11 @@ def _extract_secret_order(
     recovered_names = [name for name, office in recovered_targets if not office]
     if recovered_names:
         excluded_names = list(dict.fromkeys([*excluded_names, *recovered_names]))
-    recovered_offices = [
-        _canonical_secret_office_target(office) or office
-        for office in _secret_excluded_offices_from_command(player_command)
-    ]
-    recovered_offices = list(dict.fromkeys([*recovered_offices, *recovered_named_offices]))
+    from ming_sim.db import canonical_secret_order_exclusions
+    _ignored_people, recovered_offices = canonical_secret_order_exclusions(
+        None, [], [*_secret_excluded_offices_from_command(player_command), *recovered_named_offices],
+        player_command,
+    )
     if recovered_offices:
         excluded_offices = list(dict.fromkeys([*excluded_offices, *recovered_offices]))
     fallback_tags, fallback_deadline = _secret_metadata_from_command(player_command)
@@ -1883,7 +1883,11 @@ def _normalize_secret_exclusions(value: object, *, legacy: object = None) -> Tup
 def _secret_excluded_offices_from_command(text: str) -> List[str]:
     """Recover explicit institutional secrecy clauses the extractor may omit."""
     offices: List[str] = []
-    for match in re.finditer(r"(?:不走|不经|勿走|勿经)\s*([^，。；;、\s]{2,12})", text or ""):
+    for match in re.finditer(
+        r"(?:不走|不经|勿走|勿经|瞒住|瞒着|瞒过|不得告知|不许|严禁)\s*"
+        r"([^，。；;、\s]{2,20}?)(?=(?:知晓|知道|得知|知情|过问|插手|，|。|；|\s|$))",
+        text or "",
+    ):
         office = match.group(1).strip("：:，,。；;、")
         if office and office not in offices:
             offices.append(office)
