@@ -48,11 +48,10 @@ describe("#853 reviewer findings sentinel", () => {
     expect(result).toMatchObject({ kind: "verdict", findingsCount: 0 });
   });
 
-  it("#875: non-zero findings count without structured findings is shape malformed (full rewrite, not count-supplement)", () => {
-    // Verdict sidecar has no findings array; stdout says findings = 1.
-    // Shape failure → plain malformed (NO priorVerdict) so full outcome rewrite
-    // re-reads sidecar/JSON. findings-supplement only re-emits the count fragment
-    // and cannot add structured findings.
+  it("#875: non-zero findings count without structured findings still yields a verdict (routing is verifyCmr)", () => {
+    // Sidecar has no findings array; stdout says findings = 1. Parse attaches
+    // findingsCount; rewrite cannot invent findings JSON. runVerifyCmr terminals
+    // the completed envelope as outcome-protocol failure (separate test).
     const result = cmrOutcomeFromResult({
       stdout: "findings = 1\nCMR_STEP_COMPLETE\n",
       outcomePath: outcomePath(),
@@ -60,9 +59,11 @@ describe("#853 reviewer findings sentinel", () => {
     });
 
     expect(result).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringMatching(/structured findings are missing/i),
+      kind: "verdict",
+      findingsCount: 1,
     });
-    expect(result).not.toHaveProperty("priorVerdict");
+    if (result.kind === "verdict") {
+      expect(result.findings).toBeUndefined();
+    }
   });
 });

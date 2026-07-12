@@ -3684,22 +3684,11 @@ export function cmrOutcomeFromResult(result: {
             priorVerdict: classified,
           };
         }
-        // #875 / ADR 0062: non-0 count with no structured findings is shape
-        // failure → FULL outcome rewrite (malformed WITHOUT priorVerdict). The
-        // findings-supplement lane only re-emits `findings = x` and cannot add
-        // structured findings (outcome_rewrite.md), so priorVerdict would dead-end
-        // into the same incomplete envelope. Full rewrite re-reads the outcome
-        // sidecar/JSON. Never a silent pass; never a claim/disposition court.
-        if (
-          findingsCount > 0 &&
-          (classified.findings === undefined || classified.findings.length === 0)
-        ) {
-          return {
-            kind: "malformed",
-            reason:
-              "cmr reviewer findings count is non-zero but structured findings are missing",
-          };
-        }
+        // #875: non-0 count with missing structured findings stays a verdict —
+        // outcome_rewrite.md is count-supplement only and cannot invent findings
+        // JSON. Three-channel routing in verifyCmr terminals that envelope as
+        // outcome-protocol failure (cannot route coder-fix identities). Never
+        // silent pass; never claim/disposition court; never a pretend rewrite.
         return { ...classified, findingsCount };
       }
     } catch (err) {
