@@ -2884,13 +2884,16 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
   });
 
   it("threads prior family CMR dispositions from the ledger into finding classification", async () => {
+    // #875 Opus: pass requires converged:true. Prior ledger dispositions still
+    // thread into classification; envelope is a clear suppressions-only pass.
     const finding: Finding = {
       severity: "medium",
       category: "correctness",
       claim_quote: "stateful suppression should not reopen forever",
       location: "orchestrator/src/family/verifyCmr.ts:77",
       suggested_fix: "honor prior family CMR dispositions",
-      action: "fix_now",
+      action: "wont_fix",
+      disposition_reason: "accepted by parent issue",
     };
     const identityKey = findingIdentityKey(finding);
     const trustedSuppression = {
@@ -2900,18 +2903,28 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       findingIdentity: identityKey,
       boundedReopen: "reopen on higher severity",
     };
+    const findingWithDisposition: Finding = {
+      ...finding,
+      disposition: {
+        kind: "accepted_suppressed",
+        source: trustedSuppression.source,
+        scope: trustedSuppression.scope,
+        reason: trustedSuppression.reason,
+        findingIdentity: identityKey,
+        boundedReopen: trustedSuppression.boundedReopen,
+      },
+    };
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
         output: {
           kind: "cmr",
-          converged: false,
-          reason: "same finding reappeared",
+          converged: true,
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           ...CMR_EVIDENCE,
-          findings: [finding],
+          findings: [findingWithDisposition],
         },
       }),
     });

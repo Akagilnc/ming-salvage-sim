@@ -2316,22 +2316,12 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
-  // Three-channel findings count: prefer the constitutional `findings = x`
-  // sentinel (findingsCount) when present; else fall back to structured length.
-  // Live sidecar always sets findingsCount — treat 0 the same as "empty", not as
-  // "skip the thin not_converged branch" (r3 high: count=0 was falling through
-  // to recordCmrPassed).
-  // #875 kill-axis: count vs structured-length mismatch is sloppy prose, NOT a
-  // runner-side protocol court. Trust the count channel for emptiness; still use
-  // whatever structured findings exist for coder-fix identity routing.
-  const reportedFindingsCount =
-    cmrResult.output.findingsCount ?? cmrResult.output.findings?.length;
-  if (
-    !cmrResult.output.converged &&
-    (reportedFindingsCount === undefined || reportedFindingsCount === 0) &&
-    (cmrResult.output.findings === undefined ||
-      cmrResult.output.findings.length === 0)
-  ) {
+  // Opus/#875/ADR 0129: structured findings array is the single source of truth.
+  // open-count is DERIVED (array length). Downstream runner never reconciles an
+  // independent count field against the array (that thrash was r5–r11).
+  // Write-point already rejects count≠length; here we only read the array.
+  const openFindingsCount = cmrResult.output.findings?.length ?? 0;
+  if (!cmrResult.output.converged && openFindingsCount === 0) {
     // #875: no claimed-fixed coverage court on thin not_converged envelopes.
     // Three-channel routing only — findings empty + not converged ⇒ ordinary
     // not_converged durable abort (not a disposition/claim shape kill).
@@ -2403,38 +2393,12 @@ async function runIntegratedCmrPass(input: {
     }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  // #875: early claimed-fixed / disposition coverage court demolished. Blocking
-  // findings take the normal findings-count → coder-fix path regardless of
-  // whether protected prior keys were "accounted for" in envelope prose.
-  if (
-    (reportedFindingsCount ?? 0) > 0 &&
-    (cmrResult.output.findings === undefined ||
-      cmrResult.output.findings.length === 0)
-  ) {
-    // Three-channel: count non-0 ⇒ not a pass. Missing structured identities
-    // means we cannot dispatch coder-fix — ordinary not_converged, NOT an
-    // infra/protocol court that durable-kills the live family (#875 kill-axis:
-    // chatty/sloppy envelopes must not be re-framed as milder validators).
-    const reason =
-      cmrResult.output.reason ??
-      `integrated cmr ${pass} reported findings count ${reportedFindingsCount} without structured findings`;
-    await persistFinalReviewRound("accepted", () =>
-      recordDurableAbort(familyBackend, {
-        phase: "final",
-        cmrPass: pass,
-        reason,
-        familyHeadAfter: postWorkerFamilyHead,
-        blockingFindingIdentityKeys: [],
-        stopSummary: notConvergedStopSummary(reason),
-      }),
-    );
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
+  // #875: early claimed-fixed / disposition coverage court demolished.
+  // openFindingsCount>0 iff structured findings array is non-empty (derived).
+  // No downstream branch for "count>0 without structured" — inexpressible after
+  // write-point (Opus ballot).
   let cmrFindingClassification: CmrEnvelope | undefined;
-  if (
-    (reportedFindingsCount ?? 0) > 0 &&
-    cmrResult.output.findings !== undefined
-  ) {
+  if (openFindingsCount > 0 && cmrResult.output.findings !== undefined) {
     const priorDispositions = latestFamilyCmrDispositions(
       await familyBackend.readFamilyLedger(),
     );

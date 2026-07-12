@@ -1770,12 +1770,13 @@ module_scope:
         boundedReopen: "reopen on severity escalation, new evidence, or #287-owned local integration scope",
       },
     };
+    // #875 Opus: only converged:true may cmr_passed. Suppressions-only is a
+    // successful clear envelope (no fix_now), not !converged + pass leak.
     const backend = new CmrFindingBackend({
       kind: "completed",
       output: {
         kind: "cmr",
-        converged: false,
-        reason: "only accepted suppressions remain",
+        converged: true,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -1866,12 +1867,12 @@ module_scope:
         boundedReopen: "reopen on severity escalation, new evidence, or #287-owned local integration scope",
       },
     };
+    // #875 Opus: cmr_passed requires converged:true (suppressions-only clear).
     const backend = new CmrFindingBackend({
       kind: "completed",
       output: {
         kind: "cmr",
-        converged: false,
-        reason: "only nonblocking family CMR findings remain",
+        converged: true,
         successfulLegs: ["opus", "gpt-5.6-sol"],
         skippedLegs: [{ slug: "agy", reason: "agy quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
