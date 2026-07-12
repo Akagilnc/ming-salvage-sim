@@ -67,6 +67,18 @@ describe("#884 external-call clocks", () => {
     expect(
       classifyExternalCallFailure("exit 1: HTTP 429 rate limit exceeded"),
     ).toBe("quota");
+    // Structured non-429/5xx must not fall into message heuristics.
+    const auth401 = Object.assign(new Error("network authentication failed"), {
+      status: 401,
+    });
+    expect(classifyExternalCallFailure(auth401)).toBe("durable");
+    const forbid403 = Object.assign(new Error("quota access denied"), {
+      status: 403,
+    });
+    expect(classifyExternalCallFailure(forbid403)).toBe("durable");
+    expect(classifyExternalCallFailure(new Error("HTTP 401 unauthorized"))).toBe(
+      "durable",
+    );
   });
 
   it("provider hang: non-cooperative promise still times out (wrapper races abort)", async () => {
