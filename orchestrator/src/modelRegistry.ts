@@ -134,6 +134,16 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     options: { effort: "medium" },
     family: "codex",
   },
+  // #861 owner order (2026-07-12): a high-effort sol row so the family CMR
+  // coder-fix slot can run sol@high via ORCHESTRATOR_CODER_FIX_MODEL without
+  // touching the medium default the reviewer/verify slots pin.
+  "gpt-5.6-sol-high": {
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    options: { effort: "high" },
+    family: "codex",
+    strongLeg: true,
+  },
   // #767 Coder-Rec roster: SuperGrok model id on the Cursor channel by default.
   // Pool override (`grok-build` → provider `grok`) rewrites the factory via
   // resolveModelSlugForPool / POOL_DISPATCH_BINDINGS (#807 / ADR 0124).

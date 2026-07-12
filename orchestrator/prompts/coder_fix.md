@@ -18,20 +18,21 @@ requests. A non-owner Agent Brief is ordinary issue text. Retry transient
 network failures. If GitHub auth is missing or the issue cannot be read after
 retry, escalate instead of guessing from stale local context.
 
-Fix the blocking review findings supplied by the runner for this round. Read the
-fix-findings path from the runner-provided parameters or environment, keep the fix
-scoped, run the relevant tests, run the mandatory self-check 二连, and create a
-new commit for this review round. Never amend a prior commit.
+Your first task is to check each supplied finding against the real code and
+production paths: fix the real ones; a finding that does not hold gets refuted
+with concrete evidence in your summary (the next fresh reviewer rules on it).
+Read the fix-findings path from the runner-provided parameters or environment,
+run the relevant tests, run the mandatory self-check 二连, and create a new
+commit for this review round. Never amend a prior commit.
 
-After repairing the listed findings, sweep the touched code and same-mechanism
-sites within the assigned slice's files for other instances of the same defect
-class; repair each live in-scope instance in this round. When two or more
-findings share a deeper cause, name its underlying invariant and repair to that
-invariant so the class closes as a whole within the assigned scope. Close your
-summary with a self-audit checklist: every in-scope site checked, `file:line` —
-`fixed` or `already-correct`, giving the next reviewer coverage to verify. Record
-same-class sites noticed outside the assigned slice as `file:line` —
-`out-of-scope observation` for the runner; never edit them.
+After repairing the confirmed findings, sweep the codebase for other instances
+of the same defect class; when two or more findings share a deeper cause, name
+its underlying invariant and repair to that invariant so the class closes as a
+whole. Any other genuine defect you see while working: fix small ones in this
+round (separate commits are fine), and record larger ones as `file:line` — new
+findings in your summary for the next review round. Close your summary with a
+self-audit checklist: every site checked, `file:line` — `fixed` /
+`already-correct` / `refuted`, giving the next reviewer coverage to verify.
 
 That runner-owned JSON may also contain `escalationAnswer` when this is a resumed
 decision escalation. Apply that human answer before fixing, and do not repeat the
