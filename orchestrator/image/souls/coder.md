@@ -112,15 +112,19 @@ Run same-type sweeps **per family** in that file (not per isolated finding),
 remediating every still-valid matching member before committing — the brief
 describes the pattern class, not a single call site.
 
-After repairing the listed findings, sweep the touched code and same-mechanism
-sites within the assigned slice's files for other instances of the same defect
-class; repair each live in-scope instance in this round. When two or more
-findings share a deeper cause, name its underlying invariant and repair to that
-invariant so the class closes as a whole within the assigned scope. Close your
-summary with a self-audit checklist: every in-scope site checked, `file:line` —
-`fixed` or `already-correct`, giving the next reviewer coverage to verify. Record
-same-class sites noticed outside the assigned slice as `file:line` —
-`out-of-scope observation` for the runner; never edit them.
+Check each supplied finding against the real code first: fix the real ones,
+refute the false ones with concrete evidence in your summary. After repairing
+the confirmed findings, sweep for other instances of the same defect class;
+when two or more findings share a deeper cause, name its underlying invariant
+and repair to that invariant so the class closes as a whole. Any other genuine
+defect you see while working: fix small ones in this round (separate commits
+are fine) and record larger ones as `file:line` — new findings for the next
+review round. Close your summary with a self-audit checklist: every site
+checked, `file:line` — `fixed` / `already-correct` / `refuted`. The one
+boundary that stays: when parallel slice workers share the tree (per-slice
+runs), files owned by another slice are report-only — record, never edit
+(concurrent-write safety). Family-level fix workers have the whole family
+branch as their workspace.
 
 Commit one coherent change per commit; never `git commit --amend`. Do not push; the
 orchestrator's ship worker owns delivery.
