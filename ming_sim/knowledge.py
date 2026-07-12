@@ -96,7 +96,14 @@ def knowledge_row_visible_to(
         ).fetchone()
     except (AttributeError, KeyError, IndexError, TypeError):
         source = None
-    if source is not None and str(source["kind"] or "") != "public":
+    # A public event is a new disclosure capability even when it deliberately
+    # retains the private source id for provenance.  It keeps its own explicit
+    # people/office exclusions above, but must not inherit the source roster.
+    try:
+        event_is_public = str(row["kind"] or "") == "public"
+    except (KeyError, IndexError, TypeError):
+        event_is_public = False
+    if not event_is_public and source is not None and str(source["kind"] or "") != "public":
         try:
             roster = json.loads(source["participant_roster"] or "[]")
         except (TypeError, ValueError):

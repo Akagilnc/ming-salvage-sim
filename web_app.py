@@ -2906,7 +2906,7 @@ async def api_create_secret_order(minister_name: str, request: SecretOrderReques
     """兼容旧按钮端点：转成召对前缀消息，走同一大臣回话/确认闸门。"""
     game = get_game()
     _require_active_minister(minister_name)
-    title = request.title.strip()[:20]
+    title = request.title.strip()
     content = request.content.strip()
     if not title or not content:
         raise HTTPException(status_code=400, detail="title 和 content 不能为空")

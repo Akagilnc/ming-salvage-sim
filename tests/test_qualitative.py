@@ -62,6 +62,14 @@ def test_safe_historical_text_rejects_nearby_raw_axis_variants():
         assert "已略去" in safe_historical_text(injected), injected
 
 
+def test_p4_projection_keeps_lawful_chinese_comma_fragments_and_rejects_comparators():
+    rendered = safe_historical_text("忠诚不足30分，拨银三万两，已过六个月")
+    assert "忠诚不足30分" not in rendered
+    assert "已略去" in rendered
+    assert "拨银三万两" in rendered
+    assert "已过六个月" in rendered
+
+
 def test_p4_guard_rejects_supply_score_but_keeps_countable_people():
     assert "已略去" in safe_historical_text("补给已经明显恶化至20")
     assert "已略去" in safe_historical_text("补给整体已经明显恶化至20")
