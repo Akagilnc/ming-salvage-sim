@@ -415,6 +415,164 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
       ),
     ).toBe(false);
   });
+
+  // #881 (#434 live-semantic revision): head advance explained only by
+  // phase:final cmr_fix_committed rows AFTER the pass marker is still a skip;
+  // unexplained (barrier-external) advance must re-verify.
+  it("#881: barrier-internal fix-commit chain after a pass ⇒ already passed at advanced head", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
+      },
+      {
+        status: "cmr_reviewed",
+        event: "cmr_reviewed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadAfter: "head-1",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadBefore: "head-1",
+        familyHeadAfter: "head-2",
+      },
+    ];
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "completeness",
+        familyHeadAfter: "head-2",
+        routeFingerprint: "route:v1",
+      }),
+    ).toBe(true);
+  });
+
+  it("#881: multi-hop barrier-internal fix chain remains a skip", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-a",
+        routeFingerprint: "route:v1",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadBefore: "head-a",
+        familyHeadAfter: "head-b",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadBefore: "head-b",
+        familyHeadAfter: "head-c",
+      },
+    ];
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "completeness",
+        familyHeadAfter: "head-c",
+        routeFingerprint: "route:v1",
+      }),
+    ).toBe(true);
+  });
+
+  it("#881: head advanced without a connecting barrier-internal fix chain ⇒ re-verify", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
+      },
+      // Orphan fix: does not start from the pass head.
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadBefore: "other-head",
+        familyHeadAfter: "head-2",
+      },
+    ];
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "completeness",
+        familyHeadAfter: "head-2",
+        routeFingerprint: "route:v1",
+      }),
+    ).toBe(false);
+  });
+
+  it("#881: fix commits that predate the pass marker do not authorize advanced-head skip", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "correctness",
+        familyHeadBefore: "head-1",
+        familyHeadAfter: "head-2",
+      },
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
+      },
+    ];
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "completeness",
+        familyHeadAfter: "head-2",
+        routeFingerprint: "route:v1",
+      }),
+    ).toBe(false);
+  });
+
+  it("#881: incomplete fix rows (missing before/after) cannot bridge a head advance", () => {
+    const entries: FamilyLedgerEntry[] = [
+      {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
+      },
+      {
+        status: "cmr_fix_committed",
+        event: "cmr_fix_committed",
+        phase: "final",
+        cmrPass: "correctness",
+        // missing familyHeadBefore / familyHeadAfter → fail closed
+      },
+    ];
+    expect(
+      cmrPassAlreadyPassed(entries, {
+        cmrPass: "completeness",
+        familyHeadAfter: "head-2",
+        routeFingerprint: "route:v1",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("family-ledger.familyEscalationState", () => {
