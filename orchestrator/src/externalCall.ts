@@ -1,9 +1,12 @@
 /**
- * #884 — external-call clocks (S8 hygiene). Thin wrappers only:
+ * #884 — external-call clocks only (S8 hygiene).
+ *
+ * Two seams, each with a wall clock:
  *   - subprocess: execFile(Sync)/async + timeout → kill child → typed error
  *   - provider: AbortSignal.timeout race (probe band 60–120s)
- *   - simple failure class for S5 retry (transient / quota / durable)
- * Not a second platform: no content courts, no smoke framework.
+ *
+ * Retry policy is NOT here — #879 `legTransientRetry` owns leg/probe retry.
+ * Classification stays as a pure helper for that layer (no retry loop here).
  */
 
 import {
@@ -22,10 +25,7 @@ export const DEFAULT_PROVIDER_TIMEOUT_MS = 90_000;
 /** Default host subprocess wall budget (gh/git short ops). */
 export const DEFAULT_SUBPROCESS_TIMEOUT_MS = 120_000;
 
-/**
- * Effective subprocess wall budget. Under vitest, clamp hard so a real-network
- * hang cannot burn minutes of retry budget in unit tests (production stays 120s).
- */
+/** Under vitest, clamp so hangs cannot burn minutes. */
 export function effectiveSubprocessTimeoutMs(
   requested: number = DEFAULT_SUBPROCESS_TIMEOUT_MS,
 ): number {
@@ -35,26 +35,8 @@ export function effectiveSubprocessTimeoutMs(
   return requested;
 }
 
-/**
- * Total attempts for a transient external failure: 1 initial + 2 retries
- * (matches the #879 / S5 "瞬断重试 ×2" contract).
- */
-export const EXTERNAL_CALL_MAX_ATTEMPTS = 3;
-
-/** Seconds-scale pauses between transient retries (skipped under vitest). */
-export const EXTERNAL_CALL_RETRY_BACKOFF_MS = [1_000, 3_000] as const;
-
 export type ExternalFailureClass = "transient" | "quota" | "durable";
-
 export type ExternalCallSeam = "subprocess" | "provider";
-
-export interface ExternalCallAttemptRecord {
-  readonly stage: string;
-  readonly attempt: number;
-  readonly outcome: "ok" | "retry" | "exhausted" | "quota" | "durable";
-  readonly error?: string;
-  readonly ts: string;
-}
 
 export class ExternalCallTimeoutError extends Error {
   readonly stage: string;
@@ -85,34 +67,10 @@ export class ExternalCallTimeoutError extends Error {
   }
 }
 
-export class ExternalCallExhaustedError extends Error {
-  readonly stage: string;
-  readonly attempts: number;
-  readonly lastError: unknown;
-
-  constructor(input: {
-    readonly stage: string;
-    readonly attempts: number;
-    readonly lastError: unknown;
-  }) {
-    const last =
-      input.lastError instanceof Error
-        ? input.lastError.message
-        : String(input.lastError);
-    super(
-      `external call exhausted ${input.attempts} attempts at stage ${input.stage}: ${last}`,
-    );
-    this.name = "ExternalCallExhaustedError";
-    this.stage = input.stage;
-    this.attempts = input.attempts;
-    this.lastError = input.lastError;
-  }
-}
-
 /**
- * S5-family class: transient (retry), quota (no retry), durable (surface).
- * Order: typed timeout/code → structured HTTP status → free-text timeout/conn
- * before digits-as-status → simple HTTP token → quota words → network words.
+ * Pure class helper for #879 leg retry. No loop, no recorder, no attempts.
+ * Order: typed timeout/code → structured HTTP → free-text timeout/conn
+ * before digits → simple HTTP token → quota words → network words.
  */
 export function classifyExternalCallFailure(err: unknown): ExternalFailureClass {
   if (err instanceof ExternalCallTimeoutError) return "transient";
@@ -155,7 +113,6 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
   const msg = externalFailureText(err);
   const lower = msg.toLowerCase();
 
-  // Transport words first so "timed out after 120 seconds" is never HTTP 120.
   if (
     lower.includes("etimedout") ||
     lower.includes("econnreset") ||
@@ -173,7 +130,6 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     return "transient";
   }
 
-  // Explicit HTTP/status tokens only (not bare duration digits).
   const http =
     lower.match(/\bhttp\s*([1-5]\d\d)\b/) ??
     lower.match(/\bstatus(?:\s*code)?\s*[:=]?\s*([1-5]\d\d)\b/);
@@ -200,7 +156,6 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
   return "durable";
 }
 
-/** Merge stderr/stdout off an exec-like error into classifiable text. */
 function externalFailureText(err: unknown): string {
   if (err === null || typeof err !== "object") {
     return err instanceof Error ? err.message : String(err);
@@ -222,20 +177,6 @@ function externalFailureText(err: unknown): string {
     }
   }
   return parts.join("\n");
-}
-
-function defaultSleepMs(ms: number): Promise<void> {
-  if (process.env.VITEST === "true") return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function defaultSleepSync(ms: number): void {
-  if (process.env.VITEST === "true") return;
-  // Busy-wait is avoided; Atomics.wait on a SharedArrayBuffer is the portable
-  // sync sleep without pulling in child_process. 1 Int32 is enough.
-  const sab = new SharedArrayBuffer(4);
-  const view = new Int32Array(sab);
-  Atomics.wait(view, 0, 0, ms);
 }
 
 function isTimeoutLikeExecError(err: unknown): boolean {
@@ -262,11 +203,7 @@ export interface ExecFileTimeoutOptions {
   readonly maxBuffer?: number;
 }
 
-/**
- * Sync subprocess seam with a mandatory clock. On timeout the child is killed
- * (Node's execFileSync behaviour) and a typed {@link ExternalCallTimeoutError}
- * is raised carrying the stage name.
- */
+/** Sync subprocess with a mandatory clock. Timeout → typed error + stage. */
 export function execFileWithTimeout(
   file: string,
   args: readonly string[],
@@ -276,7 +213,6 @@ export function execFileWithTimeout(
     opts.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS,
   );
   try {
-    // No stdin input → ignore stdin so git/gh never hang waiting on the pipe.
     const hasInput = opts.input !== undefined;
     return execFileSync(file, [...args], {
       cwd: opts.cwd,
@@ -286,7 +222,6 @@ export function execFileWithTimeout(
       stdio: hasInput ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
       timeout: timeoutMs,
       maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
-      // SIGKILL: hard clock. SIGTERM can be trapped → parent still waits (Node docs).
       killSignal: "SIGKILL",
     }).toString();
   } catch (err) {
@@ -302,10 +237,7 @@ export function execFileWithTimeout(
   }
 }
 
-/**
- * Async subprocess seam with a clock — preferred for parallel work (smoke-k)
- * so Promise.all actually overlaps wall time.
- */
+/** Async subprocess with a clock (parallel smoke overlaps wall time). */
 export function execFileAsyncWithTimeout(
   file: string,
   args: readonly string[],
@@ -325,7 +257,6 @@ export function execFileAsyncWithTimeout(
         encoding: "utf8",
         timeout: timeoutMs,
         maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
-        // SIGKILL: hard clock. SIGTERM can be trapped → parent still waits (Node docs).
         killSignal: "SIGKILL",
       },
       (err, stdout, stderr) => {
@@ -341,8 +272,6 @@ export function execFileAsyncWithTimeout(
             );
             return;
           }
-          // Preserve both streams on non-zero exit so callers (opencode probe)
-          // can still scan stdout-only quota bodies (#884 cmr r9).
           const enriched = err as Error & {
             stdout?: string;
             stderr?: string;
@@ -373,26 +302,16 @@ export interface SpawnDetachedOptions {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly stdio?: SpawnOptions["stdio"];
-  /**
-   * Default true — monitored CLI workers get their own process-group boundary
-   * so kill goes through verified per-pid paths (#684).
-   */
   readonly detached?: boolean;
 }
 
-/**
- * Sole `spawn` import surface for production code. Launch itself is not a wait;
- * callers still own spawn-ack / lifecycle clocks (see workerMonitor
- * `dispatchMonitoredCliWorker` — spawn-ack races ExternalCallTimeoutError).
- * Keeping spawn here closes the static chokepoint so a new bare `spawn(` is a
- * red S8-T guard, not a reviewer finding.
- */
+/** Sole production `spawn` surface (chokepoint). Launch is not a wait. */
 export function spawnDetached(
   command: string,
   args: readonly string[],
   opts: SpawnDetachedOptions,
 ): ChildProcess {
-  void opts.stage; // required: stage name documents the call site for kill/ack
+  void opts.stage;
   return spawn(command, [...args], {
     cwd: opts.cwd,
     env: opts.env,
@@ -402,12 +321,8 @@ export function spawnDetached(
 }
 
 /**
- * In-process provider/HTTP seam: race the work against AbortSignal.timeout.
- *
- * The runner SHOULD honour `signal` (fetch, undici, …) so the underlying work
- * can cancel. The wrapper ALSO races an abort reject so a non-cooperative
- * provider that ignores the signal still cannot hang the process forever —
- * that is the #884 hang class (provider never responds, no thrown error).
+ * Provider/HTTP seam: race work against AbortSignal.timeout.
+ * Non-cooperative hang still cannot block forever.
  */
 export async function withProviderTimeout<T>(
   stage: string,
@@ -461,51 +376,9 @@ export async function withProviderTimeout<T>(
   }
 }
 
-export interface ExternalCallRetryOptions {
-  readonly maxAttempts?: number;
-  readonly sleepMs?: (ms: number) => Promise<void>;
-  readonly onAttempt?: (attempt: number, stage: string) => void;
-  /** Durable / observable bookkeeping — every attempt carries the stage name. */
-  readonly record?: (event: ExternalCallAttemptRecord) => void;
-  readonly now?: () => Date;
-}
-
 /**
- * Default production recorder: stage-named line on every non-trivial outcome
- * (retry / exhausted / quota / durable / multi-attempt ok). First-attempt ok
- * stays quiet so hot paths are not log-spam.
- */
-export function defaultExternalCallRecorder(
-  event: ExternalCallAttemptRecord,
-): void {
-  if (event.outcome === "ok" && event.attempt === 1) return;
-  const err =
-    event.error !== undefined && event.error.length > 0
-      ? ` error=${event.error}`
-      : "";
-  console.warn(
-    `[orchestrator:external-call] stage=${event.stage} attempt=${event.attempt} outcome=${event.outcome}${err}`,
-  );
-}
-
-/**
- * Attempt budget for host subprocess seams.
- * - vitest: always 1 (keep unit tests fast / deterministic)
- * - retry:false (mutations): always 1 (exactly-once — timeout must not re-fire
- *   git push/merge/clone or gh writes; ADR 0062 / #884 cmr r7)
- * - otherwise: EXTERNAL_CALL_MAX_ATTEMPTS (1 initial + 2 transient retries)
- */
-export function hostSubprocessRetryAttempts(opts?: {
-  readonly retry?: boolean;
-}): number {
-  if (process.env.VITEST === "true") return 1;
-  if (opts?.retry === false) return 1;
-  return EXTERNAL_CALL_MAX_ATTEMPTS;
-}
-
-/**
- * Host subprocess with clock + S5 retry disposition + stage-named records.
- * Preferred entry for production `gh`/`git`/CLI one-shots.
+ * Host one-shot with clock — no retry (exactly-once). Prefer this for git/gh.
+ * Stage name is required so timeouts are attributable.
  */
 export function shWithClock(
   file: string,
@@ -514,209 +387,14 @@ export function shWithClock(
     readonly stage?: string;
     readonly cwd?: string;
     readonly timeoutMs?: number;
-    /**
-     * When false, do not transient-retry (mutating gh/git must be exactly-once
-     * per ADR 0062 — a lost response must not re-fire DELETE/close).
-     * Default true for read-ish ops. Mixed class-level `sh` seams (RealBackend /
-     * RealFamilyBackend) MUST pass retry:false — they carry both reads and
-     * mutations and cannot safely default-retry.
-     */
-    readonly retry?: boolean;
   },
 ): string {
   const stage = opts?.stage ?? `subprocess:${file}`;
-  const maxAttempts = hostSubprocessRetryAttempts({ retry: opts?.retry });
-  return withExternalCallRetrySync(
+  return execFileWithTimeout(file, [...args], {
     stage,
-    () =>
-      execFileWithTimeout(file, [...args], {
-        stage,
-        timeoutMs: effectiveSubprocessTimeoutMs(
-          opts?.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS,
-        ),
-        cwd: opts?.cwd,
-      }).trim(),
-    {
-      maxAttempts,
-      record: defaultExternalCallRecorder,
-    },
-  );
-}
-
-/**
- * Run an external call with S5-family transient retry. Exhaustion raises
- * {@link ExternalCallExhaustedError} with the stage name for degrade/park paths.
- */
-export async function withExternalCallRetry<T>(
-  stage: string,
-  run: () => Promise<T>,
-  opts?: ExternalCallRetryOptions,
-): Promise<T> {
-  const maxAttempts = opts?.maxAttempts ?? EXTERNAL_CALL_MAX_ATTEMPTS;
-  const sleepMs = opts?.sleepMs ?? defaultSleepMs;
-  const now = opts?.now ?? (() => new Date());
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    opts?.onAttempt?.(attempt, stage);
-    try {
-      const value = await run();
-      opts?.record?.({
-        stage,
-        attempt,
-        outcome: "ok",
-        ts: now().toISOString(),
-      });
-      return value;
-    } catch (err) {
-      lastError = err;
-      const klass = classifyExternalCallFailure(err);
-      if (klass === "quota") {
-        opts?.record?.({
-          stage,
-          attempt,
-          outcome: "quota",
-          error: err instanceof Error ? err.message : String(err),
-          ts: now().toISOString(),
-        });
-        throw err;
-      }
-      if (klass === "durable") {
-        opts?.record?.({
-          stage,
-          attempt,
-          outcome: "durable",
-          error: err instanceof Error ? err.message : String(err),
-          ts: now().toISOString(),
-        });
-        throw err;
-      }
-      // transient
-      if (attempt >= maxAttempts) {
-        opts?.record?.({
-          stage,
-          attempt,
-          outcome: "exhausted",
-          error: err instanceof Error ? err.message : String(err),
-          ts: now().toISOString(),
-        });
-        throw new ExternalCallExhaustedError({
-          stage,
-          attempts: maxAttempts,
-          lastError: err,
-        });
-      }
-      opts?.record?.({
-        stage,
-        attempt,
-        outcome: "retry",
-        error: err instanceof Error ? err.message : String(err),
-        ts: now().toISOString(),
-      });
-      const backoff =
-        EXTERNAL_CALL_RETRY_BACKOFF_MS[
-          Math.min(attempt - 1, EXTERNAL_CALL_RETRY_BACKOFF_MS.length - 1)
-        ] ?? 1_000;
-      await sleepMs(backoff);
-    }
-  }
-
-  throw new ExternalCallExhaustedError({
-    stage,
-    attempts: maxAttempts,
-    lastError,
-  });
-}
-
-export interface ExternalCallRetrySyncOptions {
-  readonly maxAttempts?: number;
-  readonly sleepMs?: (ms: number) => void;
-  readonly onAttempt?: (attempt: number, stage: string) => void;
-  readonly record?: (event: ExternalCallAttemptRecord) => void;
-  readonly now?: () => Date;
-}
-
-/**
- * Sync counterpart of {@link withExternalCallRetry} for host `gh`/`git`
- * seams that remain synchronous (`Sh` / `RealBackend.sh`). Same S5-family
- * disposition: transient → retry ×2; quota → no retry; durable → surface.
- */
-export function withExternalCallRetrySync<T>(
-  stage: string,
-  run: () => T,
-  opts?: ExternalCallRetrySyncOptions,
-): T {
-  const maxAttempts = opts?.maxAttempts ?? EXTERNAL_CALL_MAX_ATTEMPTS;
-  const sleepMs = opts?.sleepMs ?? defaultSleepSync;
-  const now = opts?.now ?? (() => new Date());
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    opts?.onAttempt?.(attempt, stage);
-    try {
-      const value = run();
-      opts?.record?.({
-        stage,
-        attempt,
-        outcome: "ok",
-        ts: now().toISOString(),
-      });
-      return value;
-    } catch (err) {
-      lastError = err;
-      const klass = classifyExternalCallFailure(err);
-      if (klass === "quota") {
-        opts?.record?.({
-          stage,
-          attempt,
-          outcome: "quota",
-          error: err instanceof Error ? err.message : String(err),
-          ts: now().toISOString(),
-        });
-        throw err;
-      }
-      if (klass === "durable") {
-        opts?.record?.({
-          stage,
-          attempt,
-          outcome: "durable",
-          error: err instanceof Error ? err.message : String(err),
-          ts: now().toISOString(),
-        });
-        throw err;
-      }
-      if (attempt >= maxAttempts) {
-        opts?.record?.({
-          stage,
-          attempt,
-          outcome: "exhausted",
-          error: err instanceof Error ? err.message : String(err),
-          ts: now().toISOString(),
-        });
-        throw new ExternalCallExhaustedError({
-          stage,
-          attempts: maxAttempts,
-          lastError: err,
-        });
-      }
-      opts?.record?.({
-        stage,
-        attempt,
-        outcome: "retry",
-        error: err instanceof Error ? err.message : String(err),
-        ts: now().toISOString(),
-      });
-      const backoff =
-        EXTERNAL_CALL_RETRY_BACKOFF_MS[
-          Math.min(attempt - 1, EXTERNAL_CALL_RETRY_BACKOFF_MS.length - 1)
-        ] ?? 1_000;
-      sleepMs(backoff);
-    }
-  }
-
-  throw new ExternalCallExhaustedError({
-    stage,
-    attempts: maxAttempts,
-    lastError,
-  });
+    timeoutMs: effectiveSubprocessTimeoutMs(
+      opts?.timeoutMs ?? DEFAULT_SUBPROCESS_TIMEOUT_MS,
+    ),
+    cwd: opts?.cwd,
+  }).trim();
 }

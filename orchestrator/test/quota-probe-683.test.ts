@@ -280,9 +280,8 @@ describe("#683 buildQuotaWaitForResetLedgerEntry (ledger 外显)", () => {
 });
 
 describe("#683/#884 opencode probe hard clock", () => {
-  it("default runCommand uses execFileAsyncWithTimeout + external-call retry", () => {
-    // #884: bare spawn+SIGTERM is not a hard clock; production path must use
-    // the subprocess seam (SIGKILL) and transient retry with stage name.
+  it("default runCommand uses execFileAsyncWithTimeout + #879 leg retry", () => {
+    // #884: hard clock on subprocess; #879: withLegTransientRetry for blips.
     const src = readFileSync(
       new URL("../src/quotaProbe.ts", import.meta.url),
       "utf8",
@@ -292,7 +291,8 @@ describe("#683/#884 opencode probe hard clock", () => {
       src.indexOf("function isQuotaLimitBody"),
     );
     expect(block).toMatch(/execFileAsyncWithTimeout/);
-    expect(block).toMatch(/withExternalCallRetry/);
+    expect(block).toMatch(/withLegTransientRetry/);
+    expect(block).not.toMatch(/withExternalCallRetry/);
     expect(block).toMatch(/probe:opencode-go/);
   });
 });

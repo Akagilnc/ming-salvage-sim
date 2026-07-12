@@ -4,9 +4,9 @@
  * Owner structural ruling: every external wait (subprocess exec, provider HTTP,
  * probe, relay ping, spawn, pipe) must pass the public surface of
  * `externalCall.ts` (`execFileWithTimeout` / `execFileAsyncWithTimeout` /
- * `withProviderTimeout` / `withExternalCallRetry` / `shWithClock` /
- * `spawnDetached`). Clocks are a structural guarantee — a new unclocked seam
- * is a red test, not a reviewer finding.
+ * `withProviderTimeout` / `shWithClock` / `spawnDetached`). Clocks only —
+ * retry lives in #879 `legTransientRetry`. A new unclocked seam is a red
+ * test, not a reviewer finding.
  *
  * This test fails if source under `orchestrator/src/**` contains bare external
  * primitives outside the chokepoint allowlist.
@@ -207,7 +207,6 @@ describe("#884 S8-T sole external-call chokepoint (static guard)", () => {
       "execFileWithTimeout",
       "execFileAsyncWithTimeout",
       "withProviderTimeout",
-      "withExternalCallRetry",
       "shWithClock",
       "spawnDetached",
     ]) {
@@ -215,5 +214,8 @@ describe("#884 S8-T sole external-call chokepoint (static guard)", () => {
         new RegExp(`export (?:async )?function ${name}\\b`),
       );
     }
+    // Retry platform must stay out of the clock module (#884 / #879 split).
+    expect(raw).not.toMatch(/withExternalCallRetry/);
+    expect(raw).not.toMatch(/ExternalCallExhaustedError/);
   });
 });

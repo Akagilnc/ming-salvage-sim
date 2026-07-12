@@ -28,8 +28,7 @@ export interface FamilyAutoMergeInput {
 
 function familyGhSh(): (file: string, args: string[]) => string {
   return (file, args) =>
-    // Auto-merge path mutates GitHub; exactly-once on timeout (#884 cmr r7).
-    shWithClock(file, args, { stage: `admission:${file}`, retry: false });
+    shWithClock(file, args, { stage: `admission:${file}` });
 }
 
 function resolveFamilyRepoDetails(familyBackend: FamilyBackend): {

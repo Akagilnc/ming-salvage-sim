@@ -492,7 +492,6 @@ export class RealFamilyBackend implements FamilyBackend {
     return shWithClock(file, args, {
       stage: `subprocess:${file}`,
       cwd: cwd ?? this.opts.workingRepo,
-      retry: false,
     });
   }
 
@@ -1404,7 +1403,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (spec.kind === "cleanup") {
       if (landing?.cleanupDispatch !== undefined) {
         const ghSh: Sh = (file, args) =>
-          shWithClock(file, args, { stage: `dispatch:${file}`, retry: false });
+          shWithClock(file, args, { stage: `dispatch:${file}` });
         try {
           const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
           return { kind: "completed", output };

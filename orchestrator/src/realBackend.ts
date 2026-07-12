@@ -2614,14 +2614,12 @@ export class RealBackend implements Backend {
    * (integ-cmr 256 r3 reuse-fail-closed test).
    *
    * #884: every subprocess wait carries a clock (default 120s).
-   * Mixed read/write seam → retry:false (exactly-once on timeout for git
-   * clone/push/worktree remove and gh writes; cmr r7).
+   * Host one-shot with clock only (no auto-retry — #884 clocks / #879 owns leg retry).
    */
   protected sh(file: string, args: string[], cwd?: string): string {
     return shWithClock(file, args, {
       stage: `subprocess:${file}`,
       cwd,
-      retry: false,
     });
   }
 
