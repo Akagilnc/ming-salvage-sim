@@ -137,6 +137,28 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
   }
   const msg = err instanceof Error ? err.message : String(err);
   const lower = msg.toLowerCase();
+  // Status-first in free text (#884 cmr r8): explicit HTTP status tokens beat
+  // quota vocabulary so "HTTP 503 … quota" stays transient (retry), while
+  // bare "429" stays quota (no retry).
+  const statusToken = lower.match(/\b(429|5\d\d)\b/);
+  if (statusToken !== null) {
+    const code = Number(statusToken[1]);
+    if (code === 429) return "quota";
+    if (code >= 500 && code <= 599) return "transient";
+  }
+  if (
+    lower.includes("etimedout") ||
+    lower.includes("econnreset") ||
+    lower.includes("econnrefused") ||
+    lower.includes("socket hang up") ||
+    lower.includes("network") ||
+    lower.includes("timed out") ||
+    lower.includes("timeout") ||
+    lower.includes("aborted") ||
+    lower.includes("http 5")
+  ) {
+    return "transient";
+  }
   if (
     lower.includes("429") ||
     lower.includes("rate limit") ||
@@ -149,20 +171,6 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     msg.includes("配额")
   ) {
     return "quota";
-  }
-  if (
-    lower.includes("etimedout") ||
-    lower.includes("econnreset") ||
-    lower.includes("econnrefused") ||
-    lower.includes("socket hang up") ||
-    lower.includes("network") ||
-    lower.includes("timed out") ||
-    lower.includes("timeout") ||
-    lower.includes("aborted") ||
-    /\b5\d\d\b/.test(lower) ||
-    lower.includes("http 5")
-  ) {
-    return "transient";
   }
   return "durable";
 }

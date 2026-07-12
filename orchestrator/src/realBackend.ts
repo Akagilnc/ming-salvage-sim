@@ -183,9 +183,17 @@ export function loadBarePingPromptTemplate(promptsDir: string): string {
   return readFileSync(join(promptsDir, "route-smoke.md"), "utf8");
 }
 
-/** True when stdout carries the nonce (credential-alive oracle). */
+/**
+ * True when stdout satisfies the bare-ping credential oracle.
+ * Prompt contract is "Reply with exactly: {{NONCE}}". Accept a whole-stdout
+ * exact match OR any full line that is exactly the nonce (models may emit a
+ * short preface). Reject substring embedding (nonce mid-token).
+ */
 export function barePingNonceSatisfied(stdout: string, nonce: string): boolean {
-  return stdout.includes(nonce);
+  if (nonce.length === 0) return false;
+  const trimmed = stdout.trim();
+  if (trimmed === nonce) return true;
+  return stdout.split(/\r?\n/).some((line) => line.trim() === nonce);
 }
 
 export interface BarePingArgv {
@@ -2454,11 +2462,13 @@ export class RealBackend implements Backend {
           )
         : undefined;
 
-    // Unique-by-slug parallel legs (owner "六路") — overlap with relay ping.
+    // Unique-by-slug parallel legs (owner "六路") — always default pipe.
+    // Pool credentials for relaySmokeEntryKey are covered ONLY by the dedicated
+    // parallel relayPingPromise below (cmr r8: never let unique-wave pool ping
+    // fan out as "default pipe passed").
     let smoked = await smokeRouteModels(route, async (entry) => {
-      const entryPool =
-        entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
-      return pingOne(entry, entryPool);
+      void entry;
+      return pingOne(entry, undefined);
     });
 
     if (relayEntry !== undefined && relayPingPromise !== undefined) {
