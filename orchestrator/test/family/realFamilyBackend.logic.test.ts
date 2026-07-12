@@ -1591,7 +1591,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>\nfindings = 0\n',
       outcomePath,
       cmrReviewLegs: [
         { slug: "opus" },
@@ -1611,7 +1611,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout:
-        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
+        '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>\nfindings = 0\n',
       cmrReviewLegs: [
         { slug: "opus" },
         { slug: "gpt-5.6-sol" },
