@@ -1788,6 +1788,29 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     }
   });
 
+  it("#875 kill-axis: non-array claim/disposition top-level values still parse as a verdict", () => {
+    // codex high r10: z.array(...) still shape-killed object/string/null before
+    // soft-parse. Accept unknown top-level shape; discard unusable prose.
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      evidencePaths: ["cmr/review.json"],
+      claimedFixedFindingIdentityKeys: { note: "reviewer freeform" },
+      priorFindingDispositions: "chatty prose not an array",
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome.kind).toBe("verdict");
+    if (outcome.kind === "verdict") {
+      expect(outcome.converged).toBe(true);
+      expect(outcome.claimedFixedFindingIdentityKeys).toEqual([]);
+      expect(outcome.priorFindingDispositions).toEqual([]);
+    }
+  });
+
   it("#875 kill-axis: chatty prior dispositions (unknown status / extra keys) do not malformed the whole verdict", () => {
     // Pre-kill-axis residual: one disposition with unknown status or extra prose
     // key failed cmrFindingDispositionSchema → entire <cmr> malformed → rewrite

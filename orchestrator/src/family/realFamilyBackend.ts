@@ -3764,6 +3764,7 @@ function softParsePriorFindingDispositions(
   raw: unknown,
 ): PriorFindingDisposition[] | undefined {
   if (raw === undefined) return undefined;
+  // Non-array chatty values (object/string/null) → empty prose, not malformed.
   if (!Array.isArray(raw)) return [];
   const kept: PriorFindingDisposition[] = [];
   for (const item of raw) {
@@ -3772,11 +3773,23 @@ function softParsePriorFindingDispositions(
   }
   return kept;
 }
+function softParseClaimedFixedFindingIdentityKeys(
+  raw: unknown,
+): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const kept: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) kept.push(item);
+  }
+  return kept;
+}
 const cmrClosureSchema = {
-  claimedFixedFindingIdentityKeys: z.array(nonEmpty).optional(),
-  // Opaque prose array — element shape is soft-parsed after the strict object
-  // validates so a single chatty disposition cannot kill the whole envelope.
-  priorFindingDispositions: z.array(z.unknown()).optional(),
+  // #875 kill-axis: claim/disposition fields are opaque worker prose of ANY
+  // top-level shape. Accept `unknown` here so object/string/null cannot
+  // shape-kill the whole verdict; soft-parse below retains only usable entries.
+  claimedFixedFindingIdentityKeys: z.unknown().optional(),
+  priorFindingDispositions: z.unknown().optional(),
 } as const;
 // #604 slice 4 (ADR 0062): the CMR reviewer contract no longer carries routing
 // disposition kinds — the only disposition a reviewer may emit is the
@@ -4016,6 +4029,10 @@ function classifyCmrOutcomePayload(
   // or incomplete lists are worker prose, not a parse-time kill.
   if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
     const converged = cmrConvergedSchema.parse(normalizedParsed);
+    const claimedFixedFindingIdentityKeys =
+      softParseClaimedFixedFindingIdentityKeys(
+        converged.claimedFixedFindingIdentityKeys,
+      );
     const priorFindingDispositions = softParsePriorFindingDispositions(
       converged.priorFindingDispositions,
     );
@@ -4024,11 +4041,8 @@ function classifyCmrOutcomePayload(
       converged: true,
       successfulLegs: converged.successfulLegs,
       ...(converged.skippedLegs !== undefined ? { skippedLegs: converged.skippedLegs } : {}),
-      ...(converged.claimedFixedFindingIdentityKeys !== undefined
-        ? {
-            claimedFixedFindingIdentityKeys:
-              converged.claimedFixedFindingIdentityKeys,
-          }
+      ...(claimedFixedFindingIdentityKeys !== undefined
+        ? { claimedFixedFindingIdentityKeys }
         : {}),
       ...(priorFindingDispositions !== undefined
         ? { priorFindingDispositions }
@@ -4042,6 +4056,10 @@ function classifyCmrOutcomePayload(
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
   if (red.success) {
+    const claimedFixedFindingIdentityKeys =
+      softParseClaimedFixedFindingIdentityKeys(
+        red.data.claimedFixedFindingIdentityKeys,
+      );
     const priorFindingDispositions = softParsePriorFindingDispositions(
       red.data.priorFindingDispositions,
     );
@@ -4051,11 +4069,8 @@ function classifyCmrOutcomePayload(
       reason: red.data.reason,
       successfulLegs: red.data.successfulLegs,
       ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
-      ...(red.data.claimedFixedFindingIdentityKeys !== undefined
-        ? {
-            claimedFixedFindingIdentityKeys:
-              red.data.claimedFixedFindingIdentityKeys,
-          }
+      ...(claimedFixedFindingIdentityKeys !== undefined
+        ? { claimedFixedFindingIdentityKeys }
         : {}),
       ...(priorFindingDispositions !== undefined
         ? { priorFindingDispositions }
