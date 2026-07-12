@@ -630,7 +630,7 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
         ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>`,
+      })}</cmr>\nfindings = 0\n`,
     });
     expect(o.kind).toBe("verdict");
     if (o.kind === "verdict") expect(o.converged).toBe(true);
@@ -643,7 +643,7 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
         ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>`,
+      })}</cmr>\nfindings = 0\n`,
     });
     expect(o.kind).toBe("verdict");
   });
@@ -655,7 +655,7 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
         ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>`,
+      })}</cmr>\nfindings = 0\n`,
     });
     expect(o.kind).toBe("verdict");
   });
@@ -669,7 +669,7 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
         ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>`,
+      })}</cmr>\nfindings = 0\n`,
     };
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
 
@@ -2503,7 +2503,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
             converged: true,
             successfulLegs: DEFAULT_CMR_LEGS,
             ...VALID_CMR_VERDICT_FIELDS,
-          })}</cmr>\nCMR_STEP_COMPLETE`,
+          })}</cmr>\nfindings = 0\nCMR_STEP_COMPLETE`,
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
