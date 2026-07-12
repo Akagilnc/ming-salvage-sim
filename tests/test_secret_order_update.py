@@ -17,7 +17,7 @@ import pytest
         ("莫让魏忠贤知晓", "people", "魏忠贤"),
     ],
 )
-def test_secret_order_persists_explicit_secrecy_wording(
+def test_secret_order_update_persists_new_explicit_secrecy_wording(
     game, clause, expected_kind, expected_target,
 ):
     db, state, _content = game
@@ -26,7 +26,10 @@ def test_secret_order_persists_explicit_secrecy_wording(
     ).fetchone()["name"]
 
     order_id = db.create_secret_order(
-        state, minister, "密查账目", f"核清旧账，{clause}。", [],
+        state, minister, "密查账目", "核清旧账。", [],
+    )
+    assert db.update_secret_order_by_id(
+        state, order_id, "密查账目", f"核清旧账，{clause}。", [],
     )
 
     order = next(item for item in db.list_secret_orders() if item["id"] == order_id)
