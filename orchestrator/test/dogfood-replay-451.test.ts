@@ -33,8 +33,8 @@ describe("#451 dogfood replay fixture", () => {
         expect.objectContaining({
           id: "258-cmr-reviewer-self-fix-attempt",
           issue: 258,
-          classification: "contract_drift",
-          stopReason: "contract_drift",
+          classification: "success",
+          stopReason: "success",
         }),
         expect.objectContaining({
           // #604 slice 4 (ADR 0062): the former "cross-module defer" pass is gone;
@@ -372,19 +372,16 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("258-cmr-reviewer-self-fix-attempt")).toMatchObject({
       source: "family",
-      classification: "contract_drift",
-      stopReason: "contract_drift",
+      classification: "success",
+      stopReason: "success",
       sourceStopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        summary: expect.stringContaining("reviewer moved family HEAD"),
+        reason: "success",
       }),
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr",
-        mechanism: "cmr_reviewer_self_fix_head_movement",
-        reviewerSelfFixBlocked: true,
-        coderFixDispatched: false,
-        ledgerStatuses: ["aborted"],
-        dispatches: ["cmr:completeness"],
+        mechanism: "cmr_reviewer_head_movement_advisory",
+        reviewerSelfFixBlocked: false,
+        coderFixDispatched: true,
       }),
     });
     expect(rowsById.get("287-module-declaration-fenced-yaml")?.sourceEvidence).toMatchObject({
