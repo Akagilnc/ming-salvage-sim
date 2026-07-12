@@ -337,6 +337,40 @@ def test_shared_archive_storage_never_writes_restricted_aggregate(game):
     assert secret not in db.list_chapter_memories(upto_turn=state.turn)[-1]["body"]
 
 
+def test_character_added_after_archive_cannot_read_old_participant_source(game):
+    """The durable participant roster, not an archival deny-list snapshot, grants access."""
+    db, state, content = game
+    participant = next(iter(content.characters))
+    secret = "旧档中仅经手人可知的密令细节"
+    db.register_character_knowledge_source(
+        state, [{"character_id": participant}], "secret_order", "密令", secret,
+        source_id="secret_order:test-late-reader-boundary",
+    )
+    db.save_turn_report(
+        state, f"聚合转述：{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn),
+    )
+
+    late_reader = "归档后新入仕者"
+    template = db.conn.execute("SELECT * FROM characters LIMIT 1").fetchone()
+    columns = [row[1] for row in db.conn.execute("PRAGMA table_info(characters)").fetchall()]
+    values = [template[column] for column in columns]
+    values[columns.index("name")] = late_reader
+    values[columns.index("aliases")] = "[]"
+    placeholders = ",".join("?" for _ in columns)
+    db.conn.execute(
+        f"INSERT INTO characters ({','.join(columns)}) VALUES ({placeholders})",
+        values,
+    )
+    db.conn.commit()
+
+    projected = db.get_character_knowledge(state, late_reader)
+    rendered = "\n".join(
+        str(item.get("body") or "")
+        for item in [*projected["public_events"], *projected["events"]]
+    )
+    assert secret not in rendered
+
+
 def test_chapter_with_only_derived_report_does_not_publish_its_body_again(game):
     """The report projection alone is not an independently public chapter source."""
     from ming_sim.memories import _public_chapter_counterpart
