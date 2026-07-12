@@ -8,7 +8,7 @@ partially-supersedes: ADR 0026（「cmr = 一条带记忆 worker 兼 fixer / 无
 
 ## 决定
 
-per-slice 与 integrated cmr 的「评审 → 修复 → 复审」收敛 loop，从「单 worker session 内部跑完」**拆回 runner 调度层**：coder / reviewer / coder-fix 是各自 runner 派的独立 worker/容器。reviewer 把 findings 写入状态库，runner 只按未决 0 / 未决 >0 / 需要人三态派下一棒；fixer 更新行状态，fresh reviewer 在**当前全 diff 上**复验后确认关闭或打回重开。**通用原则：任一 must-pass-first 闸不得埋进单 worker loop，必须落成 runner 调度边界。**
+per-slice 与 integrated cmr 的「评审 → 修复 → 复审」收敛 loop，从「单 worker session 内部跑完」**拆回 runner 调度层**：coder / reviewer / coder-fix 是各自 runner 派的独立 worker/容器。reviewer 把 findings 写入状态库，runner 只按未决 0 / 未决 >0 / 需要人三态派下一棒；fixer 更新行状态，fresh reviewer 在**当前全 diff** 上复验后确认关闭或打回重开。**通用原则：任一 must-pass-first 闸不得埋进单 worker loop，必须落成 runner 调度边界。**
 
 跨轮发现及其裁定由 findings 状态库承接，不靠任一 worker 的 session 记忆。字段、状态跳转与 accepted suppression 授权在写入点校验；runner 不分类 finding，不管理 disposition，不比较 commit/head 或测试证据。
 
