@@ -1729,7 +1729,35 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     );
   });
 
-  it("rejects accepted_suppressed prior dispositions that omit reason", () => {
+  it("#875: converged verdict omitting claim/disposition prose fields still parses (no closure shape court)", () => {
+    // Pre-#875 / residual court: cmrClosureSchema required
+    // claimedFixedFindingIdentityKeys + priorFindingDispositions arrays; omitting
+    // them made the whole verdict malformed before three-channel routing.
+    // Post-#875: those fields are optional worker prose.
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      evidencePaths: ["cmr/review.json"],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome.kind).toBe("verdict");
+    if (outcome.kind === "verdict") {
+      expect(outcome.converged).toBe(true);
+      expect(outcome.successfulLegs).toEqual(["gpt-5.6-sol"]);
+      expect(outcome.claimedFixedFindingIdentityKeys).toBeUndefined();
+      expect(outcome.priorFindingDispositions).toBeUndefined();
+    }
+  });
+
+  it("#875: incomplete accepted_suppressed prior disposition prose still parses as a verdict (not malformed death)", () => {
+    // Pre-#875: parse-time superRefine killed incomplete accepted_suppressed
+    // prior dispositions as malformed before verifyCmr could three-channel route.
+    // Post-#875: prior dispositions are worker prose at parse; finding.disposition
+    // governance (cmrDispositionEvidenceSchema) stays strict.
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: true,
       successfulLegs: ["gpt-5.6-sol"],
@@ -1743,19 +1771,109 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         {
           identityKey: "correctness|src/x.ts:1|accepted",
           status: "accepted_suppressed",
-          source: "#445 owner answer",
-          scope: "runner review/fix loop",
-          boundedReopen: "reopen if the same scope regresses",
+          // deliberately incomplete — missing reason/source/scope/boundedReopen
         },
       ],
     })}</cmr>\nCMR_STEP_COMPLETE`);
 
-    expect(outcome).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringContaining(
-        "cmr worker <cmr> tag matched no valid shape",
-      ),
-    });
+    expect(outcome.kind).toBe("verdict");
+    if (outcome.kind === "verdict") {
+      expect(outcome.converged).toBe(true);
+      expect(outcome.priorFindingDispositions).toEqual([
+        {
+          identityKey: "correctness|src/x.ts:1|accepted",
+          status: "accepted_suppressed",
+        },
+      ]);
+    }
+  });
+
+  it("#875 kill-axis: chatty/non-array leg lists still parse; empty successfulLegs land as verdict prose", () => {
+    // r11 high: successfulLegs/skippedLegs z.array courts shape-killed before floor.
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: "not-an-array",
+      skippedLegs: [
+        { slug: "agy", reason: "quota" },
+        { slug: "opus", note: "chatty incomplete skip — drop" },
+        "bare-string-skip",
+      ],
+      evidencePaths: ["cmr/review.json"],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome.kind).toBe("verdict");
+    if (outcome.kind === "verdict") {
+      expect(outcome.successfulLegs).toEqual([]);
+      expect(outcome.skippedLegs).toEqual([
+        { slug: "agy", reason: "quota" },
+      ]);
+    }
+  });
+
+  it("#875 kill-axis: non-array claim/disposition top-level values still parse as a verdict", () => {
+    // codex high r10: z.array(...) still shape-killed object/string/null before
+    // soft-parse. Accept unknown top-level shape; discard unusable prose.
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      evidencePaths: ["cmr/review.json"],
+      claimedFixedFindingIdentityKeys: { note: "reviewer freeform" },
+      priorFindingDispositions: "chatty prose not an array",
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome.kind).toBe("verdict");
+    if (outcome.kind === "verdict") {
+      expect(outcome.converged).toBe(true);
+      expect(outcome.claimedFixedFindingIdentityKeys).toEqual([]);
+      expect(outcome.priorFindingDispositions).toEqual([]);
+    }
+  });
+
+  it("#875 kill-axis: chatty prior dispositions (unknown status / extra keys) do not malformed the whole verdict", () => {
+    // Pre-kill-axis residual: one disposition with unknown status or extra prose
+    // key failed cmrFindingDispositionSchema → entire <cmr> malformed → rewrite
+    // → durable abort. Post: soft-drop unparseable entries; well-formed neighbors
+    // still land; envelope survives as a verdict.
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: ["gpt-5.6-sol"],
+      skippedLegs: [
+        { slug: "opus", reason: "not part of this parser unit" },
+        { slug: "agy", reason: "not part of this parser unit" },
+      ],
+      evidencePaths: ["cmr/review.json"],
+      priorFindingDispositions: [
+        {
+          identityKey: "correctness|src/x.ts:1|chatty",
+          status: "probably-closed-ish",
+          note: "reviewer freeform prose",
+        },
+        {
+          identityKey: "correctness|src/x.ts:2|ok",
+          status: "verified-closed",
+        },
+        {
+          identityKey: "correctness|src/x.ts:3|extra",
+          status: "still-active",
+          extraProse: "more chatter",
+        },
+      ],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome.kind).toBe("verdict");
+    if (outcome.kind === "verdict") {
+      expect(outcome.converged).toBe(true);
+      expect(outcome.priorFindingDispositions).toEqual([
+        {
+          identityKey: "correctness|src/x.ts:2|ok",
+          status: "verified-closed",
+        },
+      ]);
+    }
   });
 
   it("rejects converged CMR verdicts that omit evidence paths", () => {

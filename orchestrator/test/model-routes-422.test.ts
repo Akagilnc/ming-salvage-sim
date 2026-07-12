@@ -134,6 +134,14 @@ describe("#422 model route presets", () => {
       [{ slug: "opus", reason: "quota exhausted" }],
       route,
     )).toMatch(/anchor.*opus/i);
+    // #875: double-reported successful+skipped is prose — success wins.
+    expect(
+      requiredCmrLegSkipFailure(
+        [{ slug: "opus", reason: "quota exhausted" }],
+        route,
+        ["opus", "gpt-5.6-sol"],
+      ),
+    ).toBeUndefined();
   });
 
   it("single-slot overrides win over the selected base route", () => {

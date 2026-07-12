@@ -247,9 +247,12 @@ export interface VerifyCmrInput {
   /** Parsed module declarations for family-CMR scope classification (#449). */
   readonly moduleContext?: FamilyModuleContext;
   /**
-   * Runner-owned prior finding identity keys that the integrated CMR worker may
-   * close. If a worker claims fixed keys without this protected context, or
-   * claims keys outside it, the family gate fails closed.
+   * Runner-owned prior finding identity keys passed to the integrated CMR
+   * worker as artifact pointers (ADR 0130 case handoff). #875 demolished the
+   * verifyCmr accounting court: the runner does NOT parse claim/disposition
+   * coverage of these keys to abort a live run. Three-channel routing only
+   * (exit / findings count / decision gate) plus strong-leg floor, required-leg
+   * degradation, and real infra durable abort.
    */
   readonly priorCmrFindingIdentityKeys?: readonly string[];
   /** Pass-scoped prior finding identity keys; preferred over the legacy flat set. */
@@ -331,16 +334,37 @@ export function meetsCmrFloor(successfulLegs: readonly string[]): boolean {
   return successfulLegs.some(modelIsStrongLeg);
 }
 
+/**
+ * Strong-leg floor credit: only route-declared successful legs count.
+ * #875 demolished leg-accounting death (undeclared extras no longer kill), but
+ * the retained floor must still mean "a route-selected strong leg ran" — an
+ * undeclared strong slug cannot satisfy the floor by itself.
+ */
+function routeDeclaredSuccessfulLegs(
+  successfulLegs: readonly string[],
+  resolvedRoute: ResolvedModelRoute,
+): readonly string[] {
+  const declared = new Set(
+    resolvedRoute.legCollections.cmrReview.map((leg) => leg.slug),
+  );
+  return successfulLegs.filter((slug) => declared.has(slug));
+}
+
 function cmrFloorFailureReason(input: {
   readonly pass: IntegratedCmrPass;
   readonly successfulLegs: readonly string[] | undefined;
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
+  readonly resolvedRoute: ResolvedModelRoute;
 }): string | undefined {
   const successfulLegs = input.successfulLegs;
   if (successfulLegs == null || successfulLegs.length === 0) {
     return `integrated cmr ${input.pass} floor failed: no successful leg set was reported`;
   }
-  if (meetsCmrFloor(successfulLegs)) return undefined;
+  const creditedLegs = routeDeclaredSuccessfulLegs(
+    successfulLegs,
+    input.resolvedRoute,
+  );
+  if (meetsCmrFloor(creditedLegs)) return undefined;
   const skipped =
     input.skippedLegs != null && input.skippedLegs.length > 0
       ? `; skipped legs: ${input.skippedLegs
@@ -348,8 +372,12 @@ function cmrFloorFailureReason(input: {
           .join(", ")}`
       : "";
   return (
-    `integrated cmr ${input.pass} floor failed: successful legs [` +
-    `${successfulLegs.join(", ")}] include no strong leg${skipped}`
+    `integrated cmr ${input.pass} floor failed: route-declared successful legs [` +
+    `${creditedLegs.join(", ")}] include no strong leg` +
+    (creditedLegs.length === successfulLegs.length
+      ? ""
+      : ` (reported [${successfulLegs.join(", ")}]; undeclared legs do not credit the floor)`) +
+    skipped
   );
 }
 
@@ -2257,12 +2285,12 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
-  if (
-    !cmrResult.output.converged &&
-    cmrResult.output.findingsCount === undefined &&
-    (cmrResult.output.findings === undefined ||
-      cmrResult.output.findings.length === 0)
-  ) {
+  // Opus/#875/ADR 0129: structured findings array is the single source of truth.
+  // open-count is DERIVED (array length). Downstream runner never reconciles an
+  // independent count field against the array (that thrash was r5–r11).
+  // Write-point already rejects count≠length; here we only read the array.
+  const openFindingsCount = cmrResult.output.findings?.length ?? 0;
+  if (!cmrResult.output.converged && openFindingsCount === 0) {
     // #875: no claimed-fixed coverage court on thin not_converged envelopes.
     // Three-channel routing only — findings empty + not converged ⇒ ordinary
     // not_converged durable abort (not a disposition/claim shape kill).
@@ -2292,11 +2320,13 @@ async function runIntegratedCmrPass(input: {
   }
   // #875: leg-accounting court demolished. successfulLegs/skippedLegs are worker
   // prose for the degradation floor below — undeclared/duplicate/omitted legs no
-  // longer abort the run.
+  // longer abort the run. Floor still credits only route-declared successful legs
+  // (undeclared strong must not satisfy ADR0032).
   const floorFailure = cmrFloorFailureReason({
     pass,
     successfulLegs: cmrResult.output.successfulLegs,
     skippedLegs: cmrResult.output.skippedLegs,
+    resolvedRoute,
   });
   if (floorFailure !== undefined) {
     const skippedLegs = cmrResult.output.skippedLegs;
@@ -2315,6 +2345,8 @@ async function runIntegratedCmrPass(input: {
   const requiredLegFailure = requiredCmrLegSkipFailure(
     cmrResult.output.skippedLegs,
     resolvedRoute,
+    // #875: double-reported successful+skipped is prose — success wins.
+    cmrResult.output.successfulLegs,
   );
   if (requiredLegFailure !== undefined) {
     const skippedLegs = cmrResult.output.skippedLegs;
@@ -2330,14 +2362,12 @@ async function runIntegratedCmrPass(input: {
     }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  // #875: early claimed-fixed / disposition coverage court demolished. Blocking
-  // findings take the normal findings-count → coder-fix path regardless of
-  // whether protected prior keys were "accounted for" in envelope prose.
+  // #875: early claimed-fixed / disposition coverage court demolished.
+  // openFindingsCount>0 iff structured findings array is non-empty (derived).
+  // No downstream branch for "count>0 without structured" — inexpressible after
+  // write-point (Opus ballot).
   let cmrFindingClassification: CmrEnvelope | undefined;
-  if (
-    (cmrResult.output.findingsCount ?? cmrResult.output.findings?.length ?? 0) > 0 &&
-    cmrResult.output.findings !== undefined
-  ) {
+  if (openFindingsCount > 0 && cmrResult.output.findings !== undefined) {
     const priorDispositions = latestFamilyCmrDispositions(
       await familyBackend.readFamilyLedger(),
     );
@@ -2452,36 +2482,35 @@ async function runIntegratedCmrPass(input: {
       return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
     }
   }
-  if (
-    !cmrResult.output.converged &&
-    cmrResult.output.findingsCount === undefined &&
-    (cmrFindingClassification === undefined ||
-      (cmrFindingClassification.deferred.length === 0 &&
-        cmrFindingClassification.dispositions.length === 0))
-  ) {
+  if (!cmrResult.output.converged) {
+    // Three-channel: worker said not converged ⇒ never recordCmrPassed.
+    // Covers residual r11 path where findingsCount>0 but all structured findings
+    // classified as accepted_suppressed (blocking=[]) and the old guard required
+    // count===0 / empty dispositions before not_converged — that leaked to pass.
+    // #604 rework (codexB): do NOT write `cmrDispositions: []` tombstones.
+    // If this pass produced governance dispositions, carry them; otherwise omit.
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
-    // #604 slice 3 / ADR 0062: not_converged carries no blocking findings — the
-    // thin envelope keeps `blockingFindingIdentityKeys: []`, staying in the
-    // runner's classified-abort branch while yielding no pending keys.
-    //
-    // #604 rework (codexB): DO NOT write `cmrDispositions: []` — see the twin
-    // not_converged branch above. An empty tombstone masks the prior round's real
-    // accepted-suppression dispositions and resets the reopen/dispute budget. The
-    // field is left UNDEFINED so the prior dispositions carry forward.
-    await persistFinalReviewRound("accepted", () => recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      blockingFindingIdentityKeys: [],
-      stopSummary: notConvergedStopSummary(reason),
-    }));
+    const dispositions = cmrFindingClassification?.dispositions;
+    await persistFinalReviewRound("accepted", () =>
+      recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        blockingFindingIdentityKeys: [],
+        ...(dispositions != null && dispositions.length > 0
+          ? { cmrDispositions: dispositions }
+          : {}),
+        stopSummary: notConvergedStopSummary(reason),
+      }),
+    );
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   // #875: late claimed-fixed / disposition-enum court demolished. Converged +
-  // findings=0 is enough for three-channel pass; runner does not re-read
-  // disposition statuses or claim coverage to kill the run.
+  // findings=0 (or only non-blocking suppressions already classified above) is
+  // enough for three-channel pass; runner does not re-read disposition statuses
+  // or claim coverage to kill the run.
   const skippedLegs = cmrResult.output.skippedLegs;
   await persistFinalReviewRound("accepted", () => recordCmrPassed(familyBackend, {
     cmrPass: pass,

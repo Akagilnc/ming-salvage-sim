@@ -926,8 +926,19 @@ export function cmrLegAccountingFailure(
 export function requiredCmrLegSkipFailure(
   skippedLegs: readonly { readonly slug: string; readonly reason: string }[] | undefined,
   route: ResolvedModelRoute,
+  /**
+   * #875: successfulLegs are worker prose. A slug listed as both successful and
+   * skipped is sloppy double-report, not "required leg unavailable" — credit
+   * success and ignore the skip for required-leg degradation.
+   */
+  successfulLegs?: readonly string[],
 ): string | undefined {
-  const skipped = new Set((skippedLegs ?? []).map((leg) => leg.slug));
+  const successful = new Set(successfulLegs ?? []);
+  const skipped = new Set(
+    (skippedLegs ?? [])
+      .map((leg) => leg.slug)
+      .filter((slug) => !successful.has(slug)),
+  );
   const required = route.legCollections.cmrReview
     .filter((leg) => leg.optional !== true && skipped.has(leg.slug))
     .map((leg) => leg.slug);

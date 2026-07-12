@@ -1378,10 +1378,12 @@ export class RealFamilyBackend implements FamilyBackend {
    * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL route-selected
    * reviewer for ONE ADR 0030 pass (completeness or correctness). It
    * `Skill`-invokes ak-cross-m-review in-container and returns a TERMINAL review
-   * verdict. The runner (`verifyCmr.ts`) owns pass order, route-leg accounting,
-   * ADR0032 strong-leg floor, blocking-finding classification, coder-fix dispatch,
-   * and fresh re-review before ship. A non-converged review outcome is a completed
-   * CMR payload the runner routes; it is NOT a failed worker.
+   * verdict. The runner (`verifyCmr.ts`) owns pass order, ADR0032 strong-leg /
+   * required-leg floor, three-channel routing (exit / findings count / decision
+   * gate), coder-fix dispatch, and fresh re-review before ship. #875 demolished
+   * the accounting court (leg-accounting death / claimed-fixed coverage /
+   * disposition-enum kill). A non-converged review outcome is a completed CMR
+   * payload the runner routes; it is NOT a failed worker.
    */
   async dispatchWorker(
     spec: WorkerSpec,
@@ -1831,18 +1833,36 @@ export class RealFamilyBackend implements FamilyBackend {
           },
         });
         if (protocolFailure.cmrPriorOutput !== undefined) {
-          const findingsCount = parseFindingsSentinel(result.stdout);
-          if (findingsCount === undefined) {
+          // Opus/#875/ADR 0129: count is never an independent setter — even on the
+          // findings-supplement rewrite path. Derive from structured array; reject
+          // sentinel mismatch at write-point for full rewrite (no lying count).
+          const priorVerdict = cmrResultToWorkerVerdict(
+            protocolFailure.cmrPriorOutput,
+          );
+          const derivedCount = priorVerdict.findings?.length ?? 0;
+          const sentinel = parseFindingsSentinel(result.stdout);
+          if (sentinel === undefined) {
             return {
               kind: "malformed",
               reason: `same reviewer supplement attempt ${attempt} omitted findings = x`,
               sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-              priorVerdict: cmrResultToWorkerVerdict(protocolFailure.cmrPriorOutput),
+              priorVerdict,
+            };
+          }
+          if (sentinel !== derivedCount) {
+            return {
+              kind: "malformed",
+              reason:
+                `same reviewer supplement attempt ${attempt}: findings = ${sentinel} ` +
+                `does not match structured findings length ${derivedCount} ` +
+                `(write-point; count is derived)`,
+              sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
+              priorVerdict,
             };
           }
           return {
-            ...cmrResultToWorkerVerdict(protocolFailure.cmrPriorOutput),
-            findingsCount,
+            ...priorVerdict,
+            findingsCount: derivedCount,
             sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
           };
         }
@@ -3674,15 +3694,31 @@ export function cmrOutcomeFromResult(result: {
           "cmr worker outcome sidecar",
         );
         if (classified.kind !== "verdict") return classified;
-        const findingsCount = parseFindingsSentinel(result.stdout);
-        if (findingsCount === undefined) {
+        // Opus/#875/#ADR0129: structured findings array is the single source of
+        // truth; open-count is DERIVED (array length). Never trust an independent
+        // count field against the array.
+        const derivedCount = classified.findings?.length ?? 0;
+        const sentinel = parseFindingsSentinel(result.stdout);
+        if (sentinel === undefined) {
           return {
             kind: "malformed",
             reason: "cmr reviewer output omitted required findings = x fragment",
             priorVerdict: classified,
           };
         }
-        return { ...classified, findingsCount };
+        // Write-point consistency (ADR 0129): findings = N must match array length.
+        // Mismatch → reject for rewrite at the write/parse entry — NOT a downstream
+        // runner court (those were the r5–r11 thrash).
+        if (sentinel !== derivedCount) {
+          return {
+            kind: "malformed",
+            reason:
+              `cmr reviewer findings = ${sentinel} does not match structured ` +
+              `findings length ${derivedCount} (write-point; count is derived)`,
+            priorVerdict: classified,
+          };
+        }
+        return { ...classified, findingsCount: derivedCount };
       }
     } catch (err) {
       return {
@@ -3727,9 +3763,37 @@ const cmrLegSlugSchema = z.string().trim().min(1);
 const cmrSkippedLegSchema = z
   .object({ slug: cmrLegSlugSchema, reason: nonEmpty })
   .strict();
+// #875 kill-axis: leg lists are worker prose at parse — non-array / empty /
+// chatty skip elements must not shape-kill the whole verdict. Soft-parse keeps
+// usable slugs; empty/missing successful legs fall through to the retained
+// strong-leg floor (provider_degraded), not parse-time malformed death.
+function softParseSuccessfulLegs(raw: unknown): string[] {
+  // Always a string[] on the verdict type (CmrWorkerOutcome requires it).
+  // Missing / non-array / empty → [] and the strong-leg floor handles fate.
+  if (!Array.isArray(raw)) return [];
+  const kept: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      kept.push(item.trim());
+    }
+  }
+  return kept;
+}
+function softParseSkippedLegs(
+  raw: unknown,
+): Array<{ slug: string; reason: string }> | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const kept: Array<{ slug: string; reason: string }> = [];
+  for (const item of raw) {
+    const parsed = cmrSkippedLegSchema.safeParse(item);
+    if (parsed.success) kept.push(parsed.data);
+  }
+  return kept;
+}
 const cmrVerdictLegsSchema = {
-  successfulLegs: z.array(cmrLegSlugSchema).min(1),
-  skippedLegs: z.array(cmrSkippedLegSchema).optional(),
+  successfulLegs: z.unknown().optional(),
+  skippedLegs: z.unknown().optional(),
 } as const;
 const cmrFindingDispositionSchema = z
   .object({
@@ -3745,42 +3809,44 @@ const cmrFindingDispositionSchema = z
     scope: z.string().optional(),
     boundedReopen: z.string().optional(),
   })
-  .strict()
-  .superRefine((disposition, ctx) => {
-    if (disposition.status !== "accepted_suppressed") return;
-    for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
-      if (disposition[field] === undefined || disposition[field].trim() === "") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `accepted_suppressed prior finding disposition requires ${field}`,
-          path: [field],
-        });
-      }
-    }
-    if (
-      disposition.source !== undefined &&
-      !hasExplicitAcceptedSuppressionSource(disposition.source)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
-        path: ["source"],
-      });
-    }
-    if (
-      disposition.boundedReopen !== undefined &&
-      !hasBoundedReopenCondition(disposition.boundedReopen)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
-        path: ["boundedReopen"],
-      });
-    }
-  });
+  .strict();
+// #875 kill-axis: priorFindingDispositions are opaque worker prose at parse.
+// Omitting the array, incomplete accepted_suppressed fields, unknown status
+// buckets, or extra chatty keys must NOT make the whole verdict malformed.
+// Keep only well-formed entries; drop the rest (they do not govern).
+// Governance for *finding* suppressions stays strict on
+// cmrDispositionEvidenceSchema; pass-time acceptedSuppressions still filters
+// via hasAcceptedSuppressionAuthority.
+function softParsePriorFindingDispositions(
+  raw: unknown,
+): PriorFindingDisposition[] | undefined {
+  if (raw === undefined) return undefined;
+  // Non-array chatty values (object/string/null) → empty prose, not malformed.
+  if (!Array.isArray(raw)) return [];
+  const kept: PriorFindingDisposition[] = [];
+  for (const item of raw) {
+    const parsed = cmrFindingDispositionSchema.safeParse(item);
+    if (parsed.success) kept.push(parsed.data);
+  }
+  return kept;
+}
+function softParseClaimedFixedFindingIdentityKeys(
+  raw: unknown,
+): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const kept: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) kept.push(item);
+  }
+  return kept;
+}
 const cmrClosureSchema = {
-  claimedFixedFindingIdentityKeys: z.array(nonEmpty),
-  priorFindingDispositions: z.array(cmrFindingDispositionSchema),
+  // #875 kill-axis: claim/disposition fields are opaque worker prose of ANY
+  // top-level shape. Accept `unknown` here so object/string/null cannot
+  // shape-kill the whole verdict; soft-parse below retains only usable entries.
+  claimedFixedFindingIdentityKeys: z.unknown().optional(),
+  priorFindingDispositions: z.unknown().optional(),
 } as const;
 // #604 slice 4 (ADR 0062): the CMR reviewer contract no longer carries routing
 // disposition kinds — the only disposition a reviewer may emit is the
@@ -4020,34 +4086,65 @@ function classifyCmrOutcomePayload(
   // or incomplete lists are worker prose, not a parse-time kill.
   if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
     const converged = cmrConvergedSchema.parse(normalizedParsed);
+    const successfulLegs = softParseSuccessfulLegs(converged.successfulLegs);
+    const skippedLegs = softParseSkippedLegs(converged.skippedLegs);
+    const claimedFixedFindingIdentityKeys =
+      softParseClaimedFixedFindingIdentityKeys(
+        converged.claimedFixedFindingIdentityKeys,
+      );
+    const priorFindingDispositions = softParsePriorFindingDispositions(
+      converged.priorFindingDispositions,
+    );
     return {
       kind: "verdict",
       converged: true,
-      successfulLegs: converged.successfulLegs,
-      ...(converged.skippedLegs !== undefined ? { skippedLegs: converged.skippedLegs } : {}),
-      claimedFixedFindingIdentityKeys:
-        converged.claimedFixedFindingIdentityKeys,
-      priorFindingDispositions: converged.priorFindingDispositions,
+      successfulLegs,
+      ...(skippedLegs !== undefined ? { skippedLegs } : {}),
+      ...(claimedFixedFindingIdentityKeys !== undefined
+        ? { claimedFixedFindingIdentityKeys }
+        : {}),
+      ...(priorFindingDispositions !== undefined
+        ? { priorFindingDispositions }
+        : {}),
       ...(converged.findings !== undefined
         ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
         : {}),
+      // Opus: findingsCount is always derived from the structured array.
+      findingsCount:
+        converged.findings !== undefined ? converged.findings.length : 0,
       ...attachSanitizedFindingFamilies({}, converged.findingFamilies),
       evidencePaths: converged.evidencePaths,
     };
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
   if (red.success) {
+    const successfulLegs = softParseSuccessfulLegs(red.data.successfulLegs);
+    const skippedLegs = softParseSkippedLegs(red.data.skippedLegs);
+    const claimedFixedFindingIdentityKeys =
+      softParseClaimedFixedFindingIdentityKeys(
+        red.data.claimedFixedFindingIdentityKeys,
+      );
+    const priorFindingDispositions = softParsePriorFindingDispositions(
+      red.data.priorFindingDispositions,
+    );
+    const redFindings =
+      red.data.findings !== undefined
+        ? red.data.findings.map(normalizeCmrReviewerFinding)
+        : undefined;
     return {
       kind: "verdict",
       converged: false,
       reason: red.data.reason,
-      successfulLegs: red.data.successfulLegs,
-      ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
-      claimedFixedFindingIdentityKeys: red.data.claimedFixedFindingIdentityKeys,
-      priorFindingDispositions: red.data.priorFindingDispositions,
-      ...(red.data.findings !== undefined
-        ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
+      successfulLegs,
+      ...(skippedLegs !== undefined ? { skippedLegs } : {}),
+      ...(claimedFixedFindingIdentityKeys !== undefined
+        ? { claimedFixedFindingIdentityKeys }
         : {}),
+      ...(priorFindingDispositions !== undefined
+        ? { priorFindingDispositions }
+        : {}),
+      ...(redFindings !== undefined ? { findings: redFindings } : {}),
+      findingsCount: redFindings !== undefined ? redFindings.length : 0,
       ...attachSanitizedFindingFamilies({}, red.data.findingFamilies),
       evidencePaths: red.data.evidencePaths,
     };
@@ -4056,8 +4153,8 @@ function classifyCmrOutcomePayload(
     kind: "malformed",
     reason:
       `${source} matched no valid shape (expected one of: ` +
-      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
-      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
+      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys?,priorFindingDispositions?,evidencePaths}, " +
+      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys?,priorFindingDispositions?,evidencePaths}, " +
       "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
   };
 }

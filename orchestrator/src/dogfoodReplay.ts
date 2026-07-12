@@ -190,12 +190,20 @@ async function familyClassificationScenario(input: {
    */
   readonly blockingCoderFixFails?: boolean;
 }): Promise<DogfoodReplayScenario> {
+  // #875 Opus: suppressions-only success is converged:true. Blocking fix_now
+  // stays !converged so the fix-loop / historical-accident path still aborts.
+  const isSuppressionOnly =
+    input.finding.action === "wont_fix" || input.finding.action === "rejected";
   const cmrOutput: WorkerResult = {
     kind: "completed",
     output: {
       kind: "cmr",
-      converged: false,
-      reason: "dogfood family CMR classification replay",
+      ...(isSuppressionOnly
+        ? { converged: true as const }
+        : {
+            converged: false as const,
+            reason: "dogfood family CMR classification replay",
+          }),
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -1109,12 +1117,13 @@ module_scope:
       boundedReopen: suppressionBoundedReopen,
     },
   };
+  // #875 Opus: cmr_passed requires converged:true. Suppressions-only clear
+  // is a successful envelope (no fix_now), not !converged + pass leak.
   const cmrOutput: WorkerResult = {
     kind: "completed",
     output: {
       kind: "cmr",
-      converged: false,
-      reason: "only accepted suppressions remain",
+      converged: true,
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -2067,12 +2076,12 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
   readonly finding: Finding;
   readonly moduleContext: FamilyModuleContext;
 }): Promise<SeamReplay> {
+  // #875 Opus: suppressions-only success is converged:true, never !converged pass.
   const cmrOutput: WorkerResult = {
     kind: "completed",
     output: {
       kind: "cmr",
-      converged: false,
-      reason: "only accepted suppressions remain",
+      converged: true,
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
