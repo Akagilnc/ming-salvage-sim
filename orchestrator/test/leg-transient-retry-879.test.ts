@@ -103,6 +103,15 @@ describe("#879 classifyLegFailure — transient vs quota vs other", () => {
       "transient",
     );
   });
+
+  it("classifies EAI_AGAIN / ENETUNREACH as transient (DNS/route blip)", () => {
+    const eai = new Error("getaddrinfo EAI_AGAIN api.example.com");
+    (eai as { code?: string }).code = "EAI_AGAIN";
+    expect(classifyLegFailure(eai)).toBe("transient");
+    const enet = new Error("connect ENETUNREACH 10.0.0.1");
+    (enet as { code?: string }).code = "ENETUNREACH";
+    expect(classifyLegFailure(enet)).toBe("transient");
+  });
 });
 
 describe("#879 withLegTransientRetry — positive / negative pair", () => {

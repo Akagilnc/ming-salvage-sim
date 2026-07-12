@@ -39,6 +39,13 @@ describe("#884 external-call clocks", () => {
     expect(classifyExternalCallFailure(new Error("socket hang up"))).toBe(
       "transient",
     );
+    // DNS/route blips — node err.code path (not free-text "network")
+    const eai = new Error("getaddrinfo EAI_AGAIN api.example.com");
+    (eai as { code?: string }).code = "EAI_AGAIN";
+    expect(classifyExternalCallFailure(eai)).toBe("transient");
+    const enet = new Error("connect ENETUNREACH");
+    (enet as { code?: string }).code = "ENETUNREACH";
+    expect(classifyExternalCallFailure(enet)).toBe("transient");
     expect(classifyExternalCallFailure(new Error("HTTP 503 unavailable"))).toBe(
       "transient",
     );

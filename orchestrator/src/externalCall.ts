@@ -131,7 +131,15 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     if (e.name === "ExternalCallTimeoutError" || e.name === "TimeoutError" || e.name === "AbortError") {
       return "transient";
     }
-    if (e.code === "ETIMEDOUT" || e.code === "ECONNRESET" || e.code === "ECONNREFUSED" || e.code === "EPIPE") {
+    if (
+      e.code === "ETIMEDOUT" ||
+      e.code === "ECONNRESET" ||
+      e.code === "ECONNREFUSED" ||
+      e.code === "EPIPE" ||
+      e.code === "EAI_AGAIN" ||
+      e.code === "ENETUNREACH" ||
+      e.code === "EHOSTUNREACH"
+    ) {
       return "transient";
     }
     const status =
