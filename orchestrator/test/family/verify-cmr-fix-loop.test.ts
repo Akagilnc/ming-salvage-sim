@@ -2332,25 +2332,30 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(1);
   });
 
-  it("#878 forever head-stuck coder → mechanical redispatch budget then re-review", async () => {
+  it("#878 forever head-stuck coder → mechanical budget then durable stop (no barrier thrash)", async () => {
     const backend = new AlwaysHeadStuckCoderBackend();
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/878-head-stuck-budget",
       familyBackend: backend,
     });
-    // Must not hang forever — mechanical budget ends stuck redispatches.
-    expect(result.ok === true || result.ok === false).toBe(true);
+    // Budget exhaust without head move → operational fail, not infinite restart.
+    expect(result).toEqual({ ok: false, ran: true });
     const coders = backend.dispatches.filter((d) => d.kind === "coder");
     // 1 initial + MAX_HEAD_STUCK_REDISPATCHES(3) = 4, never unbounded.
-    expect(coders.length).toBeLessThanOrEqual(4);
-    expect(coders.length).toBeGreaterThanOrEqual(1);
-    // After budget, a fresh cmr re-review (or abort) must appear — not pure coder spin.
-    const afterFirstCoder = backend.dispatches.slice(
-      backend.dispatches.findIndex((d) => d.kind === "coder") + 1,
-    );
+    expect(coders).toHaveLength(4);
+    // Must not re-enter cmr after budget exhaust (would reset the local counter).
+    const cmrAfterFirstCoder = backend.dispatches
+      .slice(backend.dispatches.findIndex((d) => d.kind === "coder") + 1)
+      .filter((d) => d.kind === "cmr");
+    expect(cmrAfterFirstCoder).toHaveLength(0);
     expect(
-      afterFirstCoder.some((d) => d.kind === "cmr") || result.ok === false,
+      backend.ledger.some(
+        (e) =>
+          e.status === "aborted" &&
+          typeof e.reason === "string" &&
+          /head-stuck redispatch budget/i.test(e.reason),
+      ),
     ).toBe(true);
   });
 

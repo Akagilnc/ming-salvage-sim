@@ -2499,6 +2499,35 @@ async function runIntegratedCmrPass(input: {
           });
         }
         if (!fixRound.result.ok) return fixRound;
+        // Budget exhausted and head still unmoved: durable operational stop —
+        // do NOT restartFinalBarrier (that would reset the local budget and thrash).
+        if (
+          fixFamilyHeadBefore !== undefined &&
+          fixRound.familyHeadAfter !== undefined &&
+          fixFamilyHeadBefore === fixRound.familyHeadAfter
+        ) {
+          const reason =
+            `integrated cmr ${pass} coder-fix exhausted head-stuck redispatch ` +
+            `budget (${MAX_HEAD_STUCK_REDISPATCHES}) without advancing family head`;
+          const stopSummary = coderFixFailureStopSummary({
+            pass,
+            reason,
+            familyHeadBefore: fixFamilyHeadBefore,
+            familyHeadAfter: fixRound.familyHeadAfter,
+          });
+          await recordDurableAbort(familyBackend, {
+            phase: "final",
+            cmrPass: pass,
+            reason,
+            familyHeadAfter: fixRound.familyHeadAfter,
+            blockingFindingIdentityKeys,
+            stopSummary,
+          });
+          return {
+            result: { ok: false, ran: true },
+            familyHeadAfter: fixRound.familyHeadAfter,
+          };
+        }
         const updatedPriorKeys = [
             ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...blockingFindingIdentityKeys]),
         ];
