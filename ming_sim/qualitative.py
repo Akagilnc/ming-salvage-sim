@@ -26,11 +26,11 @@ _ABSTRACT_VALUE_RE = re.compile(
 # ("忠诚已达98分", "民心跌至20").  This is deliberately fail-closed: all
 # listed axes are abstract, while concrete quantities are absent from the set.
 _ABSTRACT_NEARBY_NUMBER_RE = re.compile(
-    r"(?:民心|动乱|皇威|忠诚(?:度)?|能力|操守|廉洁|清廉|胆略|勇气|满意度|态度|朝势|军力|财力|士气|训练|装备|火器|机动|士绅阻力|军事压力|满意|势力|威望|实力|经济|进度|进展)"
+    r"(?:民心|动乱|皇威|忠诚(?:度)?|能力|操守|廉洁|清廉|胆略|勇气|满意度|态度|朝势|军力|财力|士气|训练|装备|火器|补给|机动|士绅阻力|军事压力|满意|势力|威望|实力|经济|进度|进展)"
     # LLM prose freely varies the short connective (骤降至 / 尚余 / 已然达到),
     # so do not make the P4 boundary depend on an exhaustively maintained verb
     # list.  The preceding axis is already an abstract-only allowlist.
-    r"\s*(?:[\u4e00-\u9fff]{1,4}\s*)?[-+]?\d+(?:\.\d+)?(?:\s*(?:分|%|/\s*100))?",
+    r"\s*(?:[\u4e00-\u9fff]{1,8}\s*)?[-+]?\d+(?:\.\d+)?(?:\s*(?:分|%|/\s*100))?(?!\s*(?:名|人|门|匹|艘|座|处|条))",
     re.IGNORECASE,
 )
 

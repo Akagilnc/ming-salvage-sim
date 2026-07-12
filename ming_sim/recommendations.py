@@ -94,11 +94,17 @@ def _visible_sources(db: Any, recommender: str) -> Iterable[tuple[Any, Any]]:
 
 
 def _excluded_from_visible_source(db: Any, recommender: str, target: Any) -> bool:
-    """Return whether a visible source explicitly excludes this target."""
+    """Return whether a source about *this* target excludes it.
+
+    An exclusion is a boundary on one source's participant roster, not a
+    global office-wide veto over candidates independently known elsewhere.
+    """
     for source, event in _visible_sources(db, recommender):
         if source is None or not _source_visible_to(source, recommender, db=db):
             continue
         if event is not None and not _source_visible_to(event, recommender, db=db):
+            continue
+        if str(target["name"]) not in _roster_names(source["participant_roster"]):
             continue
         if not _source_visible_to(source, recommender, target=target, db=db):
             return True

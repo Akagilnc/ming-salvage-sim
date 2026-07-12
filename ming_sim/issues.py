@@ -4991,6 +4991,26 @@ def apply_issue_tracker_output(
         resolve_condition = _issue_condition_text(ni.get("resolve_condition"))
         if not resolve_condition and isinstance(ni.get("stop_condition"), str):
             resolve_condition = stop_condition
+        # A structured roster is an item-level contract.  In particular a
+        # mapping is not an iterable roster: iterating it would persist its
+        # keys (\"character_id\", \"tier\") as phantom participants.
+        roster_input = ni.get("participant_roster")
+        if roster_input is not None:
+            try:
+                if not isinstance(roster_input, (list, tuple)):
+                    raise ValueError("participant_roster 须为列表")
+                for participant in roster_input:
+                    if not isinstance(participant, dict):
+                        raise ValueError("participant_roster 每项须为对象")
+                    if not str(participant.get("character_id") or participant.get("name") or "").strip():
+                        raise ValueError("participant_roster 每项须有 character_id")
+                    tier = str(participant.get("tier") or participant.get("档") or "知情").strip()
+                    if tier not in {"主办", "协办", "知情"}:
+                        raise ValueError(f"participant_roster tier 非法：{tier}")
+            except ValueError as exc:
+                applied_new.append({"rejected": True, "category": "invalid_participant_roster",
+                                    "reason": str(exc), "item": ni, "title": title})
+                continue
         # insert_issue 不再裹 broad except：代码/DB 异常上抛 → SettlementAbort（ADR 0005 fail-loud），
         # 不再当 WARN 吞（那会半落库 + 丢决策，违 P1 铁律）。
         # 注：字符串字段含孤代理（JSON 解析出的 "\\ud800"）会在 SQLite bind 抛 UnicodeEncodeError。

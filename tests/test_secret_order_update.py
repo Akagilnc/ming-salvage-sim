@@ -113,6 +113,16 @@ def test_update_by_id_keeps_knowledge_source_identical_to_persisted_order(game):
     assert dict(source) == {"title": order["title"], "body": order["content"]}
 
 
+def test_creation_knowledge_source_uses_persisted_truncated_title(game):
+    db, state, _ = game
+    requested = "超过密令数据库标题二十字上限的初始版本标题甲乙丙"
+    oid = db.create_secret_order(state, "保签官", requested, "密查内容", [])
+
+    order = db.conn.execute("SELECT title FROM secret_orders WHERE id=?", (oid,)).fetchone()
+    source = db.conn.execute("SELECT title FROM character_knowledge_sources WHERE source_id=?", (f"secret_order:{oid}",)).fetchone()
+    assert source["title"] == order["title"]
+
+
 def test_update_by_id_noop_on_non_active(game):
     """目标非 active(已结案)→ 不更新,返回 False。"""
     db, state, _ = game

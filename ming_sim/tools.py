@@ -187,7 +187,8 @@ def _commitment_tool_fields(db, state, row) -> str:
     # Keep the durable elapsed-month marker in the tool contract; deadline
     # prose alone cannot tell a minister whether an undertaking has begun.
     try:
-        elapsed = max(0, int(state.turn) - int(row["turn"]))
+        origin = row["origin_turn"] if "origin_turn" in keys else state.turn
+        elapsed = max(0, int(state.turn) - int(origin or state.turn))
     except (KeyError, TypeError, ValueError):
         elapsed = 0
     progress_text = f"已履行{elapsed}月"
