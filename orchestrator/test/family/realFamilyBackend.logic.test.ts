@@ -1788,6 +1788,28 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     }
   });
 
+  it("#875 kill-axis: chatty/non-array leg lists still parse; empty successfulLegs land as verdict prose", () => {
+    // r11 high: successfulLegs/skippedLegs z.array courts shape-killed before floor.
+    const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
+      converged: true,
+      successfulLegs: "not-an-array",
+      skippedLegs: [
+        { slug: "agy", reason: "quota" },
+        { slug: "opus", note: "chatty incomplete skip — drop" },
+        "bare-string-skip",
+      ],
+      evidencePaths: ["cmr/review.json"],
+    })}</cmr>\nCMR_STEP_COMPLETE`);
+
+    expect(outcome.kind).toBe("verdict");
+    if (outcome.kind === "verdict") {
+      expect(outcome.successfulLegs).toEqual([]);
+      expect(outcome.skippedLegs).toEqual([
+        { slug: "agy", reason: "quota" },
+      ]);
+    }
+  });
+
   it("#875 kill-axis: non-array claim/disposition top-level values still parse as a verdict", () => {
     // codex high r10: z.array(...) still shape-killed object/string/null before
     // soft-parse. Accept unknown top-level shape; discard unusable prose.

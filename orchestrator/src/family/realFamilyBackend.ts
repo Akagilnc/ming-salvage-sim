@@ -3734,9 +3734,37 @@ const cmrLegSlugSchema = z.string().trim().min(1);
 const cmrSkippedLegSchema = z
   .object({ slug: cmrLegSlugSchema, reason: nonEmpty })
   .strict();
+// #875 kill-axis: leg lists are worker prose at parse — non-array / empty /
+// chatty skip elements must not shape-kill the whole verdict. Soft-parse keeps
+// usable slugs; empty/missing successful legs fall through to the retained
+// strong-leg floor (provider_degraded), not parse-time malformed death.
+function softParseSuccessfulLegs(raw: unknown): string[] {
+  // Always a string[] on the verdict type (CmrWorkerOutcome requires it).
+  // Missing / non-array / empty → [] and the strong-leg floor handles fate.
+  if (!Array.isArray(raw)) return [];
+  const kept: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      kept.push(item.trim());
+    }
+  }
+  return kept;
+}
+function softParseSkippedLegs(
+  raw: unknown,
+): Array<{ slug: string; reason: string }> | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const kept: Array<{ slug: string; reason: string }> = [];
+  for (const item of raw) {
+    const parsed = cmrSkippedLegSchema.safeParse(item);
+    if (parsed.success) kept.push(parsed.data);
+  }
+  return kept;
+}
 const cmrVerdictLegsSchema = {
-  successfulLegs: z.array(cmrLegSlugSchema).min(1),
-  skippedLegs: z.array(cmrSkippedLegSchema).optional(),
+  successfulLegs: z.unknown().optional(),
+  skippedLegs: z.unknown().optional(),
 } as const;
 const cmrFindingDispositionSchema = z
   .object({
@@ -4029,6 +4057,8 @@ function classifyCmrOutcomePayload(
   // or incomplete lists are worker prose, not a parse-time kill.
   if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
     const converged = cmrConvergedSchema.parse(normalizedParsed);
+    const successfulLegs = softParseSuccessfulLegs(converged.successfulLegs);
+    const skippedLegs = softParseSkippedLegs(converged.skippedLegs);
     const claimedFixedFindingIdentityKeys =
       softParseClaimedFixedFindingIdentityKeys(
         converged.claimedFixedFindingIdentityKeys,
@@ -4039,8 +4069,8 @@ function classifyCmrOutcomePayload(
     return {
       kind: "verdict",
       converged: true,
-      successfulLegs: converged.successfulLegs,
-      ...(converged.skippedLegs !== undefined ? { skippedLegs: converged.skippedLegs } : {}),
+      successfulLegs,
+      ...(skippedLegs !== undefined ? { skippedLegs } : {}),
       ...(claimedFixedFindingIdentityKeys !== undefined
         ? { claimedFixedFindingIdentityKeys }
         : {}),
@@ -4056,6 +4086,8 @@ function classifyCmrOutcomePayload(
   }
   const red = cmrRedSchema.safeParse(normalizedParsed);
   if (red.success) {
+    const successfulLegs = softParseSuccessfulLegs(red.data.successfulLegs);
+    const skippedLegs = softParseSkippedLegs(red.data.skippedLegs);
     const claimedFixedFindingIdentityKeys =
       softParseClaimedFixedFindingIdentityKeys(
         red.data.claimedFixedFindingIdentityKeys,
@@ -4067,8 +4099,8 @@ function classifyCmrOutcomePayload(
       kind: "verdict",
       converged: false,
       reason: red.data.reason,
-      successfulLegs: red.data.successfulLegs,
-      ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
+      successfulLegs,
+      ...(skippedLegs !== undefined ? { skippedLegs } : {}),
       ...(claimedFixedFindingIdentityKeys !== undefined
         ? { claimedFixedFindingIdentityKeys }
         : {}),
