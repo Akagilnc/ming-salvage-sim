@@ -1044,20 +1044,17 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
     };
   }
 
-  it("multi-round empty S6 still-active dispositions resume as no-progress, not silent closure", async () => {
+  it("#877: multi-round empty S6 still-active disposition prose closes via findings-count (no no-progress kill)", async () => {
     const backend = new ResumeBackend(crashedAfterSecondEmptyStillActiveS6());
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(result.errorPackage?.reason).toContain("review/fix loop made no progress");
-    expect(backend.pushCount).toBe(0);
-    expect(backend.runStepIds).toEqual([]);
-    expect(result.stepLedger.map((e) => e.step).slice(-2)).toEqual(["S4", "S8"]);
-    expect(backend.ledgerWrites.find((e) => e.step === "S8")).toMatchObject({
-      handoffStatus: "escalate",
-      escalationKind: "decision",
-    });
+    expect(result.status).toBe("success");
+    expect(result.errorPackage?.reason ?? "").not.toContain(
+      "review/fix loop made no progress",
+    );
+    // Resume replays empty S6 still-active as findings=0 → ships.
+    expect(backend.pushCount).toBe(1);
   });
 });
 
@@ -1124,7 +1121,10 @@ describe("#439 decision-escalate answer channel", () => {
     expect(backend.cleanResidueCount).toBe(0);
   });
 
-  it("appended answer reopens the S4 decision escalation at S5 and injects the answer", async () => {
+  it("#877: continue_fixing answer for historical no-progress park needs findings-count keys (disposition prose alone is not enough)", async () => {
+    // Pre-#877: still-active disposition prose reopened priors so continue_fixing
+    // matched CLAIMED_FIXED_KEY and reopened S5. Post-#877: empty findings[] means
+    // replayed S4 has no blocking keys → continue_fixing cannot map → park stays.
     const answer = escalationAnswer(
       "S4",
       "continue-same-class",
@@ -1141,25 +1141,9 @@ describe("#439 decision-escalate answer channel", () => {
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs[0]?.id).toBe("S5");
-    expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
-      event: "escalation_answered",
-      forStep: "S4",
-      answer: "continue-same-class",
-      note: "Human says keep fixing this same no-progress class.",
-      source: "human",
-      findingScope: { identityKeys: [CLAIMED_FIXED_KEY] },
-    });
-    expect(result.stepLedger).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          event: "escalation_answered",
-          forStep: "S4",
-          answer: "continue-same-class",
-        }),
-      ]),
-    );
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatchSpecs).toEqual([]);
+    expect(result.stopSummary?.summary).toMatch(/unanswered escalation/i);
   });
 
   it("turns repair-intent ledger write failures into a structured S8 error handoff", async () => {
@@ -1462,8 +1446,9 @@ describe("#439 decision-escalate answer channel", () => {
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
+    // #877: still-active disposition prose does not reopen; findings=[] → S7.
     expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs[0]?.id).toBe("S5");
+    expect(backend.dispatchSpecs[0]?.id).toBe("S7");
   });
 });
 
@@ -1842,14 +1827,13 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.stopSummary).toEqual(
-      expect.objectContaining({ reason: "contract_drift" }),
-    );
-    expect(backend.dispatchSpecs.filter((s) => s.id === "S11")).toHaveLength(0);
+    // #877: fix-marked echo court demolished — bare converge on legacy key-only
+    // recheck no longer contract_drift.
+    expect(result.status).toBe("success");
+    expect(result.stopSummary?.reason).not.toBe("contract_drift");
   });
 
-  it("#743 R6: single-slice resume with empty last-S9 rebuild fails closed on bare converge", async () => {
+  it("#877: single-slice resume with empty last-S9 rebuild admits bare converge", async () => {
     const fixSha = "fixsha4444444444444444444444444444444444";
     const stateDir = mkdtempSync(join(tmpdir(), "resume-r6-empty-auth-"));
     writeResumeOnlineReviewSnapshot(stateDir);
@@ -1888,11 +1872,8 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.stopSummary).toEqual(
-      expect.objectContaining({ reason: "contract_drift" }),
-    );
-    expect(backend.dispatchSpecs.filter((s) => s.id === "S11")).toHaveLength(0);
+    expect(result.status).toBe("success");
+    expect(result.stopSummary?.reason).not.toBe("contract_drift");
   });
 
   it("#743 R6: single-slice fix_committed authorization pairs survive key-only last-S9 resume", async () => {

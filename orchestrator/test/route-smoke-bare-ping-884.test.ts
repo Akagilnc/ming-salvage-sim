@@ -302,6 +302,7 @@ describe("#884 driver stage line logs", () => {
   it("runOrchestrator emits smoke-k stage before first worker dispatch", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     class StageBackend implements Backend {
+      private reviewerCalls = 0;
       async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
         return smokeRouteModels(route, async () => ({ cliVersion: "t" }));
       }
@@ -341,19 +342,25 @@ describe("#884 driver stage line logs", () => {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
         if (spec.role === "reviewer") {
-          return {
-            kind: "reviewer",
-            findings: [
-              {
-                severity: "critical",
-                category: "bug",
-                claim_quote: "stop",
-                location: "x.ts:1",
-                suggested_fix: "stop",
-                action: "fix_now",
-              },
-            ],
-          };
+          // #877: no-progress court demolished — only S3 emits a blocker; later
+          // re-reviews return empty so the run ships (findings-count channel).
+          this.reviewerCalls += 1;
+          if (this.reviewerCalls === 1) {
+            return {
+              kind: "reviewer",
+              findings: [
+                {
+                  severity: "critical",
+                  category: "bug",
+                  claim_quote: "stop",
+                  location: "x.ts:1",
+                  suggested_fix: "stop",
+                  action: "fix_now",
+                },
+              ],
+            };
+          }
+          return { kind: "reviewer", findings: [] };
         }
         // Any remaining role (verify/fixer/cleanup/docRelease): keep the loop moving.
         return { kind: "coder", committed: true, commitsAdded: 1 };
