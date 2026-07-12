@@ -17,6 +17,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
+import { findingIdentityKey } from "../../src/findings.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   FamilyBackend,
@@ -448,6 +449,78 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     const abort = backend.ledger.find((e) => e.status === "aborted");
     expect(abort?.stopSummary?.reason).not.toBe("infra_failure");
     expect(String(abort?.reason ?? "")).toMatch(/zero count with findings body/i);
+  });
+
+  it("#875 kill-axis: !converged + findingsCount>0 with only accepted_suppressed findings never cmr_passed", async () => {
+    // r11 high: when count>0 but deriveCmrEnvelope.blocking=[] (all suppressions),
+    // the old not_converged guard required count===0 / empty dispositions and
+    // fell through to recordCmrPassed — three-channel leak.
+    const suppressedBase = {
+      severity: "low" as const,
+      category: "correctness",
+      claim_quote: "accepted non-goal",
+      location: "orchestrator/src/family/verifyCmr.ts:1",
+      suggested_fix: "leave as accepted",
+      action: "wont_fix" as const,
+    };
+    const identity = findingIdentityKey(suppressedBase);
+    const suppressed: Finding = {
+      ...suppressedBase,
+      disposition: {
+        kind: "accepted_suppressed",
+        source: "issue #875 acceptance criteria",
+        scope: "orchestrator/src/family",
+        reason: "owner accepted as non-goal for this family",
+        findingIdentity: identity,
+        boundedReopen: "reopen if the non-goal is revoked",
+      },
+    };
+    const backend = new ScriptedCmrBackend({
+      kind: "cmr",
+      converged: false,
+      reason: "not converged; only suppressions remain",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      findingsCount: 1,
+      findings: [suppressed],
+      ...CMR_EVIDENCE,
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/875-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-1",
+      moduleContext: {
+        currentModules: [
+          {
+            module: "family-cmr",
+            moduleScope: ["orchestrator/src/family"],
+            source: "family_issue",
+            issue: 875,
+          },
+        ],
+        childModules: [],
+        acceptedSuppressionSources: [
+          {
+            source: "issue #875 acceptance criteria",
+            scope: "orchestrator/src/family",
+            reason: "owner accepted as non-goal for this family",
+            findingIdentity: identity,
+            boundedReopen: "reopen if the non-goal is revoked",
+          },
+        ],
+      },
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.dispatchedNonCmrKinds).toEqual([]);
+    expect(backend.ledger.some((e) => e.status === "cmr_passed")).toBe(false);
+    expect(isCourtAbort(backend.ledger)).toBe(false);
+    const abort = backend.ledger.find((e) => e.status === "aborted");
+    expect(String(abort?.reason ?? "")).toMatch(
+      /not converged; only suppressions remain/i,
+    );
+    expect(abort?.stopSummary?.reason).not.toBe("infra_failure");
   });
 
   it("#875 kill-axis: findingsCount>0 without structured findings is ordinary not_converged (not protocol court)", async () => {

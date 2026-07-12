@@ -2549,36 +2549,35 @@ async function runIntegratedCmrPass(input: {
       return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
     }
   }
-  if (
-    !cmrResult.output.converged &&
-    (reportedFindingsCount === undefined || reportedFindingsCount === 0) &&
-    (cmrFindingClassification === undefined ||
-      (cmrFindingClassification.deferred.length === 0 &&
-        cmrFindingClassification.dispositions.length === 0))
-  ) {
+  if (!cmrResult.output.converged) {
+    // Three-channel: worker said not converged ⇒ never recordCmrPassed.
+    // Covers residual r11 path where findingsCount>0 but all structured findings
+    // classified as accepted_suppressed (blocking=[]) and the old guard required
+    // count===0 / empty dispositions before not_converged — that leaked to pass.
+    // #604 rework (codexB): do NOT write `cmrDispositions: []` tombstones.
+    // If this pass produced governance dispositions, carry them; otherwise omit.
     const reason =
       cmrResult.output.reason ?? `integrated cmr ${pass} did not converge`;
-    // #604 slice 3 / ADR 0062: not_converged carries no blocking findings — the
-    // thin envelope keeps `blockingFindingIdentityKeys: []`, staying in the
-    // runner's classified-abort branch while yielding no pending keys.
-    //
-    // #604 rework (codexB): DO NOT write `cmrDispositions: []` — see the twin
-    // not_converged branch above. An empty tombstone masks the prior round's real
-    // accepted-suppression dispositions and resets the reopen/dispute budget. The
-    // field is left UNDEFINED so the prior dispositions carry forward.
-    await persistFinalReviewRound("accepted", () => recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter: postWorkerFamilyHead,
-      blockingFindingIdentityKeys: [],
-      stopSummary: notConvergedStopSummary(reason),
-    }));
+    const dispositions = cmrFindingClassification?.dispositions;
+    await persistFinalReviewRound("accepted", () =>
+      recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        blockingFindingIdentityKeys: [],
+        ...(dispositions != null && dispositions.length > 0
+          ? { cmrDispositions: dispositions }
+          : {}),
+        stopSummary: notConvergedStopSummary(reason),
+      }),
+    );
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   // #875: late claimed-fixed / disposition-enum court demolished. Converged +
-  // findings=0 is enough for three-channel pass; runner does not re-read
-  // disposition statuses or claim coverage to kill the run.
+  // findings=0 (or only non-blocking suppressions already classified above) is
+  // enough for three-channel pass; runner does not re-read disposition statuses
+  // or claim coverage to kill the run.
   const skippedLegs = cmrResult.output.skippedLegs;
   await persistFinalReviewRound("accepted", () => recordCmrPassed(familyBackend, {
     cmrPass: pass,
