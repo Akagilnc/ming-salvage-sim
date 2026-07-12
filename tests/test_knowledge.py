@@ -357,3 +357,20 @@ def test_chapter_counterpart_filters_derived_report_before_reaggregating_sources
 
     assert source_marker in (counterpart or "")
     assert report_marker not in (counterpart or "")
+
+
+def test_chapter_counterpart_filters_settlement_narrative_derived_with_report(game):
+    """同月结算叙事和邸报是派生行，章节不得再次合并它们。"""
+    from ming_sim.memories import _public_chapter_counterpart
+
+    db, state, _content = game
+    db.record_public_knowledge_event(
+        state, "结算叙事", "正常月结正文", source_id=f"settlement:narrative:{state.turn}",
+    )
+    db.record_public_knowledge_event(
+        state, "邸报", "正常月结正文", source_id=f"turn_report:{state.turn}:public",
+    )
+
+    assert "正常月结正文" not in _public_chapter_counterpart(
+        db.knowledge_items_for_turn(state.turn)
+    )

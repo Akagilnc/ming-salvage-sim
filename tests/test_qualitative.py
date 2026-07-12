@@ -75,6 +75,12 @@ def test_p4_guard_rejects_long_connective_and_complete_abstract_axes():
         assert "已略去" in safe_historical_text(injected), injected
 
 
+def test_p4_guard_rejects_unbounded_narrative_connective_without_hiding_counts():
+    injected = "补给在敌军反复袭扰、道路多处断绝、军需转运一再延误、各营存粮难继的情形下高达20"
+    assert "已略去" in safe_historical_text(injected)
+    assert safe_historical_text("火器营新募3000人") == "火器营新募3000人"
+
+
 def test_p4_guard_covers_machine_axis_aliases_without_hiding_countable_facts():
     """Aliases accepted by the game schema are hidden by the same P4 registry."""
     for injected in (

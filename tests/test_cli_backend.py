@@ -114,6 +114,18 @@ def test_secret_exclusion_recovery_covers_common_clause_and_shipped_office(monke
     assert "户部尚书" in result["excluded_offices"]
 
 
+def test_secret_exclusion_recovery_covers_non_disclosure_clause(monkeypatch):
+    """不同措辞也必须走与落库相同的机构排除语义。"""
+    monkeypatch.setattr(cb, "_run_backend", lambda _prompt: ("{}", 1))
+
+    result = cb._extract_secret_order(
+        "密查此案，不可令翰林院侍读学士知情。", "臣领旨", "毕自严"
+    )
+
+    assert result["excluded_names"] == []
+    assert result["excluded_offices"] == ["翰林院侍读学士"]
+
+
 def test_secret_prefix_deadline_only_confirmation_uses_recent_context(monkeypatch):
     """PR #409 R1 Codex P2：密令按钮只补期限时，仍须从前文召对恢复任务正文。"""
     canned = json.dumps({

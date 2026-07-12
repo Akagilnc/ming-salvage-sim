@@ -100,7 +100,7 @@ def _snapshot_secret_order_people(
 
 
 _SECRET_EXCLUSION_CLAUSE_RE = re.compile(
-    r"(?:瞒住|瞒着|瞒过|不可令|不得让|不得告知|勿使|不要让|不许|严禁)\s*"
+    r"(?:瞒住|瞒着|瞒过|不可令|勿令|不得让|不得告知|勿使|不要让|不许|严禁)\s*"
     r"([^，。；;\s]{2,40}?)(?=(?:知晓|知道|得知|知情|过问|插手|，|。|；|\s|$))"
 )
 _SECRET_OFFICE_TYPES = (

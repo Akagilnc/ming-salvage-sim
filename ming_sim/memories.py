@@ -84,7 +84,7 @@ def _public_chapter_counterpart(
         # authorizable source material.  A chapter counterpart may aggregate
         # only the source rows that existed before either archive was written.
         if not str(item.get("source_id") or "").startswith(
-            ("turn_report:", "chapter_source:", "projection:")
+            ("turn_report:", "chapter_source:", "projection:", "settlement:narrative:")
         )
     ]
     if not items:
