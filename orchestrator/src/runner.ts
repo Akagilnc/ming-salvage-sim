@@ -71,6 +71,7 @@ import {
   scheduleCommitTelemetry,
 } from "./telemetry.js";
 import { routeSmokeFailure } from "./modelRoutes.js";
+import { logDriverStage } from "./stageLog.js";
 import {
   fixerEnvelopeFixCommitSha,
   fixerHasFixCommit,
@@ -3885,6 +3886,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     | import("./types.js").WorkerMonitorHandle
     | undefined;
 
+  /** #884: emit dispatch stage line once when first productive worker is entered. */
+  let dispatchStageLogged = false;
+
   const ensureRouteSmoke = async (): Promise<RunResult | undefined> => {
     if (typeof backend.smokeModelRoute !== "function") {
       const reason =
@@ -3903,6 +3907,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     let currentCliVersions: Readonly<Record<string, string | undefined>>;
     try {
+      logDriverStage("smoke-k", `route=${modelRoute.routeName}`);
       currentCliVersions = backend.currentCliVersions
         ? await backend.currentCliVersions(
             modelRoute,
@@ -4545,6 +4550,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // Normal fix rounds are fresh runStep dispatches (git-truthing kept),
         // never resumeSession. resumeSession is only the crash/escalate resume
         // path when `resumeFor` carries a recorded session id.
+        if (!dispatchStageLogged) {
+          logDriverStage("dispatch", `step=${step}`);
+          dispatchStageLogged = true;
+        }
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }

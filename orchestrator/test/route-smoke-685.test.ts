@@ -1,10 +1,16 @@
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+/**
+ * #685 route smoke gate + #884 bare-ping production path.
+ *
+ * Smoke is now a host CLI bare ping (no sandcastle docker / tool loop). The
+ * gate semantics (required before dispatch, TTL, CLI version, concurrent unique
+ * legs, optional-leg degrade) stay; the production executor is the bare-ping
+ * seam on RealBackend.
+ */
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import type * as sc from "@ai-hero/sandcastle";
-import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import { runOrchestrator } from "../src/runner.js";
 import {
   resolveRouteModels,
@@ -27,20 +33,25 @@ import type {
   WorktreeHandle,
 } from "../src/types.js";
 
-const { runSpy } = vi.hoisted(() => ({ runSpy: vi.fn() }));
-
-vi.mock("@ai-hero/sandcastle", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@ai-hero/sandcastle")>();
-  return { ...actual, run: runSpy };
-});
-
 class MissingSmokeBackend implements Backend {
-  async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) { return route; }
-  async findResumeState(): Promise<ResumeState | undefined> { return undefined; }
+  async smokeModelRoute(route: Parameters<Backend["smokeModelRoute"]>[0]) {
+    return route;
+  }
+  async findResumeState(): Promise<ResumeState | undefined> {
+    return undefined;
+  }
   async cleanResidue() {}
-  async resumeSession(_spec: StepSpec): Promise<StepOutput> { return { kind: "coder", committed: true, commitsAdded: 1 }; }
+  async resumeSession(_spec: StepSpec): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
   async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
-    return { number: 685, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
+    return {
+      number: 685,
+      isReadyForAgent: true,
+      hasSubIssues: false,
+      isClosed: false,
+      openBlockedBy: [],
+    };
   }
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
     return { number: issueNumber, body: "", comments: [], agentBrief: "" };
@@ -49,7 +60,9 @@ class MissingSmokeBackend implements Backend {
     return { branch: `feat/${issueNumber}`, base, path: `/tmp/${issueNumber}` };
   }
   async writeSnapshot() {}
-  async runStep(_spec: StepSpec): Promise<StepOutput> { return { kind: "coder", committed: true, commitsAdded: 1 }; }
+  async runStep(_spec: StepSpec): Promise<StepOutput> {
+    return { kind: "coder", committed: true, commitsAdded: 1 };
+  }
   async push() {}
   async writeLedger() {}
 }
@@ -94,7 +107,40 @@ class TerminalResumeSmokeBackend extends MissingSmokeBackend {
   }
 }
 
+/** Production-shaped backend with injectable bare-ping (no real model CLI). */
 class ProductionSmokeBackend extends RealBackend {
+  readonly pingCalls: Array<{
+    slug: string;
+    cwd: string;
+    timeoutMs: number;
+    file: string;
+    args: readonly string[];
+  }> = [];
+  private readonly pingImpl: (input: {
+    slug: string;
+    nonce: string;
+    file: string;
+  }) => Promise<string>;
+
+  constructor(
+    home: string,
+    pingImpl?: (input: { slug: string; nonce: string; file: string }) => Promise<string>,
+  ) {
+    super({
+      sourceRepo: "/tmp/route-smoke-source",
+      remote: "https://github.com/owner/route-smoke.git",
+      runKey: 685,
+      repo: "owner/route-smoke",
+      imageName: "route-smoke-test-image",
+      promptsDir: smokePromptsDir,
+      soulsDir: smokeSoulsDir,
+      home,
+    });
+    this.pingImpl =
+      pingImpl ??
+      (async (input) => input.nonce);
+  }
+
   protected override cloneDirExists(): boolean {
     return true;
   }
@@ -103,7 +149,40 @@ class ProductionSmokeBackend extends RealBackend {
     if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
       return ".git";
     }
+    if (
+      file === "codex" ||
+      file === "claude" ||
+      file === "opencode" ||
+      file === "grok" ||
+      file === "cursor"
+    ) {
+      return "cli-test-version";
+    }
     return "";
+  }
+
+  protected override async execBarePing(input: {
+    readonly slug: string;
+    readonly cwd: string;
+    readonly prompt: string;
+    readonly nonce: string;
+    readonly file: string;
+    readonly args: readonly string[];
+    readonly stdin?: string;
+    readonly timeoutMs: number;
+  }): Promise<string> {
+    this.pingCalls.push({
+      slug: input.slug,
+      cwd: input.cwd,
+      timeoutMs: input.timeoutMs,
+      file: input.file,
+      args: input.args,
+    });
+    return this.pingImpl({
+      slug: input.slug,
+      nonce: input.nonce,
+      file: input.file,
+    });
   }
 }
 
@@ -111,7 +190,10 @@ const smokeFixtureDir = dirname(fileURLToPath(import.meta.url));
 const smokePromptsDir = join(smokeFixtureDir, "..", "prompts");
 const smokeSoulsDir = join(smokeFixtureDir, "..", "image", "souls");
 
-function productionSmokeBackend(home: string, promptsDir = smokePromptsDir): ProductionSmokeBackend {
+function productionSmokeBackend(
+  home: string,
+  pingImpl?: (input: { slug: string; nonce: string; file: string }) => Promise<string>,
+): ProductionSmokeBackend {
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
   writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
@@ -124,149 +206,48 @@ function productionSmokeBackend(home: string, promptsDir = smokePromptsDir): Pro
       "grok-4.5": { type: "api", key: "test-key" },
     }),
   );
-  return new ProductionSmokeBackend({
-    sourceRepo: "/tmp/route-smoke-source",
-    remote: "https://github.com/owner/route-smoke.git",
-    runKey: 685,
-    repo: "owner/route-smoke",
-    imageName: "route-smoke-test-image",
-    promptsDir,
-    soulsDir: smokeSoulsDir,
-    home,
-  });
-}
-
-/**
- * Deliberately execute Sandcastle's own promptFile + promptArgs rendering path.
- * The scripted smoke worker receives only the resulting text; it never gets the
- * dispatch options, so it cannot accidentally certify a prompt it could not obey.
- */
-async function renderPromptForScriptedSmoke(options: Parameters<typeof sc.run>[0]): Promise<string> {
-  const sandcastle = await vi.importActual<typeof import("@ai-hero/sandcastle")>(
-    "@ai-hero/sandcastle",
-  );
-  let renderedPrompt: string | undefined;
-  const sandboxHome = mkdtempSync(join(tmpdir(), "route-smoke-render-home-"));
-  try {
-    await sandcastle.run({
-      agent: {
-        name: "prompt-capture",
-        env: {},
-        captureSessions: false,
-        buildPrintCommand: ({ prompt }) => {
-          renderedPrompt = prompt;
-          return { command: "printf 'ROUTE_SMOKE_COMPLETE\\n'" };
-        },
-        parseStreamLine: (line) => [{ type: "text", text: line }],
-      },
-      sandbox: noSandbox({ env: { HOME: sandboxHome } }),
-      cwd: process.cwd(),
-      promptFile: options.promptFile,
-      promptArgs: options.promptArgs,
-      maxIterations: 1,
-      completionSignal: "ROUTE_SMOKE_COMPLETE",
-      logging: { type: "file", path: join(sandboxHome, "render.log") },
-    });
-  } finally {
-    rmSync(sandboxHome, { recursive: true, force: true });
-  }
-  if (renderedPrompt === undefined) throw new Error("scripted smoke did not receive a rendered prompt");
-  return renderedPrompt;
-}
-
-function evidenceInstructionFromRenderedPrompt(prompt: string):
-  | { readonly nonceFile: string; readonly nonce: string }
-  | undefined {
-  const match = /create the nonce evidence file at\s+(\S+)\s+\(relative\s+to\s+your\s+working\s+directory\)\s+containing\s+exactly\s+(\S+),\s+then\s+emit/i.exec(prompt);
-  if (match === null) return undefined;
-  const [, nonceFile, nonce] = match;
-  if (nonceFile.includes("{{") || nonce.includes("{{")) return undefined;
-  return { nonceFile, nonce };
-}
-
-async function successfulSmoke(
-  options: Parameters<typeof sc.run>[0],
-  onRenderedPrompt?: (prompt: string) => void,
-) {
-  let renderedPrompt: string;
-  try {
-    renderedPrompt = await renderPromptForScriptedSmoke(options);
-  } catch (error) {
-    throw new Error(`rendered prompt capture failed: ${String(error)}`);
-  }
-  onRenderedPrompt?.(renderedPrompt);
-  const instruction = evidenceInstructionFromRenderedPrompt(renderedPrompt);
-  if (instruction !== undefined) {
-    mkdirSync(options.cwd!, { recursive: true });
-    writeFileSync(join(options.cwd!, instruction.nonceFile), `${instruction.nonce}\n`);
-  }
-  return { completionSignal: "ROUTE_SMOKE_COMPLETE" } as Awaited<ReturnType<typeof sc.run>>;
+  return new ProductionSmokeBackend(home, pingImpl);
 }
 
 describe("#685 route tool smoke", () => {
-  it("keeps the nonce placeholders in the route-smoke prompt for Sandcastle substitution", () => {
+  it("keeps the nonce placeholder in the route-smoke prompt for bare-ping oracle", () => {
     const prompt = readFileSync(join(smokePromptsDir, "route-smoke.md"), "utf8");
-
     expect(prompt).toContain("{{NONCE}}");
-    expect(prompt).toContain("{{NONCE_FILE}}");
+    // #884: file oracle retired — smoke is bare ping text echo.
+    expect(prompt).not.toContain("{{NONCE_FILE}}");
   });
 
-  it("passes only when a text-only smoke agent can obey the rendered nonce evidence contract", async () => {
+  it("passes when bare ping echoes the nonce (credential oracle)", async () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-rendered-pass-"));
-    const renderedPrompts: string[] = [];
-    runSpy.mockImplementation(async (options: Parameters<typeof sc.run>[0]) =>
-      successfulSmoke(options, (prompt) => renderedPrompts.push(prompt)),
-    );
     try {
       const backend = productionSmokeBackend(home);
       const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
-
-      expect(renderedPrompts).not.toHaveLength(0);
-      expect(Object.values(smoked.smoke).every((status) => status.state === "passed")).toBe(true);
-      for (const prompt of renderedPrompts) {
-        expect(prompt).not.toContain("{{");
-        expect(evidenceInstructionFromRenderedPrompt(prompt)).toEqual({
-          nonceFile: expect.stringMatching(/^\.route-smoke-[\w-]+\.nonce$/),
-          nonce: expect.stringMatching(/^[\w-]+$/),
-        });
-      }
+      expect(Object.values(smoked.smoke).every((status) => status.state === "passed")).toBe(
+        true,
+      );
+      expect(backend.pingCalls.length).toBeGreaterThan(0);
+      expect(backend.pingCalls.every((c) => c.cwd.includes("route-smoke-ping"))).toBe(true);
     } finally {
-      runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });
     }
   });
 
-  it("fails when the dispatched prompt has no values for a text-only smoke agent to obey", async () => {
+  it("fails when bare ping does not echo the nonce", async () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-rendered-missing-"));
-    const promptsDir = join(home, "prompts");
-    const renderedPrompts: string[] = [];
-    cpSync(smokePromptsDir, promptsDir, { recursive: true });
-    writeFileSync(
-      join(promptsDir, "route-smoke.md"),
-      "Create the nonce evidence file at the configured evidence path containing the configured nonce, then emit ROUTE_SMOKE_COMPLETE.\n",
-    );
-    runSpy.mockImplementation(async (options: Parameters<typeof sc.run>[0]) =>
-      successfulSmoke(options, (prompt) => renderedPrompts.push(prompt)),
-    );
     try {
-      const smoked = await productionSmokeBackend(home, promptsDir).smokeModelRoute(
-        resolveRouteModels("normal", {}),
+      const backend = productionSmokeBackend(home, async () => "no nonce here");
+      const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
+      expect(Object.values(smoked.smoke).every((status) => status.state === "failed")).toBe(
+        true,
       );
-
-      expect(Object.values(smoked.smoke).every((status) => status.state === "failed")).toBe(true);
       expect(routeSmokeFailure(smoked)).toMatch(/route smoke failed/i);
-      expect(renderedPrompts).not.toHaveLength(0);
-      expect(renderedPrompts.every((prompt) => !prompt.includes("{{"))).toBe(true);
-      expect(renderedPrompts.every((prompt) => evidenceInstructionFromRenderedPrompt(prompt) === undefined)).toBe(true);
     } finally {
-      runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });
     }
   });
 
   it("rejects a route before its model×pipe entries have been smoked", () => {
     const route = resolveRouteModels("normal", {});
-
     expect(routeSmokeFailure(route)).toMatch(/route smoke required/i);
   });
 
@@ -290,9 +271,9 @@ describe("#685 route tool smoke", () => {
       new Date("2026-07-01T00:00:00.000Z"),
     );
 
-    expect(routeSmokeFailure(smoked, Date.parse("2026-07-03T00:00:01.000Z"), 48 * 60 * 60 * 1000)).toMatch(
-      /route smoke expired/i,
-    );
+    expect(
+      routeSmokeFailure(smoked, Date.parse("2026-07-03T00:00:01.000Z"), 48 * 60 * 60 * 1000),
+    ).toMatch(/route smoke expired/i);
   });
 
   it("accepts a passed smoke from a clock that is slightly ahead", async () => {
@@ -303,9 +284,7 @@ describe("#685 route tool smoke", () => {
       new Date("2026-07-10T00:00:00.000Z"),
     );
 
-    expect(
-      routeSmokeFailure(smoked, Date.parse("2026-07-09T23:59:59.000Z")),
-    ).toBeUndefined();
+    expect(routeSmokeFailure(smoked, Date.parse("2026-07-09T23:59:59.000Z"))).toBeUndefined();
   });
 
   it("runs each unique model smoke concurrently", async () => {
@@ -327,9 +306,9 @@ describe("#685 route tool smoke", () => {
     const route = resolveRouteModels("normal", {});
     const smoked = await smokeRouteModels(route, async () => ({ cliVersion: "cli-1" }));
 
-    expect(routeSmokeFailure(smoked, Date.now(), 24 * 60 * 60 * 1000, { sonnet: "cli-2" })).toMatch(
-      /CLI version changed/i,
-    );
+    expect(
+      routeSmokeFailure(smoked, Date.now(), 24 * 60 * 60 * 1000, { sonnet: "cli-2" }),
+    ).toMatch(/CLI version changed/i);
   });
 
   it("records failures and keeps the route fail-closed", async () => {
@@ -343,7 +322,10 @@ describe("#685 route tool smoke", () => {
   });
 
   it("refuses through runOrchestrator when the backend has no smoke executor", async () => {
-    const result = await runOrchestrator({ issueNumber: 685, backend: new MissingSmokeBackend() });
+    const result = await runOrchestrator({
+      issueNumber: 685,
+      backend: new MissingSmokeBackend(),
+    });
 
     expect(result.status).toBe("error");
     expect(result.errorPackage?.failedStep).toBe("S0");
@@ -373,38 +355,24 @@ describe("#685 route tool smoke", () => {
   });
 
   it("resolves the idle budget through resolveRouteSmokeIdleTimeoutSeconds across every input branch", () => {
-    // Guard against external env pollution: the default branch is only honest
-    // if it holds even when the ambient env happens to carry the var. Save,
-    // unset, and restore around the whole matrix.
     const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
     delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
     try {
-      // undefined / missing → default 60s
       expect(resolveRouteSmokeIdleTimeoutSeconds(undefined)).toBe(60);
-      // blank / whitespace-only → default
       expect(resolveRouteSmokeIdleTimeoutSeconds("")).toBe(60);
       expect(resolveRouteSmokeIdleTimeoutSeconds("   ")).toBe(60);
-      // legal positive integers honored verbatim
       expect(resolveRouteSmokeIdleTimeoutSeconds("1")).toBe(1);
       expect(resolveRouteSmokeIdleTimeoutSeconds("25")).toBe(25);
       expect(resolveRouteSmokeIdleTimeoutSeconds("120")).toBe(120);
-      // zero / negative → default (must be >= 1)
       expect(resolveRouteSmokeIdleTimeoutSeconds("0")).toBe(60);
       expect(resolveRouteSmokeIdleTimeoutSeconds("-5")).toBe(60);
-      // non-numeric → default
       expect(resolveRouteSmokeIdleTimeoutSeconds("not-a-number")).toBe(60);
-      // decimal / non-integer → default
       expect(resolveRouteSmokeIdleTimeoutSeconds("3.5")).toBe(60);
-      // super-large value above the 32-bit-safe bound → default (would overflow
-      // Sandcastle's value*1000 signed timer)
       expect(resolveRouteSmokeIdleTimeoutSeconds("3000000")).toBe(60);
       expect(
         resolveRouteSmokeIdleTimeoutSeconds(String(Number.MAX_SAFE_INTEGER)),
       ).toBe(60);
-      // the bound itself (2_147_483) is still accepted: the largest whole-second
-      // value whose milliseconds remain <= INT32_MAX
       expect(resolveRouteSmokeIdleTimeoutSeconds("2147483")).toBe(2147483);
-      // the first integer above the bound is rejected exactly
       expect(resolveRouteSmokeIdleTimeoutSeconds("2147484")).toBe(60);
     } finally {
       if (saved === undefined) {
@@ -416,9 +384,6 @@ describe("#685 route tool smoke", () => {
   });
 
   it("resolves ORCHESTRATOR_SMOKE_IDLE_SECONDS per call, not once at module load", () => {
-    // Locks the per-call resolution semantic: changing the env WITHIN the
-    // process and resolving again must reflect the new value. A module-load
-    // constant would freeze the first reading and fail this.
     const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
     try {
       delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
@@ -449,51 +414,30 @@ describe("#685 route tool smoke", () => {
     }
   });
 
-  it("wires ORCHESTRATOR_SMOKE_IDLE_SECONDS into every production smoke run per call", async () => {
+  it("wires ORCHESTRATOR_SMOKE_IDLE_SECONDS into every production bare-ping per call", async () => {
     const saved = process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
     const home = mkdtempSync(join(tmpdir(), "route-smoke-production-"));
     const route = resolveRouteModels("normal", {});
     const smokeRunCount = new Set(routeSmokeEntries(route).map(({ slug }) => slug)).size;
-    let mutateNextSmokeEnvTo: string | undefined = "7";
-    runSpy.mockImplementation(async (options: Parameters<typeof sc.run>[0]) => {
-      if (options.logging?.type === "file") {
-        if (mutateNextSmokeEnvTo !== undefined) {
-          process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = mutateNextSmokeEnvTo;
-          mutateNextSmokeEnvTo = undefined;
-        }
-        options.logging.onAgentStreamEvent?.({
-          type: "toolCall",
-          name: "bash",
-          formattedArgs: "echo OK",
-          iteration: 1,
-          timestamp: new Date(),
-        });
-      }
-      return successfulSmoke(options);
-    });
     try {
       const backend = productionSmokeBackend(home);
 
       process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = "42";
       await backend.smokeModelRoute(route);
-      expect(runSpy).toHaveBeenCalledTimes(smokeRunCount);
-      expect(runSpy.mock.calls.map(([options]) => options.idleTimeoutSeconds)).toEqual(
-        Array(smokeRunCount).fill(42),
-      );
+      expect(backend.pingCalls).toHaveLength(smokeRunCount);
+      expect(backend.pingCalls.every((c) => c.timeoutMs === 42_000)).toBe(true);
 
-      runSpy.mockClear();
+      backend.pingCalls.length = 0;
       process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS = "7";
-      mutateNextSmokeEnvTo = "42";
       await backend.smokeModelRoute(
         route,
-        Object.fromEntries(routeSmokeEntries(route).map(({ slug }) => [slug, "changed-cli-version"])),
+        Object.fromEntries(
+          routeSmokeEntries(route).map(({ slug }) => [slug, "changed-cli-version"]),
+        ),
       );
-      expect(runSpy).toHaveBeenCalledTimes(smokeRunCount);
-      expect(runSpy.mock.calls.map(([options]) => options.idleTimeoutSeconds)).toEqual(
-        Array(smokeRunCount).fill(7),
-      );
+      expect(backend.pingCalls).toHaveLength(smokeRunCount);
+      expect(backend.pingCalls.every((c) => c.timeoutMs === 7_000)).toBe(true);
     } finally {
-      runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });
       if (saved === undefined) {
         delete process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS;
@@ -503,22 +447,18 @@ describe("#685 route tool smoke", () => {
     }
   });
 
-  it("smokes a pooled Grok route through the pool-selected Grok provider", async () => {
+  it("smokes a pooled Grok route through the pool-selected Grok CLI", async () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-pool-"));
     mkdirSync(join(home, ".grok"), { recursive: true });
     writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
-    runSpy.mockImplementation(async (options) => successfulSmoke(options));
     try {
       const backend = productionSmokeBackend(home);
       const route = resolveRouteModels("normal", { coder: "grok-4.5" });
       await backend.smokeModelRoute(route, {}, "grok-build", "coder:grok-4.5");
-      const grokRun = runSpy.mock.calls.find(([options]) => options.agent.name === "grok");
-      expect(grokRun).toBeDefined();
-      expect(
-        runSpy.mock.calls.find(([options]) => options.agent.name !== "grok"),
-      ).toBeDefined();
+      const grokPing = backend.pingCalls.find((c) => c.file === "grok");
+      expect(grokPing).toBeDefined();
+      expect(backend.pingCalls.some((c) => c.file !== "grok")).toBe(true);
     } finally {
-      runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });
     }
   });
@@ -527,27 +467,24 @@ describe("#685 route tool smoke", () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-cache-"));
     mkdirSync(join(home, ".grok"), { recursive: true });
     writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
-    runSpy.mockImplementation(async (options) => successfulSmoke(options));
     try {
       const backend = productionSmokeBackend(home);
       const route = resolveRouteModels("normal", { coder: "grok-4.5" });
 
       await backend.smokeModelRoute(route);
-      const firstIgnitionCalls = runSpy.mock.calls.length;
-      runSpy.mockClear();
+      const firstIgnitionCalls = backend.pingCalls.length;
+      backend.pingCalls.length = 0;
       await backend.smokeModelRoute(route);
 
       expect(firstIgnitionCalls).toBeGreaterThan(0);
-      expect(runSpy).toHaveBeenCalledTimes(firstIgnitionCalls);
+      expect(backend.pingCalls).toHaveLength(firstIgnitionCalls);
     } finally {
-      runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });
     }
   });
 
-  it("rejects a Grok-selected smoke before launch when its auth copy is unavailable", async () => {
+  it("rejects a Grok-selected smoke before launch when its auth is unavailable", async () => {
     const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-no-auth-"));
-    runSpy.mockImplementation(async (options) => successfulSmoke(options));
     try {
       const backend = productionSmokeBackend(home);
       const smoked = await backend.smokeModelRoute(
@@ -560,29 +497,8 @@ describe("#685 route tool smoke", () => {
         state: "failed",
         error: expect.stringMatching(/no grok auth/i),
       });
-      expect(runSpy.mock.calls.some(([options]) => options.agent.name === "grok")).toBe(false);
+      expect(backend.pingCalls.some((c) => c.file === "grok")).toBe(false);
     } finally {
-      runSpy.mockReset();
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("reclaims the temporary Grok OAuth directory after each smoke container exits", async () => {
-    const home = mkdtempSync(join(tmpdir(), "route-smoke-grok-auth-"));
-    mkdirSync(join(home, ".grok"), { recursive: true });
-    writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
-    runSpy.mockImplementation(async (options) => successfulSmoke(options));
-    try {
-      const backend = productionSmokeBackend(home);
-      await backend.smokeModelRoute(resolveRouteModels("normal", { coder: "grok-4.5" }));
-
-      expect(
-        readdirSync(join(home, ".sc-orchestrator")).filter((name) =>
-          name.startsWith("grok-auth-685-"),
-        ),
-      ).toEqual([]);
-    } finally {
-      runSpy.mockReset();
       rmSync(home, { recursive: true, force: true });
     }
   });
