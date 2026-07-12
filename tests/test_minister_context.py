@@ -851,6 +851,69 @@ def test_minister_tools_characterize_region_army_and_issue_progress(game):
     assert "进展" in memorial and "/100" not in memorial
 
 
+def test_scale_fallback_rosters_only_read_the_character_projection(game, monkeypatch):
+    """>100 人的 fallback 仍只能检索本角色的职位/人事/可见事件投影。"""
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "礼部")
+    projection = {
+        "world": {
+            "role": "礼部：可见同僚张三",
+            "personnel": "可见人事李四",
+        },
+        "events": [{"title": "具名举荐", "body": "王五可任此差"}],
+        "public_events": [],
+        "issues": [],
+    }
+    monkeypatch.setattr(
+        "ming_sim.knowledge.build_character_knowledge",
+        lambda _db, _state, _name: projection,
+    )
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("规模 fallback 不得重查全知 DB")
+
+    monkeypatch.setattr(db, "army_report", forbidden)
+    tools = {
+        f.__name__: f
+        for f in build_minister_tools(
+            minister, _ctx(game), use_roster_tool=True, use_army_tool=True,
+        )
+    }
+
+    assert "query_army_roster" not in tools
+    roster = tools["query_court_roster"]([])
+    assert all(name in roster for name in ("张三", "李四", "王五"))
+    assert "魏忠贤" not in roster
+
+
+def test_scale_fallback_army_roster_returns_only_projected_military_domain(game, monkeypatch):
+    """>30 军队的 fallback 只换成工具传递，不得重读全军名册。"""
+    db, _state, content = game
+    minister = next(c for c in content.characters.values() if c.office_type == "兵部")
+    projection = {
+        "world": {"role": "兵部本职", "military": "仅见关宁军：欠饷甚重"},
+        "events": [],
+        "public_events": [],
+        "issues": [],
+    }
+    monkeypatch.setattr(
+        "ming_sim.knowledge.build_character_knowledge",
+        lambda _db, _state, _name: projection,
+    )
+    monkeypatch.setattr(
+        db, "army_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("不得重查全军名册")),
+    )
+    tools = {
+        f.__name__: f
+        for f in build_minister_tools(minister, _ctx(game), use_army_tool=True)
+    }
+
+    assert tools["query_army_roster"]([]) == "仅见关宁军：欠饷甚重"
+    assert "关宁军" in tools["query_army_roster"](["关宁军"])
+    assert "京营" not in tools["query_army_roster"]([])
+
+
 def test_minister_tools_characterize_building_and_metric_outputs(game):
     db, _state, content = game
     db.conn.execute(

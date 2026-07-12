@@ -228,17 +228,15 @@ def build_minister_tools(character: Character, context: CourtContext,
         return "\n".join(lines) if lines else f"见闻中未载{needle}。"
 
     def query_court_roster(names: List[str] = []) -> str:
-        """查在朝人事名册。names 为空返回全部姓名+状态索引；传姓名列表返回指定人物详情（现职/官署/派系/状态）。"""
-        rows = context.db.conn.execute(
-            """SELECT name, office, office_type, faction, status FROM characters
-               WHERE power_id='ming' AND status != 'offstage'
-                 AND office_type NOT IN ('后宫', '宗藩')
-               ORDER BY name"""
-        ).fetchall()
-        rendered = "\n".join(
-            f"{row['name']}：{row['status']}，{row['office'] or row['office_type'] or '未任官'}，{row['faction'] or '无党籍'}"
-            for row in rows
-        ) or "见闻中未载在朝名册。"
+        """查本人见闻中的人事；规模 fallback 不扩大为全知名册。"""
+        knowledge = projection()
+        world = knowledge.get("world") or {}
+        parts = [str(world.get(key) or "") for key in ("role", "personnel")]
+        for item in [*(knowledge.get("public_events") or []), *(knowledge.get("events") or [])]:
+            parts.append("：".join(
+                str(value) for value in (item.get("title"), item.get("body")) if value
+            ))
+        rendered = "\n".join(part for part in parts if part) or "见闻中未载在朝名册。"
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
         if not wanted:
             return rendered
@@ -246,12 +244,9 @@ def build_minister_tools(character: Character, context: CourtContext,
                           if any(name in line for name in wanted)) or "见闻中未载所查人物。"
 
     def query_army_roster(names: List[str] = []) -> str:
-        """查全军名册。names 为空返回军名+欠饷+状态索引；传军名列表返回指定军队完整信息。"""
+        """查本人 military 授权域中的军情投影。"""
         wanted = [str(name).strip() for name in (names or []) if str(name).strip()]
-        # Reuse the knowledge presentation seam so an uncapped roster keeps
-        # the same qualitative contract as the regular military rail.
-        from ming_sim.knowledge import _qualitative
-        rendered = _qualitative(context.db.army_report(limit=10000))
+        rendered = scoped_world("military")
         if not wanted:
             return rendered
         return "\n".join(line for line in rendered.splitlines()
@@ -714,7 +709,9 @@ def build_minister_tools(character: Character, context: CourtContext,
     ]
     if use_roster_tool:
         tools.append(query_court_roster)
-    if use_army_tool:
+    # A scale threshold may switch an authorized projection from inline text
+    # to a tool, but it must never grant a domain the role does not possess.
+    if use_army_tool and "military" in (projection().get("world") or {}):
         tools.append(query_army_roster)
     if character.office_type == "吏部":
         tools.append(propose_appointment)
