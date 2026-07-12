@@ -26,6 +26,12 @@ def test_safe_historical_text_rejects_adjacent_abstract_values():
         assert "已略去" in rendered, injected
 
 
+def test_safe_historical_text_covers_hidden_aliases_without_crossing_sentence_boundary():
+    for injected in ("风险91", "等级4", "完好度22", "忠诚仅30分"):
+        assert "已略去" in safe_historical_text(injected), injected
+    assert "已略去" not in safe_historical_text("火器营已整顿。新募三千人。")
+
+
 def test_safe_historical_text_rejects_common_labeled_value_forms():
     for injected in (
         "忠诚值为88",

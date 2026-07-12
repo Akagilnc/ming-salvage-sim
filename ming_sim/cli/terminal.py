@@ -321,8 +321,21 @@ def minister_chat(session: GameSession, character: Character) -> str:
         persistent_chat = character.name not in session.temporary_characters
         accepted_turn = int(session.state.turn)
         user_message_id: int | None = None
+        chat_turn_id = 0
+        rollback_snapshot = None
+        lifecycle_supported = all(hasattr(session.db, name) for name in (
+            "capture_chat_rollback_snapshot", "create_chat_turn",
+            "update_chat_turn_messages", "record_chat_turn_rollback_diffs", "fail_chat_turn",
+        ))
         if persistent_chat:
+            if lifecycle_supported:
+                rollback_snapshot = session.db.capture_chat_rollback_snapshot()
+                chat_turn_id = session.db.create_chat_turn(
+                    session.state, character.name, f"cli:{character.name}", 0,
+                )
             user_message_id = session.db.append_chat_message(character.name, accepted_turn, "user", question)
+            if chat_turn_id:
+                session.db.update_chat_turn_messages(chat_turn_id, user_message_id=user_message_id)
         def rollback_user_message() -> None:
             if user_message_id is not None:
                 try:
@@ -331,15 +344,30 @@ def minister_chat(session: GameSession, character: Character) -> str:
                     pass
 
         try:
-            result = session.chat(character.name, question)
+            result = (
+                session.chat(character.name, question, chat_turn_id=chat_turn_id)
+                if chat_turn_id else session.chat(character.name, question)
+            )
         except KeyboardInterrupt:
+            if chat_turn_id:
+                session.db.record_chat_turn_rollback_diffs(
+                    chat_turn_id, rollback_snapshot or {}, session.db.capture_chat_rollback_snapshot())
+                session.db.fail_chat_turn(chat_turn_id)
             rollback_user_message()
             raise
         except Exception:
+            if chat_turn_id:
+                session.db.record_chat_turn_rollback_diffs(
+                    chat_turn_id, rollback_snapshot or {}, session.db.capture_chat_rollback_snapshot())
+                session.db.fail_chat_turn(chat_turn_id)
             rollback_user_message()
             raise
         if persistent_chat:
-            session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
+            minister_message_id = session.db.append_chat_message(character.name, accepted_turn, "minister", result.answer)
+            if chat_turn_id:
+                session.db.update_chat_turn_messages(chat_turn_id, minister_message_id=minister_message_id)
+                session.db.record_chat_turn_rollback_diffs(
+                    chat_turn_id, rollback_snapshot or {}, session.db.capture_chat_rollback_snapshot())
         print(wrap(result.answer))
         print()
         _print_pending_action_failures(getattr(result, "pending_action_failures", []) or [])

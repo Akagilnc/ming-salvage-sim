@@ -57,6 +57,25 @@ def test_update_by_id_preserves_tags_when_none(game):
     assert _j.loads(row["tags"]) == ["辽东", "军饷"]   # 原标签保留
 
 
+def test_update_recanonicalizes_new_secrecy_clause_and_preserves_long_text(game):
+    db, state, content = game
+    assignee = next(iter(content.characters))
+    excluded = next(c for c in content.characters.values() if c.name != assignee)
+    oid = db.create_secret_order(state, assignee, "原令", "原内容", [])
+    title = "密令修订" * 20
+    body = f"查明此事，对{excluded.name}保密。" + "细节" * 200
+
+    assert db.update_secret_order_by_id(state, oid, title, body)
+
+    import json
+    row = db.conn.execute(
+        "SELECT title, content, excluded_names FROM secret_orders WHERE id=?", (oid,)
+    ).fetchone()
+    assert row["title"] == title
+    assert row["content"] == body
+    assert excluded.name in json.loads(row["excluded_names"])
+
+
 def test_update_by_id_refreshes_durable_knowledge_source_after_restore(game):
     db, state, _ = game
     oid = db.create_secret_order(state, "保签官", "旧标题", "旧内容", ["辽东"])

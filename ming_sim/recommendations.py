@@ -124,7 +124,7 @@ def list_recommendation_candidates(db: Any, state: Any, recommender: str) -> Lis
     if conn is None:
         return []
     source = conn.execute(
-        "SELECT faction, identity FROM characters WHERE name=?", (recommender,)
+        "SELECT faction, identity, name, office, office_type FROM characters WHERE name=?", (recommender,)
     ).fetchone()
     if source is None:
         return []

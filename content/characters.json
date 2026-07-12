@@ -1381,6 +1381,7 @@
       "historical_death_month": 0,
       "status": "dismissed",
       "status_reason": "延绥兵变弹压不力，革职候勘",
+      "reason_code": "获罪削籍",
       "power_id": "ming",
       "identity": 50,
       "seed_guilt": {

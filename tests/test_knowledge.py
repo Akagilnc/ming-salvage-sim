@@ -316,6 +316,27 @@ def test_character_projection_shows_monthly_public_source_once_after_chapter_wri
     assert projected.count(marker) == 1
 
 
+def test_shared_archive_storage_never_writes_restricted_aggregate(game):
+    db, state, content = game
+    participant = next(iter(content.characters))
+    secret = "仅经手人可知的密令细节"
+    public = "本月公开政务"
+    db.register_character_knowledge_source(
+        state, [{"character_id": participant}], "secret_order", "密令", secret,
+        source_id="secret_order:test-write-boundary",
+    )
+    db.record_public_knowledge_event(state, "公开事项", public, source_id="public:test-write-boundary")
+
+    db.save_turn_report(state, f"{public}；{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn))
+    db.save_chapter_memory(
+        state, "本月", f"章节转述：{secret}", knowledge_items=db.knowledge_items_for_turn(state.turn),
+        public_body=public,
+    )
+
+    assert secret not in db.get_turn_report(state.turn)
+    assert secret not in db.list_chapter_memories(upto_turn=state.turn)[-1]["body"]
+
+
 def test_chapter_with_only_derived_report_does_not_publish_its_body_again(game):
     """The report projection alone is not an independently public chapter source."""
     from ming_sim.memories import _public_chapter_counterpart

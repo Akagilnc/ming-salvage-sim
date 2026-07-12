@@ -34,7 +34,14 @@ def knowledge_row_visible_to(
     Recommendation reads pass each roster candidate explicitly so an excluded
     office cannot be reintroduced by a name-only roster projection.
     """
-    target = target or row
+    reader = None
+    try:
+        reader = db.conn.execute(
+            "SELECT name, office, office_type FROM characters WHERE name=?", (character_name,)
+        ).fetchone()
+    except (AttributeError, TypeError):
+        reader = None
+    target = target or reader or row
     def target_value(key: str) -> object:
         try:
             return target[key]
@@ -48,7 +55,8 @@ def knowledge_row_visible_to(
         excluded_names = json.loads(row["excluded_names"] or "[]")
     except (TypeError, ValueError, KeyError, IndexError):
         excluded_names = []
-    if target_name in {str(name) for name in excluded_names}:
+    excluded = {str(name) for name in excluded_names}
+    if character_name in excluded or target_name in excluded:
         return False
     targets: object = {}
     try:
@@ -66,7 +74,40 @@ def knowledge_row_visible_to(
             targets = db.knowledge_exclusion_targets_for_source(source_id)
     people = {str(name) for name in (targets.get("people", []) if isinstance(targets, dict) else [])}
     offices = {str(name) for name in (targets.get("offices", []) if isinstance(targets, dict) else [])}
-    return target_name not in people and target_office_type not in offices and target_office not in offices
+    def excluded_subject(subject: Any, fallback_name: str) -> bool:
+        if subject is None:
+            return fallback_name in people
+        try:
+            name = str(subject["name"] or fallback_name)
+            office_type = str(subject["office_type"] or "")
+            office = str(subject["office"] or "")
+        except (KeyError, IndexError, TypeError):
+            name, office_type, office = fallback_name, "", ""
+        return name in people or office_type in offices or office in offices
+    if excluded_subject(reader, character_name) or excluded_subject(target, target_name):
+        return False
+    # A private source's roster is a positive capability, not a deny-list
+    # snapshot.  Enforce it at read time so characters created after archival
+    # cannot inherit old participant-private material.
+    try:
+        source = db.conn.execute(
+            "SELECT kind, participant_roster FROM character_knowledge_sources WHERE source_id=?",
+            (str(row["source_id"] or ""),),
+        ).fetchone()
+    except (AttributeError, KeyError, IndexError, TypeError):
+        source = None
+    if source is not None and str(source["kind"] or "") != "public":
+        try:
+            roster = json.loads(source["participant_roster"] or "[]")
+        except (TypeError, ValueError):
+            roster = []
+        participants = {
+            str(item.get("character_id") or item.get("name"))
+            for item in roster if isinstance(item, dict)
+        }
+        if participants and character_name not in participants:
+            return False
+    return True
 
 
 def _qualitative(text: object) -> str:
@@ -425,6 +466,10 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             turn = source_id.removeprefix("turn_report:").removesuffix(":public")
         elif source_id.startswith("chapter_source:"):
             turn = source_id.removeprefix("chapter_source:")
+        elif source_id.startswith("projection:turn_report:"):
+            turn = source_id.removeprefix("projection:turn_report:")
+        elif source_id.startswith("projection:chapter:"):
+            turn = source_id.removeprefix("projection:chapter:")
         else:
             continue
         if turn.isdigit():
@@ -453,6 +498,7 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             or bool(row.get("excluded_names"))
             or str(row.get("source_id") or "").startswith("projection:")
             or str(row.get("source_id") or "").startswith("opening:")
+            or str(row.get("source_id") or "").startswith("directive:")
         )
         if knowledge_row_visible_to(
             db,
@@ -460,20 +506,54 @@ def build_character_knowledge(db: Any, state: Any, character_name: str) -> Dict[
             character_name,
         )
     ]
-    projected_bodies = {
-        str(row.get("body") or "")
+    report_projection_turns = {
+        int(row.get("turn") or 0) for row in visible_public
+        if str(row.get("source_id") or "").startswith("projection:turn_report:")
+    }
+    visible_public = [
+        row for row in visible_public
+        if not (
+            str(row.get("source_id") or "").startswith("projection:chapter:")
+            and int(row.get("turn") or 0) in report_projection_turns
+        )
+    ]
+    projection_bodies_by_turn: dict[int, list[str]] = {}
+    for row in visible_public:
+        if str(row.get("source_id") or "").startswith("projection:"):
+            projection_bodies_by_turn.setdefault(int(row.get("turn") or 0), []).append(
+                str(row.get("body") or "")
+            )
+    visible_public = [
+        row for row in visible_public
+        if str(row.get("source_id") or "").startswith("projection:")
+        or not any(
+            str(row.get("body") or "")
+            and str(row.get("body") or "") in aggregate
+            for aggregate in projection_bodies_by_turn.get(int(row.get("turn") or 0), [])
+        )
+    ]
+    # Collapse only exact same-turn archive/source duplicates.  Never compare
+    # substrings and never deduplicate across turns: those are independent
+    # historical facts even when their prose happens to overlap.
+    archive_bodies = {
+        (int(row.get("turn") or 0), str(row.get("body") or ""))
         for row in visible_public
         if str(row.get("source_id") or "").startswith("projection:")
     }
     visible_public = [
         row for row in visible_public
         if str(row.get("source_id") or "").startswith("projection:")
-        or not any(
-            str(row.get("body") or "")
-            and str(row.get("body") or "") in projected_body
-            for projected_body in projected_bodies
-        )
+        or (int(row.get("turn") or 0), str(row.get("body") or "")) not in archive_bodies
     ]
+    deduped_public = []
+    seen_exact: set[tuple[int, str]] = set()
+    for row in visible_public:
+        identity = (int(row.get("turn") or 0), str(row.get("body") or ""))
+        if identity[1] and identity in seen_exact:
+            continue
+        seen_exact.add(identity)
+        deduped_public.append(row)
+    visible_public = deduped_public
     public_bodies = [
         _qualitative(item.get("body") or item.get("title") or "")
         for item in visible_public
