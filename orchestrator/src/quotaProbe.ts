@@ -361,8 +361,9 @@ const DEFAULT_PROBE_TIMEOUT_MS = 60_000;
 
 /**
  * Run the registered probe for `pool`. Network/CLI errors surface as
- * `{kind:"error"}` (fail-safe hang), never as infinite wait. 429 / rate-limit
- * text surfaces as `{kind:"quota_limited"}` with a parsed resetAt when present.
+ * `{kind:"error"}` (fail-safe hang), never as infinite wait.
+ * Quota is **status/exit only** — HTTP **429** (zai) or we do not invent
+ * quota from body/stdout keywords (owner: 只看返回码，无视 body).
  *
  * Production convenience — unit tests inject {@link QuotaProbeResult} directly
  * into {@link decideIdleAfterProbe} and do not need this.
@@ -426,6 +427,8 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
         },
         { timeoutMs },
       );
+      // Status only: 429 → quota; 5xx → transient retry; other non-2xx → error.
+      // Never scan body for "quota"/"rate limit" (Codex P2 disposition: ignore body).
       if (status === 429) {
         return {
           kind: "quota_limited" as const,
@@ -443,13 +446,6 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
         return {
           kind: "error" as const,
           cause: `zai probe HTTP ${status}: ${body.slice(0, 200)}`,
-        };
-      }
-      if (isQuotaLimitBody(body)) {
-        return {
-          kind: "quota_limited" as const,
-          resetAt: parseZaiResetAt(body),
-          detail: body.slice(0, 500),
         };
       }
       return { kind: "ok" as const };
@@ -504,33 +500,23 @@ async function runOpencodePongProbe(
         { timeoutMs },
       );
       const combined = `${result.stdout}\n${result.stderr}`;
+      // Exit code only for fate: non-zero → error (or transient retry); zero + PONG → ok.
+      // No body/stdout keyword → quota_limited (owner: 只看返回码，无视 body).
       if (result.code !== 0) {
         if (classifyExternalCallFailure(combined) === "transient") {
           throw new Error(
             `opencode PONG transient exit ${result.code}: ${combined.slice(0, 200)}`,
           );
         }
-        if (isQuotaLimitBody(combined)) {
-          return {
-            kind: "quota_limited" as const,
-            detail: combined.slice(0, 500),
-          };
-        }
         return {
           kind: "error" as const,
           cause: `opencode PONG exit ${result.code}: ${combined.slice(0, 200)}`,
         };
       }
-      if (isQuotaLimitBody(combined)) {
-        return {
-          kind: "quota_limited" as const,
-          detail: combined.slice(0, 500),
-        };
-      }
       if (!/\bPONG\b/i.test(result.stdout)) {
         return {
-          kind: "quota_limited" as const,
-          detail: "opencode PONG missing from stdout (treat as quota wall)",
+          kind: "error" as const,
+          cause: "opencode PONG missing from stdout",
         };
       }
       return { kind: "ok" as const };
@@ -539,21 +525,6 @@ async function runOpencodePongProbe(
     const cause = err instanceof Error ? err.message : String(err);
     return { kind: "error", cause };
   }
-}
-
-function isQuotaLimitBody(body: string): boolean {
-  const lower = body.toLowerCase();
-  return (
-    lower.includes("429") ||
-    lower.includes("rate limit") ||
-    lower.includes("rate-limit") ||
-    lower.includes("rate_limit") ||
-    lower.includes("too many requests") ||
-    lower.includes("quota") ||
-    body.includes("额度") ||
-    body.includes("余额不足") ||
-    body.includes("配额")
-  );
 }
 
 // ── production idle gate (the seam RealBackend must call) ───────────────────
