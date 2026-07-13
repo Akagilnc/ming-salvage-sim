@@ -34,6 +34,10 @@ describe("#884 external-call clocks", () => {
     const eai = new Error("getaddrinfo EAI_AGAIN api.example.com");
     (eai as { code?: string }).code = "EAI_AGAIN";
     expect(classifyExternalCallFailure(eai)).toBe("transient");
+    const resetWithCause = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("socket reset"), { code: "ECONNRESET" }),
+    });
+    expect(classifyExternalCallFailure(resetWithCause)).toBe("transient");
     const enet = new Error("connect ENETUNREACH");
     (enet as { code?: string }).code = "ENETUNREACH";
     expect(classifyExternalCallFailure(enet)).toBe("transient");

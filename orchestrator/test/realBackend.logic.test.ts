@@ -1182,6 +1182,7 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
 
   class HostTruthBackend extends RealBackend {
     readonly calls: string[] = [];
+    localHead = "abc123";
     remoteRef = "abc123\trefs/heads/feat/891";
     openPr: unknown[] = [];
     protected override cloneDirExists(): boolean {
@@ -1191,6 +1192,9 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
       this.calls?.push(`${file} ${args.join(" ")}`);
       if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
         return ".git";
+      }
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
+        return this.localHead;
       }
       if (file === "git" && args[0] === "ls-remote") return this.remoteRef;
       if (file === "gh" && args[0] === "pr" && args[1] === "list") {
@@ -1227,6 +1231,14 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
   it("observes pushed-only delivery when the remote branch has no open PR", async () => {
     const backend = new HostTruthBackend({ ...baseOpts, promptsDir: realPromptsDir });
     await expect(backend.observeSliceShip(shipWorktree)).resolves.toEqual({ shipped: true });
+  });
+
+  it("reports unshipped when the remote branch tip is older than the local HEAD", async () => {
+    const backend = new HostTruthBackend({ ...baseOpts, promptsDir: realPromptsDir });
+    backend.remoteRef = "old-tip\trefs/heads/feat/891";
+
+    await expect(backend.observeSliceShip(shipWorktree)).resolves.toEqual({ shipped: false });
+    expect(backend.calls.some((call) => call.startsWith("gh pr list"))).toBe(false);
   });
 
   it("reports unshipped from an absent remote branch without querying PRs", async () => {

@@ -446,7 +446,6 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         successfulLegs: ["gpt-5.6-sol", "agy"],
         ...EMPTY_CMR_CLOSURE,
         ...CMR_EVIDENCE,
-        ...DERIVED_EMPTY_FINDINGS_COUNT,
       });
     });
 

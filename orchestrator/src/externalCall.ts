@@ -38,6 +38,36 @@ export function effectiveSubprocessTimeoutMs(
 export type ExternalFailureClass = "transient" | "quota" | "durable";
 export type ExternalCallSeam = "subprocess" | "provider";
 
+const TRANSIENT_ERROR_CODES = new Set([
+  "ETIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "EAI_AGAIN",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+]);
+
+function hasTransientCodeInCauseChain(err: unknown): boolean {
+  const seen = new Set<object>();
+  let current = err;
+  while (current !== null && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const structured = current as {
+      readonly code?: unknown;
+      readonly cause?: unknown;
+    };
+    if (
+      typeof structured.code === "string" &&
+      TRANSIENT_ERROR_CODES.has(structured.code)
+    ) {
+      return true;
+    }
+    current = structured.cause;
+  }
+  return false;
+}
+
 export class ExternalCallTimeoutError extends Error {
   readonly stage: string;
   readonly timeoutMs: number;
@@ -88,15 +118,7 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     ) {
       return "transient";
     }
-    if (
-      e.code === "ETIMEDOUT" ||
-      e.code === "ECONNRESET" ||
-      e.code === "ECONNREFUSED" ||
-      e.code === "EPIPE" ||
-      e.code === "EAI_AGAIN" ||
-      e.code === "ENETUNREACH" ||
-      e.code === "EHOSTUNREACH"
-    ) {
+    if (hasTransientCodeInCauseChain(err)) {
       return "transient";
     }
     const status =
