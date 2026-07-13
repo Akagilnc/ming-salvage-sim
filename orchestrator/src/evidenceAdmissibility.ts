@@ -9,18 +9,8 @@
  */
 
 import { isPollableGithubPrUrl } from "./botPolling.js";
-import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-} from "./reviewLoopOutcome.js";
 import type {
   DispatchContext,
-  StepOutput,
-  WorkerKind,
-  WorkerResult,
-  WorkerSpec,
 } from "./types.js";
 
 /** ISO-8601 instant marking when the current review round began (ship or re-trigger). */
@@ -42,13 +32,6 @@ export interface EvidenceRecord {
   readonly timestamp?: string;
   readonly terminalState: EvidenceTerminalState;
 }
-
-const REVIEW_LOOP_KINDS = new Set<WorkerKind>([
-  "verify",
-  "fixer",
-  "cleanup",
-  "docRelease",
-]);
 
 export function isOfflineTestPrUrl(prUrl: string): boolean {
   return prUrl.trim().startsWith("pr://");
@@ -198,56 +181,4 @@ export function liveArtifactEvidenceRecord(input: {
     timestamp: input.timestamp,
     terminalState: freshness,
   };
-}
-
-function isCompletedReviewLoopOutput(
-  spec: WorkerSpec,
-  output: StepOutput | undefined,
-): boolean {
-  if (output === undefined) return false;
-  switch (spec.kind) {
-    case "verify":
-      return isValidVerifyResult(output);
-    case "fixer":
-      return isValidFixerResult(output);
-    case "cleanup":
-      return isValidCleanupResult(output);
-    case "docRelease":
-      return isValidDocReleaseResult(output);
-    default:
-      return false;
-  }
-}
-
-/**
- * Worker outcomes count toward convergence only when the dispatch completed with a
- * valid payload. Failed / malformed / escalated / skeleton-fallback paths are
- * inadmissible terminal states.
- */
-export function workerOutcomeAdmissible(
-  result: WorkerResult,
-  spec?: WorkerSpec,
-): boolean {
-  if (result.kind !== "completed" || result.output === undefined) {
-    return false;
-  }
-  if (spec !== undefined && REVIEW_LOOP_KINDS.has(spec.kind)) {
-    return isCompletedReviewLoopOutput(spec, result.output);
-  }
-  return true;
-}
-
-export function inadmissibleWorkerOutcomeReason(
-  result: WorkerResult,
-  spec: WorkerSpec,
-): string {
-  if (result.kind === "failed" || result.kind === "malformed") {
-    return "reason" in result && result.reason.length > 0
-      ? result.reason
-      : `${spec.kind} worker ${result.kind}`;
-  }
-  if (result.kind === "escalated") {
-    return `${spec.kind} worker escalated`;
-  }
-  return `${spec.kind} worker dispatch inadmissible: ${result.kind}`;
 }

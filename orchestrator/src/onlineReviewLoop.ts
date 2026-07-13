@@ -50,7 +50,6 @@ import {
   fixerLedgerFixCommitSha,
   fixerLedgerOutputProceeds,
   fixerProceedsToVerify,
-  isValidFixerResult,
 } from "./reviewLoopOutcome.js";
 import {
   applyVerifySideEffects,
@@ -1631,16 +1630,6 @@ export async function runOnlineReviewLoopStage(
     let fixerOutput: FixerResult | undefined;
     try {
       fixerOutput = await dispatch.dispatchFixer(landing);
-      if (!isValidFixerResult(fixerOutput)) {
-        // A malformed envelope is not a decision. Reassign this one fixer step
-        // once, then let a fresh verifier report the durable findings state.
-        console.warn("telemetry: malformed fixer envelope; re-dispatching fixer once");
-        fixerOutput = await dispatch.dispatchFixer(landing);
-        if (!isValidFixerResult(fixerOutput)) {
-          console.warn("telemetry: fixer envelope remained malformed after one re-dispatch");
-          fixerOutput = undefined;
-        }
-      }
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;

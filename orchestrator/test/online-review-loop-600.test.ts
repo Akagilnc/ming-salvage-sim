@@ -94,7 +94,6 @@ import {
   convergenceHeadToRecord,
   evidenceAdmissible,
   offlineSyntheticPollAdmissible,
-  workerOutcomeAdmissible,
 } from "../src/evidenceAdmissibility.js";
 import { offlinePrReviewSnapshot } from "../src/onlineReviewLoop.js";
 import {
@@ -4261,21 +4260,6 @@ describe("#600 r4 central evidence admissibility gate", () => {
     }
   });
 
-  it("pin workerOutcomeAdmissible: failed dispatch is terminal, not skeleton-green", () => {
-    const spec = verifyWorkerSpec();
-    expect(
-      workerOutcomeAdmissible(
-        { kind: "failed", reason: "verify worker threw on startup" },
-        spec,
-      ),
-    ).toBe(false);
-    expect(
-      workerOutcomeAdmissible(
-        { kind: "completed", output: { kind: "verify", converged: true } },
-        spec,
-      ),
-    ).toBe(true);
-  });
 });
 
 describe("#600 r9 first-round RoundTrigger anchoring (#600 cmr r3)", () => {
@@ -5865,7 +5849,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(fixingSha).not.toBe(driftHeadOid);
   });
 
-  it("pin r39: committed:true without fixCommitSha retries once, then returns through verify", async () => {
+  it("ADR 0131: fixer self-report is never read or re-dispatched before fresh verify", async () => {
     const malformed = { kind: "fixer", committed: true } as FixerResult;
     let fixerCalls = 0;
     let verifyCalls = 0;
@@ -5900,7 +5884,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
-    expect(fixerCalls).toBe(2);
+    expect(fixerCalls).toBe(1);
   });
 
   it("pin r40: retrigger-only ledger yields no fix SHA (single-slice, envelope-only)", () => {
@@ -6183,7 +6167,6 @@ describe("#600 r5 legacy skeleton gate — family + slice", () => {
     const spec = verifyWorkerSpec();
     const result = await legacyDispatchFamilyWorker({} as never, spec, liveCtx);
     expect(result.kind).toBe("failed");
-    expect(workerOutcomeAdmissible(result, spec)).toBe(false);
     if (result.kind === "failed") {
       expect(result.reason).toContain("offline skeleton synthesis inadmissible");
     }
@@ -6199,7 +6182,6 @@ describe("#600 r5 legacy skeleton gate — family + slice", () => {
       ...liveCtx,
     });
     expect(result.kind).toBe("failed");
-    expect(workerOutcomeAdmissible(result, spec)).toBe(false);
     if (result.kind === "failed") {
       expect(result.reason).toContain("offline skeleton synthesis inadmissible");
     }
@@ -6216,7 +6198,6 @@ describe("#600 r5 legacy skeleton gate — family + slice", () => {
         prUrl: "pr://family/offline",
       });
       expect(result.kind).toBe("completed");
-      expect(workerOutcomeAdmissible(result, spec)).toBe(true);
       if (result.kind === "completed" && result.output.kind === "verify") {
         expect(result.output.converged).toBe(true);
       }
@@ -6249,7 +6230,6 @@ describe("#600 r5 legacy skeleton gate — family + slice", () => {
       { worktree },
     );
     expect(cleanup.kind).toBe("completed");
-    expect(workerOutcomeAdmissible(cleanup, cleanupWorkerSpec())).toBe(true);
     expect(runStepCalls).toBe(0);
 
     const doc = await legacyDispatchWorker(

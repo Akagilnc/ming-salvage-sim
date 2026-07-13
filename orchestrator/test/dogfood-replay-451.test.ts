@@ -187,7 +187,6 @@ describe("#451 dogfood replay fixture", () => {
       "287-same-module-cmr-gap",
       "287-declared-target-follow-up-blocking",
       "287-module-declaration-fenced-yaml",
-      "287-family-attribution-child-before-parent",
       "287-coordinator-answer-reclassified",
       "287-known-hub-loss-suppression",
       "376-owning-issue-still-red",
@@ -231,7 +230,6 @@ describe("#451 dogfood replay fixture", () => {
 
     for (const id of [
       "287-module-declaration-fenced-yaml",
-      "287-family-attribution-child-before-parent",
       "287-correctness-r3-legacy-disposition",
       "287-correctness-final-legacy-disposition",
       "287-stale-family-head-current-cmr-pass",
@@ -295,7 +293,6 @@ describe("#451 dogfood replay fixture", () => {
       "287-same-module-cmr-gap",
       "287-declared-target-follow-up-blocking",
       "287-module-declaration-fenced-yaml",
-      "287-family-attribution-child-before-parent",
       "287-correctness-r3-legacy-disposition",
       "287-correctness-final-legacy-disposition",
       "287-stale-family-head-current-cmr-pass",
@@ -388,21 +385,6 @@ describe("#451 dogfood replay fixture", () => {
       parsedModule: "orchestrator-family",
       undevelopedTargets: ["military-state-machine"],
       proseIgnored: true,
-    });
-    expect(rowsById.get("287-family-attribution-child-before-parent")?.sourceEvidence).toMatchObject({
-      seam: "family_verify_cmr",
-      attribution: {
-        method: "child_module_scope",
-        issue: 307,
-        module: "orchestrator-runner",
-      },
-      dispatches: expect.arrayContaining([
-        "cmr:completeness",
-        "coder:family/287-attribution",
-        "cmr:correctness",
-        "ship:family/287-attribution",
-      ]),
-      reviewFixRereviewVisible: true,
     });
     expect(rowsById.get("287-correctness-r3-legacy-disposition")?.sourceEvidence).toMatchObject({
       seam: "family_verify_cmr",

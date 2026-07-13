@@ -3,8 +3,6 @@ import {
   parseModuleDeclaration,
   type FamilyModuleContext,
 } from "./family/moduleDeclaration.js";
-import { deriveCmrEnvelope } from "./family/cmrClassification.js";
-import type { FamilyCmrFindingClassification } from "./family/cmrClassification.js";
 import { runFamily } from "./family/runner.js";
 import { parseCmrOutcome } from "./family/realFamilyBackend.js";
 import {
@@ -55,15 +53,12 @@ import type {
 /**
  * Replay-scenario outcome label.
  *
- * #604 slice 4 (ADR 0062): this union used to inherit the family classifier's
- * routing values via {@link FamilyCmrFindingClassification}. Those routing
- * values were removed from the classifier, but replay scenarios still describe
- * the STOP outcomes they exercise (which map to the retained StopReason words —
- * 岔路 1 A: StopReason is untouched). So the labels are now enumerated here
- * directly, decoupled from the collapsed classifier enum.
+ * Replay-only presentation labels are enumerated locally. The harness constructs
+ * inputs and records observed topology; it does not revive a runtime classifier.
  */
 export type DogfoodReplayClassification =
-  | FamilyCmrFindingClassification
+  | "blocking"
+  | "accepted_suppressed"
   | "success"
   | "same_module_still_red"
   | "spec_conflict"
@@ -83,7 +78,7 @@ export interface DogfoodReplayScenario {
   readonly repairHint?: string;
   readonly metadata?: StopSummary["metadata"];
   readonly stopSummary: StopSummary;
-  readonly source?: "runner" | "family" | "family_cmr_classification" | "stop_summary";
+  readonly source?: "runner" | "family" | "stop_summary";
   readonly sourceStopSummary?: StopSummary;
   readonly sourceEvidence?: Readonly<Record<string, unknown>>;
 }
@@ -178,6 +173,7 @@ async function familyClassificationScenario(input: {
   readonly id: string;
   readonly issue: number;
   readonly title: string;
+  readonly classification: "blocking" | "accepted_suppressed";
   readonly familyIssue: number;
   readonly finding: Finding;
   readonly moduleContext: FamilyModuleContext;
@@ -247,19 +243,8 @@ async function familyClassificationScenario(input: {
     backend.ledger.find(
       (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
     );
-  // #604 slice 3 / ADR 0062: the runner-visible ledger no longer carries the fat
-  // `cmrFindingClassification.results` blob — the runner sees only the thin
-  // `blockingFindingIdentityKeys` envelope. This replay is a presentation fixture,
-  // so it recomputes the classification report in-process from the SAME inputs the
-  // gate classified (the finding + module context); this mirrors "what the
-  // classifier decided" without reaching into content the runner never reads.
-  const result = deriveCmrEnvelope({
-    familyIssue: input.familyIssue,
-    findings: [input.finding],
-    moduleContext: input.moduleContext,
-  }).results[0];
-  if (ledgerEntry === undefined || result === undefined) {
-    throw new Error(`dogfood replay ${input.id} produced no classification`);
+  if (ledgerEntry === undefined) {
+    throw new Error(`dogfood replay ${input.id} produced no ledger entry`);
   }
   const stopSummary = ledgerEntry?.stopSummary;
   if (stopSummary == null) {
@@ -275,7 +260,7 @@ async function familyClassificationScenario(input: {
     id: input.id,
     issue: input.issue,
     title: input.title,
-    classification: result.classification,
+    classification: input.classification,
     stopSummary,
     source: "family",
     sourceStopSummary: stopSummary,
@@ -1216,88 +1201,6 @@ module_scope:
       proseIgnored: prose === undefined,
       dispatches: backend.dispatches,
       ...cmrWorkerParserEvidence(cmrOutput),
-    },
-  };
-}
-
-async function familyAttributionReplay(
-  moduleContext: FamilyModuleContext,
-): Promise<SeamReplay> {
-  const attributedFinding = finding({
-    claim_quote: "child module finding must not fall back to the parent family module",
-    location: "orchestrator/src/runner.ts:307",
-    action: "fix_now",
-  });
-  const backend = new DogfoodCmrFamilyBackend("attribution-head", [], [
-    {
-      kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: false,
-        reason: "child attribution must stay local",
-        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
-        claimedFixedFindingIdentityKeys: [],
-        priorFindingDispositions: [],
-        ...CMR_EVIDENCE,
-        findings: [attributedFinding],
-      },
-    },
-  ]);
-  const run = await runVerifyCmr({
-    phase: "final",
-    familyBase: "family/287-attribution",
-    familyBackend: backend,
-    familyIssue: 287,
-    moduleContext,
-  });
-  const reviewed = backend.ledger.find(
-    (entry) => entry.status === "cmr_reviewed" && entry.cmrPass === "completeness",
-  );
-  const fixed = backend.ledger.find(
-    (entry) => entry.status === "cmr_fix_committed" && entry.cmrPass === "completeness",
-  );
-  const passed = backend.ledger.find(
-    (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
-  );
-  // #604 slice 3 / ADR 0062: the ledger no longer carries the fat
-  // `cmrFindingClassification.results` attribution audit (the runner reads only the
-  // thin key envelope). Recompute the attribution report in-process from the same
-  // finding + module context the gate classified, for this presentation fixture.
-  const result = deriveCmrEnvelope({
-    familyIssue: 287,
-    findings: [attributedFinding],
-    moduleContext,
-  }).results[0];
-  if (result?.attribution.method !== "child_module_scope") {
-    throw new Error("dogfood family attribution replay did not hit child scope");
-  }
-  if (!run.ok || reviewed?.stopSummary == null || fixed === undefined || passed === undefined) {
-    throw new Error(
-      `dogfood family attribution replay did not hit family review/fix/re-review gate: ` +
-        `run.ok=${run.ok} statuses=${backend.ledger.map((entry) => entry.status).join(",")}`,
-    );
-  }
-  return {
-    stopSummary: reviewed.stopSummary,
-    sourceEvidence: {
-      seam: "family_verify_cmr",
-      attribution: result.attribution,
-      classification: result.classification,
-      dispatches: backend.dispatches,
-      reviewFixRereviewVisible: true,
-      ...cmrWorkerParserEvidence({
-        kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: false,
-          reason: "child attribution must stay local",
-          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
-          ...CMR_EVIDENCE,
-          findings: [attributedFinding],
-        },
-      }),
     },
   };
 }
@@ -2614,7 +2517,6 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       },
     ],
   };
-  const familyAttributionSource = await familyAttributionReplay(moduleContext);
   const cmrReviewerSelfFixAttemptSource =
     await cmrReviewerSelfFixAttemptReplay();
   // #604 slice 4 (ADR 0062): route kinds are gone; every non-accepted-suppressed
@@ -2806,6 +2708,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "287-same-module-cmr-gap",
       issue: 287,
       title: "same-module CMR gap remains blocking",
+      classification: "blocking",
       familyIssue: 287,
       finding: sameModuleFinding,
       moduleContext,
@@ -2817,6 +2720,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "287-declared-target-follow-up-blocking",
       issue: 287,
       title: "declared-target follow-up remains blocking",
+      classification: "blocking",
       familyIssue: 287,
       finding: crossModuleFinding,
       moduleContext,
@@ -2830,16 +2734,6 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       source: "family",
       sourceStopSummary: moduleDeclarationSource.stopSummary,
       sourceEvidence: moduleDeclarationSource.sourceEvidence,
-    }),
-    replayScenario({
-      id: "287-family-attribution-child-before-parent",
-      issue: 287,
-      title: "finding attribution uses child module before parent fallback",
-      classification: "same_module_still_red",
-      stopSummary: familyAttributionSource.stopSummary,
-      source: "family",
-      sourceStopSummary: familyAttributionSource.stopSummary,
-      sourceEvidence: familyAttributionSource.sourceEvidence,
     }),
     replayScenario({
       id: "287-correctness-r3-legacy-disposition",
@@ -2880,6 +2774,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "287-coordinator-answer-reclassified",
       issue: 287,
       title: "coordinator-written escalation answer is replayed as evidence, not success",
+      classification: "blocking",
       familyIssue: 287,
       // #604 slice 4 (ADR 0062): a coordinator-written answer is replayed as a
       // plain blocking finding — no routing disposition to reclassify.
@@ -2890,6 +2785,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "287-known-hub-loss-suppression",
       issue: 287,
       title: "ADR0023 hub-loss finding is accepted suppressed with bounded reopen",
+      classification: "accepted_suppressed",
       familyIssue: 287,
       finding: hubLossFinding,
       moduleContext: hubLossModuleContext,
@@ -2970,6 +2866,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       id: "376-owning-issue-still-red",
       issue: 376,
       title: "surface owned by a named child remains blocking",
+      classification: "blocking",
       familyIssue: 376,
       finding: owningChildFinding,
       moduleContext,
