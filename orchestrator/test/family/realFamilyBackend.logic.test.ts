@@ -2505,7 +2505,10 @@ describe("RealFamilyBackend recordAborted (#291 in-memory seam, NOT the durable 
 describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
   it("persists a durable family-ledger decision escalation readable back", async () => {
     const b = new RealFamilyBackend(opts(trackRepo()));
-    await b.escalateFamily({ reason: "integrated cmr did not converge: field mismatch" });
+    await b.escalateFamily({
+      reason: "integrated cmr did not converge: field mismatch",
+      escalationKind: "decision",
+    });
     expect(await b.readFamilyLedger()).toMatchObject([
       {
         status: "escalated",
@@ -2611,7 +2614,10 @@ describe("RealFamilyBackend escalateFamily (#291 durable stuck-point)", () => {
       "utf8",
     );
     const b = new RealFamilyBackend(o);
-    await b.escalateFamily({ reason: "new ledger cmr pause" });
+    await b.escalateFamily({
+      reason: "new ledger cmr pause",
+      escalationKind: "decision",
+    });
 
     expect(await b.readEscalations()).toEqual([
       {

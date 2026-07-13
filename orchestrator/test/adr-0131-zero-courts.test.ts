@@ -6,6 +6,24 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 }
 
+function familyEscalationObjectLiterals(source: string): readonly string[] {
+  const results: string[] = [];
+  const callPattern = /escalateFamily(?:\?\.)?\(\s*\{/g;
+  for (const match of source.matchAll(callPattern)) {
+    const start = match.index + match[0].lastIndexOf("{");
+    let depth = 0;
+    for (let index = start; index < source.length; index += 1) {
+      if (source[index] === "{") depth += 1;
+      if (source[index] === "}") depth -= 1;
+      if (depth === 0) {
+        results.push(source.slice(start + 1, index));
+        break;
+      }
+    }
+  }
+  return results;
+}
+
 describe("ADR 0131 zero-judgment runner constitution", () => {
   it("routes any present escalation ticket, including empty strings, to decision", () => {
     expect(route({ from: "S2", output: {
@@ -67,10 +85,29 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     expect(Object.fromEntries(decisionSites)).toEqual({
       "src/family/runner.ts": 3,
       "src/family/ledger.ts": 1,
+      "src/family/verifyCmr.ts": 4,
+      "src/family/types.ts": 1,
       "src/family/realFamilyBackend.ts": 2,
     });
-    expect([...decisionSites.values()].reduce((sum, count) => sum + count, 0)).toBe(6);
+    expect([...decisionSites.values()].reduce((sum, count) => sum + count, 0)).toBe(11);
     expect(escalateTerminationDecisionSites).toBe(0);
+  });
+
+  it("requires every family escalation transport to declare its doorbell kind", () => {
+    const familyDir = new URL("../src/family/", import.meta.url);
+    const source = readdirSync(familyDir, { recursive: true })
+      .filter((file): file is string => typeof file === "string" && file.endsWith(".ts"))
+      .map((file) => stripComments(
+        readFileSync(new URL(`../src/family/${file}`, import.meta.url), "utf8"),
+      ))
+      .join("\n");
+    const calls = familyEscalationObjectLiterals(source);
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call).toMatch(/escalationKind\s*:/);
+    }
+    expect(source).not.toMatch(/escalationKind\s*:\s*[^,\n]*\?\?/);
   });
 
   it("family source cannot revive S1b count courts or rewrite ladders", () => {

@@ -1634,7 +1634,7 @@ module_scope:
     expect(backend.ledger[0]).not.toHaveProperty("cmrFindingClassification");
   });
 
-  it("records a CMR worker decision escalation as a spec conflict, not infra failure", async () => {
+  it("records a CMR worker decision escalation as a decision park, not infra failure", async () => {
     const backend = new CmrFindingBackend({
       kind: "escalated",
       escalation: {
@@ -1660,19 +1660,22 @@ module_scope:
       status: "aborted",
       cmrPass: "completeness",
       stopSummary: {
-        reason: "spec_conflict",
-        summary: expect.stringContaining("accepted designs conflict"),
-        repairHint: expect.stringContaining("design/specification conflict"),
+        reason: "decision_gate_park",
+        summary: "accepted designs conflict — ADR and issue acceptance criteria disagree",
+        repairHint: expect.stringContaining("resume it in place"),
       },
     });
     expect(backend.escalations[0]).toMatchObject({
-      stopSummary: { reason: "spec_conflict" },
+      reason: "accepted designs conflict",
+      diagnosis: "ADR and issue acceptance criteria disagree",
+      escalationKind: "decision",
+      stopSummary: { reason: "decision_gate_park" },
     });
     expect(backend.ledger[1]).toMatchObject({
       status: "escalated",
       stopSummary: {
-        reason: "spec_conflict",
-        summary: expect.stringContaining("accepted designs conflict"),
+        reason: "decision_gate_park",
+        summary: "accepted designs conflict — ADR and issue acceptance criteria disagree",
       },
     });
   });

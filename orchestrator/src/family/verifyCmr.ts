@@ -689,15 +689,6 @@ function notConvergedStopSummary(reason: string): StopSummary {
   };
 }
 
-function cmrEscalationStopSummary(reason: string): StopSummary {
-  return {
-    reason: "spec_conflict",
-    summary: reason,
-    repairHint:
-      "resolve the CMR worker's design/specification conflict and rerun the family CMR gate",
-  };
-}
-
 export function latestFamilyCmrDispositions(
   ledger: ReadonlyArray<{
     readonly cmrDispositions?: ReadonlyArray<FindingDisposition>;
@@ -855,17 +846,24 @@ async function runCmrCoderFix(input: {
     }
 
     if (fixResult.kind === "escalated") {
-      const reason = `${reasonPrefix} escalated: ${fixResult.escalation.reason} — ${fixResult.escalation.diagnosis}`;
-      const stopSummary = coderFixFailureStopSummary({
-        pass,
-        reason,
-        familyHeadBefore: currentFamilyHeadBefore,
-        familyHeadAfter,
+      const reason = fixResult.escalation.reason;
+      const diagnosis = fixResult.escalation.diagnosis;
+      const stopSummary = decisionGateParkStopSummary({
+        summary: `${reason} — ${diagnosis}`,
+        repairHint: "answer the coder-fix worker's decision gate, then resume it in place",
+        heads: {
+          ...(familyHeadAfter !== undefined ? { actualFamilyHead: familyHeadAfter } : {}),
+          ...(currentFamilyHeadBefore !== undefined
+            ? { verifiedCmrHead: currentFamilyHeadBefore }
+            : {}),
+        },
       });
       await familyBackend.escalateFamily?.({
         reason,
+        diagnosis,
         familyHeadAfter,
         stopSummary,
+        escalationKind: "decision",
       });
       await recordDurableAbort(familyBackend, {
         phase: "final",
@@ -912,19 +910,24 @@ async function runCmrCoderFix(input: {
   }
 
   if (fixResult.output.escalate !== undefined) {
-      const reason =
-        `${reasonPrefix} escalated: ${fixResult.output.escalate.reason} — ` +
-        fixResult.output.escalate.diagnosis;
-      const stopSummary = coderFixFailureStopSummary({
-        pass,
-        reason,
-        familyHeadBefore: currentFamilyHeadBefore,
-        familyHeadAfter,
+      const reason = fixResult.output.escalate.reason;
+      const diagnosis = fixResult.output.escalate.diagnosis;
+      const stopSummary = decisionGateParkStopSummary({
+        summary: `${reason} — ${diagnosis}`,
+        repairHint: "answer the coder-fix worker's decision gate, then resume it in place",
+        heads: {
+          ...(familyHeadAfter !== undefined ? { actualFamilyHead: familyHeadAfter } : {}),
+          ...(currentFamilyHeadBefore !== undefined
+            ? { verifiedCmrHead: currentFamilyHeadBefore }
+            : {}),
+        },
       });
       await familyBackend.escalateFamily?.({
         reason,
+        diagnosis,
         familyHeadAfter,
         stopSummary,
+        escalationKind: "decision",
       });
       await recordDurableAbort(familyBackend, {
         phase: "final",
@@ -960,7 +963,7 @@ async function runCmrCoderFix(input: {
         : currentFamilyHeadBefore !== undefined &&
             familyHeadAfter !== undefined &&
             currentFamilyHeadBefore === familyHeadAfter
-          ? `${reasonPrefix}: coder-fix left family head unmoved; redispatch fix (skip re-review)`
+          ? `${reasonPrefix}: coder-fix left family head unmoved; fresh re-review will alternate before any further fix`
           : `${reasonPrefix}: coder-fix reported no commit; fresh reviewer will judge findings`,
   });
   return { result: { ok: true, ran: true }, familyHeadAfter };
@@ -2052,8 +2055,15 @@ async function runIntegratedCmrPass(input: {
     return postWorkerGitAbort;
   }
   if (cmrResult.kind === "escalated") {
-    const reason = `${cmrResult.escalation.reason} — ${cmrResult.escalation.diagnosis}`;
-    const stopSummary = cmrEscalationStopSummary(reason);
+    const reason = cmrResult.escalation.reason;
+    const diagnosis = cmrResult.escalation.diagnosis;
+    const stopSummary = decisionGateParkStopSummary({
+      summary: `${reason} — ${diagnosis}`,
+      repairHint: "answer the CMR worker's decision gate, then resume it in place",
+      heads: postWorkerFamilyHead !== undefined
+        ? { actualFamilyHead: postWorkerFamilyHead }
+        : undefined,
+    });
     await persistFinalReviewRound("accepted", async () => {
       await recordDurableAbort(familyBackend, {
         phase: "final",
@@ -2064,8 +2074,10 @@ async function runIntegratedCmrPass(input: {
       });
       await familyBackend.escalateFamily?.({
         reason,
+        diagnosis,
         familyHeadAfter: postWorkerFamilyHead,
         stopSummary,
+        escalationKind: "decision",
       });
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
@@ -2798,6 +2810,7 @@ async function runVerifyCmrWithShipTruthAttempt(
       reason,
       familyHeadAfter: postShipFamilyHead,
       stopSummary,
+      escalationKind: "failure",
     });
     await familyBackend.recordAborted?.({
       phase,
@@ -2859,6 +2872,7 @@ async function runVerifyCmrWithShipTruthAttempt(
       reason,
       familyHeadAfter: postShipFamilyHead,
       stopSummary,
+      escalationKind: "failure",
     });
     await familyBackend.recordAborted?.({
       phase,
@@ -2884,21 +2898,13 @@ async function runVerifyCmrWithShipTruthAttempt(
       familyBase,
       cmrPassedFamilyHeadAfter,
     );
-    const escalationReason =
-      `${shipResult.escalation.reason} — ${shipResult.escalation.diagnosis}`;
-    const reason = `family ship worker escalated: ${escalationReason}`;
-    const stopSummary = infraFailureStopSummary({
-      summary: reason,
-      repairHint: "answer or repair the family ship worker escalation, then rerun",
-      ship: {
-        ...(cmrPassedFamilyHeadAfter !== undefined
-          ? { latestVerifiedCmrHead: cmrPassedFamilyHeadAfter }
-          : {}),
-        ...(postShipFamilyHead !== undefined
-          ? { currentFamilyHead: postShipFamilyHead }
-          : {}),
-        shipPrState: "ship-worker-escalated",
-      },
+    const escalationReason = shipResult.escalation.reason;
+    const escalationDiagnosis = shipResult.escalation.diagnosis;
+    const durableAbortReason =
+      `family ship worker escalated: ${escalationReason} — ${escalationDiagnosis}`;
+    const stopSummary = decisionGateParkStopSummary({
+      summary: `${escalationReason} — ${escalationDiagnosis}`,
+      repairHint: "answer the family ship worker's decision gate, then resume it in place",
       heads: {
         ...(postShipFamilyHead !== undefined
           ? { actualFamilyHead: postShipFamilyHead }
@@ -2915,13 +2921,15 @@ async function runVerifyCmrWithShipTruthAttempt(
     if (familyBackend.escalateFamily !== undefined) {
       await familyBackend.escalateFamily({
         reason: escalationReason,
+        diagnosis: escalationDiagnosis,
         familyHeadAfter: postShipFamilyHead,
         stopSummary,
+        escalationKind: "decision",
       });
     }
     await recordDurableAbort(familyBackend, {
       phase,
-      reason,
+      reason: durableAbortReason,
       familyHeadAfter: postShipFamilyHead,
       stopSummary,
     });
@@ -2949,6 +2957,7 @@ async function runVerifyCmrWithShipTruthAttempt(
       familyHeadAfter: postShipFamilyHead,
       phase: "final",
       stopSummary,
+      escalationKind: "failure",
     });
     await familyBackend.recordAborted?.({
       phase,
@@ -3076,6 +3085,7 @@ async function runVerifyCmrWithShipTruthAttempt(
       reason,
       familyHeadAfter: exactPostShipFamilyHead,
       stopSummary,
+      escalationKind: "failure",
     });
     await recordDurableAbort(familyBackend, {
       phase,

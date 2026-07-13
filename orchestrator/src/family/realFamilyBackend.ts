@@ -264,7 +264,7 @@ const CMR_SOUL = "cmr";
 const SHIP_SOUL: StepSoul = "ship";
 
 /** Compatibility read model for durable family-ledger escalation rows. */
-export interface FamilyEscalationRecord extends FamilyEscalation {
+export interface FamilyEscalationRecord extends Omit<FamilyEscalation, "escalationKind"> {
   readonly escalationKind?: FamilyLedgerEntry["escalationKind"];
   readonly familyHeadAfter?: string;
 }
@@ -3174,7 +3174,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // This is the resume truth the family runner reads: no later
     // `escalation_answered` row keeps the run paused; a later answer reopens it.
     await recordFamilyEscalated(this, {
-      escalationKind: escalation.escalationKind ?? "decision",
+      escalationKind: escalation.escalationKind,
       phase: escalation.phase ?? "final",
       reason: escalation.reason,
       familyHeadAfter: escalation.familyHeadAfter,
