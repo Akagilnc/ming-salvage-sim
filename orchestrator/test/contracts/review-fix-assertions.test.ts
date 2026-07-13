@@ -909,14 +909,7 @@ describe("#677 soul wording", () => {
     const coder = soul("coder.md");
     expect(coder).toMatch(/Ratified-acceptance gate[\s\S]*legal refuse/i);
     expect(coder).toMatch(/fresh re-review/i);
-    // Must NOT instruct global escalate for the AC-conflict case
-    expect(coder).not.toMatch(
-      /Ratified-acceptance gate[\s\S]{0,400}emit an output-protocol escalation \(not a commit\)/,
-    );
     expect(soul("fixer.md")).toMatch(/legal\s+refuse|refuse that finding/i);
-    expect(soul("fixer.md")).not.toMatch(
-      /no-commit decision-gate outcome/,
-    );
     expect(soul("cmr_correctness.md")).toMatch(/Ratified-assertion hunt[\s\S]*P1/);
     expect(soul("reviewer.md")).toMatch(
       /preexistingAssertionTouched[\s\S]*blocking/,

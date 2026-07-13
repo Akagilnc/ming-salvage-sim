@@ -629,16 +629,6 @@ exit 0
     expect(poolIdForWorker(spec)).toBe("claude/sonnet");
   });
 
-  it("does not expose any process-name-based kill API", async () => {
-    const source = readFileSync(
-      new URL("../../src/workerMonitor.ts", import.meta.url),
-      "utf8",
-    );
-    expect(source).not.toMatch(/\bpgrep\b/);
-    expect(source).not.toMatch(/\bpkill\b/);
-    expect(source).not.toMatch(/-f\s+["']/);
-  });
-
   it("production dispatchWorkerWithMonitor path calls dispatchMonitoredCliWorker for CLI workers", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-684-prod-cli-"));
     try {

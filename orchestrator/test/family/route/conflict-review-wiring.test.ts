@@ -129,6 +129,7 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
     this.cmrCalls.push(req);
     return {
       converged: true,
+      findingsCount: 0,
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       findings: [],
     };

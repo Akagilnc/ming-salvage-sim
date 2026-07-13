@@ -1255,6 +1255,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       output: {
         kind: "cmr",
         converged: false,
+        findingsCount: 1,
         reason: "family CMR found a blocking finding",
         successfulLegs: [...CMR_LEGS],
         claimedFixedFindingIdentityKeys: [],

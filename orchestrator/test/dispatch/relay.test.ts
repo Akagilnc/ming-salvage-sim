@@ -45,7 +45,6 @@ import {
   buildRelayHandoffLedgerEntry,
   canRelayHandoff,
   CapacityRelayError,
-  classifyFailureForRetryOrRelay,
   countRelayHandoffsInLedger,
   decideRelayAfterIdle,
   forkQuotaWallAt683Point,
@@ -931,36 +930,6 @@ describe("#686 three handoff triggers", () => {
 });
 
 describe("#686 resource failure NEVER resets worktree (#661 boundary)", () => {
-  it("classifies quota/pool-dead/hang-with-live-pool/capacity as resource failure", () => {
-    expect(classifyFailureForRetryOrRelay({ kind: "quota_wall" })).toBe(
-      "resource",
-    );
-    expect(classifyFailureForRetryOrRelay({ kind: "pool_dead" })).toBe(
-      "resource",
-    );
-    expect(
-      classifyFailureForRetryOrRelay({ kind: "hang_with_live_pool" }),
-    ).toBe("resource");
-    expect(
-      classifyFailureForRetryOrRelay({ kind: "self_reported_blocked" }),
-    ).toBe("resource");
-    expect(classifyFailureForRetryOrRelay({ kind: "capacity" })).toBe(
-      "resource",
-    );
-  });
-
-  it("classifies process-level failed/malformed as mechanical retry", () => {
-    expect(classifyFailureForRetryOrRelay({ kind: "process_failed" })).toBe(
-      "mechanical_retry",
-    );
-    expect(classifyFailureForRetryOrRelay({ kind: "malformed" })).toBe(
-      "mechanical_retry",
-    );
-    expect(
-      classifyFailureForRetryOrRelay({ kind: "outcome_protocol_failure" }),
-    ).toBe("mechanical_retry");
-  });
-
   it("resource failure path never invokes resetBeforeRetry (negative)", async () => {
     const resetBeforeRetry = vi.fn(async () => {
       throw new Error("reset must not run on resource failure");
@@ -2129,13 +2098,7 @@ describe("#686 R2 production seams", () => {
     expect(tryBuildRelayFocusFile(undefined, entry).ok).toBe(false);
   });
 
-  it("P1-2: HangWithLivePoolError is a resource failure (never reset class)", () => {
-    expect(
-      classifyFailureForRetryOrRelay({ kind: "hang_with_live_pool" }),
-    ).toBe("resource");
-    expect(
-      classifyFailureForRetryOrRelay({ kind: "self_reported_blocked" }),
-    ).toBe("resource");
+  it("P1-2: HangWithLivePoolError preserves its actionable pool facts", () => {
     const err = new HangWithLivePoolError({
       workerPid: 42,
       poolId: "grok-build",

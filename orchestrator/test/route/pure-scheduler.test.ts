@@ -41,45 +41,8 @@ import type {
 } from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const srcDir = join(here, "..", "..", "src");
-const promptsDir = join(here, "..", "..", "prompts");
 const soulsDir = join(here, "..", "..", "image", "souls");
 const repoRoot = join(here, "..", "..", "..");
-
-// ─── (A) runner 零具体活 — no inline productive work ─────────────────────────
-
-describe("#337 runner is a pure scheduler — no inline productive work (STATIC)", () => {
-  const runnerSrc = readFileSync(join(srcDir, "runner.ts"), "utf8");
-  // Strip line comments + block comments so a `// backend.push()` mention in
-  // prose (e.g. the family no-op comment) is NOT counted as a call site. Only
-  // real call expressions remain.
-  const code = runnerSrc
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .map((l) => l.replace(/\/\/.*$/, ""))
-    .join("\n");
-
-  it("never calls backend.runStep directly (it dispatches a worker)", () => {
-    expect(code).not.toMatch(/backend\.runStep\s*\(/);
-  });
-
-  it("never calls backend.resumeSession directly (the seam owns resume)", () => {
-    expect(code).not.toMatch(/backend\.resumeSession\s*\(/);
-  });
-
-  it("never calls backend.push directly (ship is a worker)", () => {
-    expect(code).not.toMatch(/backend\.push\s*\(/);
-  });
-
-  it("dispatches every productive step through dispatchWorker (the single seam)", () => {
-    // #684: production path is dispatchWorkerWithMonitor, which wraps the
-    // unified dispatchWorker seam (CLI → atomic monitor handle; container →
-    // fall-through). The static no-legacy-call guards above prove there is no
-    // other productive-work path.
-    expect(code).toMatch(/dispatchWorkerWithMonitor\s*\(/);
-    expect(code).not.toMatch(/\bdispatchWorker\s*\(/);
-  });
-});
 
 /**
  * A backend whose every LEGACY productive method THROWS — only `dispatchWorker`

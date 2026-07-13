@@ -10,9 +10,6 @@
  * assert "run survives / three-channel routing continues".
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   adjudicatePriorClaimedFixedFindings,
@@ -25,7 +22,6 @@ import {
 } from "../../src/reviewLoopOutcome.js";
 import { runOrchestrator } from "../../src/runner.js";
 
-const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src");
 import type {
   Backend,
   DispatchContext,
@@ -222,23 +218,6 @@ describe("#877 residual read-word fate forks — survival", () => {
     expect(missing.verifiedClosedIdentityKeys).toEqual([BLOCKING_KEY]);
   });
 
-  it("R3: fix-marked echo court hard-deleted (no soft always-admits shell)", () => {
-    // Pre-#877: bare post-fixer converge without echoing fix-marked keys →
-    // contract_drift. Post-#877 / ship-pre: helper + court branch DELETED.
-    const onlineReview = readFileSync(
-      join(srcDir, "family", "onlineReviewLoop.ts"),
-      "utf8",
-    );
-    const runner = readFileSync(join(srcDir, "runner.ts"), "utf8");
-    expect(onlineReview).not.toMatch(
-      /function recheckConvergenceConfirmsFixMarkedKeys|export function recheckConvergenceConfirmsFixMarkedKeys/,
-    );
-    expect(runner).not.toMatch(/recheckConvergenceConfirmsFixMarkedKeys/);
-    expect(runner).not.toMatch(
-      /post-fixer verify converged without confirming every fix-marked finding identity key/,
-    );
-  });
-
   it("R4: enforceRunnerOwnedRecheck never returns contradiction; forces runner truth", () => {
     // Pre-#877: worker isRecheck:false on round≥2 → recheck_contradiction kill.
     // Post-#877: force-normalize is plumbing; never a fate fork.
@@ -260,9 +239,6 @@ describe("#877 residual read-word fate forks — survival", () => {
   it("R5: isValidVerifyResult no longer rejects disposition↔fixMarked set mismatch", () => {
     // Pre-#877: set-equality of fixMarked keys with fix-action dispositions was
     // a content court → malformed. Post-#877: type shape only; no semantic shell.
-    const reviewLoop = readFileSync(join(srcDir, "reviewLoopOutcome.ts"), "utf8");
-    expect(reviewLoop).not.toMatch(/verifyResultSemanticallyConsistent/);
-
     expect(
       isValidVerifyResult({
         kind: "verify",

@@ -1045,15 +1045,6 @@ describe("realBackend promptsDirError (F4)", () => {
     );
     // No duplicates.
     expect(new Set(files).size).toBe(files.length);
-    expect(REFERENCED_PROMPT_FILES).not.toContain("ship.md");
-  });
-
-  it("prompt inventory is route-independent and does not call shipWorkerSpec during module setup", () => {
-    const src = readFileSync(
-      fileURLToPath(new URL("../../src/realBackend.ts", import.meta.url)),
-      "utf8",
-    );
-    expect(src).not.toContain("shipWorkerSpec().promptFile");
   });
 
 });

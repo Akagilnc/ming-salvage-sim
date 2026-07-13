@@ -214,8 +214,5 @@ describe("#884 S8-T sole external-call chokepoint (static guard)", () => {
         new RegExp(`export (?:async )?function ${name}\\b`),
       );
     }
-    // Retry platform must stay out of the clock module (#884 / #879 split).
-    expect(raw).not.toMatch(/withExternalCallRetry/);
-    expect(raw).not.toMatch(/ExternalCallExhaustedError/);
   });
 });

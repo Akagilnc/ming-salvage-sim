@@ -452,6 +452,9 @@ export async function legacyDispatchFamilyWorker(
         kind: "cmr",
         ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
         converged: cmr.converged,
+        ...(cmr.findingsCount !== undefined
+          ? { findingsCount: cmr.findingsCount }
+          : {}),
         ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
         ...(cmr.successfulLegs !== undefined ? { successfulLegs: cmr.successfulLegs } : {}),
         ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
@@ -495,13 +498,16 @@ export async function legacyDispatchFamilyWorker(
     };
   }
 
-  // #596 skeleton: deterministic no-op stubs for explicit offline/test contexts
-  // only (#600 r5 — same gate as verifyCmr dispatchFamilyReviewWorker: a failed or
-  // unavailable primary path must NOT synthesize convergence).
-  const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
-  if (skeletonResult !== undefined) {
+  if (
+    spec.kind === "verify" ||
+    spec.kind === "fixer" ||
+    spec.kind === "cleanup" ||
+    spec.kind === "docRelease"
+  ) {
+    // Explicit offline/test injection only. Production reaches no synthetic
+    // success receipt before this gate and fails when the real seam is absent.
     if (offlineReviewLoopDispatchAdmissible(ctx)) {
-      return skeletonResult;
+      return skeletonReviewLoopWorkerResult(spec.kind)!;
     }
     return {
       kind: "failed",

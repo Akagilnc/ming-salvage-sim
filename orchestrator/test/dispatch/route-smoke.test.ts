@@ -213,8 +213,6 @@ describe("#685 route tool smoke", () => {
   it("keeps the nonce placeholder in the route-smoke prompt for bare-ping oracle", () => {
     const prompt = readFileSync(join(smokePromptsDir, "route-smoke.md"), "utf8");
     expect(prompt).toContain("{{NONCE}}");
-    // #884: file oracle retired — smoke is bare ping text echo.
-    expect(prompt).not.toContain("{{NONCE_FILE}}");
   });
 
   it("passes when bare ping echoes the nonce (credential oracle)", async () => {

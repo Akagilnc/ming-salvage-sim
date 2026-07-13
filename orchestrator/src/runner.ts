@@ -171,9 +171,7 @@ export function relayCandidateConflictSlugs(
   const replacedSlot =
     wallStep === "S3" || wallStep === "S6"
       ? "reviewer"
-      : wallStep === "S7"
-        ? "ship"
-        : "coder";
+      : "coder";
   const candidateRoute =
     replacedSlot === "coder"
       ? withCoderSlot(route, candidate.slug)
@@ -1729,8 +1727,7 @@ function activeRelaySmokeEntryKey(
   const slot =
     step === "S2" ? "coder" :
     step === "S3" || step === "S6" ? "reviewer" :
-    step === "S5" ? "coderFix" :
-    step === "S7" ? "ship" : undefined;
+    step === "S5" ? "coderFix" : undefined;
   return slot === undefined ? undefined : `${slot}:${route.slots[slot]}`;
 }
 
@@ -2020,8 +2017,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const slots = { ...modelRoute.slots };
     if (wallStep === "S3" || wallStep === "S6") {
       slots.reviewer = baton.slug;
-    } else if (wallStep === "S7") {
-      slots.ship = baton.slug;
     } else {
       // S2/S5/default — coder (+ coderFix) slot; sticky for resource relay only.
       modelRoute = withCoderSlot(modelRoute, baton.slug);
@@ -2117,9 +2112,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const slots = modelRoute.slots;
     return wallStep === "S3" || wallStep === "S6"
       ? slots.reviewer
-      : wallStep === "S7"
-        ? slots.ship
-        : slots.coder;
+      : slots.coder;
   };
 
   const modelIdForWallStep = (wallStep: StepId): string => {
@@ -3333,12 +3326,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //
               //  - CODER (S2/S5): only process failure enters this retry. Completed
               //    receipt content never changes routing.
-              //  - REVIEWER (S3/S6): keeps its OWN bounded semantic loop below
-              //    (MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS), which owns invalid/malformed
-              //    RESULTS and structured-output THROWS — the generic layer defers those
-              //    to it (no double-count). The generic layer DOES retry a NON-structured
-              //    crash (connection drop / container start), recovering a transient one;
-              //    a persistent crash is re-thrown so the reviewer loop surfaces it.
+              //  - REVIEWER (S3/S6): completed receipt cargo goes to the fixer;
+              //    only a non-structured process crash enters this retry layer.
               //
               // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
               // current scene — do NOT pass cleanResidue into withMechanicalRetry.
@@ -3346,17 +3335,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // HEADs is legal, destroying scenes is not. (resetBeforeRetry remains an
               // optional hook for non-runner callers; this site intentionally omits it.)
               //
-              // Reviewer: no format court, no special callerOwns. Process crash
-              // still uses generic mechanical retry; completed results pass through
-              // without a runner-owned content court (owner 2026-07-13).
+              // Structured-output throws are completed receipt failures, so the
+              // reviewer path catches them and forwards raw artifacts to the fixer.
               const retryOpts: MechanicalRetryOptions =
                 expectedKind === "reviewer"
                   ? {
                       callerOwns: (outcome) =>
-                        "result" in outcome
-                          ? outcome.result.kind === "malformed" ||
-                            outcome.result.kind === "outcome_protocol_failure"
-                          : isStructuredOutputError(outcome.error),
+                        "error" in outcome && isStructuredOutputError(outcome.error),
                       rethrowOnExhaustion: true,
                     }
                   : {};
@@ -3410,26 +3395,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   // deliberately does not delay spawn / first output (#793).
                   await outcome.telemetryEnvironmentStamp;
                   const dispatched = outcome.result;
-                  if (dispatched.kind !== "completed") {
-                    if (
-                      expectedKind === "coder" &&
-                      (dispatched.kind === "malformed" ||
-                        dispatched.kind === "outcome_protocol_failure")
-                    ) {
-                      return {
-                        kind: "completed" as const,
-                        output: {
-                          kind: "coder" as const,
-                          committed: false,
-                          commitsAdded: 0,
-                        },
-                        ...(dispatched.sessionId !== undefined
-                          ? { sessionId: dispatched.sessionId }
-                          : {}),
-                      };
-                    }
-                    return dispatched;
-                  }
+                  if (dispatched.kind !== "completed") return dispatched;
                   const dispatchedEscalation = escalateOf(dispatched.output);
                   if (dispatchedEscalation !== undefined) {
                     return dispatched;
@@ -4003,10 +3969,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     clearCompletedRelayState(step, output);
 
     // The runner — not the agent — decides the next step.
-    // The runner owns the review/fix loop, but termination is still not a blind
-    // "count rounds then give up" rule. Only malformed reviewer outputs have a
-    // bounded rerun budget; substantive convergence is driven by fresh reviewer
-    // findings and explicit escalation.
+    // The fixed review/fix topology advances from the reviewer's self-reported
+    // findings count and explicit escalation; receipt cargo is not a fate input.
     const decision = route({
       from: step,
       output: lastOutput,

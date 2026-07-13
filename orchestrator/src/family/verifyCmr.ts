@@ -107,7 +107,6 @@ import {
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import {
-  type DispatchOutcome,
   MAX_DISPATCH_ATTEMPTS,
   withMechanicalRetry,
 } from "../dispatchRetry.js";
@@ -540,14 +539,6 @@ function familyVerifyFailureStopSummary(reason: string): StopSummary {
   });
 }
 
-function notConvergedStopSummary(reason: string): StopSummary {
-  return {
-    reason: "contract_drift",
-    summary: `integrated CMR did not converge: ${reason}`,
-    repairHint: "continue the CMR fix loop until the pass converges",
-  };
-}
-
 export function latestFamilyCmrDispositions(
   ledger: ReadonlyArray<{
     readonly cmrDispositions?: ReadonlyArray<FindingDisposition>;
@@ -671,12 +662,6 @@ async function runCmrCoderFix(input: {
         blockingFindings,
         ...(rawReviewerArtifacts !== undefined ? { rawReviewerArtifacts } : {}),
         ...(findingFamilies !== undefined ? { findingFamilies } : {}),
-      },
-      {
-        extraCallerOwns: (outcome) =>
-          "result" in outcome &&
-          (outcome.result.kind === "malformed" ||
-            outcome.result.kind === "outcome_protocol_failure"),
       },
     );
     // #878: observation failure must surface as unknown, never as a false
@@ -839,21 +824,6 @@ async function readPostCmrTrackedStatus(
   );
 }
 
-/** Best-effort tracked status for online-review verify guard (skip when unreadable). */
-async function readOnlineVerifyTrackedStatus(
-  familyBackend: FamilyBackend,
-  familyBase: string,
-): Promise<readonly string[] | undefined> {
-  if (familyBackend.readFamilyTrackedStatus === undefined) {
-    return undefined;
-  }
-  try {
-    return await readPostCmrTrackedStatus(familyBackend, familyBase);
-  } catch {
-    return undefined;
-  }
-}
-
 async function readPostCmrCurrentHead(
   familyBackend: FamilyBackend,
 ): Promise<string | undefined> {
@@ -868,18 +838,16 @@ async function readPostCmrCurrentHead(
  * Head position + tracked residue are **routing / advisory plumbing**, never a
  * capital crime. Mismatches are ledger-visible so operators can see them, but
  * the pass continues on the three channels (exit / findings count / decision
- * gate). Only a broken reader (true infra) still durable-aborts.
- *
- * Returns an abort outcome only for infra read failures; otherwise `undefined`
- * so the caller keeps the normal finding/fix/re-review path.
+ * gate). Reader and ledger failures are also telemetry-only: git state never
+ * decides whether a completed reviewer receipt is accepted.
  */
-async function guardPostCmrReviewerGitState(input: {
+async function observePostCmrReviewerGitState(input: {
   readonly familyBackend: FamilyBackend;
   readonly familyBase: string;
   readonly pass: IntegratedCmrPass;
   readonly expectedFamilyHead?: string;
   readonly familyHeadAfter?: string;
-}): Promise<IntegratedCmrPassOutcome | undefined> {
+}): Promise<void> {
   const {
     familyBackend,
     familyBase,
@@ -887,24 +855,26 @@ async function guardPostCmrReviewerGitState(input: {
     expectedFamilyHead,
     familyHeadAfter,
   } = input;
+  const recordObservation = async (reason: string): Promise<void> => {
+    try {
+      await familyBackend.appendFamilyLedger({
+        status: "worker_dispatched",
+        event: "worker_dispatched",
+        workerStep: `cmr:${pass}`,
+        reason,
+      });
+    } catch {
+      // Advisory git observation must never alter reviewer fate.
+    }
+  };
   let currentHead: string | undefined;
   try {
     currentHead = await readPostCmrCurrentHead(familyBackend);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    const reason = `integrated CMR ${pass} current HEAD read failed: ${detail}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter,
-      stopSummary: infraFailureStopSummary({
-        summary: reason,
-        repairHint:
-          "repair the family current-HEAD reader before trusting the CMR reviewer ref guard",
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    await recordObservation(
+      `integrated CMR ${pass} current HEAD telemetry unavailable: ${detail}`,
+    );
   }
   if (
     currentHead !== undefined &&
@@ -912,33 +882,20 @@ async function guardPostCmrReviewerGitState(input: {
     currentHead !== familyHeadAfter
   ) {
     // #876: checkout ≠ family base is advisory routing telemetry, not conviction.
-    await familyBackend.appendFamilyLedger({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      workerStep: `cmr:${pass}`,
-      reason:
-        `integrated CMR ${pass} reviewer checked out a different HEAD: ` +
+    await recordObservation(
+      `integrated CMR ${pass} reviewer checked out a different HEAD: ` +
         `family base ${familyHeadAfter}, current HEAD ${currentHead}`,
-    });
+    );
   }
   let trackedStatus: readonly string[];
   try {
     trackedStatus = await readPostCmrTrackedStatus(familyBackend, familyBase);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    const reason = `integrated CMR ${pass} tracked status read failed: ${detail}`;
-    await recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason,
-      familyHeadAfter,
-      stopSummary: infraFailureStopSummary({
-        summary: reason,
-        repairHint:
-          "repair the family tracked-status reader before trusting the CMR reviewer cleanliness gate",
-      }),
-    });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    trackedStatus = [];
+    await recordObservation(
+      `integrated CMR ${pass} tracked-status telemetry unavailable: ${detail}`,
+    );
   }
   if (
     expectedFamilyHead !== undefined &&
@@ -947,29 +904,19 @@ async function guardPostCmrReviewerGitState(input: {
   ) {
     // #876: family-base HEAD advancement is routing plumbing (diff scope for the
     // next pass / coder-fix), never a contract_drift death.
-    await familyBackend.appendFamilyLedger({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      workerStep: `cmr:${pass}`,
-      reason:
-        `integrated CMR ${pass} reviewer moved family HEAD: ` +
+    await recordObservation(
+      `integrated CMR ${pass} reviewer moved family HEAD: ` +
         `${expectedFamilyHead} -> ${familyHeadAfter}`,
-    });
+    );
   }
   if (trackedStatus.length > 0) {
     const reason =
       `integrated CMR ${pass} reviewer left tracked changes: ` +
       trackedStatus.join("; ");
-    await familyBackend.appendFamilyLedger({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      workerStep: `cmr:${pass}`,
-      reason,
-    });
+    await recordObservation(reason);
     // #853: reviewer edits are ordinary diff content. Preserve them for the
     // current round's normal finding/fix/re-review path; never abort or discard.
   }
-  return undefined;
 }
 
 async function readRequiredFamilyHead(
@@ -1057,8 +1004,6 @@ async function dispatchFamilyReviewWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
   opts?: {
-    readonly afterEachAttempt?: () => Promise<void>;
-    readonly extraCallerOwns?: (outcome: DispatchOutcome) => boolean;
     readonly onMonitorHandle?: (handle: WorkerMonitorHandle) => void;
   },
 ): Promise<WorkerResult> {
@@ -1221,58 +1166,16 @@ export async function runFamilyOnlineReviewLoop(input: {
       return snapshot;
     },
     dispatchVerify: async (landing, round) => {
-      const headBefore = await readRequiredFamilyHead(
-        input.familyBackend,
-        input.familyBase,
-      );
-      const trackedBefore = await readOnlineVerifyTrackedStatus(
-        input.familyBackend,
-        input.familyBase,
-      );
-      const assertFamilyVerifyReadOnlyContract = async (): Promise<void> => {
-        const headAfter = await readRequiredFamilyHead(
-          input.familyBackend,
-          input.familyBase,
-        );
-        const trackedAfter = await readOnlineVerifyTrackedStatus(
-          input.familyBackend,
-          input.familyBase,
-        );
-        // #876: HEAD movement is routing plumbing (diff scope for the next
-        // fixer/verify round), never a contract_drift capital crime.
-        if (
-          headBefore !== undefined &&
-          headAfter !== undefined &&
-          headAfter !== headBefore
-        ) {
-          await input.familyBackend.appendFamilyLedger({
-            status: "worker_dispatched",
-            event: "worker_dispatched",
-            workerStep: `online-verify:${round}`,
-            reason:
-              `online review verify worker moved HEAD: ${headBefore} -> ${headAfter}`,
-          });
-        }
-        if (
-          trackedBefore !== undefined &&
-          trackedAfter !== undefined &&
-          trackedAfter.join("\n") !== trackedBefore.join("\n")
-        ) {
-          await input.familyBackend.appendFamilyLedger({
-            status: "worker_dispatched",
-            event: "worker_dispatched",
-            workerStep: `online-verify:${round}`,
-            reason: `online review verify worker left tracked changes: ${trackedAfter.join("; ")}`,
-          });
-        }
-      };
+      let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         verifyWorkerSpec(input.resolvedRoute),
         { ...baseCtx, onlineReviewRound: round },
         landing,
         {
-          afterEachAttempt: assertFamilyVerifyReadOnlyContract,
+          onMonitorHandle: (handle) => {
+            reviewerMonitorHandle = handle;
+          },
         },
       );
       // Cursor R11 medium + self-check: escalated must park with decision_gate_park
@@ -1298,9 +1201,21 @@ export async function runFamilyOnlineReviewLoop(input: {
           stopSummary,
         });
       }
-      if (result.kind !== "completed" || result.output.kind !== "verify") {
+      if (
+        result.kind === "malformed" ||
+        result.kind === "outcome_protocol_failure"
+      ) {
+        return {
+          kind: "rawReviewerArtifacts",
+          artifacts: reviewerArtifactPointers(
+            reviewerMonitorHandle,
+            result.sessionId,
+          ),
+        };
+      }
+      if (result.kind !== "completed") {
         const detail =
-          result.kind === "failed" || result.kind === "malformed"
+          result.kind === "failed"
             ? `: ${result.reason}`
             : "";
         throw new OnlineReviewLoopTerminal({
@@ -1313,6 +1228,15 @@ export async function runFamilyOnlineReviewLoop(input: {
               "inspect the verify worker envelope and re-feed the family online review loop",
           }),
         });
+      }
+      if (result.output.kind !== "verify") {
+        return {
+          kind: "rawReviewerArtifacts",
+          artifacts: reviewerArtifactPointers(
+            reviewerMonitorHandle,
+            result.sessionId,
+          ),
+        };
       }
       return result.output;
     },
@@ -1348,9 +1272,15 @@ export async function runFamilyOnlineReviewLoop(input: {
                 }),
         });
       }
-      if (result.kind !== "completed" || result.output.kind !== "fixer") {
+      if (
+        result.kind === "malformed" ||
+        result.kind === "outcome_protocol_failure"
+      ) {
+        return undefined;
+      }
+      if (result.kind !== "completed") {
         const detail =
-          result.kind === "failed" || result.kind === "malformed"
+          result.kind === "failed"
             ? `: ${result.reason}`
             : "";
         throw new OnlineReviewLoopTerminal({
@@ -1364,7 +1294,7 @@ export async function runFamilyOnlineReviewLoop(input: {
           }),
         });
       }
-      return result.output;
+      return result.output.kind === "fixer" ? result.output : undefined;
     },
     // #740: family S12 crash-retry continues as-is (no scoped cleanResidue /
     // resetBeforeRetry).
@@ -1485,8 +1415,6 @@ async function dispatchOrAbort(
   ctx: Parameters<typeof dispatchFamilyWorker>[2],
   landing?: Parameters<typeof dispatchFamilyWorker>[3],
   opts?: {
-    readonly afterEachAttempt?: () => Promise<void>;
-    readonly extraCallerOwns?: (outcome: DispatchOutcome) => boolean;
     readonly onMonitorHandle?: (handle: WorkerMonitorHandle) => void;
   },
 ): Promise<Awaited<ReturnType<typeof dispatchFamilyWorker>>> {
@@ -1530,18 +1458,10 @@ async function dispatchOrAbort(
         } catch (err) {
           dispatchError = err;
         }
-        // Always assert (online R10 Codex P1):
-        // mutate-then-throw → contract_drift, not retry on dirty worktree.
-        await opts?.afterEachAttempt?.();
         if (dispatchError !== undefined) throw dispatchError;
         return workerResult!;
       },
       {
-        callerOwns: (o) =>
-          opts?.extraCallerOwns?.(o) === true ||
-          ("result" in o &&
-            (o.result.kind === "malformed" ||
-              o.result.kind === "outcome_protocol_failure")),
         onFailure: async (outcome, attempt) => {
           const reason =
             "result" in outcome
@@ -1794,46 +1714,20 @@ async function runIntegratedCmrPass(input: {
       onMonitorHandle: (handle) => {
         reviewerMonitorHandle = handle;
       },
-      extraCallerOwns: (outcome) =>
-        "result" in outcome &&
-        (outcome.result.kind === "malformed" ||
-          outcome.result.kind === "outcome_protocol_failure"),
     });
     reviewRoundResult = cmrResult;
-    if (cmrResult.kind === "malformed") {
-      const postReviewFamilyHead = await readPostCmrFamilyHead(
-        familyBackend,
-        familyBase,
-        resolvedFamilyHeadAfter,
-      );
-      const postReviewGitAbort = await guardPostCmrReviewerGitState({
-        familyBackend,
-        familyBase,
-        pass,
-        expectedFamilyHead: resolvedFamilyHeadAfter,
-        familyHeadAfter: postReviewFamilyHead,
-      });
-      if (postReviewGitAbort !== undefined) {
-        finalReviewRoundDisposition = "rejected";
-        return postReviewGitAbort;
-      }
-    }
   const postWorkerFamilyHead = await readPostCmrFamilyHead(
     familyBackend,
     familyBase,
     resolvedFamilyHeadAfter,
   );
-  const postWorkerGitAbort = await guardPostCmrReviewerGitState({
+  await observePostCmrReviewerGitState({
     familyBackend,
     familyBase,
     pass,
     expectedFamilyHead: resolvedFamilyHeadAfter,
     familyHeadAfter: postWorkerFamilyHead,
   });
-  if (postWorkerGitAbort !== undefined) {
-    finalReviewRoundDisposition = "rejected";
-    return postWorkerGitAbort;
-  }
   const routeRawReviewerArtifactsToFix = async (
     reason: string,
     sessionId: string | undefined,
@@ -1941,15 +1835,12 @@ async function runIntegratedCmrPass(input: {
     });
     return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
   }
-  // ADR 0131: the reviewer declaration is authoritative; the runner never
-  // reconciles it against structured findings. Missing sentinel falls back to
-  // the structured row count as the declaration. Declaration accuracy belongs
-  // to coder-fix, which receives the findings or raw reviewer artifacts.
-  const openFindingsCount =
-    cmrResult.output.findingsCount ?? cmrResult.output.findings?.length;
+  // ADR 0131: only the reviewer declaration routes. Structured findings are
+  // cargo and cannot supply a missing count.
+  const openFindingsCount = cmrResult.output.findingsCount;
   if (openFindingsCount === undefined) {
     return await routeRawReviewerArtifactsToFix(
-      `integrated cmr ${pass} reviewer omitted both count channels; raw artifacts require fixer inspection`,
+      `integrated cmr ${pass} reviewer omitted its declared count; raw artifacts require fixer inspection`,
       cmrResult.sessionId,
     );
   }

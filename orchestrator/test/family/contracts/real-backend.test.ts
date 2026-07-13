@@ -50,6 +50,7 @@ import {
 import { FIX_FOCUS_LANDING_FILE } from "../../../src/findingFamilies.js";
 import { familyEscalationState } from "../../../src/family/ledger.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
+import { cleanupWorkerSpec } from "../../../src/dispatchWorker.js";
 import {
   SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_SKILLS_DIR,
@@ -158,6 +159,19 @@ describe("RealFamilyBackend live officer effort", () => {
       .agentForLiveSpec(liveSpec({ model: "grok-4.5" }), "grok-build")
       .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
     expect(command).toContain("grok --prompt-file /dev/stdin");
+  });
+});
+
+describe("RealFamilyBackend production review-loop receipts", () => {
+  it("does not synthesize cleanup success without a cleanup landing", async () => {
+    const backend = new RealFamilyBackend(opts(trackRepo()));
+    const result = await backend.dispatchWorker(cleanupWorkerSpec(), {
+      familyBase: "family/293-base",
+    });
+    expect(result).toMatchObject({
+      kind: "failed",
+      reason: expect.stringContaining("cleanupDispatch landing"),
+    });
   });
 });
 
@@ -726,7 +740,6 @@ describe("family CMR prompt output contract", () => {
       expect(prompt).toContain(
         'same `{"identityKey":"<key>","status":"...","reason":"<short>"}` contract',
       );
-      expect(prompt).not.toContain('"disposition":"verified-closed"');
     }
   });
 });
@@ -1235,11 +1248,11 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out).toEqual({ kind: "verify", converged: false });
   });
 
-  it("RAW malformed (no tag / bad json / bad type) fails closed on family parseVerifyOutcome", async () => {
+  it("unreadable verify bytes remain cargo instead of becoming a process failure", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    expect(mod.parseVerifyOutcome("no tag here").kind).toBe("malformed");
-    expect(mod.parseVerifyOutcome("<verify>notjson</verify>").kind).toBe("malformed");
-    expect(mod.parseVerifyOutcome(`<verify>{"converged": 1}</verify>`).kind).toBe("malformed");
+    expect(mod.parseVerifyOutcome("no tag here").kind).toBe("cargo");
+    expect(mod.parseVerifyOutcome("<verify>notjson</verify>").kind).toBe("cargo");
+    expect(mod.parseVerifyOutcome(`<verify>{"converged": 1}</verify>`).kind).toBe("cargo");
   });
 
   it("feeds RAW valid fixer through real parseFixerOutcome (family-side kind)", async () => {
@@ -1251,29 +1264,27 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
   });
 
-  it("treats a non-empty malformed review-loop sidecar as a protocol failure", async () => {
+  it("falls back to readable stdout buttons when the sidecar cargo is unreadable", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const dir = trackTempDir("review-loop-outcome-fallback-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
     const sha = "a".repeat(40);
 
-    expect(mod.parseVerifyOutcome('<verify>{"converged": true}</verify>', outcomePath)).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringContaining("sidecar protocol failure"),
-    });
+    expect(mod.parseVerifyOutcome('<verify>{"converged": true}</verify>', outcomePath))
+      .toEqual({ kind: "verify", converged: true });
     expect(
       mod.parseFixerOutcome(
         `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
         outcomePath,
       ),
-    ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
+    ).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
     expect(
       mod.parseCleanupOutcome('<cleanup>{"terminal": true, "ok": true}</cleanup>', outcomePath),
-    ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
+    ).toEqual({ kind: "cleanup", terminal: true, ok: true });
     expect(
       mod.parseDocReleaseOutcome('<docRelease>{"released": true}</docRelease>', outcomePath),
-    ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
+    ).toEqual({ kind: "docRelease", released: true });
   });
 
   it("rings a review-loop stdout decision bell before parseable sidecar cargo", async () => {
@@ -1291,10 +1302,10 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     });
   });
 
-  it("pin r39: committed:true without fixCommitSha is malformed on family parseFixerOutcome", async () => {
+  it("keeps fixer completion even when fixCommitSha cargo is absent", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);
-    expect(out.kind).toBe("malformed");
+    expect(out).toEqual({ kind: "fixer", committed: true });
   });
 
   it("RAW extra keys on verify remain cargo", async () => {
@@ -1309,10 +1320,26 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out.kind).toBe("fixer");
   });
 
-  it("RAW extra keys on cleanup is malformed (strict)", async () => {
+  it("RAW extra keys on cleanup remain cargo", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod.parseCleanupOutcome(`<cleanup>{"ok": true, "unexpected": true}</cleanup>`);
-    expect(out.kind).toBe("malformed");
+    const out = mod.parseCleanupOutcome(
+      `<cleanup>{"terminal": true, "ok": true, "unexpected": true}</cleanup>`,
+    );
+    expect(out).toEqual({ kind: "cleanup", terminal: true, ok: true });
+  });
+
+  it("drops malformed optional cargo without discarding worker buttons", async () => {
+    const mod = await import("../../../src/family/realFamilyBackend.js");
+    expect(
+      mod.parseVerifyOutcome(
+        `<verify>{"converged": true, "threadReplies": "chatty"}</verify>`,
+      ),
+    ).toEqual({ kind: "verify", converged: true });
+    expect(
+      mod.parseCleanupOutcome(
+        `<cleanup>{"terminal": true, "ok": true, "issuesClosed": ["chatty"]}</cleanup>`,
+      ),
+    ).toEqual({ kind: "cleanup", terminal: true, ok: true });
   });
 
   it("RAW extra keys on docRelease remain cargo", async () => {
@@ -1519,7 +1546,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("treats a non-empty malformed cmr sidecar as a protocol failure", () => {
+  it("falls back to CMR stdout cargo when the sidecar is unreadable", () => {
     const dir = trackTempDir("cmr-outcome-bad-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1532,10 +1559,8 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
     });
 
-    expect(outcome).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringContaining("sidecar protocol failure"),
-    });
+    expect(outcome).toMatchObject({ kind: "verdict", converged: true });
+    expect(outcome).not.toHaveProperty("findingsCount");
   });
 
   it("falls back to stdout when the cmr outcome sidecar is blank", () => {
@@ -1581,7 +1606,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("does not let stdout bypass a malformed cmr sidecar without a completion signal", () => {
+  it("keeps completion telemetry out of unreadable-sidecar cargo fallback", () => {
     const dir = trackTempDir("cmr-outcome-bad-unsignaled-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -1594,10 +1619,8 @@ describe("parseCmrOutcome accepted suppression contract", () => {
       cmrReviewLegs: [{ slug: "gpt-5.6-sol" }],
     });
 
-    expect(outcome).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringContaining("sidecar protocol failure"),
-    });
+    expect(outcome).toMatchObject({ kind: "verdict", converged: true });
+    expect(outcome).not.toHaveProperty("findingsCount");
   });
 
   it("derives redundant accepted_suppressed finding fields from the finding payload", () => {
@@ -1831,7 +1854,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     }
   });
 
-  it("rejects converged CMR verdicts that omit evidence paths", () => {
+  it("drops missing evidence-path cargo without rejecting a converged field", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: true,
       successfulLegs: ["gpt-5.6-sol"],
@@ -1844,14 +1867,13 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     })}</cmr>\nCMR_STEP_COMPLETE`);
 
     expect(outcome).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringContaining(
-        "cmr worker <cmr> tag matched no valid shape",
-      ),
+      kind: "verdict",
+      converged: true,
+      evidencePaths: [],
     });
   });
 
-  it("rejects not-converged CMR verdicts that omit evidence paths", () => {
+  it("keeps not-converged cargo when evidence paths are absent", () => {
     const outcome = parseCmrOutcome(`<cmr>${JSON.stringify({
       converged: false,
       reason: "blocking findings remain",
@@ -1875,10 +1897,10 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     })}</cmr>\nCMR_STEP_COMPLETE`);
 
     expect(outcome).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringContaining(
-        "cmr worker <cmr> tag matched no valid shape",
-      ),
+      kind: "verdict",
+      converged: false,
+      reason: "blocking findings remain",
+      evidencePaths: [],
     });
   });
 

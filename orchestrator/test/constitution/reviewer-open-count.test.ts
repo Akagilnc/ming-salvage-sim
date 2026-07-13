@@ -40,12 +40,13 @@ describe("ADR 0131 S1b reviewer self-declared count", () => {
     expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 0 });
   });
 
-  it("falls back to structured row count only when the sentinel is absent", () => {
+  it("keeps the count unknown when the sentinel is absent", () => {
     const outcome = cmrOutcomeFromResult({
       stdout: "review complete\n",
       outcomePath: sidecar({ ...base, findings: [finding, { ...finding, claim_quote: "gap 2" }] }),
     });
-    expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 2 });
+    expect(outcome).toMatchObject({ kind: "verdict" });
+    expect(outcome).not.toHaveProperty("findingsCount");
   });
 
   it("never fabricates zero when both the sentinel and structured rows are absent", () => {
@@ -55,6 +56,15 @@ describe("ADR 0131 S1b reviewer self-declared count", () => {
     });
     expect(outcome).toMatchObject({ kind: "verdict", converged: false });
     expect(outcome).not.toHaveProperty("findingsCount");
+  });
+
+  it("does not synthesize converged from a declared count when cargo parsing fails", () => {
+    const outcome = cmrOutcomeFromResult({
+      stdout: "findings = 2\n",
+      outcomePath: sidecar({ chatty: "cargo without verdict fields" }),
+    });
+    expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 2 });
+    expect(outcome).not.toHaveProperty("converged");
   });
 
   it("rings a CMR stdout decision bell before parseable sidecar cargo", () => {

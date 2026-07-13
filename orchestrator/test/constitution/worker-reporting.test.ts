@@ -1,15 +1,12 @@
 /**
  * #825 — closing regression sweep for ADR 0062 / #820.
  *
- * Completion sentinels are useful observability stamps, but an otherwise
- * completed worker must never be told they are a routing requirement. Every
- * sentinel tokens appear only as the canonical optional-telemetry sentence;
- * any other mention fails the sweep — no prose can re-impose an obligation
- * without failing.
+ * Completion sentinels are optional telemetry. Routing behavior is exercised
+ * below through worker results and durable ledgers, not source-text bans.
  */
 
-import { globSync, readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
@@ -39,65 +36,13 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 
-const CONTRACT_FILES = globSync(
-  ["prompts/*.md", "image/souls/*.md"],
-  { cwd: process.cwd(), withFileTypes: true },
-)
-  .filter((entry) => entry.isFile())
-  .map((entry) => relative(process.cwd(), resolve(entry.parentPath, entry.name)))
-  .sort();
-
-const COMPLETION_SENTINEL = "[A-Z][A-Z0-9_]*_STEP_COMPLETE";
-const CANONICAL_OPTIONAL_TELEMETRY_SENTENCES = [
-  "For optional telemetry, you may print CODER_STEP_COMPLETE on its own final line.",
-  "For optional telemetry, you may print FIXER_STEP_COMPLETE on its own final line.",
-  "For optional telemetry, you may print REVIEWER_STEP_COMPLETE on its own final line.",
-  "For optional telemetry, you may print CMR_STEP_COMPLETE on its own final line.",
-  "For optional telemetry, you may print VERIFY_STEP_COMPLETE on its own final line.",
-  "For optional telemetry, you may print SHIP_STEP_COMPLETE on its own final line.",
-  "For optional telemetry, you may print MERGER_STEP_COMPLETE on its own final line.",
-  "For optional telemetry, you may print DOCRELEASE_STEP_COMPLETE on its own final line.",
-] as const;
-
-function hasUnframedCompletionSentinel(authoredText: string): boolean {
-  const sentinel = new RegExp(`\\b${COMPLETION_SENTINEL}\\b`, "g");
-  let remainder = authoredText.replace(/\s+/g, " ");
-  for (const sentence of CANONICAL_OPTIONAL_TELEMETRY_SENTENCES) {
-    remainder = remainder.replaceAll(sentence, "");
-  }
-  return sentinel.test(remainder);
-}
-
-describe("#825 ADR 0062 completion-sentinel contract sweep", () => {
-  it("fails loudly when the contract glob resolves fewer than the known prompt set", () => {
-    expect(CONTRACT_FILES.length).toBeGreaterThanOrEqual(20);
-  });
-
-  it.each([
-    "append CODER_STEP_COMPLETE to your response",
-    "Finish by writing CODER_STEP_COMPLETE.",
-    "Your response has to end with the line CODER_STEP_COMPLETE.",
-    "Add CODER_STEP_COMPLETE to the bottom of your reply.",
-    "Close the message with CODER_STEP_COMPLETE.",
-    "The final line is CODER_STEP_COMPLETE.",
-    "You MUST append CODER_STEP_COMPLETE. This is not optional.",
-    "For optional telemetry, you may print CODER_STEP_COMPLETE on its own final line. You MUST also append CODER_STEP_COMPLETE to every response.",
-  ])("rejects unframed completion-sentinel instruction: %s", (instruction) => {
-    expect(hasUnframedCompletionSentinel(instruction)).toBe(true);
-  });
-
-  it.each(CONTRACT_FILES)("treats completion sentinels as optional telemetry in %s", (file) => {
-    const body = readFileSync(resolve(process.cwd(), file), "utf8");
-    expect(hasUnframedCompletionSentinel(body)).toBe(false);
-  });
-
+describe("#825 ADR 0062 worker reporting", () => {
   it.each([
     "image/souls/fixer.md",
     "prompts/fixer.md",
   ])("routes fixer self-audit evidence outside the strict outcome envelope in %s", (file) => {
     const body = readFileSync(resolve(process.cwd(), file), "utf8");
     expect(body).toContain("Record the self-audit checklist in the fixing commit message body");
-    expect(body).not.toContain("Close your summary with a self-audit checklist");
   });
 });
 

@@ -320,9 +320,8 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     );
   });
 
-  it("#875 Opus: open-count is array-derived — lying findingsCount is ignored at runner", async () => {
-    // Downstream never reconciles independent findingsCount vs array (Opus).
-    // findings=[one blocker] ⇒ openCount=1 ⇒ coder-fix, even if findingsCount lies.
+  it("#875 Opus: the reviewer-declared count routes without array reconciliation", async () => {
+    // findingsCount=99 is the route signal; the single cargo row is not recounted.
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: false,

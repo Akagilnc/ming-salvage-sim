@@ -118,6 +118,7 @@ class AbortingFamilyBackend implements FamilyBackend {
     const result =
       this.script.cmr?.(req) ?? {
         converged: true,
+        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       };
     return result.findings === undefined ? { ...result, findings: [] } : result;
@@ -217,7 +218,7 @@ describe("Wiring 2 — a red wave verify writes a PHASE-LEVEL durable aborted en
   it("a clean all-green run writes NO aborted entry", async () => {
     const backend = new AbortingFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     await runFamily({
       epic: epicWith(294),

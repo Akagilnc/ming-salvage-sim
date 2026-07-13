@@ -205,25 +205,23 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
     if (o.kind === "verdict") expect(o.converged).toBe(true);
   });
 
-  it("no <cmr> tag ⇒ malformed (never silently a pass)", () => {
+  it("no <cmr> tag ⇒ sparse cargo with no self-declared count", () => {
     const o = parseCmrOutcome("I reviewed everything, looks fine.");
-    expect(o.kind).toBe("malformed");
+    expect(o).toMatchObject({ kind: "verdict", successfulLegs: [], evidencePaths: [] });
+    expect(o).not.toHaveProperty("converged");
   });
 
-  it("a non-JSON / non-object <cmr> body ⇒ malformed (never a pass)", () => {
-    expect(parseCmrOutcome("<cmr>not json</cmr>").kind).toBe("malformed");
-    expect(parseCmrOutcome("<cmr>null</cmr>").kind).toBe("malformed");
-    expect(parseCmrOutcome("<cmr>true</cmr>").kind).toBe("malformed");
+  it("a non-JSON / non-object <cmr> body only reduces cargo richness", () => {
+    expect(parseCmrOutcome("<cmr>not json</cmr>").kind).toBe("verdict");
+    expect(parseCmrOutcome("<cmr>null</cmr>").kind).toBe("verdict");
+    expect(parseCmrOutcome("<cmr>true</cmr>").kind).toBe("verdict");
   });
 
-  it("a <cmr> object with no boolean converged and no escalate ⇒ malformed", () => {
-    expect(parseCmrOutcome('<cmr>{"foo": 1}</cmr>').kind).toBe("malformed");
+  it("a <cmr> object with no boolean converged remains sparse cargo", () => {
+    expect(parseCmrOutcome('<cmr>{"foo": 1}</cmr>').kind).toBe("verdict");
   });
 
-  // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
-  // Integrated CMR pass prompts: "must match one of the shapes above exactly". A mixed /
-  // extra-key / garbage payload must NOT coerce into a pass — fail-CLOSED.
-  describe("Finding A — strict shape (no extra/mixed keys, non-empty verdict fields)", () => {
+  describe("ADR 0131 — decision bell independent; remaining fields are cargo", () => {
     it("a mixed converged+escalate payload rings the decision bell first", () => {
       // A success key carried ALONGSIDE an escalate verdict is off-contract — it
       // must NOT slip through to a converged pass.
@@ -376,7 +374,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       expect(o.kind).toBe("verdict");
     });
 
-    it("converged:true without closure arrays ⇒ malformed (absence is not closure)", () => {
+    it("converged:true without closure arrays remains readable cargo", () => {
       expect(
         parseCmrOutcome(
           `<cmr>${JSON.stringify({
@@ -384,14 +382,14 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
             successfulLegs: DEFAULT_CMR_LEGS,
           })}</cmr>`,
         ).kind,
-      ).toBe("malformed");
+      ).toBe("verdict");
     });
 
-    it("converged:false WITHOUT a reason ⇒ malformed (the contract requires the one-line reason)", () => {
-      expect(parseCmrOutcome('<cmr>{"converged": false}</cmr>').kind).toBe("malformed");
+    it("converged:false without a reason remains readable cargo", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": false}</cmr>').kind).toBe("verdict");
     });
 
-    it("converged:false with a BLANK reason ⇒ malformed (non-empty required)", () => {
+    it("a blank optional reason is dropped without rejecting the receipt", () => {
       expect(
         parseCmrOutcome(
           `<cmr>${JSON.stringify({
@@ -402,26 +400,26 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           })}</cmr>`,
         ).kind,
       ).toBe(
-        "malformed",
+        "verdict",
       );
     });
 
-    it("a garbage escalate (blank reason/diagnosis) ⇒ malformed (not a coerced escalate)", () => {
+    it("an incomplete escalate block does not ring the bell or reject the cargo", () => {
       expect(
         parseCmrOutcome('<cmr>{"escalate": {"reason": "", "diagnosis": ""}}</cmr>').kind,
-      ).toBe("malformed");
-      expect(parseCmrOutcome('<cmr>{"escalate": {}}</cmr>').kind).toBe("malformed");
+      ).toBe("verdict");
+      expect(parseCmrOutcome('<cmr>{"escalate": {}}</cmr>').kind).toBe("verdict");
     });
 
-    it("converged with a NON-boolean value ⇒ malformed", () => {
-      expect(parseCmrOutcome('<cmr>{"converged": "true"}</cmr>').kind).toBe("malformed");
+    it("a non-boolean converged cargo field is dropped", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": "true"}</cmr>').kind).toBe("verdict");
     });
 
-    it("bare converged:true without successfulLegs ⇒ malformed (ADR0032 floor needs leg truth)", () => {
-      expect(parseCmrOutcome('<cmr>{"converged": true}</cmr>').kind).toBe("malformed");
+    it("bare converged:true does not require sibling cargo", () => {
+      expect(parseCmrOutcome('<cmr>{"converged": true}</cmr>').kind).toBe("verdict");
     });
 
-    it("omitted skippedLegs is valid only when every default cmr leg succeeded", () => {
+    it("leg lists stay optional cargo", () => {
       expect(
         parseCmrOutcome(
           `<cmr>${JSON.stringify({
@@ -432,7 +430,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         ).kind,
       ).toBe("verdict");
       expect(parseCmrOutcome('<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>').kind).toBe(
-        "malformed",
+        "verdict",
       );
     });
 
@@ -1348,9 +1346,6 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const fnBody = source.slice(fnStart, fnEnd);
     // Must match the real assignment/derivation line, not a comment mention alone.
     expect(fnBody).toMatch(/env\.CMR_CODEX_MODEL\s*=\s*codexReviewLeg\.slug/);
-    // Object-literal hardcode OR assignment-form hardcode both RED.
-    expect(fnBody).not.toMatch(/CMR_CODEX_MODEL:\s*["']gpt-5\./);
-    expect(fnBody).not.toMatch(/env\.CMR_CODEX_MODEL\s*=\s*["']gpt-5/);
   });
 });
 

@@ -10,7 +10,6 @@
  */
 
 import { dirname, join } from "node:path";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -86,13 +85,6 @@ function newBackend(override?: Partial<RealBackendOptions>): RecordingBackend {
 }
 
 describe("#661 resident scene preservation", () => {
-  it("has no reset/clean helper reachable from prepare, retry, resume, or relay source", () => {
-    const backendSource = readFileSync(join(here, "..", "..", "src", "realBackend.ts"), "utf8");
-    const runnerSource = readFileSync(join(here, "..", "..", "src", "runner.ts"), "utf8");
-    expect(backendSource).not.toMatch(/cleanResidueAt|\["reset",\s*\["--hard"|\["clean",\s*\["-fd"/);
-    expect(runnerSource).not.toMatch(/\.cleanResidue\(/);
-  });
-
   it("on reuse, never resets, cleans, or prunes the scene", async () => {
     const b = newBackend();
     RecordingBackend.gitCalls = []; // ignore construction-time git

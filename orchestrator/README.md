@@ -1,15 +1,12 @@
 # Ming Orchestrator — operator's manual
 
-Multi-agent build pipeline for `Akagilnc/ming-salvage-sim`. A **runner** walks a
-ledger-backed step machine (S0–S12) and dispatches sandboxed CLI **workers**
-(coder, reviewer, merger, ship, …) into containers. Two entry shapes:
-
-- **single-slice** — one issue through S0(rfa gate) → S2(code) → S3(review) →
-  S5(fix loop) → S7(ship) → S9(verify) → S10(fixer) → S12(docRelease) →
-  S11(cleanup) → S8(terminal).
-- **family** — an epic's children built in waves on a shared `family/<epic>`
-  base, merged by a merger worker, closed by an integrated CMR
-  (completeness + correctness + cross-model review legs) and a family ship.
+Multi-agent build pipeline for `Akagilnc/ming-salvage-sim`. Production has one
+entry shape: `runFamilyDriver`. A leaf issue is normalized to a
+**family-of-one**; an epic becomes a multi-child family. Both build on a shared
+family base and close through merger, integrated CMR (completeness,
+correctness, and cross-model review legs), verify/fix, family ship, and cleanup.
+The S0–S8 slice runner remains internal child machinery, not a second public
+entry or terminal-delivery topology.
 
 ## Constitution (ADR 0131 — three channels, zero judgment; lineage ADR 0062)
 
@@ -23,18 +20,20 @@ reads worker prose**:
    keeps the loop going on the fixed topology (after a fix leg a fresh review
    leg always follows — ADR 0129 keeps fixer-flipped rows open until a fresh
    reviewer closes them; whose turn it is comes from the topology, never from
-   a runner judgment). The count is the reviewer's own declaration (sentinel
-   value; absent a sentinel form, the rows it wrote **are** the declaration —
-   counting them is reading channel 2 itself, not reconciling it against
-   anything, because no second claim exists). The runner never derives a
-   check, never re-classifies severity/action. Whether the declaration
+   a runner judgment). The count is the reviewer's own declaration: either an
+   explicit count in the receipt, or an in-process review seam's own `findings`
+   array. Missing declarative count is not zero and is never derived from cargo
+   rows. The runner never derives a check or re-classifies severity/action.
+   Whether the declaration
    matches the papers is the fixer's judgment when it reads the submission —
    never the runner's.
 3. **decision-gate signal** → durable park; the answer resumes the SAME worker
    session in place (`resumeSessionId`).
 
-Corollaries, all mechanically enforced by
-`test/adr-0062-regression-825.test.ts`:
+Corollaries are locked by positive routing tests under `test/constitution/`,
+not by forbidden-source-text sweeps. In particular see
+`reviewer-open-count.test.ts`, `review-closure-behavior.test.ts`, and
+`worker-reporting.test.ts`:
 
 - A worker whose **envelope cannot be extracted** (no kind, no count,
   undecodable output) is never judged, never mechanically redispatched, and
@@ -62,10 +61,9 @@ Corollaries, all mechanically enforced by
   by the next reviewer, and any reported PR URL is cargo for downstream
   workers, not a runner verdict input. The runner never runs
   `git rev-list` / `ls-remote` / `gh pr view` to adjudicate a worker.
-- **`*_STEP_COMPLETE` sentinels are optional telemetry.** In every prompt/soul
-  they may appear only inside the canonical optional-telemetry sentence; the
-  sweep test fails any other mention, so no prompt edit can silently restore a
-  lie-detector gate.
+- **`*_STEP_COMPLETE` sentinels are optional telemetry.** Process and receipt
+  routing tests prove that their prose placement cannot become a runner fate
+  channel; no source-text ban is used as the lock.
 - **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the
   runner dispatches ship again. The worker verifies whether the branch's exact
   delivery already exists and returns success without duplicate push, PR, or
@@ -281,7 +279,7 @@ reality, then fine-tune single slots:
 | cmrCompleteness | `ORCHESTRATOR_CMR_COMPLETENESS_MODEL` |
 | cmrCorrectness | `ORCHESTRATOR_CMR_CORRECTNESS_MODEL` |
 | verify | `ORCHESTRATOR_VERIFY_MODEL` |
-| fixer (S10) | `ORCHESTRATOR_FIXER_MODEL` |
+| fixer | `ORCHESTRATOR_FIXER_MODEL` |
 | cleanup | `ORCHESTRATOR_CLEANUP_MODEL` |
 | docRelease | `ORCHESTRATOR_DOCRELEASE_MODEL` |
 | cmrReview legs | `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` (comma list) |
@@ -290,8 +288,8 @@ Role vocabulary worth keeping straight:
 
 - **coderFix** = in-loop fix worker during the build (responds to S3 reviewer
   findings until the review is clean).
-- **fixer** = S10, the post-ship repair worker (eats verify/CI/online-review
-  failures after S7). Different seat, independently staffed.
+- **fixer** = family-endgame repair worker for verify/CI/online-review findings.
+  Different seat, independently staffed.
 
 Roster conventions (from the exam/marathon evidence, 2026-07):
 
@@ -380,11 +378,10 @@ never on input the test itself seeded.
 ## Telemetry sidecar (#786)
 
 Append-only JSONL at the durable ledger location
-`<ledgerDir>/telemetry.jsonl`, parallel to the step ledger (`steps.jsonl`). For
-single-slice runs this is `<dedicated-clone>/.ledger-<issue>/`; it is outside
-Sandcastle's `.sandcastle/worktrees/` prune scope. Family runs use their
-existing durable family `ledgerDir`. Raw per-leg stamps only — aggregation /
-stats are out of scope for #786.
+`<ledgerDir>/telemetry.jsonl`, parallel to the step ledger (`steps.jsonl`). Both
+family-of-one and multi-child runs use the durable family `ledgerDir`, outside
+Sandcastle's `.sandcastle/worktrees/` prune scope. Raw per-leg stamps only —
+aggregation / stats are out of scope for #786.
 
 The durable telemetry directory is never automatically deleted. The former
 `.sandcastle/worktrees/.ledger-<issue>/telemetry.jsonl` path is retained as a

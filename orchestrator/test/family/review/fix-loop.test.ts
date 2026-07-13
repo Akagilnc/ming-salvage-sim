@@ -384,6 +384,7 @@ class ReviewFixRereviewBackend implements FamilyBackend {
           output: {
             kind: "cmr",
             converged: false,
+            findingsCount: 1,
             reason: "blocking family CMR finding requires coder-fix",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [],
@@ -592,6 +593,7 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
           output: {
             kind: "cmr",
             converged: false,
+            findingsCount: 1,
             reason:
               "reviewer content-labels the blocker as owning-issue-still-red",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -719,6 +721,7 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
           output: {
             kind: "cmr",
             converged: false,
+            findingsCount: 1,
             reason: "correctness pass found a fixable family CMR finding",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [],
@@ -837,6 +840,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
             output: {
               kind: "cmr",
               converged: false,
+              findingsCount: 1,
               reason: "first blocking family CMR finding requires coder-fix",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: [],
@@ -852,6 +856,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
             output: {
               kind: "cmr",
               converged: false,
+              findingsCount: 1,
               reason:
                 "fresh full-diff re-review found a new same-module blocker",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -1004,6 +1009,7 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
             output: {
               kind: "cmr",
               converged: false,
+              findingsCount: 1,
               reason: `fresh full-diff re-review found blocker ${reviewRound + 1}`,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: closedPriorKeys,
@@ -1159,6 +1165,7 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
             output: {
               kind: "cmr",
               converged: false,
+              findingsCount: 1,
               reason: `dogfood #272 fresh re-review still has blocker round ${reviewRound + 1}`,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: closedPriorKeys,
@@ -1309,6 +1316,7 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
             output: {
               kind: "cmr",
               converged: false,
+              findingsCount: 1,
               reason: `non-converging blocker round ${reviewRound + 1}`,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: closedPriorKeys,
@@ -2491,7 +2499,7 @@ it("#876 keeps the CMR loop alive when the reviewer moves family HEAD before fin
       ),
     ).toBe(false);
   });
-it("fails closed when the runner cannot read tracked status after CMR review", async () => {
+  it("keeps tracked-status read failures out of reviewer fate", async () => {
     const backend = new ReviewerTrackedStatusReadFailsBackend();
 
     const result = await runVerifyCmr({
@@ -2500,23 +2508,16 @@ it("fails closed when the runner cannot read tracked status after CMR review", a
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(["cmr"]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      cmrPass: "completeness",
-      reason: expect.stringContaining("tracked status read failed"),
-      familyHeadAfter: "head-before-cmr-review",
-      stopSummary: expect.objectContaining({
-        reason: "infra_failure",
-      }),
-    }));
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.map((dispatch) => dispatch.kind)).toEqual(
+      expect.arrayContaining(["cmr", "coder", "ship"]),
+    );
     expect(
-      backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
-    ).toBe(false);
-    expect(
-      backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          /tracked status read failed/i.test(entry.reason ?? ""),
+      ),
     ).toBe(false);
   });
 
@@ -2777,6 +2778,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
         output: {
           kind: "cmr",
           converged: false,
+          findingsCount: 2,
           reason: "has blocking findings",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
@@ -3250,14 +3252,15 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     expect(JSON.stringify(backend.ledger)).not.toContain('"escalationKind":"decision"');
   });
 
-  it("routes a completed reviewer missing both count channels to coder-fix raw artifacts", async () => {
+  it("routes a completed reviewer missing its declared count to raw artifacts even with finding cargo", async () => {
     const backend = new CountChannelFixBackend({
       kind: "completed",
       sessionId: "cmr-reviewer-missing-count",
       output: {
         kind: "cmr",
         converged: false,
-        reason: "reviewer omitted both count channels",
+        reason: "reviewer omitted its declared count",
+        findings: [BLOCKING_FAMILY_CMR_FINDING],
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         ...CMR_EVIDENCE,
       },

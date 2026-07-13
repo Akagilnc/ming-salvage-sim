@@ -301,7 +301,6 @@ export {
   buildRelayHandoffLedgerEntry,
   canRelayHandoff,
   capacityRelayErrorFrom,
-  classifyFailureForRetryOrRelay,
   countRelayHandoffsInLedger,
   decideRelayAfterIdle,
   forkQuotaWallAt683Point,
@@ -321,12 +320,10 @@ export {
 export type {
   ApplyResourceFailureHandoffInput,
   DecideRelayAfterIdleInput,
-  FailureClassKind,
   RelayDispositionResult,
   RelayHandoffLedgerEvent,
   RelayHandoffTrigger,
   RelayTagOutcome,
-  RetryOrRelayClass,
 } from "./relayDispatch.js";
 export {
   POOL_DISPATCH_BINDINGS,

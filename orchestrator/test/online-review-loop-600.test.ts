@@ -101,7 +101,6 @@ import {
 } from "../src/reviewLoopOutcome.js";
 import {
   buildOnlineReviewLanding,
-  clampVerifyConvergenceForCheckRuns,
   verifyBlockedOnlyOnPendingCheckRuns,
   onlineReviewFixerNothingToFixStopSummary,
 } from "../src/family/onlineReviewLoop.js";
@@ -3044,69 +3043,6 @@ describe("#600 onlineReviewLoop helpers", () => {
     expect(checkRunsConverged([], "pending")).toBe(false);
   });
 
-  it("pin clampVerifyConvergenceForCheckRuns default-denies worker converged:true when CI red", () => {
-    const landing: OnlineReviewLandingSnapshot = {
-      prUrl: "https://github.com/o/r/pull/1",
-      headOid: "abc",
-      totalFindingCount: 0,
-      quiescent: true,
-      bots: {
-        coderabbit: { state: "complete", findingCount: 0 },
-        sourcery: { state: "complete", findingCount: 0 },
-        codex: { state: "complete", findingCount: 0 },
-        gemini: { state: "complete", findingCount: 0 },
-      },
-      droppedBots: [],
-      threads: [],
-      checkRuns: [
-        {
-          id: 1,
-          name: "ci",
-          headSha: "abc",
-          status: "completed",
-          conclusion: "failure",
-        },
-      ],
-    };
-    expect(
-      clampVerifyConvergenceForCheckRuns(
-        { kind: "verify", converged: true },
-        landing,
-      ).converged,
-    ).toBe(false);
-    expect(
-      clampVerifyConvergenceForCheckRuns(
-        { kind: "verify", converged: true },
-        { ...landing, checkRuns: [] },
-      ).converged,
-    ).toBe(true);
-    // pending CI: leave converged true — re-poll, do not force fixer (online R2 Codex P2)
-    const pendingLanding = {
-      ...landing,
-      checkRuns: [
-        { id: 9, name: "ci", headSha: "abc", status: "in_progress" as const },
-      ],
-    };
-    expect(
-      clampVerifyConvergenceForCheckRuns(
-        { kind: "verify", converged: true },
-        pendingLanding,
-      ).converged,
-    ).toBe(true);
-    expect(
-      verifyBlockedOnlyOnPendingCheckRuns(
-        { kind: "verify", converged: true },
-        pendingLanding,
-      ),
-    ).toBe(true);
-    expect(
-      clampVerifyConvergenceForCheckRuns(
-        { kind: "verify", converged: false },
-        landing,
-      ).converged,
-    ).toBe(false);
-  });
-
 });
 describe("#600 r4 central evidence admissibility gate", () => {
   const trigger = buildRoundTrigger("head-a", "2026-07-08T10:00:00.000Z");
@@ -4152,6 +4088,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
 
   it("pin deep self-check R8: CI failed + no fix marks parks without fixer", async () => {
     let fixerCalls = 0;
+    let accountedVerify: VerifyResult | undefined;
     const result = await runOnlineReviewLoopStage(stageShip, {
       poll: async () => ({
         ...baseSnapshot,
@@ -4172,10 +4109,16 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         return fixerNotFixed();
       },
       dispatchDocRelease: async () => true,
-      applySideEffects: (_landing, verify) => verify,
+      applySideEffects: (_landing, verify) => {
+        accountedVerify = verify;
+        return verify;
+      },
       retriggerAfterFix: () => {},
     });
     expect(fixerCalls).toBe(0);
+    expect(accountedVerify).toEqual(
+      expect.objectContaining({ kind: "verify", converged: true }),
+    );
     expect(result.ok).toBe(false);
     expect(result.terminalState).toBe("decision_gate_raised");
     expect(result.stopSummary?.summary).toMatch(/CI check-runs failed/i);
@@ -4614,7 +4557,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(fixingSha).not.toBe(driftHeadOid);
   });
 
-  it("pin r39: committed:true without fixCommitSha retries once, then returns through verify", async () => {
+  it("completed fixer with sparse cargo dispatches once, then returns through fresh verify", async () => {
     const malformed = { kind: "fixer", committed: true } as FixerResult;
     let fixerCalls = 0;
     let verifyCalls = 0;
@@ -4648,7 +4591,8 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       },
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
-    expect(fixerCalls).toBe(2);
+    expect(fixerCalls).toBe(1);
+    expect(verifyCalls).toBe(2);
   });
 
   it("pin r40: retrigger-only ledger yields no fix SHA (family, envelope-only)", () => {
@@ -4902,14 +4846,18 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("#853 family verify tracked changes stay in the normal review flow", async () => {
+  it("#853 family verify receipt routes without a tracked-status court", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
       let trackedStatus: string[] = [];
+      let trackedStatusReads = 0;
       const backend = new ReviewLoopFamilyBackend();
       backend.readFamilyHead = async () => "head-before";
-      backend.readFamilyTrackedStatus = async () => trackedStatus;
+      backend.readFamilyTrackedStatus = async () => {
+        trackedStatusReads += 1;
+        return trackedStatus;
+      };
       backend.dispatchWorker = async (spec) => {
         if (spec.kind === "verify") {
           trackedStatus = [" M orchestrator/src/foo.ts"];
@@ -4927,10 +4875,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ship: offlineShip,
       });
       expect(result).toEqual(expect.objectContaining({ ok: true, round: 1 }));
-      expect(backend.ledger).toContainEqual(expect.objectContaining({
-        workerStep: "online-verify:1",
-        reason: expect.stringContaining("left tracked changes"),
-      }));
+      expect(trackedStatusReads).toBe(0);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
@@ -4940,7 +4885,62 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("#876 family verify that moves HEAD stays in the normal review flow", async () => {
+  it("routes completed sparse verify cargo to fixer, then fresh verify", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      let verifyCalls = 0;
+      let fixerCalls = 0;
+      let fixerLanding: WorkerLandingPayload | undefined;
+      const backend = new ReviewLoopFamilyBackend();
+      backend.dispatchWorker = async (spec, _ctx, landing) => {
+        if (spec.kind === "verify") {
+          verifyCalls += 1;
+          return verifyCalls === 1
+            ? {
+                kind: "completed",
+                output: { kind: "coder", committed: false, commitsAdded: 0 },
+                sessionId: "sparse-verify-session",
+              }
+            : {
+                kind: "completed",
+                output: { kind: "verify", converged: true },
+              };
+        }
+        if (spec.kind === "fixer") {
+          fixerCalls += 1;
+          fixerLanding = landing;
+          return {
+            kind: "completed",
+            output: { kind: "fixer", committed: false },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+
+      expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+      expect(verifyCalls).toBe(2);
+      expect(fixerCalls).toBe(1);
+      expect(fixerLanding?.rawReviewerArtifacts).toMatchObject({
+        reviewerSessionId: "sparse-verify-session",
+      });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("#876 family verify receipt routes without a HEAD court", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
@@ -4966,11 +4966,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         ship: offlineShip,
       });
       expect(result).toEqual(expect.objectContaining({ ok: true, round: 1 }));
-      expect(backend.ledger).toContainEqual(expect.objectContaining({
-        workerStep: "online-verify:1",
-        reason: expect.stringContaining("moved HEAD"),
-      }));
-      expect(headReadCount).toBeGreaterThanOrEqual(2);
+      expect(headReadCount).toBe(0);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
@@ -5023,7 +5019,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
     }
   });
 
-  it("pin r10: family verify that dirties tracked worktree then throws surfaces contract_drift (no retry on dirty tree)", async () => {
+  it("pin r10: a verify process throw retries without consulting tracked cargo", async () => {
     const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
     process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
     try {
