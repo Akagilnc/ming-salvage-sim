@@ -7,22 +7,22 @@
  *   - resume/order: S12 fail re-enters; success → merge → cleanup
  */
 import { describe, expect, it, vi } from "vitest";
-import type { Sh } from "../src/familyDriver.js";
+import type { Sh } from "../../src/familyDriver.js";
 import {
   runAutoMergeStage,
-} from "../src/autoMerge.js";
-import type { PrReviewSnapshot } from "../src/botPolling.js";
+} from "../../src/autoMerge.js";
+import type { PrReviewSnapshot } from "../../src/botPolling.js";
 import {
   dispatchWorker,
   docReleaseWorkerSpec,
   legacyDispatchWorker,
-} from "../src/dispatchWorker.js";
-import { offlineReviewLoopDispatchAdmissible } from "../src/evidenceAdmissibility.js";
+} from "../../src/dispatchWorker.js";
+import { offlineReviewLoopDispatchAdmissible } from "../../src/evidenceAdmissibility.js";
 import {
   legacyDispatchFamilyWorker,
-} from "../src/family/dispatchFamilyWorker.js";
-import { resolveRouteModels, routeSmokeEntries } from "../src/modelRoutes.js";
-import type { FamilyBackend } from "../src/family/types.js";
+} from "../../src/family/dispatchFamilyWorker.js";
+import { resolveRouteModels, routeSmokeEntries } from "../../src/modelRoutes.js";
+import type { FamilyBackend } from "../../src/family/types.js";
 import type {
   Backend,
   DispatchContext,
@@ -30,7 +30,7 @@ import type {
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
-} from "../src/types.js";
+} from "../../src/types.js";
 
 const REPO = "Akagilnc/ming-salvage-sim";
 const LIVE_PR = "https://github.com/Akagilnc/ming-salvage-sim/pull/735";

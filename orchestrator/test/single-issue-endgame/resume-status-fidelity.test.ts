@@ -28,7 +28,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { runOrchestrator } from "../src/runner.js";
+import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
@@ -39,7 +39,7 @@ import type {
   StepOutput,
   StepSpec,
   WorktreeHandle,
-} from "../src/types.js";
+} from "../../src/types.js";
 
 // ─── shared fixtures ──────────────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ function s8(handoffStatus?: "success" | "escalate" | "error"): PersistentLedgerE
  */
 class SeamBackend implements Backend {
   async smokeModelRoute(route: any) {
-    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
   readonly calls: string[] = [];

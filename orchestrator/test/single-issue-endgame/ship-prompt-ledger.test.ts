@@ -18,9 +18,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { shipWorkerSpec } from "../src/dispatchWorker.js";
-import { runOrchestrator } from "../src/runner.js";
-import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
+import { shipWorkerSpec } from "../../src/dispatchWorker.js";
+import { runOrchestrator } from "../../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
   DispatchContext,
@@ -32,7 +32,7 @@ import type {
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
-} from "../src/types.js";
+} from "../../src/types.js";
 
 // The web-crypto sha256 the runner's hashPrompt uses (runner.ts:sha256Hex).
 async function sha256Hex(s: string): Promise<string> {
@@ -59,7 +59,7 @@ const WORKTREE: WorktreeHandle = {
  */
 class ShipLedgerBackend implements Backend {
   async smokeModelRoute(route: any) {
-    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
   readonly ledgerCalls: PersistentLedgerEntry[] = [];
