@@ -57,6 +57,48 @@ import {
   MissingCoderTagBackend,
 } from "../helpers/resume-fixtures.js";
 
+describe("#824 durable mechanical redispatch budget", () => {
+  it("re-feeds S9 after a crash mid pending-CI re-poll without inheriting the prior successful streak", async () => {
+    const resumeState: ResumeState = {
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S7", {
+          kind: "ship",
+          branch: WORKTREE.branch,
+          status: "pr_opened",
+          pr: "pr://slice/offline-255",
+        }),
+        entry("S9", { kind: "verify", converged: true }),
+        {
+          ...entry("S9"),
+          event: "online_review_ci_pending",
+          prUrl: "pr://slice/offline-255",
+          prHead: "deadbeefcommitsha",
+        },
+        {
+          ...entry("S9"),
+          step: "mechanical_redispatch_attempt",
+          event: "mechanical_redispatch_attempt",
+          forStep: "S9",
+          mechanicalRedispatchAttempt: 1,
+        },
+      ],
+    };
+    const backend = new DispatchRecordingResumeBackend(resumeState);
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(backend.dispatchSpecs.some((spec) => spec.id === "S9")).toBe(true);
+    expect(result.stopSummary?.summary).not.toContain("after 3 dispatch attempts");
+  });
+});
+
 // ─── AC3 + AC4: escalate-resume — SAME machine, via resumeSession + sessionId ─
 
 describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/AC4)", () => {
