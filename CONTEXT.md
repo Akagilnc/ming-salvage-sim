@@ -529,7 +529,7 @@ _Avoid_: CI、流水线(太泛)、hermes(那是一个具体后端不是编排器
 _Avoid_: 三套 workflow、Role Workflow Definition、可执行 DSL、把 wiki 逐字翻译成运行时流程
 
 **编排动作**:
-交付主流程里一个目的明确的专业步骤，拥有该步的具体做法、skill、模型腿、外部副作用核验与合法空跑。动作可以向 runner 提交需要人类决定，但不得跨角色私自推进后续流程；是否以及何时调用下一动作由流程层决定。
+交付主流程里一个目的明确的专业步骤，拥有该步必要 skill/capability 的绑定与实际调用，以及模型腿、外部副作用核验与合法空跑。skill 的方法与内容仍以版本化 skill 自身为真源，不复制进流程、runner 或 prompt。动作可以向 runner 提交需要人类决定，但不得跨角色私自推进后续流程；是否以及何时调用下一动作由流程层决定。
 _Avoid_: runner 分支、万能 executeAction、把动作内部方法复制进流程或 prompt
 
 **独立子 issue**:
