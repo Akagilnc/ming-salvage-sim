@@ -288,11 +288,12 @@ describe("#683/#884 opencode probe hard clock", () => {
     );
     const block = src.slice(
       src.indexOf("async function runOpencodePongProbe"),
-      src.indexOf("function isQuotaLimitBody"),
+      src.indexOf("// ── production idle gate"),
     );
     expect(block).toMatch(/execFileAsyncWithTimeout/);
     expect(block).toMatch(/withLegTransientRetry/);
     expect(block).not.toMatch(/withExternalCallRetry/);
+    expect(block).not.toMatch(/isQuotaLimitBody/);
     expect(block).toMatch(/probe:opencode-go/);
   });
 });
@@ -369,21 +370,31 @@ describe("#683 parseZaiResetAt (北京时间 → ISO UTC)", () => {
   });
 });
 
-describe("#683 isQuotaLimitBody variants (via runPoolProbe)", () => {
-  it("treats rate-limit and too many requests bodies as quota_limited", async () => {
-    for (const body of ["rate-limit exceeded", "Too Many Requests"]) {
+describe("#683 quota = status/exit only (ignore body keywords)", () => {
+  it("2xx body with rate-limit text is still ok (no body court)", async () => {
+    for (const body of ["rate-limit exceeded", "Too Many Requests", "quota"]) {
       const result = await runPoolProbe("zai", {
         zaiApiKey: "test-key",
         fetch: async () =>
           new Response(body, { status: 200, statusText: "OK" }),
       });
-      expect(result.kind, body).toBe("quota_limited");
+      expect(result.kind, body).toBe("ok");
     }
   });
 
-  it("#884: HTTP 5xx is transient even when body mentions quota (status-first)", async () => {
-    // Owner policy: 5xx → retry ×2; 429 → no retry. Body-based quota inference
-    // must not swallow a 503 before the status branch (would skip retries).
+  it("403 + quota body is error, not quota_limited (status only)", async () => {
+    const result = await runPoolProbe("zai", {
+      zaiApiKey: "test-key",
+      fetch: async () =>
+        new Response("quota exceeded / rate limit", {
+          status: 403,
+          statusText: "Forbidden",
+        }),
+    });
+    expect(result.kind).toBe("error");
+  });
+
+  it("#884: HTTP 5xx retries ×2 even when body mentions quota", async () => {
     let fetches = 0;
     const result = await runPoolProbe("zai", {
       zaiApiKey: "test-key",
@@ -396,7 +407,6 @@ describe("#683 isQuotaLimitBody variants (via runPoolProbe)", () => {
         });
       },
     });
-    // Exhausted transient retries → error (not immediate quota_limited).
     expect(result.kind).toBe("error");
     expect(fetches).toBe(3);
     expect(result.kind === "error" ? result.cause : "").toMatch(
@@ -404,13 +414,13 @@ describe("#683 isQuotaLimitBody variants (via runPoolProbe)", () => {
     );
   });
 
-  it("#884: pure 429 still no-retry (status 429 wins immediately)", async () => {
+  it("#884: HTTP 429 → quota_limited once (no retry)", async () => {
     let fetches = 0;
     const result = await runPoolProbe("zai", {
       zaiApiKey: "test-key",
       fetch: async () => {
         fetches += 1;
-        return new Response("rate limit", {
+        return new Response("anything", {
           status: 429,
           statusText: "Too Many Requests",
         });
@@ -420,12 +430,11 @@ describe("#683 isQuotaLimitBody variants (via runPoolProbe)", () => {
     expect(fetches).toBe(1);
   });
 
-  it("#884 cmr r9: opencode exit≠0 with stdout-only 429 → quota_limited, no retry", async () => {
+  it("opencode exit≠0 is error even if stdout says 429 (no body court)", async () => {
     let runs = 0;
     const result = await runPoolProbe("opencode-go", {
       runCommand: async () => {
         runs += 1;
-        // Production shape: non-zero exit, quota text only on stdout.
         return {
           code: 1,
           stdout: "HTTP 429 rate limit — wait for reset",
@@ -433,7 +442,9 @@ describe("#683 isQuotaLimitBody variants (via runPoolProbe)", () => {
         };
       },
     });
-    expect(result.kind).toBe("quota_limited");
+    // "429" in text may classify as quota class for retry policy — but we no
+    // longer promote body to quota_limited; durable/other → error in one shot.
+    expect(result.kind).toBe("error");
     expect(runs).toBe(1);
   });
 });
