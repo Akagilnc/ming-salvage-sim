@@ -1092,18 +1092,24 @@ function normalizeGitPath(path: string): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+export function normalizeGitOutputLines(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
 function gitOutputLines(
   worktree: WorktreeHandle | undefined,
   args: ReadonlyArray<string>,
 ): string[] {
   if (worktree === undefined) return [];
   try {
-    return shWithClock("git", ["-C", worktree.path, ...args], {
-      stage: "reconcile:git",
-    })
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+    return normalizeGitOutputLines(
+      shWithClock("git", ["-C", worktree.path, ...args], {
+        stage: "reconcile:git",
+      }),
+    );
   } catch {
     return [];
   }
