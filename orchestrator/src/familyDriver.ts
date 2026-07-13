@@ -554,7 +554,7 @@ function admissionSkippedChildren(
 export interface FamilyDriverOptions {
   /** Resolved once per run from ORCHESTRATOR_CODEX_FAST (or an explicit option). */
   readonly codexFast?: boolean;
-  /** The PARENT EPIC issue number — the family run key (ADR 0024). */
+  /** A parent epic or leaf issue number — leaf issues become a family-of-one. */
   readonly epicIssue: number;
   /** The SOURCE repo to clone (path or URL) — the family clone is cut from it. */
   readonly sourceRepo: string;

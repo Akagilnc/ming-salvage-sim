@@ -86,8 +86,9 @@ not by forbidden-source-text sweeps. In particular see
 
 ### 1. Issue prerequisites (what the run reads from GitHub)
 
-- The **parent epic** issue number is the run key. Its children must be
-  attached as **native sub-issues** (not just task-list mentions).
+- A **parent epic** or **leaf issue** number is the run key. Parent epic
+  children must be attached as **native sub-issues** (not just task-list
+  mentions); a leaf issue is normalized automatically to a family-of-one.
 - Children the run may build carry the `ready-for-agent` label — the S0 gate
   (rfa) refuses anything else. Pull the label to hold a child out.
 - Native `blocked_by` dependencies between children drive wave order
