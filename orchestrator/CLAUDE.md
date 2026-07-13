@@ -5,7 +5,7 @@
 **runner = 交通警察，只准做三件事，三件之外零判断权（ADR 0131，母法沿革 0062）：**
 
 1. **数 exit code** —— 进程死活。进程崩的机械重试（#598）挂在这条通道上，不读任何字。
-2. **数 findings 计数** —— 读 reviewer **自报**的 open-count：**说几条就是几条**（0 = 收敛关环，>0 = 派 fixer）。runner 不派生、不复核、不拿数组长度对账。
+2. **数 findings 计数** —— 读 reviewer **自报**的 open-count：**说几条就是几条**（0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒：修复腿之后必派 fresh 复审，fixer 自翻的行在 fresh 终翻前仍计未决（ADR 0129）。轮到谁由拓扑写死，runner 仍只读数）。runner 不派生、不复核、不拿数组长度对账。
 3. **转决策门** —— worker 自己按的 decision/raise 原样递给人。转运，不裁决。
 
 **从不读字。** 卷面（findings 数组、散文、任何内容）只给下一个智慧体读：fixer 读卷，数对不上 / 读不懂 → 打回 reviewer 或 raise（走决策门）。**存在即违宪、发现即砍**：runner 对 worker 输出做任何格式 / schema / 合法性校验（处置再温柔也算，「写入点对账」也算）；runner 复核或覆写 worker 自报的计数（count-vs-array 一致性闸、按数组长度改写自报数）；runner 读出 malformed / protocol-failure 后计次机械重派；runner 替 worker 编造 failure（synthesizedFailure = 伪造信封签名——仅通道①进程事实或 git/host 外部事实派生的 infra 包除外）。
