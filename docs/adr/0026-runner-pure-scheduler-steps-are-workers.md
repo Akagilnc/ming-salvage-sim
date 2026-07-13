@@ -30,5 +30,5 @@ ADR 0018 最初让 Runner 控制外层顺序，却同时把 push、CMR、ship �
 
 - `ak-cross-m-review`、`gstack-ship` 等方法由对应 Action / worker 调用，Runner 不复制其流程。
 - reviewer 与 fixer 的分离、fresh review 纪律由 ADR 0030 保留；具体顺序只在 #869 出现。
-- 容器、运行上下文、session、重试、relay、merge reconciliation 与外部效果核验分别归 Execution Capsule / Lineage、Worker Invocation 或对应 Action；本 ADR 不再规定实现细节。
+- scene identity、locator 与 live handle 的找回/重连归 Execution Capsule / Lineage 与 Scene Provisioning / Recovery；既有 scene 内的 worker 进程、当前角色 session、重试与 relay 归 Worker Invocation；merge reconciliation 与外部效果核验归对应 Action。本 ADR 不再规定实现细节。
 - 旧 prompt/output/ledger 机制只能作为 Git 历史背景，不能成为兼容目标或新实现验收依据。
