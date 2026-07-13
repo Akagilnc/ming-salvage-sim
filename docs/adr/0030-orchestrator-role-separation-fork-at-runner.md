@@ -24,7 +24,7 @@ ADR 0026 押注「一条带记忆的 worker 主 session 兼 fixer，凭 in-sessi
 
 ## 追踪
 
-#376（epic v2.1 角色分离）/ #369（per-slice 拆 coder/reviewer/fix）/ #376 scope#2（integrated cmr step5 完整性 与 step6 正确性 拆成独立 runner-dispatched pass）。实现保「薄 promptFile / issue live fetch / baked soul-skill / runner 只调度读终态」的反漂移约束不变。
+#376（epic v2.1 角色分离）/ #369（per-slice 拆 coder/reviewer/fix）/ #376 scope#2（integrated cmr step5 完整性 与 step6 正确性 拆成独立调度边界）。现行实现必须保持角色分离；准确接力只读 #869，Runner 只读 ADR 0131 三通道，不读取 worker 终态报告。
 
 ## 传导范围（实现 #369/#419/#422 必改；本节列已知承重点，但**清单非穷尽**）
 

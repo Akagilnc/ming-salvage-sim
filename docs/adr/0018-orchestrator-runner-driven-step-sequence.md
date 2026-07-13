@@ -1,6 +1,8 @@
 # v1 编排器 = runner 驱动外层步骤序列；agent 只在步内执行，不决定下一步
 
-Status: Accepted（2026-06-20；grill-with-docs 第二轮收敛，整合 gpt-5.5-pro stepper 方向 + Sandcastle 原生原语实证（`createSandbox` 容器保活多 run、`resumeSession`/`fork`、`createWorktree`、`completionSignal`、`Output.object`）。**评审闭环完成**：本地 cmr 6 轮收敛 + 线上 bot（PR #246）。**取代 ADR 0016 v1 §3「coder 一个 run 跑完整 wiki 流程、自己判完成」**。）
+Status: Accepted（2026-06-20；固定外层顺序的核心决定保留；Runner-facing mechanics 已由 ADR 0131 与 #869 取代。）
+
+Current authority: #869 单一拥有现行交付拓扑，ADR 0131 单一拥有 Runner 三通道。下文旧 `completionSignal`、output schema、reviewer JSON 内容路由与 Runner prompt 注入权均废止，不得作为实现依据。
 
 ## 背景
 
@@ -8,15 +10,15 @@ Status: Accepted（2026-06-20；grill-with-docs 第二轮收敛，整合 gpt-5.5
 
 ## 决定
 
-**外层 wiki 步骤由 runner（TS 代码）逐步推进；agent 只在单步内执行，永不决定下一步。**
+**外层交付顺序由 #869 固定；worker 只完成当前角色 / Action，不自行跨角色决定下一步。**
 
-1. **一个 agent 步 = 一次 `sandbox.run()`**（固定 promptFile + agent + completionSignal + output schema）；runner 动作步（input_gate / load_context / route / push / handoff）是纯 TS、不跑 agent；**下一步由 runner 的 `route()` 定、不由 agent**——agent 在步内再想跳别处也没用。
+1. 每个专业 worker 只完成一个明确 Action / 角色范围；Runner 按 #869 固定拓扑与 ADR 0131 三通道调用下一 Action，不解析 completionSignal、output schema 或 worker 内容。
 2. **`/tdd` 内层红绿留给 skill，v1 不机器验**（步内执行很少错，机器化代价不划算）。
 3. **每步写 step ledger** = 防跳步真源（事后看跳没跳）+ 续跑真源（下一步只读 ledger，不靠 LLM 记忆）。
-4. **prompt 注入权归 runner**（版本化 promptFile + promptArgs 只填变量），不临场拼大 prompt、不「参考 wiki 那套做一下」。
-5. **fix loop 收敛 = runner 确定性路由**（看 reviewer JSON：有 P0/P1 **或 `action:'fix_now'` 的 P2/P3** → 修；否则 → push，与 PRD #244 S4 路由表一致）；不收敛靠**模型发 escalate 信号**（不数轮数）→ 人判 → `resumeSession` 续跑——不造自动 drift 诊断机器。
+4. Runtime Context Materialization Action 负责版本化运行上下文；Runner 不临场拼方法 prompt，也不读取其内容。
+5. review loop 只读取 reviewer 自报 open-count：`0` 关环，`>0` 按 #869 固定拓扑继续；worker 主动提交 decision gate 时由 Runner 原样转运。Runner 不看 reviewer JSON、严重度、action 字段或 finding 内容。
 
-> 具体步骤表（S0–S8）/ StepSpec 字段 / ledger schema / 路由细节 / maxIter 分配 / 结构化输出容错 = **实现 spec，见 PRD #244 Implementation Decisions**（ADR 只记决定、不记 spec）。
+> 旧 S0–S8 / StepSpec / 结构化输出路由只保留为历史背景；现行顺序见 #869，Runner 边界见 ADR 0131。
 
 ## Considered Options
 
