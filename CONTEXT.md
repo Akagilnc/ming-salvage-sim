@@ -597,8 +597,8 @@ _Avoid_: 把文档发布当成 merge 本身、Runner 直接改文档或检查路
 _Avoid_: 把空跑当失败、为凑 commit 造空提交、把「没改文件」等同 skill 崩溃。
 
 **修复证据**:
-coder-fix worker 留给下一轮专业 reviewer 的可追踪材料，例如对应 diff、finding scope 对应关系、focused test log、same-class bug scan 与 introduced-regression check。它帮助 reviewer 复核，不是 runner 的输入。
-_Avoid_: 口头说已修、有代码变化却不落 commit/test、自查二连缺席、把修复证据当 reviewer concurrence。
+coder-fix worker 留给下一轮专业 reviewer 的可追踪材料，例如对应 diff、finding scope 对应关系、focused test log、same-class bug scan 与 introduced-regression check。它帮助 reviewer 复核，不是 runner 的输入，也不授予 fixer 提交权；commit 只由 Change Finalization 创建，准确接力只读 #869。
+_Avoid_: 口头说已修、有代码变化却不留下 diff/test/self-check 材料、自查二连缺席、把修复证据当 reviewer concurrence。
 
 **smart zoom**(步的粒度):
 选一个 worker/step 该多大的权衡(Matt)。大步省调度、但一个上下文塞太多会到上限;小步上下文清爽、但调度多。判据 = 步内无需调度 + 上下文预算。大步不一定好。
