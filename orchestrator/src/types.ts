@@ -1616,14 +1616,6 @@ export interface ResumeState {
   readonly ledger: ReadonlyArray<PersistentLedgerEntry>;
 }
 
-/** Git/GitHub host truth for a single-slice S7 delivery. */
-export interface SliceShipObservation {
-  /** The resident branch exists on the remote host. */
-  readonly shipped: boolean;
-  /** The open PR discovered for that branch, when one exists. */
-  readonly prUrl?: string;
-}
-
 // ──────────────────────────── Backend seam ────────────────────────────
 
 /**
@@ -1802,13 +1794,6 @@ export interface Backend {
   ): Promise<MonitoredWorkerIdleDisposition>;
   /** S7: push the resident slice branch (no PR, no merge). */
   push(worktree: WorktreeHandle): Promise<void>;
-  /**
-   * S7 host-truth reader. The runner may use only this external observation—not
-   * the worker receipt—to decide whether delivery happened.
-   *
-   * Optional only for legacy in-memory test backends; RealBackend implements it.
-   */
-  observeSliceShip?(worktree: WorktreeHandle): Promise<SliceShipObservation>;
   /**
    * #256 (optional, ledger true-value): resolve a step's promptFile to its raw
    * CONTENT so the runner can hash the content (real anti-tampering audit)

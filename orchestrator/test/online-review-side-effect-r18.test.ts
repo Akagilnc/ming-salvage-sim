@@ -166,9 +166,6 @@ describe("#600 r18 single-slice verify side-effect in-band", () => {
       throw new Error("runStep should not be called");
     }
     async push(): Promise<void> {}
-    async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
-      return { shipped: true, prUrl: livePr };
-    }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind === "coder") {
         return {

@@ -17,6 +17,7 @@ import { mergeChild } from "../src/family/merger.js";
 import { runVerifyCmr } from "../src/family/verifyCmr.js";
 import { runOnlineReviewLoopStage } from "../src/onlineReviewLoop.js";
 import { buildRoundTrigger } from "../src/evidenceAdmissibility.js";
+import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type { PrReviewSnapshot } from "../src/botPolling.js";
 import type {
   Backend,
@@ -158,6 +159,8 @@ function validWorkerResult(spec: WorkerSpec): WorkerResult {
   if (spec.kind === "ship") {
     return { kind: "completed", output: { kind: "ship", branch: WORKTREE.branch, status: "pushed" } };
   }
+  const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+  if (skeleton !== undefined) return skeleton;
   return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
 }
 
@@ -309,7 +312,6 @@ describe("#825 Group A family roles", () => {
         this.shipCalls += 1;
         return { kind: "completed", output: { kind: "ship", branch: "family/825", status: "pr_opened", pr: "pr://825", prHead: "head" } };
       }
-      async verifyFamilyShippedPr() { return { ok: true as const }; }
     }
     const backend = new CmrBackend();
     const result = await runVerifyCmr({ phase: "final", familyBase: "family/825", familyBackend: backend });

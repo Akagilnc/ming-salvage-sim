@@ -168,15 +168,6 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
-   *   - `"ship_dispatch_reserved"` / `"ship_dispatch_attempt"` — the two-phase
-   *     final-barrier launch marker. Reservation is written before launch; attempt
-   *     confirms physical launch. Neither is delivery or unblock truth.
-   *   - `"ship_completed"` — the ship worker reported a PR locator and branch,
-   *     before host observation verified either. This is advisory observation input
-   *     only; it is deliberately not delivery, unblock, or review-loop truth.
-   *   - `"ship_streak_opened"` / `"ship_streak_closed"` — durable boundaries for
-   *     the exactly-once mutating ship budget. CMR rows and HEAD movement do not
-   *     split an open streak.
    */
   readonly status:
     | "merged"
@@ -195,11 +186,6 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "ship_streak_opened"
-    | "ship_streak_closed"
-    | "ship_dispatch_reserved"
-    | "ship_dispatch_attempt"
-    | "ship_completed"
     | "route_degraded";
   /**
    * Event tag.
@@ -235,11 +221,6 @@ export interface FamilyLedgerEntry {
    *     carries a `childIssue` it answers a `child_decision_parked` row (#604 slice 5).
    *   - `"admission_skipped"` — paired with `status:"admission_skipped"`; records
    *     production admission skips before scheduling.
-   *   - `"ship_dispatch_reserved"` — paired with the same status and written
-   *     before launch; `"ship_dispatch_attempt"` confirms successful spawn. Only
-   *     confirmed attempts consume the mutating budget.
-   *   - `"ship_completed"` — paired with `status:"ship_completed"`; a worker-
-   *     reported PR locator plus branch persisted before host observation (#823).
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
   readonly event?:
@@ -259,11 +240,6 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "ship_streak_opened"
-    | "ship_streak_closed"
-    | "ship_dispatch_reserved"
-    | "ship_dispatch_attempt"
-    | "ship_completed"
     | "route_degraded";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
@@ -346,18 +322,6 @@ export interface FamilyLedgerEntry {
    * guard's "already delivered" decision is locatable from the ledger alone.
    */
   readonly pr?: string;
-  /** Worker-reported branch on a `ship_completed` observation-input row (#823). */
-  readonly shipBranch?: string;
-  /** Correlates a pre-launch reservation with its confirmed physical launch. */
-  readonly shipDispatchId?: string;
-  /** Stable identity shared by the open/close rows of one ship streak. */
-  readonly shipStreakId?: string;
-  /** Legacy confirmed attempts carried into a newly materialized streak anchor. */
-  readonly shipAttemptsAtOpen?: number;
-  /** Legacy unconfirmed reservations carried into a newly materialized streak anchor. */
-  readonly shipInfraAttemptsAtOpen?: number;
-  /** Why an open ship streak became terminal. */
-  readonly shipStreakOutcome?: "shipped" | "exhausted";
   /** PR number on `status:"pr_merged"` terminal entries (#602). */
   readonly prNumber?: number;
   /** Remote branch name on `status:"pr_merged"` terminal entries (#602). */
@@ -670,20 +634,6 @@ export interface FamilyBackend {
    */
   openFamilyPr?(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult>;
   /**
-   * Resume-skip trust boundary: before a durable `shipped` marker can skip the
-   * final verify/cmr/ship barrier, re-check that the recorded PR still exists,
-   * is OPEN, targets the expected PR base, uses this family branch as head, and
-   * has `headRefOid === expectedHead`.
-   */
-  verifyFamilyShippedPr?(
-    request: VerifyFamilyShippedPrRequest,
-  ): Promise<VerifyFamilyShippedPrResult>;
-  /** Discover host truth after a ship dispatch throws, before any replacement dispatch. */
-  findFamilyShippedPr?(request: {
-    readonly familyBase: string;
-    readonly expectedHead: string;
-  }): Promise<FindFamilyShippedPrResult>;
-  /**
    * Absolute git working directory for the family base clone. Optional — used to
    * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
    * working-repo does not block merge: path allowlist is not a merge gate.
@@ -809,34 +759,6 @@ export interface OpenFamilyPrResult {
   /** The opened PR's head commit SHA/OID, verified from PR metadata when available. */
   readonly prHead?: string;
 }
-
-export interface VerifyFamilyShippedPrRequest {
-  /** The shipped marker's PR URL/handle from the family ledger. */
-  readonly pr: string;
-  /** The family base branch the PR must use as its head branch. */
-  readonly familyBase: string;
-  /** The current local family base HEAD the PR must still cover. */
-  readonly expectedHead: string;
-}
-
-export type VerifyFamilyShippedPrResult =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      /** Host truth, not an error-string inference at the caller. */
-      readonly kind: "pr_missing" | "observation_failed" | "mismatch";
-      readonly reason: string;
-    };
-
-/** Host discovery used after a mutating ship dispatch loses its return path. */
-export type FindFamilyShippedPrResult =
-  | { readonly ok: true; readonly pr: string }
-  | {
-      readonly ok: false;
-      /** `pr_missing` is the only result that permits another mutating dispatch. */
-      readonly kind: "pr_missing" | "observation_failed" | "mismatch";
-      readonly reason: string;
-    };
 
 /**
  * An `aborted` event #296 hands to #298's `recordAborted` seam on a red verify

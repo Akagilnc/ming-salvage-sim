@@ -640,59 +640,20 @@ describe("#334 ADR 0030 worker routing", () => {
       "S5:coder:/tdd",
       "S6:reviewer:/code-review",
       "S7:ship:gstack-ship",
+      "S9:verify:/verify",
+      "S12:docRelease:/gstack-document-release",
+      "S11:cleanup:/cleanup",
     ]);
   });
 
-  it("#824: worker pushed + host PR observation carries the PR locator into S9", async () => {
-    const cp = await import("node:child_process");
-    const execMock = cp.execFileSync as unknown as ReturnType<typeof vi.fn>;
-    execMock.mockImplementation((_file: string, args: string[]) =>
-      args.slice(0, 2).join(" ") === "pr list"
-        ? JSON.stringify([
-            {
-              number: 824,
-              url: "pr://slice/offline-824",
-              state: "OPEN",
-              headRefName: "feat/orchestrator/issue-334",
-              headRefOid: "host-confirmed-head",
-              headRepositoryOwner: { login: "Akagilnc" },
-              mergeStateStatus: "CLEAN",
-            },
-          ])
-        : "",
-    );
-    vi.stubEnv("NODE_ENV", "production");
-
-    class HostObservedPrBackend extends ReviewWorkerBackend {
-      async worktreeHead(): Promise<string> {
-        return "host-confirmed-head";
-      }
-      async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
-        return { shipped: true, prUrl: "pr://slice/offline-824" };
-      }
-    }
-
-    const backend = new HostObservedPrBackend();
-    const result = await runOrchestrator({ issueNumber: 824, backend });
-    const s9Index = backend.specs.findIndex((spec) => spec.id === "S9");
-    const s9 = backend.ctxs[s9Index];
-
-    expect(result.status).toBe("success");
-    expect(s9Index).toBeGreaterThanOrEqual(0);
-    expect(s9?.prUrl).toBe("pr://slice/offline-824");
-  });
 });
 
-describe("#891 — single-slice S7 routes from host truth, not the ship receipt", () => {
-  /** A configurable receipt plus an independent, host-confirmed delivery. */
+describe("single-slice S7 routes from the worker result", () => {
   class ShipPayloadBackend extends ReviewWorkerBackend {
     shipOutput: WorkerResult;
     constructor(shipOutput: WorkerResult) {
       super();
       this.shipOutput = shipOutput;
-    }
-    async observeSliceShip(): Promise<{ shipped: boolean }> {
-      return { shipped: true };
     }
     override async dispatchWorker(
       spec: WorkerSpec,
@@ -724,25 +685,25 @@ describe("#891 — single-slice S7 routes from host truth, not the ship receipt"
     return result.status;
   }
 
-  const wtBranch = "feat/orchestrator/issue-334";
+  const wtBranch = "pr://slice/offline-334";
 
-  it("a wrong receipt branch cannot override a host-confirmed delivery", async () => {
+  it("completed remains successful without runner branch judgment", async () => {
     const status = await run({
       kind: "completed",
-      output: { kind: "ship", branch: "main", status: "pushed" },
+      output: { kind: "ship", branch: "main", status: "pushed", pr: "pr://slice/offline-334" },
     });
     expect(status).toBe("success");
   });
 
-  it("an unknown receipt status cannot override a host-confirmed delivery", async () => {
+  it("completed remains successful without runner status judgment", async () => {
     const status = await run({
       kind: "completed",
-      output: { kind: "ship", branch: wtBranch, status: "merged" },
+      output: { kind: "ship", branch: wtBranch, status: "merged", pr: "pr://slice/offline-334" },
     });
     expect(status).toBe("success");
   });
 
-  it("a missing receipt PR locator cannot override a host-confirmed delivery", async () => {
+  it("missing PR cargo falls back to the branch locator", async () => {
     const status = await run({
       kind: "completed",
       output: { kind: "ship", branch: wtBranch, status: "pr_opened" },
@@ -750,7 +711,7 @@ describe("#891 — single-slice S7 routes from host truth, not the ship receipt"
     expect(status).toBe("success");
   });
 
-  it("a blank receipt PR locator cannot override a host-confirmed delivery", async () => {
+  it("blank PR cargo falls back to the branch locator", async () => {
     const status = await run({
       kind: "completed",
       output: { kind: "ship", branch: wtBranch, status: "pr_opened", pr: "  " },

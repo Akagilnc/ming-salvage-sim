@@ -157,9 +157,6 @@ class FamilyTelemetryBackend implements FamilyBackend {
     return { ok: true };
   }
 
-  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
-    return { ok: true };
-  }
 
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.ctxs.push(ctx);

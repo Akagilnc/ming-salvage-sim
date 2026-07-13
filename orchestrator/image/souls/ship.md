@@ -32,6 +32,16 @@ distinct from the coder soul.
 2. The tests, the diff `/review`, the version bump, and the changelog are
    `gstack-ship`'s own steps — run them through the skill, do not re-decide the
    method here.
+3. Before reporting success, use `gh pr view` or an equivalent command to confirm
+   that the PR exists and its head is the commit delivered by this assignment.
+   Successful delivery is your verdict only after that check passes.
+4. Start every assignment by checking for the idempotent success case: when the
+   branch already has a PR whose head is the commit this assignment must deliver,
+   report success immediately and reuse it. Leave push, PR creation, and version
+   bump untouched in that case.
+5. A push or PR-creation failure exits as failure (non-zero). A genuine undecidable
+   case uses the decision gate with all required fields, including
+   `escalationKind:"decision"`.
 
 ## Delivery discipline (the part that is NOT in gstack-ship's defaults)
 

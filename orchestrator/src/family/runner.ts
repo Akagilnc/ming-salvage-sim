@@ -47,9 +47,7 @@ import { assertAcyclic, selectWave } from "./commander.js";
 import {
   childEscalationAnswer,
   familyEscalationState,
-  familyShipCompletedRecord,
   familyReviewLoopConvergedForHead,
-  familyShippedRecordForReviewLoopResume,
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   hasBoundShippedMarker,
@@ -60,15 +58,12 @@ import {
   recordChildDecisionParked,
   recordFamilyEscalated,
   recordMerged,
-  recordReviewLoopConverged,
   unansweredChildEscalations,
 } from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
-import { convergenceHeadToRecord } from "../evidenceAdmissibility.js";
 import {
   ensureFamilyPostMergeCleanup,
-  runFamilyOnlineReviewLoop,
   runVerifyCmr,
 } from "./verifyCmr.js";
 import {
@@ -938,24 +933,16 @@ export async function runFamily(
     initialFamilyLedger = await familyBackend.readFamilyLedger();
   }
   const priorEscalation = familyEscalationState(initialFamilyLedger);
-  const activeShipStreakStart = (() => {
-    for (let index = initialFamilyLedger.length - 1; index >= 0; index--) {
-      const entry = initialFamilyLedger[index]!;
-      if (entry.status === "ship_streak_closed") return -1;
-      if (entry.status === "ship_streak_opened") return index;
-    }
-    return -1;
-  })();
-  const resumableFamilyShipObservationPark =
+  const resumableLegacyFamilyShipPark =
     priorEscalation?.escalation.escalationKind === "failure" &&
     priorEscalation.escalation.phase === "final" &&
-    activeShipStreakStart >= 0 &&
-    familyShipCompletedRecord(initialFamilyLedger.slice(activeShipStreakStart + 1)) !==
-      undefined;
+    initialFamilyLedger.some(
+      (entry) => (entry as { readonly status: string }).status === "ship_completed",
+    );
   if (priorEscalation !== undefined) {
     const { escalation, answer } = priorEscalation;
     if (
-      !resumableFamilyShipObservationPark &&
+      !resumableLegacyFamilyShipPark &&
       (escalation.escalationKind !== "decision" || answer === undefined)
     ) {
       const ledgerMerged = mergedSet(initialFamilyLedger);
@@ -1710,29 +1697,6 @@ export async function runFamily(
         ? { issue: c.issue, status: "already_done" as const }
         : { issue: c.issue, status: "skipped" as const },
     );
-    if (familyBackend.verifyFamilyShippedPr == null) {
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "failure",
-        phase: "final",
-        reason:
-          "family ledger contains a review_loop_converged marker but this backend cannot verify the PR still covers the current family HEAD",
-        familyHeadAfter: preFinalFamilyHead,
-      });
-      return {
-        status: "escalated",
-        familyBase,
-        familyHead: preFinalFamilyHead,
-        stopSummary: familyStopSummary({
-          status: "escalated",
-          familyBase,
-          familyHead: preFinalFamilyHead,
-          children,
-          escalationReason:
-            "family ledger contains a review_loop_converged marker but this backend cannot verify the PR still covers the current family HEAD",
-        }),
-        children,
-      };
-    }
 
     const priorPrMerged = familyPrMergedForHead(preFinalLedger, preFinalFamilyHead);
     if (priorPrMerged !== undefined) {
@@ -1874,32 +1838,6 @@ export async function runFamily(
       };
     }
 
-    const shippedPr = await familyBackend.verifyFamilyShippedPr({
-      pr: convergedRecord.pr,
-      familyBase,
-      expectedHead: preFinalFamilyHead!,
-    });
-    if (!shippedPr.ok) {
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "failure",
-        phase: "final",
-        reason: `family review_loop_converged marker no longer verifies: ${shippedPr.reason}`,
-        familyHeadAfter: preFinalFamilyHead,
-      });
-      return {
-        status: "escalated",
-        familyBase,
-        familyHead: preFinalFamilyHead,
-        stopSummary: familyStopSummary({
-          status: "escalated",
-          familyBase,
-          familyHead: preFinalFamilyHead,
-          children,
-          escalationReason: `family review_loop_converged marker no longer verifies: ${shippedPr.reason}`,
-        }),
-        children,
-      };
-    }
 
     const autoMerge = await runFamilyAutoMergeStage({
       familyBackend,
@@ -1985,321 +1923,6 @@ export async function runFamily(
     };
   }
 
-  // ── #596 shipped-only resume: continues into review-loop (F1) ─────────────────
-  // Per AC: `shipped` means "PR opened, review-loop pending". A ledger with ONLY
-  // the intermediate shipped marker (bound to live head) must "continue into the
-  // review-loop" rather than re-verify/re-cmr/re-ship. In this skeleton the
-  // review-loop segment is the stub write of `review_loop_converged`.
-  // This also closes the post-ship crash window (shipped written, converged not
-  // yet) without duplicate PR. (Ruled against AC text; re-open PR cannot satisfy
-  // "continues into review-loop" clause — we must resume *from* the shipped state
-  // by writing the terminal marker.)
-  const shippedRecord = familyShippedRecordForReviewLoopResume(
-    preFinalLedger,
-    preFinalFamilyHead,
-  );
-  if (shippedRecord != null) {
-    if (familyBackend.verifyFamilyShippedPr == null) {
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "failure",
-        phase: "final",
-        reason:
-          "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
-        familyHeadAfter: preFinalFamilyHead,
-      });
-      const ledgerMerged = await currentMerged(familyBackend);
-      const children: FamilyChildResult[] = epic.children.map((c) =>
-        ledgerMerged.has(c.issue)
-          ? { issue: c.issue, status: "already_done" as const }
-          : { issue: c.issue, status: "skipped" as const },
-      );
-      return {
-        status: "escalated",
-        familyBase,
-        familyHead: preFinalFamilyHead,
-        stopSummary: familyStopSummary({
-          status: "escalated",
-          familyBase,
-          familyHead: preFinalFamilyHead,
-          children,
-          escalationReason:
-            "family ledger contains a shipped marker but this backend cannot verify the PR still covers the current family HEAD",
-        }),
-        children,
-      };
-    }
-    const shippedPr = await familyBackend.verifyFamilyShippedPr({
-      pr: shippedRecord.pr,
-      familyBase,
-      expectedHead: preFinalFamilyHead!,
-    });
-    if (!shippedPr.ok) {
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "failure",
-        phase: "final",
-        reason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
-        familyHeadAfter: preFinalFamilyHead,
-      });
-      const ledgerMerged = await currentMerged(familyBackend);
-      const children: FamilyChildResult[] = epic.children.map((c) =>
-        ledgerMerged.has(c.issue)
-          ? { issue: c.issue, status: "already_done" as const }
-          : { issue: c.issue, status: "skipped" as const },
-      );
-      return {
-        status: "escalated",
-        familyBase,
-        familyHead: preFinalFamilyHead,
-        stopSummary: familyStopSummary({
-          status: "escalated",
-          familyBase,
-          familyHead: preFinalFamilyHead,
-          children,
-          escalationReason: `family shipped marker no longer verifies: ${shippedPr.reason}`,
-        }),
-        children,
-      };
-    }
-
-    // #600: continue into the live online review-loop stage (not a stub marker).
-    const reviewLoop = await runFamilyOnlineReviewLoop({
-      familyBackend,
-      familyBase,
-      runId,
-      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
-      ship: {
-        kind: "ship",
-        branch: familyBase,
-        pr: shippedRecord.pr,
-        prHead: preFinalFamilyHead,
-        status: "pr_opened",
-      },
-    });
-    if (!reviewLoop.ok) {
-      const postReviewLoopFamilyHead =
-        (await readCurrentFamilyHead(familyBackend, familyBase)) ??
-        preFinalFamilyHead;
-      const escalationFamilyHead =
-        convergenceHeadToRecord({
-          shipHead: shippedRecord.familyHeadAfter,
-          postFixHead:
-            postReviewLoopFamilyHead !== shippedRecord.familyHeadAfter
-              ? postReviewLoopFamilyHead
-              : undefined,
-        }) ?? postReviewLoopFamilyHead;
-      const escalationReason =
-        reviewLoop.stopSummary?.summary ??
-        (reviewLoop.terminalState === "round_budget_exhausted"
-          ? "family online review loop exhausted the 3-round budget during resume"
-          : reviewLoop.terminalState === "contract_drift"
-            ? "family online review loop stopped for contract drift during resume"
-            : "family online review loop did not converge during resume");
-      // #744: a true human park is answerable + re-feedable (escalationKind
-      // "decision"); hard-writing "failure" made re-feed impossible.
-      // R1: terminalState "decision_gate_raised" is overloaded — onlineReviewLoop
-      // returns it for both B-class parks (stopSummary.reason decision_gate_park)
-      // and A-class infra failures (stopSummary.reason infra_failure). Key
-      // escalationKind off verifiable park semantics (StopSummary reason), not
-      // terminalState alone. decision_gate_raised + infra_failure stays failure.
-      const isDecisionGatePark =
-        reviewLoop.stopSummary?.reason === "decision_gate_park";
-      const ledgerMerged = await currentMerged(familyBackend);
-      const children: FamilyChildResult[] = epic.children.map((c) =>
-        ledgerMerged.has(c.issue)
-          ? { issue: c.issue, status: "already_done" as const }
-          : { issue: c.issue, status: "skipped" as const },
-      );
-      const stopSummary =
-        reviewLoop.stopSummary ??
-        familyStopSummary({
-          status: "escalated",
-          familyBase,
-          familyHead: escalationFamilyHead ?? preFinalFamilyHead,
-          children,
-          escalationReason,
-          decisionGatePark: isDecisionGatePark,
-        });
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: isDecisionGatePark ? "decision" : "failure",
-        phase: "final",
-        reason: escalationReason,
-        familyHeadAfter: escalationFamilyHead,
-        stopSummary,
-      });
-      return {
-        status: "escalated",
-        familyBase,
-        familyHead: escalationFamilyHead ?? preFinalFamilyHead,
-        stopSummary,
-        children,
-      };
-    }
-    const postReviewLoopFamilyHead =
-      (await readCurrentFamilyHead(familyBackend, familyBase)) ??
-      preFinalFamilyHead;
-    const convergedFamilyHead =
-      convergenceHeadToRecord({
-        shipHead: shippedRecord.familyHeadAfter,
-        postFixHead:
-          postReviewLoopFamilyHead !== undefined &&
-          postReviewLoopFamilyHead !== shippedRecord.familyHeadAfter
-            ? postReviewLoopFamilyHead
-            : undefined,
-      }) ??
-      postReviewLoopFamilyHead ??
-      shippedRecord.familyHeadAfter;
-    await recordReviewLoopConverged(familyBackend, {
-      pr: shippedRecord.pr,
-      familyHeadAfter: convergedFamilyHead,
-      ...(shippedRecord.stopSummary != null
-        ? { stopSummary: shippedRecord.stopSummary }
-        : {}),
-    });
-
-    const postConvergedLedger = await familyBackend.readFamilyLedger();
-    const priorPrMerged = familyPrMergedForHead(
-      postConvergedLedger,
-      convergedFamilyHead,
-    );
-    if (priorPrMerged === undefined) {
-      const autoMerge = await runFamilyAutoMergeStage({
-        familyBackend,
-        familyBase,
-        convergedHeadOid: convergedFamilyHead,
-        prUrl: shippedRecord.pr,
-      });
-      if (familyAutoMergeIncomplete(autoMerge)) {
-        const stopSummary =
-          autoMerge.stopSummary ??
-          decisionGateParkStopSummary({
-            summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
-            repairHint:
-              "resolve merge blockers or answer the decision gate, then re-feed the family run",
-          });
-        await recordFamilyEscalated(familyBackend, {
-          escalationKind: "failure",
-          phase: "final",
-          reason: stopSummary.summary,
-          familyHeadAfter: convergedFamilyHead,
-        });
-        const ledgerMergedAfterEscalation = await currentMerged(familyBackend);
-        const childrenAfterEscalation: FamilyChildResult[] = epic.children.map((c) =>
-          ledgerMergedAfterEscalation.has(c.issue)
-            ? { issue: c.issue, status: "already_done" as const }
-            : { issue: c.issue, status: "skipped" as const },
-        );
-        return {
-          status: "escalated",
-          familyBase,
-          familyHead: convergedFamilyHead,
-          stopSummary: familyStopSummary({
-            status: "escalated",
-            familyBase,
-            familyHead: convergedFamilyHead,
-            children: childrenAfterEscalation,
-            escalationReason: stopSummary.summary,
-          }),
-          children: childrenAfterEscalation,
-        };
-      }
-    }
-
-    familyHead = postReviewLoopFamilyHead;
-    const ledgerMerged = await currentMerged(familyBackend);
-    const children: FamilyChildResult[] = epic.children.map((c) =>
-      ledgerMerged.has(c.issue)
-        ? { issue: c.issue, status: "already_done" as const }
-        : { issue: c.issue, status: "skipped" as const },
-    );
-    const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
-      familyBackend,
-      familyBase,
-      runId,
-      familyHeadAfter: convergedFamilyHead,
-      prUrl: shippedRecord.pr,
-      familyIssue: epic.issue,
-      resolvedRoute: activeRoutePolicy.route,
-      children,
-      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
-        ? { admissionSkipped: epic.admissionSkipped }
-        : {}),
-    });
-    if (cleanupBlocked !== undefined) return cleanupBlocked;
-    const shippedVerifiedCmrHead =
-      shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead ??
-      preFinalFamilyHead;
-    const alreadyDoneSummary: StopSummary = {
-      reason: "already_done",
-      summary: "family review-loop converged during resume for the current family HEAD",
-      metadata: {
-        heads: {
-          actualFamilyHead: postReviewLoopFamilyHead,
-          reportedFamilyHead: convergedFamilyHead,
-          verifiedCmrHead: shippedVerifiedCmrHead,
-          sources: {
-            actualFamilyHead: "current family head",
-            reportedFamilyHead: "review_loop_converged ledger row",
-            verifiedCmrHead:
-              shippedRecord.stopSummary?.metadata?.heads?.verifiedCmrHead != null
-                ? "shipped ledger stop summary"
-                : "shipped ledger row",
-          },
-        },
-      },
-    };
-    return {
-      status: "success",
-      familyBase,
-      familyHead,
-      stopSummary: alreadyDoneSummary,
-      children,
-      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
-        ? { admissionSkipped: epic.admissionSkipped }
-        : {}),
-    };
-  }
-
-  if (
-    hasUnboundLegacyShippedMarker(preFinalLedger) ||
-    (preFinalFamilyHead === undefined && hasBoundShippedMarker(preFinalLedger))
-  ) {
-    const ledgerMerged = await currentMerged(familyBackend);
-    const children: FamilyChildResult[] = epic.children.map((c) =>
-      ledgerMerged.has(c.issue)
-        ? { issue: c.issue, status: "already_done" as const }
-        : { issue: c.issue, status: "skipped" as const },
-    );
-    await recordFamilyEscalated(familyBackend, {
-      escalationKind: "failure",
-      phase: "final",
-      reason:
-        preFinalFamilyHead === undefined && hasBoundShippedMarker(preFinalLedger)
-          ? "family ledger contains a shipped marker but current family HEAD could not be resolved"
-          : "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
-      familyHeadAfter: preFinalFamilyHead,
-    });
-    return {
-      status: "escalated",
-      familyBase,
-      familyHead: preFinalFamilyHead,
-      stopSummary: familyStopSummary({
-        status: "escalated",
-        familyBase,
-        familyHead: preFinalFamilyHead,
-        children,
-        escalationReason:
-          preFinalFamilyHead === undefined && hasBoundShippedMarker(preFinalLedger)
-            ? "family ledger contains a shipped marker but current family HEAD could not be resolved"
-            : "family ledger contains a legacy shipped marker without familyHeadAfter; cannot prove which family HEAD the prior PR covered",
-      }),
-      children,
-    };
-  }
-
-  // ── verify-cmr hook: end-of-run barrier (#293 no-op seam, #296 fills) ─────────
-  // Decision 3⑤/⑥: after all waves merge, run the 全量 verify + the load-bearing
-  // integrated cross-model cmr (catches 跨片接缝). #293 no-op; the call site is
-  // wired now so #296 fills only the "final" hook body, not the spine.
   const finalVerify = await verifyCmr({
     phase: "final",
     familyBase,

@@ -390,7 +390,7 @@ describe("S0 gate — #247 happy-path regression", () => {
     // ADR 0030: the runner-level ledger exposes the fresh reviewer and
     // classification boundary before ship.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S9", "S12", "S12", "S11", "S8",
     ]);
   });
 });

@@ -87,9 +87,6 @@ class ScriptedCmrBackend implements FamilyBackend {
   async runFamilyVerify(_req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     return { ok: true };
   }
-  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
-    return { ok: true };
-  }
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,

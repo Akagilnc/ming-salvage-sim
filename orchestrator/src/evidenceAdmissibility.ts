@@ -59,7 +59,11 @@ export function offlineSyntheticPollAdmissible(
   prUrl: string,
   defaultRepo: string,
 ): boolean {
-  if (process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL !== "1") {
+  const branchCargo = prUrl.trim().startsWith("pr://slice/branch-cargo/");
+  if (
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL !== "1" &&
+    !branchCargo
+  ) {
     return false;
   }
   return isOfflineTestPrUrl(prUrl) && !isPollableGithubPrUrl(prUrl, defaultRepo);

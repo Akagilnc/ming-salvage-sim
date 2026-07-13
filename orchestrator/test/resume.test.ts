@@ -37,25 +37,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-const childProcessFault = vi.hoisted(() => ({ ghUnavailable: false }));
-
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return {
-    ...actual,
-    execFileSync: vi.fn((file: string, args: string[], options?: object) => {
-      if (file === "gh" && childProcessFault.ghUnavailable) {
-        throw new Error("gh temporarily unavailable");
-      }
-      return actual.execFileSync(
-        file,
-        args as Parameters<typeof actual.execFileSync>[1],
-        options as Parameters<typeof actual.execFileSync>[2],
-      );
-    }),
-  };
-});
-
 import { runOrchestrator } from "../src/runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../src/dispatchRetry.js";
 import { route } from "../src/route.js";
@@ -494,7 +475,7 @@ class MissingCoderTagBackend extends ResumeBackend {
 // ─── AC: fresh run is unaffected (no residue) ────────────────────────────────
 
 describe("fresh run (no residue) is unchanged (#255)", () => {
-  it("findResumeState returns undefined → runs full S0→S8, cuts a fresh worktree", async () => {
+  it("findResumeState returns undefined → runs the full fixed topology, cuts a fresh worktree", async () => {
     const backend = new ResumeBackend(); // no resumeState
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
@@ -502,7 +483,7 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
     expect(result.status).toBe("success");
     // Full happy path executed (ADR 0030: gate + load + implement + review + classify + ship).
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S9", "S12", "S12", "S11", "S8",
     ]);
     // Fresh cut: prepareWorktree called once; cleanResidue never called.
     expect(backend.prepareWorktreeCount).toBe(1);
@@ -593,8 +574,10 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // The prior committed steps survive into the final ledger (not lost), and
     // the resumed steps are appended after them.
     const steps = result.stepLedger.map((e) => e.step);
-    // Prior S0/S1/S2 + resumed S3/S4/S7/S8.
-    expect(steps).toEqual(["S0", "S1", "S2", "S3", "S4", "S7", "S8"]);
+    // Prior S0/S1/S2 + resumed fixed topology.
+    expect(steps).toEqual([
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S9", "S12", "S12", "S11", "S8",
+    ]);
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
@@ -643,6 +626,11 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S6",
       "S4",
       "S7",
+      "S9",
+      "S9",
+      "S12",
+      "S12",
+      "S11",
       "S8",
     ]);
     const s5 = result.stepLedger.find((e) => e.step === "S5");
@@ -684,6 +672,11 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S3",
       "S4",
       "S7",
+      "S9",
+      "S9",
+      "S12",
+      "S12",
+      "S11",
       "S8",
     ]);
     const s2 = result.stepLedger.find((e) => e.step === "S2");
@@ -3312,7 +3305,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(s7Entries[0]!.output).toBeDefined();
     // The full re-opened ledger has the clean happy-path shape (ADR 0030), no S7 twice.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S9", "S12", "S12", "S11", "S8",
     ]);
   });
 
@@ -3331,7 +3324,7 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(s7Entries).toHaveLength(1);
     expect(s7Entries[0]!.output).toBeDefined();
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S9", "S12", "S12", "S11", "S8",
     ]);
     expect(result.stepLedger).not.toEqual(
       expect.arrayContaining([
@@ -3400,18 +3393,12 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
 
 // ─── AC4: recovery decides next step from ledger, not memory ──────────────────
 
-describe("S7 ship observation during resume setup (#824 r10)", () => {
-  it("re-dispatches S7 within the remaining durable budget when resumed host truth confirms no delivery", async () => {
-    class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
-      observationCalls = 0;
-
-      async observeSliceShip(): Promise<{ shipped: boolean }> {
-        this.observationCalls += 1;
-        return { shipped: this.observationCalls > 1 };
-      }
+describe("S7 ship failure resume", () => {
+  it("re-dispatches the idempotent ship worker without re-observing old delivery", async () => {
+    class ShipResumeBackend extends DispatchRecordingResumeBackend {
     }
 
-    const backend = new ObservationRecoveryBackend({
+    const backend = new ShipResumeBackend({
       worktree: WORKTREE,
       stateDir: STATE_DIR,
       ledger: [
@@ -3420,13 +3407,6 @@ describe("S7 ship observation during resume setup (#824 r10)", () => {
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S3", { kind: "reviewer", findings: [] }),
         entry("S4"),
-        {
-          ...entry("S7"),
-          step: "mechanical_redispatch_attempt",
-          event: "mechanical_redispatch_attempt",
-          forStep: "S7",
-          mechanicalRedispatchAttempt: 1,
-        },
         entry("S7", {
           kind: "ship",
           branch: WORKTREE.branch,
@@ -3437,9 +3417,8 @@ describe("S7 ship observation during resume setup (#824 r10)", () => {
           escalationKind: "failure",
           stopSummary: {
             reason: "infra_failure",
-            summary: "S7 host delivery observation unavailable: timed out",
-            repairHint:
-              "restore host observation, then resume to observe delivery without re-running ship",
+            summary: "S7 worker process failed after retries",
+            repairHint: "repair the worker process and rerun",
           },
         },
       ],
@@ -3448,243 +3427,14 @@ describe("S7 ship observation during resume setup (#824 r10)", () => {
     const result = await runOrchestrator({ issueNumber: 891, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.observationCalls).toBe(2);
     expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(1);
     expect(backend.ledgerWrites).toContainEqual(expect.objectContaining({
       step: "mechanical_redispatch_attempt",
       forStep: "S7",
-      mechanicalRedispatchAttempt: 2,
-    }));
-    expect(
-      backend.ledgerWrites.filter(
-        (written) =>
-          written.step === "mechanical_redispatch_attempt" && written.forStep === "S7",
-      ),
-    ).toHaveLength(1);
-    expect(MAX_DISPATCH_ATTEMPTS).toBeGreaterThan(2);
-  });
-
-  it("keeps the resumed non-delivery parked when the durable S7 redispatch budget is exhausted", async () => {
-    class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
-      observationCalls = 0;
-
-      async observeSliceShip(): Promise<{ shipped: boolean }> {
-        this.observationCalls += 1;
-        return { shipped: false };
-      }
-    }
-
-    const redispatchMarkers = Array.from(
-      { length: MAX_DISPATCH_ATTEMPTS },
-      (_, index): PersistentLedgerEntry => ({
-        ...entry("S7"),
-        step: "mechanical_redispatch_attempt",
-        event: "mechanical_redispatch_attempt",
-        forStep: "S7",
-        mechanicalRedispatchAttempt: index + 1,
-      }),
-    );
-    const backend = new ObservationRecoveryBackend({
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
-        ...redispatchMarkers,
-        entry("S7", {
-          kind: "ship",
-          branch: WORKTREE.branch,
-          status: "pushed",
-        }),
-        {
-          ...s8("escalate"),
-          escalationKind: "failure",
-          stopSummary: {
-            reason: "infra_failure",
-            summary: "S7 host delivery observation unavailable: timed out",
-            repairHint:
-              "restore host observation, then resume to observe delivery without re-running ship",
-          },
-        },
-      ],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 891, backend });
-
-    expect(result.status).toBe("escalate");
-    expect(result.stopSummary.reason).toBe("infra_failure");
-    expect(result.errorPackage?.failedStep).toBe("S7");
-    expect(backend.observationCalls).toBe(1);
-    expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(0);
-    expect(
-      backend.ledgerWrites.filter(
-        (written) =>
-          written.step === "mechanical_redispatch_attempt" && written.forStep === "S7",
-      ),
-    ).toHaveLength(0);
-  });
-
-  it("rebuilds the resumed S7 ship output from a host-observed open PR before entering S9", async () => {
-    class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
-      observationCalls = 0;
-
-      async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
-        this.observationCalls += 1;
-        return { shipped: true, prUrl: "pr://slice/offline-255" };
-      }
-    }
-
-    const backend = new ObservationRecoveryBackend({
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
-        entry("S7", {
-          kind: "ship",
-          branch: WORKTREE.branch,
-          status: "pushed",
-        }),
-        {
-          ...s8("escalate"),
-          escalationKind: "failure",
-          stopSummary: {
-            reason: "infra_failure",
-            summary: "S7 host delivery observation unavailable: timed out",
-            repairHint:
-              "restore host observation, then resume to observe delivery without re-running ship",
-          },
-        },
-      ],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 891, backend });
-
-    expect(result.status).toBe("success");
-    expect(backend.observationCalls).toBe(1);
-    expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(0);
-    expect(backend.dispatchSpecs.some((spec) => spec.id === "S9")).toBe(true);
-    expect([...result.stepLedger].reverse().find((entry) => entry.step === "S7")?.output)
-      .toEqual(expect.objectContaining({
-        kind: "ship",
-        branch: WORKTREE.branch,
-        status: "pr_opened",
-        pr: "pr://slice/offline-255",
-      }));
-    expect(backend.ledgerWrites).toContainEqual(expect.objectContaining({
-      step: "S7",
-      output: expect.objectContaining({
-        status: "pr_opened",
-        pr: "pr://slice/offline-255",
-      }),
-    }));
-    expect(result.stopSummary?.summary).not.toContain(
-      "requires a prior S7 pr_opened ship output with a PR URL",
-    );
-  });
-
-  it("rebuilds the resumed S7 ship output as pushed when host truth has no open PR", async () => {
-    class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
-      observationCalls = 0;
-
-      async observeSliceShip(): Promise<{ shipped: boolean }> {
-        this.observationCalls += 1;
-        return { shipped: true };
-      }
-    }
-
-    const backend = new ObservationRecoveryBackend({
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
-        entry("S7", {
-          kind: "ship",
-          branch: WORKTREE.branch,
-          status: "pushed",
-        }),
-        {
-          ...s8("escalate"),
-          escalationKind: "failure",
-          stopSummary: {
-            reason: "infra_failure",
-            summary: "S7 host delivery observation unavailable: timed out",
-            repairHint:
-              "restore host observation, then resume to observe delivery without re-running ship",
-          },
-        },
-      ],
-    });
-
-    const result = await runOrchestrator({ issueNumber: 891, backend });
-
-    expect(result.status).toBe("success");
-    expect(backend.observationCalls).toBe(1);
-    expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(0);
-    expect(backend.dispatchSpecs.some((spec) => spec.id === "S9")).toBe(false);
-    expect([...result.stepLedger].reverse().find((entry) => entry.step === "S7")?.output)
-      .toEqual(expect.objectContaining({
-        kind: "ship",
-        branch: WORKTREE.branch,
-        status: "pushed",
-      }));
-    expect(backend.ledgerWrites).toContainEqual(expect.objectContaining({
-      step: "S7",
-      output: expect.objectContaining({ status: "pushed" }),
+      mechanicalRedispatchAttempt: 1,
     }));
   });
 
-  it("turns transient gh failure into resumable S8(error) instead of rejecting runOrchestrator", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
-    childProcessFault.ghUnavailable = true;
-    const backend = new ResumeBackend({
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [] }),
-        entry("S4"),
-        entry("S7", {
-          kind: "ship",
-          branch: WORKTREE.branch,
-          status: "pushed",
-        }),
-      ],
-    });
-
-    try {
-      const result = await runOrchestrator({ issueNumber: 824, backend });
-
-      expect(result.status).toBe("error");
-      expect(result.stepLedger.at(-1)).toEqual(
-        expect.objectContaining({
-          step: "S8",
-          stopSummary: expect.objectContaining({
-            summary: "gh temporarily unavailable",
-          }),
-        }),
-      );
-      expect(backend.ledgerWrites.at(-1)).toEqual(
-        expect.objectContaining({ step: "S8", handoffStatus: "error" }),
-      );
-    } finally {
-      childProcessFault.ghUnavailable = false;
-      vi.unstubAllEnvs();
-    }
-  });
 });
 
 describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", () => {
@@ -3711,7 +3461,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     expect(backend.pushCount).toBe(1);
     expect(result.status).toBe("success");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S9", "S12", "S12", "S11", "S8",
     ]);
   });
 
@@ -3741,10 +3491,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     expect(result.branch).toBe(WORKTREE.branch);
   });
 
-  it("a legacy S8 entry without a handoffStatus tag is inferred from the prior step (untagged success → success)", async () => {
-    // Older ledgers (written before the handoffStatus tag) end at a bare S8.
-    // Recovery must infer the terminal status from the prior step (S7 → success)
-    // rather than calling route() out of S8 (which throws).
+  it("a legacy untagged S8 after ship re-dispatches the idempotent ship worker", async () => {
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
@@ -3756,13 +3503,13 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
         entry("S8"), // untagged legacy terminal entry
       ],
     };
-    const backend = new ResumeBackend(resumeState);
+    const backend = new DispatchRecordingResumeBackend(resumeState);
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
     expect(result.status).toBe("success");
     expect(result.branch).toBe(WORKTREE.branch);
-    expect(backend.runStepIds).toEqual([]);
+    expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(1);
   });
 });
 

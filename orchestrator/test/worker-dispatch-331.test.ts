@@ -123,9 +123,6 @@ class DispatchBackend implements Backend {
     this.pushCount += 1;
     throw new Error("push should not be called directly (#331)");
   }
-  async observeSliceShip(): Promise<{ shipped: boolean; prUrl?: string }> {
-    return { shipped: true, prUrl: "pr://slice/offline-331" };
-  }
   async pollOnlineReviewState(input: {
     repo: string;
     prUrl: string;
@@ -336,9 +333,6 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       resolveTelemetryDir(): string {
         return telemetryDir;
       }
-      override async observeSliceShip(): Promise<{ shipped: boolean }> {
-        return { shipped: true };
-      }
 
       async installTelemetryRunEnvironment(): Promise<void> {}
 
@@ -354,6 +348,8 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
           err.name = "StructuredOutputError";
           throw err;
         }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
         return spec.kind === "ship"
           ? {
               kind: "completed",
@@ -437,12 +433,9 @@ describe("#331 a non-completed WorkerResult routes via workerResultToStep", () =
   });
 });
 
-describe("#891 S7 ignores receipt content and follows host delivery truth", () => {
+describe("#891 S7 routes completed exit-zero receipts as ship success", () => {
   /** A backend whose S7 ship worker returns a completed NON-ship payload. */
   class WrongShipPayloadBackend extends DispatchBackend {
-    override async observeSliceShip(): Promise<{ shipped: boolean }> {
-      return { shipped: true };
-    }
     override async dispatchWorker(
       spec: WorkerSpec,
       ctx: DispatchContext,
@@ -458,6 +451,8 @@ describe("#891 S7 ignores receipt content and follows host delivery truth", () =
       if (spec.kind === "reviewer") {
         return { kind: "completed", output: { kind: "reviewer", findings: [] } };
       }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      if (skeleton !== undefined) return skeleton;
       // ship: a mis-wired backend returns a non-ship completed payload.
       return {
         kind: "completed",
@@ -471,7 +466,7 @@ describe("#891 S7 ignores receipt content and follows host delivery truth", () =
     }
   }
 
-  it("a completed non-ship receipt cannot veto a host-confirmed delivery", async () => {
+  it("a completed non-ship receipt is still exit-zero ship success", async () => {
     const backend = new WrongShipPayloadBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
     expect(result.status).toBe("success");

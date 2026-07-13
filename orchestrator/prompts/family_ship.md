@@ -22,6 +22,21 @@ Self-rerun only when the skill offers a rerun-able path. Escalate only for a rea
 human-decision block; report a hard failure when the ship command/tests fail and no
 rerun clears it.
 
+## Delivery truth and idempotency
+
+Before reporting success, verify the delivery yourself with `gh pr view` (or an
+equivalent command): the PR exists and its head is the commit delivered by this
+run. A failed verification is a failed delivery.
+
+On assignment, first check whether this family branch is already delivered: the PR
+exists and its head is the commit this assignment must deliver. If so, report
+success immediately. Reuse that delivery; do not push again, open another PR, or
+bump the version again.
+
+When push or PR creation cannot complete, exit with failure (non-zero). When a real
+human decision is required, emit the decision-gate outcome below with every required
+field, including `escalationKind`.
+
 ## Required output
 
 The real completion evidence is the single JSON object written to
@@ -39,7 +54,7 @@ PR opened:
 Escalation:
 
 ```text
-<ship>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>"}}</ship>
+<ship>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>", "escalationKind": "decision"}}</ship>
 ```
 
 Failure:

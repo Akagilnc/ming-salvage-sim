@@ -35,11 +35,16 @@ import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
 export type ShipWorkerOutcome =
   | {
       readonly kind: "shipped";
-      readonly branch: string;
+      readonly branch?: string;
       readonly status: string;
       readonly pr?: string;
     }
-  | { readonly kind: "escalate"; readonly reason: string; readonly diagnosis: string }
+  | {
+      readonly kind: "escalate";
+      readonly reason: string;
+      readonly diagnosis: string;
+      readonly escalationKind: "decision";
+    }
   | { readonly kind: "failed"; readonly reason: string; readonly diagnosis: string }
   | { readonly kind: "malformed"; readonly reason: string };
 
@@ -74,19 +79,33 @@ const nonEmpty = z.string().trim().min(1);
  * Mirrors prompts/ship.md + family_ship.md (the union of the two contracts):
  *   1. `{status:"pushed",    branch}`            — shipped, no pr (pr MUST be absent);
  *   2. `{status:"pr_opened", branch, pr}`        — shipped, pr REQUIRED;
- *   3. `{escalate:{reason, diagnosis}}`          — a genuine block;
+ *   3. `{escalate:{reason, diagnosis, escalationKind:"decision"}}` — a genuine block;
  *   4. `{failed:{reason, diagnosis}}`            — a hard ship/test failure.
  * All string fields are non-empty (trimmed). `.strict()` is the F3 belt: a
  * `{status:"pr_opened", branch, pr, failed:"…"}` (a success carrying a verdict key)
  * or a `{status:"pushed", branch, pr}` (pushed must not carry pr) no longer slips
  * through to a fabricated success.
  */
-const pushedSchema = z.object({ status: z.literal("pushed"), branch: nonEmpty }).strict();
+const pushedSchema = z
+  .object({ status: z.literal("pushed"), branch: nonEmpty.optional() })
+  .strict();
 const prOpenedSchema = z
-  .object({ status: z.literal("pr_opened"), branch: nonEmpty, pr: nonEmpty })
+  .object({
+    status: z.literal("pr_opened"),
+    branch: nonEmpty.optional(),
+    pr: nonEmpty.optional(),
+  })
   .strict();
 const escalateSchema = z
-  .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
+  .object({
+    escalate: z
+      .object({
+        reason: nonEmpty,
+        diagnosis: nonEmpty,
+        escalationKind: z.literal("decision"),
+      })
+      .strict(),
+  })
   .strict();
 const failedSchema = z
   .object({ failed: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
@@ -184,6 +203,7 @@ function classifyShipOutcomePayload(
       kind: "escalate",
       reason: escalate.data.escalate.reason,
       diagnosis: escalate.data.escalate.diagnosis,
+      escalationKind: escalate.data.escalate.escalationKind,
     };
   }
   const failed = failedSchema.safeParse(parsed);
@@ -192,15 +212,19 @@ function classifyShipOutcomePayload(
   }
   const pushed = pushedSchema.safeParse(parsed);
   if (pushed.success) {
-    return { kind: "shipped", branch: pushed.data.branch, status: "pushed" };
+    return {
+      kind: "shipped",
+      status: "pushed",
+      ...(pushed.data.branch !== undefined ? { branch: pushed.data.branch } : {}),
+    };
   }
   const prOpened = prOpenedSchema.safeParse(parsed);
   if (prOpened.success) {
     return {
       kind: "shipped",
-      branch: prOpened.data.branch,
       status: "pr_opened",
-      pr: prOpened.data.pr,
+      ...(prOpened.data.branch !== undefined ? { branch: prOpened.data.branch } : {}),
+      ...(prOpened.data.pr !== undefined ? { pr: prOpened.data.pr } : {}),
     };
   }
   // No strict schema matched → off-contract (unknown status, blank branch/pr, a
@@ -210,7 +234,7 @@ function classifyShipOutcomePayload(
     kind: "malformed",
     reason:
       `${source} matched no valid shape (expected one of: {status:"pushed",branch}, ` +
-      '{status:"pr_opened",branch,pr}, {escalate:{reason,diagnosis}}, {failed:{reason,diagnosis}} — ' +
+      '{status:"pr_opened",branch,pr}, {escalate:{reason,diagnosis,escalationKind:"decision"}}, {failed:{reason,diagnosis}} — ' +
       "non-empty strings, no extra keys)",
   };
 }

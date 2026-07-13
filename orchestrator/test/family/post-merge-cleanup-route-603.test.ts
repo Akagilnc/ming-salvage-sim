@@ -76,7 +76,6 @@ class FakeFamilyBackend implements FamilyBackend {
   resolveFamilyWorkingRepo(): string | undefined {
     return undefined;
   }
-  verifyFamilyShippedPr?: FamilyBackend["verifyFamilyShippedPr"];
   dispatchWorker?: FamilyBackend["dispatchWorker"];
 }
 
@@ -207,7 +206,6 @@ describe("#603 requirePostMergeCleanupForAlreadyDone — threads resolvedRoute",
         familyHeadAfter: "family-base-0",
       },
     );
-    familyBackend.verifyFamilyShippedPr = async () => ({ ok: true });
 
     const result = await runFamily({
       epic: epicWith(10),

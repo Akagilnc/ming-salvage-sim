@@ -87,7 +87,7 @@ describe("#451 dogfood replay fixture", () => {
             ship: expect.objectContaining({
               latestVerifiedCmrHead: "family-head",
               currentFamilyHead: "family-head",
-              shipPrState: "malformed-worker-output",
+              shipPrState: "worker-failed",
             }),
             heads: expect.objectContaining({
               verifiedCmrHead: "family-head",
