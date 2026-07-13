@@ -167,14 +167,12 @@ describe("#604 general fix_now branch PRESERVED — #369 bounded dispute (②③
     expect(c.dispositions[0]?.disputeAttempts).toBe(1);
   });
 
-  it("③ once the dispute budget is exhausted, a repeat fix_now stands (NOT blocking)", () => {
-    // #369 + ADR 0030: bounded dispute — one challenge, then it settles and
-    // repeats are re-suppressed.
+  it("③ after one dispute spent, repeat fix_now still blocks for human (no silent re-suppress)", () => {
+    // Owner 2026-07-13: 意见统一不了 → 上升裁决, not "budget exhausted → stay suppressed".
     const c = classifyFindings([finding("medium", "fix_now")], [
       priorSuppression("medium", 0, 1),
     ], { acceptedSuppressionSources: [trustedSource] });
-    expect(c.blocking).toEqual([]);
-    expect(c.deferred).toEqual([]);
+    expect(c.blocking).toHaveLength(1);
     expect(c.dispositions[0]?.disputeAttempts).toBe(1);
   });
 });
@@ -205,13 +203,13 @@ describe("#604 fix silent-drop — upgrade path blocks (⑤⑥)", () => {
     expect(c.dispositions[0]?.severity).toBe("medium");
   });
 
-  it("⑥ upgrade with reopen budget EXHAUSTED → still blocks (no silent drop)", () => {
+  it("⑥ upgrade with many prior reopens → still reopens + blocks (no cap court)", () => {
     const c = classifyFindings([finding("medium", "wont_fix")], [
       priorSuppression("low", 4),
     ], { acceptedSuppressionSources: [trustedSource] });
     expect(c.blocking).toHaveLength(1);
     expect(c.deferred).toEqual([]);
-    // capped at MAX_REOPEN_ATTEMPTS (4)
-    expect(c.dispositions[0]?.reopenAttempts).toBe(4);
+    // no MAX_REOPEN_ATTEMPTS — counter only for ledger, always reopens
+    expect(c.dispositions[0]?.reopenAttempts).toBe(5);
   });
 });

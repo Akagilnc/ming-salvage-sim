@@ -479,10 +479,8 @@ describe("#598 integration — the SHIP role: crash retries, a judged failed ver
 });
 
 /**
- * A backend whose S3 reviewer ALWAYS returns a malformed result (a semantic
- * invalid-output failure the reviewer's own MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS
- * loop owns). Counts reviewer dispatches so the composition test can prove the
- * generic layer does NOT also retry — the reviewer budget is not double-counted.
+ * S3 reviewer ALWAYS returns malformed. Owner 2026-07-13: decision-gate once;
+ * generic layer must not redispatch (callerOwns malformed for reviewer).
  */
 class ReviewerAlwaysMalformedBackend implements Backend {
   async smokeModelRoute(route: any) {
@@ -521,15 +519,11 @@ class ReviewerAlwaysMalformedBackend implements Backend {
   }
 }
 
-describe("#598 composition — the reviewer's own budget is not double-counted by the generic layer", () => {
-  it("a persistently malformed reviewer is dispatched EXACTLY its own bounded budget (not multiplied by the generic retry)", async () => {
+describe("#598 composition — reviewer unusable output not multi-dispatched", () => {
+  it("a persistently malformed reviewer is dispatched once then decision-escalate", async () => {
     const backend = new ReviewerAlwaysMalformedBackend();
-    await runOrchestrator({ issueNumber: 598, backend });
-    // The reviewer's malformed RESULT is caller-owned → deferred to its own
-    // MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS loop; the generic layer never retries it.
-    // So the reviewer is dispatched exactly its own budget (2), NOT 2 × the generic
-    // MAX_DISPATCH_ATTEMPTS. This is the "sequential composition, never
-    // double-counting" invariant.
-    expect(backend.reviewerDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+    expect(result.status).toBe("escalate");
+    expect(backend.reviewerDispatches).toBe(1);
   });
 });

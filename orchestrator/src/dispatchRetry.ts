@@ -29,7 +29,9 @@ import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
  * failure (crash / no-output). #598 owns this number.
  *
  * This is a DIFFERENT, independent bound from the reviewer's
- * `MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS` (= 2, runner.ts): that one bounds SEMANTIC
+ * reviewer invalid-output path (runner.ts): rises to decision gate — NOT a
+ * semantic retry budget / schema court. Historical name
+ * `MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS` removed (owner 2026-07-13). Prior note:
  * reruns of a reviewer that produced INVALID OUTPUT (a model/prompt problem that a
  * 3rd try rarely fixes → deliberately tighter), whereas this bounds a transient
  * process crash (retrying more is worth it). #592 ("no role treated specially")
