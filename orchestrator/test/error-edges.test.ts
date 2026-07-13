@@ -8,7 +8,6 @@
 
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../src/runner.js";
-import { MAX_DISPATCH_ATTEMPTS } from "../src/dispatchRetry.js";
 import type {
   Backend,
   IssueMeta,
@@ -84,8 +83,8 @@ class BaseBackend implements Backend {
 
 // ─── 0-commit (S2 coder_implement returns committed:false) ─────────────────
 
-describe("S2 coder 0-commit bounded mechanical redispatch", () => {
-  it("redispatches through the shared bound, then advances to S3", async () => {
+describe("S2 coder completed 0-commit report", () => {
+  it("advances once to S3 without entering process retry", async () => {
     const runStepIds: string[] = [];
     const backend = new BaseBackend();
     backend.runStep = async (spec) => {
@@ -100,7 +99,7 @@ describe("S2 coder 0-commit bounded mechanical redispatch", () => {
 
     expect(result.status).toBe("success");
     expect(runStepIds).toContain("S3");
-    expect(runStepIds.filter((id) => id === "S2")).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+    expect(runStepIds.filter((id) => id === "S2")).toHaveLength(1);
     expect(JSON.stringify(result.stepLedger)).not.toContain("synthesizedFailure");
   });
 

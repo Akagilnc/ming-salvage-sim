@@ -275,11 +275,6 @@ export interface CoderOutput {
   readonly committed: boolean;
   readonly commitsAdded: number;
   /**
-   * A reconciliation observation retained in the durable ledger for diagnosis.
-   * It is telemetry only: reconciliation never decides the worker's route.
-   */
-  readonly selfReportDiscrepancy?: CoderSelfReportDiscrepancy;
-  /**
    * Optional scoped proof that the fix worker changed implementation, tests, or
    * fixtures for an active finding. Generic "I tried" is not progress.
    */
@@ -294,17 +289,6 @@ export interface CoderOutput {
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
-}
-
-/** Advisory reconciliation telemetry, persisted with the coder output. */
-export interface CoderSelfReportDiscrepancy {
-  readonly code:
-    | "coder_self_report_disagrees_with_git_commits"
-    | "coder_git_commit_count_unknown";
-  readonly selfReportedCommitted: boolean;
-  readonly selfReportedCommitsAdded: number;
-  /** Null when no trustworthy git baseline was available. */
-  readonly gitCommitCount: number | null;
 }
 
 /** Output of a reviewer step (S3/S6). Empty findings ⇒ approve only when no prior finding needs adjudication. */
@@ -646,9 +630,8 @@ export type WorkerHost = "claude" | Exclude<ModelProviderFactory, "claudeCode">;
  *     `resumeSession` path (carrying {@link DispatchContext.resumeSessionId}).
  *
  * ADR 0026 INVARIANT (do not conflate with context retention): `resume` is the
- * CRASH/ESCALATE-resume path ONLY — it skips git-truthing (trusts the model's
- * self-report) and pins maxIter to 1. A normal coder/fix round must NOT use it
- * (it must keep git-truthing + within-step maxIter). So a worker is `resume`
+ * CRASH/ESCALATE-resume path ONLY and pins maxIter to 1. A normal coder/fix
+ * round must NOT use it (it keeps within-step maxIter). So a worker is `resume`
  * ONLY when the runner is actually threading a `resumeSessionId`; otherwise
  * `fresh`. "Retain context across fix rounds" is a SEPARATE concern — see
  * {@link WorkerSpec.contextRetention} — NOT expressed via `resume`.
@@ -663,7 +646,7 @@ export type WorkerSessionMode = "fresh" | "resume";
  *     rounds so a fix接得住 findings without re-exploring from scratch. ADR 0026:
  *     the MECHANISM (e.g. fresh run + prior findings/output fed in, vs a
  *     fix-loop-capable resume) is left to the worker implementation (#334) — the
- *     INVARIANT is that a normal fix keeps git-truthing + maxIter, so it is NOT
+ *     INVARIANT is that a normal fix keeps maxIter, so it is NOT
  *     the `resume` (crash/escalate) dispatch path.
  *   - `clean`  — review workers (reviewer/cmr) start each round with clean eyes
  *     (cross-model independence; never re-checking their own prior findings).
@@ -929,7 +912,7 @@ export interface DispatchContext {
    * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
    * recorded agent session. Normal S2/S3/S5/S6 runner-visible work is
    * `session:"fresh"` and does NOT carry this (codex cmr R3/R4 finding: normal
-   * work must not take the resume path, which skips git-truthing).
+   * work must not take the crash/escalate resume path).
    */
   readonly resumeSessionId?: string;
   /**
@@ -1815,20 +1798,6 @@ export interface Backend {
    * runner keeps the v0.1 branch-name value.
    */
   worktreeHead?(worktree: WorktreeHandle): Promise<string | undefined>;
-  /**
-   * Optional git-truth helper for resume recovery.
-   *
-   * When a legacy coder worker landed commits but failed the old stdout outcome
-   * protocol, the runner can only recover the step if it can reconstruct the
-   * true commit count from two persisted HEADs. Backends that cannot provide
-   * this must leave the method absent; the runner will then report the original
-   * terminal error instead of synthesising a misleading success.
-   */
-  countCommitsBetween?(
-    worktree: WorktreeHandle,
-    fromHead: string,
-    toHead: string,
-  ): Promise<number>;
   /**
    * Write one persisted ledger entry to the sibling state directory (#249).
    *

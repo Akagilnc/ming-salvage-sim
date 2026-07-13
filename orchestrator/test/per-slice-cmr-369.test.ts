@@ -336,13 +336,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ).toEqual({ kind: "next", step: "S7" });
   });
 
-  it("#551 keeps per-slice S5 no-commit output on the existing terminal error edge", () => {
+  it("routes a completed S5 no-commit report to fresh re-review", () => {
     expect(
       route({
         from: "S5",
         output: { kind: "coder", committed: false, commitsAdded: 0 },
       }),
-    ).toEqual({ kind: "next", step: "S5" });
+    ).toEqual({ kind: "next", step: "S6" });
   });
 
   it("#877: S6 empty findings without disposition ships (disposition court demolished)", async () => {

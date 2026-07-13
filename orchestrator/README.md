@@ -46,19 +46,15 @@ Corollaries, all mechanically enforced by
   (their output IS the paper): the runner makes zero judgment and zero park and
   hands the raw artifact pointers down the fixed topology to the fixer, who
   reads what it can, bounces the rest back to the reviewer, or raises.
-  **Coder/ship** (their output is a git commit / PR — an external fact; the
-  slip is only a receipt): an unreadable receipt never goes to the human — a
-  **new commit on the graph** (`git rev-list <headBefore>..HEAD` non-empty; not
-  counted, head not inspected, content not judged) proceeds to review anyway;
-  no commit runs the existing empty-run mechanical budget (#592), and even when
-  that budget is exhausted the runner draws no conclusion — it advances to the
-  review step and lets the reviewer judge the empty diff (bounce or raise).
+  **Coder/ship**: exit-zero completion proceeds to the next worker; the runner
+  neither reads the receipt nor queries git/host to adjudicate it. The next
+  reviewer judges an empty or incorrect delivery (bounce or raise).
   Only repeated process crashes (#598 — no work, no paper to judge) still take
   the infra park. A readable-but-wrong submission is likewise the next wisdom's
   problem (the fixer bounces it back to the reviewer or raises).
   `synthesizedFailure` may only ever be derived from channel-1 process facts
   (the git/host external-truth source was revoked 2026-07-13: three channels,
-  no exceptions), and a missing result is never synthesized into
+  no exceptions), and a missing reviewer result is never synthesized into
   success (`findings: []` / `converged: true`) — nor into failure.
 - **The worker's OK is OK — no git verdicts.** A coder or ship worker's
   exit-zero completion routes forward as-is; self-verification (real commit /

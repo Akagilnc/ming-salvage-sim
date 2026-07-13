@@ -40,6 +40,33 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
       .toEqual({ kind: "next", step: "S7" });
   });
 
+  it("routes every completed coder report directly to the next reviewer", () => {
+    expect(route({ from: "S2", output: {
+      kind: "coder", committed: false, commitsAdded: 0,
+    } })).toEqual({ kind: "next", step: "S3" });
+    expect(route({ from: "S5", output: {
+      kind: "coder", committed: false, commitsAdded: 0,
+    } })).toEqual({ kind: "next", step: "S6" });
+  });
+
+  it("contains no coder git-verdict court in single-slice or family runtime", () => {
+    const sources = [
+      "src/runner.ts",
+      "src/realBackend.ts",
+      "src/family/realFamilyBackend.ts",
+    ].map((file) => stripComments(
+      readFileSync(new URL(`../${file}`, import.meta.url), "utf8"),
+    ));
+    const [runner, realBackend, familyBackend] = sources;
+
+    expect(runner).not.toContain("coderNoCommitBudgetExhausted");
+    expect(runner).not.toMatch(/rev-list[^\n]*coderHeadBeforeStep|coderHeadBeforeStep[^\n]*rev-list/);
+    expect(realBackend).not.toContain("reconcileCoderCommits");
+    expect(realBackend).not.toContain("freshCoderGitCommitCount");
+    expect(realBackend).not.toContain("resumeCoderCommitCount");
+    expect(familyBackend).not.toContain("familyCoderGitCommitCount");
+  });
+
   it("runner and route cannot revive deleted output courts", () => {
     const source = ["runner.ts", "route.ts"]
       .map((file) => stripComments(readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8")))

@@ -84,6 +84,9 @@ ad-hoc runner prompt text.
    In your terminal coder report, set `commitsAdded` to the exact number of
    `git commit` commands made in this worker run; report every commit when more
    than one was necessary.
+   Before reporting completion, verify that your deliverable is committed and a
+   real commit exists in the worktree history. If there is no deliverable, exit
+   truthfully as failed or explain it through your decision gate.
 
 When dispatched as a **coder-fix** worker, apply the INTENT gate (step 2) to every
 behaviour-changing edit before patching. Do not redesign the slice. Read the

@@ -273,7 +273,7 @@ describe("#677 legal refuse one finding, fix the others", () => {
     ).toEqual({ kind: "next", step: "S6" });
   });
 
-  it("S5 refuse alone without commit remains the existing no-commit error edge", () => {
+  it("S5 refuse alone without commit still advances to fresh re-review", () => {
     expect(
       route({
         from: "S5",
@@ -292,7 +292,7 @@ describe("#677 legal refuse one finding, fix the others", () => {
           ],
         },
       }),
-    ).toEqual({ kind: "next", step: "S5" });
+    ).toEqual({ kind: "next", step: "S6" });
   });
 
   it("end-to-end: refuse one + fix others → not abort; still dispatches fresh re-review", async () => {

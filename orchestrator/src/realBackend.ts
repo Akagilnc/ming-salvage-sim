@@ -113,7 +113,6 @@ import {
   smokeRouteModels,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
-import type { CoderSelfReportDiscrepancy } from "./types.js";
 
 // ── #884 bare-ping smoke only (credential oracle; no docker/tool loop) ───────
 
@@ -1339,146 +1338,15 @@ export function stripJsonFence(s: string): string {
   return stripOutcomeJsonFence(s);
 }
 
-// ── coder commit truth from git (#256 truthification) ───────────────────────
-
 /** The self-reported coder JSON a step emits (already shape-validated). */
 export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
-  readonly selfReportDiscrepancy?: CoderSelfReportDiscrepancy;
   readonly escalate?: { readonly reason: string; readonly diagnosis: string };
   readonly repairEvidence?: RepairEvidence;
 }
 
-/**
- * Reconcile a coder step's SELF-REPORTED `{committed, commitsAdded}` against the
- * REAL number of commits reachable from final HEAD but not the pinned
- * pre-worker baseline, and return a git-TRUTHED coder output.
- *
- * WHY (integ-cmr 256 r4, real-backend-wiring / commit-truth): the coder reports
- * `committed` / `commitsAdded` in its `<coder>` tag, but a model can claim a
- * commit it never made (`{committed:true, commitsAdded:1}` with ZERO real
- * commits). Trusting the self-report routes that step to S2/S5 SUCCESS, slipping
- * the #252 0-commit edge and defeating the very truthification this slice was
- * assigned (the in-tree `validate.ts` note: "deriving the real count from git is
- * #256"). The single source of truth is the final git graph —
- * `git rev-list <headBefore>..HEAD` — so:
- *
- *   - committed   ← finalGraphCommitCount > 0
- *   - commitsAdded ← finalGraphCommitCount
- *
- * The self-report is always advisory. Any disagreement is retained as durable
- * discrepancy telemetry, but never interrupts or routes the run. When no
- * trustworthy git baseline is available, the count is explicitly recorded as
- * unknown rather than inventing a failure signal.
- *
- * `escalate` is a MODEL signal (not derivable from git), so it is preserved from
- * the self-report verbatim.
- *
- * Pure (no I/O): the caller supplies the final-graph commit count, so the
- * reconciliation is unit-tested without a container.
- */
-export function reconcileCoderCommits(
-  selfReported: SelfReportedCoder,
-  gitCommitCount: number | undefined,
-): SelfReportedCoder {
-  if (gitCommitCount === undefined) {
-    return {
-      committed: selfReported.committed,
-      commitsAdded: selfReported.commitsAdded,
-      selfReportDiscrepancy: {
-        code: "coder_git_commit_count_unknown",
-        selfReportedCommitted: selfReported.committed,
-        selfReportedCommitsAdded: selfReported.commitsAdded,
-        gitCommitCount: null,
-      },
-      ...(selfReported.repairEvidence !== undefined
-        ? { repairEvidence: selfReported.repairEvidence }
-        : {}),
-      ...(selfReported.escalate !== undefined ? { escalate: selfReported.escalate } : {}),
-    };
-  }
-  const committed = gitCommitCount > 0;
-  const selfReportDiscrepancy =
-    selfReported.committed !== committed ||
-    selfReported.commitsAdded !== gitCommitCount
-      ? {
-          code: "coder_self_report_disagrees_with_git_commits" as const,
-          selfReportedCommitted: selfReported.committed,
-          selfReportedCommitsAdded: selfReported.commitsAdded,
-          gitCommitCount,
-        }
-      : undefined;
-  const base = {
-    committed,
-    commitsAdded: gitCommitCount,
-    ...(selfReportDiscrepancy !== undefined ? { selfReportDiscrepancy } : {}),
-    ...(selfReported.repairEvidence !== undefined
-      ? { repairEvidence: selfReported.repairEvidence }
-      : {}),
-  };
-  return selfReported.escalate !== undefined
-    ? { ...base, escalate: selfReported.escalate }
-    : base;
-}
-
-export interface ResumeCoderCommitBasis {
-  readonly baselineHead?: string;
-  readonly priorCommitsAdded?: number;
-}
-
-/**
- * Locate the git truth basis for a resumed coder step.
- *
- * On escalate-resume, the runner re-opens the agent entry that escalated and
- * truncates it from the in-memory ledger, but the persisted ledger still has the
- * superseded coder entry plus the branch HEADs around it. The cumulative commit
- * truth for the resumed output is therefore:
- *
- *   commits from the ledger entry immediately BEFORE the resumed coder step
- *   through the current resident HEAD.
- *
- * If an older ledger has no usable SHA, the previous coder output's truthified
- * `commitsAdded` is retained as a fallback basis; the caller adds any commits
- * created during the resume iteration via a before/after HEAD diff.
- */
-export function resumeCoderCommitBasis(
-  ledger: ReadonlyArray<{
-    readonly sessionId?: string;
-    readonly branchHEAD?: string;
-    readonly output?: StepOutput;
-  }>,
-  sessionId: string,
-): ResumeCoderCommitBasis {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (entry.sessionId !== sessionId || entry.output?.kind !== "coder") {
-      continue;
-    }
-    let baselineHead: string | undefined;
-    for (let j = i - 1; j >= 0; j--) {
-      const head = ledger[j]?.branchHEAD;
-      if (typeof head === "string" && isLikelySha(head)) {
-        baselineHead = head;
-        break;
-      }
-    }
-    return {
-      ...(baselineHead !== undefined ? { baselineHead } : {}),
-      priorCommitsAdded: entry.output.commitsAdded,
-    };
-  }
-  return {};
-}
-
-export function reconcileResumeCoderCommits(
-  selfReported: SelfReportedCoder,
-  cumulativeGitCommitCount: number,
-): SelfReportedCoder {
-  return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
-}
-
-/** A git SHA / abbreviation: only lower-case hex, length 7–40. */
+/** A git SHA / abbreviation used by non-verdict bookkeeping parsers. */
 export function isLikelySha(s: string): boolean {
   return /^[0-9a-f]{7,40}$/.test(s);
 }
@@ -1643,7 +1511,7 @@ export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
  *   gone → fall back to a FRESH `run()` (lose in-session memory, keep the
  *   committed worktree progress — the resident branch survives).
  * - Every other error (completion-signal mismatch, schema/structured-output
- *   parse failure, auth/model failure, commit-truth contradiction) propagates to
+ *   parse failure, auth/model failure) propagates to
  *   S8(error). It must not be masked by a fresh run.
  *
  * Pure: classifies the error only; the caller performs the chosen recovery.
@@ -3389,26 +3257,9 @@ export class RealBackend implements Backend {
     throw err;
   }
 
-  /**
-   * Decode a Sandcastle structured output into a domain StepOutput.
-   *
-   * For a fresh coder step `gitCommitCount` is the final graph delta from its
-   * pinned pre-worker HEAD to final HEAD. It is the SINGLE SOURCE OF TRUTH for
-   * `committed` / `commitsAdded` (#818): self-reported `<coder>` values are
-   * advisory discrepancy telemetry only, never a reconcile failure.
-   *
-   * `gitCommitCount === undefined` is allowed only for roles where commit truth
-   * is irrelevant (reviewer). A resumed coder still gets git-truthed, but the
-   * count is cumulative from the persisted ledger baseline to the resident HEAD:
-   * resume may only re-emit corrected structured
-   * output while earlier commits already live on the branch.
-   *
-   * Ignored for the reviewer role (commits are not part of a review's contract).
-   */
   private decodeOutput(
     spec: StepSpec,
     raw: unknown,
-    gitCommitCount: number | undefined,
   ): StepOutput {
     if (raw === undefined) {
       throw new Error(
@@ -3429,35 +3280,26 @@ export class RealBackend implements Backend {
         ...(r.escalate ? { escalate: r.escalate } : {}),
       };
     }
-    // Coder: parse the self-report for shape, then attach final graph truth.
-    // Fresh runs use their final graph delta; resumed runs use a cumulative
-    // ledger-baseline count. Mismatch/unknown is advisory telemetry.
+    // Coder completion is worker-authored. The next reviewer judges the diff.
     if (spec.role === "coder") {
-      const c = coderOutputSchema.parse(raw);
-      const out = reconcileCoderCommits(c, gitCommitCount);
-      const repairEvidence =
-        out.repairEvidence !== undefined
-          ? { repairEvidence: out.repairEvidence }
-          : {};
-      const selfReportDiscrepancy =
-        out.selfReportDiscrepancy !== undefined
-          ? { selfReportDiscrepancy: out.selfReportDiscrepancy }
-          : {};
+      const out = coderOutputSchema.parse(raw);
       return out.escalate
         ? {
             kind: "coder",
             committed: out.committed,
             commitsAdded: out.commitsAdded,
-            ...repairEvidence,
-            ...selfReportDiscrepancy,
+            ...(out.repairEvidence !== undefined
+              ? { repairEvidence: out.repairEvidence }
+              : {}),
             escalate: out.escalate,
           }
         : {
             kind: "coder",
             committed: out.committed,
             commitsAdded: out.commitsAdded,
-            ...repairEvidence,
-            ...selfReportDiscrepancy,
+            ...(out.repairEvidence !== undefined
+              ? { repairEvidence: out.repairEvidence }
+              : {}),
           };
     }
 
@@ -3558,87 +3400,6 @@ export class RealBackend implements Backend {
     throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
   }
 
-  private resumeCoderCommitCount(
-    worktree: WorktreeHandle,
-    sessionId: string,
-    beforeResumeHead: string | undefined,
-  ): number | undefined {
-    const stateDir = this.stateDirFor(worktree.path, this.issueOf(worktree));
-    const ledger = this.readLedger(stateDir);
-    const basis =
-      ledger === undefined ? {} : resumeCoderCommitBasis(ledger, sessionId);
-    if (basis.baselineHead !== undefined) {
-      try {
-        return this.countCommitsSince(worktree, basis.baselineHead);
-      } catch {
-        return undefined;
-      }
-    }
-    if (basis.priorCommitsAdded !== undefined) {
-      if (beforeResumeHead === undefined) {
-        return undefined;
-      }
-      try {
-        const resumeOnlyCommits =
-          this.countCommitsSince(worktree, beforeResumeHead);
-        return basis.priorCommitsAdded + resumeOnlyCommits;
-      } catch {
-        return undefined;
-      }
-    }
-    return undefined;
-  }
-
-  async countCommitsBetween(
-    worktree: WorktreeHandle,
-    fromHead: string,
-    toHead: string,
-  ): Promise<number> {
-    return this.countCommitsInRange(worktree, `${fromHead}..${toHead}`);
-  }
-
-  private countCommitsSince(worktree: WorktreeHandle, fromHead: string): number {
-    return this.countCommitsInRange(worktree, `${fromHead}..HEAD`);
-  }
-
-  /**
-   * Fresh-coder commit truth is the final graph delta, never Sandcastle's
-   * accumulated observation log. A worker can commit and later reset, rebase,
-   * squash, or drop that commit; only commits still reachable from final HEAD
-   * are allowed to set `committed:true`.
-   */
-  private freshCoderGitCommitCount(
-    worktree: WorktreeHandle,
-    headBefore: string | undefined,
-  ): number | undefined {
-    if (headBefore === undefined || headBefore.trim().length === 0) {
-      return undefined;
-    }
-    try {
-      return this.countCommitsSince(worktree, headBefore.trim());
-    } catch {
-      // The self-report remains advisory when the final graph cannot be
-      // observed. Do not invent a mismatch failure from an unavailable probe.
-      return undefined;
-    }
-  }
-
-  private countCommitsInRange(worktree: WorktreeHandle, range: string): number {
-    const raw = this.sh(
-      "git",
-      ["rev-list", "--count", range],
-      worktree.path,
-    );
-    const count = Number.parseInt(raw, 10);
-    if (!Number.isInteger(count) || count < 0) {
-      throw new Error(
-        `realBackend: git rev-list returned invalid commit count "${raw}" ` +
-          `for ${range} in ${worktree.path}`,
-      );
-    }
-    return count;
-  }
-
   // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns
   //    StepResult). S2/S5 run the coder soul; S3/S6 run the fresh read-only
   //    reviewer soul. The runner owns the visible review/fix loop and threads
@@ -3647,15 +3408,9 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     options?: AgentStepRunOptions,
-    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number | undefined,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
-    // Pin the graph before Sandcastle begins. `result.commits` is only an
-    // accumulated observation log, so it may include SHAs a worker later made
-    // unreachable; the final graph delta below is the sole verdict input.
-    const headBefore =
-      spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     const typedOutputUsed =
       spec.maxIter === 1 && options?.outcomeLanding === undefined;
     const box = this.box(issueNumber, spec, options);
@@ -3698,16 +3453,8 @@ export class RealBackend implements Backend {
         issueNumber,
       },
     });
-    // #818: derive coder verdict fields from final graph truth, not Sandcastle's
-    // cumulative commit observations or the worker self-report.
-    const gitCommitCount =
-      spec.role === "coder"
-        ? coderCommitCount !== undefined
-          ? coderCommitCount(result)
-          : this.freshCoderGitCommitCount(worktree, headBefore)
-        : undefined;
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-    const output = this.decodeOutput(spec, raw, gitCommitCount);
+    const output = this.decodeOutput(spec, raw);
     return { output, sessionId: lastSessionId(result) };
     } finally {
       box.cleanup();
@@ -3730,8 +3477,6 @@ export class RealBackend implements Backend {
     options?: AgentStepRunOptions,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
-    const beforeResumeHead =
-      spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     await this.preflightToolchain(spec);
     const box = this.box(issueNumber, spec, options);
     try {
@@ -3770,42 +3515,20 @@ export class RealBackend implements Backend {
           issueNumber,
         },
       });
-      // Resume path: git-truth against the cumulative resident-branch commit
-      // count, not this one-iteration result.commits.length. The resumed
-      // iteration may only re-emit the structured tag while prior commits already
-      // live on the branch.
-      const gitCommitCount =
-        spec.role === "coder"
-          ? this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
-          : undefined;
       const output = this.decodeOutput(
         spec,
         this.rawOutputFor(result, spec, typedOutputUsed, options),
-        gitCommitCount,
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
       // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
       // session falls back to a fresh run() (keep committed worktree progress,
       // lose in-session memory). Signal mismatches, schema parse failures, auth
-      // failures, model errors, and commit-truth contradictions propagate to the
+      // failures and model errors propagate to the
       // runner's S8(error) edge instead of being masked by a fresh run.
       const recovery = classifyResumeError(err);
       if (recovery.kind === "fresh-run") {
-        // Re-dispatch the build worker (a dead resume session ⇒ start a fresh
-        // sandbox.run for the same step). Coder commit truth still uses the
-        // resume ledger baseline, because prior committed work may already live
-        // on the resident branch even though the old session is gone.
-        const coderCommitCount =
-          spec.role === "coder"
-            ? () => this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
-            : undefined;
-        return await this.runFreshAgentStep(
-          spec,
-          worktree,
-          options,
-          coderCommitCount,
-        );
+        return await this.runFreshAgentStep(spec, worktree, options);
       }
       throw err;
     } finally {

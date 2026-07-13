@@ -14,9 +14,8 @@
  * worker-reported content. A process-level failure
  * (`failed` or a thrown process exception) retries with a FRESH (non-resume)
  * session for the same step, up to MAX_DISPATCH_ATTEMPTS. Unusable reviewer
- * receipts are caller-owned decisions; unusable coder receipts are first
- * reconciled against git truth, and only a no-commit result enters this budget.
- * a judged `completed`/`escalated` passes through with ZERO retry; bounded
+ * receipts are caller-owned decisions; coder receipt content never enters this
+ * budget. A `completed`/`escalated` result passes through with ZERO retry; bounded
  * exhaustion returns the last failure (runner function (a), #604).
  */
 
@@ -217,7 +216,7 @@ describe("#598 withMechanicalRetry", () => {
 
 });
 
-// ── #598 integration: coder/ship inherit the generic retry (the #592 asymmetry) ──
+// ── #598 integration: coder/ship inherit process-failure retry ──
 
 const RUN_WORKTREE: WorktreeHandle = {
   branch: "feat/issue-598",
@@ -281,7 +280,7 @@ class CoderCrashBackend implements Backend {
   }
 }
 
-describe("#598 integration — a coder (S2) process crash retries fresh (the #592 asymmetry)", () => {
+describe("#598 integration — a coder (S2) process crash retries fresh", () => {
   it("a coder that crashes once then succeeds no longer aborts the run — S2 dispatched twice", async () => {
     const backend = new CoderCrashBackend(1);
     const result = await runOrchestrator({ issueNumber: 598, backend });
