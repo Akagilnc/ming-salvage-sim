@@ -8,11 +8,13 @@ runner 只准做三件事，三件之外零判断权：
 
 (a) **数 exit code**——进程死活。真进程级失败只来自非零 exit、抛异常或执行通道本身失败；其有界机械重试挂在这条通道上（#598 崩溃半边、#853/#855 park-retry），不读任何完成标记或报告文字。
 
-(b) **读 reviewer 明确自报的 open-count**——只有 reviewer 明确报出的 0 或 >0 才是信号：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。runner 不派生、不复核、不读 severity/action 做二次分类。申报与卷面不符由 fixer 读卷时发现。
+(b) **读 reviewer 明确自报的 open-count**——这里的 reviewer 包括固定流程指定的专业 review/verification worker；只有该 reviewer worker 明确报出的 0 或 >0 才是信号：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。Action/Runner 不合成 count，不从测试、findings 或其他 Action 结果推导 count。runner 不派生、不复核、不读 severity/action 做二次分类。申报与卷面不符由 fixer 读卷时发现。
 
 (c) **转决策门**——worker 自己按的 decision/raise 原样递给人，转运不裁决。
 
 **从不读字。** 卷面对不对是下一个智慧体（fixer）的判断：读不懂 → raise（走决策门）或打回 reviewer。
+
+**Quota/capacity 生命周期归 Worker Invocation Action。** 该 Action 在内部调用 Policy 机械求值 seat/park/relay，并拥有 park、wake、relay、crash/re-entry 直到本次 invocation 真正完成的完整生命周期。parked 或 relayed 工作仍有未完成义务时，Action 不得向 Flow 宣告成功；Lineage 持久化当前 Action 的未完成义务与必要 recovery anchor。reset/re-entry 复用同一 scene、Capsule 与 role-scoped session，relay 仍按既有 baton/checkpoint 规则接续同一 Action 生命周期。Runner 只按固定 flow position 重调未完成 Action，不知道 park reason、provider、pool 或 resetAt，也不增加第四信号。
 
 **明确要求产出代码的 coder / fixer 类动作**：允许记录代码 commit 有/无这一机械事实；有 commit 照常进评审，无 commit 照既有白跑机械线处理，Runner 不知道 HEAD、不数 commit、不评内容。
 **Delivery Action**：ship / PR / merge 等外部效果只由 Delivery Action 自己执行和核验；Runner 不查外部效果，也不把这些动作混入 commit 有/无二值权限。
