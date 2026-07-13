@@ -521,8 +521,16 @@ _Avoid_: 第二案头/独立急务界面；把六动作做成通用下旨的语�
 ### Epic Orchestration
 
 **Epic 编排器**:
-把一个 issue 喂进去、AFK 跑到「待评审/待合」状态的本地自动化。它复用 Sandcastle 底座(容器隔离、订阅 auth、分支、Ralph 循环),自叠本 epic 的质量层(多模型评审承重闸、findings 升级、家族整体闸)。
+把一个 issue 喂进去、沿唯一交付主流程自治跑到 merge 与收尾的本地自动化。它复用 Sandcastle 底座(容器隔离、订阅 auth、分支、Ralph 循环),由 runner 调度相互独立的专业动作完成开发、评审、修复、合并、发布和清理。
 _Avoid_: CI、流水线(太泛)、hermes(那是一个具体后端不是编排器)
+
+**交付主流程**:
+编排器当前唯一的一条 issue→merge 路线。single 是只有一个切片的主流程，family 是有多个切片的主流程，online review 是两者共用的尾段；流程层只决定何时调用哪个编排动作，不规定动作内部怎样完成。
+_Avoid_: 三套 workflow、Role Workflow Definition、可执行 DSL、把 wiki 逐字翻译成运行时流程
+
+**编排动作**:
+交付主流程里一个目的明确的专业步骤，拥有该步的具体做法、skill、模型腿、外部副作用核验与合法空跑。动作可以向 runner 提交需要人类决定，但不得跨角色私自推进后续流程；是否以及何时调用下一动作由流程层决定。
+_Avoid_: runner 分支、万能 executeAction、把动作内部方法复制进流程或 prompt
 
 **独立子 issue**:
 本身就是一个自足交付物的 issue,没有父 epic 罩着,自身底下也不挂子 issue(leaf)。
@@ -533,7 +541,7 @@ _Avoid_: 单 issue、孤儿 issue
 _Avoid_: 子任务、subtask(太泛,不区分独立与否)
 
 **家族 base**:
-同一父 epic 下所有家族子片共享的基线分支,由家族集成层把子片合回它。**家族层(v0.1 deferred)的不变式**;**v0.1 单片编排从 main 切、此刻不消费家族 base**(不从它派生),家族 base 的派生/合回是家族集成层的事。
+同一父 epic 下所有家族子片共享的集成基线。完成的子片依次合回这里；每次合入后先通过父分支验证，再重新计算依赖并放行新子片。
 _Avoid_: 主干、main、集成分支(太泛)
 
 **角色**:
@@ -553,27 +561,23 @@ _Avoid_: system prompt、人设、persona(太泛)
 _Avoid_: caller、上游、parent(太泛)
 
 **step(编排步)**:
-runner 控的一个外层 wiki 步骤,两类:**worker 步**(产出工作——写码/评审/cmr/ship/merge——一个顶层 agent/执行器跑在自己容器里,见 worker / 0026)与 **runner 调度决策**(gate / route / 排序 / ledger / 续跑——纯 TS、不跑 agent)。step 的序由 runner 推,不由 agent。(0026 把 push/cmr/ship 从原「runner 动作」改成 worker 步;runner 只剩调度决策。)
+交付主流程里由 runner 推进的一步：要么调用一个编排动作产出工作，要么执行纯机械的交通调度。步骤顺序由唯一交付主流程固定；专业做法留在动作内部。
 _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 
-**StepSpec**:
-一个 **worker 步**的固定规格——固定 role + promptFile + agent/model + completionSignal + output schema + maxIterations。存在代码里,不临场生成。(role 决定注哪份 soul:v0.1 一镜像双角色,runner 凭 role 选 coder/reviewer soul。)**仅 worker 步有**——runner 调度决策(gate/route/排序/ledger/续跑)不跑 agent、无 StepSpec。
-_Avoid_: 配置、config(太泛)
-
 **runner**(纯调度器):
-驱动 step 序列的 TS 代码,**只做调度**——step 之间的流程决策(input gate / route / 排序 / step ledger / 续跑);由 `route()` 定下一步,agent 永不决定下一步、不跳步、不改流程。它**派 worker 步、等 worker、按三态交通灯叫下一位,自己不干也不评任何具体活**(具体纪律活在 worker invoke 的 skill 里,见 worker / 0026)。评审场景只看“未决 findings 为 0 / 大于 0 / 需要人”;不接 worker outcome JSON,不读 finding 内容,不比较 commit/head,不核测试或证据。
+驱动交付主流程的交通警察。它只数 exit code、读取 reviewer 自报的 open-count(0 / 大于 0)、转运 worker 自己按下的决策门；对要求产出代码的动作，还可机械判断是否至少新增一个 commit，但只能知道有/无。它不读任何报告文字，不核对 count，不知道 commit HEAD 或数量，也不判断专业工作是否合格。
 _Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它当干活的(它只调度)、把 runner 当语义裁判、用自由文本/正则推断路由。
 
 **worker**:
-wiki 流程里的**一步**(可大可小),由 runner 派出去执行。判据 = **步内没有需要调度的东西**(调度只发生在步与步之间,是 runner 的活)。每个 worker 跑在自己的容器/上下文里,里面的 agent 是该容器的**顶层**(Claude 或 Codex,非 runner 的 sub),故能起自己的 sub + CLI(例:cmr worker 起 1 Agent + 2 CLI 跑三腿)。worker **不一定用 skill**(如 merge 可能就不用);用时 Claude=`Skill` invoke、Codex=加载 SKILL.md 当 skill item 传入 prompt。
+执行一个编排动作的专业工作者。每个 worker 跑在自己的容器/上下文里，拥有完成本动作所需的 skill、工具和同角色模型腿；它可以提交需要人类决定，但不能自行跨到下一角色或接管外层调度。
 _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worker 的判据)、subagent(worker 是顶层容器、不是 runner 的子代理)。
 
 **reviewer worker**:
-被 runner 派出、只负责评审并把 findings 写入状态库的 worker。它可以读 scope/issue/ADR、运行评审所需测试、派多模型 review legs、汇总原始评审证据,但不承担持久修复,不得提交修复 commit。CMR completeness/correctness worker 也遵守同一边界。它完成后只给调度层三种结果:未决 findings 为 0、未决 findings 大于 0、需要人类决定;finding 内容留给下一位专业 worker,不交给 runner 裁判。边界取舍见 0050、0129。
+被 runner 派出、只负责评审的 worker。它可以读 scope/issue/ADR、运行评审所需测试、按所属动作调用模型腿并汇总证据，但不承担持久修复；完成后只自报 open-count 或提交需要人类决定，finding 内容留给 fixer 与 fresh reviewer，不交给 runner 裁判。
 _Avoid_: 自评自修、顺手修一下、把 CMR reviewer 当 coder-fix。
 
 **coder-fix worker**:
-被 runner 派出、专门处理 findings 状态库中未决项的 worker。它逐项验真:真的就修复并写 commit,假的就写明反证；随后更新对应 finding 状态并交给 fresh reviewer 复核。commit、测试和说明由下一位 reviewer 检查,runner 不比较 hash、不核证据、不判断修复是否正确。边界取舍见 0050、0129。
+被 runner 派出、专门处理 reviewer 交来的未决项的 worker。它逐项验真、修复真实问题并完成自查；结果必须交给 fresh reviewer 全量复核，runner 只机械判断本动作是否有新增 commit，不比较 hash、不数 commit、不核修复证据。
 _Avoid_: reviewer 自修、amend 折叠、无 commit 修复、runner 代判修复正确。
 
 **文档发布 (docRelease)**:
@@ -591,28 +595,24 @@ _Avoid_: 口头说已修、只贴总结不落 commit/test、自查二连缺席�
 **smart zoom**(步的粒度):
 选一个 worker/step 该多大的权衡(Matt)。大步省调度、但一个上下文塞太多会到上限;小步上下文清爽、但调度多。判据 = 步内无需调度 + 上下文预算。大步不一定好。
 
-**completionSignal**:
-一个 step 完成时 agent 必须 emit 的固定串(如 `AK_STEP_COMPLETE:coder_implement`)。runner 靠它确认该步真跑完。
-_Avoid_: 结束标记、done(太泛)
-
 **评审调度信号**:
-reviewer 完成专业判断后留给 runner 的最小交通灯,只有三种:未决 findings 为 0、未决 findings 大于 0、需要人类决定。0 继续,大于 0 派 fixer,需要人则 park。runner 不接收 worker outcome JSON,不读取 finding 内容,不比较 commit/head,不核测试或证据；这些由下一位专业 worker 处理。
+reviewer 完成专业判断后留给 runner 的最小交通灯：自报 open-count 为 0、自报 open-count 大于 0，或主动提交需要人类决定。说几条就是几条；runner 不从卷面派生或对账 count，也不读取 finding 内容、格式、严重度、测试或证据。
 _Avoid_: outcome JSON、finding 分类器、commit hash 一致性闸、让 runner 管理或评价 worker。
 
 **step ledger**:
-每个 **worker 步**落一条的账本(step / promptFile / prompt_hash / agent / model / commits before-after / sessionId 等)。防跳步的事后真源 + 续跑真源(下一步只读 ledger,不靠 LLM 记忆)。同 0017 的「状态文件」是同一份。(runner 的纯调度决策不产 worker 制品、不落 StepSpec 字段,但其路由结果仍记入 ledger 供续跑。)
+记录交付主流程已走到哪一步、哪些动作完成、哪些任务 parked，以及恢复原 worker session 所需定位信息的持久账本。它服务续跑与统计，不保存 commit before/after 对账材料，也不成为 runner 判卷的依据。
 _Avoid_: 日志、log(太泛)、history
 
 **commander**:
-家族集成层的**确定性波次调度步**(runner 调度决策、无 soul、非 LLM)。读父 epic 现成的 GitHub native sub-issues + 显式 blocked_by DAG → 拓扑分波(未阻塞者并发为一波、被阻塞者下波)→ fan-out。**不分解 epic、不建 sub-issue**——切片由 to-issues 在编排器外(design session)切好发布,commander 只调度现成片。区别于原生 parallel-planner Plan stage(那是 LLM「选 unblocked」的选择器、且会重推我们已有的显式 blocked_by,故不采用)。
+家族模式的确定性交通调度。它读取父 issue 已有的 native sub-issues 与显式依赖，派出当前可运行的子片；每个子片合入并通过父分支验证后立即重算依赖、继续放行，不负责分解 epic 或创建 issue。
 _Avoid_: 分解器 / planner(它不分解)、原生 Plan stage(它 LLM 选片、本 commander 确定性读现成)
 
 **波次 / wave**:
-commander 一次并发放出的一组互不阻塞子片。被 blocked_by 阻塞者,等其阻塞者合回家族 base 后入下一波。波内并行、波间 barrier。
+某一时刻同时满足依赖、可以并发启动的一组子片。波次只是启动快照，不是硬 barrier；已完成子片可先合入并释放其下游，不等待同批 parked 或仍在运行的子片。
 _Avoid_: 批次、轮(混淆评审轮)
 
 **family ledger**:
-家族集成层的账本(家族 base worktree 的 sibling、worktree 外),记已合子片 hash / 当前波次 / 家族 base HEAD,供 merger 幂等续跑(崩溃重启跳过已合)。区别于单片的 step ledger。
+家族集成层用于续跑与统计的持久账本，记录子片的完成、合入、park、关闭或取消状态，以及父流程当前应继续的位置；不以 commit hash、HEAD 或提交数量作为 runner 的裁决材料。
 _Avoid_: step ledger(那是单片的)、状态文件(太泛)
 
 **family escalation answer**:
