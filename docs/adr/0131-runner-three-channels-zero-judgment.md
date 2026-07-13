@@ -6,7 +6,7 @@ Status: Accepted（2026-07-13 owner 当日裁决成文；本 ADR 为口谕的 ca
 
 runner 只准做三件事，三件之外零判断权：
 
-(a) **数 exit code**——进程死活。真进程级失败（非零 exit / 抛异常 / 无完成信号）的有界机械重试挂在这条通道上（#598 崩溃半边、#853/#855 park-retry），不读任何字。
+(a) **数 exit code**——进程死活。真进程级失败只来自非零 exit、抛异常或执行通道本身失败；其有界机械重试挂在这条通道上（#598 崩溃半边、#853/#855 park-retry），不读任何完成标记或报告文字。
 
 (b) **读 reviewer 自报的 open-count**——说几条就是几条：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。count 是 worker 的申报（自报哨兵值；无哨兵形态的路径以其**写下的行数**为申报——写行即开口，数行=读通道 (b) 本身，不存在「对账」，因为没有第二个申报可对），runner 不派生、不复核、不读 severity/action 做二次分类。申报与卷面不符由 fixer 读卷时发现。
 
@@ -22,7 +22,7 @@ synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (
 
 ## 取代（旧 ADR 已就地标过时并指针到本 ADR）
 
-- **ADR 0050**「malformed 到 runner → 令同 worker 重写 cap 2 → infra escalation」及「outcome-guard 住 runner/image 层校验 format/schema/字段/证据」——**废止**。worker 发完成信号前自验半句仍成立（归 ADR 0130 交卷契约）。
+- **ADR 0050**「malformed 到 runner → 令同 worker 重写 cap 2 → infra escalation」及「outcome-guard 住 runner/image 层校验 format/schema/字段/证据」——**废止**。worker 交卷前自验仍成立（归 ADR 0130 交卷契约）。
 - **ADR 0062** 信封宪法段「缺覆盖 = malformed outcome → 机械重试重派 reviewer」半句、typed-治理澄清段（「outcome-guard 必须在 worker 之外的 runner 层」及其形状/治理校验派生信封）——**废止**；0062 三通道母法与决策门 durable 语义保留，通道 (b) 语义改为本 ADR 自报数。0050 立法理由（被守护者自守漏洞）的新解法 = 下轮 fresh 复审验真 + fixer 逐条实证（0129 沿革段：形式核验本就拦不住填表完美的假话）。
 - **ADR 0030** 裁定状态段（runner 覆盖断言 / 压制预算 / 翻案计数器）——0129 已拆，本 ADR 重申不得复活。
 - **ADR 0129** 写入点校验条款**限缩**：不含 count-vs-array 对账（count=自报）；「拒收→同 worker 重写」梯废止——不可用卷面按角色真源分治（评审类递 fixer 原料、runner 永不自己按决策门）。findings 状态库、交通警察定理、fresh 终翻规则不变。
