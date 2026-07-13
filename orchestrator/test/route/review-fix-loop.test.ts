@@ -215,8 +215,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
   });
 
   // #604 slice 4 (ADR 0062): there is no cross-module deferral pass, so every
-  // non-accepted-suppressed finding rides the fix loop and deferredFindings is
-  // always empty.
+  // non-accepted-suppressed finding rides the fix loop.
   it("keeps non-accepted-suppressed follow-up findings blocking across fix rounds", async () => {
     const blocking: Finding = {
       severity: "high",
@@ -261,7 +260,6 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     expect(result.status).toBe("success");
-    expect(result.deferredFindings).toEqual([]);
   });
 
 });
@@ -2229,7 +2227,6 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 428, backend });
 
     expect(result.status).toBe("success");
-    expect(result.deferredFindings).toEqual([]);
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:reviewer",
@@ -2239,10 +2236,9 @@ describe("#369 runner resume/retry review fixes", () => {
     ]);
   });
 
-  // #604 slice 4 (ADR 0062): deferredFindings is always empty now; re-feeding a
-  // terminal success run stays terminal and dispatches nothing, but rebuilds an
-  // empty deferred bucket.
-  it("rebuilds an empty deferred bucket when re-feeding a terminal resumed run", async () => {
+  // #604 slice 4 (ADR 0062): re-feeding a terminal success run stays terminal
+  // and dispatches nothing.
+  it("keeps a re-fed terminal success run terminal", async () => {
     const followUpFinding: Finding = {
       severity: "medium",
       category: "Follow-up",
@@ -2269,7 +2265,6 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     expect(result.status).toBe("success");
-    expect(result.deferredFindings).toEqual([]);
     expect(backend.dispatched).toEqual([]);
   });
 

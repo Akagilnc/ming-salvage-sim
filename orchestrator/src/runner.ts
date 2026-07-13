@@ -461,7 +461,7 @@ function sliceQuotaWaitPending(
       }
       return "S2";
     }
-    // Any newer executable agent/ship progress clears the park.
+    // Any newer executable agent/handoff progress clears the park.
     if (
       entry.event === undefined &&
       (entry.step === "S2" ||
@@ -489,7 +489,6 @@ async function parkOrRelayQuotaWall(opts: {
   readonly stateDir: string | undefined;
   readonly sessionId: string;
   readonly backend: Backend;
-  readonly deferredFindings: ReadonlyArray<Finding>;
   readonly resolveBranchHEAD: () => Promise<string>;
   readonly hashPrompt: (
     promptFile: string | undefined,
@@ -525,7 +524,6 @@ async function parkOrRelayQuotaWall(opts: {
     stateDir,
     sessionId,
     backend,
-    deferredFindings,
   } = opts;
   const disposition = err.disposition;
   if (disposition.kind !== "wait_for_reset") {
@@ -539,7 +537,6 @@ async function parkOrRelayQuotaWall(opts: {
         stateDir,
         sessionId,
         backend,
-        deferredFindings,
         resolveBranchHEAD: opts.resolveBranchHEAD,
         hashPrompt: opts.hashPrompt,
       }),
@@ -577,7 +574,6 @@ async function parkOrRelayQuotaWall(opts: {
           stateDir,
           sessionId,
           backend,
-          deferredFindings,
           resolveBranchHEAD: opts.resolveBranchHEAD,
           hashPrompt: opts.hashPrompt,
         }),
@@ -619,7 +615,6 @@ async function parkOrRelayQuotaWall(opts: {
             stateDir,
             sessionId,
             backend,
-            deferredFindings,
             resolveBranchHEAD: opts.resolveBranchHEAD,
             hashPrompt: opts.hashPrompt,
           }),
@@ -632,7 +627,7 @@ async function parkOrRelayQuotaWall(opts: {
       return {
         kind: "park",
         result: await parkQuotaWaitForResetLegacy({
-          step, err, ledger, stateDir, sessionId, backend, deferredFindings,
+          step, err, ledger, stateDir, sessionId, backend,
           resolveBranchHEAD: opts.resolveBranchHEAD, hashPrompt: opts.hashPrompt,
         }),
       };
@@ -656,7 +651,6 @@ async function parkOrRelayQuotaWall(opts: {
       stateDir,
       sessionId,
       backend,
-      deferredFindings,
       resolveBranchHEAD: opts.resolveBranchHEAD,
       hashPrompt: opts.hashPrompt,
     }),
@@ -674,15 +668,13 @@ async function parkQuotaWaitForResetLegacy(opts: {
   readonly stateDir: string | undefined;
   readonly sessionId: string;
   readonly backend: Backend;
-  readonly deferredFindings: ReadonlyArray<Finding>;
   readonly resolveBranchHEAD: () => Promise<string>;
   readonly hashPrompt: (
     promptFile: string | undefined,
     step: SliceStepId,
   ) => Promise<string>;
 }): Promise<RunResult> {
-  const { err, step, ledger, stateDir, sessionId, backend, deferredFindings } =
-    opts;
+  const { err, step, ledger, stateDir, sessionId, backend } = opts;
   const ledgerEntry: QuotaWaitForResetLedgerEvent =
     err.applied.ledgerEntry ?? {
       event: "quota_wait_for_reset",
@@ -735,7 +727,6 @@ async function parkQuotaWaitForResetLegacy(opts: {
       repairHint:
         "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
     },
-    deferredFindings,
   };
 }
 
@@ -1056,7 +1047,7 @@ function latestCoderRepair(ledger: ReadonlyArray<LedgerEntry>): LatestCoderRepai
  * S5 completing and S6 running would otherwise drop both. Prefer rebuild over
  * new durable fields: refuse keys already live on the S5 coder output, and the
  * assertion signal is recomputed from ledger branchHEADs + worktree git
- * (same shape as #743 authorization rebuild / S4 adjudication replay).
+ * (same shape as #743 authorization rebuild / S4 findings-count replay).
  */
 interface S5ReverifySignals {
   readonly preexistingAssertionTouched: boolean;
@@ -1148,7 +1139,7 @@ interface ContinueFixingRepair {
 
 function continueRepairFromEvent(
   event: ContinueFixingEvent,
-  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+  replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
 ): ContinueFixingRepair | undefined {
   const matchingIdentityKeys = matchingContinueFixingKeys(
     event,
@@ -1161,7 +1152,7 @@ function continueRepairFromEvent(
 
 function continueRepairFromAnswer(
   answer: EscalationAnswerEvent | undefined,
-  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+  replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
 ): ContinueFixingRepair | undefined {
   if (answer === undefined || !answerMapsToContinueFixing(answer)) {
     return undefined;
@@ -1191,7 +1182,7 @@ function continueRepairFromAnswer(
 function latestContinueFixingAfter(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
   index: number,
-  replay: Pick<S4AdjudicationReplay, "blocking" | "blockingIdentityKeys">,
+  replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
 ): ContinueFixingRepair | undefined {
   for (let i = ledger.length - 1; i > index; i--) {
     const entry = ledger[i]!;
@@ -1270,19 +1261,17 @@ function lastReviewerStep(
   return undefined;
 }
 
-interface S4AdjudicationReplay {
+interface S4FindingsCountReplay {
   readonly blocking: ReadonlyArray<Finding>;
   readonly blockingIdentityKeys: ReadonlyArray<string>;
-  readonly deferred: ReadonlyArray<Finding>;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
 }
 
-function replayS4AdjudicationState(
+function replayS4FindingsCountState(
   ledger: ReadonlyArray<LedgerEntry>,
-): S4AdjudicationReplay {
+): S4FindingsCountReplay {
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
-  let deferredFindings: Finding[] = [];
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerOutputForS4: StepOutput | undefined;
 
@@ -1301,16 +1290,12 @@ function replayS4AdjudicationState(
 
     // #877: findings-count channel only — disposition prose / still-active
     // reopen / no-progress courts demolished. Prior keys absent from findings[]
-    // are closed by the three-channel envelope, not by runner adjudication.
+    // are closed by the three-channel envelope; the runner does not inspect prose.
     const blocking = [...lastReviewerOutputForS4.findings];
     const blockingIdentityKeys = blocking.map(findingIdentityKey);
     findingDispositions = [
       ...(entry.findingDispositions ?? []),
     ];
-    const blockingKeys = new Set(blockingIdentityKeys);
-    deferredFindings = deferredFindings.filter(
-      (finding) => !blockingKeys.has(findingIdentityKey(finding)),
-    );
     pendingBlockingFindings = blocking;
     pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
   }
@@ -1318,7 +1303,6 @@ function replayS4AdjudicationState(
   return {
     blocking: pendingBlockingFindings,
     blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
-    deferred: deferredFindings,
     findingDispositions,
   };
 }
@@ -1389,7 +1373,7 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
-    const replayedS4 = replayS4AdjudicationState(executableLedger);
+    const replayedS4 = replayS4FindingsCountState(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
@@ -1746,12 +1730,10 @@ function acceptedSuppressionsFromDispositions(
 }
 
 function successSummaryForCurrentState(input: {
-  readonly deferredFindings: ReadonlyArray<Finding>;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
 }): StopSummary {
-  // #604 slice 4 (ADR 0062): routing disposition kinds are gone and the deferred
-  // bucket is always empty, so there is no cross-module defer to surface here —
-  // a success summary carries accepted-suppression metadata only.
+  // #604 slice 4 (ADR 0062): a success summary carries accepted-suppression
+  // metadata only.
   const acceptedSuppressions = acceptedSuppressionsFromDispositions(
     input.findingDispositions,
   );
@@ -1849,7 +1831,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       errorPackage: { failedStep: "S0", reason },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-      deferredFindings: [],
     };
   }
   const routePolicy = await applyRuntimeTightRoutePolicy(modelRoute, {
@@ -1866,7 +1847,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-      deferredFindings: [],
     };
   }
   console.info(
@@ -1961,7 +1941,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       },
       stepLedger: [{ step: "S8", stopSummary }],
       stopSummary,
-      deferredFindings: [],
     };
   };
 
@@ -1993,7 +1972,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   };
 
   // #686 P1: count the chain from the FULL ledger (resume history + in-memory),
-  // so post-ship trim / re-feed cannot reset MAX_RELAY_HANDOFFS.
+  // so post-handoff trim / re-feed cannot reset MAX_RELAY_HANDOFFS.
   const canRelayInProcess = (): boolean =>
     canRelayHandoff(mergeResumeLedgerHistory(resumeHistoryLedger, ledger));
 
@@ -2174,9 +2153,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // State threaded across steps within this run.
   let worktree: WorktreeHandle | undefined;
   let lastOutput: StepOutput | undefined;
-  // #617: the `defer` action was removed from the reviewer contract, so this
-  // bucket is always empty; it is retained so resume state stays shape-compatible.
-  let deferredFindings: Finding[] = [];
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
@@ -2524,7 +2500,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       errorPackage,
       stepLedger: ledger,
       stopSummary,
-      deferredFindings,
     };
   }
   // ─────────────────────────────────────────────────────────────────────────
@@ -2573,7 +2548,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       },
       stepLedger: ledger,
       stopSummary,
-      deferredFindings,
     };
   }
   // ─────────────────────────────────────────────────────────────────────────
@@ -2641,7 +2615,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           summary: reason,
           repairHint: "provide a real model×pipe smoke executor before dispatching workers",
         }),
-        deferredFindings: [],
       };
     }
 
@@ -2671,7 +2644,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           summary: `route smoke failed: ${reason}`,
           repairHint: "repair the selected model×pipe tool smoke before dispatching workers",
         }),
-        deferredFindings: [],
       };
     }
     const degradation = degradeOptionalRouteSmokeFailures(modelRoute);
@@ -2691,7 +2663,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           summary: smokeFailure,
           repairHint: "rerun the route smoke or repair the selected model×pipe",
         }),
-        deferredFindings: [],
       };
     }
     for (const dropped of degradation.dropped) {
@@ -2789,15 +2760,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // ADR 0030: persisted S4 boundaries are the runner's closure truth. Resume
-    // must replay the prior S4 adjudications, because an S6 reviewer may carry an
-    // empty `findings[]` plus `still-active` dispositions for blockers inherited
-    // from older rounds. Reclassifying only the previous reviewer payload would
-    // treat absence as closure.
-    const replayedS4 = replayS4AdjudicationState(plan.priorLedger);
+    // #877: persisted S4 boundaries are replayed from reviewer findings-count
+    // only. Each S4 replaces the pending blocker set with that reviewer's
+    // `findings[]`; prose dispositions do not preserve or reopen findings.
+    const replayedS4 = replayS4FindingsCountState(plan.priorLedger);
     pendingBlockingFindings = [...replayedS4.blocking];
     pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
-    deferredFindings = [...replayedS4.deferred];
     findingDispositions = [...replayedS4.findingDispositions];
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     const latestRepair = latestCoderRepair(plan.priorLedger);
@@ -2837,7 +2805,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-          deferredFindings,
         };
       }
       const stopSummary: StopSummary =
@@ -2856,7 +2823,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         branch: plan.terminalStatus === "success" ? worktree.branch : undefined,
         stepLedger: ledger,
         stopSummary,
-        deferredFindings,
       };
     }
 
@@ -3259,8 +3225,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
               // crash (`failed` / non-structured throw) with a fresh
-              // worker. This loop dispatches the agent worker steps S2/S3/S5/S6 (the
-              // SHIP S7 is a separate dispatch below, with its own retry predicate).
+              // worker. This loop dispatches the agent worker steps S2/S3/S5/S6.
+              // S7 is only the local child handoff handled by the loop below; it
+              // dispatches no worker and has no retry predicate.
               //
               //  - CODER (S2/S5): only process failure enters this retry. Completed
               //    receipt content never changes routing.
@@ -3533,7 +3500,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stateDir,
                 sessionId,
                 backend,
-                deferredFindings,
                 resolveBranchHEAD,
                 hashPrompt: (promptFile, s) =>
                   hashPrompt(promptFile, s, backend),
@@ -3546,7 +3512,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               stateDir,
               sessionId,
               backend,
-              deferredFindings,
               resolveBranchHEAD,
               hashPrompt: (promptFile, s) => hashPrompt(promptFile, s, backend),
               worktreePath: worktree?.path,
@@ -3893,7 +3858,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (decision.kind === "handoff") {
       const handoffStopSummary: StopSummary =
         decision.status === "success"
-          ? successSummaryForCurrentState({ deferredFindings, findingDispositions })
+          ? successSummaryForCurrentState({ findingDispositions })
           : decision.status === "error"
             ? stopSummaryForErrorPackage({
                 failedStep: step,
@@ -3909,8 +3874,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ledger.push({ step: "S8", stopSummary: handoffStopSummary });
       // #249: persist the S8 handoff entry too.
       // #6 / integ-cmr base r2 (E): a writeLedger failure on the S8 entry →
-      // S8(error), not a raw rejection. (deferredFindings stays whatever was
-      // collected.)
+      // S8(error), not a raw rejection.
       // #255: tag the entry with the terminal status (decision.status) so a
       // resuming run can tell a prior success / escalate / error apart (the S8
       // entry is otherwise identical for all three).
@@ -3966,7 +3930,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           errorPackage,
           stepLedger: ledger,
           stopSummary,
-          deferredFindings,
         };
       }
 
@@ -3984,7 +3947,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           errorPackage,
           stepLedger: ledger,
           stopSummary: handoffStopSummary,
-          deferredFindings,
         };
       }
 
@@ -3993,7 +3955,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         branch: decision.status === "success" ? worktree?.branch : undefined,
         stepLedger: ledger,
         stopSummary: handoffStopSummary,
-        deferredFindings,
       };
     }
 

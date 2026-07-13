@@ -11,15 +11,12 @@
  *   - {@link dispatchWorker} — the free function the runner ALWAYS calls. It uses
  *     `backend.dispatchWorker` when a backend implements the unified seam, else
  *     falls back to {@link legacyDispatchWorker}.
- *   - {@link legacyDispatchWorker} — the #331 PREFACTOR thin wrapper: forwards a
- *     worker to the EXISTING backend methods (`runStep`/`resumeSession`) and wraps
- *     their returns into the
- *     discriminated {@link WorkerResult}. External behaviour is unchanged
- *     (regression green); the real worker dispatch (invoke `/tdd` / `/code-review` /
- *     family delivery worker) lands in the family backend.
+ *   - {@link legacyDispatchWorker} — the compatibility wrapper for older
+ *     Backends: forwards child coder/reviewer workers to `runStep`/`resumeSession`
+ *     and wraps their returns into the discriminated {@link WorkerResult}.
  *   - {@link workerResultToStep} — unwrap a `completed` {@link WorkerResult} back
  *     into the `{@link StepOutput} | {@link StepResult}` shape the existing runner
- *     control flow consumes, so the prefactor does not touch route()/validate().
+ *     control flow consumes without changing route()/validate().
  */
 
 import type { ChildProcess } from "node:child_process";
@@ -105,9 +102,8 @@ const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
  *   ship → `gstack-ship`, merge → none; review-loop agents: verify/fixer/docRelease.
  *   Cleanup is the S11 host-deterministic endgame action, not an agent skill.
  *
- * #331 PREFACTOR: this is only the DECLARED routing on the spec (so #337's "coder
- * 手搓 TDD 不 invoke /tdd" regression assertion has a target). The legacy wrapper
- * does NOT actually invoke the skill yet — it forwards to the existing methods.
+ * Production backends invoke these routed skills through the unified dispatch
+ * seam. The legacy compatibility wrapper forwards only older child methods.
  */
 const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   coder: "/tdd",
@@ -401,15 +397,15 @@ export function docReleaseWorkerSpec(
 }
 
 /**
- * The #331 PREFACTOR thin wrapper: forward a worker to the EXISTING backend
- * methods and wrap the return into a {@link WorkerResult}. Behaviour-preserving.
+ * Compatibility wrapper for older Backends: forward a child worker to the
+ * existing methods and wrap the return into a {@link WorkerResult}.
  *
  *   - coder (the S2 build worker): when `ctx.resumeSessionId` is set the worker is
  *     dispatched via `backend.resumeSession` (the escalate/crash-resume path), else
  *     via `backend.runStep`. The returned `StepOutput | StepResult` is wrapped as
  *     `completed` (carrying the real per-step `sessionId` when surfaced).
- * #331 always yields `completed`; process `failed` and worker-declared
- * `escalated` results are produced by the real workers in later slices.
+ * This wrapper yields `completed`; unified real workers produce process `failed`
+ * and worker-declared `escalated` results directly.
  */
 export async function legacyDispatchWorker(
   backend: Backend,
@@ -990,7 +986,7 @@ function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
 /**
  * Unwrap a `completed` {@link WorkerResult} into the `StepOutput | StepResult`
  * shape the existing runner control flow (#256 normalisation, validate, route)
- * consumes for an AGENT step — so the prefactor leaves route()/validate()
+ * consumes for an AGENT step — so the unified seam leaves route()/validate()
  * untouched. A non-`completed` result is mapped to an escalate/garbage StepOutput
  * the runner's existing guards already handle:
  *   - `escalated` → a coder/reviewer output carrying the escalate (route() takes

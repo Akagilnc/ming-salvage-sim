@@ -613,12 +613,9 @@ export interface FamilyBackend {
    */
   runFamilyVerify?(request: FamilyVerifyRequest): Promise<FamilyVerifyResult>;
   /**
-   * #296 integrated-cmr seam (ADR 0022 decision 3⑥): run the integrated
-   * cross-model cmr 承重闸 over the merged family base AFTER a green full verify,
-   * to catch 跨片接缝 (field-name / type / 阈值口径 / 组合 e2e) that per-slice cmr
-   * cannot see. `{converged:false}` is the load-bearing red — the hook escalates
-   * 续跑 (#298) rather than opening a PR. Mechanically reuses the local
-   * `ak-cross-m-review` pipeline (a薄封装 behind this seam).
+   * Legacy per-method integrated-CMR seam retained for older fake/test backends.
+   * Production dispatches the CMR container worker through `dispatchWorker`; the
+   * default real implementation throws if this bypass seam is reached.
    */
   runIntegratedCmr?(request: IntegratedCmrRequest): Promise<IntegratedCmrResult>;
   /**
