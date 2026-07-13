@@ -65,3 +65,10 @@ Stop. Do **not** open r4 automatically. Re-read this file + O* outputs; owner di
 - No observational 3× rfa run in this overnight pass
 src +1844 -1651 net +193
 tip 93b77fd5 2026-07-13T01:12:44+09:00
+
+
+## PR
+
+https://github.com/Akagilnc/ming-salvage-sim/pull/891
+
+Pushed + PR opened in autonomous continuation (not wait-for-owner after Step 6).
