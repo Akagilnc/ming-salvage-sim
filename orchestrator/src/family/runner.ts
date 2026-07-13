@@ -47,6 +47,7 @@ import { assertAcyclic, selectWave } from "./commander.js";
 import {
   childEscalationAnswer,
   familyEscalationState,
+  familyShipCompletedRecord,
   familyReviewLoopConvergedForHead,
   familyShippedRecordForReviewLoopResume,
   familyPostMergeCleanupForHead,
@@ -937,9 +938,26 @@ export async function runFamily(
     initialFamilyLedger = await familyBackend.readFamilyLedger();
   }
   const priorEscalation = familyEscalationState(initialFamilyLedger);
+  const activeShipStreakStart = (() => {
+    for (let index = initialFamilyLedger.length - 1; index >= 0; index--) {
+      const entry = initialFamilyLedger[index]!;
+      if (entry.status === "ship_streak_closed") return -1;
+      if (entry.status === "ship_streak_opened") return index;
+    }
+    return -1;
+  })();
+  const resumableFamilyShipObservationPark =
+    priorEscalation?.escalation.escalationKind === "failure" &&
+    priorEscalation.escalation.phase === "final" &&
+    activeShipStreakStart >= 0 &&
+    familyShipCompletedRecord(initialFamilyLedger.slice(activeShipStreakStart + 1)) !==
+      undefined;
   if (priorEscalation !== undefined) {
     const { escalation, answer } = priorEscalation;
-    if (escalation.escalationKind !== "decision" || answer === undefined) {
+    if (
+      !resumableFamilyShipObservationPark &&
+      (escalation.escalationKind !== "decision" || answer === undefined)
+    ) {
       const ledgerMerged = mergedSet(initialFamilyLedger);
       return {
         status: "escalated",
