@@ -164,7 +164,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     ["coder bad JSON sidecar", "S2"],
     ["cmr reviewer missing sidecar", "S3"],
     ["ship no sentinel", "S7"],
-  ] as const)("Group A: %s continues to the next baton after bounded redispatch", async (_name, target) => {
+  ] as const)("Group A: %s defective report disposition", async (_name, target) => {
     const backend = new ScriptedRunnerBackend((spec, attempt) => {
       if (spec.id === target && attempt === 1) {
         return { kind: "malformed", reason: `${_name}: exit 0 with defective report`, sessionId: `bad-${target}` };
@@ -172,6 +172,17 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
       return validWorkerResult(spec);
     });
     const result = await runOrchestrator({ issueNumber: 825, backend });
+    if (target === "S3") {
+      // Owner 2026-07-13: unusable reviewer → decision gate once, not mechanical redispatch.
+      expect(result.status).toBe("escalate");
+      expect(backend.dispatches.filter((row) => row.startsWith("S3:"))).toHaveLength(1);
+      const s3 = result.stepLedger.find((row) => row.step === "S3");
+      expect(s3?.output).toMatchObject({
+        kind: "reviewer",
+        escalate: { reason: expect.stringMatching(/needs human decision/i) },
+      });
+      return;
+    }
     expect(result.status).toBe("success");
     expect(backend.dispatches.filter((row) => row.startsWith(`${target}:`))).toHaveLength(2);
     expect(result.stepLedger.at(-1)?.step).toBe("S8");
