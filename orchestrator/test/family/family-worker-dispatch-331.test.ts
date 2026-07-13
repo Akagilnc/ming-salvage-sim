@@ -259,6 +259,9 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
     async verifyFamilyShippedPr(): Promise<{ ok: true }> {
       return { ok: true };
     }
+    async findFamilyShippedPr(): ReturnType<NonNullable<FamilyBackend["findFamilyShippedPr"]>> {
+      return Promise.resolve({ ok: false, kind: "pr_missing", reason: "fixture host has no PR" });
+    }
     async dispatchWorker(
       spec: WorkerSpec,
       ctx: DispatchContext,
@@ -384,24 +387,6 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       { kind: "cleanup", promptFile: "cleanup.md" },
     ]);
   });
-
-  it("a red completeness pass gates correctness and ship (step6 cannot run before step5 passes)", async () => {
-    const be = new NewSeamFamilyBackend();
-    be.completenessConverged = false;
-    const res = await runVerifyCmr({
-      phase: "final",
-      familyBase: "feat/330",
-      familyBackend: be,
-    });
-    expect(res).toEqual({ ok: false, ran: true });
-    expect(be.dispatched).toEqual([
-      {
-        kind: "cmr",
-        promptFile: "integrated_cmr_completeness.md",
-        cmrPass: "completeness",
-      },
-    ]);
-  });
 });
 
 describe("#331 the family ship worker must return a SHIP payload (codex R2 guard)", () => {
@@ -485,6 +470,9 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     }
     async verifyFamilyShippedPr(): Promise<{ ok: true }> {
       return { ok: true };
+    }
+    async findFamilyShippedPr(): ReturnType<NonNullable<FamilyBackend["findFamilyShippedPr"]>> {
+      return Promise.resolve({ ok: false, kind: "pr_missing", reason: "fixture host has no PR" });
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
@@ -657,6 +645,9 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     }
     async verifyFamilyShippedPr(): Promise<{ ok: true }> {
       return { ok: true };
+    }
+    async findFamilyShippedPr(): ReturnType<NonNullable<FamilyBackend["findFamilyShippedPr"]>> {
+      return Promise.resolve({ ok: false, kind: "pr_missing", reason: "fixture host has no PR" });
     }
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };

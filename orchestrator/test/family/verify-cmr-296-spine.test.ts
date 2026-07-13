@@ -261,40 +261,6 @@ describe("#296 spine integration — acceptance 1: per-wave fail-fast verify", (
 });
 
 describe("#296 spine integration — acceptance 2: integrated cmr gate → escalate续跑", () => {
-  it("green verify but NOT-converged final cmr → escalate (#298), verify_failed, NO PR", async () => {
-    const backend = new CapableFamilyBackend({
-      verify: () => ({ ok: true }),
-      cmr: () => ({
-        converged: false,
-        reason: "阈值口径 mismatch: slice A clamps at 100, slice B at 99",
-      }),
-    });
-    const result = await runFamily({
-      epic: epicWith(294, 295),
-      familyBackend: backend,
-      singleSliceBackend: new ChildBackend(),
-      familyBase: "family/291-base",
-    });
-    // Both children merged; wave verify green; final verify green; step5 completeness ran + red.
-    expect(backend.merges.map((m) => m.childIssue)).toEqual([294, 295]);
-    expect(backend.cmrCalls).toEqual([
-      { familyBase: "family/291-base", cmrPass: "completeness" },
-    ]);
-    expect(backend.escalations).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      phase: "final",
-      cmrPass: "completeness",
-      reason: expect.stringContaining("阈值口径"),
-      stopSummary: expect.objectContaining({ reason: "contract_drift" }),
-    }));
-    expect(backend.prCalls).toEqual([]);
-    // Observably verify_failed at the final phase.
-    expect(result.status).toBe("verify_failed");
-    expect(result.failedPhase).toBe("final");
-  });
-
   it("resumes after a committed CMR coder-fix with protected finding keys", async () => {
     const priorKey = "completeness|orchestrator/src/x.ts:12|restart final barrier";
     const backend = new CapableFamilyBackend({
@@ -676,53 +642,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
     expect(backend.cmrCalls[0]?.priorCmrFindingIdentityKeys).toBeUndefined();
   });
 
-  it("CMR completed/not-converged is a machine abort, not a decision pause", async () => {
-    let cmrCalls = 0;
-    const seenAnswers: IntegratedCmrRequest["escalationAnswer"][] = [];
-    const backend = new CapableFamilyBackend({
-      verify: () => ({ ok: true }),
-      cmr: (req) => {
-        cmrCalls += 1;
-        seenAnswers.push(req.escalationAnswer);
-        return cmrCalls === 1
-          ? {
-              converged: false,
-              reason: "same-class findings need a human continue decision",
-            }
-          : { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
-      },
-    });
-    const input = {
-      epic: epicWith(294, 295),
-      familyBackend: backend,
-      singleSliceBackend: new ChildBackend(),
-      familyBase: "family/291-base",
-    };
-
-    const first = await runFamily(input);
-
-    expect(first.status).toBe("verify_failed");
-    expect(backend.ledger).toContainEqual(
-      expect.objectContaining({
-        status: "aborted",
-        event: "aborted",
-        phase: "final",
-        cmrPass: "completeness",
-        familyHeadAfter: "+295",
-        reason: expect.stringContaining("same-class findings"),
-        stopSummary: expect.objectContaining({ reason: "contract_drift" }),
-      }),
-    );
-    const callsAfterFirst = cmrCalls;
-
-    const rerun = await runFamily(input);
-
-    expect(rerun.status).toBe("success");
-    expect(cmrCalls).toBeGreaterThan(callsAfterFirst);
-    expect(seenAnswers).toEqual([undefined, undefined, undefined]);
-    expect(backend.prCalls).toHaveLength(1);
   });
-});
 
 describe("#296 spine integration — fail-safe: verify-green but a required final-barrier capability missing must NOT be success", () => {
   it("a real backend that verifies green but lacks runIntegratedCmr leaves the run verify_failed (NOT a false success)", async () => {

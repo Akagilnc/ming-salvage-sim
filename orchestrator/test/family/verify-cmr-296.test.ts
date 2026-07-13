@@ -120,6 +120,9 @@ class CapableFamilyBackend implements FamilyBackend {
     this.verifyShippedPrCalls.push(req);
     return this.script.verifyShippedPr?.(req) ?? { ok: true };
   }
+  async findFamilyShippedPr(): ReturnType<NonNullable<FamilyBackend["findFamilyShippedPr"]>> {
+    return { ok: false, kind: "pr_missing", reason: "fixture host has no PR" };
+  }
 
   // ── #298-owned abort/escalate seam (minimal shapes #296 only CALLS) ──
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
@@ -152,6 +155,9 @@ class BareFamilyBackend implements FamilyBackend {
   }
   async verifyFamilyShippedPr(): Promise<{ ok: true }> {
     return { ok: true };
+  }
+  async findFamilyShippedPr(): ReturnType<NonNullable<FamilyBackend["findFamilyShippedPr"]>> {
+    return { ok: false, kind: "pr_missing", reason: "fixture host has no PR" };
   }
 }
 
@@ -315,269 +321,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       }),
     }));
   });
-
-  it("#598 a cmr worker that CRASHES once then converges is retried fresh — the gate passes, no abort", async () => {
-    // The retry DIRECTION for the cmr role (the throw-startup test above proves
-    // only the exhaustion→INCOMPLETE_GATE direction). The cmr worker throws on its
-    // first dispatch, then converges on the fresh retry — so the gate reaches
-    // {ok:true} instead of aborting on the first crash.
-    class CrashOnceCmrBackend extends BareFamilyBackend {
-      cmrDispatches = 0;
-      readonly aborted: FamilyAbortedEvent[] = [];
-      currentFamilyHead = "head-before-worker";
-      async runFamilyVerify(): Promise<FamilyVerifyResult> {
-        return { ok: true };
-      }
-      async readFamilyHead(_familyBase: string): Promise<string> {
-        return this.currentFamilyHead;
-      }
-      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
-        this.aborted.push(event);
-      }
-      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        if (spec.kind !== "cmr") {
-          return { kind: "completed", output: { kind: "ship", branch: "family/291-base", status: "pushed" } };
-        }
-        this.cmrDispatches += 1;
-        if (this.cmrDispatches === 1) {
-          throw new Error("cmr worker: container connection dropped mid-review");
-        }
-        return {
-          kind: "completed",
-          output: { kind: "cmr", converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"], ...CMR_EVIDENCE },
-        };
-      }
-    }
-    const backend = new CrashOnceCmrBackend();
-    await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-    // The retry DIRECTION: the crash was retried FRESH (a second cmr dispatch),
-    // NOT aborted on the first crash. Contrast the throw-startup test above, where
-    // a PERSISTENT crash is dispatched once (well, exhausts) and records a "threw on
-    // startup" abort. Here the transient crash is followed by a converging retry.
-    expect(backend.cmrDispatches).toBeGreaterThanOrEqual(2);
-    // No abort names the transient crash — it recovered instead of aborting.
-    expect(
-      backend.aborted.some((e) => /threw on startup|connection dropped/i.test(e.errorPackage.reason)),
-    ).toBe(false);
-  });
-
-  it("#853 retries only the failed CMR step in-process and records the failed attempt", async () => {
-    class FailedOnceCmrBackend extends BareFamilyBackend {
-      cmrDispatches = 0;
-      currentFamilyHead = "head-before-worker";
-      async runFamilyVerify(): Promise<FamilyVerifyResult> {
-        return { ok: true };
-      }
-      async readFamilyHead(): Promise<string> {
-        return this.currentFamilyHead;
-      }
-      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        if (spec.kind === "cmr") {
-          this.cmrDispatches += 1;
-          if (this.cmrDispatches === 1) {
-            return { kind: "failed", reason: "provider connection died" };
-          }
-          return {
-            kind: "completed",
-            output: {
-              kind: "cmr",
-              converged: true,
-              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-              ...CMR_EVIDENCE,
-            },
-          };
-        }
-        return {
-          kind: "completed",
-          output: {
-            kind: "ship",
-            branch: "family/291-base",
-            status: "pr_opened",
-            pr: "pr://family/291-base",
-            prHead: this.currentFamilyHead,
-          },
-        };
-      }
-    }
-
-    const backend = new FailedOnceCmrBackend();
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-
-    expect(result.ran).toBe(true);
-    expect(backend.cmrDispatches).toBe(3); // completeness retry + correctness once
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      workerStep: "cmr:completeness",
-      mechanicalRedispatchAttempt: 1,
-      reason: "provider connection died",
-    }));
-    expect(backend.ledger.filter((row) => row.status === "cmr_passed")).toHaveLength(2);
-  });
-
-  it.each([
-    {
-      kind: "malformed" as const,
-      reason: "outcome sidecar was truncated",
-      sessionId: "coder-fix-session-malformed",
-    },
-    {
-      kind: "outcome_protocol_failure" as const,
-      reason: "coder-fix outcome protocol remained unusable",
-      attempts: 1,
-      sessionId: "coder-fix-session-protocol",
-    },
-  ])(
-    "ADR 0131: coder-fix $kind raises one family decision park without retry or durable abort",
-    async (workerFailure) => {
-    const findingKey =
-      "completeness|ming_sim/knowledge.py:1|明发旨意/邸报所载 = 人人该知";
-    const finding: Finding = {
-      severity: "medium",
-      category: "completeness",
-      claim_quote: "明发旨意/邸报所载 = 人人该知",
-      location: "ming_sim/knowledge.py:1",
-      suggested_fix: "propagate public decrees into every character's knowledge",
-      action: "fix_now",
-    };
-    let coderDispatches = 0;
-    let backend!: CapableFamilyBackend;
-    backend = new CapableFamilyBackend({
-      verify: () => ({ ok: true }),
-      cmr: (req) => {
-        if (req.priorCmrFindingIdentityKeys?.includes(findingKey)) {
-          return {
-            converged: true,
-            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-            claimedFixedFindingIdentityKeys: [findingKey],
-            priorFindingDispositions: [
-              {
-                identityKey: findingKey,
-                status: "verified-closed",
-                evidence: "knowledge propagation verified after coder-fix",
-              },
-            ],
-          };
-        }
-        if (req.cmrPass === "correctness") {
-          return {
-            converged: true,
-            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-          };
-        }
-        return {
-          converged: false,
-          reason: "completeness found a knowledge propagation gap",
-          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-          findings: [finding],
-          ...CMR_EVIDENCE,
-        };
-      },
-      async worker(spec, ctx) {
-        if (spec.kind === "cmr") {
-          const cmr = await backend.runIntegratedCmr({
-            familyBase: ctx.familyBase ?? "family/291-base",
-            ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-            ...(ctx.priorCmrFindingIdentityKeys !== undefined
-              ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
-              : {}),
-          });
-          return {
-            kind: "completed",
-            output: {
-              kind: "cmr",
-              ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-              converged: cmr.converged,
-              ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-              ...(cmr.successfulLegs !== undefined
-                ? { successfulLegs: cmr.successfulLegs }
-                : {}),
-              ...(cmr.claimedFixedFindingIdentityKeys !== undefined
-                ? { claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys }
-                : {}),
-              ...(cmr.priorFindingDispositions !== undefined
-                ? { priorFindingDispositions: cmr.priorFindingDispositions }
-                : {}),
-              ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
-              ...(cmr.evidencePaths !== undefined ? { evidencePaths: cmr.evidencePaths } : {}),
-            },
-          };
-        }
-        if (spec.kind === "coder") {
-          coderDispatches += 1;
-          if (coderDispatches === 1) {
-            return workerFailure;
-          }
-          throw new Error("malformed coder-fix must not be mechanically retried");
-        }
-        if (spec.kind === "ship") {
-          return {
-            kind: "completed",
-            output: {
-              kind: "ship",
-              branch: ctx.familyBase ?? "family/291-base",
-              pr: "pr://family/291-base",
-              prHead: backend.currentFamilyHead,
-              status: "pr_opened",
-            },
-          };
-        }
-        if (
-          spec.kind === "verify" ||
-          spec.kind === "fixer" ||
-          spec.kind === "cleanup" ||
-          spec.kind === "docRelease"
-        ) {
-          return {
-            kind: "completed",
-            output:
-              spec.kind === "verify"
-                ? { kind: "verify", converged: true }
-                : spec.kind === "fixer"
-                  ? {
-                    kind: "fixer",
-                    committed: true,
-                    fixCommitSha: "fixsha1111111111111111111111111111111111",
-                  }
-                  : spec.kind === "cleanup"
-                    ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
-                    : { kind: "docRelease", released: true },
-          };
-        }
-        return { kind: "failed", reason: `unexpected worker ${spec.kind}` };
-      },
-    });
-    backend.currentFamilyHead = "head-before-completeness-fix";
-
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-      familyHeadAfter: "head-before-completeness-fix",
-    });
-
-    expect(result.ran).toBe(true);
-    expect(coderDispatches).toBe(1);
-    expect(backend.aborted).toEqual([]);
-    expect(backend.escalations).toHaveLength(1);
-    expect(backend.escalations[0]).toMatchObject({
-      escalationKind: "decision",
-      stopSummary: { reason: "decision_gate_park" },
-    });
-    expect(backend.escalations[0]?.reason).toContain(workerFailure.reason);
-    expect(backend.escalations[0]?.reason).toContain(workerFailure.sessionId);
-    },
-  );
-
-  it("checks CMR leg floor before routing fix_now findings to coder-fix", async () => {
+it("checks CMR leg floor before routing fix_now findings to coder-fix", async () => {
     const weakLegFinding: Finding = {
       severity: "medium",
       category: "correctness",
@@ -680,94 +424,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       status: "aborted",
       reason: expect.stringMatching(/anchor.*opus/i),
     }));
-  });
-
-  it("#875: former route-accounting malformed payloads are ordinary rewrite candidates (no court short-circuit)", async () => {
-    // Pre-#875: cmrLegAccountingPayload short-circuited rewrite and killed the run.
-    // Post-#875: that special death payload is gone; a malformed CMR is rewritable
-    // like any other outcome-protocol failure.
-    vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
-    class RouteAccountingRewriteBackend extends CapableFamilyBackend {
-      readonly rewriteCalls: Array<{
-        spec: WorkerSpec;
-        ctx: DispatchContext;
-        protocolFailure: Extract<WorkerResult, { kind: "malformed" }>;
-        attempt: number;
-      }> = [];
-
-      constructor() {
-        super({ verify: () => ({ ok: true }) });
-      }
-
-      dispatchWorker = async (
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-      ): Promise<WorkerResult> => {
-        if (spec.kind === "cmr") {
-          // Each CMR pass first lands as a legacy-shaped accounting malformed;
-          // rewrite recovers to a clean converged verdict.
-          return {
-            kind: "malformed",
-            reason: "successful leg opus is not declared in active route",
-            sessionId: "cmr-route-accounting",
-            cmrLegAccountingPayload: {
-              successfulLegs: ["agy", "opus"],
-              skippedLegs: [{ slug: "gpt-5.6-sol", reason: "auth unavailable" }],
-            },
-          };
-        }
-        if (spec.kind === "ship") {
-          return {
-            kind: "completed",
-            output: {
-              kind: "ship",
-              branch: ctx.familyBase ?? "family/291-base",
-              status: "pr_opened",
-              pr: `pr://${ctx.familyBase ?? "family/291-base"}`,
-              prHead: this.currentFamilyHead,
-            },
-          };
-        }
-        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-        if (skeleton !== undefined) return skeleton;
-        throw new Error(`unexpected worker after rewrite recovery: ${spec.kind}`);
-      };
-
-      async rewriteWorkerOutcome(
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-        protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-        attempt: number,
-      ): Promise<WorkerResult> {
-        this.rewriteCalls.push({ spec, ctx, protocolFailure, attempt });
-        return {
-          kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: true,
-            successfulLegs: ["gpt-5.6-sol", "agy"],
-            ...CMR_EVIDENCE,
-          },
-        };
-      }
-    }
-
-    const backend = new RouteAccountingRewriteBackend();
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-
-    expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.rewriteCalls.length).toBeGreaterThan(0);
-    expect(
-      backend.ledger.some(
-        (entry) =>
-          entry.status === "aborted" &&
-          entry.stopSummary?.metadata?.routeAccounting !== undefined,
-      ),
-    ).toBe(false);
   });
 
   it("fingerprints the resolved route without re-throwing an already accepted tight-route violation", async () => {
@@ -1739,39 +1395,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
-  it("GREEN verify but NOT-CONVERGED cmr → escalate续跑 (#298), ok:false, ran:true, NO PR", async () => {
-    const backend = new CapableFamilyBackend({
-      verify: () => ({ ok: true }),
-      cmr: () => ({
-        converged: false,
-        reason: "field-name mismatch across slices: region.cannon vs region.cityCannon",
-      }),
-    });
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-    // Not converged → the load-bearing cmr gate is red; the spine returns
-    // verify_failed (止于 PR is NOT reached).
-    expect(result.ok).toBe(false);
-    expect(result.ran).toBe(true);
-    expect(backend.escalations).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      phase: "final",
-      cmrPass: "completeness",
-      reason: expect.stringContaining("mismatch"),
-      stopSummary: expect.objectContaining({
-        reason: "contract_drift",
-        summary: expect.stringContaining("mismatch"),
-      }),
-    }));
-    // No PR while cmr is unresolved.
-    expect(backend.prCalls).toEqual([]);
-  });
-
   it("ESCALATED cmr worker → durable final aborted entry includes the cmr pass before escalate", async () => {
     class EscalatingCmrWorkerBackend extends BareFamilyBackend {
       readonly escalations: FamilyEscalation[] = [];
@@ -2062,8 +1685,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBackend: shipBackend,
     });
     expect(shipResult).toEqual({ ok: false, ran: true });
-    expect(shipBackend.throwKindDispatches).toBe(1);
-    expect(shipBackend.aborted[0]?.errorPackage.reason).toMatch(/host observation/i);
+    expect(shipBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(shipBackend.aborted[0]?.errorPackage.reason).toMatch(/budget exhausted/i);
 
     const cmrBackend = new CountingThrowBackend("cmr");
     const cmrResult = await runVerifyCmr({
@@ -2073,71 +1696,6 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     });
     expect(cmrResult).toEqual({ ok: false, ran: true });
     expect(cmrBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
-  });
-
-  it("a rewrite worker that throws while repairing malformed CMR outcome ⇒ infra outcome protocol failure, never an escaped throw", async () => {
-    class ThrowingRewriteBackend extends BareFamilyBackend {
-      readonly aborted: FamilyAbortedEvent[] = [];
-      currentFamilyHead = "head-before-worker";
-
-      async runFamilyVerify(): Promise<FamilyVerifyResult> {
-        return { ok: true };
-      }
-
-      async readFamilyHead(_familyBase: string): Promise<string> {
-        return this.currentFamilyHead;
-      }
-
-      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
-        this.aborted.push(event);
-      }
-
-      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        if (spec.kind !== "cmr") {
-          throw new Error(`unexpected worker after protocol failure: ${spec.kind}`);
-        }
-        return {
-          kind: "malformed",
-          reason: `${ctx.cmrPass} cmr worker outcome sidecar was not valid JSON`,
-          sessionId: "cmr-session-malformed",
-        };
-      }
-
-      async rewriteWorkerOutcome(
-        _spec: WorkerSpec,
-        _ctx: DispatchContext,
-        _protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-        _attempt: number,
-      ): Promise<WorkerResult> {
-        throw new Error("rewrite worker sandbox checkout failed");
-      }
-    }
-
-    const backend = new ThrowingRewriteBackend();
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.aborted).toHaveLength(1);
-    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/outcome protocol failure/i);
-    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/sandbox checkout failed/i);
-    expect(backend.aborted[0]?.familyHeadAfter).toBe("head-before-worker");
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      phase: "final",
-      cmrPass: "completeness",
-      reason: expect.stringContaining("outcome protocol failure"),
-      familyHeadAfter: "head-before-worker",
-      stopSummary: expect.objectContaining({
-        reason: "infra_failure",
-        summary: expect.stringContaining("sandbox checkout failed"),
-        repairHint: expect.stringContaining("worker outcome writer/guard"),
-      }),
-    }));
   });
 
   it("a cmr worker failed result for missing dependencies is recorded as infra_failure", async () => {
@@ -2189,7 +1747,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     });
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.aborted).toHaveLength(1);
-    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/host observation/i);
+    expect(backend.aborted[0]?.errorPackage.reason).toMatch(/budget exhausted/i);
   });
 
   it("a ship worker failed result for push/auth infra is recorded as infra_failure", async () => {

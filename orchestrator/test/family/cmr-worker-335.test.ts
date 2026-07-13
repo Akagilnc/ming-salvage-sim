@@ -907,6 +907,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(res.kind).toBe("malformed");
   });
 
+  /* ADR 0131 deleted the same-worker outcome rewrite ladder and its tests.
   it("supplements a missing findings fragment by resuming the same reviewer with its prior verdict", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
@@ -1372,6 +1373,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     );
   });
 
+  */
   it("forwards llmResolvedChildren on the DispatchContext to the cmr worker", async () => {
     const be = fixtured();
     await be.dispatchWorker(cmrWorkerSpec(), {
