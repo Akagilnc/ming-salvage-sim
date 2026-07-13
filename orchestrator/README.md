@@ -36,13 +36,28 @@ reads worker prose**:
 Corollaries, all mechanically enforced by
 `test/adr-0062-regression-825.test.ts`:
 
-- A worker that delivered an **unusable report** (the envelope cannot be
-  extracted: no kind, no count, undecodable output) is never judged, never
-  mechanically redispatched, and never dressed up as a process failure. The
-  caller owns it: **one `decision` escalate to the human**. A readable-but-
-  wrong submission is the next wisdom's problem (the fixer bounces it back to
-  the reviewer or raises). `synthesizedFailure` may only ever be derived from
-  channel-1 process facts, and a missing result is never synthesized into
+- A worker whose **envelope cannot be extracted** (no kind, no count,
+  undecodable output) is never judged, never mechanically redispatched, and
+  never dressed up as a process failure — and the runner never presses the
+  decision gate for it either. Deeming a paper "unusable" is itself a judgment
+  the runner has no authority to make; the decision gate only relays a gate a
+  worker itself pressed, and a runner pressing it is a forged doorbell.
+  Disposition splits by the worker's source of truth. **Reviewer/verify**
+  (their output IS the paper): the runner makes zero judgment and zero park and
+  hands the raw artifact pointers down the fixed topology to the fixer, who
+  reads what it can, bounces the rest back to the reviewer, or raises.
+  **Coder/ship** (their output is a git commit / PR — an external fact; the
+  slip is only a receipt): an unreadable receipt never goes to the human — a
+  **new commit on the graph** (`git rev-list <headBefore>..HEAD` non-empty; not
+  counted, head not inspected, content not judged) proceeds to review anyway;
+  no commit runs the existing empty-run mechanical budget (#592), and even when
+  that budget is exhausted the runner draws no conclusion — it advances to the
+  review step and lets the reviewer judge the empty diff (bounce or raise).
+  Only repeated process crashes (#598 — no work, no paper to judge) still take
+  the infra park. A readable-but-wrong submission is likewise the next wisdom's
+  problem (the fixer bounces it back to the reviewer or raises).
+  `synthesizedFailure` may only ever be derived from channel-1 process facts or
+  git/host external truth, and a missing result is never synthesized into
   success (`findings: []` / `converged: true`) — nor into failure.
 - **Git/host truth over worker words.** Commit evidence comes from
   `git rev-list <headBefore>..HEAD` (final-graph reachability); a
