@@ -164,18 +164,15 @@ describe("#598 withMechanicalRetry", () => {
     }
   });
 
-  it("persistent process failure → durably returns the failure after the bounded attempts, naming the attempt count", async () => {
+  it("malformed is caller-owned and never mechanically retried", async () => {
     const { dispatch, seen } = scripted([{ kind: "malformed", reason: "no completion signal" }]);
     const result = await withMechanicalRetry(coderSpec(), {}, dispatch);
     expect(result.kind).toBe("malformed");
-    expect(seen).toHaveLength(MAX_DISPATCH_ATTEMPTS);
-    // #598 crit 6: the durable-abort reason names the generic dispatch attempt count.
-    expect((result as { reason: string }).reason).toContain(
-      `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
-    );
+    expect(seen).toHaveLength(1);
+    expect((result as { reason: string }).reason).toBe("no completion signal");
   });
 
-  it("a retry originating from a RESUME dispatch is forced fresh (resume id stripped)", async () => {
+  it("outcome_protocol_failure is caller-owned and preserves the original resume dispatch", async () => {
     const { dispatch, seen } = scripted([
       { kind: "outcome_protocol_failure", reason: "no signal", attempts: 1 },
       COMPLETED,
@@ -183,14 +180,11 @@ describe("#598 withMechanicalRetry", () => {
     const ctx: DispatchContext = { resumeSessionId: "sess-abc" };
     const result = await withMechanicalRetry(coderSpec("resume"), ctx, dispatch);
 
-    expect(result.kind).toBe("completed");
-    expect(seen).toHaveLength(2);
+    expect(result.kind).toBe("outcome_protocol_failure");
+    expect(seen).toHaveLength(1);
     // Attempt 1 kept the resume id + resume session mode.
     expect(seen[0]!.ctx.resumeSessionId).toBe("sess-abc");
     expect(seen[0]!.spec.session).toBe("resume");
-    // The RETRY stripped the resume id and forced a fresh session.
-    expect(seen[1]!.ctx.resumeSessionId).toBeUndefined();
-    expect(seen[1]!.spec.session).toBe("fresh");
   });
 
   it("callerOwns re-throws a caller-owned thrown error instead of retrying it", async () => {
@@ -462,7 +456,7 @@ describe("#598 integration — the SHIP role: crash retries, a judged failed ver
     expect(backend.shipDispatches).toBe(1);
   });
 
-  it("a ship `malformed` (no valid verdict) RETRIES through the shared path — a structural process failure, not a decided verdict (#601 corrects #598 r2)", async () => {
+  it("a ship malformed verdict is not a process crash and is not mechanically retried", async () => {
     // #601: the over-conservative "#598 r2" carve-out (a structural ship `malformed`
     // treated as a non-retried contract violation) is corrected here. A ship that
     // emits no parseable `<ship>` tag (the dogfood-362 / family-405 incident class)
@@ -474,7 +468,7 @@ describe("#598 integration — the SHIP role: crash retries, a judged failed ver
     const backend = new ShipScriptBackend(0, false, true);
     const result = await runOrchestrator({ issueNumber: 598, backend });
     expect(result.status).toBe("error");
-    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(backend.shipDispatches).toBe(1);
   });
 });
 
@@ -518,10 +512,10 @@ class ReviewerAlwaysMalformedBackend implements Backend {
   }
 }
 
-describe("#598 composition — reviewer process-malformed shares mechanical budget", () => {
-  it("a persistently malformed reviewer is dispatched MAX_DISPATCH_ATTEMPTS times", async () => {
+describe("#598 composition — reviewer malformed belongs to the caller", () => {
+  it("a malformed reviewer is dispatched once", async () => {
     const backend = new ReviewerAlwaysMalformedBackend();
     await runOrchestrator({ issueNumber: 598, backend });
-    expect(backend.reviewerDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(backend.reviewerDispatches).toBe(1);
   });
 });

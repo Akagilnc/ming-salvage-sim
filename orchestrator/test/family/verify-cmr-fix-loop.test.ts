@@ -2378,23 +2378,14 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: false, ran: true });
-    // A persistent protocol failure from a NON-reviewer worker is retried
-    // mechanically (it is not caller-owned — only the CMR reviewer path has a
-    // malformed follow-up loop), then aborts durably with details preserved.
+    // Protocol-envelope failure is not a process crash and is not redispatched.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
       expect.objectContaining({
         kind: "coder",
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
-      expect.objectContaining({ kind: "coder", session: "fresh" }),
-      expect.objectContaining({ kind: "coder", session: "fresh" }),
     ]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      mechanicalRedispatchAttempt: 1,
-    }));
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",

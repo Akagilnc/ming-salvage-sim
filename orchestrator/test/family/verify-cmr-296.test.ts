@@ -570,14 +570,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     });
 
     expect(result.ran).toBe(true);
-    // The malformed first attempt was retried mechanically and the fix landed.
-    expect(coderDispatches).toBe(2);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      mechanicalRedispatchAttempt: 1,
-      reason: "outcome sidecar was truncated",
-    }));
+    expect(coderDispatches).toBe(1);
     // The gate converged instead of aborting on the transient malformed outcome.
     expect(
       backend.aborted.some((e) => /malformed|sidecar/i.test(e.errorPackage.reason)),

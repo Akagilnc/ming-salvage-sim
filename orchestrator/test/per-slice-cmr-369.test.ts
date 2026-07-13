@@ -186,7 +186,7 @@ class RetryReviewBackend implements Backend {
 }
 
 describe("#369 per-slice runner-visible review/fix loop", () => {
-  it("process-malformed reviewer redispatches mechanically then accepts clean result (no format court)", async () => {
+  it("malformed reviewer escalates once without redispatch", async () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "dispatch protocol failure" },
       { kind: "completed", output: { kind: "reviewer", findings: [] } },
@@ -194,12 +194,10 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("escalate");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:reviewer",
-      "S3:reviewer",
-      "S7:ship",
     ]);
   });
 
@@ -291,7 +289,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.deferredFindings).toEqual([]);
   });
 
-  it("persistent process-malformed reviewer exhausts mechanical dispatch budget (no format court)", async () => {
+  it("malformed reviewer uses no mechanical dispatch budget", async () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "dispatch protocol failure" },
       { kind: "malformed", reason: "dispatch protocol failure again" },
@@ -301,8 +299,8 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     // Process-level only: 1 initial + MAX_DISPATCH_ATTEMPTS-1 retries = 3 S3s.
-    expect(backend.dispatched.filter((d) => d.startsWith("S3:"))).toHaveLength(3);
-    expect(result.status === "error" || result.status === "escalate").toBe(true);
+    expect(backend.dispatched.filter((d) => d.startsWith("S3:"))).toHaveLength(1);
+    expect(result.status).toBe("escalate");
   });
 });
 
@@ -317,7 +315,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   };
   const blockingKey = "correctness|src/runner.ts:427|absence is not closure";
 
-  it("routes S4 from the runner-adjudicated blocking set, not only reviewer findings", () => {
+  it("routes S4 only from the reviewer-declared findings count", () => {
     expect(
       route({
         from: "S4",
@@ -330,7 +328,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         pendingBlockingFindings: [blocking],
       }),
-    ).toEqual({ kind: "next", step: "S5" });
+    ).toEqual({ kind: "next", step: "S7" });
   });
 
   it("#551 keeps per-slice S5 no-commit output on the existing terminal error edge", () => {

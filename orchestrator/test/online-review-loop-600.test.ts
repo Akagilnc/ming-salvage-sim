@@ -3397,13 +3397,10 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
       },
       { rethrowOnExhaustion: true },
     );
-    expect(attempts).toBe(2);
+    expect(attempts).toBe(1);
     expect(resets).toBe(0);
     expect(head).toBe("head-after-mutation");
-    expect(result).toMatchObject({
-      kind: "completed",
-      output: { kind: "verify", converged: true },
-    });
+    expect(result).toMatchObject({ kind: "malformed" });
   });
 
   it("a persistently crashing verify exhausts the shared dispatch bound", async () => {
@@ -6578,7 +6575,7 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       const backend = new InvalidVerifyThenConvergeBackend();
       const result = await runOrchestrator({ issueNumber: 600, backend });
       expect(result.status).toBe("success");
-      expect(backend.verifyDispatches).toBe(2);
+      expect(backend.verifyDispatches).toBe(1);
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
