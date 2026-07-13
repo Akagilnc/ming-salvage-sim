@@ -525,7 +525,7 @@ _Avoid_: 第二案头/独立急务界面；把六动作做成通用下旨的语�
 _Avoid_: CI、流水线(太泛)、hermes(那是一个具体后端不是编排器)
 
 **交付主流程**:
-编排器当前唯一的一条 issue→merge 路线。single 是只有一个切片的主流程，family 是有多个切片的主流程，online review 是两者共用的尾段；流程层只决定何时调用哪个编排动作，不规定动作内部怎样完成。
+编排器当前唯一的一条 issue→merge 路线。single 是只有一个切片的主流程，family 是有多个切片的主流程，online review 是两者共用的尾段；代码产出在 review 前经过 Change Finalization，shared tail 在 merge 外部成功后先记录 terminal-success 再显式 cleanup；流程层只决定何时调用哪个编排动作，不规定动作内部怎样完成。
 _Avoid_: 三套 workflow、Role Workflow Definition、可执行 DSL、把 wiki 逐字翻译成运行时流程
 
 **编排动作**:
