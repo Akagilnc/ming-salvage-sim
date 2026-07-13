@@ -569,7 +569,7 @@ _Avoid_: caller、上游、parent(太泛)
 _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 
 **runner**(纯调度器):
-驱动交付主流程的交通警察。它只数 exit code、读取 reviewer 自报的 open-count(0 / 大于 0)、转运 worker 自己按下的决策门；Change Finalization 完成后，还可机械记录该 Action 最终是否新增 commit，但只能知道有/无且不得据此路由、重试或判断 repo 是否变化。它不读任何报告文字，不核对 count，不知道 commit HEAD 或数量，也不判断专业工作是否合格。
+驱动交付主流程的交通警察。它只数 exit code、读取 reviewer 自报的 open-count(0 / 大于 0)、转运 worker 自己按下的决策门。它不读任何报告文字，不核对 count，不读取 commit、HEAD、diff、PR 或其他完成证据，也不判断专业工作是否合格。
 _Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它当干活的(它只调度)、把 runner 当语义裁判、用自由文本/正则推断路由。
 
 **worker**:
@@ -581,7 +581,7 @@ _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worke
 _Avoid_: 自评自修、顺手修一下、把 CMR reviewer 当 coder-fix。
 
 **coder-fix worker**:
-被 runner 派出、专门处理 reviewer 交来的未决项的 worker。它逐项验真、只产出未 finalization 的变更并完成自查；随后固定进入 Verification，再由 Change Finalization 单一拥有 commit 或合法 no-op，之后交给 fresh reviewer 全量复核。Runner 不把 commit 有/无当门票，不比较 hash、不数 commit、不核修复证据。
+被 runner 派出、专门处理 reviewer 交来的未决项的 worker。它逐项验真、完成修复与自查，并把结果留给 fresh reviewer 全量复核；具体接力顺序由唯一交付主流程定义。Runner 不读取提交或修复证据。
 _Avoid_: reviewer 自修、amend 折叠、coder/fixer 完成时的 commit gate、无 commit 白跑或重试、runner 代判修复正确。
 
 **delivery-base Finding Repair**:
@@ -597,7 +597,7 @@ _Avoid_: 把文档发布当成 merge 本身、runner 直接改文档、用路径
 _Avoid_: 把空跑当失败、为凑 commit 造空提交、把「没改文件」等同 skill 崩溃。
 
 **修复证据**:
-coder-fix worker 留给 Verification 与下一轮 reviewer 的可追踪材料:未 finalization 的变更、Change Finalization 产生的 commit 或合法 no-op 结果、对应 diff、finding scope 对应关系、focused test log、same-class bug scan、introduced-regression check。它帮助专业 reviewer 复核，不是 runner 的机械门票；runner 不比较 commit/head、不检查材料一致性。
+coder-fix worker 留给下一轮专业 reviewer 的可追踪材料，例如对应 diff、finding scope 对应关系、focused test log、same-class bug scan 与 introduced-regression check。它帮助 reviewer 复核，不是 runner 的输入。
 _Avoid_: 口头说已修、只贴总结不落 commit/test、自查二连缺席、把修复证据当 reviewer concurrence。
 
 **smart zoom**(步的粒度):

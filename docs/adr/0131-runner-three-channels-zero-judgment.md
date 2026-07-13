@@ -1,38 +1,15 @@
-Status: Accepted（2026-07-13 owner 当日裁决成文；本 ADR 为口谕的 canonical 落笔，被取代旧条款见「取代」节）
+Status: Accepted（2026-07-13）
 
-# 0131: runner 三通道零判断权——交通警察总纲（自报数 + fixer 判卷 + runner 永不按门）
+# 0131: runner 三通道零判断权
 
 ## 决定
 
-runner 只准做三件事，三件之外零判断权：
+Runner 是交通警察，只准处理三种交通信号：进程的 exit code、reviewer 明确自报的 open-count（0 关环，>0 按固定拓扑继续修复与 fresh 复审）、worker 自己按下的 decision gate；三者之外零判断权，且从不读取报告、findings、格式、测试、commit、HEAD、diff、PR 或其他完成证据。专业判断与外部副作用核验属于对应 worker/Action，准确流程顺序属于 #869 的 Canonical Delivery Flow 与其可执行测试，不属于本 ADR。
 
-(a) **数 exit code**——进程死活。真进程级失败只来自非零 exit、抛异常或执行通道本身失败；Runner 只依据这条 exit-code 通道，在同一 fixed flow position 机械重调尚未完成的 Worker Invocation Action，不读任何完成标记或报告文字。Worker Invocation Action + Lineage 单一拥有 worker crash/re-entry、retry budget 消耗、是否重派 worker 以及 scene/session recovery；Runner 不区分 Action/执行通道本身崩溃与 Action 内部 worker crash，也不读取原因文字或新增信号。
+## 取代
 
-(b) **读 reviewer 明确自报的 open-count**——这里的 reviewer 包括固定流程指定的专业 review/verification worker；只有该 reviewer worker 明确报出的 0 或 >0 才是信号：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。Action/Runner 不合成 count，不从测试、findings 或其他 Action 结果推导 count。runner 不派生、不复核、不读 severity/action 做二次分类。申报与卷面不符由 fixer 读卷时发现。
-
-(c) **转决策门**——worker 自己按的 decision/raise 原样递给人，转运不裁决。
-
-**从不读字。** 卷面对不对是下一个智慧体（fixer）的判断：读不懂 → raise（走决策门）或打回 reviewer。
-
-**Quota/capacity 生命周期归 Worker Invocation Action。** 该 Action 在内部调用 Policy 机械求值 seat/park/relay，并拥有 park、wake、relay、crash/re-entry 直到本次 invocation 真正完成的完整生命周期。parked 或 relayed 工作仍有未完成义务时，Action 不得向 Flow 宣告成功；Lineage 持久化当前 Action 的未完成义务与必要 recovery anchor。ordinary retry/resume 复用同一 scene、Capsule 与当前角色的 role-scoped session；relay 是换棒，保留 scene、worktree、baton 以及旧 session/checkpoint records，但 successor agent/session/checkpoint 按 ADR 0126/0127 的选棒结果决定，可发生变化，不要求 same session。Runner 只按固定 flow position 重调未完成 Action，不知道 park reason、provider、pool 或 resetAt，也不增加第四信号。
-
-**Change Finalization 之后的 commit 二值事实**：Coder / Finding Repair 只产出未 finalization 的变更并自查，随后固定进入 Verification；Verification=0 后固定调用 Change Finalization。该 Action 单一拥有 commit/no-op：有 repo change 就建立新的 non-amend commit，无 repo change 就合法 no-op，并由 Action 自己核验副作用、以正常 exit 表示完成。Runner 此后可以机械记录该 Action 最终有没有新增 commit，但不得据此选择下一步、重试前一动作或判断 repo 是否变化；它不知道 HEAD、不数 commit、不读内容。
-**固定后继**：Change Finalization 完成后，Flow 固定继续 fresh reviewer 或下一固定动作；删除 coder/fixer 完成时的 commit gate、“无 commit 就白跑/重试”路由，以及“如产生 repo change 才调用 Change Finalization”的条件。
-**Finding Repair scope**：shared-tail final Verification 的 `>0` 固定派来源无关的 `delivery-base Finding Repair`，作用于当前 delivery branch/base；single 使用 standalone branch，family 使用 family base。只有 family 增量合入后的父分支 Verification 红灯使用 `family-integration Finding Repair`。
-**Delivery Action**：ship / PR / merge 等外部效果只由 Delivery Action 自己执行和核验；Runner 不查外部效果，也不把这些动作混入 commit 有/无二值权限。
-
-synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (a) 进程事实或上述外部真源事实派生，永不得由卷面判断合成。kill-axis（承 #873）：任何拆除不得以「换一个更温和的校验」收尾。卷面质量归交卷契约（ADR 0130，worker 侧 soul/skill）；发现搬运走 artifact pointer / findings 状态库（ADR 0129）。
-
-## 取代（旧 ADR 已就地标过时并指针到本 ADR）
-
-- **ADR 0050**「malformed 到 runner → 令同 worker 重写 cap 2 → infra escalation」及「outcome-guard 住 runner/image 层校验 format/schema/字段/证据」——**废止**。worker 交卷前自验仍成立（归 ADR 0130 交卷契约）。
-- **ADR 0062** 信封宪法段「缺覆盖 = malformed outcome → 机械重试重派 reviewer」半句、typed-治理澄清段（「outcome-guard 必须在 worker 之外的 runner 层」及其形状/治理校验派生信封）——**废止**；0062 三通道母法与决策门 durable 语义保留，通道 (b) 语义改为本 ADR 自报数。0050 立法理由（被守护者自守漏洞）的新解法 = 下轮 fresh 复审验真 + fixer 逐条实证（0129 沿革段：形式核验本就拦不住填表完美的假话）。
-- **ADR 0030** 裁定状态段（runner 覆盖断言 / 压制预算 / 翻案计数器）——0129 已拆，本 ADR 重申不得复活。
-- **ADR 0129** 写入点校验条款**限缩**：不含 count 对账（count=自报）；「拒收→同 worker 重写」梯废止——不可用卷面按角色真源分治（评审类递 fixer 原料、runner 永不自己按决策门）。findings 状态库、交通警察定理、fresh 终翻规则不变。
-- **#598 验收第 1/5 条** malformed-shape lane（「过不了 runner 下游 schema 再校验 → 当 process-level malformed 机械重派」）——**废止**；进程崩 lane 保留。
-- **#875 信封票 §1/§2**（派生 count、写入点拒收 + 重写反馈）——**废止（S1b，2026-07-13）**；§3「下游禁一切 shape 处置」保留并加强。
-- **orchestrator/README.md Constitution 节**「defective report = shape failure → 有界机械重派」corollary——按本 ADR 重写（同 PR）；其防拆测试钉 `test/adr-0062-regression-825.test.ts` 随实现翻转（#873 战役工单）。
+本决定取代 ADR 0050、0062、0129、#598、#875 与旧 README 中一切让 Runner 校验卷面、派生或对账 count、依据 commit/HEAD/证据重试或裁决、替 worker 合成 decision/failure 的条款；进程崩溃的机械重试与 worker 自验仍保留在各自所有者内。
 
 ## 后果
 
-全部 runner 侧 isValid* 法庭、count 对账 / 重写梯、malformed 计次机械重派线按本 ADR 拆除；实现细节归 #873 战役工单，不进本 ADR。操作面镜像：`orchestrator/CLAUDE.md`「铁律 0」（评审判卷首读，与本 ADR 同源同 PR）。
+Runner 侧格式/schema 法庭、count 对账、commit/HEAD/diff/PR 检查与完成证据 gate 均必须删除；操作真源为 `orchestrator/CLAUDE.md` 的“铁律 0”，专业交卷契约归 ADR 0130，finding 搬运归 ADR 0129，交付拓扑归 #869。

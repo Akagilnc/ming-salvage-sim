@@ -6,6 +6,8 @@ Status: Accepted（2026-06-21；grill-with-docs 收敛 + 设计 cmr 5 轮 + 线�
 
 > **前向更正（#869 Canonical Delivery Flow）**：下文「决定 3」原先的“每波 fan-out barrier / 本波合完再 verify / 再开下一波”时序废止。wave 只表示同一时刻的启动快照；每个 child 完成即进入串行 merge → 父分支 Verification，绿色后立即重算依赖并释放新 ready child，不等待同批 parked 或仍在运行的 child。
 
+> **过时范围（#869 Canonical Delivery Flow）**：背景中的“不做 merge 前代码 review”、决定 2 的“复用单片 S0-S8”以及本 ADR 其余交付步骤顺序均不再是流程真源；它们只保留为历史记录。当前唯一交付顺序由 #869 定义并由可执行流程测试固定，本 ADR 只保留 distinct child branch、family base 与增量合入等家族层决策。
+
 ## 背景
 
 ADR 0016/0017 把家族层（父 epic → 多子片并行 fan-out + 合回家族 base）显式 deferred。现做。
