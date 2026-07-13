@@ -880,6 +880,12 @@ async function runCmrCoderFix(input: {
         blockingFindings: classification.blocking,
         ...(findingFamilies !== undefined ? { findingFamilies } : {}),
       },
+      {
+        extraCallerOwns: (outcome) =>
+          "result" in outcome &&
+          (outcome.result.kind === "malformed" ||
+            outcome.result.kind === "outcome_protocol_failure"),
+      },
     );
     // #878: observation failure must surface as unknown, never as a false
     // "head stuck" signal. Falling back to the pre-fix head would make
@@ -942,6 +948,27 @@ async function runCmrCoderFix(input: {
             : fixResult.kind === "outcome_protocol_failure"
               ? `${reasonPrefix} outcome protocol failure: ${fixResult.reason}`
               : `${reasonPrefix} returned no valid coder result`;
+      if (
+        fixResult.kind === "malformed" ||
+        fixResult.kind === "outcome_protocol_failure"
+      ) {
+        const decisionReason =
+          `${reason}; sessionId=${fixResult.sessionId ?? "unavailable"}`;
+        await familyBackend.escalateFamily?.({
+          reason: decisionReason,
+          diagnosis: decisionReason,
+          familyHeadAfter,
+          escalationKind: "decision",
+          phase: "final",
+          stopSummary: {
+            reason: "decision_gate_park",
+            summary: decisionReason,
+            repairHint:
+              "inspect the coder-fix envelope, answer the decision gate, then re-feed",
+          },
+        });
+        return { result: { ok: false, ran: true }, familyHeadAfter };
+      }
       await recordDurableAbort(familyBackend, {
         phase: "final",
         cmrPass: pass,

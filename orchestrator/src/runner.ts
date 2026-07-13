@@ -45,10 +45,7 @@ import {
   reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
-import {
-  classifyFindings,
-  findingIdentityKey,
-} from "./findings.js";
+import { findingIdentityKey } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY worker step (S2/S3/S5/S6 agent workers + S7 ship) through ONE free function
 // instead of reaching for runStep/resumeSession/push directly.
@@ -1686,14 +1683,10 @@ function replayS4AdjudicationState(
     // #877: findings-count channel only — disposition prose / still-active
     // reopen / no-progress courts demolished. Prior keys absent from findings[]
     // are closed by the three-channel envelope, not by runner adjudication.
-    const classification = classifyFindings(
-      lastReviewerOutputForS4.findings,
-      findingDispositions,
-    );
-    const blocking = [...classification.blocking];
+    const blocking = [...lastReviewerOutputForS4.findings];
     const blockingIdentityKeys = blocking.map(findingIdentityKey);
     findingDispositions = [
-      ...(entry.findingDispositions ?? classification.dispositions),
+      ...(entry.findingDispositions ?? []),
     ];
     noProgressCounts.clear();
 
@@ -1701,14 +1694,6 @@ function replayS4AdjudicationState(
     deferredFindings = deferredFindings.filter(
       (finding) => !blockingKeys.has(findingIdentityKey(finding)),
     );
-    const deferredKeys = new Set(deferredFindings.map(findingIdentityKey));
-    for (const finding of classification.deferred) {
-      const key = findingIdentityKey(finding);
-      if (!deferredKeys.has(key)) {
-        deferredFindings.push(finding);
-        deferredKeys.add(key);
-      }
-    }
     pendingBlockingFindings = blocking;
     pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
   }
@@ -4922,9 +4907,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
             }
             if (!Array.isArray(output.findings)) {
-              // Count channel needs an array; missing array = empty open-count,
-              // not a content court over individual finding fields.
-              output = { ...output, findings: [] };
+              const escalation: Escalation = {
+                reason: "reviewer 未申报可数卷面，需人拍",
+                diagnosis:
+                  `${step}: reviewer findings is not an array; ` +
+                  `sessionId=${stepSessionId ?? sessionId}`,
+              };
+              return await escalateTermination(
+                step,
+                escalation,
+                stepSessionId,
+                "decision",
+                { kind: "reviewer", findings: [], escalate: escalation },
+                decisionGateParkStopSummary({
+                  summary:
+                    `reviewer 未申报可数卷面；sessionId=${stepSessionId ?? sessionId}`,
+                  repairHint:
+                    "inspect the reviewer envelope, answer the decision gate, then re-feed",
+                }),
+              );
             }
           } else if (output?.kind !== "coder") {
             const escalation: Escalation = {

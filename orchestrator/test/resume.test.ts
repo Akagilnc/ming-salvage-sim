@@ -57,6 +57,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 import { runOrchestrator } from "../src/runner.js";
+import { route } from "../src/route.js";
 import { parseLedgerJsonl } from "../src/realBackend.js";
 import { buildRoundTrigger } from "../src/evidenceAdmissibility.js";
 import {
@@ -1013,6 +1014,43 @@ describe("#824 durable mechanical redispatch budget", () => {
 });
 
 describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication", () => {
+  it("ADR 0131: persisted and live S4 both route by row count without reading severity/action", async () => {
+    const opaqueFinding = {
+      category: "opaque",
+      claim_quote: "one declared row",
+      location: "opaque:1",
+      suggested_fix: "worker-owned prose",
+      get severity(): never {
+        throw new Error("runner must not read severity");
+      },
+      get action(): never {
+        throw new Error("runner must not read action");
+      },
+    } as unknown as Finding;
+
+    expect(route({
+      from: "S4",
+      output: { kind: "reviewer", findings: [opaqueFinding] },
+    })).toEqual({ kind: "next", step: "S5" });
+
+    const backend = new ResumeBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [opaqueFinding] }),
+        entry("S4"),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 255, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.runStepIds[0]).toBe("S5");
+  });
+
   function crashedAfterSecondEmptyStillActiveS6(): ResumeState {
     return {
       worktree: WORKTREE,

@@ -27,9 +27,15 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
       .map((file) => stripComments(readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8")))
       .join("\n");
     for (const symbol of [
+      "classifyFindings",
       "isValidStepOutput", "isValidCoderOutput", "isValidReviewerOutput",
       "isValidFinding", "isBlockingFinding", "isValidVerifyResult",
       "isValidFixerResult", "isValidCleanupResult", "isValidDocReleaseResult",
     ]) expect(source).not.toContain(symbol);
+    expect(source).not.toMatch(/\.severity\b/);
+    expect(source).not.toMatch(/\.action\b/);
+    expect(source).not.toMatch(
+      /output\s*=\s*\{[^;]*findings\s*:\s*\[\s*\][^;]*\}/,
+    );
   });
 });

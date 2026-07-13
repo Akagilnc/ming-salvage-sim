@@ -2368,7 +2368,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ).toBe(false);
   });
 
-  it("preserves coder-fix outcome protocol failure details in the durable abort after mechanical retries (#855 review)", async () => {
+  it("parks coder-fix outcome protocol failure once with original details and session id", async () => {
     const backend = new OutcomeProtocolFailureCoderFixBackend();
 
     const result = await runVerifyCmr({
@@ -2386,17 +2386,18 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
       }),
     ]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      cmrPass: "completeness",
-      reason: expect.stringContaining("outcome protocol failure"),
-      stopSummary: expect.objectContaining({
-        summary: expect.stringContaining(
-          "coder-fix outcome guard rejected missing repairEvidence",
-        ),
-      }),
-    }));
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]).toMatchObject({
+      escalationKind: "decision",
+      reason: expect.stringContaining(
+        "coder-fix outcome guard rejected missing repairEvidence",
+      ),
+      stopSummary: {
+        reason: "decision_gate_park",
+        summary: expect.stringContaining("sessionId=coder-fix-session"),
+      },
+    });
+    expect(backend.ledger.some((entry) => entry.status === "aborted")).toBe(false);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
     ).toBe(false);
