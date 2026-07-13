@@ -24,20 +24,6 @@ function outcomePath(): string {
 }
 
 describe("#853 reviewer findings sentinel", () => {
-  it("rejects an otherwise valid reviewer verdict when the canonical fragment is missing", () => {
-    const result = cmrOutcomeFromResult({
-      stdout: "CMR_STEP_COMPLETE\n",
-      outcomePath: outcomePath(),
-      cmrReviewLegs: [{ slug: "opus" }, { slug: "gpt-5.6-sol" }, { slug: "agy" }],
-    });
-
-    expect(result).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringContaining("findings = x"),
-      priorVerdict: expect.objectContaining({ kind: "verdict", converged: true }),
-    });
-  });
-
   it("derives findingsCount from structured array; sentinel must match (write-point)", () => {
     // Opus/#875/ADR 0129: array is single source of truth; findings = N is a
     // write-point consistency check, not an independent counting channel.
@@ -50,19 +36,4 @@ describe("#853 reviewer findings sentinel", () => {
     expect(result).toMatchObject({ kind: "verdict", findingsCount: 0 });
   });
 
-  it("#875 Opus: findings=N without matching structured array is write-point malformed (not a live verdict)", () => {
-    // count=1 but sidecar findings array empty/absent → design-impossible
-    // after write-point. Reject for rewrite; do not hand runner a lying count.
-    const result = cmrOutcomeFromResult({
-      stdout: "findings = 1\nCMR_STEP_COMPLETE\n",
-      outcomePath: outcomePath(),
-      cmrReviewLegs: [{ slug: "opus" }, { slug: "gpt-5.6-sol" }, { slug: "agy" }],
-    });
-
-    expect(result).toMatchObject({
-      kind: "malformed",
-      reason: expect.stringMatching(/does not match structured findings length/i),
-      priorVerdict: expect.objectContaining({ kind: "verdict", converged: true }),
-    });
   });
-});

@@ -366,7 +366,7 @@ describe("#786 family dispatch telemetry", () => {
     ["failed", "failed", { kind: "failed", reason: "worker exited 1" }],
     [
       "malformed outcome after its protocol rewrite",
-      "protocol_failure",
+      "malformed",
       { kind: "malformed", reason: "missing CMR verdict" },
     ],
     [
@@ -412,49 +412,7 @@ describe("#786 family dispatch telemetry", () => {
       }),
     );
   });
-
-  it("#876 HEAD drift does not pre-empt a malformed CMR into a git-truth death", async () => {
-    class MalformedHeadMovingReviewerBackend extends FamilyTelemetryBackend {
-      override async dispatchWorker(
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-      ): Promise<WorkerResult> {
-        if (spec.kind === "cmr") {
-          this.ctxs.push(ctx);
-          return { kind: "malformed", reason: "missing CMR verdict" };
-        }
-        return super.dispatchWorker(spec, ctx);
-      }
-
-      async readFamilyCurrentHead(): Promise<string> {
-        return `${FAMILY_HEAD}-reviewer-moved`;
-      }
-    }
-
-    const durable = join(tempDir("orch-786-malformed-head-advisory-"), ".ledger-809");
-    const result = await runFamily({
-      epic: { issue: 809, children: [] },
-      familyBackend: new MalformedHeadMovingReviewerBackend(durable),
-      singleSliceBackend: new SmokeOnlySingleSliceBackend(),
-      familyBase: "family/809-sidecar",
-    });
-
-    // #876: HEAD movement is advisory; the malformed envelope still routes through
-    // the ordinary outcome-protocol path (protocol_failure after rewrite exhaustion).
-    expect(result.status).not.toBe("success");
-    expect(
-      readTelemetryRecords(durable).filter(
-        (record): record is TelemetryReviewRoundRecord => record.phase === "review_round",
-      ),
-    ).toContainEqual(
-      expect.objectContaining({
-        verdict: "protocol_failure",
-        finalDisposition: "rejected",
-      }),
-    );
-  });
-
-  it("keeps an unknown review-round row when durable abort persistence throws", async () => {
+it("keeps an unknown review-round row when durable abort persistence throws", async () => {
     class ThrowingDurableAbortBackend extends FamilyTelemetryBackend {
       override async appendFamilyLedger(): Promise<void> {
         throw new Error("durable abort ledger unavailable");

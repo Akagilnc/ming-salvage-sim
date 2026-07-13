@@ -593,6 +593,10 @@ class DogfoodFamilyBackend implements FamilyBackend {
   async verifyFamilyShippedPr(): Promise<{ ok: true }> {
     return { ok: true };
   }
+
+  async findFamilyShippedPr(): ReturnType<NonNullable<FamilyBackend["findFamilyShippedPr"]>> {
+    return Promise.resolve({ ok: false, kind: "pr_missing", reason: "dogfood host has no PR" });
+  }
 }
 
 class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {

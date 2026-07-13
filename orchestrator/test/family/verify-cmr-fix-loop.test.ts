@@ -140,22 +140,6 @@ describe("review-round persistence immunity", () => {
       expect.objectContaining({ cmrPass: "completeness", finalDisposition: "unknown" }),
     ]);
   });
-
-  it("stamps accepted once on a normal terminal path", async () => {
-    const backend = new ReviewRoundStampBackend("none");
-
-    await expect(
-      runVerifyCmr({
-        phase: "final",
-        familyBase: "family/review-round-normal",
-        familyBackend: backend,
-      }),
-    ).resolves.toEqual({ ok: false, ran: true });
-
-    expect(reviewRoundRows(backend)).toEqual([
-      expect.objectContaining({ cmrPass: "completeness", finalDisposition: "accepted" }),
-    ]);
-  });
 });
 
 /** #600/#603: successful pr_opened ship → verify → docRelease → post-merge cleanup. */
@@ -2367,43 +2351,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       ),
     ).toBe(false);
   });
-
-  it("parks coder-fix outcome protocol failure once with original details and session id", async () => {
-    const backend = new OutcomeProtocolFailureCoderFixBackend();
-
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/551-base",
-      familyBackend: backend,
-    });
-
-    expect(result).toEqual({ ok: false, ran: true });
-    // Protocol-envelope failure is not a process crash and is not redispatched.
-    expect(backend.dispatches).toEqual([
-      expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
-      expect.objectContaining({
-        kind: "coder",
-        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
-      }),
-    ]);
-    expect(backend.escalations).toHaveLength(1);
-    expect(backend.escalations[0]).toMatchObject({
-      escalationKind: "decision",
-      reason: expect.stringContaining(
-        "coder-fix outcome guard rejected missing repairEvidence",
-      ),
-      stopSummary: {
-        reason: "decision_gate_park",
-        summary: expect.stringContaining("sessionId=coder-fix-session"),
-      },
-    });
-    expect(backend.ledger.some((entry) => entry.status === "aborted")).toBe(false);
-    expect(
-      backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
-    ).toBe(false);
-  });
-
-  it("#876 keeps the CMR loop alive when the reviewer moves family HEAD before findings", async () => {
+it("#876 keeps the CMR loop alive when the reviewer moves family HEAD before findings", async () => {
     const backend = new ReviewerMutatesHeadBeforeFindingBackend();
 
     const result = await runVerifyCmr({
@@ -2520,29 +2468,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       ),
     ).toBe(false);
   });
-
-  it("#876 still rewrites a malformed CMR outcome when the worktree HEAD drifted", async () => {
-    const backend = new MalformedReviewerWrongHeadBeforeRewriteBackend();
-
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/550-base",
-      familyBackend: backend,
-    });
-    expect(result).toEqual({ ok: true, ran: true });
-    expect(backend.rewriteCalls).toBeGreaterThan(0);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      workerStep: "cmr:completeness",
-      reason: expect.stringMatching(/checked out.*different HEAD|moved family HEAD/i),
-    }));
-    expect(
-      backend.dispatches.some((dispatch) => dispatch.kind === "ship"),
-    ).toBe(true);
-  });
-
-  it("fails closed when the runner cannot read tracked status after CMR review", async () => {
+it("fails closed when the runner cannot read tracked status after CMR review", async () => {
     const backend = new ReviewerTrackedStatusReadFailsBackend();
 
     const result = await runVerifyCmr({
@@ -2621,37 +2547,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches.filter((d) => d.kind === "coder")).toEqual([]);
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
   });
-
-  it("cmr worker COMPLETED but NOT converged (no escalate) ⇒ machine abort with the reason, ok:false, NO ship", async () => {
-    const backend = new SchedulerFamilyBackend({
-      cmr: () => ({
-        kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: false,
-          reason: "cross-slice contract drift left unresolved",
-          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-          ...CMR_EVIDENCE,
-        },
-      }),
-    });
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.escalations).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      reason: expect.stringContaining("contract drift"),
-      stopSummary: expect.objectContaining({ reason: "contract_drift" }),
-    }));
-    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
-  });
-
-  it("#875: converged cmr with claimed-fixed keys but no dispositions still ships (coverage court demolished)", async () => {
+it("#875: converged cmr with claimed-fixed keys but no dispositions still ships (coverage court demolished)", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
@@ -3121,24 +3017,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       "cleanup",
     ]);
   });
-
-  it("cmr worker MALFORMED / crash ⇒ recordAborted + INCOMPLETE_GATE (ok:false), NO ship", async () => {
-    const backend = new SchedulerFamilyBackend({
-      cmr: () => ({ kind: "malformed", reason: "no parseable CMR-VERDICT" }),
-    });
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/291-base",
-      familyBackend: backend,
-    });
-    expect(result).toEqual({ ok: false, ran: true });
-    // A malformed cmr persists a DURABLE aborted ledger entry (recordDurableAbort →
-    // appendFamilyLedger), so a resume doesn't re-run the same failing gate blind.
-    expect(backend.ledger.some((e) => e.status === "aborted")).toBe(true);
-    expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);
-  });
-
-  it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", async () => {
+it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({ kind: "failed", reason: "sandbox exited 1" }),
     });

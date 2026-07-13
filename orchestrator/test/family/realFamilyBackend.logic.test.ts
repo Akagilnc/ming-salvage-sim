@@ -810,7 +810,6 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
         "integrated_cmr_completeness.md",
         "integrated_cmr_correctness.md",
         "coder_fix.md",
-        "outcome_rewrite.md",
         "family_ship.md",
         "merger_resolve_conflict.md",
         "verify.md",
