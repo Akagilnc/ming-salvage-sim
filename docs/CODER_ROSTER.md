@@ -47,9 +47,9 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
 
 ## 编排器只读行为
 
-1. S0 读 issue body；**仅当存在 `Coder-Rec:` 行**时覆盖 coder（+ coderFix）槽。
+1. Issue intake 读 issue body；**仅当存在 `Coder-Rec:` 行**时覆盖 coder（+ coderFix）槽。
 2. 派工第一个花名册合法项。
-3. 每完成 `CODER_REC_FALLBACK_AFTER_ROUNDS`（默认 2）个不收敛的 S6 fix 轮 → 顺位补位。
+3. 专业评审 Action 声明质量不收敛并要求 coder/coderFix 换棒时 → 顺位补位；花名册不数评审轮、不读 findings。
 4. `ORCHESTRATOR_CODER_MODEL` 显式覆盖时，跳过 Coder-Rec（运维优先）。
 5. 无 `Coder-Rec:` 行 → 保持当前 `ORCHESTRATOR_ROUTE` 预设 coder。
 
