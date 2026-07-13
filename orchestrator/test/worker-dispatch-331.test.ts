@@ -123,6 +123,9 @@ class DispatchBackend implements Backend {
     this.pushCount += 1;
     throw new Error("push should not be called directly (#331)");
   }
+  async observeSliceShip(): Promise<{ shipped: boolean; prUrl?: string }> {
+    return { shipped: true, prUrl: "pr://slice/offline-331" };
+  }
   async pollOnlineReviewState(input: {
     repo: string;
     prUrl: string;
@@ -333,6 +336,9 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       resolveTelemetryDir(): string {
         return telemetryDir;
       }
+      override async observeSliceShip(): Promise<{ shipped: boolean }> {
+        return { shipped: true };
+      }
 
       async installTelemetryRunEnvironment(): Promise<void> {}
 
@@ -431,9 +437,12 @@ describe("#331 a non-completed WorkerResult routes via workerResultToStep", () =
   });
 });
 
-describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", () => {
+describe("#891 S7 ignores receipt content and follows host delivery truth", () => {
   /** A backend whose S7 ship worker returns a completed NON-ship payload. */
   class WrongShipPayloadBackend extends DispatchBackend {
+    override async observeSliceShip(): Promise<{ shipped: boolean }> {
+      return { shipped: true };
+    }
     override async dispatchWorker(
       spec: WorkerSpec,
       ctx: DispatchContext,
@@ -462,12 +471,11 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
     }
   }
 
-  it("a persistently completed-but-non-ship S7 result exhausts bounded redispatch, never false-success", async () => {
+  it("a completed non-ship receipt cannot veto a host-confirmed delivery", async () => {
     const backend = new WrongShipPayloadBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.reason).toContain("invalid delivery envelope");
-    expect(result.errorPackage?.reason).not.toContain("after 3 dispatch attempts");
+    expect(result.status).toBe("success");
+    expect(backend.specs.filter((spec) => spec.id === "S7")).toHaveLength(1);
   });
 });
 

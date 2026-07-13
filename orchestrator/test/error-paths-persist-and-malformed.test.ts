@@ -148,7 +148,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
     expect(persistedSteps).toContain("S7");
   });
 
-  it("S7 push throw → persisted ledger contains S7 and S8", async () => {
+  it("S7 push throw exhaustion → persisted infra park contains S7 and S8", async () => {
     const backend = new SpyBackend();
     backend.push = async () => {
       throw new Error("remote rejected: non-fast-forward");
@@ -156,7 +156,8 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("infra_failure");
     const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
     expect(persistedSteps).toContain("S7");
     expect(persistedSteps).toContain("S8");

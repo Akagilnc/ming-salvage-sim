@@ -189,16 +189,16 @@ describe("Finding 1: terminal-error S8 is tagged handoffStatus:'error' (#254 ⋈
     }
   }
 
-  it("a push-fail run persists its terminal S8 tagged 'error' (not untagged)", async () => {
+  it("a push-fail exhaustion persists its terminal S8 as an infra park", async () => {
     const backend = new PushFailBackend();
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("error");
-    // The terminal S8 written to disk must carry handoffStatus:'error' so a
-    // re-feed reports the true status (Case 3a) — not fall through to Case 3b/4.
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("infra_failure");
+    // The terminal S8 written to disk must carry the parked handoff status.
     const s8Writes = backend.written.filter((e) => e.step === "S8");
     expect(s8Writes.length).toBeGreaterThan(0);
-    for (const w of s8Writes) expect(w.handoffStatus).toBe("error");
+    for (const w of s8Writes) expect(w.handoffStatus).toBe("escalate");
   });
 
   it("RESUME: re-feeding a push-fail ledger reports ERROR, not SUCCESS", async () => {

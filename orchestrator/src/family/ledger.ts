@@ -1120,7 +1120,7 @@ export function cmrPassAlreadyPassed(
       e.familyHeadAfter == null ||
       e.familyHeadAfter.trim().length === 0 ||
       e.routeFingerprint == null ||
-      e.routeFingerprint !== routeFingerprint
+      e.routeFingerprint.trim() !== routeFingerprint
     ) {
       continue;
     }

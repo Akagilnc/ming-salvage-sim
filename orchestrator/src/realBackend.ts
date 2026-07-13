@@ -69,6 +69,7 @@ import {
   hasBoundedReopenCondition,
   hasExplicitAcceptedSuppressionSource,
 } from "./acceptedSuppression.js";
+import { observeOpenPrForBranch } from "./autoMerge.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
   execFileAsyncWithTimeout,
@@ -4498,6 +4499,27 @@ export class RealBackend implements Backend {
       ["push", "-u", "origin", worktree.branch],
       worktree.path,
     );
+  }
+
+  async observeSliceShip(worktree: WorktreeHandle): Promise<{
+    shipped: boolean;
+    prUrl?: string;
+  }> {
+    const remoteRef = this.sh(
+      "git",
+      ["ls-remote", "--heads", "origin", `refs/heads/${worktree.branch}`],
+      worktree.path,
+    ).trim();
+    if (remoteRef.length === 0) return { shipped: false };
+
+    const pr = observeOpenPrForBranch(
+      (file, args) => this.sh(file, args, this.workingRepo),
+      this.opts.repo,
+      worktree.branch,
+    );
+    return pr.present
+      ? { shipped: true, ...(pr.prUrl !== undefined ? { prUrl: pr.prUrl } : {}) }
+      : { shipped: true };
   }
 
   // #661: retained only as a compatibility seam. Scenes are never destroyed.

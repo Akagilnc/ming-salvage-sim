@@ -396,7 +396,20 @@ class ShipScriptBackend implements Backend {
     private readonly crashes: number,
     private readonly judgedFailed = false,
     private readonly judgedMalformed = false,
+    private readonly hostObservations: ReadonlyArray<{
+      readonly shipped: boolean;
+      readonly prUrl?: string;
+    }> = [{ shipped: true }],
   ) {}
+  hostObservationCalls = 0;
+  async observeSliceShip(): Promise<{ shipped: boolean; prUrl?: string }> {
+    const observation =
+      this.hostObservations[
+        Math.min(this.hostObservationCalls, this.hostObservations.length - 1)
+      ] ?? { shipped: false };
+    this.hostObservationCalls += 1;
+    return observation;
+  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
@@ -442,7 +455,7 @@ class ShipScriptBackend implements Backend {
   }
 }
 
-describe("#598 integration — the SHIP role: crash retries, a judged failed verdict passes through", () => {
+describe("#598 integration — the SHIP role: process retry plus host-truth delivery", () => {
   it("a ship that crashes once then completes is retried fresh — the run proceeds", async () => {
     const backend = new ShipScriptBackend(1);
     const result = await runOrchestrator({ issueNumber: 598, backend });
@@ -450,27 +463,43 @@ describe("#598 integration — the SHIP role: crash retries, a judged failed ver
     expect(backend.shipDispatches).toBe(2);
   });
 
-  it("a JUDGED ship-`failed` verdict passes through with ZERO retry (dispatched once)", async () => {
+  it("a failed ship process still uses the existing bounded retry", async () => {
     const backend = new ShipScriptBackend(0, true);
     const result = await runOrchestrator({ issueNumber: 598, backend });
-    // A decided delivery failure is surfaced, never re-run.
-    expect(result.status).toBe("error");
-    expect(backend.shipDispatches).toBe(1);
+    expect(result.status).toBe("escalate");
+    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 
-  it("a ship malformed verdict is not a process crash and is not mechanically retried", async () => {
-    // #601: the over-conservative "#598 r2" carve-out (a structural ship `malformed`
-    // treated as a non-retried contract violation) is corrected here. A ship that
-    // emits no parseable `<ship>` tag (the dogfood-362 / family-405 incident class)
-    // is a PROCESS-LEVEL failure — the worker produced no valid output — so it
-    // retries through the SAME shared `withMechanicalRetry` path as a coder crash
-    // (#592 "no role treated specially"). A PERSISTENT one exhausts the shared bound
-    // and durably aborts; only a JUDGED `failed` verdict (parsed `<ship>{failed:…}`)
-    // passes through with zero retry (the test directly above).
-    const backend = new ShipScriptBackend(0, false, true);
+  it("a malformed ship receipt is accepted when host truth has the PR", async () => {
+    const backend = new ShipScriptBackend(0, false, true, [
+      { shipped: true, prUrl: "pr://slice/offline-891" },
+    ]);
     const result = await runOrchestrator({ issueNumber: 598, backend });
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("success");
     expect(backend.shipDispatches).toBe(1);
+    expect(backend.hostObservationCalls).toBe(1);
+  });
+
+  it("a malformed ship receipt consumes the bounded budget until host truth appears", async () => {
+    const backend = new ShipScriptBackend(0, false, true, [
+      { shipped: false },
+      { shipped: false },
+      { shipped: true },
+    ]);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+    expect(result.status).toBe("success");
+    expect(backend.shipDispatches).toBe(3);
+    expect(backend.hostObservationCalls).toBe(3);
+  });
+
+  it("parks as infra failure when host truth stays unshipped through the bounded budget", async () => {
+    const backend = new ShipScriptBackend(0, false, true, [{ shipped: false }]);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("infra_failure");
+    expect(result.errorPackage?.failedStep).toBe("S7");
+    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(backend.hostObservationCalls).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });
 

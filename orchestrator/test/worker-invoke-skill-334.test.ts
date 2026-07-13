@@ -667,6 +667,9 @@ describe("#334 ADR 0030 worker routing", () => {
       async worktreeHead(): Promise<string> {
         return "host-confirmed-head";
       }
+      async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
+        return { shipped: true, prUrl: "pr://slice/offline-824" };
+      }
     }
 
     const backend = new HostObservedPrBackend();
@@ -680,20 +683,16 @@ describe("#334 ADR 0030 worker routing", () => {
   });
 });
 
-describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the ship contract", () => {
-  /**
-   * A clean-review backend whose S7 ship worker returns a `completed {kind:"ship"}`
-   * payload with a configurable, possibly off-contract, ShipResult. The terminal
-   * S7 gate must re-assert the single-slice contract independently of the backend
-   * (defense-in-depth, symmetric to the family terminal gate): branch === the
-   * resident worktree branch, status ∈ {pushed, pr_opened}, and pr_opened carries
-   * a non-empty pr URL. An off-contract success must NOT route to S8(success).
-   */
+describe("#891 — single-slice S7 routes from host truth, not the ship receipt", () => {
+  /** A configurable receipt plus an independent, host-confirmed delivery. */
   class ShipPayloadBackend extends ReviewWorkerBackend {
     shipOutput: WorkerResult;
     constructor(shipOutput: WorkerResult) {
       super();
       this.shipOutput = shipOutput;
+    }
+    async observeSliceShip(): Promise<{ shipped: boolean }> {
+      return { shipped: true };
     }
     override async dispatchWorker(
       spec: WorkerSpec,
@@ -727,36 +726,36 @@ describe("#336 cmr S336 r4 — the terminal single-slice S7 gate re-asserts the 
 
   const wtBranch = "feat/orchestrator/issue-334";
 
-  it("a ship on the WRONG branch (≠ worktree) ⇒ error, not success", async () => {
+  it("a wrong receipt branch cannot override a host-confirmed delivery", async () => {
     const status = await run({
       kind: "completed",
       output: { kind: "ship", branch: "main", status: "pushed" },
     });
-    expect(status).toBe("error");
+    expect(status).toBe("success");
   });
 
-  it("a ship with an unknown status ⇒ error, not success", async () => {
+  it("an unknown receipt status cannot override a host-confirmed delivery", async () => {
     const status = await run({
       kind: "completed",
       output: { kind: "ship", branch: wtBranch, status: "merged" },
     });
-    expect(status).toBe("error");
+    expect(status).toBe("success");
   });
 
-  it("a pr_opened ship missing its pr URL ⇒ error, not success", async () => {
+  it("a missing receipt PR locator cannot override a host-confirmed delivery", async () => {
     const status = await run({
       kind: "completed",
       output: { kind: "ship", branch: wtBranch, status: "pr_opened" },
     });
-    expect(status).toBe("error");
+    expect(status).toBe("success");
   });
 
-  it("a pr_opened ship with a blank pr URL ⇒ error, not success", async () => {
+  it("a blank receipt PR locator cannot override a host-confirmed delivery", async () => {
     const status = await run({
       kind: "completed",
       output: { kind: "ship", branch: wtBranch, status: "pr_opened", pr: "  " },
     });
-    expect(status).toBe("error");
+    expect(status).toBe("success");
   });
 
   it("a legitimate pushed ship on the worktree branch ⇒ success (the contract holds)", async () => {

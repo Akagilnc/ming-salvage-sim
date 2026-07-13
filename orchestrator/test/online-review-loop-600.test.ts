@@ -6332,6 +6332,9 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       throw new Error("runStep should not be called");
     }
     async push(): Promise<void> {}
+    async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
+      return { shipped: true, prUrl: livePr };
+    }
     async pollOnlineReviewState(input: {
       repo: string;
       prUrl: string;
@@ -6413,6 +6416,9 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
     try {
       class OfflineHookBackend extends HookPollBackend {
         readonly verifyLandings: WorkerLandingPayload[] = [];
+        override async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
+          return { shipped: true, prUrl: offlinePr };
+        }
 
         override async pollOnlineReviewState(input: {
           repo: string;
@@ -6485,6 +6491,9 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       class SlowCiBackend extends HookPollBackend {
         readonly ledgerWrites: PersistentLedgerEntry[] = [];
         verifyDispatches = 0;
+        override async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
+          return { shipped: true, prUrl: offlinePr };
+        }
 
         override async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
           this.ledgerWrites.push(entry);
@@ -6536,6 +6545,9 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
     try {
       class InvalidVerifyThenConvergeBackend extends HookPollBackend {
         verifyDispatches = 0;
+        override async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
+          return { shipped: true, prUrl: offlinePr };
+        }
 
         override async pollOnlineReviewState(
           _input: { repo: string; prUrl: string; pollCount: number },
@@ -6591,6 +6603,9 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
     try {
       class RebuildGuardBackend extends HookPollBackend {
         verifyCount = 0;
+        override async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
+          return { shipped: true, prUrl: offlinePr };
+        }
 
         override async pollOnlineReviewState(
           _input: { repo: string; prUrl: string; pollCount: number },

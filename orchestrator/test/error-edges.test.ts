@@ -141,8 +141,8 @@ describe("S2 coder 0-commit bounded mechanical redispatch", () => {
 
 // ─── push failure (S7 push throws) ─────────────────────────────────────────
 
-describe("error edge: S7 push failure → S8(error)", () => {
-  it("routes to S8(status=error) when push throws", async () => {
+describe("infra edge: persistent S7 process failure → S8 infra park", () => {
+  it("parks after the bounded process retry when push throws", async () => {
     const backend = new BaseBackend();
     backend.push = async () => {
       throw new Error("remote rejected: non-fast-forward");
@@ -150,7 +150,8 @@ describe("error edge: S7 push failure → S8(error)", () => {
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("infra_failure");
   });
 
   it("error package includes failedStep=S7 and the original error reason", async () => {
