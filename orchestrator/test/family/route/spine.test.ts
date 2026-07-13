@@ -348,7 +348,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     ).toHaveLength(1);
   });
 
-  it("#603: family cleanup failed/malformed abort includes worker reason", async () => {
+  it("#603: family cleanup process failure abort includes worker reason", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push(

@@ -150,7 +150,6 @@ import type {
   StepOutput,
   StepSpec,
   WorkerLandingPayload,
-  WorkerResult,
   WorktreeHandle,
 } from "./types.js";
 
@@ -282,7 +281,7 @@ async function hashPrompt(
  * builder just assembles the entry; value resolution lives in `emitLedger`.
  */
 function buildPersistentEntry(opts: {
-  step: StepId;
+  step: SliceStepId;
   output: StepOutput | undefined;
   runId: string;
   sessionId: string;
@@ -484,7 +483,7 @@ function sliceQuotaWaitPending(
  * the next baton for the caller to apply + re-dispatch.
  */
 async function parkOrRelayQuotaWall(opts: {
-  readonly step: StepId;
+  readonly step: SliceStepId;
   readonly err: QuotaWaitForResetError;
   readonly ledger: LedgerEntry[];
   readonly stateDir: string | undefined;
@@ -494,7 +493,7 @@ async function parkOrRelayQuotaWall(opts: {
   readonly resolveBranchHEAD: () => Promise<string>;
   readonly hashPrompt: (
     promptFile: string | undefined,
-    step: StepId,
+    step: SliceStepId,
   ) => Promise<string>;
   readonly worktreePath: string | undefined;
   readonly currentModelId: string;
@@ -585,7 +584,7 @@ async function parkOrRelayQuotaWall(opts: {
       };
     }
     const marker: LedgerEntry = {
-      step: entry.step ?? step,
+      step: isValidStepId(entry.step) ? entry.step : step,
       event: "relay_baton_handoff",
       trigger: entry.trigger,
       state_summary: entry.state_summary,
@@ -669,7 +668,7 @@ async function parkOrRelayQuotaWall(opts: {
  * Mirror CI-pending park: ledger marker + stopSummary, no sticky failure.
  */
 async function parkQuotaWaitForResetLegacy(opts: {
-  readonly step: StepId;
+  readonly step: SliceStepId;
   readonly err: QuotaWaitForResetError;
   readonly ledger: LedgerEntry[];
   readonly stateDir: string | undefined;
@@ -679,7 +678,7 @@ async function parkQuotaWaitForResetLegacy(opts: {
   readonly resolveBranchHEAD: () => Promise<string>;
   readonly hashPrompt: (
     promptFile: string | undefined,
-    step: StepId,
+    step: SliceStepId,
   ) => Promise<string>;
 }): Promise<RunResult> {
   const { err, step, ledger, stateDir, sessionId, backend, deferredFindings } =
@@ -696,7 +695,7 @@ async function parkQuotaWaitForResetLegacy(opts: {
         : {}),
     };
   const marker: LedgerEntry = {
-    step: ledgerEntry.step ?? step,
+    step: isValidStepId(ledgerEntry.step) ? ledgerEntry.step : step,
     event: "quota_wait_for_reset",
     pool: ledgerEntry.pool,
     reason: ledgerEntry.reason,
@@ -1276,7 +1275,6 @@ interface S4AdjudicationReplay {
   readonly blockingIdentityKeys: ReadonlyArray<string>;
   readonly deferred: ReadonlyArray<Finding>;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
-  readonly noProgressCounts: ReadonlyMap<string, number>;
 }
 
 function replayS4AdjudicationState(
@@ -1286,7 +1284,6 @@ function replayS4AdjudicationState(
   let pendingBlockingFindingIdentityKeys: string[] = [];
   let deferredFindings: Finding[] = [];
   let findingDispositions: FindingDisposition[] = [];
-  const noProgressCounts = new Map<string, number>();
   let lastReviewerOutputForS4: StepOutput | undefined;
 
   for (const entry of ledger) {
@@ -1310,8 +1307,6 @@ function replayS4AdjudicationState(
     findingDispositions = [
       ...(entry.findingDispositions ?? []),
     ];
-    noProgressCounts.clear();
-
     const blockingKeys = new Set(blockingIdentityKeys);
     deferredFindings = deferredFindings.filter(
       (finding) => !blockingKeys.has(findingIdentityKey(finding)),
@@ -1325,14 +1320,7 @@ function replayS4AdjudicationState(
     blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
     deferred: deferredFindings,
     findingDispositions,
-    noProgressCounts,
   };
-}
-
-function adjudicatedBlockingFindingsForPersistedS4(
-  ledger: ReadonlyArray<LedgerEntry>,
-): ReadonlyArray<Finding> | undefined {
-  return replayS4AdjudicationState(ledger).blocking;
 }
 
 /**
@@ -1732,15 +1720,6 @@ function buildErrorReason(step: StepId, _output: StepOutput | undefined): string
   return `step ${step} routed to error handoff`;
 }
 
-/** Compact, safe description of a (possibly malformed) step output for errors. */
-function describeOutput(output: StepOutput | undefined): string {
-  if (output === undefined) return "undefined";
-  if (output === null) return "null";
-  if (typeof output !== "object") return String(output);
-  const kind = (output as { kind?: unknown }).kind;
-  return `object with kind=${JSON.stringify(kind)}`;
-}
-
 function acceptedSuppressionsFromDispositions(
   dispositions: ReadonlyArray<FindingDisposition>,
 ): AcceptedSuppressionSummary[] {
@@ -2028,9 +2007,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // Attempt markers belong to a dedicated durable ledger namespace, not the
   // canonical step-result ledger. Keep the live-process delta separately so
   // successful retries do not add duplicate worker rows to `RunResult.stepLedger`.
-  const mechanicalRedispatchAttempts = new Map<StepId, number>();
+  const mechanicalRedispatchAttempts = new Map<SliceStepId, number>();
 
-  const mechanicalRedispatchAttemptsFor = (step: StepId): number => {
+  const mechanicalRedispatchAttemptsFor = (step: SliceStepId): number => {
     const history = mergeResumeLedgerHistory(resumeHistoryLedger, ledger);
     let durableAttempts = 0;
     // A canonical completed row starts a new logical invocation.  Markers
@@ -2058,12 +2037,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     return Math.max(mechanicalRedispatchAttempts.get(step) ?? 0, durableAttempts);
   };
 
-  const completeMechanicalRetryInvocation = (step: StepId): void => {
+  const completeMechanicalRetryInvocation = (step: SliceStepId): void => {
     mechanicalRedispatchAttempts.delete(step);
   };
 
   const durableMechanicalRetryOptions = (
-    step: StepId,
+    step: SliceStepId,
     options: MechanicalRetryOptions = {},
   ): MechanicalRetryOptions => ({
     ...options,
@@ -2210,11 +2189,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
-  let lastCoderRepairEvidence: RepairEvidence | undefined;
   let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
   let preexistingAssertionTouchedForReverify = false;
   let refusedFindingIdentityKeysForReverify: readonly string[] = [];
-  const noProgressByFindingIdentityKey = new Map<string, number>();
   // Preserve the full ledger for relay and resume accounting.
   let resumeHistoryLedger: ReadonlyArray<LedgerEntry> = [];
 
@@ -2225,7 +2202,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (reviewerOutput?.kind !== "reviewer") return [];
     const blocking = [...reviewerOutput.findings];
     const blockingIdentityKeys = blocking.map(findingIdentityKey);
-    noProgressByFindingIdentityKey.clear();
     pendingBlockingFindings = blocking;
     pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
     return [];
@@ -2288,7 +2264,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * After S1 (stateDir known):    flush any buffered entries first, then write.
    */
   async function emitLedger(
-    s: StepId,
+    s: SliceStepId,
     output: StepOutput | undefined,
     promptFile: string | undefined,
     handoffStatus?: HandoffStatus,
@@ -2323,7 +2299,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     });
 
     const mirrorInMemoryLedgerPersistedFields = (
-      step: StepId,
+      step: SliceStepId,
       fields: Pick<PersistentLedgerEntry, "ts" | "branchHEAD">,
     ): void => {
       for (let i = ledger.length - 1; i >= 0; i--) {
@@ -2367,7 +2343,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * {@link monitorHandleFromLedger} while the worker is still running.
    */
   async function persistMonitorHandleAtSpawn(
-    s: StepId,
+    s: SliceStepId,
     handle: import("./types.js").WorkerMonitorHandle,
   ): Promise<void> {
     if (stateDir === undefined) return;
@@ -2407,7 +2383,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * pass handoffStatus=undefined, matching emitLedger's "undefined for non-S8".
    */
   async function persistBestEffort(
-    s: StepId,
+    s: SliceStepId,
     output: StepOutput | undefined,
     promptFile: string | undefined,
     handoffStatus?: HandoffStatus,
@@ -2462,7 +2438,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * — only post-worktree ones.
    */
   async function errorTermination(
-    failedStep: StepId,
+    failedStep: SliceStepId,
     err: unknown,
     opts?: {
       recordInMemory?: boolean;
@@ -2562,7 +2538,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
   /** Transport a child worker's decision/failure park without judging its prose. */
   async function escalateTermination(
-    failedStep: StepId,
+    failedStep: SliceStepId,
     escalation: Escalation,
     sessionId?: string,
     escalationKind: EscalationKind = "decision",
@@ -2788,12 +2764,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       resumeLedger = [...resumeLedger, repairIntentEntry];
     }
-    let executableResumeLedger = executableLedgerEntries(resumeLedger);
-    let resumeTail = executableResumeLedger.at(-1);
-    const resumeRouteFrom =
-      resumeTail?.step === "S8" && resumeTail.handoffStatus === undefined
-        ? lastNonTerminalStep(executableResumeLedger)
-        : resumeTail?.step;
     const plan = planResume(resumeLedger);
     resumeHistoryLedger = resumeLedger;
 
@@ -2836,16 +2806,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
     deferredFindings = [...replayedS4.deferred];
     findingDispositions = [...replayedS4.findingDispositions];
-    noProgressByFindingIdentityKey.clear();
-    for (const [key, count] of replayedS4.noProgressCounts) {
-      noProgressByFindingIdentityKey.set(key, count);
-    }
-    for (const key of plan.continueFixingRepair?.matchingIdentityKeys ?? []) {
-      noProgressByFindingIdentityKey.delete(key);
-    }
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     const latestRepair = latestCoderRepair(plan.priorLedger);
-    lastCoderRepairEvidence = latestRepair.repairEvidence;
     lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
 
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
@@ -3348,7 +3310,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         onMonitorHandleSpawned: async (handle) => {
                           stepMonitorHandle = handle;
                           try {
-                            await persistMonitorHandleAtSpawn(s.id, handle);
+                            if (isValidStepId(s.id)) {
+                              await persistMonitorHandleAtSpawn(s.id, handle);
+                            }
                           } catch {
                             // Best-effort: spawn-time ledger write must not abort
                             // the worker; post-step emitLedger still records it.
@@ -3410,27 +3374,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 
             if (unwrapped === undefined) {
-              if (
-                expectedKind === "reviewer" &&
-                (result.kind === "malformed" || result.kind === "outcome_protocol_failure")
-              ) {
-                pendingBlockingFindings = [];
-                pendingBlockingFindingIdentityKeys = [];
-                pendingRawReviewerArtifacts = {
-                  ...(stepMonitorHandle?.logPath !== undefined
-                    ? { stdoutPath: stepMonitorHandle.logPath }
-                    : {}),
-                  ...(stepMonitorHandle?.resultPath !== undefined
-                    ? { sidecarPath: stepMonitorHandle.resultPath }
-                    : {}),
-                  ...(result.sessionId !== undefined
-                    ? { reviewerSessionId: result.sessionId }
-                    : {}),
-                  statement: "the previous reviewer raw artifacts are here",
-                };
-                step = "S5";
-                continue orchestratorStepLoop;
-              }
               // #686 P2-b: mechanical-retry exhaustion is a relay candidate —
               // hand off when a live baton exists; durable abort only when none.
               if (
@@ -3477,7 +3420,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     );
                   }
                   const marker: LedgerEntry = {
-                    step: entry.step ?? step,
+                    step: isValidStepId(entry.step) ? entry.step : step,
                     event: "relay_baton_handoff",
                     trigger: entry.trigger,
                     state_summary: entry.state_summary,
@@ -3685,7 +3628,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 );
               }
               const marker: LedgerEntry = {
-                step: entry.step ?? step,
+                step: isValidStepId(entry.step) ? entry.step : step,
                 event: "relay_baton_handoff",
                 trigger: entry.trigger,
                 state_summary: entry.state_summary,
@@ -3809,7 +3752,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         lastOutput = output;
         if (output.kind === "coder") {
-          lastCoderRepairEvidence = output.repairEvidence;
           lastCoderActualRepairPaths = actualRepairMovementPaths(
             worktree,
             coderHeadBeforeStep,

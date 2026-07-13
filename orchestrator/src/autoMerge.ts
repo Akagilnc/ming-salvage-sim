@@ -8,9 +8,6 @@
 import { shWithClock } from "./externalCall.js";
 
 import {
-  offlineSyntheticPollAdmissible,
-} from "./evidenceAdmissibility.js";
-import {
   classifyCheckRuns,
   isLiveGithubReviewPollEnabled,
   parsePrRef,

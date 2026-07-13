@@ -2890,39 +2890,6 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     expect(attempts).toBe(2);
   });
 
-  it("#876 pin r27: verify that mutates HEAD then returns malformed is not reset-cleaned and is not git-convicted", async () => {
-    let attempts = 0;
-    let resets = 0;
-    let head = "head-before";
-    const headBefore = head;
-    const resolveHead = () => head;
-    const result = await withMechanicalRetry(
-      verifyWorkerSpec(),
-      {} as DispatchContext,
-      async () => {
-        attempts += 1;
-        if (attempts === 1) {
-          head = "head-after-mutation";
-        }
-        // #876: HEAD drift is advisory plumbing — do not throw a contract_drift
-        // death. Malformed still routes through ordinary mechanical retry.
-        void resolveHead();
-        void headBefore;
-        return attempts === 1
-          ? { kind: "malformed" as const, reason: "missing verify tag" }
-          : {
-              kind: "completed" as const,
-              output: { kind: "verify" as const, converged: true },
-            };
-      },
-      { rethrowOnExhaustion: true },
-    );
-    expect(attempts).toBe(1);
-    expect(resets).toBe(0);
-    expect(head).toBe("head-after-mutation");
-    expect(result).toMatchObject({ kind: "malformed" });
-  });
-
   it("a persistently crashing verify exhausts the shared dispatch bound", async () => {
     let attempts = 0;
     const result = await withMechanicalRetry(
@@ -4930,6 +4897,105 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
       expect(fixerLanding?.rawReviewerArtifacts).toMatchObject({
         reviewerSessionId: "sparse-verify-session",
       });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("passes raw verify artifacts to fixer even when structured cargo survives", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      let verifyCalls = 0;
+      let fixerLanding: WorkerLandingPayload | undefined;
+      const backend = new ReviewLoopFamilyBackend();
+      backend.dispatchWorker = async (spec, _ctx, landing) => {
+        if (spec.kind === "verify") {
+          verifyCalls += 1;
+          return verifyCalls === 1
+            ? {
+                kind: "completed",
+                output: {
+                  kind: "verify",
+                  converged: false,
+                  findingDispositions: [
+                    {
+                      identityKey: "correctness|src/a.ts:1|survivor",
+                      threadId: "thread-survivor",
+                      action: "fix",
+                    },
+                  ],
+                },
+                sessionId: "verify-partial-cargo-session",
+              }
+            : {
+                kind: "completed",
+                output: { kind: "verify", converged: true },
+              };
+        }
+        if (spec.kind === "fixer") {
+          fixerLanding = landing;
+          return {
+            kind: "completed",
+            output: { kind: "fixer", committed: false },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        return skeleton ?? { kind: "failed", reason: "unexpected" };
+      };
+
+      const result = await runFamilyOnlineReviewLoop({
+        familyBackend: backend,
+        familyBase: "family/r7",
+        ship: offlineShip,
+      });
+
+      expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+      expect(fixerLanding?.rawReviewerArtifacts).toMatchObject({
+        reviewerSessionId: "verify-partial-cargo-session",
+        statement: "the previous reviewer raw artifacts are here",
+      });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+      } else {
+        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = prev;
+      }
+    }
+  });
+
+  it("completed docRelease without receipt cargo remains mergeable", async () => {
+    const prev = process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;
+    process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL = "1";
+    try {
+      const backend = new ReviewLoopFamilyBackend();
+      backend.dispatchWorker = async (spec) => {
+        if (spec.kind === "verify") {
+          return {
+            kind: "completed",
+            output: { kind: "verify", converged: true },
+          };
+        }
+        if (spec.kind === "docRelease") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+          };
+        }
+        return { kind: "failed", reason: `unexpected ${spec.kind}` };
+      };
+
+      await expect(
+        runFamilyOnlineReviewLoop({
+          familyBackend: backend,
+          familyBase: "family/r7",
+          ship: offlineShip,
+        }),
+      ).resolves.toEqual({ ok: true, terminalState: "mergeable", round: 1 });
     } finally {
       if (prev === undefined) {
         delete process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL;

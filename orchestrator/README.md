@@ -306,13 +306,13 @@ Roster conventions (from the exam/marathon evidence, 2026-07):
 ## Route smoke (startup gate)
 
 Before any real work each selected model×pipe must prove it can act inside the
-container: the smoke prompt carries a random `{{NONCE}}` and a
-`{{NONCE_FILE}}` path (sandcastle substitutes `{{KEY}}` placeholders from
-`promptArgs` — placeholders in `prompts/route-smoke.md` are load-bearing; a
-regression test drives the REAL rendering and a text-only-obedient agent, plus
-a negative case proving a value-less prompt fails). The worker must create the
-evidence file with exactly the nonce. Any slot failing smoke = fail-closed
-startup escalation; nothing mutates.
+container: the smoke prompt carries a random `{{NONCE}}` (sandcastle substitutes
+`{{KEY}}` placeholders from `promptArgs` — placeholders in
+`prompts/route-smoke.md` are load-bearing). The worker must print exactly that
+nonce to stdout; no shell command or evidence file is part of the contract. A
+regression test drives the real rendering and a text-only-obedient agent, plus a
+negative case proving a value-less prompt fails. Any slot failing smoke =
+fail-closed startup escalation; nothing mutates.
 
 Providers with unavailable auth (e.g. grok without a mounted `auth.json`) are
 rejected **before** dispatch — fail-closed preflight, never an unauthenticated
@@ -461,7 +461,7 @@ main across cross-slice seams; the integrated gates exist precisely for that.
 
 | symptom | likely cause | fix |
 | --- | --- | --- |
-| startup `route smoke failed … did not complete an observable bash smoke` (every launch) | smoke prompt lost its `{{NONCE}}`/`{{NONCE_FILE}}` placeholders, or model at capacity | check `prompts/route-smoke.md` placeholders; switch checkpoint |
+| startup `route smoke failed … did not echo the expected nonce` (every launch) | smoke prompt lost its `{{NONCE}}` placeholder, or model at capacity | check `prompts/route-smoke.md` placeholder; switch checkpoint |
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
 | worker looks hung | judge by idle threshold (>15 min with no new output), then kill only that worker's own pid tree; capacity/quota errors are not hangs | relay a successor onto the surviving drift |

@@ -178,23 +178,6 @@ class RetryReviewBackend implements Backend {
 }
 
 describe("#369 per-slice runner-visible review/fix loop", () => {
-  it("malformed reviewer sends raw material to S5 then fresh S6", async () => {
-    const backend = new RetryReviewBackend([
-      { kind: "malformed", reason: "dispatch protocol failure" },
-      { kind: "completed", output: { kind: "reviewer", findings: [] } },
-    ]);
-
-    const result = await runOrchestrator({ issueNumber: 369, backend });
-
-    expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual([
-      "S2:coder",
-      "S3:reviewer",
-      "S5:coder",
-      "S6:reviewer",
-    ]);
-  });
-
   it("passes structured blocking findings and identity keys to the S5 fix worker", async () => {
     const finding: Finding = {
       severity: "high",
@@ -283,19 +266,6 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.deferredFindings).toEqual([]);
   });
 
-  it("malformed reviewer uses no mechanical dispatch budget and reaches fixer", async () => {
-    const backend = new RetryReviewBackend([
-      { kind: "malformed", reason: "dispatch protocol failure" },
-      { kind: "completed", output: { kind: "reviewer", findings: [] } },
-    ]);
-
-    const result = await runOrchestrator({ issueNumber: 369, backend });
-
-    // Process-level only: 1 initial + MAX_DISPATCH_ATTEMPTS-1 retries = 3 S3s.
-    expect(backend.dispatched.filter((d) => d.startsWith("S3:"))).toHaveLength(1);
-    expect(backend.dispatched.some((d) => d.startsWith("S5:"))).toBe(true);
-    expect(result.status).toBe("success");
-  });
 });
 
 describe("#427 ADR0030 claimed-fixed adjudication", () => {

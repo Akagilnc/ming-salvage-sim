@@ -163,7 +163,6 @@ import type {
   Finding,
   FindingFamily,
   FixerResult,
-  CmrResult,
   OnlineReviewFindingDisposition,
   OnlineReviewThreadReply,
   PriorFindingDisposition,

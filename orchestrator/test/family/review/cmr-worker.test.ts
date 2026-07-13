@@ -12,13 +12,13 @@
  * a separate coder-fix worker). A `red` verdict is NOT `failed`.
  *
  * Tested WITHOUT a real container:
- *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / malformed;
+ *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / sparse cargo;
  *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion signals
  *     remain compatibility telemetry, not a verdict gate;
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
  *     clean cmr reviewer soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
- *     escalated; malformed → malformed);
+ *     escalated; sparse cargo remains completed cargo);
  *   - cmrSandboxConfig: wires the agy auth runtime-mount (writable dir) + codex
  *     auth + the claude token (the #333 gotcha: agy needs its file token mounted,
  *     else the cmr leg degrades to codex-only);

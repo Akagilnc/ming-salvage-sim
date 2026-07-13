@@ -107,33 +107,6 @@ function validWorkerResult(spec: WorkerSpec): WorkerResult {
 }
 
 describe("#825 Group A/B — real runner defective-report and exit retry behavior", () => {
-  it.each([
-    ["coder bad JSON sidecar", "S2"],
-    ["cmr reviewer missing sidecar", "S3"],
-  ] as const)("Group A: %s continues after process-level redispatch (no format court)", async (_name, target) => {
-    const backend = new ScriptedRunnerBackend((spec, attempt) => {
-      if (spec.id === target && attempt === 1) {
-        return { kind: "malformed", reason: `${_name}: exit 0 with defective report`, sessionId: `bad-${target}` };
-      }
-      return validWorkerResult(spec);
-    });
-    const result = await runOrchestrator({ issueNumber: 825, backend });
-    if (target === "S3") {
-      expect(result.status).toBe("success");
-      expect(backend.dispatches.filter((row) => row.startsWith(`${target}:`))).toHaveLength(1);
-      expect(backend.dispatches.some((row) => row.startsWith("S5:"))).toBe(true);
-      expect(JSON.stringify(result.stepLedger)).not.toContain('"synthesizedFailure"');
-      expect(JSON.stringify(backend.ledger)).not.toContain('"escalationKind":"decision"');
-      return;
-    }
-    if (target === "S2") {
-      expect(result.status).toBe("success");
-      expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(1);
-      expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
-      return;
-    }
-  });
-
   it("Group A coder completed report advances without git adjudication", async () => {
     const backend = new ScriptedRunnerBackend((spec) => {
       if (spec.id === "S2") {

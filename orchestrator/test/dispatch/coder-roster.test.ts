@@ -41,6 +41,7 @@ import type {
   IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
+  SliceStepId,
   StepId,
   StepOutput,
   StepSpec,
@@ -498,7 +499,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
   const blockingKey = findingIdentityKey(blockingFinding);
 
   function ledgerEntry(
-    step: StepId,
+    step: SliceStepId,
     output?: StepOutput,
   ): PersistentLedgerEntry {
     return {

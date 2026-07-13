@@ -62,10 +62,20 @@ export type StepId = SliceStepId | FamilyEndgameWorkerId;
  * bookkeeping deliberately occupies its own namespace so step-result readers
  * cannot mistake a pre-dispatch marker for that step's result (#824 r6).
  */
-export type LedgerStepId = StepId | "mechanical_redispatch_attempt";
+export type LedgerStepId = SliceStepId | "mechanical_redispatch_attempt";
 
-export function isStepId(step: LedgerStepId): step is StepId {
-  return step !== "mechanical_redispatch_attempt";
+export function isStepId(step: unknown): step is SliceStepId {
+  return (
+    step === "S0" ||
+    step === "S1" ||
+    step === "S2" ||
+    step === "S3" ||
+    step === "S4" ||
+    step === "S5" ||
+    step === "S6" ||
+    step === "S7" ||
+    step === "S8"
+  );
 }
 
 /** Worker roles shared by child and family dispatch. */
@@ -297,7 +307,7 @@ export interface CoderOutput {
   readonly escalate?: Escalation;
 }
 
-/** Output of a reviewer step (S3/S6). Empty findings ⇒ approve only when no prior finding needs adjudication. */
+/** Output of a reviewer step (S3/S6). `findings` is the reviewer's declared open-item cargo. */
 export interface ReviewerOutput {
   readonly kind: "reviewer";
   readonly findings: ReadonlyArray<Finding>;
@@ -329,7 +339,7 @@ export type EscalationKind = "decision" | "failure";
  */
 export interface EscalationAnswerPayload {
   readonly event: "escalation_answered";
-  readonly forStep?: StepId;
+  readonly forStep?: SliceStepId;
   /** Original parked worker session, when the answer reopens a decision gate. */
   readonly sessionId?: string;
   readonly answer: string;
@@ -343,7 +353,7 @@ export interface EscalationAnswerPayload {
 }
 
 export interface EscalationAnswerEvent extends EscalationAnswerPayload {
-  readonly forStep: StepId;
+  readonly forStep: SliceStepId;
 }
 
 /** Scope carried by runner bookkeeping events that target active findings. */
@@ -408,7 +418,7 @@ export interface QuotaWaitForResetEvent {
   /** ISO-8601 reset instant when the 429 body carried one. */
   readonly resetAt?: string;
   readonly reason: string;
-  readonly step?: StepId;
+  readonly step?: SliceStepId;
   readonly workerPid?: number;
   readonly ts: string;
 }
@@ -429,7 +439,7 @@ export interface RelayBatonHandoffEvent {
   readonly fromPool: string;
   readonly toModelId: string;
   readonly toPool: string;
-  readonly step?: StepId;
+  readonly step?: SliceStepId;
   readonly ts: string;
 }
 
@@ -449,7 +459,7 @@ export interface WorkerMonitorSpawnedEvent {
 export interface MechanicalRedispatchAttemptEvent {
   readonly event: "mechanical_redispatch_attempt";
   /** Canonical worker step whose current invocation owns this attempt. */
-  readonly forStep: StepId;
+  readonly forStep: SliceStepId;
   readonly mechanicalRedispatchAttempt: number;
 }
 
@@ -1141,35 +1151,17 @@ export type WorkerOutput =
  *     R2): `red` is a normal review outcome the runner routes on.
  *   - `failed`    — the worker crashed / its command or tests hard-failed
  *     (no usable output).
- *   - `malformed` — the worker produced output the seam could not parse into the
- *     declared schema (no completion signal / unparseable).
- *   - `outcome_protocol_failure` — a malformed/missing/schema-incompatible outcome
- *     reached the runner and either remained malformed after the bounded same-worker
- *     rewrite path, or the rewrite produced git-truth movement (HEAD/commits/tracked
- *     status) while only repairing the control envelope. This is infrastructure
- *     failure, not a semantic review verdict.
  *   - `escalated` — the worker (model-judged) signalled it is stuck and a human
  *     must answer (carries the resume指引). Crash/timeout/missing-skill map to
- *     `failed`/`malformed`; only a MODEL escalate is `escalated`.
+ *     `failed`; only a MODEL escalate is `escalated`.
  *
  * #331 prefactor: the legacy wrapper always yields `completed` (forwarding the
- * existing methods' returns); `failed`/`malformed`/`escalated` are wired into the
- * shape now and exercised by later slices.
+ * existing methods' returns); real workers additionally mint process `failed`
+ * and worker-declared `escalated` results.
  */
 export type WorkerResult =
   | { readonly kind: "completed"; readonly output: WorkerOutput; readonly sessionId?: string }
   | { readonly kind: "failed"; readonly reason: string; readonly sessionId?: string }
-  | {
-      readonly kind: "malformed";
-      readonly reason: string;
-      readonly sessionId?: string;
-    }
-  | {
-      readonly kind: "outcome_protocol_failure";
-      readonly reason: string;
-      readonly attempts: number;
-      readonly sessionId?: string;
-    }
   | {
       readonly kind: "escalated";
       readonly escalation: Escalation;
@@ -1294,7 +1286,7 @@ export interface LedgerEntry {
   /** #686 — relay handoff trigger discriminant. */
   readonly trigger?: string;
   /** Step this answer reopens when `event === "escalation_answered"` (#439). */
-  readonly forStep?: StepId;
+  readonly forStep?: SliceStepId;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Optional human note attached to an escalation answer (#439). */

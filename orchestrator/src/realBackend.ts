@@ -76,7 +76,6 @@ import {
 } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
-import { findingIdentityKey } from "./findings.js";
 import {
   provisionRepoNodeModules,
   runProvisionCommand,
@@ -241,13 +240,12 @@ import {
 } from "./quotaProbe.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
-  WORKER_OUTCOME_REPO_FILE,
-  WORKER_OUTCOME_SANDBOX_FILE,
   readRequiredWorkerOutcomeSidecar as readRequiredOutcomeSidecar,
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
 import { probeWorkerDecisionBell } from "./workerReceipt.js";
+import { isStepId } from "./types.js";
 import type {
   AgentStepRunOptions,
   Backend,
@@ -1697,8 +1695,9 @@ export interface RealBackendOptions {
    * base (no `git fetch origin`, no `origin/` prefix) — because the family base
    * is a local branch the merger accumulates onto, with no remote counterpart;
    * deriving it as `origin/<family-base>` would cut from a stale/absent remote ref
-   * missing the prior waves (agy R1). Absent ⇒ a standalone single-slice run: the
-   * cut base is "main", fetched + cut as `origin/main` exactly as before.
+   * missing the prior waves (agy R1). Absent is retained only for the child-machine
+   * harness and focused single-slice tests: the cut base is "main", fetched + cut
+   * as `origin/main`.
    */
   readonly familyBase?: string;
 }
@@ -1787,23 +1786,6 @@ export const findingSchema = z.object({
     });
   }
 });
-function normalizeReviewerFinding(finding: Finding): Finding {
-  if (
-    (finding.action !== "wont_fix" && finding.action !== "rejected") ||
-    finding.disposition?.kind !== "accepted_suppressed"
-  ) {
-    return finding;
-  }
-  return {
-    ...finding,
-    disposition_reason: finding.disposition.reason ?? finding.disposition_reason,
-    disposition: {
-      ...finding.disposition,
-      findingIdentity:
-        finding.disposition.findingIdentity ?? findingIdentityKey(finding),
-    },
-  };
-}
 // #604 correctness r5 (E1): `.strict()` so a prior-finding disposition carrying an
 // unknown field (e.g. a deleted routing field like `targetModule`) is REJECTED
 // here rather than silently STRIPPED by zod — parity with the family-side
@@ -1854,13 +1836,6 @@ export const priorFindingDispositionSchema = z.object({
       message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
     });
   }
-});
-const reviewerOutputSchema = z.object({
-  findings: z.array(findingSchema),
-  priorFindingDispositions: z.array(priorFindingDispositionSchema).optional(),
-  escalate: z
-    .object({ reason: z.string(), diagnosis: z.string() })
-    .optional(),
 });
 const findingRepairScopeSchema = z
   .object({
@@ -2541,9 +2516,9 @@ export class RealBackend implements Backend {
     // #291: a family-base cut is LOCAL-only (ADR 0022 decision 7) — the family
     // base is a local branch the merger accumulates onto, with no remote
     // counterpart. So skip `git fetch origin <family-base>` (it would fail or, worse,
-    // resolve a stale remote branch) and force the bare local ref. A standalone
-    // single-slice run (base="main", no `familyBase` option) keeps the fetch +
-    // `origin/main` derivation byte-identical.
+    // resolve a stale remote branch) and force the bare local ref. The child-machine
+    // harness path (base="main", no `familyBase` option) keeps the fetch +
+    // `origin/main` derivation used by focused single-slice tests.
     const localOnly = base === this.opts.familyBase;
     const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
     const cutRef = cutRefFor(base, fetchedOk, localOnly);
@@ -3382,8 +3357,10 @@ export class RealBackend implements Backend {
       return;
     }
     const stateDir = this.stateDirFor(ctx.worktreePath, ctx.issueNumber);
+    const step = entry.step ?? ctx.step ?? "S2";
+    if (!isStepId(step)) return;
     const persistent: PersistentLedgerEntry = {
-      step: entry.step ?? ctx.step ?? "S2",
+      step,
       event: "quota_wait_for_reset",
       pool: entry.pool,
       ...(entry.resetAt !== undefined ? { resetAt: entry.resetAt } : {}),

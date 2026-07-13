@@ -45,13 +45,11 @@ import {
   fixerProceedsToVerify,
 } from "../reviewLoopOutcome.js";
 import {
-  applyVerifySideEffects,
   fixMarkedFindingThreadsFromVerify,
   fixMarkedKeysFromVerify,
 } from "../onlineReviewSideEffects.js";
 import type { StopSummary } from "../stopSummary.js";
 import {
-  contractDriftStopSummary,
   decisionGateParkStopSummary,
   infraFailureStopSummary,
 } from "../stopSummary.js";
@@ -747,12 +745,15 @@ export interface OnlineReviewLoopDispatch {
     | {
         readonly kind: "rawReviewerArtifacts";
         readonly artifacts: NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]>;
+        readonly verify?: VerifyResult;
       }
   >;
   readonly dispatchFixer: (
     landing: WorkerLandingPayload,
   ) => Promise<FixerResult | undefined>;
-  readonly dispatchDocRelease: (landing: WorkerLandingPayload) => Promise<boolean>;
+  readonly dispatchDocRelease: (
+    landing: WorkerLandingPayload,
+  ) => Promise<boolean | undefined>;
   readonly applySideEffects: (
     landing: WorkerLandingPayload,
     verify: VerifyResult,
@@ -855,6 +856,7 @@ export async function runOnlineReviewLoopStage(
           ...landing,
           rawReviewerArtifacts: dispatchedVerify.artifacts,
         };
+        verify = dispatchedVerify.verify;
       } else {
         verify = dispatchedVerify;
       }
@@ -943,7 +945,7 @@ export async function runOnlineReviewLoopStage(
     const emptyMeans = reviewSnap?.checkRunsEmptyMeans ?? "converged";
     if (verify.converged && checkRunsConverged(checkRuns, emptyMeans)) {
       const released = await dispatch.dispatchDocRelease(landing);
-      if (!released) {
+      if (released === false) {
         // #735: surface 文档发布 failure distinctly (not a silent empty gate).
         return {
           ok: false,
