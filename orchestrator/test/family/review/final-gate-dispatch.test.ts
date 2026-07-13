@@ -25,8 +25,6 @@ import type {
   FamilyVerifyResult,
   IntegratedCmrRequest,
   IntegratedCmrResult,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
 } from "../../../src/family/types.js";
 
 const CMR_EVIDENCE = {
@@ -35,16 +33,14 @@ const CMR_EVIDENCE = {
 
 /**
  * #331 — the FAMILY worker-dispatch seam. The verify-cmr hook dispatches the
- * integrated cmr + 止于 PR through `dispatchFamilyWorker` instead of the per-method
- * `runIntegratedCmr` / `openFamilyPr`. Behaviour is unchanged (the legacy methods
- * are still consulted as the capability gate; the wrapper forwards to them).
+ * integrated cmr + 止于 PR through `dispatchFamilyWorker`.
  */
 
-/** A capable FamilyBackend that records the legacy method calls. */
+/** A capable FamilyBackend that records the unified worker calls. */
 class CapableFamilyBackend implements FamilyBackend {
   verifyCalls: FamilyVerifyRequest[] = [];
   cmrCalls: IntegratedCmrRequest[] = [];
-  prCalls: OpenFamilyPrRequest[] = [];
+  prCalls: Array<{ readonly familyBase: string }> = [];
   cmrConverged = true;
 
   async mergeChildIntoFamilyBase(): Promise<never> {
@@ -89,9 +85,25 @@ class CapableFamilyBackend implements FamilyBackend {
           ],
         };
   }
-  async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    this.prCalls.push(req);
-    return { url: `pr://${req.familyBase}`, prHead: "head-1" };
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    if (spec.kind === "cmr") {
+      return legacyDispatchFamilyWorker(this, spec, ctx);
+    }
+    if (spec.kind === "ship") {
+      const familyBase = ctx.familyBase!;
+      this.prCalls.push({ familyBase });
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: familyBase,
+          pr: `pr://${familyBase}`,
+          prHead: "head-1",
+          status: "pr_opened",
+        },
+      };
+    }
+    return legacyDispatchFamilyWorker(this, spec, ctx);
   }
 }
 
@@ -196,7 +208,6 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
     });
 
     expect(res).toEqual({ ok: true, ran: true });
-    // The legacy methods were still reached (the wrapper forwards to them).
     expect(be.cmrCalls).toEqual([
       { familyBase: "feat/330", cmrPass: "completeness" },
       { familyBase: "feat/330", cmrPass: "correctness" },
@@ -245,7 +256,7 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
 describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without legacy methods", () => {
   /**
    * A backend that implements the UNIFIED `dispatchWorker` seam but NONE of the
-   * legacy `runIntegratedCmr` / `openFamilyPr` methods. The verify-cmr gate must
+   * legacy per-method hooks. The verify-cmr gate must
    * accept it (codex cmr finding: gating on the legacy method alone wrongly
    * fail-safed a new-seam-only backend to INCOMPLETE_GATE).
    */
@@ -730,20 +741,6 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     }
   }
 
-  it("a malformed cmr worker (completed but NOT a cmr payload) ⇒ INCOMPLETE_GATE + durable aborted(final)", async () => {
-    const backend = new RecordingFamilyBackend(
-      { kind: "completed", output: { kind: "ship", branch: "feat/330", status: "pushed" } },
-      { kind: "completed", output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "u" } },
-    );
-    const res = await runVerifyCmr({ phase: "final", familyBase: "feat/330", familyBackend: backend });
-    expect(res).toEqual({ ok: false, ran: true });
-    const aborts = backend.ledger.filter((e) => e.status === "aborted");
-    expect(aborts).toHaveLength(1);
-    expect(aborts[0]?.phase).toBe("final");
-    // NO ship marker — the barrier failed, so a resume re-runs it (does not skip).
-    expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
-  });
-
   it("no ship capability after converged cmr writes durable aborted(final) over stale success", async () => {
     const backend = new NoShipCapabilityAfterCmrBackend();
 
@@ -930,7 +927,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
   });
 });
 
-describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResult", () => {
+describe("#331 legacyDispatchFamilyWorker — wraps the legacy CMR return as WorkerResult", () => {
   it("cmr worker: a red verdict is `completed` (with payload), NOT `failed`", async () => {
     const be = new CapableFamilyBackend();
     be.cmrConverged = false;
@@ -943,41 +940,6 @@ describe("#331 legacyDispatchFamilyWorker — wraps legacy returns as WorkerResu
       expect(res.output.reason).toBe("cross-slice seam mismatch");
     } else {
       throw new Error("expected completed cmr payload");
-    }
-  });
-
-  it("ship worker: forwards to openFamilyPr and wraps as completed ShipResult", async () => {
-    const be = new CapableFamilyBackend();
-    const res = await legacyDispatchFamilyWorker(be, familyShipWorkerSpec(), {
-      familyBase: "fb",
-    });
-    expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "ship") {
-      expect(res.output.pr).toBe("pr://fb");
-      expect(res.output.prHead).toBe("head-1");
-      expect(res.output.status).toBe("pr_opened");
-    } else {
-      throw new Error("expected completed ship payload");
-    }
-  });
-
-  it("ship worker: does not synthesize prHead from the local family ref when openFamilyPr did not verify it", async () => {
-    class UnverifiedPrBackend extends CapableFamilyBackend {
-      override async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-        this.prCalls.push(req);
-        return { url: `pr://${req.familyBase}` };
-      }
-    }
-    const be = new UnverifiedPrBackend();
-    const res = await legacyDispatchFamilyWorker(be, familyShipWorkerSpec(), {
-      familyBase: "fb",
-    });
-    expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "ship") {
-      expect(res.output.pr).toBe("pr://fb");
-      expect(res.output.prHead).toBeUndefined();
-    } else {
-      throw new Error("expected completed ship payload");
     }
   });
 

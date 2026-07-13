@@ -25,7 +25,7 @@
  *      (the family base HEAD advances; each child's file is present);
  *   3. the family ledger REALLY records each merge (a JSONL sibling file);
  *   4. the run STOPS at the PR (the ship WORKER is dispatched exactly once with
- *      the family base — #336: gstack-ship, not the inline openFamilyPr; status
+ *      the family base through the #336 gstack-ship worker; status
  *      === "success"; no merge to main).
  */
 
@@ -45,7 +45,6 @@ import type { ShipWorkerOutcome } from "../../../src/shipOutcome.js";
 import type {
   FamilyVerifyRequest,
   IntegratedCmrRequest,
-  OpenFamilyPrRequest,
 } from "../../../src/family/types.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type {
@@ -198,7 +197,6 @@ class RealGitChildBackend implements Backend {
 class E2EFamilyBackend extends RealFamilyBackend {
   readonly verifyCalls: FamilyVerifyRequest[] = [];
   readonly cmrCalls: IntegratedCmrRequest[] = [];
-  readonly prCalls: OpenFamilyPrRequest[] = [];
   readonly shipCalls: string[] = [];
   protected override async runVerifyCommands(req: FamilyVerifyRequest): Promise<void> {
     this.verifyCalls.push(req); // green: no throw, no real npx.
@@ -224,7 +222,7 @@ class E2EFamilyBackend extends RealFamilyBackend {
     };
   }
   // #336: 止于 PR is now a CONTAINER ship WORKER (gstack-ship) via dispatchWorker →
-  // runShipWorker, NOT the inline openFamilyPr. Override the worker seam (no real
+  // runShipWorker. Override the worker seam (no real
   // container) so the e2e proves the run reaches the ship step + STOPS at the PR,
   // recording the family base it shipped (no real gstack-ship, no image, no push).
   protected override async runShipWorker(
@@ -238,13 +236,6 @@ class E2EFamilyBackend extends RealFamilyBackend {
       status: "pr_opened",
       pr: "pr://family/291-base",
     };
-  }
-  override async openFamilyPr(req: OpenFamilyPrRequest) {
-    // LEGACY inline 止于 PR — RETAINED only to record that the production path no
-    // longer reaches it (#336 routes ship through runShipWorker). The assertion
-    // below proves prCalls stays EMPTY (the inline push path is dead).
-    this.prCalls.push(req);
-    return { url: "pr://family/291-base" };
   }
   protected override async runFamilyReviewLoopWorker(
     spec: WorkerSpec,
@@ -370,7 +361,7 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     // ── 4. the run STOPPED at the PR (ship worker dispatched once, family base) ─
     // verify ran at BOTH barriers (each wave + final), CMR ran as two final passes, the
     // ship WORKER ran once with the family base (#336: gstack-ship, not the inline
-    // openFamilyPr) — and nothing merged to main.
+    // inline host PR path — and nothing merged to main.
     expect(backend.verifyCalls.length).toBeGreaterThanOrEqual(1);
     expect(backend.verifyCalls.some((v) => v.phase === "final")).toBe(true);
     expect(backend.cmrCalls).toEqual([
@@ -379,6 +370,5 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
     ]);
     expect(backend.shipCalls).toEqual([familyBase]);
     // The legacy inline push path is DEAD — the ship worker replaced it (#336).
-    expect(backend.prCalls).toEqual([]);
   });
 });

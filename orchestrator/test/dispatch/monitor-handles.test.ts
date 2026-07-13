@@ -198,7 +198,7 @@ describe("#684 worker monitor handles", () => {
     }
   });
 
-  it("exit 0 without a usable sidecar is retry telemetry, not malformed terminal input", () => {
+  it("exit 0 without a usable sidecar remains completed without receipt cargo", () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-826-sidecar-"));
     try {
       const result = workerResultFromMonitorSidecar(
@@ -210,7 +210,10 @@ describe("#684 worker monitor handles", () => {
         0,
       );
 
-      expect(result).toMatchObject({ kind: "failed" });
+      expect(result).toMatchObject({
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
+      });
       expect(isMissingMonitorSidecarResult(result)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });

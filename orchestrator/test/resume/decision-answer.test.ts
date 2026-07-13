@@ -213,7 +213,6 @@ describe("#439 decision-escalate answer channel", () => {
             escalate: {
               reason: "design ambiguity",
               diagnosis: "needs a human answer",
-              escalationKind: "decision",
             },
           },
           "session-escalated-S2",
@@ -245,7 +244,6 @@ describe("#439 decision-escalate answer channel", () => {
             escalate: {
               reason: "design ambiguity",
               diagnosis: "needs a human answer",
-              escalationKind: "decision",
             },
           },
           "session-escalated-S2",
@@ -285,7 +283,6 @@ describe("#439 decision-escalate answer channel", () => {
               escalate: {
                 reason: "design ambiguity",
                 diagnosis: "needs a human answer",
-                escalationKind: "decision",
               },
             },
             "session-escalated-S2",
@@ -320,7 +317,6 @@ describe("#439 decision-escalate answer channel", () => {
             escalate: {
               reason: "design ambiguity",
               diagnosis: "needs a human answer",
-              escalationKind: "decision",
             },
           },
           "session-escalated-S2",
@@ -360,7 +356,6 @@ describe("#439 decision-escalate answer channel", () => {
               escalate: {
                 reason: "design ambiguity",
                 diagnosis: "needs a human answer",
-                escalationKind: "decision",
               },
             },
             "session-escalated-S2",
@@ -394,7 +389,6 @@ describe("#439 decision-escalate answer channel", () => {
             escalate: {
               reason: "design ambiguity",
               diagnosis: "needs a human answer",
-              escalationKind: "decision",
             },
           },
           "session-escalated-S2",

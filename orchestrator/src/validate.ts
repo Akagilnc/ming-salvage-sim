@@ -1,14 +1,7 @@
 /**
- * Legacy domain validators retained only for non-runner consumers. ADR 0131
- * forbids runner/route from using these functions as routing courts.
- *
- * Why this is load-bearing (integ-cmr base r2, finding A):
- *   route()'s S4 compares `severity`/`action` by EXACT string. A malformed
- *   finding element — `severity:"critical "` (trailing space), `action:"FIX_NOW"`
- *   (uppercase), or a missing field — would silently fail every `=== 'critical'`
- *   / `=== 'fix_now'` test → needsFix=false → push → a REAL P0 shipped past the
- *   mandatory fix gate. So a finding array whose ELEMENTS are not all valid must
- *   never be treated as legitimate findings: the whole step → S8(error).
+ * Legacy domain validators retained for non-runner consumers and compatibility
+ * parsing. ADR 0131 forbids runner/route from using them as fate courts: reviewer
+ * routing reads only the worker-declared open count.
  */
 
 import type {
@@ -214,23 +207,13 @@ function isValidDispositionEvidence(
 /**
  * Validate the `escalate` field on an agent-step output.
  *
- * `escalate` is part of the step-output schema contract (PRD #244 contract
- * layer: `{ escalate?: { reason, diagnosis } }`). It is the GLOBAL stop edge —
- * route() takes it before every other edge. So a NON-NULL escalate is a real
- * human-escalation stop signal whose `reason`/`diagnosis` the caller reads
- * verbatim; a garbage escalate (empty `{}`, wrong types, blank strings) must NOT
- * be accepted as a legitimate stop signal — that is the malformed-output
- * coercion hole (integ-cmr base r1, F1). route() must judge such a step
- * S8(error), not S8(escalate).
- *
- * Rules:
- *   - absent / undefined / null → NO escalate (valid: the step simply did not
- *     escalate; real backends emit `escalate: null` for the unset field).
- *   - present (non-null) → MUST be `{ reason: non-empty string,
- *     diagnosis: non-empty string }`; anything else is invalid.
+ * Presence of a non-null object is the worker's decision bell. `reason` and
+ * `diagnosis` are cargo: missing or empty fields do not unpress the bell. This
+ * compatibility predicate therefore checks presence/shape only and never routes
+ * on cargo quality.
  */
 export function isValidEscalation(e: unknown): e is Escalation | null | undefined {
-  if (e == null) return true; // absent / undefined / null = no escalate.
+  if (e == null) return true;
   return typeof e === "object";
 }
 

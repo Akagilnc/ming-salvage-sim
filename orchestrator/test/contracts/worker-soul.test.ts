@@ -349,7 +349,6 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
       ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/],
       ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/],
       ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/],
-      ["integrated_cmr.md", /<cmr>/, /CMR_STEP_COMPLETE/],
       ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
       ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
       ["merger_resolve_conflict.md", /<merger>/, /MERGER_STEP_COMPLETE/],
@@ -424,7 +423,6 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
 
   it("integrated-cmr prompts include accepted_suppressed terminal closure metadata", () => {
     for (const text of [
-      read("integrated_cmr.md"),
       read("integrated_cmr_completeness.md"),
       read("integrated_cmr_correctness.md"),
     ]) {

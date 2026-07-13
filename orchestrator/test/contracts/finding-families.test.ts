@@ -19,7 +19,6 @@ import {
   parseVerifyOutcome,
 } from "../../src/family/realFamilyBackend.js";
 import { runOnlineReviewLoopStage } from "../../src/family/onlineReviewLoop.js";
-import { verifyOutputSchema } from "../../src/realBackend.js";
 import { isValidVerifyResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
@@ -112,7 +111,7 @@ describe("#711 findingFamilies contract", () => {
     ).toBe(true);
   });
 
-  it("verify schema accepts finding_families snake_case top-level and degrades malformed families", () => {
+  it("verify parsing accepts finding_families snake_case top-level and degrades malformed families", () => {
     const raw = {
       converged: false,
       findingDispositions: [
@@ -133,17 +132,6 @@ describe("#711 findingFamilies contract", () => {
         { bad: true },
       ],
     };
-    const shape = verifyOutputSchema.parse(raw);
-    // Nested snake_case is normalized to camelCase before schema accepts it.
-    expect(shape.findingFamilies).toEqual([
-      {
-        family: "silence-not-green",
-        members: ["t:1"],
-        recurringFromRounds: [1, 2],
-        brief: "Fix the class, not one call site.",
-      },
-      { bad: true },
-    ]);
     const stdout = `<verify>${JSON.stringify(raw)}</verify>`;
     const parsed = parseVerifyOutcome(stdout);
     expect(parsed).toMatchObject({
@@ -161,7 +149,7 @@ describe("#711 findingFamilies contract", () => {
     expect(isValidVerifyResult(parsed as VerifyResult)).toBe(true);
   });
 
-  it("verify schema accepts camelCase findingFamilies and parseVerifyOutcome preserves sanitized families", () => {
+  it("parseVerifyOutcome preserves sanitized camelCase findingFamilies", () => {
     const raw = {
       converged: false,
       findingDispositions: [
@@ -182,8 +170,6 @@ describe("#711 findingFamilies contract", () => {
         { bad: true },
       ],
     };
-    const shape = verifyOutputSchema.parse(raw);
-    expect(shape.findingFamilies).toEqual(raw.findingFamilies);
     const stdout = `<verify>${JSON.stringify(raw)}</verify>`;
     const parsed = parseVerifyOutcome(stdout);
     expect(parsed).toMatchObject({
@@ -250,7 +236,6 @@ describe("#711 findingFamilies contract", () => {
       fixMarkedFindingIdentityKeys: ["t:1"],
       findingFamilies: "not-an-array",
     };
-    verifyOutputSchema.parse(raw);
     const parsed = parseVerifyOutcome(`<verify>${JSON.stringify(raw)}</verify>`);
     expect(parsed).toMatchObject({ kind: "verify", converged: false });
     expect((parsed as VerifyResult).findingFamilies).toBeUndefined();

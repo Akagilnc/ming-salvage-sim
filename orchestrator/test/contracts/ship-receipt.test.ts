@@ -142,29 +142,26 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
     expect(parseShipOutcome('<ship>{"foo": 1}</ship>').kind).toBe("malformed");
   });
 
-  // ── Finding 2 (cmr S336 r2): a garbage escalate/failed must NOT be coerced into
-  // a structured result — both `reason` AND `diagnosis` MUST be non-empty strings
-  // (family_ship.md requires both). Mirrors the既有 escalate
-  // invariant (validate.ts isValidEscalation / integ-cmr-base-r1-seams F1): an
-  // off-contract escalate/failed → malformed, never a fabricated stop signal.
-  describe("Finding 2: a malformed escalate is never coerced into an escalate", () => {
-    it("escalate:{} (empty) ⇒ malformed", () => {
-      expect(parseShipOutcome('<ship>{"escalate": {}}</ship>').kind).toBe("malformed");
+  // ADR 0131: the escalate block's presence is the decision bell. Its fields are
+  // cargo; missing, blank, or mistyped cargo does not unpress the bell.
+  describe("decision bell presence is independent of escalate cargo quality", () => {
+    it("escalate:{} (empty) ⇒ escalate", () => {
+      expect(parseShipOutcome('<ship>{"escalate": {}}</ship>').kind).toBe("escalate");
     });
-    it("escalate with non-string reason ⇒ malformed", () => {
+    it("escalate with non-string reason ⇒ escalate", () => {
       expect(
         parseShipOutcome('<ship>{"escalate": {"reason": 123, "diagnosis": "x"}}</ship>').kind,
-      ).toBe("malformed");
+      ).toBe("escalate");
     });
-    it("escalate missing diagnosis ⇒ malformed", () => {
+    it("escalate missing diagnosis ⇒ escalate", () => {
       expect(parseShipOutcome('<ship>{"escalate": {"reason": "stuck"}}</ship>').kind).toBe(
-        "malformed",
+        "escalate",
       );
     });
-    it("escalate with empty-string fields ⇒ malformed", () => {
+    it("escalate with empty-string fields ⇒ escalate", () => {
       expect(
         parseShipOutcome('<ship>{"escalate": {"reason": "", "diagnosis": "   "}}</ship>').kind,
-      ).toBe("malformed");
+      ).toBe("escalate");
     });
   });
 

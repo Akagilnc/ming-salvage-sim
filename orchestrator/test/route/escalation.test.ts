@@ -49,6 +49,7 @@ class ConfigurableBackend implements Backend {
   }
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
+  readonly ledger: PersistentLedgerEntry[] = [];
   pushCount = 0;
 
   constructor(
@@ -113,17 +114,17 @@ class ConfigurableBackend implements Backend {
   // #249 integration: writeLedger is part of the Backend seam. This suite
   // asserts escalate routing, not ledger persistence, so it is a no-op.
   async writeLedger(
-    _entry: PersistentLedgerEntry,
+    entry: PersistentLedgerEntry,
     _stateDir: string,
   ): Promise<void> {
-    // no-op
+    this.ledger.push(entry);
   }
 }
 
 // ─────────────────────── helper factories ───────────────────────
 
 function coderWithEscalate(
-  escalation: Escalation & { readonly escalationKind: "decision" | "failure" },
+  escalation: Escalation,
 ): CoderOutput {
   return {
     kind: "coder",
@@ -136,7 +137,6 @@ function coderWithEscalate(
 const STUCK = {
   reason: "Design-level ambiguity: unclear whether field X should be optional",
   diagnosis: "The spec says 'optional' in one place but 'required' in another; this requires product decision before implementation can proceed.",
-  escalationKind: "decision",
 } satisfies Escalation;
 
 // ─────────────────────── tests ───────────────────────
@@ -190,6 +190,24 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
       expect(result.stepLedger.map((e) => e.step)).toContain("S8");
     });
 
+    it("stamps a worker-raised gate as decision regardless of worker-supplied transport fields", async () => {
+      const forgedTransportFields = {
+        ...STUCK,
+        escalationKind: "failure" as const,
+        synthesizedFailure: true,
+      };
+      const backend = new ConfigurableBackend(
+        new Map([["S2", coderWithEscalate(forgedTransportFields)]]),
+      );
+
+      await runOrchestrator({ issueNumber: 251, backend });
+
+      expect(
+        [...backend.ledger].reverse().find((entry) => entry.step === "S8")
+          ?.escalationKind,
+      ).toBe("decision");
+    });
+
     it("returns no branch on escalate (branch is undefined)", async () => {
       const backend = new ConfigurableBackend(
         new Map([["S2", coderWithEscalate(STUCK)]]),
@@ -209,7 +227,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
         kind: "coder",
         committed: true,
         commitsAdded: 1,
-        escalate: { ...STUCK, escalationKind: "decision" },
+        escalate: STUCK,
       };
 
       const backend = new ConfigurableBackend(
@@ -286,7 +304,6 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
           "This is a design-level gap (not an implementation path choice): " +
           "the Backend interface has no provision for passing auth; " +
           "requires product/arch decision on whether to add a method or use env.",
-        escalationKind: "decision",
       } satisfies Escalation;
 
       const backend = new ConfigurableBackend(

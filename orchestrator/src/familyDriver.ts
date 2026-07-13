@@ -168,28 +168,6 @@ export function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
 }
 
 /**
- * Extract child issue NUMBERS from a native sub-issues payload.
- *
- * Pure compatibility wrapper used by older tests/callers. This preserves the
- * narrow historical behavior: skip CLOSED children, but leave readiness / parent
- * checks to the explicit `parseSubIssueAdmission` interface.
- */
-export function parseSubIssueNumbers(parsed: unknown): number[] {
-  const nodes = subIssueNodes(parsed);
-  const seen = new Set<number>();
-  const childNumbers: number[] = [];
-  for (const n of nodes) {
-    const num = (n as { number?: unknown })?.number;
-    if (typeof num !== "number" || !Number.isFinite(num) || seen.has(num)) continue;
-    seen.add(num);
-    const state = (n as { state?: unknown })?.state;
-    if (typeof state === "string" && state.toUpperCase() === "CLOSED") continue;
-    childNumbers.push(num);
-  }
-  return childNumbers;
-}
-
-/**
  * Build the {@link FamilyEpic} from the epic issue + each child's `blocked_by`
  * edges (decision 1). A child's `blockedBy` is the FULL native blocked_by number
  * list — the commander/spine itself splits intra-family vs external (it never

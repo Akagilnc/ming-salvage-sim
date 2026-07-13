@@ -25,14 +25,18 @@
 
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
+import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import type {
   Backend,
+  DispatchContext,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
   WorktreeHandle,
+  WorkerResult,
+  WorkerSpec,
 } from "../../../src/types.js";
 import type {
   ConflictResolveRequest,
@@ -45,8 +49,6 @@ import type {
   IntegratedCmrResult,
   MergeRequest,
   MergeResult,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
 } from "../../../src/family/types.js";
 
 /** A single-slice Backend that drives every child to S8(success). */
@@ -94,7 +96,7 @@ class ChildBackend implements Backend {
 class ConflictCmrFamilyBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly cmrCalls: IntegratedCmrRequest[] = [];
-  readonly prCalls: OpenFamilyPrRequest[] = [];
+  readonly prCalls: Array<{ readonly familyBase: string }> = [];
   readonly resolveCalls: ConflictResolveRequest[] = [];
   private head = "base0";
 
@@ -134,9 +136,25 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
       findings: [],
     };
   }
-  async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    this.prCalls.push(req);
-    return { url: `pr://${req.familyBase}`, prHead: this.head };
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    if (spec.kind === "cmr") {
+      return legacyDispatchFamilyWorker(this, spec, ctx);
+    }
+    if (spec.kind === "ship") {
+      const familyBase = ctx.familyBase!;
+      this.prCalls.push({ familyBase });
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: familyBase,
+          pr: `pr://${familyBase}`,
+          prHead: this.head,
+          status: "pr_opened",
+        },
+      };
+    }
+    return legacyDispatchFamilyWorker(this, spec, ctx);
   }
 }
 

@@ -29,41 +29,6 @@ export function fixerProceedsToVerify(_output: FixerResult): boolean {
   return true;
 }
 
-/** Ledger replay: every valid S10 fixer output advances to fresh verification. */
-export function fixerLedgerOutputProceeds(output?: {
-  readonly kind?: string;
-  readonly committed?: boolean;
-  readonly alreadySatisfied?: boolean;
-}): boolean {
-  return (
-    output?.kind === "fixer" &&
-    typeof output?.committed === "boolean"
-  );
-}
-
-/** Fix SHA recorded on an S10 ledger row (envelope only). */
-export function fixerLedgerFixCommitSha(entry: {
-  readonly branchHEAD?: string;
-  readonly output?: {
-    readonly kind?: string;
-    readonly committed?: boolean;
-    readonly alreadySatisfied?: boolean;
-    readonly fixCommitSha?: string;
-  };
-}): string | undefined {
-  const output = entry.output;
-  if (!fixerLedgerOutputProceeds(output)) {
-    return undefined;
-  }
-  if (
-    typeof output?.fixCommitSha === "string" &&
-    output.fixCommitSha.length > 0
-  ) {
-    return output.fixCommitSha;
-  }
-  return undefined;
-}
-
 /**
  * Optional fix SHA from the fixer envelope. A no-fix envelope has no SHA and
  * proceeds through the verify findings channel.

@@ -404,11 +404,11 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       );
     });
 
-    it("an incomplete escalate block does not ring the bell or reject the cargo", () => {
+    it("an incomplete escalate block rings the bell; empty fields remain cargo", () => {
       expect(
         parseCmrOutcome('<cmr>{"escalate": {"reason": "", "diagnosis": ""}}</cmr>').kind,
-      ).toBe("verdict");
-      expect(parseCmrOutcome('<cmr>{"escalate": {}}</cmr>').kind).toBe("verdict");
+      ).toBe("escalate");
+      expect(parseCmrOutcome('<cmr>{"escalate": {}}</cmr>').kind).toBe("escalate");
     });
 
     it("a non-boolean converged cargo field is dropped", () => {
@@ -560,7 +560,6 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
 
 describe("integrated CMR pass prompt closure contract", () => {
   for (const promptName of [
-    "integrated_cmr.md",
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
   ]) {
@@ -583,7 +582,6 @@ describe("integrated CMR pass prompt closure contract", () => {
   }
 
   for (const promptName of [
-    "integrated_cmr.md",
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
   ]) {
@@ -711,7 +709,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     }
     // #336: a ship spec routes to the ship worker seam (NOT the cmr seam). Fixture it
     // so this test asserts the routing without a real container / host claude token
-    // (the pre-#336 version relied on the legacy openFamilyPr `git push` throwing,
+    // (the pre-#336 version relied on a host-side `git push` throwing,
     // which is now both stale and host-fragile — cmr S336 r9).
     protected override async runShipWorker(
       spec: WorkerSpec,

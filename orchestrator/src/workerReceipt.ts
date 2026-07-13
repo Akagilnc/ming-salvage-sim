@@ -8,16 +8,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isFilledString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
 /** Unknown keys and unusable sibling cargo are deliberately ignored. */
 export function probeWorkerDecisionBell(
   receipt: unknown,
 ): WorkerDecisionBell | undefined {
   if (!isRecord(receipt) || !isRecord(receipt.escalate)) return undefined;
   const { reason, diagnosis } = receipt.escalate;
-  if (!isFilledString(reason) || !isFilledString(diagnosis)) return undefined;
-  return { reason, diagnosis };
+  return {
+    reason: typeof reason === "string" ? reason : "",
+    diagnosis: typeof diagnosis === "string" ? diagnosis : "",
+  };
 }

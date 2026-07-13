@@ -14,7 +14,6 @@ import type {
   StepOutput,
   WorkerKind,
   WorkerResult,
-  WorkerSpec,
 } from "./types.js";
 
 /** ISO-8601 instant marking when the current review round began (ship or re-trigger). */
@@ -195,19 +194,4 @@ export function liveArtifactEvidenceRecord(input: {
     timestamp: input.timestamp,
     terminalState: freshness,
   };
-}
-
-export function inadmissibleWorkerOutcomeReason(
-  result: WorkerResult,
-  spec: WorkerSpec,
-): string {
-  if (result.kind === "failed" || result.kind === "malformed") {
-    return "reason" in result && result.reason.length > 0
-      ? result.reason
-      : `${spec.kind} worker ${result.kind}`;
-  }
-  if (result.kind === "escalated") {
-    return `${spec.kind} worker escalated`;
-  }
-  return `${spec.kind} worker dispatch inadmissible: ${result.kind}`;
 }

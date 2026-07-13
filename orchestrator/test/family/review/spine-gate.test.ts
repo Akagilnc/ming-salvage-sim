@@ -25,10 +25,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { findingIdentityKey } from "../../../src/findings.js";
+import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { recordFamilyEscalated } from "../../../src/family/ledger.js";
 import { runFamily } from "../../../src/family/runner.js";
 import type {
   Backend,
+  DispatchContext,
   Finding,
   IssueMeta,
   IssueSnapshot,
@@ -36,6 +38,8 @@ import type {
   StepOutput,
   StepSpec,
   WorktreeHandle,
+  WorkerResult,
+  WorkerSpec,
 } from "../../../src/types.js";
 import type {
   FamilyAbortedEvent,
@@ -48,8 +52,6 @@ import type {
   IntegratedCmrRequest,
   IntegratedCmrResult,
   MergeRequest,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
   ReconcileGit,
 } from "../../../src/family/types.js";
 
@@ -113,7 +115,7 @@ class CapableFamilyBackend implements FamilyBackend {
   readonly cmrCalls: IntegratedCmrRequest[] = [];
   readonly aborted: FamilyAbortedEvent[] = [];
   readonly escalations: FamilyEscalation[] = [];
-  readonly prCalls: OpenFamilyPrRequest[] = [];
+  readonly prCalls: Array<{ readonly familyBase: string }> = [];
   readonly workingRepo: string;
   liveHead: string | undefined;
 
@@ -155,9 +157,25 @@ class CapableFamilyBackend implements FamilyBackend {
     };
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
-  async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    this.prCalls.push(req);
-    return { url: `pr://${req.familyBase}`, prHead: this.liveHead };
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    if (spec.kind === "cmr") {
+      return legacyDispatchFamilyWorker(this, spec, ctx);
+    }
+    if (spec.kind === "ship") {
+      const familyBase = ctx.familyBase!;
+      this.prCalls.push({ familyBase });
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: familyBase,
+          pr: `pr://${familyBase}`,
+          ...(this.liveHead !== undefined ? { prHead: this.liveHead } : {}),
+          status: "pr_opened",
+        },
+      };
+    }
+    return legacyDispatchFamilyWorker(this, spec, ctx);
   }
   resolveFamilyWorkingRepo(): string | undefined {
     return this.workingRepo;
@@ -661,7 +679,7 @@ describe("#296 spine integration — fail-safe: verify-green but a required fina
         this.verifyCalls.push(req);
         return { ok: true };
       }
-      // NO runIntegratedCmr / openFamilyPr (a real-but-incomplete backend).
+      // No integrated-CMR or family worker capability (a real-but-incomplete backend).
     }
     const backend = new VerifyOnlySpineBackend();
     const result = await runFamily({
@@ -712,7 +730,7 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
   // A child whose single-slice run does NOT succeed (coder commits nothing → S2
   // routes to S8 error → a non-throwing "failed") leaves the family base PARTIAL:
   // the wave loop exits with that child unmerged and finalize() marks the run
-  // "incomplete". The final barrier (full verify → integrated cmr → openFamilyPr) is
+  // "incomplete". The final barrier (full verify → integrated cmr → ship worker) is
   // meaningful ONLY for a COMPLETE base — running it on a partial base would open a
   // family PR missing slices, even though the returned status is not shippable. So
   // the spine must SKIP the final barrier (no final verify / cmr / PR) when not every

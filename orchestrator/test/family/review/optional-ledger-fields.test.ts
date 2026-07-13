@@ -17,7 +17,6 @@
 
 import { describe, expect, it } from "vitest";
 import { pendingPriorCmrFindingIdentityKeysByPass } from "../../../src/family/runner.js";
-import { latestFamilyCmrDispositions } from "../../../src/family/verifyCmr.js";
 import type { FamilyLedgerEntry } from "../../../src/family/types.js";
 
 describe("PR#643 R3 (Gemini) — ledger scanners tolerate a null optional array field", () => {
@@ -51,16 +50,5 @@ describe("PR#643 R3 (Gemini) — ledger scanners tolerate a null optional array 
     ];
     const result = pendingPriorCmrFindingIdentityKeysByPass(ledger);
     expect(result.correctness).toBeUndefined();
-  });
-
-  it("latestFamilyCmrDispositions: a row with null cmrDispositions is skipped, not a throw", () => {
-    const ledger = [
-      { cmrDispositions: null } as unknown as {
-        readonly cmrDispositions?: null;
-      },
-    ];
-    // Before the fix `entry.cmrDispositions !== undefined` was true for null →
-    // `null.length` threw. Now `!= null` skips it and returns undefined.
-    expect(latestFamilyCmrDispositions(ledger as never)).toBeUndefined();
   });
 });
