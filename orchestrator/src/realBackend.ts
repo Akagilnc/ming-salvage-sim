@@ -286,12 +286,6 @@ import type {
   WorktreeHandle,
 } from "./types.js";
 import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-} from "./reviewLoopOutcome.js";
-import {
   configureTelemetryFromWorkerImage,
   durableTelemetryDirForSingleSlice,
 } from "./telemetry.js";
@@ -2118,9 +2112,8 @@ const coderOutputSchema = z.object({
     .optional(),
 });
 
-// #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
-// and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
-// from reviewLoopOutcome.ts (per AC2). .strict() so off-shape (extra keys, wrong types) fails closed.
+// Byte-to-object readers for the 4 review-loop kinds. After this parse,
+// decodeOutput relays the worker report without a second outcome court.
 const onlineReviewFindingDispositionSchema = z
   .object({
     identityKey: z.string().min(1),
@@ -3442,10 +3435,8 @@ export class RealBackend implements Backend {
           };
     }
 
-    // #596 F2 AC2: wire the 4 new kinds into real decodeOutput using isValid*Result
-    // guards from reviewLoopOutcome.ts as the decode validation. Malformed raw fails closed
-    // (zod parse throws; or explicit guard fail) mirroring reviewer/coder style+wording.
-    // Shape-valid but false flags (converged:false etc) pass this layer (no semantic).
+    // The zod schemas are byte-to-object readers. Once parsed, the runner relays
+    // the worker report without a second outcome court (ADR 0131).
     if (spec.role === "verify") {
       const v = verifyOutputSchema.parse(raw);
       const candidate: VerifyResult = {
@@ -3472,13 +3463,6 @@ export class RealBackend implements Backend {
           v.findingFamilies,
         ),
       };
-      if (!isValidVerifyResult(candidate)) {
-        const err = new Error(
-          "realBackend: verify output did not satisfy isValidVerifyResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
       return candidate;
     }
     if (spec.role === "fixer") {
@@ -3489,13 +3473,6 @@ export class RealBackend implements Backend {
         ...(f.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
         ...(f.fixCommitSha !== undefined ? { fixCommitSha: f.fixCommitSha } : {}),
       };
-      if (!isValidFixerResult(candidate)) {
-        const err = new Error(
-          "realBackend: fixer output did not satisfy isValidFixerResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
       return candidate;
     }
     if (spec.role === "cleanup") {
@@ -3513,25 +3490,11 @@ export class RealBackend implements Backend {
           ? { skippedReasons: c.skippedReasons }
           : {}),
       };
-      if (!isValidCleanupResult(candidate)) {
-        const err = new Error(
-          "realBackend: cleanup output did not satisfy isValidCleanupResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
       return candidate;
     }
     if (spec.role === "docRelease") {
       const d = docReleaseOutputSchema.parse(raw);
       const candidate: DocReleaseResult = { kind: "docRelease", released: d.released };
-      if (!isValidDocReleaseResult(candidate)) {
-        const err = new Error(
-          "realBackend: docRelease output did not satisfy isValidDocReleaseResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
       return candidate;
     }
 

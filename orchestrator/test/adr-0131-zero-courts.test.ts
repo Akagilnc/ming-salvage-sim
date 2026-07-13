@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { route } from "../src/route.js";
 
@@ -58,6 +58,42 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     expect(source).not.toMatch(
       /output\s*=\s*\{[^;]*findings\s*:\s*\[\s*\][^;]*\}/,
     );
+  });
+
+  it("single-slice online review has no outcome courts beyond named integrity readers", () => {
+    const srcDir = new URL("../src/", import.meta.url);
+    const sources = readdirSync(srcDir, { recursive: true })
+      .filter((file): file is string => typeof file === "string" && file.endsWith(".ts"))
+      .map((file) => [
+        `src/${file}`,
+        stripComments(readFileSync(new URL(file, srcDir), "utf8")),
+      ] as const);
+    const sitesFor = (symbol: string): Record<string, number> => Object.fromEntries(
+      sources.flatMap(([file, source]) => {
+        const count = [...source.matchAll(new RegExp(`\\b${symbol}\\b`, "g"))].length;
+        return count === 0 ? [] : [[file, count] as const];
+      }),
+    );
+
+    expect(sitesFor("isValidVerifyResult")).toEqual({
+      "src/reviewLoopOutcome.ts": 1,
+    });
+    expect(sitesFor("isValidFixerResult")).toEqual({
+      "src/reviewLoopOutcome.ts": 3,
+    });
+    expect(sitesFor("isValidCleanupResult")).toEqual({
+      "src/family/ledger.ts": 3,
+      "src/hostReclaim.ts": 4,
+      "src/reviewLoopOutcome.ts": 1,
+    });
+    expect(sitesFor("isValidDocReleaseResult")).toEqual({
+      "src/reviewLoopOutcome.ts": 1,
+    });
+    expect(sitesFor("workerOutcomeAdmissible")).toEqual({});
+    expect(sitesFor("inadmissibleWorkerOutcomeReason")).toEqual({});
+    expect(sitesFor("deriveCmrEnvelope")).toEqual({});
+    expect(existsSync(new URL("../src/family/cmrClassification.ts", import.meta.url)))
+      .toBe(false);
   });
 
   it("runner decision parks are limited to worker-pressed gates", () => {
