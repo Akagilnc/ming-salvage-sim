@@ -161,41 +161,6 @@ export function parseRelayTag(stdout: string): RelayTagOutcome {
   };
 }
 
-// ── failure-type boundary vs mechanical retry (#598/#661) ───────────────────
-
-export type FailureClassKind =
-  | "quota_wall"
-  | "capacity"
-  | "pool_dead"
-  | "hang_with_live_pool"
-  | "self_reported_blocked"
-  | "process_failed"
-  | "malformed"
-  | "outcome_protocol_failure";
-
-export type RetryOrRelayClass = "resource" | "mechanical_retry";
-
-/**
- * Failure-type boundary: process-level → mechanical retry (may reset);
- * resource failure → relay (NEVER reset — preserves uncommitted drift).
- */
-export function classifyFailureForRetryOrRelay(input: {
-  readonly kind: FailureClassKind;
-}): RetryOrRelayClass {
-  switch (input.kind) {
-    case "quota_wall":
-    case "capacity":
-    case "pool_dead":
-    case "hang_with_live_pool":
-    case "self_reported_blocked":
-      return "resource";
-    case "process_failed":
-    case "malformed":
-    case "outcome_protocol_failure":
-      return "mechanical_retry";
-  }
-}
-
 // ── ledger + parameter file ─────────────────────────────────────────────────
 
 export const RELAY_FOCUS_FILENAME = ".relay-focus.md";

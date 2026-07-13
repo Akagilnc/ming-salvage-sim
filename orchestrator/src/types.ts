@@ -314,13 +314,11 @@ export interface Escalation {
   /** Transport-authored durable kind; workers do not declare it. */
   readonly escalationKind?: EscalationKind;
   /**
-   * #604 correctness r1 (P1-a) / ADR 0062: TRUE marks an escalate the RUNNER
-   * SYNTHESIZED from a protocol/infra failure (malformed reviewer output
-   * exhausted its bounded reruns, retries exhausted), NOT a worker-proactive
-   * "需人类拍板" decision signal. The decision gate (B-class park) fires ONLY for
-   * a worker-emitted decision escalate; a synthesized-failure escalate maps to
-   * the A-class `escalationKind:"failure"` bucket. Absent/false ⇒ a genuine
-   * worker-emitted escalate (decision).
+   * TRUE marks an escalate the runner synthesized solely from channel-1 process
+   * facts (for example, bounded crash retries exhausted). Receipt shape, cargo,
+   * git, and host observations may never set it. The decision gate fires only
+   * for a worker-emitted decision escalate; synthesized failures remain in the
+   * transport-authored `escalationKind:"failure"` bucket.
    */
   readonly synthesizedFailure?: boolean;
 }
@@ -978,8 +976,8 @@ export interface CmrResult {
   readonly kind: "cmr";
   /** Which integrated CMR pass produced this verdict, when known. */
   readonly cmrPass?: "completeness" | "correctness";
-  /** Converged (all reviewers agreed) ⇒ true; else the gate is red. */
-  readonly converged: boolean;
+  /** Optional reviewer cargo; routing comes only from findingsCount. */
+  readonly converged?: boolean;
   /** Why it did not converge — set when red (handed to escalate). */
   readonly reason?: string;
   /** CMR leg slugs that actually produced a usable review this pass. */
@@ -992,7 +990,7 @@ export interface CmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured CMR findings passed through as worker cargo. */
   readonly findings?: readonly Finding[];
-  /** Reviewer-declared count, falling back to structured row count when absent. */
+  /** Reviewer-declared count. Structured finding rows never supply it. */
   readonly findingsCount?: number;
   /** Cross-round grouped findings + recurring-class markers (#711). */
   readonly findingFamilies?: readonly FindingFamily[];

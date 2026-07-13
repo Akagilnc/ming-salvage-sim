@@ -9,12 +9,6 @@
  */
 
 import { isPollableGithubPrUrl } from "./botPolling.js";
-import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-} from "./reviewLoopOutcome.js";
 import type {
   DispatchContext,
   StepOutput,

@@ -1470,6 +1470,7 @@ describe("#449 verifyCmr family gate classification", () => {
       output: {
         kind: "cmr",
         converged: false,
+        findingsCount: 1,
         reason: "reviewers tried to defer without module context",
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
@@ -1517,6 +1518,7 @@ describe("#449 verifyCmr family gate classification", () => {
       output: {
         kind: "cmr",
         converged: false,
+        findingsCount: 1,
         reason: "undeclared target should block",
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
@@ -1587,6 +1589,7 @@ module_scope:
       output: {
         kind: "cmr",
         converged: false,
+        findingsCount: 1,
         reason: "only parsed cross-module follow-up findings remain",
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],

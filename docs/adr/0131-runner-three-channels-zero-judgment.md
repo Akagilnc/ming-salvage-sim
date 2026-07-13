@@ -8,7 +8,7 @@ runner 只准做三件事，三件之外零判断权：
 
 (a) **数 exit code**——进程死活。真进程级失败（非零 exit / 抛异常 / 无完成信号）的有界机械重试挂在这条通道上（#598 崩溃半边、#853/#855 park-retry），不读任何字。
 
-(b) **读 reviewer 自报的 open-count**——说几条就是几条：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。count 是 worker 的申报（自报哨兵值；无哨兵形态的路径以其**写下的行数**为申报——写行即开口，数行=读通道 (b) 本身，不存在「对账」，因为没有第二个申报可对），runner 不派生、不复核、不读 severity/action 做二次分类。申报与卷面不符由 fixer 读卷时发现。
+(b) **读 reviewer 自报的 open-count**——说几条就是几条：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。count 只来自 worker 的显式申报；进程内 review seam 的 `findings` 数组本身就是该 worker 的申报。声明式 count 缺失不等于 0，也不得从 cargo rows 派生。runner 不复核、不读 severity/action 做二次分类；申报与卷面不符由 fixer 读卷时发现。
 
 (c) **转决策门**——worker 自己按的 decision/raise 原样递给人，转运不裁决。
 
@@ -33,7 +33,7 @@ synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (
 - **ADR 0129** 写入点校验条款**限缩**：不含 count-vs-array 对账（count=自报）；「拒收→同 worker 重写」梯废止——不可用卷面按角色真源分治（评审类递 fixer 原料、runner 永不自己按决策门）。findings 状态库、交通警察定理、fresh 终翻规则不变。
 - **#598 验收第 1/5 条** malformed-shape lane（「过不了 runner 下游 schema 再校验 → 当 process-level malformed 机械重派」）——**废止**；进程崩 lane 保留。
 - **#875 信封票 §1/§2**（count 由数组派生、写入点 count-vs-array 拒收 + 重写反馈）——**废止（S1b，2026-07-13）**；§3「下游禁一切 shape 处置」保留并加强（连数组长度都不数）。
-- **orchestrator/README.md Constitution 节**「defective report = shape failure → 有界机械重派」corollary——按本 ADR 重写（同 PR）；其防拆测试钉 `test/adr-0062-regression-825.test.ts` 随实现翻转（#873 战役工单）。
+- **orchestrator/README.md Constitution 节**「defective report = shape failure → 有界机械重派」corollary——按本 ADR 重写（同 PR）；现由 `test/constitution/reviewer-open-count.test.ts`、`review-closure-behavior.test.ts`、`worker-reporting.test.ts` 的正向路由行为锁定，不再使用源码禁字机械钉。
 
 ## 后果
 

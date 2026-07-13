@@ -1021,15 +1021,13 @@ function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
  * the runner's existing guards already handle:
  *   - `escalated` → a coder/reviewer output carrying the escalate (route() takes
  *     the global escalate edge → S8(escalate)).
- *   - `failed` / `malformed` → returns `{ unwrapped: undefined, reason }`: the
- *     runner maps a non-completed result to S8(error) carrying `reason`. The
- *     output is `undefined` so the runner treats the control envelope as unusable
- *     uniformly. (#331's legacy wrapper never produces these; #334's real workers
- *     do.)
+ *   - malformed receipt cargo → a completed placeholder. Reviewer callers pass
+ *     the raw artifacts to fixer; coder callers continue to the fresh reviewer.
+ *   - process `failed` → `{ unwrapped: undefined, reason }` for S8(error).
  *
- * Returns `{ unwrapped, reason? }`: `unwrapped` is the `StepOutput | StepResult`
- * for the existing flow (`undefined` only for failed/malformed); `reason` is set
- * for failed/malformed so the runner can surface it in the error package.
+ * Returns `{ unwrapped, reason? }`: coder receipt cargo becomes a completed
+ * placeholder; reviewer receipt cargo stays unwrapped so its caller can forward
+ * raw artifacts to the fixer. Only process failure carries an error reason.
  */
 export function workerResultToStep(
   result: WorkerResult,
@@ -1076,7 +1074,21 @@ export function workerResultToStep(
           : output,
     };
   }
-  // failed / malformed → undefined output (the guard rejects it → S8(error)).
+  if (result.kind === "malformed" || result.kind === "outcome_protocol_failure") {
+    if (expectedKind === "reviewer") return { unwrapped: undefined };
+    const output: StepOutput = {
+      kind: "coder",
+      committed: false,
+      commitsAdded: 0,
+    };
+    return {
+      unwrapped:
+        result.sessionId !== undefined
+          ? { output, sessionId: result.sessionId }
+          : output,
+    };
+  }
+  // Process failure remains an error fact.
   return { unwrapped: undefined, reason: result.reason };
 }
 

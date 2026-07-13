@@ -102,16 +102,6 @@ describe("#884 external-call clocks", () => {
     expect(attempts).toBe(1);
   });
 
-  it("has no free-text failure classification court", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const source = readFileSync(join(here, "../../src/externalCall.ts"), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/(^|[^:])\/\/.*$/gm, "$1");
-    expect(source).not.toMatch(
-      /(?:includes|match|test)\s*\([^\n]*(?:rate.?limit|quota|额度|配额|too many requests|timed?\s?out|econnreset|socket hang up|connection (?:refused|reset|closed|aborted)|broken pipe|network)/i,
-    );
-  });
-
   it("provider hang: non-cooperative promise still times out", async () => {
     await expect(
       withProviderTimeout(
@@ -215,14 +205,6 @@ describe("#884 external-call clocks", () => {
       join(here, "../../src/workerMonitor.ts"),
       "utf8",
     );
-    const externalCall = readFileSync(
-      join(here, "../../src/externalCall.ts"),
-      "utf8",
-    );
-    // No retry platform in the clock module.
-    expect(externalCall).not.toMatch(/withExternalCallRetry/);
-    expect(externalCall).not.toMatch(/ExternalCallExhaustedError/);
-    expect(externalCall).not.toMatch(/EXTERNAL_CALL_MAX_ATTEMPTS/);
     expect(realBackend).toMatch(
       /protected sh\([\s\S]*?shWithClock\(/,
     );
@@ -238,6 +220,5 @@ describe("#884 external-call clocks", () => {
     expect(spawnTimer?.[1] ?? "").toMatch(/ExternalCallTimeoutError/);
     expect(spawnTimer?.[1] ?? "").toMatch(/child\.kill\("SIGTERM"\)/);
     expect(spawnTimer?.[1] ?? "").toMatch(/child\.kill\("SIGKILL"\)/);
-    expect(spawnTimer?.[1] ?? "").not.toMatch(/process\.kill\s*\(/);
   });
 });

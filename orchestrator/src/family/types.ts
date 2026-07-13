@@ -730,6 +730,8 @@ export interface IntegratedCmrRequest {
 export interface IntegratedCmrResult {
   /** Converged (all reviewers empty / agreed) ⇒ true; else the gate is red. */
   readonly converged: boolean;
+  /** Reviewer-declared open count; omitted is not equivalent to zero. */
+  readonly findingsCount?: number;
   /** Why it did not converge (handed to the escalate seam) — set when red. */
   readonly reason?: string;
   /** CMR leg slugs that actually produced a usable review this pass. */

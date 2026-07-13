@@ -12,6 +12,7 @@ import {
   legacyDispatchWorker,
   stepSpecToWorkerSpec,
   verifyWorkerSpec,
+  workerResultToStep,
 } from "../../src/dispatchWorker.js";
 import { familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import { CODER_ROSTER } from "../../src/coderRoster.js";
@@ -316,6 +317,26 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
 });
 
 describe("#331 a non-completed WorkerResult routes via workerResultToStep", () => {
+  it("maps malformed coder cargo to a completed placeholder", () => {
+    expect(
+      workerResultToStep(
+        { kind: "malformed", reason: "receipt cargo was sparse" },
+        "coder",
+      ),
+    ).toEqual({
+      unwrapped: { kind: "coder", committed: false, commitsAdded: 0 },
+    });
+  });
+
+  it("leaves malformed reviewer cargo for the raw-artifact route", () => {
+    expect(
+      workerResultToStep(
+        { kind: "malformed", reason: "receipt cargo was sparse" },
+        "reviewer",
+      ),
+    ).toEqual({ unwrapped: undefined });
+  });
+
   /** A backend whose S2 coder worker ESCALATES (model-judged stuck). */
   class EscalateBackend extends DispatchBackend {
     override async dispatchWorker(

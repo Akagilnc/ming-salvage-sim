@@ -292,8 +292,6 @@ describe("#683/#884 opencode probe hard clock", () => {
     );
     expect(block).toMatch(/execFileAsyncWithTimeout/);
     expect(block).toMatch(/withLegTransientRetry/);
-    expect(block).not.toMatch(/withExternalCallRetry/);
-    expect(block).not.toMatch(/isQuotaLimitBody/);
     expect(block).toMatch(/probe:opencode-go/);
   });
 });

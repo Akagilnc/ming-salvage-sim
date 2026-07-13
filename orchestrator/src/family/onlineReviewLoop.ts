@@ -43,7 +43,6 @@ import {
   fixerEnvelopeFixCommitSha,
   fixerHasFixCommit,
   fixerProceedsToVerify,
-  isValidFixerResult,
 } from "../reviewLoopOutcome.js";
 import {
   applyVerifySideEffects,
@@ -90,29 +89,6 @@ function toLandingSnapshot(snapshot: PrReviewSnapshot): OnlineReviewLandingSnaps
     checkRuns: snapshot.checkRuns,
     checkRunsEmptyMeans: snapshot.checkRunsEmptyMeans,
   };
-}
-
-/**
- * Host-side default-deny: verify `converged:true` is inadmissible when CI has a
- * terminal non-success (ADR 0061 — runner enforces, worker still sees runs).
- *
- * Pending (queued/in_progress) check-runs are NOT clamped to false — that would
- * route a clean bot verify into the fixer with empty fix keys and park at the
- * decision gate (online R2 Codex P2). Callers must re-poll while CI is pending
- * via {@link verifyBlockedOnlyOnPendingCheckRuns}.
- */
-export function clampVerifyConvergenceForCheckRuns(
-  verify: VerifyResult,
-  landing: OnlineReviewLandingSnapshot | undefined,
-): VerifyResult {
-  if (!verify.converged || landing === undefined) {
-    return verify;
-  }
-  const emptyMeans = landing.checkRunsEmptyMeans ?? "converged";
-  if (classifyCheckRuns(landing.checkRuns, emptyMeans) === "failed") {
-    return { ...verify, converged: false };
-  }
-  return verify;
 }
 
 /**
@@ -766,8 +742,16 @@ export interface OnlineReviewLoopDispatch {
   readonly dispatchVerify: (
     landing: WorkerLandingPayload,
     round: number,
-  ) => Promise<VerifyResult>;
-  readonly dispatchFixer: (landing: WorkerLandingPayload) => Promise<FixerResult>;
+  ) => Promise<
+    | VerifyResult
+    | {
+        readonly kind: "rawReviewerArtifacts";
+        readonly artifacts: NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]>;
+      }
+  >;
+  readonly dispatchFixer: (
+    landing: WorkerLandingPayload,
+  ) => Promise<FixerResult | undefined>;
   readonly dispatchDocRelease: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly applySideEffects: (
     landing: WorkerLandingPayload,
@@ -863,21 +847,32 @@ export async function runOnlineReviewLoopStage(
       landing = await opts.enrichVerifyLanding(landing, round);
     }
 
-    let verify: VerifyResult;
+    let verify: VerifyResult | undefined;
     try {
-      verify = clampVerifyConvergenceForCheckRuns(
-        await dispatch.dispatchVerify(landing, round),
-        landing.onlineReviewSnapshot,
-      );
+      const dispatchedVerify = await dispatch.dispatchVerify(landing, round);
+      if (dispatchedVerify.kind === "rawReviewerArtifacts") {
+        landing = {
+          ...landing,
+          rawReviewerArtifacts: dispatchedVerify.artifacts,
+        };
+      } else {
+        verify = dispatchedVerify;
+      }
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;
       }
       return decisionGateFromDispatchInfra(round, "verify", err);
     }
-    // #877: isRecheck force-normalize is routing plumbing; fix-marked echo
-    // coverage court demolished (helper always admits three-channel converge).
-    verify = enforceRunnerOwnedRecheck(verify, round);
+    let fixKeys: string[] = [];
+    let fixMarkedFindingThreads: Array<{
+      readonly identityKey: string;
+      readonly threadId: string;
+    }> = [];
+    if (verify !== undefined) {
+      // #877: isRecheck force-normalize is routing plumbing; fix-marked echo
+      // coverage court demolished (helper always admits three-channel converge).
+      verify = enforceRunnerOwnedRecheck(verify, round);
     if (verify.terminalState === "decision_gate_raised") {
       return {
         ok: false,
@@ -932,8 +927,8 @@ export async function runOnlineReviewLoopStage(
         stopSummary: verifySideEffectFailureStopSummary(err),
       };
     }
-    const fixKeys = fixMarkedKeysFromVerify(verify);
-    const fixMarkedFindingThreads = fixMarkedFindingThreadsFromVerify(verify);
+    fixKeys = fixMarkedKeysFromVerify(verify);
+    fixMarkedFindingThreads = fixMarkedFindingThreadsFromVerify(verify);
     landing = {
       ...landing,
       fixMarkedFindingIdentityKeys: fixKeys,
@@ -966,9 +961,8 @@ export async function runOnlineReviewLoopStage(
       return { ok: true, terminalState: "mergeable", round };
     }
 
-    // CI failed + no bot fix marks: do not dispatch fixer (would park with
-    // misleading "nothing to fix while findings remain") — online R8 Gemini high.
-    // clamp may have set converged:false for failed CI while worker had no findings.
+    // CI failed + no bot fix marks: gate only the runner's merge action. Preserve
+    // the worker's convergence receipt and park on the existing CI-red resume lane.
     if (
       classifyCheckRuns(checkRuns, emptyMeans) === "failed" &&
       fixKeys.length === 0
@@ -986,6 +980,7 @@ export async function runOnlineReviewLoopStage(
         },
       };
     }
+    }
 
     // ADR 0061: round MAX+1 is verify-only — no further fixer after the cap.
     if (round > MAX_ONLINE_REVIEW_ROUNDS) {
@@ -998,16 +993,6 @@ export async function runOnlineReviewLoopStage(
     let fixerOutput: FixerResult | undefined;
     try {
       fixerOutput = await dispatch.dispatchFixer(landing);
-      if (!isValidFixerResult(fixerOutput)) {
-        // A malformed envelope is not a decision. Reassign this one fixer step
-        // once, then let a fresh verifier report the durable findings state.
-        console.warn("telemetry: malformed fixer envelope; re-dispatching fixer once");
-        fixerOutput = await dispatch.dispatchFixer(landing);
-        if (!isValidFixerResult(fixerOutput)) {
-          console.warn("telemetry: fixer envelope remained malformed after one re-dispatch");
-          fixerOutput = undefined;
-        }
-      }
     } catch (err) {
       if (err instanceof OnlineReviewLoopTerminal) {
         throw err;
@@ -1050,7 +1035,7 @@ export async function runOnlineReviewLoopStage(
     priorRoundFindingsAccum.push({
       round,
       fixMarkedFindingIdentityKeys: fixKeys,
-      ...(verify.findingDispositions !== undefined
+      ...(verify?.findingDispositions !== undefined
         ? { findingDispositions: verify.findingDispositions }
         : {}),
     });

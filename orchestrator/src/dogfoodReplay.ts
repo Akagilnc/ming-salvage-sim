@@ -179,8 +179,8 @@ async function familyClassificationScenario(input: {
   readonly familyIssue: number;
   readonly finding: Finding;
   readonly moduleContext: FamilyModuleContext;
-  /** Explicit reviewer declaration; absent means structured-row fallback. */
-  readonly findingsCount?: number;
+  /** Explicit reviewer declaration carried by this scripted worker receipt. */
+  readonly findingsCount: number;
   /**
    * #604 slice 2 / ADR 0062: a blocking finding is counted and routed through
    * coder-fix (no longer terminated on its classification). This replay fixture
@@ -211,9 +211,7 @@ async function familyClassificationScenario(input: {
       priorFindingDispositions: [],
       ...CMR_EVIDENCE,
       findings: [input.finding],
-      ...(input.findingsCount !== undefined
-        ? { findingsCount: input.findingsCount }
-        : {}),
+      findingsCount: input.findingsCount,
     },
   };
   // #604 slice 2 / ADR 0062: a BLOCKING family finding no longer terminates the
@@ -1195,6 +1193,7 @@ async function familyAttributionReplay(
       output: {
         kind: "cmr",
         converged: false,
+        findingsCount: 1,
         reason: "child attribution must stay local",
         successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [],
@@ -1237,6 +1236,7 @@ async function familyAttributionReplay(
         output: {
           kind: "cmr",
           converged: false,
+          findingsCount: 1,
           reason: "child attribution must stay local",
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
@@ -1262,6 +1262,7 @@ async function cmrReviewerSelfFixAttemptReplay(): Promise<SeamReplay> {
     output: {
       kind: "cmr",
       converged: false,
+      findingsCount: 1,
       reason:
         "blocking findings remain; reviewer says it is moving into the fix loop before all review legs completed",
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
@@ -2757,6 +2758,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       familyIssue: 287,
       finding: sameModuleFinding,
       moduleContext,
+      findingsCount: 1,
       blockingCoderFixFails: true,
     }),
     await familyClassificationScenario({
@@ -2768,6 +2770,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       familyIssue: 287,
       finding: crossModuleFinding,
       moduleContext,
+      findingsCount: 1,
     }),
     replayScenario({
       id: "287-module-declaration-fenced-yaml",
@@ -2833,6 +2836,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       // plain blocking finding — no routing disposition to reclassify.
       finding: specConflictFinding,
       moduleContext,
+      findingsCount: 1,
     }),
     await familyClassificationScenario({
       id: "287-known-hub-loss-suppression",
@@ -2921,6 +2925,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       familyIssue: 376,
       finding: owningChildFinding,
       moduleContext,
+      findingsCount: 1,
     }),
     replayScenario({
       id: "376-accepted-suppression-with-source",

@@ -68,11 +68,13 @@ class CapableFamilyBackend implements FamilyBackend {
     return this.cmrConverged
       ? {
           converged: true,
+          findingsCount: 0,
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           findings: [],
         }
       : {
           converged: false,
+          findingsCount: 1,
           reason: "cross-slice seam mismatch",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           findings: [
@@ -130,7 +132,7 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
           events.push("awaited");
           return {
             kind: "completed",
-            output: { kind: "cmr", converged: true },
+            output: { kind: "cmr", converged: true, findingsCount: 0 },
           } as WorkerResult;
         },
       } as unknown as FamilyBackend;
@@ -161,7 +163,7 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
         events.push("launched");
         return {
           kind: "completed",
-          output: { kind: "cmr", converged: true },
+          output: { kind: "cmr", converged: true, findingsCount: 0 },
         };
       },
     } as unknown as FamilyBackend;
@@ -676,6 +678,7 @@ describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted 
     async runIntegratedCmr(): Promise<IntegratedCmrResult> {
       return {
         converged: true,
+        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         findings: [],
       };

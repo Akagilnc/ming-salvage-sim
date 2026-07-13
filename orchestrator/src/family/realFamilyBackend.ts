@@ -104,15 +104,8 @@ import {
   REQUIRED_SOUL_FILES,
   soulsDirError,
   type SelfReportedCoder,
-  verifyOutputSchema,
-  fixerOutputSchema,
-  cleanupOutputSchema,
-  docReleaseOutputSchema,
   SANDBOX_FIX_FOCUS_PATH_ENV,
 } from "../realBackend.js";
-import {
-  skeletonReviewLoopWorkerResult,
-} from "../reviewLoopOutcome.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   attachSanitizedFindingFamilies,
@@ -174,9 +167,12 @@ import type {
   FindingFamily,
   FixerResult,
   CmrResult,
+  OnlineReviewFindingDisposition,
+  OnlineReviewThreadReply,
   PriorFindingDisposition,
   StepSoul,
   VerifyResult,
+  VerifyWorkerTerminalState,
   WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
@@ -1332,13 +1328,11 @@ export class RealFamilyBackend implements FamilyBackend {
           };
         }
       }
-      const stub = skeletonReviewLoopWorkerResult(spec.kind);
-      if (stub !== undefined) {
-        return stub;
-      }
       return {
         kind: "failed",
-        reason: `family ${spec.kind} stub unavailable`,
+        reason:
+          "family cleanup worker requires cleanupDispatch landing; " +
+          "production dispatch never synthesizes a green receipt",
       };
     }
     // #735: real 文档发布 worker shares the family review-loop agent path
@@ -1435,7 +1429,7 @@ export class RealFamilyBackend implements FamilyBackend {
       output: {
         kind: "cmr",
         ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-        converged: outcome.converged,
+        ...(outcome.converged !== undefined ? { converged: outcome.converged } : {}),
         ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
         successfulLegs: outcome.successfulLegs,
         ...(outcome.skippedLegs !== undefined ? { skippedLegs: outcome.skippedLegs } : {}),
@@ -2148,7 +2142,7 @@ export class RealFamilyBackend implements FamilyBackend {
         if (parsed.kind === "escalate") {
           return { kind: "escalated", escalation: parsed.escalation, sessionId };
         }
-        if (parsed.kind === "malformed") {
+        if (parsed.kind === "cargo") {
           return {
             kind: "completed",
             output: { kind: "coder", committed: false, commitsAdded: 0 },
@@ -2162,7 +2156,7 @@ export class RealFamilyBackend implements FamilyBackend {
         if (parsed.kind === "escalate") {
           return { kind: "escalated", escalation: parsed.escalation, sessionId };
         }
-        if (parsed.kind === "malformed") {
+        if (parsed.kind === "cargo") {
           return {
             kind: "completed",
             output: { kind: "coder", committed: false, commitsAdded: 0 },
@@ -2176,7 +2170,7 @@ export class RealFamilyBackend implements FamilyBackend {
         if (parsed.kind === "escalate") {
           return { kind: "escalated", escalation: parsed.escalation, sessionId };
         }
-        if (parsed.kind === "malformed") {
+        if (parsed.kind === "cargo") {
           return {
             kind: "completed",
             output: { kind: "coder", committed: false, commitsAdded: 0 },
@@ -2189,7 +2183,7 @@ export class RealFamilyBackend implements FamilyBackend {
       if (parsed.kind === "escalate") {
         return { kind: "escalated", escalation: parsed.escalation, sessionId };
       }
-      if (parsed.kind === "malformed") {
+      if (parsed.kind === "cargo") {
         return {
           kind: "completed",
           output: { kind: "coder", committed: false, commitsAdded: 0 },
@@ -3178,15 +3172,15 @@ export class RealFamilyBackend implements FamilyBackend {
  *     has already checked required-leg availability before worker dispatch);
  *   - `escalate`  — the worker is model-stuck (skill missing / no leg ran / it
  *     could not produce a verdict) ⇒ the runner's escalate续跑 fork, NOT a pass;
- *   - `malformed` — the run emitted no parseable `<cmr>` tag ⇒ the gate must never
- *     read it as a pass (fail-closed).
+ *   - `malformed` — compatibility-only injected result; production receipt
+ *     decoding instead returns sparse verdict cargo with no declared count.
  * Deliberately NOT the bare {@link IntegratedCmrResult}: a cmr worker also has the
  * escalate / malformed WorkerResult-level cases the bare verdict cannot carry.
  */
 export type CmrWorkerOutcome =
   | {
       readonly kind: "verdict";
-      readonly converged: boolean;
+      readonly converged?: boolean;
       readonly reason?: string;
       readonly successfulLegs: readonly string[];
       readonly skippedLegs?: readonly CmrSkippedLeg[];
@@ -3304,7 +3298,7 @@ export interface MergerAuth {
  * completion proof and verdict source. Legacy/no-sidecar workers still require the
  * Sandcastle completion signal before stdout fallback is trusted.
  */
-/** Preserve the reviewer-declared sentinel count; structured rows are fallback cargo. */
+/** Preserve only the reviewer-declared sentinel count; structured rows stay cargo. */
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
@@ -3323,20 +3317,12 @@ export function cmrOutcomeFromResult(result: {
         if (classified.kind === "escalate") return classified;
         const stdoutBell = parseCmrOutcome(stdout, result.cmrReviewLegs);
         if (stdoutBell.kind === "escalate") return stdoutBell;
-        // ADR 0131: sentinel declaration wins; missing sentinel falls back to rows.
-        const declared = parseFindingsSentinel(stdout);
-        const receiptRows =
-          isJsonRecord(sidecar) && Array.isArray(sidecar.findings)
-            ? sidecar.findings.length
-            : undefined;
-        const findingsCount = declared ?? receiptRows;
+        const findingsCount = parseFindingsSentinel(stdout);
         if (classified.kind !== "verdict") {
           return findingsCount === undefined
             ? classified
             : {
                 kind: "verdict",
-                converged: findingsCount === 0,
-                ...(findingsCount > 0 ? { reason: "reviewer declared open findings" } : {}),
                 successfulLegs: [],
                 evidencePaths: [],
                 findingsCount,
@@ -3347,23 +3333,33 @@ export function cmrOutcomeFromResult(result: {
           ...(findingsCount !== undefined ? { findingsCount } : {}),
         };
       }
-    } catch (err) {
+    } catch {
       const stdoutBell = parseCmrOutcome(stdout, result.cmrReviewLegs);
       if (stdoutBell.kind === "escalate") return stdoutBell;
+      const findingsCount = parseFindingsSentinel(stdout);
       return {
-        kind: "malformed",
-        reason:
-          `cmr worker outcome sidecar protocol failure: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+        ...stdoutBell,
+        ...(stdoutBell.kind === "verdict" && findingsCount !== undefined
+          ? { findingsCount }
+          : {}),
       };
     }
   }
 
   // Stdout-only / blank-sidecar fallback preserves the same declaration channel.
   const fromStdout = parseCmrOutcome(stdout, result.cmrReviewLegs);
-  if (fromStdout.kind !== "verdict") return fromStdout;
   const declared = parseFindingsSentinel(stdout);
-  const findingsCount = declared ?? fromStdout.findings?.length;
+  if (fromStdout.kind !== "verdict") {
+    return declared === undefined
+      ? fromStdout
+      : {
+          kind: "verdict",
+          successfulLegs: [],
+          evidencePaths: [],
+          findingsCount: declared,
+        };
+  }
+  const findingsCount = declared;
   return {
     ...fromStdout,
     ...(findingsCount !== undefined ? { findingsCount } : {}),
@@ -3383,15 +3379,8 @@ export function parseFindingsSentinel(stdout: string): number | undefined {
 const nonEmpty = z.string().trim().min(1);
 
 /**
- * Cargo decoding for the non-bell `<cmr>` shapes. The independent escalation
- * probe runs first and tolerates every sibling key; verdict parsing only enriches
- * cargo for the reviewer-count probe. The recognized shapes are:
- *   1. `{converged:true, successfulLegs, skippedLegs?, evidencePaths}`           — converged;
- *   2. `{converged:false, reason, successfulLegs, skippedLegs?, evidencePaths}`  — not converged;
- *   3. `{escalate:{reason, diagnosis}}`            — could not run the review.
- * Verdicts must also account for every default CMR leg: each must be either
- * successful or explicitly skipped.
- * The bell is probed before every verdict schema.
+ * Optional CMR cargo decoders. Escalation is probed independently before these
+ * fields; none of the cargo shapes can reject a completed reviewer receipt.
  */
 const cmrLegSlugSchema = z.string().trim().min(1);
 const cmrSkippedLegSchema = z
@@ -3424,10 +3413,6 @@ function softParseSkippedLegs(
   }
   return kept;
 }
-const cmrVerdictLegsSchema = {
-  successfulLegs: z.unknown().optional(),
-  skippedLegs: z.unknown().optional(),
-} as const;
 const cmrFindingDispositionSchema = z
   .object({
     identityKey: nonEmpty,
@@ -3474,13 +3459,6 @@ function softParseClaimedFixedFindingIdentityKeys(
   }
   return kept;
 }
-const cmrClosureSchema = {
-  // #875 kill-axis: claim/disposition fields are opaque worker prose of ANY
-  // top-level shape. Accept `unknown` here so object/string/null cannot
-  // shape-kill the whole verdict; soft-parse below retains only usable entries.
-  claimedFixedFindingIdentityKeys: z.unknown().optional(),
-  priorFindingDispositions: z.unknown().optional(),
-} as const;
 // #604 slice 4 (ADR 0062): the CMR reviewer contract no longer carries routing
 // disposition kinds — the only disposition a reviewer may emit is the
 // accepted-suppression governance carrier.
@@ -3580,33 +3558,6 @@ function normalizeCmrReviewerFinding(
     },
   };
 }
-const cmrFindingsSchema = {
-  findings: z.array(cmrReviewerFindingSchema).optional(),
-  // #711: malformed families degrade to no brief — never block the CMR gate.
-  findingFamilies: z.unknown().optional(),
-} as const;
-const cmrEvidenceSchema = {
-  evidencePaths: z.array(nonEmpty).min(1),
-} as const;
-const cmrConvergedSchema = z
-  .object({
-    converged: z.literal(true),
-    ...cmrVerdictLegsSchema,
-    ...cmrClosureSchema,
-    ...cmrFindingsSchema,
-    ...cmrEvidenceSchema,
-  })
-  .passthrough();
-const cmrRedSchema = z
-  .object({
-    converged: z.literal(false),
-    reason: nonEmpty,
-    ...cmrVerdictLegsSchema,
-    ...cmrClosureSchema,
-    ...cmrFindingsSchema,
-    ...cmrEvidenceSchema,
-  })
-  .passthrough();
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -3649,13 +3600,13 @@ export function parseCmrOutcome(
   let last: string | undefined;
   for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
   if (last === undefined) {
-    return { kind: "malformed", reason: "cmr worker emitted no <cmr> tag" };
+    return sparseCmrCargo();
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(last.trim());
   } catch {
-    return { kind: "malformed", reason: "cmr worker <cmr> tag was not valid JSON" };
+    return sparseCmrCargo();
   }
   // #875: routeOrEnv retained on the signature for call-site compatibility; parse
   // no longer converts leg-accounting mismatches into malformed death payloads.
@@ -3664,93 +3615,60 @@ export function parseCmrOutcome(
 
 function classifyCmrOutcomePayload(
   parsed: unknown,
-  source: string,
+  _source: string,
 ): CmrWorkerOutcome {
-  // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
-  // schemas reject every non-object, but guard explicitly so the malformed
-  // message stays specific (mirrors parseShipOutcome / parseMergerOutcome).
-  if (!isJsonRecord(parsed)) {
-    return { kind: "malformed", reason: `${source} was not a JSON object` };
-  }
+  if (!isJsonRecord(parsed)) return sparseCmrCargo();
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
   const decisionBell = probeWorkerDecisionBell(normalizedParsed);
   if (decisionBell !== undefined) {
     return { kind: "escalate", ...decisionBell };
   }
-  // Escalate FIRST — a model-stuck worker never carries a usable verdict.
-  // #875: parse no longer converts leg-accounting shape mismatches into
-  // `malformed` death payloads. successfulLegs/skippedLegs remain on the
-  // verdict as reviewer evidence; required-leg availability was checked by
-  // route smoke, and incomplete lists are worker prose, not a parse-time kill.
-  if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
-    const converged = cmrConvergedSchema.parse(normalizedParsed);
-    const successfulLegs = softParseSuccessfulLegs(converged.successfulLegs);
-    const skippedLegs = softParseSkippedLegs(converged.skippedLegs);
-    const claimedFixedFindingIdentityKeys =
-      softParseClaimedFixedFindingIdentityKeys(
-        converged.claimedFixedFindingIdentityKeys,
-      );
-    const priorFindingDispositions = softParsePriorFindingDispositions(
-      converged.priorFindingDispositions,
+  const findings = Array.isArray(normalizedParsed.findings)
+    ? normalizedParsed.findings.flatMap((rawFinding) => {
+        const candidate = cmrReviewerFindingSchema.safeParse(rawFinding);
+        return candidate.success
+          ? [normalizeCmrReviewerFinding(candidate.data)]
+          : [];
+      })
+    : undefined;
+  const evidencePaths = Array.isArray(normalizedParsed.evidencePaths)
+    ? normalizedParsed.evidencePaths.filter(
+        (path): path is string => typeof path === "string" && path.trim().length > 0,
+      )
+    : [];
+  const skippedLegs = softParseSkippedLegs(normalizedParsed.skippedLegs);
+  const claimedFixedFindingIdentityKeys =
+    softParseClaimedFixedFindingIdentityKeys(
+      normalizedParsed.claimedFixedFindingIdentityKeys,
     );
-    return {
-      kind: "verdict",
-      converged: true,
-      successfulLegs,
-      ...(skippedLegs !== undefined ? { skippedLegs } : {}),
-      ...(claimedFixedFindingIdentityKeys !== undefined
-        ? { claimedFixedFindingIdentityKeys }
-        : {}),
-      ...(priorFindingDispositions !== undefined
-        ? { priorFindingDispositions }
-        : {}),
-      ...(converged.findings !== undefined
-        ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
-        : {}),
-      ...attachSanitizedFindingFamilies({}, converged.findingFamilies),
-      evidencePaths: converged.evidencePaths,
-    };
-  }
-  const red = cmrRedSchema.safeParse(normalizedParsed);
-  if (red.success) {
-    const successfulLegs = softParseSuccessfulLegs(red.data.successfulLegs);
-    const skippedLegs = softParseSkippedLegs(red.data.skippedLegs);
-    const claimedFixedFindingIdentityKeys =
-      softParseClaimedFixedFindingIdentityKeys(
-        red.data.claimedFixedFindingIdentityKeys,
-      );
-    const priorFindingDispositions = softParsePriorFindingDispositions(
-      red.data.priorFindingDispositions,
-    );
-    const redFindings =
-      red.data.findings !== undefined
-        ? red.data.findings.map(normalizeCmrReviewerFinding)
-        : undefined;
-    return {
-      kind: "verdict",
-      converged: false,
-      reason: red.data.reason,
-      successfulLegs,
-      ...(skippedLegs !== undefined ? { skippedLegs } : {}),
-      ...(claimedFixedFindingIdentityKeys !== undefined
-        ? { claimedFixedFindingIdentityKeys }
-        : {}),
-      ...(priorFindingDispositions !== undefined
-        ? { priorFindingDispositions }
-        : {}),
-      ...(redFindings !== undefined ? { findings: redFindings } : {}),
-      ...attachSanitizedFindingFamilies({}, red.data.findingFamilies),
-      evidencePaths: red.data.evidencePaths,
-    };
-  }
+  const priorFindingDispositions = softParsePriorFindingDispositions(
+    normalizedParsed.priorFindingDispositions,
+  );
   return {
-    kind: "malformed",
-    reason:
-      `${source} matched no valid shape (expected one of: ` +
-      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys?,priorFindingDispositions?,evidencePaths}, " +
-      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys?,priorFindingDispositions?,evidencePaths}, " +
-      "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
+    kind: "verdict",
+    ...(typeof normalizedParsed.converged === "boolean"
+      ? { converged: normalizedParsed.converged }
+      : {}),
+    ...(typeof normalizedParsed.reason === "string" &&
+    normalizedParsed.reason.trim().length > 0
+      ? { reason: normalizedParsed.reason }
+      : {}),
+    successfulLegs: softParseSuccessfulLegs(normalizedParsed.successfulLegs),
+    ...(skippedLegs !== undefined ? { skippedLegs } : {}),
+    ...(claimedFixedFindingIdentityKeys !== undefined
+      ? { claimedFixedFindingIdentityKeys }
+      : {}),
+    ...(priorFindingDispositions !== undefined
+      ? { priorFindingDispositions }
+      : {}),
+    ...(findings !== undefined ? { findings } : {}),
+    ...attachSanitizedFindingFamilies({}, normalizedParsed.findingFamilies),
+    evidencePaths,
   };
+}
+
+function sparseCmrCargo(): Extract<CmrWorkerOutcome, { readonly kind: "verdict" }> {
+  return { kind: "verdict", successfulLegs: [], evidencePaths: [] };
 }
 
 /**
@@ -3994,9 +3912,7 @@ function parseOutcomePayload(
       if (last !== undefined) {
         try {
           const parsed = JSON.parse(last.trim());
-          if (probeWorkerDecisionBell(parsed) !== undefined) {
-            return { parsed, source: `${tag} worker <${tag}> tag` };
-          }
+          return { parsed, source: `${tag} worker <${tag}> tag` };
         } catch {
           // The sidecar and compatibility receipt are both unreadable cargo.
         }
@@ -4025,6 +3941,10 @@ type ReceiptDecisionBell = {
   readonly escalation: { readonly reason: string; readonly diagnosis: string };
 };
 
+type ReceiptCargo = { readonly kind: "cargo" };
+
+const RECEIPT_CARGO: ReceiptCargo = { kind: "cargo" };
+
 function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
   const escalation = probeWorkerDecisionBell(parsed);
   return escalation === undefined ? undefined : { kind: "escalate", escalation };
@@ -4033,48 +3953,62 @@ function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
 export function parseVerifyOutcome(
   stdout: string,
   outcomePath?: string,
-): VerifyResult | ReceiptDecisionBell | { kind: "malformed"; reason: string } {
+): VerifyResult | ReceiptDecisionBell | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "verify", outcomePath);
-  if ("error" in payload) return { kind: "malformed", reason: payload.error };
-  const parsed = payload.parsed;
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "verify worker <verify> tag was not a JSON object" };
-  }
+  if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
+  const parsed = normalizeFindingFamiliesWireAliases(payload.parsed);
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
   const decisionBell = receiptDecisionBell(parsed);
   if (decisionBell !== undefined) return decisionBell;
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side (realBackend decodeOutput). Extra keys → malformed (fail-closed),
-  // matching parseCmrOutcome / parse* style and the header claim to "Mirror cmr…parse style".
-  const shape = verifyOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "verify worker <verify> tag did not satisfy verifyOutputSchema (extra keys or wrong types)",
-    };
-  }
-  const v = shape.data;
+  if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
+  const stringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  const findingDispositions = Array.isArray(parsed.findingDispositions)
+    ? parsed.findingDispositions.filter((item): item is OnlineReviewFindingDisposition => {
+        if (!isJsonRecord(item)) return false;
+        return (
+          typeof item.identityKey === "string" &&
+          typeof item.threadId === "string" &&
+          (item.action === "fix" || item.action === "reject" || item.action === "defer") &&
+          (item.reason === undefined || typeof item.reason === "string")
+        );
+      })
+    : undefined;
+  const threadReplies = Array.isArray(parsed.threadReplies)
+    ? parsed.threadReplies.filter((item): item is OnlineReviewThreadReply =>
+        isJsonRecord(item) &&
+        typeof item.threadId === "string" &&
+        typeof item.body === "string",
+      )
+    : undefined;
+  const terminalState: VerifyWorkerTerminalState | undefined =
+    parsed.terminalState === "mergeable" ||
+    parsed.terminalState === "round_budget_exhausted" ||
+    parsed.terminalState === "decision_gate_raised"
+      ? parsed.terminalState
+      : undefined;
   const candidate: VerifyResult = {
     kind: "verify",
     ...attachSanitizedFindingFamilies(
       {
-        converged: v.converged,
-        ...(v.findingDispositions !== undefined
-          ? { findingDispositions: v.findingDispositions }
+        converged: parsed.converged,
+        ...(findingDispositions !== undefined
+          ? { findingDispositions }
           : {}),
-        ...(v.fixMarkedFindingIdentityKeys !== undefined
-          ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
+        ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
+          ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
           : {}),
-        ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
-        ...(v.threadsToResolve !== undefined
-          ? { threadsToResolve: v.threadsToResolve }
+        ...(threadReplies !== undefined ? { threadReplies } : {}),
+        ...(stringArray(parsed.threadsToResolve)
+          ? { threadsToResolve: parsed.threadsToResolve }
           : {}),
-        ...(v.deferredIssueUrls !== undefined
-          ? { deferredIssueUrls: v.deferredIssueUrls }
+        ...(stringArray(parsed.deferredIssueUrls)
+          ? { deferredIssueUrls: parsed.deferredIssueUrls }
           : {}),
-        ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
-        ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+        ...(terminalState !== undefined ? { terminalState } : {}),
+        ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
       },
-      v.findingFamilies,
+      parsed.findingFamilies,
     ),
   };
   return candidate;
@@ -4083,30 +4017,22 @@ export function parseVerifyOutcome(
 export function parseFixerOutcome(
   stdout: string,
   outcomePath?: string,
-): FixerResult | ReceiptDecisionBell | { kind: "malformed"; reason: string } {
+): FixerResult | ReceiptDecisionBell | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "fixer", outcomePath);
-  if ("error" in payload) return { kind: "malformed", reason: payload.error };
+  if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "fixer worker <fixer> tag was not a JSON object" };
-  }
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
   const decisionBell = receiptDecisionBell(parsed);
   if (decisionBell !== undefined) return decisionBell;
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side. Extra keys → malformed (fail-closed).
-  const shape = fixerOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "fixer worker <fixer> tag did not satisfy fixerOutputSchema (extra keys or wrong types)",
-    };
-  }
+  if (typeof parsed.committed !== "boolean") return RECEIPT_CARGO;
   const candidate: FixerResult = {
     kind: "fixer",
-    committed: shape.data.committed,
-    ...(shape.data.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
-    ...(shape.data.fixCommitSha !== undefined
-      ? { fixCommitSha: shape.data.fixCommitSha }
+    committed: parsed.committed,
+    ...(typeof parsed.alreadySatisfied === "boolean"
+      ? { alreadySatisfied: parsed.alreadySatisfied }
+      : {}),
+    ...(typeof parsed.fixCommitSha === "string" && parsed.fixCommitSha.length > 0
+      ? { fixCommitSha: parsed.fixCommitSha }
       : {}),
   };
   return candidate;
@@ -4115,39 +4041,43 @@ export function parseFixerOutcome(
 export function parseCleanupOutcome(
   stdout: string,
   outcomePath?: string,
-): CleanupResult | ReceiptDecisionBell | { kind: "malformed"; reason: string } {
+): CleanupResult | ReceiptDecisionBell | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "cleanup", outcomePath);
-  if ("error" in payload) return { kind: "malformed", reason: payload.error };
+  if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not a JSON object" };
-  }
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
   const decisionBell = receiptDecisionBell(parsed);
   if (decisionBell !== undefined) return decisionBell;
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side. Extra keys → malformed (fail-closed).
-  const shape = cleanupOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "cleanup worker <cleanup> tag did not satisfy cleanupOutputSchema (extra keys or wrong types)",
-    };
+  if (typeof parsed.terminal !== "boolean" || typeof parsed.ok !== "boolean") {
+    return RECEIPT_CARGO;
   }
+  const branchOutcome =
+    parsed.branchOutcome === "deleted" ||
+    parsed.branchOutcome === "already_gone" ||
+    parsed.branchOutcome === "skipped_tip_drift" ||
+    parsed.branchOutcome === "skipped_pr_not_merged" ||
+    parsed.branchOutcome === "skipped_precondition"
+      ? parsed.branchOutcome
+      : undefined;
   const candidate: CleanupResult = {
     kind: "cleanup",
-    terminal: shape.data.terminal,
-    ok: shape.data.ok,
-    ...(shape.data.issuesClosed !== undefined
-      ? { issuesClosed: shape.data.issuesClosed }
+    terminal: parsed.terminal,
+    ok: parsed.ok,
+    ...(Array.isArray(parsed.issuesClosed) &&
+    parsed.issuesClosed.every(
+      (issue): issue is number => Number.isInteger(issue) && (issue as number) > 0,
+    )
+      ? { issuesClosed: parsed.issuesClosed }
       : {}),
-    ...(shape.data.parentIssueClosed === true
-      ? { parentIssueClosed: true }
+    ...(typeof parsed.parentIssueClosed === "boolean"
+      ? { parentIssueClosed: parsed.parentIssueClosed }
       : {}),
-    ...(shape.data.branchOutcome !== undefined
-      ? { branchOutcome: shape.data.branchOutcome }
+    ...(branchOutcome !== undefined
+      ? { branchOutcome }
       : {}),
-    ...(shape.data.skippedReasons !== undefined
-      ? { skippedReasons: shape.data.skippedReasons }
+    ...(Array.isArray(parsed.skippedReasons) &&
+    parsed.skippedReasons.every((reason): reason is string => typeof reason === "string")
+      ? { skippedReasons: parsed.skippedReasons }
       : {}),
   };
   return candidate;
@@ -4156,24 +4086,14 @@ export function parseCleanupOutcome(
 export function parseDocReleaseOutcome(
   stdout: string,
   outcomePath?: string,
-): DocReleaseResult | ReceiptDecisionBell | { kind: "malformed"; reason: string } {
+): DocReleaseResult | ReceiptDecisionBell | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "docRelease", outcomePath);
-  if ("error" in payload) return { kind: "malformed", reason: payload.error };
+  if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not a JSON object" };
-  }
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
   const decisionBell = receiptDecisionBell(parsed);
   if (decisionBell !== undefined) return decisionBell;
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side. Extra keys → malformed (fail-closed).
-  const shape = docReleaseOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "docRelease worker <docRelease> tag did not satisfy docReleaseOutputSchema (extra keys or wrong types)",
-    };
-  }
-  const candidate: DocReleaseResult = { kind: "docRelease", released: shape.data.released };
+  if (typeof parsed.released !== "boolean") return RECEIPT_CARGO;
+  const candidate: DocReleaseResult = { kind: "docRelease", released: parsed.released };
   return candidate;
 }
