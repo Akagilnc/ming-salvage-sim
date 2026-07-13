@@ -12,7 +12,13 @@ runner 只准做三件事，三件之外零判断权：
 
 (c) **转决策门**——worker 自己按的 decision/raise 原样递给人，转运不裁决。
 
-**从不读字。** 卷面对不对是下一个智慧体（fixer）的判断：读不懂 → raise（走决策门）或打回 reviewer。**卷面不可用**（信封提取不出：无 kind / 无计数 / 解码失败）→ **callerOwns，一次 escalate(kind=decision) 给人拍，零机械重派、零重写梯**。synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (a) 的进程事实派生（崩溃重试耗尽的 infra 包），永不得由卷面判断合成。kill-axis（承 #873）：任何拆除不得以「换一个更温和的校验」收尾。卷面质量归交卷契约（ADR 0130，worker 侧 soul/skill）；发现搬运走 artifact pointer / findings 状态库（ADR 0129）。
+**从不读字。** 卷面对不对是下一个智慧体（fixer）的判断：读不懂 → raise（走决策门）或打回 reviewer。
+
+**卷面不可用（信封提取不出）按角色真源分治——决策门准入原则（owner 2026-07-13）：人环只接真决策；凡人唯一合理回答是「重试」的，不许上人环，机器按既有机械线自理。**
+- **评审类 worker（reviewer / verify 等）**：产出=卷面本身，无外部真源可查——callerOwns，**一次 escalate(kind=decision) 给人拍，零机械重派、零重写梯**。
+- **coder / ship 类 worker**：产出=git commit / PR 等**外部可查事实**，交卷条只是回执——回执不可读**不上人环**：git 图有新 commit → 照常进评审（回执作废不碍事，评审审的是活不是条）；无 commit → 走既有白跑/崩溃机械重派预算（#592/#598），耗尽 → infra park（该包由外部事实派生，合法）。
+
+synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (a) 进程事实或上述外部真源事实派生，永不得由卷面判断合成。kill-axis（承 #873）：任何拆除不得以「换一个更温和的校验」收尾。卷面质量归交卷契约（ADR 0130，worker 侧 soul/skill）；发现搬运走 artifact pointer / findings 状态库（ADR 0129）。
 
 ## 取代（旧 ADR 已就地标过时并指针到本 ADR）
 
