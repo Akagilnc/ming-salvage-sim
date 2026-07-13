@@ -363,11 +363,12 @@ describe("#786 family dispatch telemetry", () => {
   });
 
   it.each([
-    ["failed", "failed", { kind: "failed", reason: "worker exited 1" }],
+    ["failed", "failed", { kind: "failed", reason: "worker exited 1" }, "rejected"],
     [
       "malformed outcome after its protocol rewrite",
       "malformed",
       { kind: "malformed", reason: "missing CMR verdict" },
+      "accepted",
     ],
     [
       "outcome protocol failure",
@@ -377,8 +378,9 @@ describe("#786 family dispatch telemetry", () => {
         reason: "outcome guard rejected the CMR envelope",
         attempts: 1,
       },
+      "accepted",
     ],
-  ] as const)("preserves the %s worker verdict when the runner rejects it", async (_label, verdict, terminal) => {
+  ] as const)("preserves the %s worker verdict when the runner routes it", async (_label, verdict, terminal, finalDisposition) => {
     class RejectedTerminalBackend extends FamilyTelemetryBackend {
       override async dispatchWorker(
         spec: WorkerSpec,
@@ -408,7 +410,7 @@ describe("#786 family dispatch telemetry", () => {
     ).toContainEqual(
       expect.objectContaining({
         verdict,
-        finalDisposition: "rejected",
+        finalDisposition,
       }),
     );
   });

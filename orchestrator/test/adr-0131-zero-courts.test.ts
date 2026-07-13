@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { route } from "../src/route.js";
 
@@ -43,26 +43,58 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
   });
 
   it("runner decision parks are limited to worker-pressed gates", () => {
-    const source = [
-      "../src/runner.ts",
-      "../src/family/verifyCmr.ts",
-      "../src/family/realFamilyBackend.ts",
-      "../src/family/runner.ts",
-    ].map((file) => stripComments(readFileSync(new URL(file, import.meta.url), "utf8"))).join("\n");
-    // Four allowed escalateTermination call sites (three relay tags + one
-    // escalated worker result), plus the helper default and auto-merge ledger tag.
-    expect(source).not.toContain("交卷不可用，需人拍");
-    expect(source).not.toContain("reviewer 未申报可数卷面");
-    expect(source).toContain("result.escalation");
+    const familyDir = new URL("../src/family/", import.meta.url);
+    const files = [
+      "src/runner.ts",
+      "src/route.ts",
+      ...readdirSync(familyDir, { recursive: true })
+        .filter((file): file is string => typeof file === "string" && file.endsWith(".ts"))
+        .map((file) => `src/family/${file}`),
+    ];
+    const decisionSites = new Map<string, number>();
+    let escalateTerminationDecisionSites = 0;
+    for (const file of files) {
+      const source = stripComments(
+        readFileSync(new URL(`../${file}`, import.meta.url), "utf8"),
+      );
+      const count = [...source.matchAll(/escalationKind\s*:\s*"decision"/g)].length;
+      if (count > 0) decisionSites.set(file, count);
+      escalateTerminationDecisionSites += [
+        ...source.matchAll(/escalateTermination\s*\(\s*"decision"/g),
+      ].length;
+    }
+
+    expect(Object.fromEntries(decisionSites)).toEqual({
+      "src/family/runner.ts": 3,
+      "src/family/ledger.ts": 1,
+      "src/family/realFamilyBackend.ts": 2,
+    });
+    expect([...decisionSites.values()].reduce((sum, count) => sum + count, 0)).toBe(6);
+    expect(escalateTerminationDecisionSites).toBe(0);
   });
 
   it("family source cannot revive S1b count courts or rewrite ladders", () => {
     const source = ["verifyCmr.ts", "realFamilyBackend.ts"]
-      .map((file) => stripComments(readFileSync(new URL(`../src/family/${file}`, import.meta.url), "utf8")))
+      .map((file) => readFileSync(new URL(`../src/family/${file}`, import.meta.url), "utf8"))
       .join("\n");
     for (const symbol of [
       "enforceFindingsSentinelWritePoint", "OUTCOME_REWRITE",
       "FINDINGS_SUPPLEMENT", "rewriteOutcomeProtocolFailure", "runCmrOutcomeRewrite",
+      "captureOutcomeRewriteGitEvidence", "outcomeRewriteGitFailure",
+      "cmrLegAccountingPayload", "cmrPriorOutput",
     ]) expect(source).not.toContain(symbol);
+  });
+
+  it("documents the reviewer declaration as the authoritative count channel", () => {
+    const source = readFileSync(
+      new URL("../src/family/verifyCmr.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain("reviewer declaration is authoritative");
+    expect(source).toContain("Missing sentinel falls back to");
+    expect(source).toContain("structured row count as the declaration");
+    expect(source).toContain("Declaration accuracy belongs");
+    expect(source).toContain("to coder-fix");
+    expect(source).not.toContain("open-count is DERIVED (array length)");
   });
 });

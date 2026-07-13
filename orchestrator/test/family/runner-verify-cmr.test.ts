@@ -1267,7 +1267,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       },
     };
 
-    it("persists only blockingFindingIdentityKeys + cmrDispositions, never the fat classification", async () => {
+    it("persists only finding identity keys, never content-derived dispositions or the fat classification", async () => {
       const backend = new ScriptedCmrBackend(blockingCmrOutput);
       const result = await runVerifyCmr({
         phase: "final",
@@ -1283,9 +1283,9 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       expect(reviewed).toBeDefined();
       // The runner's only pending-key source is present…
       expect(reviewed!.blockingFindingIdentityKeys).toEqual([blockerKey]);
-      // …the gate's prior-disposition source is present…
-      expect(reviewed!.cmrDispositions).toBeDefined();
-      // …and the fat structure the runner used to read from is GONE.
+      // Content-derived disposition judgment belongs to the worker, not the runner.
+      expect(reviewed).not.toHaveProperty("cmrDispositions");
+      // The fat structure the runner used to read from is GONE.
       expect(reviewed).not.toHaveProperty("cmrFindingClassification");
     });
 

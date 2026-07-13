@@ -164,7 +164,9 @@ function cmrWorkerParserEvidence(result: WorkerResult): { cmrWorkerParserValid: 
   if (result.kind !== "completed" || result.output.kind !== "cmr") {
     throw new Error("dogfood CMR parser evidence requires a completed CMR output");
   }
-  const { kind: _kind, ...payload } = result.output;
+  // The parser sees the worker payload; findingsCount is attached later from the
+  // stdout sentinel channel (or its structured-row fallback).
+  const { kind: _kind, findingsCount: _findingsCount, ...payload } = result.output;
   const parsed = parseCmrOutcome(`<cmr>${JSON.stringify(payload)}</cmr>`);
   if (parsed.kind === "malformed") {
     throw new Error(`dogfood scripted CMR output is parser-invalid: ${parsed.reason}`);
@@ -179,6 +181,8 @@ async function familyClassificationScenario(input: {
   readonly familyIssue: number;
   readonly finding: Finding;
   readonly moduleContext: FamilyModuleContext;
+  /** Explicit reviewer declaration; absent means structured-row fallback. */
+  readonly findingsCount?: number;
   /**
    * #604 slice 2 / ADR 0062: a blocking finding is counted and routed through
    * coder-fix (no longer terminated on its classification). This replay fixture
@@ -209,6 +213,9 @@ async function familyClassificationScenario(input: {
       priorFindingDispositions: [],
       ...CMR_EVIDENCE,
       findings: [input.finding],
+      ...(input.findingsCount !== undefined
+        ? { findingsCount: input.findingsCount }
+        : {}),
     },
   };
   // #604 slice 2 / ADR 0062: a BLOCKING family finding no longer terminates the
@@ -1138,6 +1145,7 @@ module_scope:
     output: {
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -2099,6 +2107,7 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
     output: {
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -2130,9 +2139,11 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
   const pass = backend.ledger.find(
     (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
   );
-  const accepted = pass?.stopSummary?.metadata?.acceptedSuppressions?.[0];
-  if (!result.ok || pass?.stopSummary?.reason !== "success" || accepted === undefined) {
-    throw new Error("dogfood accepted-suppression replay lost success metadata");
+  if (!result.ok || pass?.stopSummary?.reason !== "success") {
+    throw new Error("dogfood zero-declaration replay did not converge");
+  }
+  if (pass.stopSummary.metadata?.acceptedSuppressions !== undefined) {
+    throw new Error("dogfood zero-declaration replay let the runner classify finding content");
   }
   if (backend.dispatches.filter((dispatch) => dispatch.startsWith("ship:")).length !== 1) {
     throw new Error("dogfood accepted-suppression replay did not ship after pass");
@@ -2141,10 +2152,10 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
     stopSummary: pass.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr_pass_summary",
-      mechanism: "accepted_suppressed_success_metadata",
+      mechanism: "zero_declaration_without_content_classification",
       status: "success",
       dispatches: backend.dispatches,
-      acceptedSuppression: accepted,
+      runnerClassifiedFindingContent: false,
     },
   };
 }
@@ -2882,6 +2893,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
       familyIssue: 287,
       finding: hubLossFinding,
       moduleContext: hubLossModuleContext,
+      findingsCount: 0,
     }),
     replayScenario({
       id: "376-route-accounting-non-default",
@@ -2965,7 +2977,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "376-accepted-suppression-with-source",
       issue: 376,
-      title: "accepted suppression with explicit source enters success metadata",
+      title: "explicit zero declaration converges without runner content classification",
       classification: "accepted_suppressed",
       stopSummary: acceptedSuppressionSource.stopSummary,
       source: "family",

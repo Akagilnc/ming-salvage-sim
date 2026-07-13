@@ -50,14 +50,6 @@ describe("#451 dogfood replay fixture", () => {
           issue: 287,
           classification: "accepted_suppressed",
           stopReason: "success",
-          metadata: expect.objectContaining({
-            acceptedSuppressions: [
-              expect.objectContaining({
-                source: "#303",
-                scope: expect.stringContaining("#287 hub-loss / central C_ accounts"),
-              }),
-            ],
-          }),
         }),
         expect.objectContaining({
           id: "376-provider-degraded-nonblocking",
@@ -524,19 +516,11 @@ describe("#451 dogfood replay fixture", () => {
       stopReason: "success",
       sourceStopSummary: expect.objectContaining({
         reason: "success",
-        metadata: expect.objectContaining({
-          acceptedSuppressions: [
-            expect.objectContaining({
-              source: "#376 owner answer",
-              scope: expect.stringContaining("orchestrator route accounting"),
-              boundedReopen: expect.stringContaining("scope mismatch"),
-            }),
-          ],
-        }),
       }),
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr_pass_summary",
-        mechanism: "accepted_suppressed_success_metadata",
+        mechanism: "zero_declaration_without_content_classification",
+        runnerClassifiedFindingContent: false,
       }),
     });
     expect(rowsById.get("376-provider-degraded-blocking")).toMatchObject({
