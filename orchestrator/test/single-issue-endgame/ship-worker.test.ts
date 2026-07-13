@@ -41,15 +41,15 @@ import {
   SHIP_FOCUS_FILENAME,
   soulsMount,
   SPAWNED_WORKER_ENV,
-} from "../src/realBackend.js";
-import type { ShipAuth } from "../src/realBackend.js";
-import { shipWorkerSpec } from "../src/dispatchWorker.js";
-import type { ShipWorkerOutcome } from "../src/shipOutcome.js";
-import type { DispatchContext, WorkerSpec, WorktreeHandle } from "../src/types.js";
+} from "../../src/realBackend.js";
+import type { ShipAuth } from "../../src/realBackend.js";
+import { shipWorkerSpec } from "../../src/dispatchWorker.js";
+import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
+import type { DispatchContext, WorkerSpec, WorktreeHandle } from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const realPromptsDir = join(here, "..", "prompts");
-const realSoulsDir = join(here, "..", "image", "souls");
+const realPromptsDir = join(here, "..", "..", "prompts");
+const realSoulsDir = join(here, "..", "..", "image", "souls");
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -605,7 +605,7 @@ describe("#336 single-slice runShipWorker — outcome sidecar cleanup", () => {
 describe("#439 single-slice ship worker resume answer focus", () => {
   it(".ship-focus.md is repo-ignored even if a per-worktree exclude update fails", () => {
     const here = dirname(fileURLToPath(import.meta.url));
-    const ignore = readFileSync(join(here, "..", "..", ".gitignore"), "utf8");
+    const ignore = readFileSync(join(here, "..", "..", "..", ".gitignore"), "utf8");
     expect(ignore.split(/\r?\n/)).toContain(SHIP_FOCUS_FILENAME);
   });
 

@@ -20,7 +20,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { runOrchestrator } from "../src/runner.js";
+import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
@@ -29,7 +29,7 @@ import type {
   StepOutput,
   StepSpec,
   WorktreeHandle,
-} from "../src/types.js";
+} from "../../src/types.js";
 
 // ─── shared worktree fixture ──────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ const WORKTREE: WorktreeHandle = {
 
 class LedgerBackend implements Backend {
   async smokeModelRoute(route: any) {
-    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
   readonly calls: string[] = [];
@@ -294,7 +294,7 @@ describe("persisted step ledger (#249)", () => {
     let writeAttempts = 0;
     const failFirstWriteBackend: Backend = {
       async smokeModelRoute(route: any) {
-        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
         return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
       },
       async findResumeState() { return undefined; },
@@ -363,7 +363,7 @@ describe("persisted step ledger (#249)", () => {
     const capturedStateDirs: string[] = [];
     const trailingSlashBackend: Backend = {
       async smokeModelRoute(route: any) {
-        const { smokeRouteModels } = await import("../src/modelRoutes.js");
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
         return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
       },
       async findResumeState() { return undefined; },

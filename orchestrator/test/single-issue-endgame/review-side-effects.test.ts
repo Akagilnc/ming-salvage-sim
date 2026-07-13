@@ -114,9 +114,9 @@ import type {
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
-} from "../src/types.js";
-import { runOrchestrator } from "../src/runner.js";
-import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
+} from "../../src/types.js";
+import { runOrchestrator } from "../../src/runner.js";
+import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 
 describe("#600 r18 single-slice verify side-effect in-band", () => {
   const livePr = "https://github.com/o/r/pull/42";
@@ -128,7 +128,7 @@ describe("#600 r18 single-slice verify side-effect in-band", () => {
 
   class SideEffectFailBackend implements Backend {
   async smokeModelRoute(route: any) {
-    const { smokeRouteModels } = await import("../src/modelRoutes.js");
+    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
     private verifyCalls = 0;
