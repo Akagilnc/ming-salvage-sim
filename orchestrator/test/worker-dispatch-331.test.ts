@@ -192,7 +192,7 @@ class DispatchBackend implements Backend {
 }
 
 describe("#331 unified worker-dispatch seam — happy path", () => {
-  it("continues from a coder/git discrepancy through the production dispatch seam to a fresh reviewer", async () => {
+  it("continues from a completed empty coder report to a fresh reviewer", async () => {
     class AdvisoryDiscrepancyBackend extends DispatchBackend {
       override async dispatchWorker(
         spec: WorkerSpec,
@@ -210,12 +210,6 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
               kind: "coder",
               committed: false,
               commitsAdded: 0,
-              selfReportDiscrepancy: {
-                code: "coder_self_report_disagrees_with_git_commits",
-                selfReportedCommitted: true,
-                selfReportedCommitsAdded: 1,
-                gitCommitCount: 0,
-              },
             },
           };
         }
@@ -315,7 +309,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     }
   });
 
-  it("derives a committed coder envelope from git and continues to S3 when the receipt is malformed", async () => {
+  it("continues to S3 without a git verdict when the coder receipt is malformed", async () => {
     const root = mkdtempSync(join(tmpdir(), "orch-786-malformed-coder-"));
     const telemetryDir = join(root, ".ledger-786");
     execFileSync("git", ["init", "--initial-branch=main", root]);
@@ -369,7 +363,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       expect(backend.specs.filter((spec) => spec.id === "S2")).toHaveLength(1);
       expect(backend.specs.filter((spec) => spec.id === "S3")).toHaveLength(1);
       expect(result.stepLedger.find((entry) => entry.step === "S2")?.output)
-        .toMatchObject({ kind: "coder", committed: true });
+        .toMatchObject({ kind: "coder", committed: false });
       let commits: TelemetryCommitRecord[] = [];
       await vi.waitFor(() => {
         commits = readTelemetryRecords(telemetryDir).filter(

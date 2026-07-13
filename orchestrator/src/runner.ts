@@ -20,7 +20,6 @@
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
  * Slice #251: global escalate stop edge (in route()).
  * Slice #252: error edges —
- *   - S2 committed:false → S8(error)  [route() detects]
  *   - S7 ship throws/escalates → S8(error)/S8(escalate)  [runner catch]
  *   - any backend call throws → S8(error) + error package  [runner catch]
  *   - the S2 worker carries escalate → S8(escalate) [route() detects]
@@ -471,13 +470,6 @@ interface ResumePlan {
   readonly continueFixingRepair?: ContinueFixingRepair;
   readonly lastOutput?: StepOutput;
   readonly priorLedger: ReadonlyArray<LedgerEntry>;
-}
-
-interface LandedCoderProtocolFailure {
-  readonly index: number;
-  readonly step: "S2" | "S5";
-  readonly previousHead: string;
-  readonly branchHead: string;
 }
 
 function isValidStepId(value: unknown): value is StepId {
@@ -1490,145 +1482,8 @@ function isLikelyGitSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{7,64}$/.test(value);
 }
 
-const CODER_STDOUT_MISSING_TAG_RE =
-  /\bcoder step stdout carried no <coder>[\s\S]*tag\b/i;
 const WORKER_STDOUT_MISSING_TAG_RE =
   /\b(?:coder step stdout carried no <coder>|reviewer step stdout carried no <review>)[\s\S]*tag\b/i;
-function isRecoverableCoderProtocolFailure(
-  entry: PersistentLedgerEntry,
-): boolean {
-  if (
-    entry.step !== "S8" ||
-    entry.handoffStatus !== "error" ||
-    entry.stopSummary == null
-  ) {
-    return false;
-  }
-
-  return CODER_STDOUT_MISSING_TAG_RE.test(entry.stopSummary.summary);
-}
-
-function protocolFailedLandedCoderStep(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
-): LandedCoderProtocolFailure | undefined {
-  if (ledger.length < 2) return undefined;
-  const last = ledger[ledger.length - 1]!;
-  if (!isRecoverableCoderProtocolFailure(last)) return undefined;
-
-  let i = ledger.length - 2;
-  while (i >= 0 && ledger[i]!.step === "S8") {
-    i--;
-  }
-  if (i < 0) return undefined;
-
-  const entry = ledger[i]!;
-  if (
-    (entry.step !== "S2" && entry.step !== "S5") ||
-    entry.output != null ||
-    !isLikelyGitSha(entry.branchHEAD)
-  ) {
-    return undefined;
-  }
-
-  let previousHead: string | undefined;
-  for (let j = i - 1; j >= 0; j--) {
-    if (ledger[j]!.step === "S8") continue;
-    const head = ledger[j]!.branchHEAD;
-    if (isLikelyGitSha(head)) {
-      previousHead = head;
-      break;
-    }
-  }
-  if (previousHead === undefined || previousHead === entry.branchHEAD) {
-    return undefined;
-  }
-  return {
-    index: i,
-    step: entry.step,
-    previousHead,
-    branchHead: entry.branchHEAD,
-  };
-}
-
-function ledgerThroughRecoveredCoderOutput(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
-  landedProtocolFailure: {
-    readonly index: number;
-    readonly output: StepOutput;
-  },
-): ReadonlyArray<LedgerEntry> {
-  return ledger
-    .slice(0, landedProtocolFailure.index + 1)
-    .map((entry, index) =>
-      index === landedProtocolFailure.index
-        ? { ...entry, output: landedProtocolFailure.output }
-        : entry,
-    ) as ReadonlyArray<LedgerEntry>;
-}
-
-async function planRecoveredLandedCoderProtocolFailure(
-  ledger: ReadonlyArray<PersistentLedgerEntry>,
-  worktree: WorktreeHandle,
-  backend: Backend,
-): Promise<ResumePlan | undefined> {
-  const executableLedger = executableLedgerEntries(ledger);
-  const landedProtocolFailure =
-    protocolFailedLandedCoderStep(executableLedger);
-  if (
-    landedProtocolFailure === undefined ||
-    backend.countCommitsBetween === undefined
-  ) {
-    return undefined;
-  }
-
-  let commitsAdded: number;
-  try {
-    commitsAdded = await backend.countCommitsBetween(
-      worktree,
-      landedProtocolFailure.previousHead,
-      landedProtocolFailure.branchHead,
-    );
-  } catch {
-    return undefined;
-  }
-
-  if (!Number.isInteger(commitsAdded) || commitsAdded <= 0) {
-    return undefined;
-  }
-
-  const output: StepOutput = {
-    kind: "coder",
-    committed: true,
-    commitsAdded,
-  };
-  const pendingBlockingFindings =
-    landedProtocolFailure.step === "S5"
-      ? adjudicatedBlockingFindingsForPersistedS4(executableLedger)
-      : undefined;
-  const decision = route({
-    from: landedProtocolFailure.step,
-    output,
-    ...(pendingBlockingFindings !== undefined
-      ? { pendingBlockingFindings }
-      : {}),
-  });
-  if (decision.kind === "handoff") {
-    return undefined;
-  }
-
-  return {
-    resumeStep: decision.step,
-    lastOutput: output,
-    priorLedger: ledgerThroughRecoveredCoderOutput(
-      executableLedger,
-      {
-        index: landedProtocolFailure.index,
-        output,
-      },
-    ),
-  };
-}
-
 function lastReviewerStep(
   ledger: ReadonlyArray<LedgerEntry>,
 ): StepId | undefined {
@@ -2356,14 +2211,8 @@ export const WORKER_PROMPT_FILES: Readonly<Record<WorkerStepId, string>> = {
   S6: "reviewer_review.md",
 };
 
-/**
- * Synthesise a human-readable reason string for route()-detected error edges
- * (e.g. 0-commit). Backend-throw errors use the caught message directly.
- */
-function buildErrorReason(step: StepId, output: StepOutput | undefined): string {
-  if ((step === "S2" || step === "S5") && output?.kind === "coder" && !output.committed) {
-    return `${step} coder worker produced no commits (committed:false)`;
-  }
+/** Synthesise a human-readable reason for a route-owned error edge. */
+function buildErrorReason(step: StepId, _output: StepOutput | undefined): string {
   return `step ${step} routed to error handoff`;
 }
 
@@ -2374,10 +2223,6 @@ function describeOutput(output: StepOutput | undefined): string {
   if (typeof output !== "object") return String(output);
   const kind = (output as { kind?: unknown }).kind;
   return `object with kind=${JSON.stringify(kind)}`;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function acceptedSuppressionsFromDispositions(
@@ -2838,10 +2683,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (
       activeRelayStep !== completedStep ||
       completed === undefined ||
-      escalateOf(completed) !== undefined ||
-      (completed.kind === "coder" &&
-        !completed.committed &&
-        completed.selfReportDiscrepancy === undefined)
+      escalateOf(completed) !== undefined
     ) return;
     currentBillingPool = undefined;
     activeRelayFocusPath = undefined;
@@ -2871,7 +2713,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
-  let coderNoCommitBudgetExhausted = false;
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
   let lastCoderRepairEvidence: RepairEvidence | undefined;
@@ -3770,12 +3611,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       resumeTail?.step === "S8" && resumeTail.handoffStatus === undefined
         ? lastNonTerminalStep(executableResumeLedger)
         : resumeTail?.step;
-    const plan =
-      (await planRecoveredLandedCoderProtocolFailure(
-        resumeLedger,
-        worktree,
-        backend,
-      )) ?? planResume(resumeLedger, undefined, family?.noPush === true);
+    const plan = planResume(resumeLedger, undefined, family?.noPush === true);
     resumeHistoryLedger = resumeLedger;
 
     // #684 R2: production call site for monitorHandleFromLedger — rebuild any
@@ -4286,7 +4122,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // ADR 0030 productive steps:
         //   S2 coder implement, S3 fresh read-only review, S5 coder fix,
         //   S6 fresh read-only full-diff re-review.
-        // Normal fix rounds are fresh runStep dispatches (git-truthing kept),
+        // Normal fix rounds are fresh runStep dispatches,
         // never resumeSession. resumeSession is only the crash/escalate resume
         // path when `resumeFor` carries a recorded session id.
         if (!dispatchStageLogged) {
@@ -4346,10 +4182,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             resumedEscalationAnswer = undefined;
           }
 
-          let attempts = 0;
           for (;;) {
-            attempts += 1;
-            if (step === "S2") coderNoCommitBudgetExhausted = false;
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
             >["result"];
@@ -4421,13 +4254,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     }
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
-              // crash (failed/malformed/outcome_protocol_failure/throw) with a fresh
+              // crash (`failed` / non-structured throw) with a fresh
               // worker. This loop dispatches the agent worker steps S2/S3/S5/S6 (the
               // SHIP S7 is a separate dispatch below, with its own retry predicate).
               //
-              //  - CODER (S2/S5): no semantic-retry loop → inherits the generic retry
-              //    for EVERY process failure (the #592 asymmetry: a `failed` coder =
-              //    produced no commit = a process failure to re-attempt).
+              //  - CODER (S2/S5): only process failure enters this retry. Completed
+              //    receipt content never changes routing.
               //  - REVIEWER (S3/S6): keeps its OWN bounded semantic loop below
               //    (MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS), which owns invalid/malformed
               //    RESULTS and structured-output THROWS — the generic layer defers those
@@ -4489,24 +4321,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     if (expectedKind !== "coder" || !isStructuredOutputError(err)) {
                       throw err;
                     }
-                    const hasCommit = coderHeadBeforeStep !== undefined &&
-                      gitOutputLines(worktree, [
-                        "rev-list", "--max-count=1", `${coderHeadBeforeStep}..HEAD`,
-                      ]).length > 0;
-                    if (hasCommit) {
-                      return {
-                        kind: "completed" as const,
-                        output: {
-                          kind: "coder" as const,
-                          committed: true,
-                          commitsAdded: 1,
-                        },
-                      };
-                    }
-                    coderNoCommitBudgetExhausted = true;
                     return {
-                      kind: "failed" as const,
-                      reason: errorMessage(err),
+                      kind: "completed" as const,
+                      output: {
+                        kind: "coder" as const,
+                        committed: false,
+                        commitsAdded: 0,
+                      },
                     };
                   }
                   if (outcome.monitorHandle !== undefined) {
@@ -4524,27 +4345,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       (dispatched.kind === "malformed" ||
                         dispatched.kind === "outcome_protocol_failure")
                     ) {
-                      const hasCommit = coderHeadBeforeStep !== undefined &&
-                        gitOutputLines(worktree, [
-                          "rev-list", "--max-count=1", `${coderHeadBeforeStep}..HEAD`,
-                        ]).length > 0;
-                      if (hasCommit) {
-                        return {
-                          kind: "completed" as const,
-                          output: {
-                            kind: "coder" as const,
-                            committed: true,
-                            commitsAdded: 1,
-                          },
-                          ...(dispatched.sessionId !== undefined
-                            ? { sessionId: dispatched.sessionId }
-                            : {}),
-                        };
-                      }
-                      coderNoCommitBudgetExhausted = true;
                       return {
-                        kind: "failed" as const,
-                        reason: dispatched.reason,
+                        kind: "completed" as const,
+                        output: {
+                          kind: "coder" as const,
+                          committed: false,
+                          commitsAdded: 0,
+                        },
                         ...(dispatched.sessionId !== undefined
                           ? { sessionId: dispatched.sessionId }
                           : {}),
@@ -4557,52 +4364,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     return dispatched;
                   }
 
-                  if (
-                    expectedKind === "coder" &&
-                    dispatched.output?.kind !== "coder"
-                  ) {
-                    const hasCommit = coderHeadBeforeStep !== undefined &&
-                      gitOutputLines(worktree, [
-                        "rev-list", "--max-count=1", `${coderHeadBeforeStep}..HEAD`,
-                      ]).length > 0;
-                    if (hasCommit) {
-                      return {
-                        kind: "completed" as const,
-                        output: {
-                          kind: "coder" as const,
-                          committed: true,
-                          commitsAdded: 1,
-                        },
-                        ...(dispatched.sessionId !== undefined
-                          ? { sessionId: dispatched.sessionId }
-                          : {}),
-                      };
-                    }
-                    coderNoCommitBudgetExhausted = true;
-                    return {
-                      kind: "failed" as const,
-                      reason: `${step}: coder receipt unusable and git has no new commit`,
-                      ...(dispatched.sessionId !== undefined
-                        ? { sessionId: dispatched.sessionId }
-                        : {}),
-                    };
-                  }
-
-                  if (
-                    expectedKind === "coder" &&
-                    dispatched.output.kind === "coder" &&
-                    !dispatched.output.committed &&
-                    dispatched.output.selfReportDiscrepancy === undefined
-                  ) {
-                    coderNoCommitBudgetExhausted = true;
-                    return {
-                      kind: "failed" as const,
-                      reason: `${step}: coder worker produced no commits (committed:false)`,
-                      ...(dispatched.sessionId !== undefined
-                        ? { sessionId: dispatched.sessionId }
-                        : {}),
-                    };
-                  }
                   return dispatched;
                 },
                 durableRetryOpts,
@@ -4752,11 +4513,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               const exhaustionReason =
                 reason ?? `worker ${step} returned ${result.kind} after bounded redispatch`;
-              if (step === "S2" && coderNoCommitBudgetExhausted) {
-                output = { kind: "coder", committed: false, commitsAdded: 0 };
-                stepSessionId = result.sessionId;
-                break;
-              }
               return await escalateTermination(
                 step,
                 {
@@ -6670,12 +6426,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // durably completed, normal downstream roles must reselect their own route.
     clearCompletedRelayState(step, output);
 
-    if (step === "S2" && coderNoCommitBudgetExhausted) {
-      coderNoCommitBudgetExhausted = false;
-      step = "S3";
-      continue;
-    }
-
     // The runner — not the agent — decides the next step.
     // The runner owns the review/fix loop, but termination is still not a blind
     // "count rounds then give up" rule. Only malformed reviewer outputs have a
@@ -6751,8 +6501,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         );
       } catch (err) {
         // integ-cmr base r2 (E): the failing operation here is the S8 handoff
-        // ledger write — which happens for ANY handoff (S2 no-commit error,
-        // route error, escalate, push success). The old code hard-coded
+        // ledger write — which happens for ANY handoff (route error, escalate,
+        // push success). The old code hard-coded
         // failedStep:"S7", misattributing it to push even on paths where push
         // never ran. Attribute to the REAL failing step (the S8 write) and name
         // the operation in the reason so the dev sees what actually failed.

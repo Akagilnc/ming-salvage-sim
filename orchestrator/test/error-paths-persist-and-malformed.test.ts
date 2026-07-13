@@ -217,7 +217,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("#5 malformed S2 build output → S8(error), never silent bypass", () => {
-  it("S2 wrong-kind output with no git commit exhausts the mechanical line", async () => {
+  it("S2 completed wrong-kind cargo advances to the reviewer without git adjudication", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -232,7 +232,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(3);
+    expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(1);
     expect(result.stepLedger.some((entry) => entry.step === "S3")).toBe(true);
     expect(pushed).toBe(true);
   });
@@ -259,48 +259,6 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     expect(backend.runStepIds).toContain("S5");
     expect(backend.runStepIds).toContain("S6");
     expect(pushed).toBe(true);
-  });
-
-  it("S2 undefined output with no git commit mechanically redispatches", async () => {
-    const backend = new SpyBackend();
-    let pushed = false;
-    backend.push = async () => {
-      pushed = true;
-    };
-    let coderAttempts = 0;
-    backend.runStep = async (spec) => {
-      backend.runStepIds.push(spec.id);
-      if (spec.role === "coder" && ++coderAttempts === 1) {
-        return undefined as unknown as StepOutput;
-      }
-      return spec.role === "coder"
-        ? { kind: "coder", committed: true, commitsAdded: 1 }
-        : { kind: "reviewer", findings: [] };
-    };
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(result.status).toBe("success");
-    expect(coderAttempts).toBe(2);
-    expect(pushed).toBe(true);
-  });
-
-  it("S2 permanently returns garbage → bounded failure escalation, NOT pushed", async () => {
-    const backend = new SpyBackend();
-    let pushed = false;
-    backend.push = async () => {
-      pushed = true;
-    };
-    backend.runStep = async (spec) => {
-      backend.runStepIds.push(spec.id);
-      return { foo: "bar" } as unknown as StepOutput;
-    };
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    // Coder envelope still process-guarded; terminal may be error or escalate stop.
-    expect(result.status === "error" || result.status === "escalate").toBe(true);
-    expect(pushed).toBe(false);
   });
 
   it("S2 garbage commitsAdded remains advisory; later invalid worker output still stops before push", async () => {

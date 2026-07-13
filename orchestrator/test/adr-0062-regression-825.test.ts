@@ -187,7 +187,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     }
     if (target === "S2") {
       expect(result.status).toBe("success");
-      expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(2);
+      expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(1);
       expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
       return;
     }
@@ -195,7 +195,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     expect(backend.dispatches.filter((row) => row.startsWith(`${target}:`))).toHaveLength(1);
   });
 
-  it("Group A coder wrong self-count: git-backed discrepancy is telemetry, not a run-abort", async () => {
+  it("Group A coder completed report advances without git adjudication", async () => {
     const backend = new ScriptedRunnerBackend((spec) => {
       if (spec.id === "S2") {
         return {
@@ -204,12 +204,6 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
             kind: "coder",
             committed: false,
             commitsAdded: 0,
-            selfReportDiscrepancy: {
-              code: "coder_self_report_disagrees_with_git_commits",
-              selfReportedCommitted: false,
-              selfReportedCommitsAdded: 0,
-              gitCommitCount: 1,
-            },
           },
         };
       }
@@ -218,8 +212,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     const result = await runOrchestrator({ issueNumber: 825, backend });
     expect(result.status).toBe("success");
     expect(result.stepLedger.find((row) => row.step === "S2")?.output).toMatchObject({
-      kind: "coder",
-      selfReportDiscrepancy: expect.objectContaining({ gitCommitCount: 1 }),
+      kind: "coder", committed: false, commitsAdded: 0,
     });
   });
 
@@ -234,7 +227,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     expect(result.stepLedger.find((row) => row.step === "S2")?.output).toMatchObject({ committed: true });
   });
 
-  it("coder StructuredOutputError with no git commit uses the mechanical line and emits no decision park", async () => {
+  it("coder StructuredOutputError cargo advances without git adjudication or decision park", async () => {
     const backend = new ScriptedRunnerBackend((spec, attempt) => {
       if (spec.id === "S2" && attempt === 1) {
         const err = new Error("coder outcome JSON was truncated");
@@ -247,11 +240,11 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     const result = await runOrchestrator({ issueNumber: 825, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(2);
+    expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(1);
     expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
   });
 
-  it("coder no-commit budget exhaustion advances to S3 without synthesized infra failure", async () => {
+  it("coder completed no-commit report advances once to S3", async () => {
     const backend = new ScriptedRunnerBackend((spec) =>
       spec.id === "S2"
         ? { kind: "completed", output: { kind: "coder", committed: false, commitsAdded: 0 } }
@@ -260,7 +253,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     const result = await runOrchestrator({ issueNumber: 825, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(3);
+    expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(1);
     expect(backend.dispatches.filter((row) => row.startsWith("S3:"))).toHaveLength(1);
     expect(JSON.stringify(result.stepLedger)).not.toContain('"synthesizedFailure"');
     expect(JSON.stringify(backend.ledger)).not.toContain('"escalationKind":"decision"');

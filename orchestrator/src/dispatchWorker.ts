@@ -147,7 +147,7 @@ function workerKindForRole(role: StepSpec["role"]): WorkerKind {
  * (reviewer/cmr) start each round CLEAN (clean eyes, cross-model independence).
  * This is DECOUPLED from the dispatch {@link WorkerSessionMode} — a normal coder
  * round is `session:"fresh"` yet `contextRetention:"retain"` (ADR 0026 invariant:
- * normal fix keeps git-truthing + maxIter, NOT the crash/escalate resume path).
+ * normal fix keeps maxIter, NOT the crash/escalate resume path).
  */
 function retentionForKind(kind: WorkerKind): WorkerContextRetention {
   // Production workers (coder + post-review fixer) retain context across rounds;

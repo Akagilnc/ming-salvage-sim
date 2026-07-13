@@ -80,18 +80,8 @@ export function route(ctx: RouteContext): RouteDecision {
       return { kind: "next", step: "S2" };
 
     case "S2": {
-      // S2 implementation done → independent fresh reviewer.
-      // #5: a malformed coder output (wrong kind / undefined / garbage) is a
-      // contract violation → S8(error). NEVER fall through to S7 on a malformed
-      // output (the runner also guards this, but route() must be safe at the
-      // seam regardless of caller).
-      if (ctx.output?.kind !== "coder") {
-        return { kind: "next", step: "S2" };
-      }
-      // #252 error edge: 0 commits → S8(error: build produced nothing).
-      if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
-        return { kind: "next", step: "S2" };
-      }
+      // A completed implementation worker always hands the scene to the fresh
+      // reviewer. Empty or incorrect work is the reviewer's judgment.
       return { kind: "next", step: "S3" };
     }
 
@@ -113,12 +103,7 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S5": {
-      if (ctx.output?.kind !== "coder") {
-        return { kind: "next", step: "S5" };
-      }
-      if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
-        return { kind: "next", step: "S5" };
-      }
+      // Fix and fresh re-review alternate by topology, never by git movement.
       return { kind: "next", step: "S6" };
     }
 

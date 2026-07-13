@@ -1487,9 +1487,8 @@ class KnownCoderGitMismatchThenGoodBackend extends ReviewFixRereviewBackend {
       priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
       blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
     });
-    // #878: first fix leaves head unmoved (empty-handed + self-report
-    // discrepancy) → short-circuit redispatch; second fix advances head so
-    // re-review can run. Never hang on permanent head-stuck scripted backends.
+    // The first completed fix is handed directly to fresh re-review even when
+    // the worker reports no commit.
     if (this.coderFixRound++ === 0) {
       return {
         kind: "completed",
@@ -1497,12 +1496,6 @@ class KnownCoderGitMismatchThenGoodBackend extends ReviewFixRereviewBackend {
           kind: "coder",
           committed: false,
           commitsAdded: 0,
-          selfReportDiscrepancy: {
-            code: "coder_self_report_disagrees_with_git_commits",
-            selfReportedCommitted: true,
-            selfReportedCommitsAdded: 1,
-            gitCommitCount: 0,
-          },
         },
       };
     }
@@ -2204,7 +2197,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     ).toBe(2);
   });
 
-  it("records an unknown family baseline as telemetry and lets fresh CMR judge the attempted fix", async () => {
+  it("lets fresh CMR judge the attempted fix when family HEAD is unavailable", async () => {
     const backend = new UnknownFamilyBaselineThenGoodBackend();
 
     const result = await runVerifyCmr({
@@ -2220,11 +2213,11 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     )).toBe(false);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_fix_committed",
-      reason: expect.stringMatching(/telemetry family\/git observation advisory/),
+      reason: expect.stringMatching(/coder-fix completed; fresh reviewer will judge findings/),
     }));
   });
 
-  it("records a known coder/git mismatch as telemetry and sends it to fresh re-review", async () => {
+  it("sends a completed no-commit coder report to fresh re-review", async () => {
     const backend = new KnownCoderGitMismatchThenGoodBackend();
 
     const result = await runVerifyCmr({
@@ -2241,9 +2234,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     )).toBe(false);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_fix_committed",
-      reason: expect.stringMatching(
-        /telemetry family\/git baseline unknown|warning coder_self_report|left family head unmoved/,
-      ),
+      reason: expect.stringMatching(/coder-fix completed; fresh reviewer will judge findings/),
     }));
   });
 
@@ -2471,7 +2462,7 @@ it("#876 keeps the CMR loop alive when the reviewer moves family HEAD before fin
     });
 
     // HEAD movement is advisory; the malformed envelope still routes through the
-    // ordinary outcome-protocol / three-channel path (not a git-truth death).
+    // ordinary outcome-protocol / three-channel path.
     expect(result.ran).toBe(true);
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "worker_dispatched",

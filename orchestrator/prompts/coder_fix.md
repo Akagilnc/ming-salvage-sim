@@ -42,6 +42,10 @@ same escalation unless the answer leaves a concrete blocker unresolved.
 
 Do not use `.orchestrator-snapshot.json` as execution input.
 
+Before reporting completion, verify that your deliverable is committed and a
+real commit exists in the worktree history. If there is no deliverable, exit
+truthfully as failed or explain it through your decision gate.
+
 If `.relay-focus.md` is present at the worktree root, read that baton handoff
 brief from a prior resource-relay (#686) before continuing. Continue from that
 scene — do not reset or discard uncommitted prior-baton work.
@@ -64,8 +68,8 @@ Success:
 ```
 
 For a fix round, include `repairEvidence` whenever you committed a fix for a
-runner-supplied finding. The runner uses it with the actual git movement to avoid
-misclassifying a still-active finding as no-progress after resume. Use the
+runner-supplied finding. The fresh reviewer uses it as context while judging the
+current full diff. Use the
 identity keys and locations from the fix-findings JSON when available:
 
 - `findingScope.identityKeys`: the fixed finding identity key(s).

@@ -753,7 +753,7 @@ async function runCmrCoderFix(input: {
           familyHeadBefore: currentFamilyHeadBefore,
           familyHeadAfter,
           blockingFindingIdentityKeys,
-          reason: `${reasonPrefix}: coder-fix receipt unreadable; fresh reviewer will judge git truth`,
+          reason: `${reasonPrefix}: coder-fix receipt unreadable; fresh reviewer will judge the diff`,
         });
         return { result: { ok: true, ran: true }, familyHeadAfter };
       }
@@ -802,32 +802,12 @@ async function runCmrCoderFix(input: {
       return { result: { ok: false, ran: true }, familyHeadAfter };
   }
 
-  const repairObservationAdvisory =
-    fixResult.output.selfReportDiscrepancy !== undefined ||
-    currentFamilyHeadBefore === undefined ||
-    familyHeadAfter === undefined;
-
   await recordCmrFixCommitted(familyBackend, {
     cmrPass: pass,
     familyHeadBefore: currentFamilyHeadBefore,
     familyHeadAfter,
     blockingFindingIdentityKeys,
-    reason:
-      repairObservationAdvisory
-        ? `${reasonPrefix}: coder-fix attempted; telemetry family/git observation advisory` +
-          (fixResult.output.selfReportDiscrepancy !== undefined
-            ? `; warning ${fixResult.output.selfReportDiscrepancy.code} ` +
-              `(reported ${fixResult.output.selfReportDiscrepancy.selfReportedCommitsAdded}, ` +
-              `git observed ${fixResult.output.selfReportDiscrepancy.gitCommitCount})`
-            : "")
-        : fixResult.output.committed && fixResult.output.commitsAdded >= 1
-        ? `${reasonPrefix}: coder-fix committed ${fixResult.output.commitsAdded} ` +
-          `commit${fixResult.output.commitsAdded === 1 ? "" : "s"}`
-        : currentFamilyHeadBefore !== undefined &&
-            familyHeadAfter !== undefined &&
-            currentFamilyHeadBefore === familyHeadAfter
-          ? `${reasonPrefix}: coder-fix left family head unmoved; fresh re-review will alternate before any further fix`
-          : `${reasonPrefix}: coder-fix reported no commit; fresh reviewer will judge findings`,
+    reason: `${reasonPrefix}: coder-fix completed; fresh reviewer will judge findings`,
   });
   return { result: { ok: true, ran: true }, familyHeadAfter };
 }

@@ -358,10 +358,7 @@ describe("D: writeLedger failure re-persists the failing step (best-effort)", ()
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("E: S8 ledger-write failure attributes the real failing step", () => {
-  it("S2 no-commit handoff whose S8 write throws → failedStep is NOT hard-coded S7", async () => {
-    // Route into an S8 error handoff from S2 (0-commit). Then make the S8 ledger
-    // write throw. The old code hard-coded failedStep:'S7' here, even though
-    // push never ran. It must attribute to the step that actually failed.
+  it("S2 completed no-commit report still reaches review before an S8 write failure", async () => {
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);

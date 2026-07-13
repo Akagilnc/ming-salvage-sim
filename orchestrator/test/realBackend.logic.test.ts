@@ -61,9 +61,6 @@ import {
   promptsDirError,
   soulsDirError,
   REQUIRED_SOUL_FILES,
-  reconcileCoderCommits,
-  reconcileResumeCoderCommits,
-  resumeCoderCommitBasis,
   resolveModelSlug,
   soulForStep,
   REFERENCED_PROMPT_FILES,
@@ -2010,11 +2007,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("routes a fresh coder with only unreachable observed commits to the 0-commit edge", async () => {
+  it("preserves the fresh coder self-report without inspecting observed commits", async () => {
     const backend = makeBackend();
-    // Sandcastle observed a now-unreachable commit. Final HEAD is still the
-    // pre-worker baseline, so graph truth must override both observations and
-    // the worker's self-report without turning the mismatch into a failure.
+    // Sandcastle's commit observations are irrelevant to the worker-authored
+    // completion report.
     backend.finalGraphCommitCount = 0;
     backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
@@ -2032,14 +2028,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     ).resolves.toEqual({
       output: {
         kind: "coder",
-        committed: false,
-        commitsAdded: 0,
-        selfReportDiscrepancy: {
-          code: "coder_self_report_disagrees_with_git_commits",
-          selfReportedCommitted: true,
-          selfReportedCommitsAdded: 1,
-          gitCommitCount: 0,
-        },
+        committed: true,
+        commitsAdded: 1,
       },
       sessionId: "sess-final-graph-truth",
     });
@@ -2573,274 +2563,5 @@ describe("realBackend extractCoderTag", () => {
 
   it("throws when the tag body is not valid JSON", () => {
     expect(() => extractCoderTag("<coder>not json</coder>")).toThrow();
-  });
-});
-
-// ─── reconcileCoderCommits (#256 commit-truth) ───────────────────────────────
-
-describe("realBackend reconcileCoderCommits", () => {
-  it("derives committed+commitsAdded from the real git commit count, not the self-report", () => {
-    // git truth: 2 real commits. The derived output reflects git, even though the
-    // function is also handed the (here matching) self-report.
-    const out = reconcileCoderCommits({ committed: true, commitsAdded: 2 }, 2);
-    expect(out).toEqual({ committed: true, commitsAdded: 2 });
-  });
-
-  it("derives committed:false / commitsAdded:0 when git shows zero commits", () => {
-    const out = reconcileCoderCommits({ committed: false, commitsAdded: 0 }, 0);
-    expect(out).toEqual({ committed: false, commitsAdded: 0 });
-  });
-
-  it("preserves a self-reported escalate (a model signal, not git-derivable)", () => {
-    const out = reconcileCoderCommits(
-      {
-        committed: false,
-        commitsAdded: 0,
-        escalate: { reason: "blocked", diagnosis: "design gap" },
-      },
-      0,
-    );
-    expect(out).toEqual({
-      committed: false,
-      commitsAdded: 0,
-      escalate: { reason: "blocked", diagnosis: "design gap" },
-    });
-  });
-
-  it("preserves repairEvidence while deriving commit truth from git", () => {
-    const repairEvidence: RepairEvidence = {
-      findingScope: {
-        identityKeys: ["correctness|src/x.ts:1|active bug"],
-      },
-      changedFiles: ["src/x.ts"],
-      tests: ["npm test -- src/x.test.ts"],
-    };
-
-    const out = reconcileCoderCommits(
-      { committed: true, commitsAdded: 1, repairEvidence },
-      1,
-    );
-
-    expect(out).toEqual({
-      committed: true,
-      commitsAdded: 1,
-      repairEvidence,
-    });
-  });
-
-  it("continues with git truth and ledger-visible telemetry when the coder reports commits git lacks", () => {
-    expect(reconcileCoderCommits({ committed: true, commitsAdded: 1 }, 0)).toEqual({
-      committed: false,
-      commitsAdded: 0,
-      selfReportDiscrepancy: {
-          code: "coder_self_report_disagrees_with_git_commits",
-        selfReportedCommitted: true,
-        selfReportedCommitsAdded: 1,
-        gitCommitCount: 0,
-      },
-    });
-  });
-
-  it("continues with git truth and telemetry when the coder over-reports a nonzero git count", () => {
-    expect(reconcileCoderCommits({ committed: true, commitsAdded: 3 }, 1)).toMatchObject({
-      committed: true,
-      commitsAdded: 1,
-      selfReportDiscrepancy: {
-        code: "coder_self_report_disagrees_with_git_commits",
-        selfReportedCommitted: true,
-        selfReportedCommitsAdded: 3,
-        gitCommitCount: 1,
-      },
-    });
-  });
-
-  it("continues with a discrepancy when git has more commits than the coder reported", () => {
-    const out = reconcileCoderCommits(
-      { committed: true, commitsAdded: 1 },
-      2,
-    );
-
-    expect(out).toMatchObject({
-      committed: true,
-      commitsAdded: 2,
-      selfReportDiscrepancy: {
-        code: "coder_self_report_disagrees_with_git_commits",
-        selfReportedCommitted: true,
-        selfReportedCommitsAdded: 1,
-        gitCommitCount: 2,
-      },
-    });
-  });
-
-  it("emits no discrepancy when the self-report matches git truth", () => {
-    expect(reconcileCoderCommits({ committed: true, commitsAdded: 1 }, 1))
-      .not.toHaveProperty("selfReportDiscrepancy");
-  });
-
-  it("records an advisory discrepancy when the coder reports no commit but git has one", () => {
-    expect(reconcileCoderCommits({ committed: false, commitsAdded: 0 }, 1))
-      .toMatchObject({
-        committed: true,
-        commitsAdded: 1,
-        selfReportDiscrepancy: {
-          code: "coder_self_report_disagrees_with_git_commits",
-          selfReportedCommitted: false,
-          selfReportedCommitsAdded: 0,
-          gitCommitCount: 1,
-        },
-      });
-  });
-
-  it("preserves escalate alongside mismatch telemetry without producing a reconcile failure", () => {
-    expect(
-      reconcileCoderCommits(
-        {
-          committed: true,
-          commitsAdded: 2,
-          escalate: { reason: "blocked", diagnosis: "design gap" },
-        },
-        0,
-      ),
-    ).toMatchObject({
-      committed: false,
-      commitsAdded: 0,
-      selfReportDiscrepancy: { gitCommitCount: 0 },
-      escalate: { reason: "blocked", diagnosis: "design gap" },
-    });
-  });
-
-  it("records an unknown baseline as telemetry and leaves the worker path usable", () => {
-    expect(reconcileCoderCommits({ committed: true, commitsAdded: 1 }, undefined)).toEqual({
-      committed: true,
-      commitsAdded: 1,
-      selfReportDiscrepancy: {
-        code: "coder_git_commit_count_unknown",
-        selfReportedCommitted: true,
-        selfReportedCommitsAdded: 1,
-        gitCommitCount: null,
-      },
-    });
-  });
-});
-
-// ─── resume coder commit truth (#285) ───────────────────────────────────────
-
-describe("realBackend resume coder commit truth", () => {
-  const base = "a".repeat(40);
-  const head = "b".repeat(40);
-
-  it("finds the ledger baseline before the coder step being resumed", () => {
-    const ledger: Array<{
-      readonly sessionId?: string;
-      readonly branchHEAD?: string;
-      readonly output?: StepOutput;
-    }> = [
-      { branchHEAD: base },
-      {
-        sessionId: "sess-coder",
-        branchHEAD: head,
-        output: { kind: "coder", committed: true, commitsAdded: 1 },
-      },
-      { branchHEAD: head },
-    ];
-    const basis = resumeCoderCommitBasis(
-      ledger,
-      "sess-coder",
-    );
-    expect(basis).toEqual({
-      baselineHead: base,
-      priorCommitsAdded: 1,
-    });
-  });
-
-  it("allows a resume that only re-emits the structured tag when cumulative git truth matches", () => {
-    expect(
-      reconcileResumeCoderCommits(
-        { committed: true, commitsAdded: 1 },
-        /*cumulativeGitCommitCount*/ 1,
-      ),
-    ).toEqual({ committed: true, commitsAdded: 1 });
-  });
-
-  it("continues a resumed coder with git truth when its self-report disagrees", () => {
-    expect(
-      reconcileResumeCoderCommits(
-        { committed: true, commitsAdded: 1 },
-        /*cumulativeGitCommitCount*/ 0,
-      ),
-    ).toMatchObject({
-      committed: false,
-      commitsAdded: 0,
-      selfReportDiscrepancy: { gitCommitCount: 0 },
-    });
-  });
-
-  it("reports unknown when a prior commit-count fallback has no before-resume HEAD", () => {
-    class ResumeCommitBackend extends RealBackend {
-      protected override cloneDirExists(): boolean {
-        return true;
-      }
-      protected override sh(file: string, args: string[]): string {
-        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
-          return ".git";
-        }
-        throw new Error(`unexpected shell call: ${file} ${args.join(" ")}`);
-      }
-    }
-    const here = dirname(fileURLToPath(import.meta.url));
-    const root = mkdtempSync(join(tmpdir(), "resume-commit-truth-"));
-    const worktreePath = join(root, "wt");
-    const stateDir = join(root, ".ledger-256");
-    mkdirSync(worktreePath, { recursive: true });
-    mkdirSync(stateDir, { recursive: true });
-    writeFileSync(
-      join(stateDir, "steps.jsonl"),
-      `${JSON.stringify({
-        step: "S2",
-        sessionId: "sess-coder",
-        output: { kind: "coder", committed: true, commitsAdded: 1 },
-      })}\n`,
-      "utf8",
-    );
-    const backend = new ResumeCommitBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/owner/name.git",
-      runKey: 285,
-      repo: "owner/name",
-      imageName: "img",
-      promptsDir: join(here, "..", "prompts"),
-      soulsDir: join(here, "..", "image", "souls"),
-      home: tempHome("rb-home-285-"),
-    });
-
-    expect(
-      (
-        backend as unknown as {
-          resumeCoderCommitCount(
-            worktree: { branch: string; base: string; path: string },
-            sessionId: string,
-            beforeResumeHead: string | undefined,
-          ): number | undefined;
-        }
-      ).resumeCoderCommitCount(
-        { branch: "feat/issue-256", base: "main", path: worktreePath },
-        "sess-coder",
-        undefined,
-      ),
-    ).toBeUndefined();
-  });
-
-  it("dead-session fallback does not route resumed coders through normal runStep commit truth", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(join(here, "..", "src", "realBackend.ts"), "utf8");
-    const code = src
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .split("\n")
-      .map((l) => l.replace(/\/\/.*$/, ""))
-      .join("\n");
-
-    expect(code).not.toMatch(
-      /recovery\.kind\s*===\s*"fresh-run"[\s\S]*?return\s+await\s+this\.runStep\s*\(/,
-    );
   });
 });

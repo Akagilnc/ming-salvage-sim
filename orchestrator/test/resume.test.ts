@@ -583,7 +583,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
   });
 
-  it("recovers a landed S5 commit when stdout outcome parsing wrote S8(error)", async () => {
+  it("does not use git to overturn a landed S5 protocol error", async () => {
     const beforeFixHead = "a".repeat(40);
     const afterFixHead = "b".repeat(40);
     const backend = new DispatchRecordingResumeBackend({
@@ -614,34 +614,11 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs[0]?.id).toBe("S6");
-    expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0",
-      "S1",
-      "S2",
-      "S3",
-      "S4",
-      "S5",
-      "S6",
-      "S4",
-      "S7",
-      "S9",
-      "S9",
-      "S12",
-      "S12",
-      "S11",
-      "S8",
-    ]);
-    const s5 = result.stepLedger.find((e) => e.step === "S5");
-    expect(s5?.output).toEqual({
-      kind: "coder",
-      committed: true,
-      commitsAdded: 1,
-    });
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
   });
 
-  it("recovers a landed S2 commit when stdout outcome parsing wrote S8(error)", async () => {
+  it("does not use git to overturn a landed S2 protocol error", async () => {
     const beforeBuildHead = "a".repeat(40);
     const afterBuildHead = "b".repeat(40);
     const backend = new DispatchRecordingResumeBackend({
@@ -663,31 +640,11 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs[0]?.id).toBe("S3");
-    expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0",
-      "S1",
-      "S2",
-      "S3",
-      "S4",
-      "S7",
-      "S9",
-      "S9",
-      "S12",
-      "S12",
-      "S11",
-      "S8",
-    ]);
-    const s2 = result.stepLedger.find((e) => e.step === "S2");
-    expect(s2?.output).toEqual({
-      kind: "coder",
-      committed: true,
-      commitsAdded: 1,
-    });
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
   });
 
-  it("recovers a real no-tag coder failure even when legacy stop summary classified it as infra", async () => {
+  it("does not use HEAD movement to overturn a legacy no-tag coder error", async () => {
     const beforeBuildHead = "a".repeat(40);
     const afterBuildHead = "b".repeat(40);
     const backend = new DispatchRecordingResumeBackend({
@@ -723,17 +680,11 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs[0]?.id).toBe("S3");
-    const s2 = result.stepLedger.find((e) => e.step === "S2");
-    expect(s2?.output).toEqual({
-      kind: "coder",
-      committed: true,
-      commitsAdded: 2,
-    });
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
   });
 
-  it("recovers the real landed coder commit count from persisted HEADs", async () => {
+  it("does not read persisted HEADs to recover a coder result", async () => {
     const beforeFixHead = "a".repeat(40);
     const afterFixHead = "b".repeat(40);
     const backend = new DispatchRecordingResumeBackend({
@@ -765,16 +716,10 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.calls).toContain(
+    expect(result.status).toBe("error");
+    expect(backend.calls).not.toContain(
       `countCommitsBetween(${beforeFixHead}, ${afterFixHead})`,
     );
-    const s5 = result.stepLedger.find((e) => e.step === "S5");
-    expect(s5?.output).toEqual({
-      kind: "coder",
-      committed: true,
-      commitsAdded: 3,
-    });
   });
 
   it("does not recover a landed coder protocol failure when the git count is not positive", async () => {
@@ -810,7 +755,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     ]);
   });
 
-  it("recovers a landed SHA-256 coder commit while skipping intervening S8 heads", async () => {
+  it("does not use SHA-256 HEAD movement to recover a coder result", async () => {
     const beforeBuildHead = "a".repeat(64);
     const afterBuildHead = "b".repeat(64);
     const backend = new DispatchRecordingResumeBackend({
@@ -833,14 +778,8 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
 
     const result = await runOrchestrator({ issueNumber: 496, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs[0]?.id).toBe("S3");
-    const s2 = result.stepLedger.find((e) => e.step === "S2");
-    expect(s2?.output).toEqual({
-      kind: "coder",
-      committed: true,
-      commitsAdded: 1,
-    });
+    expect(result.status).toBe("error");
+    expect(backend.dispatchSpecs).toHaveLength(0);
   });
 
   it("does not recover unrelated terminal S8 errors even when HEAD advanced", async () => {
@@ -864,7 +803,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           branchHEAD: afterBuildHead,
           stopSummary: {
             reason: "contract_drift",
-            summary: "coder output failed commit-truth reconciliation",
+            summary: "persisted coder protocol error",
             repairHint: "Re-run the coder step or inspect the contract failure.",
           },
         },
@@ -882,7 +821,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
       "S8",
     ]);
     expect(result.stopSummary?.summary).toBe(
-      "coder output failed commit-truth reconciliation",
+      "persisted coder protocol error",
     );
   });
 
