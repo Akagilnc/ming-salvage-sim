@@ -21,6 +21,9 @@ gate in this worker.
 
 When the review is complete, emit `findings = x` on its own line, replacing `x`
 with the number of findings. This fragment is required even when the count is 0.
+A converged judgement declares `findings = 0`. A not-converged judgement declares
+at least `findings = 1`; without an itemized finding list, declare `findings = 1`
+and explain the reason in the review body, which the fixer reads.
 
 Converged:
 
