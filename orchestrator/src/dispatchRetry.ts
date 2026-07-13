@@ -28,16 +28,9 @@ import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
  * Total dispatch attempts for one step (1 initial + retries) for a PROCESS-LEVEL
  * failure (crash / no-output). #598 owns this number.
  *
- * This is a DIFFERENT, independent bound from the reviewer's
- * reviewer invalid-output path (runner.ts): rises to decision gate — NOT a
- * semantic retry budget / schema court. Historical name
- * `MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS` removed (owner 2026-07-13). Prior note:
- * reruns of a reviewer that produced INVALID OUTPUT (a model/prompt problem that a
- * 3rd try rarely fixes → deliberately tighter), whereas this bounds a transient
- * process crash (retrying more is worth it). #592 ("no role treated specially")
- * means no role gets ZERO retry — NOT that the two bounds must be equal; a reviewer
- * crash that surfaces as a THROW still uses this generic bound (3) via the runner's
- * reviewer predicate. (The two are intentionally unequal; do not conflate them.)
+ * This is the single process-failure retry budget shared by every worker role.
+ * Completed/escalated worker receipts are never retried here; the runner only
+ * transports their self-reported gates and counts.
  */
 export const MAX_DISPATCH_ATTEMPTS = 3;
 
@@ -79,9 +72,7 @@ export type DispatchOutcome =
   | { readonly result: WorkerResult };
 
 /**
- * Options that let a caller compose its OWN semantic-retry layer with this generic
- * mechanical layer WITHOUT double-counting (#598 acceptance: "each keeps its own
- * counter, the generic layer firing only after those run").
+ * Options for the shared process-failure retry layer.
  */
 export interface MechanicalRetryOptions {
   /** Injectable retry wait so tests and callers with virtual clocks do not sleep. */
@@ -97,14 +88,9 @@ export interface MechanicalRetryOptions {
   /** Persist/observe a failed attempt before the same step is retried. */
   readonly onFailure?: (outcome: DispatchOutcome, attempt: number) => Promise<void>;
   /**
-   * Return `true` when THIS failure is owned by the caller's semantic-retry layer
-   * (e.g. the reviewer's invalid-output rerun, or CMR's same-worker outcome
-   * rewrite) and must NOT be retried here — the generic layer defers it to the
-   * caller (re-throws a thrown error, returns a resolved result) so the caller's
-   * own bounded loop handles it with its own counter. Everything else (a generic
-   * crash / connection drop / process-protocol failure the caller does not own) is
-   * retried fresh here. Absent ⇒ nothing is caller-owned; every process failure is
-   * retried generically.
+   * Optional escape hatch for an outcome that is not a process failure and must
+   * surface unchanged. The runner uses it for structured-output throws, which it
+   * forwards to the fixer as receipt cargo; there is no second retry counter.
    */
   readonly callerOwns?: (outcome: DispatchOutcome) => boolean;
   /**

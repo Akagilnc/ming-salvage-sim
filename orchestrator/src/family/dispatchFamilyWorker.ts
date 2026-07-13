@@ -398,8 +398,8 @@ function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
 }
 
 /**
- * The #331 PREFACTOR thin wrapper: forward a family worker to the EXISTING
- * `FamilyBackend` methods and wrap into a {@link WorkerResult}.
+ * Compatibility wrapper: forward a family CMR worker to the older
+ * `FamilyBackend` method and wrap it into a {@link WorkerResult}.
  *
  * The optional legacy `runIntegratedCmr` method gates this reviewer-only
  * fallback. Ship always uses the unified worker seam.

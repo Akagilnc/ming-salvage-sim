@@ -54,8 +54,7 @@ import type {
  * Replay-scenario outcome label.
  *
  * #604 slice 4 (ADR 0062): this union used to inherit the family classifier's
- * routing values via {@link FamilyCmrFindingClassification}. Those routing
- * values were removed from the classifier, but replay scenarios still describe
+ * routing values. Those values were removed, but replay scenarios still describe
  * the STOP outcomes they exercise (which map to the retained StopReason words —
  * 岔路 1 A: StopReason is untouched). So the labels are now enumerated here
  * directly, decoupled from the collapsed classifier enum.
@@ -217,7 +216,7 @@ async function familyClassificationScenario(input: {
   // through coder-fix (recording a `cmr_reviewed` row that carries the
   // classification + blocking stop summary). Script only the first blocking CMR
   // output; the default backend responses cover the coder-fix, re-review, and
-  // ship dispatches for both the blocking (same-module) and passing
+  // family ship worker runs for both the blocking (same-module) and passing
   // (cross-module defer) scenarios.
   const coderFixFailure: WorkerResult = {
     kind: "failed",

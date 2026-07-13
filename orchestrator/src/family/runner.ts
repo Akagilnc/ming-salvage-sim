@@ -8,15 +8,15 @@
  *       in family mode (cut from family base, S7 = local child handoff) [dec.2/7]
  *     → merger.mergeChild → serial `git merge --no-ff` into family base [dec.3②]
  *       (which writes the append-only family-ledger entry)             [dec.5]
- *     → verify-cmr hook (no-op in #293)                            [dec.3④/⑥ seam]
+ *     → verify-cmr hook                                            [dec.3④/⑥ seam]
  *     → loop until the commander returns an empty wave.
  *
  * The spine is a THIN scheduler: it OWNS none of the four extension modules'
  * logic — it only CALLS them (selectWave / runOrchestrator / mergeChild /
  * runVerifyCmr). That is the acceptance-4 boundary: #294 (waves), #295 (merge
  * conflict), #296 (verify+cmr), #298 (ledger) each grow THEIR module and the
- * spine keeps calling the same functions. #293 does NOT process conflicts, run
- * verify/cmr, or do crash-resume reconcile (those are the later slices).
+ * spine keeps calling the same functions. Those modules now provide conflict,
+ * verify/CMR, and crash-resume handling behind the same calls.
  *
  * The wave loop is written generally (re-select after each wave from the merged
  * set) so #294's multi-wave dependency scheduling drops in WITHOUT a spine

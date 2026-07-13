@@ -22,8 +22,8 @@
  *     single-slice step ledger, but a distinct file.
  *   - runFamilyVerify          → `npx tsc --noEmit` + `npx vitest run` against the
  *     family base; green → {ok:true}, red → {ok:false, errorPackage:{reason}}.
- *   - runIntegratedCmr         → a thin wrap of the local `ak-cross-m-review`
- *     pipeline behind the {@link runCmr} protected seam.
+ *   - runIntegratedCmr         → a legacy per-method throw seam; production CMR
+ *     runs as a container worker through `dispatchWorker`.
  *   - dispatchWorker(ship)     → the `gstack-ship` worker opens the family PR;
  *     online bot CMR + merge remain the separate PR-review-loop stage.
  *   - recordAborted            → the #296 in-memory back-compat seam (a no-op
@@ -35,11 +35,9 @@
  *     `git rev-parse` / `git rev-parse --verify` / `git merge-base --is-ancestor`.
  *
  * SEAM BOUNDARY: the deterministic git / file ops run directly; the external side
- * effects (the merger agent container, `gh pr create`, `ak-cross-m-review`) go
- * through protected methods a unit test overrides — so the contract is verified
- * zero-container, and the real container / real GitHub only run on the driver /
- * manual-smoke path (the next unit). This file does NOT wire into the driver / run
- * end-to-end — that is the下一个 unit.
+ * effects go through dispatch/protected seams that unit tests can override. The
+ * production driver is wired to this backend; real container/GitHub effects run
+ * only on its driver/manual-smoke path.
  */
 
 import { shWithClock } from "../externalCall.js";

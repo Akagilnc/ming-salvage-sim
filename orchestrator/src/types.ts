@@ -8,9 +8,8 @@
  *   - step-output schema ({@link CoderOutput} / {@link ReviewerOutput}) —
  *     the agent↔runner contract that {@link route} consumes.
  *
- * Slice #247 only wires the happy path; field VALUES and most step kinds are
- * present in shape but exercised minimally. Keep shapes stable — later slices
- * fill behaviour in, not re-shape these.
+ * Keep these shared shapes stable: current runner, backends, and family flow all
+ * depend on them.
  */
 
 import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
@@ -527,13 +526,13 @@ export interface StepResult {
 
 // ─────────────────────── unified worker-dispatch seam ───────────────────────
 // ADR 0026 / PRD #330: every step that produces or changes the worked artifact
-// is a WORKER dispatched through ONE seam, `dispatchWorker(spec, ctx)`. #331 is a
-// The call sites route through the unified seam. A narrow legacy wrapper remains
-// only for older integrated-CMR review backends.
+// is a WORKER dispatched through ONE seam, `dispatchWorker(spec, ctx)`. All call
+// sites now route through it; the narrow legacy wrapper only supports older
+// integrated-CMR review backends.
 
 /**
  * Which kind of work a worker performs. Drives the {@link WorkerResult} payload
- * discriminant and (later slices) which skill is invoked:
+ * discriminant and the skill invoked:
  *   - `coder`    → invoke `/tdd` (S2 implement / S5 fix), resume across rounds.
  *   - `reviewer` → invoke `/code-review` (S3/S6 per-slice review), fresh each round.
  *   - `cmr`      → invoke `ak-cross-m-review` (family integrated cmr), fresh.
@@ -1152,9 +1151,9 @@ export type WorkerOutput =
  *     must answer (carries the resume指引). Crash/timeout/missing-skill map to
  *     `failed`; only a MODEL escalate is `escalated`.
  *
- * #331 prefactor: the legacy wrapper always yields `completed` (forwarding the
- * existing methods' returns); real workers additionally mint process `failed`
- * and worker-declared `escalated` results.
+ * The legacy wrapper yields `completed` by forwarding the older methods' returns;
+ * unified real workers additionally mint process `failed` and worker-declared
+ * `escalated` results.
  */
 export type WorkerResult =
   | { readonly kind: "completed"; readonly output: WorkerOutput; readonly sessionId?: string }
@@ -1585,19 +1584,14 @@ export interface Backend {
    * the per-method seam (`runStep` / `resumeSession`) as the runner's
    * dispatch entry point.
    *
-   * #331 PREFACTOR: this is a thin LEGACY WRAPPER. The runner ALWAYS dispatches
-   * through the free function `dispatchWorker(backend, spec, ctx)` (runner.ts),
-   * which calls THIS method when a backend implements it, else falls back to
-   * `legacyDispatchWorker` — forwarding to the existing methods
-   * (`runStep`/`resumeSession` for agent workers),
-   * so external behaviour is unchanged (regression green) and every existing fake
-   * Backend keeps working without change. The real worker dispatch (invoke
-   * `/tdd` / `/code-review` / `gstack-ship`) lands in #334/#336. The legacy methods
-   * stay on the seam during the transition.
+   * The runner dispatches through the free function
+   * `dispatchWorker(backend, spec, ctx)` (runner.ts), which calls THIS method when
+   * implemented and otherwise falls back to `legacyDispatchWorker`. The fallback
+   * only forwards older child coder/reviewer methods (`runStep`/`resumeSession`);
+   * production backends invoke the routed worker skills through this unified seam.
    *
-   * OPTIONAL on the interface during the prefactor so the existing zero-container
-   * fakes need no change; new tests inject a fake implementing it to assert the
-   * dispatch SEQUENCE + each {@link WorkerSpec} (the #331 acceptance criterion).
+   * The method remains optional so zero-container and older fake Backends can use
+   * the forwarding fallback unchanged.
    */
   dispatchWorker?(
     spec: WorkerSpec,
@@ -1809,7 +1803,7 @@ export interface ErrorPackage {
 /** Final handoff (S8). `status` lets the caller tell the three outcomes apart. */
 export interface RunResult {
   readonly status: HandoffStatus;
-  /** The reviewed, pushed slice branch (set on success). */
+  /** The reviewed local slice branch handed to the family merger on success. */
   readonly branch?: string;
   /**
    * Diagnostic error payload — set when status=error (#252).
@@ -1820,10 +1814,4 @@ export interface RunResult {
   readonly stepLedger: ReadonlyArray<LedgerEntry>;
   /** Unified run-level stop reason summary (#450). */
   readonly stopSummary: StopSummary;
-  /**
-   * Formerly carried reviewer findings with action:'defer'. #617 removed the
-   * `defer` action from the contract, so this array is always empty; it is
-   * retained on the handoff shape for backward compatibility with resume state.
-   */
-  readonly deferredFindings: ReadonlyArray<Finding>;
 }
