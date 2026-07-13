@@ -586,16 +586,6 @@ export interface FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
-  /**
-   * Runner fallback for outcome protocol failures (#552).
-   *
-   * When a worker finished but its outcome control envelope was malformed,
-   * missing, or schema-incompatible, the runner may ask the SAME producing worker
-   * to rewrite only the machine outcome from existing artifacts/local memory.
-   * This is a control-envelope repair path: it must not run semantic review/fix
-   * work, move git truth, leave tracked changes, or infer a route from prose. The
-   * runner owns the bounded retry cap.
-   */
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
   // ALL OPTIONAL: a #293-era backend (the no-op default, the existing fakes)
   // does NOT implement them, so the verify-cmr hook degrades to the no-op
@@ -857,7 +847,7 @@ export interface MergeResult {
  * Input to the family entry point {@link runFamily}.
  *
  * `singleSliceBackend` is the {@link Backend} each child fan-out runs the
- * single-slice runner against (family mode: S7 push is a local no-op, base is
+ * single-slice runner against (family mode: S7 is a local child handoff, base is
  * the family base — carried via the runner's family context). `familyBackend`
  * is the family-LEVEL seam (merge + ledger). They are distinct seams so the
  * single-slice runner is reused UNCHANGED for each child (ADR 0022 decision 2).

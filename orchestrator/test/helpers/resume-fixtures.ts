@@ -48,6 +48,7 @@ import type {
   PersistentLedgerEntry,
   ResumeState,
   DispatchContext,
+  SliceStepId,
   StepId,
   StepOutput,
   StepSpec,
@@ -80,7 +81,7 @@ export const CLAIMED_FIXED_KEY =
 
 /** Build a persisted ledger entry (the resume truth on disk). */
 export function entry(
-  step: StepId,
+  step: SliceStepId,
   output?: StepOutput,
   sessionId = "session-prior",
   branchHEAD = "deadbeefcommitsha",
@@ -133,7 +134,7 @@ export function malformedCoderPayloadFailureS8(): PersistentLedgerEntry {
 }
 
 export function escalationAnswer(
-  forStep: StepId,
+  forStep: SliceStepId,
   answer: string,
   note?: string,
 ): PersistentLedgerEntry {

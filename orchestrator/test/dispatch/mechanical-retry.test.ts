@@ -166,29 +166,6 @@ describe("#598 withMechanicalRetry", () => {
     }
   });
 
-  it("malformed is caller-owned and never mechanically retried", async () => {
-    const { dispatch, seen } = scripted([{ kind: "malformed", reason: "no completion signal" }]);
-    const result = await withMechanicalRetry(coderSpec(), {}, dispatch);
-    expect(result.kind).toBe("malformed");
-    expect(seen).toHaveLength(1);
-    expect((result as { reason: string }).reason).toBe("no completion signal");
-  });
-
-  it("outcome_protocol_failure is caller-owned and preserves the original resume dispatch", async () => {
-    const { dispatch, seen } = scripted([
-      { kind: "outcome_protocol_failure", reason: "no signal", attempts: 1 },
-      COMPLETED,
-    ]);
-    const ctx: DispatchContext = { resumeSessionId: "sess-abc" };
-    const result = await withMechanicalRetry(coderSpec("resume"), ctx, dispatch);
-
-    expect(result.kind).toBe("outcome_protocol_failure");
-    expect(seen).toHaveLength(1);
-    // Attempt 1 kept the resume id + resume session mode.
-    expect(seen[0]!.ctx.resumeSessionId).toBe("sess-abc");
-    expect(seen[0]!.spec.session).toBe("resume");
-  });
-
   it("callerOwns re-throws a caller-owned thrown error instead of retrying it", async () => {
     let calls = 0;
     const dispatch = async (): Promise<WorkerResult> => {
@@ -202,16 +179,6 @@ describe("#598 withMechanicalRetry", () => {
     ).rejects.toThrow("reviewer structured output error");
     // Deferred to the caller on the FIRST attempt — never retried here.
     expect(calls).toBe(1);
-  });
-
-  it("callerOwns returns a caller-owned process-failure result without retrying", async () => {
-    const { dispatch, seen } = scripted([{ kind: "malformed", reason: "reviewer output invalid" }]);
-    const result = await withMechanicalRetry(coderSpec(), {}, dispatch, {
-      callerOwns: (o) => "result" in o && o.result.kind === "malformed",
-    });
-    expect(result.kind).toBe("malformed");
-    // Deferred to the caller's own bounded loop — one dispatch, no generic retry.
-    expect(seen).toHaveLength(1);
   });
 
 });
@@ -378,53 +345,5 @@ describe("#598 integration — a transient reviewer non-structured crash recover
     const result = await runOrchestrator({ issueNumber: 598, backend });
     expect(result.status).not.toBe("error");
     expect(backend.coderDispatches).toBe(2);
-  });
-});
-
-/** Reviewer process-malformed fixture for caller-owned retry composition. */
-class ReviewerAlwaysMalformedBackend implements Backend {
-  async smokeModelRoute(route: any) {
-    const { smokeRouteModels } = await import("../../src/modelRoutes.js");
-    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
-  }
-  reviewerDispatches = 0;
-  async findResumeState(): Promise<undefined> {
-    return undefined;
-  }
-  async cleanResidue(): Promise<void> {}
-  async resumeSession(): Promise<StepOutput> {
-    return { kind: "coder", committed: true, commitsAdded: 1 };
-  }
-  async fetchIssueMeta(n: number): Promise<IssueMeta> {
-    return { number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
-  }
-  async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-    return { number: n, body: "body", comments: [], agentBrief: "" };
-  }
-  async prepareWorktree(): Promise<WorktreeHandle> {
-    return RUN_WORKTREE;
-  }
-  async writeSnapshot(): Promise<void> {}
-  async runStep(): Promise<StepOutput> {
-    return { kind: "coder", committed: true, commitsAdded: 1 };
-  }
-  async push(): Promise<void> {}
-  async writeLedger(): Promise<void> {}
-  async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-    if (spec.kind === "reviewer") {
-      this.reviewerDispatches += 1;
-      return this.reviewerDispatches === 1
-        ? { kind: "malformed", reason: "process protocol failure" }
-        : { kind: "completed", output: { kind: "reviewer", findings: [] } };
-    }
-    return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
-  }
-}
-
-describe("#598 composition — reviewer malformed belongs to the caller", () => {
-  it("a malformed reviewer advances through fixer to a fresh reviewer", async () => {
-    const backend = new ReviewerAlwaysMalformedBackend();
-    await runOrchestrator({ issueNumber: 598, backend });
-    expect(backend.reviewerDispatches).toBe(2);
   });
 });

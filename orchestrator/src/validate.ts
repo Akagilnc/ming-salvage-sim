@@ -6,82 +6,8 @@
 
 import type {
   Escalation,
-  RepairEvidence,
   StepOutput,
 } from "./types.js";
-
-/**
- * Type-only string guard (intentionally does NOT reject `""`): a Finding's
- * required string fields must be PRESENT strings per the #244 contract, but the
- * contract does not forbid empty values here. For a genuinely non-empty check
- * (used by `escalate`), see `isFilledString` below. The name is `isString`, not
- * `isNonEmptyString`, so the type-only intent is not misread (gemini R1).
- */
-function isString(v: unknown): v is string {
-  return typeof v === "string";
-}
-
-/** A genuinely non-empty string (rejects "" and whitespace-only). */
-function isFilledString(v: unknown): v is string {
-  return typeof v === "string" && v.trim().length > 0;
-}
-
-function isStringArray(v: unknown): v is ReadonlyArray<string> {
-  return Array.isArray(v) && v.every(isString);
-}
-
-function isFilledStringArray(v: unknown): v is ReadonlyArray<string> {
-  return Array.isArray(v) && v.every(isFilledString);
-}
-
-function isValidFindingRepairScope(v: unknown): boolean {
-  if (v == null || typeof v !== "object" || Array.isArray(v)) return false;
-  const obj = v as Record<string, unknown>;
-  return (
-    (obj.identityKeys === undefined || isStringArray(obj.identityKeys)) &&
-    (obj.locations === undefined || isStringArray(obj.locations)) &&
-    (obj.categories === undefined || isStringArray(obj.categories)) &&
-    (obj.findingGroup === undefined || isString(obj.findingGroup)) &&
-    (obj.reviewContext === undefined || isString(obj.reviewContext)) &&
-    (obj.featureArea === undefined || isString(obj.featureArea))
-  );
-}
-
-export function isValidRepairEvidence(v: unknown): v is RepairEvidence {
-  if (v == null || typeof v !== "object" || Array.isArray(v)) return false;
-  const obj = v as Record<string, unknown>;
-  if (!isValidFindingRepairScope(obj.findingScope)) return false;
-  if (
-    obj.changedFiles !== undefined &&
-    !isFilledStringArray(obj.changedFiles)
-  ) {
-    return false;
-  }
-  if (obj.tests !== undefined && !isFilledStringArray(obj.tests)) return false;
-  if (obj.fixtures !== undefined && !isFilledStringArray(obj.fixtures)) {
-    return false;
-  }
-  if (
-    obj.sameClassBugScan !== undefined &&
-    !isFilledString(obj.sameClassBugScan)
-  ) {
-    return false;
-  }
-  if (
-    obj.introducedRegressionCheck !== undefined &&
-    !isFilledString(obj.introducedRegressionCheck)
-  ) {
-    return false;
-  }
-  if (obj.patchSummary !== undefined && !isFilledString(obj.patchSummary)) {
-    return false;
-  }
-  return (
-    (Array.isArray(obj.changedFiles) && obj.changedFiles.length > 0) ||
-    (Array.isArray(obj.tests) && obj.tests.length > 0) ||
-    (Array.isArray(obj.fixtures) && obj.fixtures.length > 0)
-  );
-}
 
 /**
  * Validate the `escalate` field on an agent-step output.

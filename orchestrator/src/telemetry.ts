@@ -353,8 +353,6 @@ export type TelemetryErrorCategory =
 export type TelemetryTerminal =
   | "completed"
   | "failed"
-  | "malformed"
-  | "outcome_protocol_failure"
   | "escalated"
   | "thrown";
 
@@ -495,9 +493,7 @@ export interface TelemetryReviewRoundRecord extends TelemetryRecordBase {
     | "blocking"
     | "not_converged"
     | "escalated"
-    | "failed"
-    | "malformed"
-    | "protocol_failure";
+    | "failed";
   /**
    * Whether the runner accepted this review result after every terminal gate.
    * `unknown` means runner-side durable persistence threw before the terminal
@@ -914,22 +910,6 @@ export function classifyWorkerTerminal(
             ? null
             : categorized,
         errorMessage: reason.length > 0 ? reason : null,
-        sessionId,
-      };
-    }
-    if (r.kind === "malformed") {
-      return {
-        terminal: "malformed",
-        errorCategory: categoryFromReason(r.reason),
-        errorMessage: r.reason,
-        sessionId,
-      };
-    }
-    if (r.kind === "outcome_protocol_failure") {
-      return {
-        terminal: "outcome_protocol_failure",
-        errorCategory: categoryFromReason(r.reason),
-        errorMessage: r.reason,
         sessionId,
       };
     }

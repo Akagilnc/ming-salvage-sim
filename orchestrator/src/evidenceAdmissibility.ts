@@ -9,12 +9,7 @@
  */
 
 import { isPollableGithubPrUrl } from "./botPolling.js";
-import type {
-  DispatchContext,
-  StepOutput,
-  WorkerKind,
-  WorkerResult,
-} from "./types.js";
+import type { DispatchContext } from "./types.js";
 
 /** ISO-8601 instant marking when the current review round began (ship or re-trigger). */
 export interface RoundTrigger {
@@ -35,13 +30,6 @@ export interface EvidenceRecord {
   readonly timestamp?: string;
   readonly terminalState: EvidenceTerminalState;
 }
-
-const REVIEW_LOOP_KINDS = new Set<WorkerKind>([
-  "verify",
-  "fixer",
-  "cleanup",
-  "docRelease",
-]);
 
 export function isOfflineTestPrUrl(prUrl: string): boolean {
   return prUrl.trim().startsWith("pr://");

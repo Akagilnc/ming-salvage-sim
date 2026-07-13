@@ -1705,31 +1705,6 @@ class AlwaysHeadStuckCoderBackend extends ReviewFixRereviewBackend {
   }
 }
 
-class OutcomeProtocolFailureCoderFixBackend extends ReviewFixRereviewBackend {
-  override async dispatchWorker(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<WorkerResult> {
-    if (spec.kind !== "coder") return super.dispatchWorker(spec, ctx);
-    this.dispatches.push({
-      kind: spec.kind,
-      session: spec.session,
-      role: spec.role,
-      promptFile: spec.promptFile,
-      contextRetention: spec.contextRetention,
-      cmrPass: ctx.cmrPass,
-      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
-      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
-    });
-    return {
-      kind: "outcome_protocol_failure",
-      reason: "coder-fix outcome guard rejected missing repairEvidence",
-      attempts: 2,
-      sessionId: "coder-fix-session",
-    };
-  }
-}
-
 class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
@@ -1791,92 +1766,6 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
       };
     }
     return onlineReviewLoopWorkerOrThrow(spec);
-  }
-}
-
-class MalformedReviewerMovesFamilyHeadBackend extends ReviewFixRereviewBackend {
-  async readFamilyCurrentHead(): Promise<string> {
-    return this.currentFamilyHead;
-  }
-
-  async readFamilyTrackedStatus(): Promise<readonly string[]> {
-    return [];
-  }
-
-  async dispatchWorker(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<WorkerResult> {
-    this.dispatches.push({
-      kind: spec.kind,
-      session: spec.session,
-      role: spec.role,
-      promptFile: spec.promptFile,
-      contextRetention: spec.contextRetention,
-      cmrPass: ctx.cmrPass,
-      priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
-      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
-    });
-    if (spec.kind === "cmr") {
-      this.currentFamilyHead = "head-after-reviewer-commit";
-      return { kind: "malformed", reason: "no parseable CMR-VERDICT" };
-    }
-    return onlineReviewLoopWorkerOrThrow(spec);
-  }
-}
-
-class MalformedReviewerWrongHeadBeforeRewriteBackend extends ReviewFixRereviewBackend {
-  rewriteCalls = 0;
-  private firstCmrMalformed = true;
-
-  async readFamilyCurrentHead(): Promise<string> {
-    return this.currentFamilyHead;
-  }
-
-  async readFamilyTrackedStatus(): Promise<readonly string[]> {
-    return [];
-  }
-
-  override async dispatchWorker(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<WorkerResult> {
-    if (spec.kind === "cmr" && this.firstCmrMalformed) {
-      this.firstCmrMalformed = false;
-      this.dispatches.push({
-        kind: spec.kind,
-        session: spec.session,
-        role: spec.role,
-        promptFile: spec.promptFile,
-        contextRetention: spec.contextRetention,
-        cmrPass: ctx.cmrPass,
-        priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys,
-        blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
-      });
-      this.currentFamilyHead = "detached-review-head";
-      return {
-        kind: "malformed",
-        reason: "no parseable CMR-VERDICT",
-        sessionId: "cmr-session-wrong-head",
-      };
-    }
-    // Non-first cmr / ship / online-review: ordinary ReviewFixRereview path.
-    return super.dispatchWorker(spec, ctx);
-  }
-
-  async rewriteWorkerOutcome(): Promise<WorkerResult> {
-    this.rewriteCalls += 1;
-    this.currentFamilyHead = "head-before-cmr-review";
-    return {
-      kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: true,
-        findingsCount: 0,
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-        ...CMR_EVIDENCE,
-      },
-    };
   }
 }
 
@@ -2473,33 +2362,6 @@ it("#876 keeps the CMR loop alive when the reviewer moves family HEAD before fin
     ).toBe(true);
   });
 
-  it("#876 does not convict HEAD movement ahead of a malformed CMR outcome", async () => {
-    const backend = new MalformedReviewerMovesFamilyHeadBackend();
-
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/550-base",
-      familyBackend: backend,
-    });
-
-    // HEAD movement is advisory; the malformed envelope still routes through the
-    // ordinary outcome-protocol / three-channel path.
-    expect(result.ran).toBe(true);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      workerStep: "cmr:completeness",
-      reason: expect.stringMatching(/reviewer moved family HEAD/i),
-    }));
-    expect(
-      backend.ledger.some(
-        (entry) =>
-          entry.status === "aborted" &&
-          /reviewer moved family HEAD/i.test(entry.reason ?? "") &&
-          entry.stopSummary?.reason === "contract_drift",
-      ),
-    ).toBe(false);
-  });
   it("keeps tracked-status read failures out of reviewer fate", async () => {
     const backend = new ReviewerTrackedStatusReadFailsBackend();
 
@@ -3173,6 +3035,7 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     };
     const backend = new CountChannelFixBackend({
       kind: "completed",
+      sessionId: "cmr-partial-cargo-session",
       output: {
         kind: "cmr",
         converged: false,
@@ -3194,6 +3057,10 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
     expect(backend.landings[coderIndex]).toEqual({
       blockingFindings: [BLOCKING_FAMILY_CMR_FINDING, secondFinding],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "cmr-partial-cargo-session",
+        statement: "the previous reviewer raw artifacts are here",
+      },
     });
   });
 
@@ -3221,33 +3088,6 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({ status: "cmr_passed", cmrPass: "completeness" }),
     );
-  });
-
-  it("routes a reviewer with neither extractable count nor structure to coder-fix with raw artifact pointers and no decision park", async () => {
-    const backend = new CountChannelFixBackend({
-      kind: "malformed",
-      reason: "reviewer outcome sidecar was unreadable",
-      sessionId: "cmr-reviewer-session",
-    });
-
-    const result = await runVerifyCmr({
-      phase: "final",
-      familyBase: "family/raw-reviewer-artifacts",
-      familyBackend: backend,
-    });
-
-    expect(result).toEqual({ ok: true, ran: true });
-    const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
-    expect(coderIndex).toBeGreaterThan(0);
-    expect(backend.landings[coderIndex]).toMatchObject({
-      blockingFindings: [],
-      rawReviewerArtifacts: {
-        reviewerSessionId: "cmr-reviewer-session",
-        statement: "the previous reviewer raw artifacts are here",
-      },
-    });
-    expect(backend.escalations).toEqual([]);
-    expect(JSON.stringify(backend.ledger)).not.toContain('"escalationKind":"decision"');
   });
 
   it("routes a completed reviewer carrying a non-cmr shape to coder-fix as raw artifacts", async () => {

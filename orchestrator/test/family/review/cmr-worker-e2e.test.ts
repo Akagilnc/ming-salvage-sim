@@ -11,11 +11,11 @@
  * — the container's top-level claude invokes ak-cross-m-review (1 Agent + 2 CLI
  * legs) over the base diff and returns a verdict. We require the worker to RUN TO A
  * VERDICT: `completed` + a `cmr` payload + a boolean `converged` (codex cmr R3 — a
- * lenient `["completed","escalated","malformed"]` assertion passes even when the
- * fan-out never happened, so it proves nothing; this path must reach a real verdict).
+ * lenient completed/escalated assertion can pass even when the fan-out never
+ * happened, so it proves nothing; this path must reach a real verdict).
  * We log but do NOT hard-assert `converged:false`: the LLM legs' judgement is the
- * system under proof, not deterministic. An escalate/malformed degradation is a
- * SEPARATE concern, not counted here as proof the path works.
+ * system under proof, not deterministic. Escalation or sparse cargo is a separate
+ * concern, not counted here as proof the path works.
  */
 
 import { execFileSync } from "node:child_process";

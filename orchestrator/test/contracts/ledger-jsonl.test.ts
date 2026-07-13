@@ -27,6 +27,12 @@
 
 import { describe, expect, it } from "vitest";
 import { parseLedgerJsonl } from "../../src/realBackend.js";
+import type { LedgerEntry } from "../../src/types.js";
+
+// Family endgame labels belong to the family ledger, never the child resume ledger.
+// @ts-expect-error S9 is not a legal child-ledger step.
+const familyStepMustNotTypecheckAsChildLedger: LedgerEntry = { step: "S9" };
+void familyStepMustNotTypecheckAsChildLedger;
 
 describe("parseLedgerJsonl — corrupt-line fail-closed (256 r5)", () => {
   const goodLine = (step: string) =>
@@ -118,8 +124,8 @@ describe("parseLedgerJsonl — corrupt-line fail-closed (256 r5)", () => {
     expect(() => parseLedgerJsonl(raw)).toThrow(/corrupt/i);
   });
 
-  it("an object whose `step` is not a valid StepId is corrupt", () => {
-    // A typo'd / out-of-range step would route invalidly in planResume.
+  it("an object whose `step` is not a valid child step is corrupt", () => {
+    // A family-only / typo'd step would route invalidly in child planResume.
     const raw = [goodLine("S0"), goodLine("S9"), goodLine("FOO")].join("\n");
     expect(() => parseLedgerJsonl(raw)).toThrow(/corrupt/i);
   });

@@ -5,7 +5,7 @@
  *   parent epic (children already cut + blocked_by)             [ADR 0022 dec.1]
  *     → commander.selectWave → the unblocked wave
  *     → fan out each child through the REUSED single-slice runOrchestrator,
- *       in family mode (cut from family base, S7 push = local no-op)  [dec.2/7]
+ *       in family mode (cut from family base, S7 = local child handoff) [dec.2/7]
  *     → merger.mergeChild → serial `git merge --no-ff` into family base [dec.3②]
  *       (which writes the append-only family-ledger entry)             [dec.5]
  *     → verify-cmr hook (no-op in #293)                            [dec.3④/⑥ seam]
@@ -52,8 +52,6 @@ import {
   familyShippedRecordForReviewLoopResume,
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
-  hasBoundShippedMarker,
-  hasUnboundLegacyShippedMarker,
   isMergedAccountingEntry,
   mergedSet,
   recordAdmissionSkipped,
@@ -233,7 +231,7 @@ function familyStopSummary(input: {
  * Run a child slice through the reused single-slice runner in FAMILY MODE.
  *
  * Family context (ADR 0022 decision 2) is passed via RunInput.family so the
- * single-slice runner cuts from the family base + no-ops S7 push. The child is a
+ * single-slice runner cuts from the family base + performs an S7 local handoff. The child is a
  * leaf (no sub-issues) so its own S0 gate passes unchanged; #293's wave is
  * all-unblocked children so the ledger口径 dependency check (dec.6③) is trivially
  * satisfied (empty blocked_by).

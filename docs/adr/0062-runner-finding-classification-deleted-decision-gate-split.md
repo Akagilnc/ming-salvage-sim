@@ -2,7 +2,7 @@ Status: Accepted（2026-07-06：源于 #497/#498 实证与 #604；本地 kill-ax
 
 Revised by: ADR 0129（findings 状态机与三态取数改由状态库定义；runner 纯调度边界不变）
 
-> **前向废止（ADR 0131，2026-07-13 owner 裁决）**：通道 (b) 语义改为「reviewer 自报 open-count，说几条就是几条，不派生不对账」（状态库时代：复审员写的行即申报）；runner 零卷面校验、**永不自己按决策门**（通道 (c) 只转运 worker 按的门）；卷面不可用按角色真源分治（评审类递 fixer 原料，coder/ship 走 git/host 外部事实）。本 ADR 旧「缺覆盖 = malformed → 机械重试重派 reviewer」与「typed 治理住 runner 层」两段已随 #890 收口从正文移除，其残余授权由 0131 正式废止。见 ADR 0131。
+> **前向废止（ADR 0131，2026-07-13 owner 裁决）**：通道 (b) 语义改为「reviewer 自报 open-count，说几条就是几条，不派生不对账」（状态库时代：复审员写的行即申报）；runner 零卷面校验、**永不自己按决策门**（通道 (c) 只转运 worker 按的门）；评审类卷面原料递 fixer，coder/ship completed（exit 0）照常进下一棒，cargo 只透传，runner 永不查询 git/host 裁命运。本 ADR 旧「缺覆盖 = malformed → 机械重试重派 reviewer」与「typed 治理住 runner 层」两段已随 #890 收口从正文移除，其残余授权由 0131 正式废止。见 ADR 0131。
 
 # 0062: 删除 runner 侧 finding 分类，失败 escalate 与人类决策门分家（回归 0026/0050，supersede #448/#449 路线）
 

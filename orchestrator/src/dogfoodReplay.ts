@@ -40,6 +40,7 @@ import type {
   IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
+  SliceStepId,
   StepId,
   StepOutput,
   StepSpec,
@@ -165,7 +166,7 @@ function cmrWorkerParserEvidence(result: WorkerResult): { cmrWorkerParserValid: 
   // The parser sees the worker payload; findingsCount is attached later from the
   // stdout sentinel channel (or its structured-row fallback).
   const { kind: _kind, findingsCount: _findingsCount, ...payload } = result.output;
-  const parsed = parseCmrOutcome(`<cmr>${JSON.stringify(payload)}</cmr>`);
+  parseCmrOutcome(`<cmr>${JSON.stringify(payload)}</cmr>`);
   return { cmrWorkerParserValid: true };
 }
 
@@ -362,13 +363,13 @@ function completeDogfoodS5CoderOutput(
 }
 
 function ledgerEntry(
-  step: StepId,
+  step: SliceStepId,
   input?: {
     readonly output?: StepOutput;
     readonly handoffStatus?: "success" | "escalate" | "error";
     readonly escalationKind?: "decision" | "failure";
     readonly event?: "escalation_answered" | "runner_bookkeeping";
-    readonly forStep?: StepId;
+    readonly forStep?: SliceStepId;
     readonly answer?: string;
     readonly source?: "human" | "resume_input";
     readonly intent?: "continue_fixing";
@@ -1922,33 +1923,6 @@ async function familyClosureSurvives(input: {
     shape: input.shape,
     reason: `survived_${input.shape}`,
     stopSummary: pass.stopSummary,
-  };
-}
-
-async function runnerClosureFailure(input: {
-  readonly shape: string;
-  readonly reviewerOutput: StepOutput;
-}): Promise<{
-  readonly shape: string;
-  readonly reason: string;
-  readonly stopSummary: StopSummary;
-}> {
-  const closureFinding = runnerFinding({
-    claimQuote: `closure failure ${input.shape}`,
-    location: "orchestrator/src/runner.ts:376",
-  });
-  const backend = new DogfoodSingleSliceBackend(undefined, [
-    { kind: "reviewer", findings: [closureFinding] },
-    input.reviewerOutput,
-  ]);
-  const result = await runOrchestrator({ issueNumber: 376, backend });
-  if (result.status !== "error" || result.errorPackage === undefined) {
-    throw new Error(`dogfood runner closure replay ${input.shape} ended ${result.status}`);
-  }
-  return {
-    shape: input.shape,
-    reason: result.errorPackage.reason,
-    stopSummary: result.stopSummary,
   };
 }
 

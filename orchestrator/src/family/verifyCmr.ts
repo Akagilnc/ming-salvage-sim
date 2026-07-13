@@ -106,10 +106,7 @@ import {
   dispatchFamilyWorkerWithMonitor,
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
-import {
-  MAX_DISPATCH_ATTEMPTS,
-  withMechanicalRetry,
-} from "../dispatchRetry.js";
+import { withMechanicalRetry } from "../dispatchRetry.js";
 import {
   modelRouteFingerprint,
   resolveActiveModelRoute,
@@ -692,24 +689,7 @@ async function runCmrCoderFix(input: {
   }
 
   if (fixResult.kind !== "completed") {
-    const reason =
-      fixResult.kind === "failed"
-        ? `${reasonPrefix} failed: ${fixResult.reason}`
-        : fixResult.kind === "malformed"
-          ? `${reasonPrefix} malformed: ${fixResult.reason}`
-          : fixResult.kind === "outcome_protocol_failure"
-            ? `${reasonPrefix} outcome protocol failure: ${fixResult.reason}`
-            : `${reasonPrefix} returned no valid coder result`;
-    if (fixResult.kind === "malformed" || fixResult.kind === "outcome_protocol_failure") {
-      await recordCmrFixCommitted(familyBackend, {
-        cmrPass: pass,
-        familyHeadBefore: currentFamilyHeadBefore,
-        familyHeadAfter,
-        blockingFindingIdentityKeys,
-        reason: `${reasonPrefix}: coder-fix receipt unreadable; fresh reviewer will judge the diff`,
-      });
-      return { result: { ok: true, ran: true }, familyHeadAfter };
-    }
+    const reason = `${reasonPrefix} failed: ${fixResult.reason}`;
     await recordDurableAbort(familyBackend, {
       phase: "final",
       cmrPass: pass,
@@ -1179,23 +1159,8 @@ export async function runFamilyOnlineReviewLoop(input: {
           stopSummary,
         });
       }
-      if (
-        result.kind === "malformed" ||
-        result.kind === "outcome_protocol_failure"
-      ) {
-        return {
-          kind: "rawReviewerArtifacts",
-          artifacts: reviewerArtifactPointers(
-            reviewerMonitorHandle,
-            result.sessionId,
-          ),
-        };
-      }
       if (result.kind !== "completed") {
-        const detail =
-          result.kind === "failed"
-            ? `: ${result.reason}`
-            : "";
+        const detail = result.kind === "failed" ? `: ${result.reason}` : "";
         throw new OnlineReviewLoopTerminal({
           ok: false,
           terminalState: "decision_gate_raised",
@@ -1216,7 +1181,14 @@ export async function runFamilyOnlineReviewLoop(input: {
           ),
         };
       }
-      return result.output;
+      return {
+        kind: "rawReviewerArtifacts",
+        artifacts: reviewerArtifactPointers(
+          reviewerMonitorHandle,
+          result.sessionId,
+        ),
+        verify: result.output,
+      };
     },
     dispatchFixer: async (landing: WorkerLandingPayload) => {
       const round = landing.onlineReviewRound ?? baseCtx.onlineReviewRound ?? 1;
@@ -1249,12 +1221,6 @@ export async function runFamilyOnlineReviewLoop(input: {
               }),
         });
       }
-      if (
-        result.kind === "malformed" ||
-        result.kind === "outcome_protocol_failure"
-      ) {
-        return undefined;
-      }
       if (result.kind !== "completed") {
         const detail =
           result.kind === "failed"
@@ -1282,10 +1248,10 @@ export async function runFamilyOnlineReviewLoop(input: {
         baseCtx,
         landing,
       );
-      return (
-        result.kind === "completed" && result.output.kind === "docRelease" &&
-        result.output.released
-      );
+      if (result.kind !== "completed") return false;
+      return result.output.kind === "docRelease"
+        ? result.output.released
+        : undefined;
     },
     applySideEffects: (
       landing: WorkerLandingPayload,
@@ -1442,9 +1408,7 @@ async function dispatchOrAbort(
         onFailure: async (outcome, attempt) => {
           const reason =
             "result" in outcome
-              ? outcome.result.kind === "failed" ||
-                  outcome.result.kind === "malformed" ||
-                  outcome.result.kind === "outcome_protocol_failure"
+              ? outcome.result.kind === "failed"
                 ? outcome.result.reason
                 : `worker returned ${outcome.result.kind}`
               : outcome.error instanceof Error
@@ -1500,15 +1464,11 @@ function stampCmrReviewRound(input: {
         ? "escalated"
         : input.result.kind === "failed"
           ? "failed"
-          : input.result.kind === "malformed"
-            ? "malformed"
-            : input.result.kind === "outcome_protocol_failure"
-              ? "protocol_failure"
-              : output?.converged === true
-                ? "converged"
-                : (output?.findings?.length ?? 0) > 0
-                  ? "blocking"
-                  : "not_converged";
+          : output?.converged === true
+            ? "converged"
+            : (output?.findings?.length ?? 0) > 0
+              ? "blocking"
+              : "not_converged";
     tryAppendTelemetryRecord(
       ledgerDir,
       buildReviewRoundStamp({
@@ -1774,20 +1734,7 @@ async function runIntegratedCmrPass(input: {
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
   if (cmrResult.kind !== "completed") {
-    const reason =
-      cmrResult.kind === "failed"
-        ? `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`
-        : cmrResult.kind === "outcome_protocol_failure"
-          ? `family integrated cmr ${pass} outcome protocol failure: ${cmrResult.reason}`
-        : cmrResult.kind === "malformed"
-          ? `family integrated cmr ${pass} worker malformed: ${cmrResult.reason}`
-          : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
-    if (cmrResult.kind === "malformed" || cmrResult.kind === "outcome_protocol_failure") {
-      return await routeRawReviewerArtifactsToFix(
-        `integrated cmr ${pass} reviewer raw artifacts require fixer inspection`,
-        cmrResult.sessionId,
-      );
-    }
+    const reason = `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`;
     const stopSummary = cmrResult.kind === "failed"
         ? cmrWorkerFailedStopSummary({
             reason,
@@ -1862,14 +1809,10 @@ async function runIntegratedCmrPass(input: {
         blockingFindings,
         blockingFindingCount: openFindingsCount,
         blockingFindingIdentityKeys,
-        ...(blockingFindings.length === 0
-          ? {
-              rawReviewerArtifacts: reviewerArtifactPointers(
-                reviewerMonitorHandle,
-                cmrResult.sessionId,
-              ),
-            }
-          : {}),
+        rawReviewerArtifacts: reviewerArtifactPointers(
+          reviewerMonitorHandle,
+          cmrResult.sessionId,
+        ),
         ...(cmrResult.output.findingFamilies !== undefined
           ? { findingFamilies: cmrResult.output.findingFamilies }
           : {}),
@@ -2490,16 +2433,19 @@ export async function ensureFamilyPostMergeCleanup(input: {
     },
     cleanupLanding,
   );
+  const reportedCleanup =
+    cleanupResult.kind === "completed" && cleanupResult.output.kind === "cleanup"
+      ? cleanupResult.output
+      : undefined;
   if (
     cleanupResult.kind !== "completed" ||
-    cleanupResult.output.kind !== "cleanup" ||
-    !cleanupResult.output.terminal ||
-    !cleanupResult.output.ok
+    (reportedCleanup !== undefined &&
+      (!reportedCleanup.terminal || !reportedCleanup.ok))
   ) {
     const reason =
       cleanupResult.kind === "completed"
         ? "family post-merge cleanup did not reach a terminal success outcome"
-        : cleanupResult.kind === "failed" || cleanupResult.kind === "malformed"
+        : cleanupResult.kind === "failed"
           ? `family post-merge cleanup worker returned ${cleanupResult.kind}: ${cleanupResult.reason}`
           : `family post-merge cleanup worker returned ${cleanupResult.kind}`;
     if (recordAbortOnFailure) {
@@ -2522,9 +2468,12 @@ export async function ensureFamilyPostMergeCleanup(input: {
     }
     return { ok: false, reason };
   }
+  if (reportedCleanup === undefined) {
+    return { ok: true };
+  }
   await recordPostMergeCleanup(familyBackend, {
     familyHeadAfter,
-    cleanupOutput: cleanupResult.output,
+    cleanupOutput: reportedCleanup,
   });
   const postCleanupLedger = await familyBackend.readFamilyLedger();
   if (

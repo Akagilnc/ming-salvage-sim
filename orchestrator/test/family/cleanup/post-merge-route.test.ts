@@ -176,6 +176,43 @@ describe("#603 ensureFamilyPostMergeCleanup — route after short-circuit", () =
     ).resolves.toEqual({ ok: true });
     expect(cleanupDispatched).toBe(1);
   });
+
+  it("completed cleanup without receipt cargo advances without synthesizing failure", async () => {
+    const goodRoute = await smokeRouteModels(
+      resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" }),
+      async () => ({ cliVersion: "test" }),
+    );
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push({
+      status: "pr_merged",
+      event: "pr_merged",
+      phase: "final",
+      pr: "pr://family/603",
+      prNumber: 603,
+      remoteBranchName: "family/603-base",
+      mergedHeadOid: "family-base-0",
+      familyHeadAfter: "family-base-0",
+    });
+    familyBackend.dispatchWorker = async (spec) =>
+      spec.kind === "cleanup"
+        ? {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+          }
+        : { kind: "failed", reason: `unexpected ${spec.kind}` };
+
+    await expect(
+      ensureFamilyPostMergeCleanup({
+        familyBackend,
+        familyBase: "family/603-base",
+        familyHeadAfter: "family-base-0",
+        prUrl: "pr://family/603",
+        resolvedRoute: goodRoute,
+        recordAbortOnFailure: true,
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(familyBackend.ledger.some((entry) => entry.status === "aborted")).toBe(false);
+  });
 });
 
 describe("#603 requirePostMergeCleanupForAlreadyDone — threads resolvedRoute", () => {

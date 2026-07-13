@@ -634,11 +634,11 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
   });
 });
 
-describe("#330 a crash/malformed final cmr/ship worker writes a durable aborted event (online review r3, codex P2)", () => {
+describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborted event (online review r3, codex P2)", () => {
   /**
    * A new-seam backend that RECORDS the ledger, with the cmr + ship worker outputs
    * configurable. A `completed` worker whose output kind is WRONG (cmr worker
-   * returning a ship-shaped payload, or vice-versa) is the crash/malformed case the
+   * returning a ship-shaped payload, or vice-versa) is the wrong-kind case the
    * verify-cmr hook fail-safes to INCOMPLETE_GATE — and (r3) must leave a durable
    * `aborted` event so the failed FINAL barrier survives to the ledger for resume.
    */

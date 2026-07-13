@@ -434,8 +434,8 @@ export function docReleaseWorkerSpec(
  *     dispatched via `backend.resumeSession` (the escalate/crash-resume path), else
  *     via `backend.runStep`. The returned `StepOutput | StepResult` is wrapped as
  *     `completed` (carrying the real per-step `sessionId` when surfaced).
- * #331 always yields `completed` — the `failed`/`malformed`/`escalated` cases are
- * wired into the union now but produced by the real workers in later slices.
+ * #331 always yields `completed`; process `failed` and worker-declared
+ * `escalated` results are produced by the real workers in later slices.
  */
 export async function legacyDispatchWorker(
   backend: Backend,
@@ -1021,13 +1021,9 @@ function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
  * the runner's existing guards already handle:
  *   - `escalated` → a coder/reviewer output carrying the escalate (route() takes
  *     the global escalate edge → S8(escalate)).
- *   - malformed receipt cargo → a completed placeholder. Reviewer callers pass
- *     the raw artifacts to fixer; coder callers continue to the fresh reviewer.
  *   - process `failed` → `{ unwrapped: undefined, reason }` for S8(error).
  *
- * Returns `{ unwrapped, reason? }`: coder receipt cargo becomes a completed
- * placeholder; reviewer receipt cargo stays unwrapped so its caller can forward
- * raw artifacts to the fixer. Only process failure carries an error reason.
+ * Returns `{ unwrapped, reason? }`; only process failure carries an error reason.
  */
 export function workerResultToStep(
   result: WorkerResult,
@@ -1058,20 +1054,6 @@ export function workerResultToStep(
     // the human-answer resume (planResume → resumeSession) resumes the recorded
     // ledger sessionId; dropping it here would resume the wrong (run-level UUID)
     // session. Wrap as a StepResult when the id is present, mirroring `completed`.
-    return {
-      unwrapped:
-        result.sessionId !== undefined
-          ? { output, sessionId: result.sessionId }
-          : output,
-    };
-  }
-  if (result.kind === "malformed" || result.kind === "outcome_protocol_failure") {
-    if (expectedKind === "reviewer") return { unwrapped: undefined };
-    const output: StepOutput = {
-      kind: "coder",
-      committed: false,
-      commitsAdded: 0,
-    };
     return {
       unwrapped:
         result.sessionId !== undefined
