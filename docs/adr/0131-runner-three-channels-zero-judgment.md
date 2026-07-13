@@ -1,6 +1,6 @@
 Status: Accepted（2026-07-13 owner 当日裁决成文；本 ADR 为口谕的 canonical 落笔，被取代旧条款见「取代」节）
 
-# 0131: runner 三通道零判断权——交通警察总纲（自报数 + fixer 判卷 + 一次上抛）
+# 0131: runner 三通道零判断权——交通警察总纲（自报数 + fixer 判卷 + runner 永不按门）
 
 ## 决定
 
@@ -25,7 +25,7 @@ synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (
 - **ADR 0050**「malformed 到 runner → 令同 worker 重写 cap 2 → infra escalation」及「outcome-guard 住 runner/image 层校验 format/schema/字段/证据」——**废止**。worker 发完成信号前自验半句仍成立（归 ADR 0130 交卷契约）。
 - **ADR 0062** 信封宪法段「缺覆盖 = malformed outcome → 机械重试重派 reviewer」半句、typed-治理澄清段（「outcome-guard 必须在 worker 之外的 runner 层」及其形状/治理校验派生信封）——**废止**；0062 三通道母法与决策门 durable 语义保留，通道 (b) 语义改为本 ADR 自报数。0050 立法理由（被守护者自守漏洞）的新解法 = 下轮 fresh 复审验真 + fixer 逐条实证（0129 沿革段：形式核验本就拦不住填表完美的假话）。
 - **ADR 0030** 裁定状态段（runner 覆盖断言 / 压制预算 / 翻案计数器）——0129 已拆，本 ADR 重申不得复活。
-- **ADR 0129** 写入点校验条款**限缩**：不含 count-vs-array 对账（count=自报）；「拒收→同 worker 重写」梯废止——不可用一次 decision 上抛。findings 状态库、交通警察定理、fresh 终翻规则不变。
+- **ADR 0129** 写入点校验条款**限缩**：不含 count-vs-array 对账（count=自报）；「拒收→同 worker 重写」梯废止——不可用卷面按角色真源分治（评审类递 fixer 原料、runner 永不自己按决策门）。findings 状态库、交通警察定理、fresh 终翻规则不变。
 - **#598 验收第 1/5 条** malformed-shape lane（「过不了 runner 下游 schema 再校验 → 当 process-level malformed 机械重派」）——**废止**；进程崩 lane 保留。
 - **#875 信封票 §1/§2**（count 由数组派生、写入点 count-vs-array 拒收 + 重写反馈）——**废止（S1b，2026-07-13）**；§3「下游禁一切 shape 处置」保留并加强（连数组长度都不数）。
 - **orchestrator/README.md Constitution 节**「defective report = shape failure → 有界机械重派」corollary——按本 ADR 重写（同 PR）；其防拆测试钉 `test/adr-0062-regression-825.test.ts` 随实现翻转（#873 战役工单）。
