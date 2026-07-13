@@ -49,6 +49,20 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     } })).toEqual({ kind: "next", step: "S6" });
   });
 
+  it("kind mismatch never decides redispatch or error fate", () => {
+    const wrong = { kind: "coder", committed: false, commitsAdded: 0 } as const;
+    expect(route({ from: "S3", output: wrong })).toEqual({ kind: "next", step: "S4" });
+    expect(route({ from: "S6", output: wrong })).toEqual({ kind: "next", step: "S4" });
+    expect(route({ from: "S4", output: wrong })).toEqual({ kind: "next", step: "S5" });
+    expect(route({ from: "S9", output: wrong })).toEqual({ kind: "next", step: "S10" });
+    expect(route({ from: "S10", output: wrong })).toEqual({ kind: "next", step: "S9" });
+    expect(route({ from: "S11", output: wrong })).toEqual({
+      kind: "handoff",
+      status: "success",
+    });
+    expect(route({ from: "S12", output: wrong })).toEqual({ kind: "next", step: "S11" });
+  });
+
   it("contains no coder git-verdict court in single-slice or family runtime", () => {
     const sources = [
       "src/runner.ts",
@@ -80,6 +94,8 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     expect(source).not.toContain("isReviewerStructuredOutputError");
     expect(stripComments(readFileSync(new URL("../src/route.ts", import.meta.url), "utf8")))
       .not.toContain("pendingBlockingFindings");
+    expect(stripComments(readFileSync(new URL("../src/route.ts", import.meta.url), "utf8")))
+      .not.toMatch(/ctx\.output\?\.kind\s*!==/);
     expect(source).not.toMatch(/\.severity\b/);
     expect(source).not.toMatch(/\.action\b/);
     expect(source).not.toMatch(

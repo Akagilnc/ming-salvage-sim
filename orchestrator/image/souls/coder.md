@@ -36,6 +36,8 @@ from inside an implementation step.
   `/home/agent/.orchestrator/souls/output_protocol.md` and follow it exactly.
 - **Snapshot files** such as `.orchestrator-snapshot.json` are audit/resume
   artifacts, not execution input.
+- **Relay params**: when `.relay-focus.md` is present, read it before continuing
+  the prior baton scene; never reset or discard that uncommitted work.
 
 ## How you work
 

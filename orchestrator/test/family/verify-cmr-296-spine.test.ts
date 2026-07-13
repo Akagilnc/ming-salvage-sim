@@ -736,8 +736,8 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
   });
 });
 
-describe("#330 spine — shipped resume redispatches the idempotent ship worker", () => {
-  it("re-enters the final barrier", async () => {
+describe("#330 spine — shipped resume continues after the delivery checkpoint", () => {
+  it("does not rerun final verify/cmr/ship", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
@@ -762,8 +762,11 @@ describe("#330 spine — shipped resume redispatches the idempotent ship worker"
       familyBase: "family/291-base",
     });
 
-    expect(backend.verifyCalls.map((v) => v.phase)).toContain("final");
-    expect(backend.prCalls).toEqual([{ familyBase: "family/291-base" }]);
+    expect(backend.verifyCalls.map((v) => v.phase)).not.toContain("final");
+    expect(backend.cmrCalls).toEqual([]);
+    expect(backend.prCalls).toEqual([]);
+    expect(backend.ledger.filter((entry) => entry.status === "shipped")).toHaveLength(1);
+    expect(backend.ledger.some((entry) => entry.status === "review_loop_converged")).toBe(true);
     expect(result.status).toBe("success");
   });
 });

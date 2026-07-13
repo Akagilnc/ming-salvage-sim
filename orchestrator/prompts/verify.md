@@ -7,7 +7,8 @@ Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`)
 - `$ORCHESTRATOR_ONLINE_REVIEW_PATH` or `.orchestrator-online-review.json` — bot snapshot + ship metadata landing file mounted by the runner.
 
 If ship metadata carries `pr://slice/branch-cargo/<encoded-branch>` instead of a
-PR URL, resolve the PR yourself with `gh pr view <branch>` before reviewing.
+PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
+`gh pr view <decoded-branch>` before reviewing.
 
 ## Output
 

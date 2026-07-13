@@ -36,8 +36,14 @@ export type ShipWorkerOutcome =
   | {
       readonly kind: "shipped";
       readonly branch?: string;
-      readonly status: string;
-      readonly pr?: string;
+      readonly status: "pushed";
+      readonly pr?: never;
+    }
+  | {
+      readonly kind: "shipped";
+      readonly branch?: string;
+      readonly status: "pr_opened";
+      readonly pr: string;
     }
   | {
       readonly kind: "escalate";
@@ -93,7 +99,7 @@ const prOpenedSchema = z
   .object({
     status: z.literal("pr_opened"),
     branch: nonEmpty.optional(),
-    pr: nonEmpty.optional(),
+    pr: nonEmpty,
   })
   .strict();
 const escalateSchema = z
@@ -224,7 +230,7 @@ function classifyShipOutcomePayload(
       kind: "shipped",
       status: "pr_opened",
       ...(prOpened.data.branch !== undefined ? { branch: prOpened.data.branch } : {}),
-      ...(prOpened.data.pr !== undefined ? { pr: prOpened.data.pr } : {}),
+      pr: prOpened.data.pr,
     };
   }
   // No strict schema matched → off-contract (unknown status, blank branch/pr, a

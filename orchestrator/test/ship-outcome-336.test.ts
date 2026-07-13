@@ -79,9 +79,9 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
     if (o.kind === "malformed") expect(o.reason).toContain("status");
   });
 
-  it("pr_opened without cargo URL remains a shipped worker report", () => {
+  it("pr_opened without cargo URL is outside the typed worker contract", () => {
     const o = parseShipOutcome('<ship>{"status": "pr_opened", "branch": "feat/x"}</ship>');
-    expect(o.kind).toBe("shipped");
+    expect(o.kind).toBe("malformed");
   });
 
   it("an escalate object ⇒ an escalate outcome (a genuine block, not a rerun)", () => {

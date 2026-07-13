@@ -186,7 +186,11 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
 
   it('a shipped "pr_opened" with no cargo URL remains completed', async () => {
     const be = fixtured();
-    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened" };
+    be.outcome = {
+      kind: "shipped",
+      branch: FAMILY_BASE,
+      status: "pr_opened",
+    } as unknown as ShipWorkerOutcome;
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res.kind).toBe("completed");
   });

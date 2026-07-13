@@ -25,20 +25,20 @@ distinct from the coder soul.
 
 ## How you work
 
-1. Read `.ship-focus.md` if it exists. Invoke the baked **`gstack-ship`** skill on
+1. Start every assignment by checking for the idempotent success case: when the
+   branch already has a PR whose head is the commit this assignment must deliver,
+   report success immediately and reuse it. Leave push, PR creation, version bump,
+   and changelog untouched in that case.
+2. Read `.ship-focus.md` if it exists. Invoke the baked **`gstack-ship`** skill on
    the checked-out branch and **stop at PR creation** (do not merge, do not push
    past the PR). Use the PR target base from `.ship-focus.md` when present; for a
    single-slice ship with no focus file, let `gstack-ship` detect the base.
-2. The tests, the diff `/review`, the version bump, and the changelog are
+3. The tests, the diff `/review`, the version bump, and the changelog are
    `gstack-ship`'s own steps — run them through the skill, do not re-decide the
    method here.
-3. Before reporting success, use `gh pr view` or an equivalent command to confirm
+4. Before reporting success, use `gh pr view` or an equivalent command to confirm
    that the PR exists and its head is the commit delivered by this assignment.
    Successful delivery is your verdict only after that check passes.
-4. Start every assignment by checking for the idempotent success case: when the
-   branch already has a PR whose head is the commit this assignment must deliver,
-   report success immediately and reuse it. Leave push, PR creation, and version
-   bump untouched in that case.
 5. A push or PR-creation failure exits as failure (non-zero). A genuine undecidable
    case uses the decision gate with all required fields, including
    `escalationKind:"decision"`.
@@ -59,6 +59,6 @@ distinct from the coder soul.
   human's answer.
 
 Report your terminal verdict on its own line per the `<ship>` contract
-(`pr_opened` with the PR url, or `pushed` when no PR target), then the completion
+(`pr_opened` with the PR url), then the completion
 signal. Report a hard failure when the ship command/tests fail and no safe self-rerun
 remains. Stay strictly inside the delivery's scope.

@@ -13,8 +13,8 @@
  *     blocking → S5(fix)→S6(fresh full-diff review)→S4
  *
  * A valid decision escalation stays the global stop edge (checked FIRST).
- * Malformed envelopes return the same step as a redispatch request; the runner's
- * shared mechanical retry layer owns the bound and exhaustion escalation.
+ * Envelope shape never decides fate: kind guards only narrow worker-owned fields;
+ * an unusable envelope follows the same fixed topology to the next worker.
  */
 
 import type { OnlineReviewTerminalState, StepId, StepOutput } from "./types.js";
@@ -87,19 +87,17 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S3":
     case "S6":
-      if (ctx.output?.kind !== "reviewer") {
-        return { kind: "next", step: ctx.from };
-      }
       return { kind: "next", step: "S4" };
 
     case "S4": {
-      if (ctx.output?.kind !== "reviewer") {
-        return { kind: "next", step: "S4" };
+      if (ctx.output?.kind === "reviewer") {
+        const blockingCount = ctx.output.findings.length;
+        return blockingCount > 0
+          ? { kind: "next", step: "S5" }
+          : { kind: "next", step: "S7" };
       }
-      const blockingCount = ctx.output.findings.length;
-      return blockingCount > 0
-        ? { kind: "next", step: "S5" }
-        : { kind: "next", step: "S7" };
+      // Unusable review cargo goes to the fixer with its raw artifact pointers.
+      return { kind: "next", step: "S5" };
     }
 
     case "S5": {
@@ -115,62 +113,54 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S9": {
-      if (ctx.output?.kind !== "verify") {
-        return { kind: "handoff", status: "error" };
-      }
-      if (ctx.output.converged) {
-        return {
-          kind: "next",
-          step: "S12",
-        };
-      }
-      if (ctx.output.terminalState === "decision_gate_raised") {
-        return {
-          kind: "handoff",
-          status: "escalate",
-          onlineReviewTerminal: "decision_gate_raised",
-        };
-      }
-      const round = ctx.onlineReviewRound ?? 1;
-      // AC5: round 3 remaining P2/nits are attempted by default — only exhaust
-      // after the final (round > cap) verify still has findings.
-      if (round > MAX_ONLINE_REVIEW_ROUNDS) {
-        return {
-          kind: "handoff",
-          status: "escalate",
-          onlineReviewTerminal: "round_budget_exhausted",
-        };
+      if (ctx.output?.kind === "verify") {
+        if (ctx.output.converged) {
+          return {
+            kind: "next",
+            step: "S12",
+          };
+        }
+        if (ctx.output.terminalState === "decision_gate_raised") {
+          return {
+            kind: "handoff",
+            status: "escalate",
+            onlineReviewTerminal: "decision_gate_raised",
+          };
+        }
+        const round = ctx.onlineReviewRound ?? 1;
+        // AC5: round 3 remaining P2/nits are attempted by default — only exhaust
+        // after the final (round > cap) verify still has findings.
+        if (round > MAX_ONLINE_REVIEW_ROUNDS) {
+          return {
+            kind: "handoff",
+            status: "escalate",
+            onlineReviewTerminal: "round_budget_exhausted",
+          };
+        }
       }
       return { kind: "next", step: "S10" };
     }
 
     case "S10": {
-      if (ctx.output?.kind !== "fixer") {
-        return { kind: "handoff", status: "error" };
-      }
-      // Every valid fixer envelope, including committed:false, advances to a
-      // fresh S9 verification; findings there own any decision gate.
+      // Every completed fixer run advances to a fresh S9 verification; findings
+      // there own any decision gate, including when cargo shape is unusable.
       return { kind: "next", step: "S9" };
     }
 
     case "S11": {
-      if (ctx.output?.kind !== "cleanup") {
-        return { kind: "handoff", status: "error" };
-      }
-      if (!ctx.output.terminal) {
-        return { kind: "handoff", status: "error" };
-      }
-      if (!ctx.output.ok) {
-        return { kind: "handoff", status: "error" };
+      if (ctx.output?.kind === "cleanup") {
+        if (!ctx.output.terminal) {
+          return { kind: "handoff", status: "error" };
+        }
+        if (!ctx.output.ok) {
+          return { kind: "handoff", status: "error" };
+        }
       }
       return { kind: "handoff", status: "success" };
     }
 
     case "S12": {
-      if (ctx.output?.kind !== "docRelease") {
-        return { kind: "handoff", status: "error" };
-      }
-      if (!ctx.output.released) {
+      if (ctx.output?.kind === "docRelease" && !ctx.output.released) {
         return { kind: "handoff", status: "error" };
       }
       return { kind: "next", step: "S11" };

@@ -217,6 +217,86 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     });
   });
 
+  it("shipped-only resume continues at the online review loop without shipping again", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      {
+        status: "shipped",
+        event: "shipped",
+        phase: "final",
+        pr: "pr://family/293-base",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    let verifyDispatches = 0;
+    familyBackend.dispatchWorker = async (spec: any) => {
+      if (spec.kind === "verify") {
+        verifyDispatches += 1;
+        return { kind: "completed", output: { kind: "verify", converged: true } };
+      }
+      if (spec.kind === "docRelease") {
+        return { kind: "completed", output: { kind: "docRelease", released: true } };
+      }
+      if (spec.kind === "cleanup") {
+        return {
+          kind: "completed",
+          output: { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" },
+        };
+      }
+      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      verifyCmr: async () => {
+        throw new Error("final verify/cmr/ship must not rerun after recordShipped");
+      },
+    });
+
+    expect(result.status).toBe("success");
+    expect(verifyDispatches).toBe(1);
+    expect(familyBackend.ledger.filter((e) => e.status === "shipped")).toHaveLength(1);
+    expect(familyBackend.ledger.some((e) => e.status === "review_loop_converged")).toBe(true);
+  });
+
+  it("a terminal family failure stays terminal even when a legacy ship_completed row exists", async () => {
+    const singleSliceBackend = new ChildBackend();
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push(
+      { childIssue: 10, status: "merged", familyHeadAfter: "family-base-0" },
+      { status: "ship_completed" } as unknown as FamilyLedgerEntry,
+      {
+        status: "escalated",
+        event: "escalated",
+        phase: "final",
+        escalationKind: "failure",
+        reason: "terminal review infrastructure failure",
+        familyHeadAfter: "family-base-0",
+      },
+    );
+    let barrierCalls = 0;
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend,
+      familyBase: "family/293-base",
+      verifyCmr: async () => {
+        barrierCalls += 1;
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.escalation?.diagnosis).toMatch(/classified as failure/i);
+    expect(barrierCalls).toBe(0);
+  });
+
   it("review_loop_converged + pr_merged resume stays already_done without re-merge", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();

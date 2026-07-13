@@ -114,10 +114,10 @@ describe("#880 ADR 0130 pointer — per-slice coder-fix (coder soul + coder_fix 
     expect(soul).toMatch(/Check each supplied finding against the real code first/i);
   });
 
-  it("coder_fix prompt cites ADR 0130 so the fix entrypoint is not skill-only", () => {
-    expect(prompt).toMatch(/ADR 0130/);
-    expect(prompt).toContain(ADR_PATH);
-    expect(prompt).toMatch(/refut/i);
+  it("coder_fix prompt stays thin while the soul carries the ADR 0130 method", () => {
+    expect(prompt).not.toMatch(/ADR 0130|refut/i);
+    expect(soul).toMatch(/ADR 0130/);
+    expect(soul).toContain(ADR_PATH);
   });
 });
 
