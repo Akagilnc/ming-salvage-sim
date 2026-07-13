@@ -10,12 +10,12 @@ ADR 0022 decision 4 定「自治边界 = 分阶段到 PR：family 编排器跑�
 
 ## 决定
 
-反转 ADR 0022 decision 4：**线上评审 loop 纳入编排器自身**，成为 ship worker 开出 PR 之后统一接管的一个 worker 阶段（单切片 PR 与 family PR 共用同一套逻辑，不分叉）。编排器的自治边界从「止于 PR」推进到「止于 merge」。
+反转 ADR 0022 decision 4：**线上评审 loop 纳入编排器自身**，成为 ship 开出 PR 后由单切片与 family 共用的 shared-tail segment；该 segment 由相互独立的具名 Action / worker 接力，不按来源分叉。编排器的自治边界从「止于 PR」推进到「止于 merge」。
 
 **决策要点**（详见 #366 PRD，编码细节归 to-issues 切片）：
 
 1. Online Review Action 读取 reactions / reviews / checks / threads 并完成专业判断；Ship / PR Publication 与 Merge / Delivery 分别核验自己拥有的 push、PR 与最终 merge 副作用。修复、Verification、finalization 与 fresh review 的准确接力只读 #869。Runner 不读取 PR 状态或 finding 内容，只按 ADR 0131 三通道与 #869 固定拓扑调度。
-2. 单切片 PR 与 family PR 共用同一套 worker/skill，不按来源分叉设计。
+2. 单切片 PR 与 family PR 共用同一 shared-tail segment 与 Action implementations，不按来源分叉设计；这不表示多个角色合并成同一 worker。
 3. 不设"强证据/弱证据分级→人工升级"机制；verify-worker（强模型）自主判定，fresh review loop 可自纠错，真卡住走既有通用升级通道，不另建专用 defer 机制。
 4. Merge / Delivery Action 核验 ruleset、线程与 CI 等客观条件后自动合并，不额外加人工确认闸；这些外部事实不进入 Runner。
 

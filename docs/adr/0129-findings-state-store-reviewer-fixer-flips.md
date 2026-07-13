@@ -17,7 +17,7 @@ runner 是交通警察，不是刑警：能力多大，责任才配多大——T
 ## Supersede / 沿革
 
 - ADR 0030「四判词由 runner 断言覆盖 / 压制预算 / 翻案上限」段：法庭拆除，判词沦为行状态与留言；争议行反复翻转的终止兜底 = 复审员自升级决策门（#597），不设 runner 计数器。
-- ADR 0050「blocking finding 返回 runner 后再派 fixer」沿革为 reviewer 自报 open-count 驱动固定拓扑；reviewer / fixer / fresh reviewer 的角色分离不变。
+- ADR 0050 原 family-cmr findings-return 版本的“blocking finding 返回 runner 后再派 fixer”，沿革为 reviewer 自报 open-count 驱动固定拓扑；reviewer / fixer / fresh reviewer 的角色分离不变。
 - ADR 0062「typed 治理豁免」句：**收账法庭形态**的豁免对象消失；accepted_suppressed 的授权校验仍在专业写入点完成，错误反馈给写入方。三通道语义不变，信号②只读 reviewer 自报数。
 - 落账文件作为发现载体的机制：沿革为库；富内容仍 worker 间直达、不经 runner 判断面。
 - 2026-07-12 夜实证：收账法庭两次误杀活 run（多报真修复被判死）；r23 证明形式核验拦不住填表完美的假话——真相守卫从来是 fresh 跨模型复审 + 行为演练 + verify 测试 + 线上闸，法庭只提供假安全感。
