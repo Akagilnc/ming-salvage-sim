@@ -59,25 +59,19 @@ Corollaries, all mechanically enforced by
   `synthesizedFailure` may only ever be derived from channel-1 process facts or
   git/host external truth, and a missing result is never synthesized into
   success (`findings: []` / `converged: true`) — nor into failure.
-- **Git/host truth over worker words.** Commit evidence comes from
-  `git rev-list <headBefore>..HEAD` (final-graph reachability); a
-  worker-reported PR URL is an advisory hint that is verified
-  (open + head branch + head repository owner) or discarded — a rejected hint
-  never reaches downstream steps. Self-reported numbers are telemetry only.
+- **Git truth for coder commits; ship owns delivery truth.** Commit evidence
+  comes from `git rev-list <headBefore>..HEAD` (final-graph reachability).
+  A ship worker's exit-zero completion routes as success; any reported PR URL
+  is cargo for downstream workers, not a runner verdict input.
 - **`*_STEP_COMPLETE` sentinels are optional telemetry.** In every prompt/soul
   they may appear only inside the canonical optional-telemetry sentence; the
   sweep test fails any other mention, so no prompt edit can silently restore a
   lie-detector gate.
-- **Mutating dispatches are exactly-once.** Family ship writes a durable
-  two-phase attempt marker (reserve before launch, confirm on spawn), a durable
-  `ship_completed` record before host observation, and re-dispatches only when
-  host truth confirms `pr_missing`. A mismatch (e.g. a deliberately closed PR)
-  escalates durably instead of re-shipping. Retry budgets live in the ledger
-  (`mechanical_redispatch_attempt` rows) and survive crash/re-feed;
-  legitimate repeated rounds (slow-CI S9 re-polls) never consume them.
-- **Observation failure ≠ confirmed absence.** A failed `gh`/git lookup is a
-  retryable observation problem (its own bounded lane), never proof that the
-  mutation didn't land and never a reason to abort a resume.
+- **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the
+  runner dispatches ship again. The worker verifies whether the branch's exact
+  delivery already exists and returns success without duplicate push, PR, or
+  version bump. Process failures use durable `mechanical_redispatch_attempt`
+  rows; decision gates are transported unchanged.
 
 ## Igniting a family run (cold start — everything a fresh session needs)
 
@@ -326,9 +320,7 @@ startup escalation; nothing mutates.
 
 Providers with unavailable auth (e.g. grok without a mounted `auth.json`) are
 rejected **before** dispatch — fail-closed preflight, never an unauthenticated
-launch. Same pattern for capabilities: a backend without a required
-verification seam (`verifyFamilyShippedPr`) is refused before the mutating
-ship, not after.
+launch.
 
 OpenCode is baked into the worker image and the route-selectable `glm-5.2`
 slug resolves to `opencode-go/glm-5.2`. Its Go-subscription credential remains
@@ -475,5 +467,4 @@ main across cross-slice seams; the integrated gates exist precisely for that.
 | startup `route smoke failed … did not complete an observable bash smoke` (every launch) | smoke prompt lost its `{{NONCE}}`/`{{NONCE_FILE}}` placeholders, or model at capacity | check `prompts/route-smoke.md` placeholders; switch checkpoint |
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
-| resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
 | worker looks hung | judge by idle threshold (>15 min with no new output), then kill only that worker's own pid tree; capacity/quota errors are not hangs | relay a successor onto the surviving drift |

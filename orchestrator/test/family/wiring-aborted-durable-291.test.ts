@@ -120,9 +120,6 @@ class AbortingFamilyBackend implements FamilyBackend {
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     return { url: `pr://${req.familyBase}`, prHead: this.currentFamilyHead };
   }
-  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
-    return { ok: true };
-  }
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
     this.aborted.push(event);
   }

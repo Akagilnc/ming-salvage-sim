@@ -180,7 +180,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     );
   });
 
-  it("#824 push-only ship observes no PR and reaches S8(success)", async () => {
+  it("completed ship enters the fixed online-review topology and reaches S8(success)", async () => {
     const backend = new HappyPathBackend();
 
     const result = await runOrchestrator({ issueNumber: 247, backend });
@@ -198,7 +198,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
 
     // The step ledger records the runner's decisions in canonical order —
     // S3 is the fresh full-diff reviewer and S4 records the runner classification.
-    // #600: pushed ship skips the online review loop (S9–S12); S7 → S8 directly.
+    // Completed ship enters the fixed online-review topology.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
       "S1",
@@ -206,9 +206,14 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       "S3",
       "S4",
       "S7",
+      "S9",
+      "S9",
+      "S12",
+      "S12",
+      "S11",
       "S8",
     ]);
-    expect(result.stepLedger.some((e) => e.step === "S9")).toBe(false);
+    expect(result.stepLedger.some((e) => e.step === "S9")).toBe(true);
   });
 
   it("dispatches implementation and review steps to the sandbox", async () => {

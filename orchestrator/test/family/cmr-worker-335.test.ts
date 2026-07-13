@@ -725,13 +725,6 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    protected override verifyFamilyShipPr(input: { pr: string; familyBase: string }): {
-      ok: true;
-      headOid: string;
-      prUrl: string;
-    } {
-      return { ok: true, headOid: "head-1", prUrl: input.pr };
-    }
   }
 
   function fixtured(): FixturedCmrBackend {

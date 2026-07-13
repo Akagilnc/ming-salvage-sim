@@ -69,7 +69,6 @@ import {
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
-import { NoOpenPrForBranchError, resolveHostTruthPr } from "../autoMerge.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
 import {
@@ -154,11 +153,7 @@ import {
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
 import type { Sh } from "../familyDriver.js";
 import { recordFamilyEscalated } from "./ledger.js";
-import {
-  isFilledString,
-  shipOutcomeFromResult,
-  type ShipWorkerOutcome,
-} from "../shipOutcome.js";
+import { shipOutcomeFromResult, type ShipWorkerOutcome } from "../shipOutcome.js";
 import {
   configureTelemetryFromWorkerImage,
   createTelemetryLegStamper,
@@ -199,9 +194,6 @@ import type {
   OpenFamilyPrRequest,
   OpenFamilyPrResult,
   ReconcileGit,
-  VerifyFamilyShippedPrRequest,
-  VerifyFamilyShippedPrResult,
-  FindFamilyShippedPrResult,
 } from "./types.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
@@ -494,88 +486,6 @@ export class RealFamilyBackend implements FamilyBackend {
       cwd: cwd ?? this.opts.workingRepo,
       timeoutMs,
     });
-  }
-
-  protected verifyFamilyShipPr(input: {
-    readonly pr: string;
-    readonly familyBase: string;
-  }):
-    | { ok: true; headOid: string; prUrl: string }
-    | {
-        ok: false;
-        kind: "pr_missing" | "observation_failed" | "mismatch";
-        reason: string;
-      } {
-    try {
-      const resolved = resolveHostTruthPr(
-        (file, args) => this.sh(file, args, this.opts.workingRepo),
-        this.opts.repo,
-        input.familyBase,
-        input.pr,
-      );
-      if (resolved.baseRefName !== this.opts.base) {
-        return {
-          ok: false,
-          kind: "mismatch",
-          reason: `family PR "${resolved.prUrl}" targets base "${String(resolved.baseRefName)}" but expected "${this.opts.base}"`,
-        };
-      }
-      return { ok: true, headOid: resolved.headOid, prUrl: resolved.prUrl };
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      const kind = err instanceof NoOpenPrForBranchError ? "pr_missing" : "observation_failed";
-      return {
-        ok: false,
-        kind,
-        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${detail}`,
-      };
-    }
-  }
-
-  async verifyFamilyShippedPr(
-    request: VerifyFamilyShippedPrRequest,
-  ): Promise<VerifyFamilyShippedPrResult> {
-    const verifiedPr = this.verifyFamilyShipPr({
-      pr: request.pr,
-      familyBase: request.familyBase,
-    });
-    if (!verifiedPr.ok) return verifiedPr;
-    if (verifiedPr.headOid !== request.expectedHead) {
-      return {
-        ok: false,
-        kind: "mismatch",
-        reason:
-          `family PR "${request.pr}" head ${verifiedPr.headOid} ` +
-          `does not match current family HEAD ${request.expectedHead}`,
-      };
-    }
-    return { ok: true };
-  }
-
-  async findFamilyShippedPr(input: {
-    readonly familyBase: string;
-    readonly expectedHead: string;
-  }): Promise<FindFamilyShippedPrResult> {
-    try {
-      const resolved = resolveHostTruthPr(
-        (file, args) => this.sh(file, args, this.opts.workingRepo),
-        this.opts.repo,
-        input.familyBase,
-      );
-      if (resolved.baseRefName !== this.opts.base) {
-        return { ok: false, kind: "mismatch", reason: `host family PR "${resolved.prUrl}" targets base "${String(resolved.baseRefName)}" but expected "${this.opts.base}"` };
-      }
-      if (resolved.headOid !== input.expectedHead) {
-        return { ok: false, kind: "mismatch", reason: `host family PR head ${resolved.headOid} does not match current family HEAD ${input.expectedHead}` };
-      }
-      return { ok: true, pr: resolved.prUrl };
-    } catch (err) {
-      return {
-        ok: false,
-        kind: err instanceof NoOpenPrForBranchError ? "pr_missing" : "observation_failed",
-        reason: `could not discover family PR via host truth: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
   }
 
   /**
@@ -2730,47 +2640,13 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcome.kind === "malformed") {
       return { kind: "malformed", reason: outcome.reason };
     }
-    // Fail-CLOSED on the FAMILY contract (prompts/family_ship.md): a family ship
-    // delivery is a family PR — the ONLY accepted shipped status is "pr_opened"
-    // with a `pr` URL. The shared parser also accepts "pushed" (legal for a SINGLE
-    // slice, prompts/ship.md), so a family worker that pushed-but-opened-no-PR
-    // would otherwise be read as a completed family delivery → verifyCmr ok:true on
-    // a PHANTOM family PR (cmr S336 r2 F1). The single-slice consumer keeps "pushed"
-    // (legal there); only THIS family consumer narrows it (verifyCmr never reads
-    // success on a non-PR family ship). The `pr` belt uses isFilledString as
-    // defense-in-depth (the parser already enforces non-empty pr — cmr S336 r3).
-    if (outcome.status !== "pr_opened" || !isFilledString(outcome.pr)) {
-      return {
-        kind: "malformed",
-        reason: `family ship worker reported status "${outcome.status}" — the family delivery must be "pr_opened" with a \`pr\` URL (family_ship.md allows only pr_opened; "pushed" is single-slice only)`,
-      };
-    }
-    const verifiedPr = this.verifyFamilyShipPr({
-      pr: outcome.pr,
-      familyBase: ctx.familyBase,
-    });
-    // A host-confirmed metadata mismatch is observed-but-unexpected state, not a
-    // malformed worker response. Escalate it durably so verifyCmr never maps a
-    // deliberately closed or otherwise mismatched claimed PR into another
-    // mutating ship dispatch. Missing PRs and unknown observations remain
-    // lifecycle outcomes owned by verifyCmr.
-    if (!verifiedPr.ok && verifiedPr.kind === "mismatch") {
-      return {
-        kind: "escalated",
-        escalation: {
-          reason: verifiedPr.reason,
-          diagnosis: "claimed family PR metadata was observed but did not match the delivery contract",
-        },
-      };
-    }
     return {
       kind: "completed",
       output: {
         kind: "ship",
-        branch: outcome.branch,
+        branch: outcome.branch ?? ctx.familyBase,
         status: outcome.status,
-        pr: verifiedPr.ok ? verifiedPr.prUrl : outcome.pr,
-        ...(verifiedPr.ok ? { prHead: verifiedPr.headOid } : {}),
+        ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
       },
     };
   }
@@ -2813,6 +2689,7 @@ export class RealFamilyBackend implements FamilyBackend {
       if (missingProvider !== undefined) {
         return {
           kind: "escalate",
+          escalationKind: "decision",
           reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
           diagnosis:
             "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; typed provider availability preflight rejected the ship launch before sc.run",
@@ -2821,6 +2698,7 @@ export class RealFamilyBackend implements FamilyBackend {
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
+          escalationKind: "decision",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
           diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
         };
@@ -2836,6 +2714,7 @@ export class RealFamilyBackend implements FamilyBackend {
       if (auth.ghToken === undefined) {
         return {
           kind: "escalate",
+          escalationKind: "decision",
           reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
           diagnosis:
             "the family ship worker invokes gstack-ship, whose family delivery is a PR " +
@@ -3157,14 +3036,7 @@ export class RealFamilyBackend implements FamilyBackend {
       ],
       repo,
     );
-    const verifiedPr = this.verifyFamilyShipPr({
-      pr: url,
-      familyBase: request.familyBase,
-    });
-    if (!verifiedPr.ok) {
-      throw new Error(verifiedPr.reason);
-    }
-    return { url: verifiedPr.prUrl, prHead: verifiedPr.headOid };
+    return { url };
   }
 
   // ─────────────────────────── aborted / escalate ───────────────────────────

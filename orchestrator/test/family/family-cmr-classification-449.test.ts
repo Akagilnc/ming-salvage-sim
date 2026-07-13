@@ -1351,9 +1351,6 @@ class CmrFindingBackend implements FamilyBackend {
   async readFamilyHead(): Promise<string> {
     return this.currentFamilyHead;
   }
-  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
-    return { ok: true };
-  }
   async escalateFamily(escalation: FamilyEscalation): Promise<void> {
     this.escalations.push(escalation);
     await recordFamilyEscalated(this, {

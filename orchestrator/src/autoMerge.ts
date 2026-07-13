@@ -58,95 +58,6 @@ export interface PrMergedTerminalRecord {
   readonly convergedHeadOid: string;
 }
 
-export interface OpenPrObservation {
-  readonly present: boolean;
-  readonly prUrl?: string;
-}
-
-export class NoOpenPrForBranchError extends Error {}
-
-function repositoryOwner(repo: string): string {
-  return repo.split("/")[0] ?? "";
-}
-
-function githubFieldEquals(actual: string | undefined, expected: string): boolean {
-  return actual?.trim().toLowerCase() === expected.trim().toLowerCase();
-}
-
-function isOwnOpenBranchPr(
-  live: PrMergeLiveState,
-  repo: string,
-  branch: string,
-): boolean {
-  return githubFieldEquals(live.state, "OPEN") &&
-    live.headRefName === branch &&
-    githubFieldEquals(live.headRepositoryOwnerLogin, repositoryOwner(repo));
-}
-
-/**
- * Resolve the one downstream PR identity from GitHub host truth.
- * Worker output is advisory only: every rejected or unreadable hint is discarded
- * before the branch query, and owner filtering happens over the complete result set.
- */
-export function resolveHostTruthPr(
-  sh: Sh,
-  repo: string,
-  branch: string,
-  reportedPr?: string,
-): PrMergeLiveState {
-  if (reportedPr !== undefined && reportedPr.trim().length > 0) {
-    try {
-      const hinted = fetchPrMergeLiveState(sh, repo, reportedPr);
-      if (isOwnOpenBranchPr(hinted, repo, branch)) return hinted;
-    } catch {
-      // A stale/deleted/mistyped hint is untrusted input, not a routing failure.
-    }
-  }
-
-  const raw = sh("gh", [
-    "pr", "list", "--repo", repo, "--head", branch, "--state", "open",
-    "--json",
-    "number,url,state,baseRefName,headRefName,headRefOid,headRepositoryOwner,mergeStateStatus,mergeable",
-  ]);
-  const parsed: unknown = JSON.parse(raw);
-  if (!Array.isArray(parsed)) {
-    throw new Error(`autoMerge: malformed gh pr list payload for branch ${branch}`);
-  }
-  for (const candidate of parsed) {
-    if (candidate === null || typeof candidate !== "object") {
-      throw new Error(`autoMerge: malformed gh pr list entry for branch ${branch}`);
-    }
-    const owner = (candidate as Record<string, unknown>).headRepositoryOwner;
-    const login = owner !== null && typeof owner === "object"
-      ? (owner as Record<string, unknown>).login
-      : undefined;
-    if (
-      typeof login !== "string" ||
-      !githubFieldEquals(login, repositoryOwner(repo))
-    ) continue;
-    const live = parsePrMergeLivePayload(JSON.stringify(candidate), `branch ${branch}`);
-    if (isOwnOpenBranchPr(live, repo, branch)) return live;
-  }
-  throw new NoOpenPrForBranchError(
-    `autoMerge: no open PR for branch ${branch} owned by repository ${repo}`,
-  );
-}
-
-/** Host truth for the open PR currently associated with a pushed branch. */
-export function observeOpenPrForBranch(
-  sh: Sh,
-  repo: string,
-  branch: string,
-  reportedPr?: string,
-): OpenPrObservation {
-  try {
-    const resolved = resolveHostTruthPr(sh, repo, branch, reportedPr);
-    return { present: true, prUrl: resolved.prUrl };
-  } catch (err) {
-    if (!(err instanceof NoOpenPrForBranchError)) throw err;
-    return { present: false };
-  }
-}
 
 export type AutoMergeTerminalState =
   | "merged"
@@ -154,6 +65,10 @@ export type AutoMergeTerminalState =
   | "decision_gate"
   | "externally_merged_never_converged"
   | "already_recorded";
+
+function githubFieldEquals(actual: string | undefined, expected: string): boolean {
+  return actual?.trim().toLowerCase() === expected.trim().toLowerCase();
+}
 
 export interface AutoMergeStageResult {
   readonly ok: boolean;

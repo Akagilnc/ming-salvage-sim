@@ -93,7 +93,6 @@ import {
 import {
   docReleasePathsFromCommit,
   isPrMergedMarker,
-  observeOpenPrForBranch,
   offlineAutoMergeAllowUnverifiedDocPaths,
   runAutoMergeStage,
   slicePrMergedRecordFromLedger,
@@ -1725,7 +1724,7 @@ function adjudicatedBlockingFindingsForPersistedS4(
 function planResume(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
   repairIntent?: ContinueFixingEvent,
-  hostPrPresent?: boolean,
+  skipOnlineReview = false,
 ): ResumePlan {
   if (ledger.length === 0) {
     return { resumeStep: "S0", priorLedger: [] };
@@ -1754,6 +1753,22 @@ function planResume(
     lastEntry.escalationKind !== undefined
   ) {
     if (lastEntry.escalationKind === "failure") {
+      if (lastNonTerminalStep(executableLedger) === "S7") {
+        let reopenIdx = lastEntryIndex - 1;
+        while (reopenIdx >= 0 && ledger[reopenIdx]?.step !== "S7") reopenIdx--;
+        while (
+          reopenIdx > 0 &&
+          ledger[reopenIdx - 1]?.step === "mechanical_redispatch_attempt" &&
+          ledger[reopenIdx - 1]?.forStep === "S7"
+        ) {
+          reopenIdx--;
+        }
+        return {
+          resumeStep: "S7",
+          lastOutput: agentEntry?.output,
+          priorLedger: ledger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
+        };
+      }
       return {
         terminalStatus: "escalate",
         resumeStep: "S8",
@@ -2000,6 +2015,23 @@ function planResume(
     };
   }
 
+  // A parked/legacy ship boundary is not delivery truth. Re-dispatch the
+  // idempotent ship worker; that worker alone verifies whether delivery is
+  // already complete. Decision escalations remain parked until answered above.
+  if (
+    lastEntry.step === "S8" &&
+    (lastEntry.handoffStatus === "error" || lastEntry.handoffStatus === undefined) &&
+    lastNonTerminalStep(executableLedger) === "S7"
+  ) {
+    let reopenIdx = executableLedger.length - 1;
+    while (reopenIdx >= 0 && executableLedger[reopenIdx]!.step === "S8") reopenIdx--;
+    return {
+      resumeStep: "S7",
+      lastOutput: agentEntry?.output,
+      priorLedger: executableLedger.slice(0, reopenIdx) as ReadonlyArray<LedgerEntry>,
+    };
+  }
+
   // Case 3a: the prior run wrote a terminal S8 entry. Report its TRUE status
   // (recorded in handoffStatus, #255) — a prior error/escalate must not be
   // re-reported as success. If an older ledger lacks the tag, fall back to
@@ -2050,8 +2082,7 @@ function planResume(
       : {}),
     ...(routeFrom === "S7"
       ? {
-          shipStatus: lastShipFromLedger(executableLedger)?.status,
-          hostPrPresent,
+          skipOnlineReview,
         }
       : {}),
     ...(onlineReviewRoundForRoute !== undefined
@@ -2849,7 +2880,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let refusedFindingIdentityKeysForReverify: readonly string[] = [];
   const noProgressByFindingIdentityKey = new Map<string, number>();
   let lastShipOutput: ShipResult | undefined;
-  let hostPrPresent: boolean | undefined;
   let onlineReviewRound = 1;
   // Resume planning keeps a display-seeded ledger trimmed at S7. Preserve a
   // separate full ledger for S9's cross-round history extraction.
@@ -2886,44 +2916,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     } catch {
       return "Akagilnc/ming-salvage-sim";
     }
-  }
-
-  function observeShipPr(ship: ShipResult): {
-    readonly present: boolean;
-    readonly prUrl?: string;
-  } {
-    // Unit/dogfood backends intentionally have no GitHub host. Keep their
-    // synthetic handles inside the established test boundary; production must
-    // always execute the host query below.
-    if (process.env.NODE_ENV === "test") {
-      return isFilledString(ship.pr)
-        ? { present: true, prUrl: ship.pr }
-        : { present: false };
-    }
-    const repo = defaultRepo();
-    if (
-      ship.pr !== undefined &&
-      (offlineSyntheticPollAdmissible(ship.pr, repo) ||
-        process.env.ORCHESTRATOR_OFFLINE_REVIEW_POLL === "1")
-    ) {
-      return { present: true, prUrl: ship.pr };
-    }
-    return observeOpenPrForBranch(ghSh, repo, ship.branch, ship.pr);
-  }
-
-  async function observeS7HostTruth(
-    shipWorktree: WorktreeHandle,
-  ): Promise<{
-    readonly shipped: boolean;
-    readonly prUrl?: string;
-  }> {
-    if (backend.observeSliceShip !== undefined) {
-      return backend.observeSliceShip(shipWorktree);
-    }
-    // Legacy zero-host test backends model a successful remote delivery. They
-    // may not supply production host readers; production RealBackend always does.
-    if (process.env.NODE_ENV === "test") return { shipped: true };
-    throw new Error("S7 host-truth reader is unavailable");
   }
 
   async function pollMergeReadinessForShip(
@@ -3774,110 +3766,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     let executableResumeLedger = executableLedgerEntries(resumeLedger);
     let resumeTail = executableResumeLedger.at(-1);
-    const parkedS7Ship = lastShipFromLedger(executableResumeLedger);
-    const s7HostObservationPark =
-      resumeTail?.step === "S8" &&
-      resumeTail.handoffStatus === "escalate" &&
-      resumeTail.escalationKind === "failure" &&
-      lastNonTerminalStep(executableResumeLedger) === "S7" &&
-      parkedS7Ship !== undefined;
-    let resumedS7Observation:
-      | { readonly shipped: boolean; readonly prUrl?: string }
-      | undefined;
-    if (s7HostObservationPark) {
-      if (worktree === undefined) {
-        return await errorTermination(
-          "S7",
-          new Error("S7 host-observation park requires a resident worktree"),
-        );
-      }
-      const resumeWorktree = worktree;
-      try {
-        resumedS7Observation = await withLegTransientRetry(() =>
-          observeS7HostTruth(resumeWorktree),
-        );
-      } catch {
-        // While host truth remains unavailable, keep the prior infra park and do
-        // not re-dispatch the side-effecting ship worker.
-      }
-      if (resumedS7Observation !== undefined) {
-        const parkedBoundaryIndex = resumeLedger.lastIndexOf(resumeTail!);
-        let parkedShipIndex = parkedBoundaryIndex - 1;
-        while (
-          parkedShipIndex >= 0 &&
-          !(
-            resumeLedger[parkedShipIndex]?.step === "S7" &&
-            resumeLedger[parkedShipIndex]?.output?.kind === "ship"
-          )
-        ) {
-          parkedShipIndex -= 1;
-        }
-        if (resumedS7Observation.shipped) {
-          const parkedShipEntry = resumeLedger[parkedShipIndex]!;
-          const resumedHostShip: ShipResult =
-            resumedS7Observation.prUrl === undefined
-              ? { kind: "ship", branch: worktree.branch, status: "pushed" }
-              : {
-                  kind: "ship",
-                  branch: worktree.branch,
-                  status: "pr_opened",
-                  pr: resumedS7Observation.prUrl,
-                };
-          const resumedHostShipEntry: PersistentLedgerEntry = {
-            ...parkedShipEntry,
-            output: resumedHostShip,
-            branchHEAD: await resolveBranchHEAD(),
-            ts: new Date().toISOString(),
-          };
-          try {
-            await backend.writeLedger(resumedHostShipEntry, stateDir);
-          } catch (err) {
-            return await errorTermination("S7", err);
-          }
-          resumeLedger = resumeLedger
-            .slice(0, parkedBoundaryIndex)
-            .map((entry, index) =>
-              index === parkedShipIndex ? resumedHostShipEntry : entry,
-            );
-        } else {
-          // Host truth proved that the parked dispatch did not deliver. Drop the
-          // stale S7 receipt + S8 observation park, but retain the preceding
-          // durable redispatch markers so the fixed route re-enters S7 with only
-          // the remaining bounded budget.
-          resumeLedger = resumeLedger.slice(0, parkedShipIndex);
-        }
-        executableResumeLedger = executableLedgerEntries(resumeLedger);
-        resumeTail = executableResumeLedger.at(-1);
-      }
-    }
     const resumeRouteFrom =
       resumeTail?.step === "S8" && resumeTail.handoffStatus === undefined
         ? lastNonTerminalStep(executableResumeLedger)
         : resumeTail?.step;
-    const resumedShip =
-      resumeRouteFrom === "S7" ? lastShipFromLedger(resumeLedger) : undefined;
-    let resumedHostPr: ReturnType<typeof observeShipPr> | undefined =
-      resumedS7Observation?.shipped
-        ? {
-            present: resumedS7Observation.prUrl !== undefined,
-            ...(resumedS7Observation.prUrl !== undefined
-              ? { prUrl: resumedS7Observation.prUrl }
-              : {}),
-          }
-        : undefined;
-    if (resumedShip !== undefined && resumedHostPr === undefined) {
-      try {
-        resumedHostPr = observeShipPr(resumedShip);
-      } catch (err) {
-        return await errorTermination("S7", err);
-      }
-    }
     const plan =
       (await planRecoveredLandedCoderProtocolFailure(
         resumeLedger,
         worktree,
         backend,
-      )) ?? planResume(resumeLedger, undefined, resumedHostPr?.present);
+      )) ?? planResume(resumeLedger, undefined, family?.noPush === true);
     resumeHistoryLedger = resumeLedger;
 
     // #684 R2: production call site for monitorHandleFromLedger — rebuild any
@@ -5239,107 +5137,43 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             throw new Error("S7 requires a resident worktree");
           }
           const shipWorktree = worktree;
-          // S7 delivery is decided only from git/GitHub host truth. The worker
-          // receipt is telemetry: a completed or malformed receipt cannot prove or
-          // disprove that the branch/PR landed. Keep worker-process retry and the
-          // read-only host observation on separate pipes: an observation outage must
-          // never re-dispatch this side-effecting worker.
-          // #661: continue on the current scene — never resetBeforeRetry/cleanResidue.
-          // gstack-ship's re-runnable design keeps push/PR idempotent without a wipe.
-          let hostObservedShip: ShipResult | undefined;
-          let shipResult: WorkerResult;
-          while (true) {
-            shipResult = await withMechanicalRetry(
-              shipSpec,
-              shipCtx,
-              async (s, c) => {
-                // #684: production monitored dispatch (CLI → handle atomic with spawn).
-                const outcome = await dispatchWorkerWithMonitor(
-                  backend,
-                  s,
-                  c,
-                  undefined,
-                  {
-                    onMonitorHandleSpawned: async (handle) => {
-                      stepMonitorHandle = handle;
-                      try {
-                        await persistMonitorHandleAtSpawn(s.id, handle);
-                      } catch {
-                        // Best-effort spawn-time persist.
-                      }
-                    },
-                  },
-                );
-                if (outcome.monitorHandle !== undefined) {
-                  stepMonitorHandle = outcome.monitorHandle;
-                }
-                // Join only at result collection, never on the spawn path.
-                await outcome.telemetryEnvironmentStamp;
-                return outcome.result;
-              },
-              durableMechanicalRetryOptions("S7"),
-            );
-            // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
-            // S8(escalate) handoff, NOT an error — keep the escalate semantics so
-            // the human-answer resume re-opens it (codex cmr R4 finding). #331's
-            // legacy wrapper never escalates; the real ship worker (#336) does.
-            if (shipResult.kind === "escalated") {
-              return await escalateTermination(
-                "S7",
-                shipResult.escalation,
-                shipResult.sessionId,
-              );
-            }
-            if (shipResult.kind === "failed") break;
-            try {
-              const observed = await withLegTransientRetry(() =>
-                observeS7HostTruth(shipWorktree),
-              );
-              if (observed.shipped) {
-                hostObservedShip = observed.prUrl === undefined
-                  ? { kind: "ship", branch: shipWorktree.branch, status: "pushed" }
-                  : {
-                      kind: "ship",
-                      branch: shipWorktree.branch,
-                      status: "pr_opened",
-                      pr: observed.prUrl,
-                    };
-              }
-            } catch (err) {
-              const reason =
-                `S7 host delivery observation unavailable: ${
-                  err instanceof Error ? err.message : String(err)
-                }`;
-              return await escalateTermination(
-                "S7",
+          const shipResult = await withMechanicalRetry(
+            shipSpec,
+            shipCtx,
+            async (s, c) => {
+              const outcome = await dispatchWorkerWithMonitor(
+                backend,
+                s,
+                c,
+                undefined,
                 {
-                  reason: "S7 host observation unavailable",
-                  diagnosis: reason,
-                  synthesizedFailure: true,
+                  onMonitorHandleSpawned: async (handle) => {
+                    stepMonitorHandle = handle;
+                    try {
+                      await persistMonitorHandleAtSpawn(s.id, handle);
+                    } catch {
+                      // Best-effort spawn-time persist.
+                    }
+                  },
                 },
-                shipResult.sessionId,
-                "failure",
-                { kind: "ship", branch: shipWorktree.branch, status: "pushed" },
-                infraFailureStopSummary({
-                  summary: reason,
-                  repairHint:
-                    "restore host observation, then resume to observe delivery without re-running ship",
-                }),
               );
-            }
-            if (hostObservedShip !== undefined) break;
-            // A successful host observation that proves no delivery authorizes a
-            // replacement dispatch. This loop is separate from process retry;
-            // an observation throw returns above and can never reach this edge.
+              if (outcome.monitorHandle !== undefined) {
+                stepMonitorHandle = outcome.monitorHandle;
+              }
+              await outcome.telemetryEnvironmentStamp;
+              return outcome.result;
+            },
+            durableMechanicalRetryOptions("S7"),
+          );
+          if (shipResult.kind === "escalated") {
+            return await escalateTermination(
+              "S7",
+              shipResult.escalation,
+              shipResult.sessionId,
+            );
           }
-          // Exhaustion here is derived from external host truth (or repeated
-          // process failure), so it is a legal infra park rather than a receipt
-          // content verdict.
-          if (hostObservedShip === undefined) {
-            const reason =
-              "reason" in shipResult
-                ? shipResult.reason
-                : `ship worker returned ${shipResult.kind}`;
+          if (shipResult.kind === "failed") {
+            const reason = shipResult.reason;
             return await escalateTermination(
               "S7",
               {
@@ -5352,13 +5186,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               undefined,
               infraFailureStopSummary({
                 summary: reason,
-                repairHint: "inspect S7 process/host delivery failure and rerun",
+                repairHint: "inspect the S7 worker process failure and rerun",
               }),
             );
           }
-          const ship = hostObservedShip;
+          const ship: ShipResult =
+            shipResult.kind === "completed" && shipResult.output?.kind === "ship"
+              ? shipResult.output
+              : { kind: "ship", branch: shipWorktree.branch, status: "completed" };
           completeMechanicalRetryInvocation("S7");
-          // Persist the validated SHIP payload + the worker's session id into the S7
+          // Persist the worker's SHIP cargo + session id into the S7
           // ledger entry (online review r1, 3 bots): the shared record/emitLedger
           // path below writes `output`/`stepSessionId`, but S7 previously left both
           // undefined — so the persisted ledger AND RunResult.stepLedger dropped the
@@ -5370,7 +5207,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // RealBackend ship envelope historically omits it; without it resume uses
           // "offline-review-head" → live poll re-anchors and stales timestamp-only bots.
           let shipWithHead = ship;
-          hostPrPresent = ship.status === "pr_opened";
           if (!isFilledString(ship.prHead)) {
             const headOid = await resolveBranchHEAD();
             if (isFilledString(headOid)) {
@@ -5551,14 +5387,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
-        if (lastShipOutput === undefined || lastShipOutput.pr === undefined) {
+        if (lastShipOutput === undefined) {
           return await errorTermination(
             step,
-            new Error(
-              `${step} requires a prior S7 pr_opened ship output with a PR URL`,
-            ),
+            new Error(`${step} requires a prior S7 completed ship result`),
           );
         }
+        const branchLocator = isFilledString(lastShipOutput.branch)
+          ? lastShipOutput.branch
+          : worktree.branch;
+        const reviewPrLocator = isFilledString(lastShipOutput.pr)
+          ? lastShipOutput.pr
+          : `pr://slice/branch-cargo/${encodeURIComponent(branchLocator)}`;
+        lastShipOutput = {
+          ...lastShipOutput,
+          pr: reviewPrLocator,
+        };
         let reviewStep = step;
         const reviewHeadKey =
           onlineReviewResumeHeadKeyFromLedger(ledger) ??
@@ -5577,7 +5421,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           let ciStillAllowsSkip = true;
           if (
             isLiveGithubReviewPollEnabled(
-              lastShipOutput.pr,
+              reviewPrLocator,
               defaultRepo(),
             )
           ) {
@@ -5591,7 +5435,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 });
               const recheck = pollPrReviewState(ghSh, {
                 repo: defaultRepo(),
-                prUrl: lastShipOutput.pr,
+                prUrl: reviewPrLocator,
                 pollCount: 0,
                 roundTrigger: buildRoundTrigger(
                   reviewHeadKey ?? lastShipOutput.prHead ?? "resume-head",
@@ -6842,10 +6686,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       output: lastOutput,
       ...(step === "S7"
         ? {
-            shipStatus:
-              lastShipOutput?.status ??
-              (family?.noPush ? "pushed" : undefined),
-            hostPrPresent: family?.noPush ? false : hostPrPresent,
+            skipOnlineReview: family?.noPush === true,
           }
         : {}),
       ...(step === "S9" || step === "S10"

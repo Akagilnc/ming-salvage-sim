@@ -201,7 +201,7 @@ describe("Finding 1: terminal-error S8 is tagged handoffStatus:'error' (#254 ⋈
     for (const w of s8Writes) expect(w.handoffStatus).toBe("escalate");
   });
 
-  it("RESUME: re-feeding a push-fail ledger reports ERROR, not SUCCESS", async () => {
+  it("RESUME: re-feeding a push-fail ship park re-dispatches the idempotent ship worker", async () => {
     // Prior run: …S7 then died on push → errorTermination wrote S7 + S8(error).
     const resumeState: ResumeState = {
       worktree: WORKTREE,
@@ -218,12 +218,10 @@ describe("Finding 1: terminal-error S8 is tagged handoffStatus:'error' (#254 ⋈
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    // Must report the prior ERROR — NOT route S7→success and report SUCCESS.
-    expect(result.status).toBe("error");
-    expect(result.errorPackage).toBeDefined();
-    // No re-run: re-feeding a completed terminal run is a pure status report.
+    expect(result.status).toBe("success");
+    expect(result.errorPackage).toBeUndefined();
     expect(backend.runStepIds).toEqual([]);
-    expect(backend.pushCount).toBe(0);
+    expect(backend.pushCount).toBe(1);
   });
 
   it("RESUME: re-feeding a 0-commit-error ledger reports ERROR, not re-run", async () => {
@@ -424,7 +422,7 @@ describe("normal-handoff S8 writeLedger throw persists a tagged error S8 (#252 �
     });
   });
 
-  it("RESUME: re-feeding a success-handoff-with-S8-write-fault ledger reports ERROR, not SUCCESS", async () => {
+  it("RESUME: re-feeding a ship-boundary write fault re-dispatches the idempotent ship worker", async () => {
     // Prior run: …S7 (push ok) then the S8 handoff write faulted → the fix
     // best-effort persisted S8(error). The disk ledger ends …S7 + S8(error).
     const resumeState: ResumeState = {
@@ -442,12 +440,10 @@ describe("normal-handoff S8 writeLedger throw persists a tagged error S8 (#252 �
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    // Must report the prior ERROR — NOT route S7→success and report SUCCESS.
-    expect(result.status).toBe("error");
-    expect(result.errorPackage).toBeDefined();
-    // Pure status report — no re-run.
+    expect(result.status).toBe("success");
+    expect(result.errorPackage).toBeUndefined();
     expect(backend.runStepIds).toEqual([]);
-    expect(backend.pushCount).toBe(0);
+    expect(backend.pushCount).toBe(1);
   });
 
   it("escalate handoff: the S8 write throws → disk persists a tagged 'error' S8", async () => {

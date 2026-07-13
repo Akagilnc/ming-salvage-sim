@@ -69,7 +69,6 @@ import {
   hasBoundedReopenCondition,
   hasExplicitAcceptedSuppressionSource,
 } from "./acceptedSuppression.js";
-import { observeOpenPrForBranch } from "./autoMerge.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
   execFileAsyncWithTimeout,
@@ -4034,7 +4033,7 @@ export class RealBackend implements Backend {
       kind: "completed",
       output: {
         kind: "ship",
-        branch: outcome.branch,
+        branch: outcome.branch ?? ctx.worktree.branch,
         status: outcome.status,
         ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
       },
@@ -4158,6 +4157,7 @@ export class RealBackend implements Backend {
       if (missingProvider !== undefined) {
         return {
           kind: "escalate",
+          escalationKind: "decision",
           reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
           diagnosis:
             "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; provider availability preflight rejected the ship launch before sc.run",
@@ -4166,6 +4166,7 @@ export class RealBackend implements Backend {
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
+          escalationKind: "decision",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
           diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
         };
@@ -4182,6 +4183,7 @@ export class RealBackend implements Backend {
       if (auth.ghToken === undefined) {
         return {
           kind: "escalate",
+          escalationKind: "decision",
           reason: "no gh auth (GH_TOKEN) — the ship worker cannot push / `gh pr create`",
           diagnosis:
             "the ship worker invokes gstack-ship, which pushes over https + runs " +
@@ -4499,34 +4501,6 @@ export class RealBackend implements Backend {
       ["push", "-u", "origin", worktree.branch],
       worktree.path,
     );
-  }
-
-  async observeSliceShip(worktree: WorktreeHandle): Promise<{
-    shipped: boolean;
-    prUrl?: string;
-  }> {
-    const remoteRef = this.sh(
-      "git",
-      ["ls-remote", "--heads", "origin", `refs/heads/${worktree.branch}`],
-      worktree.path,
-    ).trim();
-    if (remoteRef.length === 0) return { shipped: false };
-    const remoteHead = remoteRef.split(/\s+/, 1)[0];
-    const expectedHead = this.sh(
-      "git",
-      ["rev-parse", "HEAD"],
-      worktree.path,
-    ).trim();
-    if (remoteHead !== expectedHead) return { shipped: false };
-
-    const pr = observeOpenPrForBranch(
-      (file, args) => this.sh(file, args, this.workingRepo),
-      this.opts.repo,
-      worktree.branch,
-    );
-    return pr.present
-      ? { shipped: true, ...(pr.prUrl !== undefined ? { prUrl: pr.prUrl } : {}) }
-      : { shipped: true };
   }
 
   // #661: retained only as a compatibility seam. Scenes are never destroyed.

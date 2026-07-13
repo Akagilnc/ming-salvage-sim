@@ -124,7 +124,6 @@ import {
 } from "../src/onlineReviewLoop.js";
 import { runOrchestrator } from "../src/runner.js";
 import { route } from "../src/route.js";
-import { observeOpenPrForBranch } from "../src/autoMerge.js";
 import {
   fixerHasFixCommit,
   skeletonReviewLoopWorkerResult,
@@ -798,92 +797,16 @@ describe("#600 botPolling — parsePrRef + paginated gh api", () => {
 });
 
 describe("#600 route — success flags + ADR 0061 verify/fixer topology", () => {
-  it("observes an open PR for the shipped branch from GitHub host state", () => {
-    const calls: string[] = [];
-    const observation = observeOpenPrForBranch((file, args) => {
-      calls.push(`${file} ${args.join(" ")}`);
-      return JSON.stringify([
-        {
-          number: 42,
-          url: "https://github.com/o/r/pull/42",
-          state: "OPEN",
-          headRefName: "fix/824-radius",
-          headRefOid: "head-42",
-          headRepositoryOwner: { login: "o" },
-          mergeStateStatus: "CLEAN",
-        },
-      ]);
-    }, "o/r", "fix/824-radius");
-
-    expect(observation).toEqual({
-      present: true,
-      prUrl: "https://github.com/o/r/pull/42",
-    });
-    expect(calls[0]).toContain("gh pr list --repo o/r --head fix/824-radius --state open");
+  it("S7 completed enters the online-review topology", () => {
+    expect(route({ from: "S7" })).toEqual({ kind: "next", step: "S9" });
   });
 
-  it("observes no open PR from an empty GitHub host result", () => {
-    expect(
-      observeOpenPrForBranch(() => "[]", "o/r", "fix/824-radius"),
-    ).toEqual({ present: false });
-  });
-
-  it("discards a reported open PR on another branch and routes from the shipped branch host truth", () => {
-    const observation = observeOpenPrForBranch(
-      (_file, args) =>
-        args[1] === "view"
-          ? JSON.stringify({
-              number: 99,
-              url: "https://github.com/o/r/pull/99",
-              state: "OPEN",
-              headRefName: "other-open-branch",
-              headRefOid: "deadbeef",
-              mergeStateStatus: "CLEAN",
-            })
-          : JSON.stringify([
-              {
-                number: 100,
-                url: "https://github.com/o/r/pull/100",
-                state: "OPEN",
-                headRefName: "fix/824-radius",
-                headRefOid: "head-100",
-                headRepositoryOwner: { login: "o" },
-                mergeStateStatus: "CLEAN",
-              },
-            ]),
-      "o/r",
-      "fix/824-radius",
-      "https://github.com/o/r/pull/99",
-    );
-
-    expect(observation).toEqual({
-      present: true,
-      prUrl: "https://github.com/o/r/pull/100",
+  it("family child topology stops before standalone online review", () => {
+    expect(route({ from: "S7", skipOnlineReview: true })).toEqual({
+      kind: "handoff",
+      status: "success",
     });
   });
-
-  it("S7 skips online review when host truth says no PR, regardless of worker shipStatus", () => {
-    expect(
-      route({
-        from: "S7",
-        shipStatus: "pr_opened",
-        hostPrPresent: false,
-        output: { kind: "ship", branch: "b", status: "pr_opened", pr: "https://x" },
-      }),
-    ).toEqual({ kind: "handoff", status: "success" });
-  });
-
-  it("S7 enters S9 when host truth says a PR exists, regardless of worker shipStatus", () => {
-    expect(
-      route({
-        from: "S7",
-        shipStatus: "pushed",
-        hostPrPresent: true,
-        output: { kind: "ship", branch: "b", status: "pushed" },
-      }),
-    ).toEqual({ kind: "next", step: "S9" });
-  });
-
   it("S9 converged skips fixer → S12", () => {
     expect(
       route({
@@ -6332,9 +6255,6 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       throw new Error("runStep should not be called");
     }
     async push(): Promise<void> {}
-    async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
-      return { shipped: true, prUrl: livePr };
-    }
     async pollOnlineReviewState(input: {
       repo: string;
       prUrl: string;
@@ -6416,9 +6336,6 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
     try {
       class OfflineHookBackend extends HookPollBackend {
         readonly verifyLandings: WorkerLandingPayload[] = [];
-        override async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
-          return { shipped: true, prUrl: offlinePr };
-        }
 
         override async pollOnlineReviewState(input: {
           repo: string;
@@ -6491,9 +6408,6 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
       class SlowCiBackend extends HookPollBackend {
         readonly ledgerWrites: PersistentLedgerEntry[] = [];
         verifyDispatches = 0;
-        override async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
-          return { shipped: true, prUrl: offlinePr };
-        }
 
         override async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
           this.ledgerWrites.push(entry);
@@ -6545,9 +6459,6 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
     try {
       class InvalidVerifyThenConvergeBackend extends HookPollBackend {
         verifyDispatches = 0;
-        override async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
-          return { shipped: true, prUrl: offlinePr };
-        }
 
         override async pollOnlineReviewState(
           _input: { repo: string; prUrl: string; pollCount: number },
@@ -6603,9 +6514,6 @@ describe("#600 r6 slice pollOnlineReviewState hook — central admissibility gat
     try {
       class RebuildGuardBackend extends HookPollBackend {
         verifyCount = 0;
-        override async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
-          return { shipped: true, prUrl: offlinePr };
-        }
 
         override async pollOnlineReviewState(
           _input: { repo: string; prUrl: string; pollCount: number },

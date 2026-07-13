@@ -960,13 +960,6 @@ class FakeSeamsBackend extends RealFamilyBackend {
     );
   }
 
-  public verifyShipPr(pr: string, familyBase: string) {
-    return this.verifyFamilyShipPr({ pr, familyBase });
-  }
-
-  public findFamilyPr(familyBase: string, expectedHead: string) {
-    return this.findFamilyShippedPr({ familyBase, expectedHead });
-  }
 }
 
 describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () => {
@@ -2436,7 +2429,6 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
     };
     const res = await b.openFamilyPr({ familyBase: "family/293-base" });
     expect(res.url).toContain("/pull/777");
-    expect(res.prHead).toBe("pr-head-777");
     // The SOLE remote push is here.
     const push = b.shCalls.find((c) => c.file === "git" && c.args[0] === "push");
     expect(push?.args).toEqual(["push", "-u", "origin", "family/293-base"]);
@@ -2448,131 +2440,6 @@ describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)",
     expect(pr?.args).toContain("family/293-base");
   });
 
-  it("verifies PR metadata with base/head/state/head OID and returns the trimmed head OID", () => {
-    const b = new FakeSeamsBackend(opts(trackRepo(), { base: "integ/291-wave3" }));
-    b.prViewResponse = {
-      baseRefName: "integ/291-wave3",
-      headRefName: "family/293-base",
-      headRefOid: " pr-head-777 ",
-      headRepositoryOwner: { login: "Akagilnc" },
-      state: "OPEN",
-    };
-
-    expect(b.verifyShipPr("https://github.com/Akagilnc/ming-salvage-sim/pull/777", "family/293-base")).toEqual({
-      ok: true,
-      headOid: "pr-head-777",
-      prUrl: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
-    });
-    const view = b.shCalls.find((c) => c.file === "gh" && c.args[0] === "pr" && c.args[1] === "view");
-    expect(view?.args).toContain("number,url,state,baseRefName,headRefName,headRefOid,headRepositoryOwner,mergeStateStatus,mergeable");
-  });
-
-  it("rejects a same-named family branch when its PR head belongs to another fork", () => {
-    const b = new FakeSeamsBackend(opts(trackRepo()));
-    b.prViewResponse = {
-      baseRefName: "main",
-      headRefName: "family/293-base",
-      headRefOid: "fork-head",
-      headRepositoryOwner: { login: "other-fork" },
-      state: "OPEN",
-    };
-
-    expect(b.verifyShipPr("pr://foreign-head", "family/293-base")).toMatchObject({
-      ok: false,
-      reason: expect.stringMatching(/no open PR/i),
-    });
-  });
-
-  it("separates host-confirmed PR absence from an unknown gh observation failure", () => {
-    class ThrowingPrViewBackend extends FakeSeamsBackend {
-      constructor(private readonly failure: string) {
-        super(opts(trackRepo()));
-      }
-
-      protected override sh(file: string, args: string[], cwd?: string): string {
-        if (file === "gh" && args[0] === "pr" && args[1] === "view") {
-          throw new Error(this.failure);
-        }
-        return super.sh(file, args, cwd);
-      }
-    }
-
-    expect(
-      new ThrowingPrViewBackend("pull request not found").verifyShipPr(
-        "pr://missing",
-        "family/293-base",
-      ),
-    ).toMatchObject({ ok: false, kind: "pr_missing" });
-    expect(
-      new ThrowingPrViewBackend("network timeout contacting api.github.com").verifyShipPr(
-        "pr://unknown",
-        "family/293-base",
-      ),
-    ).toMatchObject({ ok: false, kind: "pr_missing" });
-  });
-
-  it("rejects PR metadata when the PR is not OPEN or lacks a non-empty head OID", () => {
-    const b = new FakeSeamsBackend(opts(trackRepo()));
-
-    b.prViewResponse = {
-      baseRefName: "main",
-      headRefName: "family/293-base",
-      headRefOid: "pr-head-1",
-      headRepositoryOwner: { login: "Akagilnc" },
-      state: "MERGED",
-    };
-    expect(b.verifyShipPr("pr://closed", "family/293-base")).toMatchObject({
-      ok: false,
-    });
-
-    b.prViewResponse = {
-      baseRefName: "main",
-      headRefName: "family/293-base",
-      headRefOid: "   ",
-      headRepositoryOwner: { login: "Akagilnc" },
-      state: "OPEN",
-    };
-    expect(b.verifyShipPr("pr://blank-head", "family/293-base")).toMatchObject({
-      ok: false,
-    });
-  });
-
-  it("resume PR verification requires the PR head OID to still match the current family HEAD", async () => {
-    const b = new FakeSeamsBackend(opts(trackRepo()));
-    b.prViewResponse = {
-      baseRefName: "main",
-      headRefName: "family/293-base",
-      headRefOid: "pr-head-1",
-      headRepositoryOwner: { login: "Akagilnc" },
-      state: "OPEN",
-    };
-
-    await expect(
-      b.verifyFamilyShippedPr({
-        pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
-        familyBase: "family/293-base",
-        expectedHead: "pr-head-1",
-      }),
-    ).resolves.toEqual({ ok: true });
-    await expect(
-      b.verifyFamilyShippedPr({
-        pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/777",
-        familyBase: "family/293-base",
-        expectedHead: "new-head",
-      }),
-    ).resolves.toMatchObject({ ok: false });
-  });
-
-  it("treats a non-array gh pr list response as an observation failure", async () => {
-    const b = new FakeSeamsBackend(opts(trackRepo()));
-    b.prListResponse = { url: "https://example.test/pull/823" };
-
-    await expect(b.findFamilyPr("family/823-base", "head-823")).resolves.toMatchObject({
-      ok: false,
-      kind: "observation_failed",
-      reason: expect.stringMatching(/malformed gh pr list payload/i),
-    });
-  });
 });
 
 // ═══════════════════════════ 8. recordAborted / escalate ════════════════════

@@ -397,20 +397,7 @@ class ShipScriptBackend implements Backend {
     private readonly crashes: number,
     private readonly judgedFailed = false,
     private readonly judgedMalformed = false,
-    private readonly hostObservations: ReadonlyArray<{
-      readonly shipped: boolean;
-      readonly prUrl?: string;
-    }> = [{ shipped: true }],
   ) {}
-  hostObservationCalls = 0;
-  async observeSliceShip(): Promise<{ shipped: boolean; prUrl?: string }> {
-    const observation =
-      this.hostObservations[
-        Math.min(this.hostObservationCalls, this.hostObservations.length - 1)
-      ] ?? { shipped: false };
-    this.hostObservationCalls += 1;
-    return observation;
-  }
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
@@ -456,7 +443,7 @@ class ShipScriptBackend implements Backend {
   }
 }
 
-describe("#598 integration — the SHIP role: process retry plus host-truth delivery", () => {
+describe("#598 integration — the SHIP role: the worker verdict is authoritative", () => {
   it("a ship that crashes once then completes is retried fresh — the run proceeds", async () => {
     const backend = new ShipScriptBackend(1);
     const result = await runOrchestrator({ issueNumber: 598, backend });
@@ -471,77 +458,39 @@ describe("#598 integration — the SHIP role: process retry plus host-truth deli
     expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 
-  it("parks without redispatching ship when host observation stays unavailable", async () => {
-    class ObservationUnavailableBackend extends ShipScriptBackend {
-      override async observeSliceShip(): Promise<{ shipped: boolean }> {
-        this.hostObservationCalls += 1;
-        throw Object.assign(new Error("host observation timed out"), {
-          code: "ETIMEDOUT",
-        });
-      }
+  it("a completed ship succeeds without asking the host to re-judge it", async () => {
+    class CompletedBackend extends ShipScriptBackend {
     }
-
-    const backend = new ObservationUnavailableBackend(0);
+    const backend = new CompletedBackend(0);
     const result = await runOrchestrator({ issueNumber: 598, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(result.stopSummary.reason).toBe("infra_failure");
-    expect(result.errorPackage?.failedStep).toBe("S7");
+    expect(result.status).toBe("success");
     expect(backend.shipDispatches).toBe(1);
-    expect(backend.hostObservationCalls).toBe(MAX_LEG_TRANSIENT_ATTEMPTS);
   });
 
-  it("recovers a transient host observation outage without redispatching ship", async () => {
-    class ObservationRecoversBackend extends ShipScriptBackend {
-      override async observeSliceShip(): Promise<{ shipped: boolean }> {
-        this.hostObservationCalls += 1;
-        if (this.hostObservationCalls === 1) {
-          throw Object.assign(new Error("host observation timed out once"), {
-            code: "ETIMEDOUT",
-          });
+  it("transports a ship worker decision gate unchanged and does not retry it", async () => {
+    class EscalatedBackend extends ShipScriptBackend {
+      override async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "ship") {
+          this.shipDispatches += 1;
+          return {
+            kind: "escalated",
+            escalation: {
+              reason: "owner decision required",
+              diagnosis: "choose the release target",
+            },
+          };
         }
-        return { shipped: true };
+        return super.dispatchWorker(spec);
       }
     }
-
-    const backend = new ObservationRecoversBackend(0);
+    const backend = new EscalatedBackend(0);
     const result = await runOrchestrator({ issueNumber: 598, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.shipDispatches).toBe(1);
-    expect(backend.hostObservationCalls).toBe(2);
-  });
-
-  it("a malformed ship receipt is accepted when host truth has the PR", async () => {
-    const backend = new ShipScriptBackend(0, false, true, [
-      { shipped: true, prUrl: "pr://slice/offline-891" },
-    ]);
-    const result = await runOrchestrator({ issueNumber: 598, backend });
-    expect(result.status).toBe("success");
-    expect(backend.shipDispatches).toBe(1);
-    expect(backend.hostObservationCalls).toBe(1);
-  });
-
-  it("a malformed ship receipt consumes the bounded budget until host truth appears", async () => {
-    const backend = new ShipScriptBackend(0, false, true, [
-      { shipped: false },
-      { shipped: false },
-      { shipped: true },
-    ]);
-    const result = await runOrchestrator({ issueNumber: 598, backend });
-    expect(result.status).toBe("success");
-    expect(backend.shipDispatches).toBe(3);
-    expect(backend.hostObservationCalls).toBe(3);
-  });
-
-  it("parks as infra failure when host truth stays unshipped through the bounded budget", async () => {
-    const backend = new ShipScriptBackend(0, false, true, [{ shipped: false }]);
-    const result = await runOrchestrator({ issueNumber: 598, backend });
     expect(result.status).toBe("escalate");
-    expect(result.stopSummary.reason).toBe("infra_failure");
-    expect(result.errorPackage?.failedStep).toBe("S7");
-    expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
-    expect(backend.hostObservationCalls).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(result.errorPackage?.reason).toContain("owner decision required");
+    expect(result.errorPackage?.reason).toContain("choose the release target");
+    expect(backend.shipDispatches).toBe(1);
   });
 });
 

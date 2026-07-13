@@ -19,7 +19,10 @@ import {
   findingIdentityKey,
 } from "../src/findings.js";
 import { enforceRunnerOwnedRecheck } from "../src/onlineReviewLoop.js";
-import { isValidVerifyResult } from "../src/reviewLoopOutcome.js";
+import {
+  isValidVerifyResult,
+  skeletonReviewLoopWorkerResult,
+} from "../src/reviewLoopOutcome.js";
 import { runOrchestrator } from "../src/runner.js";
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
@@ -133,6 +136,8 @@ class ScriptedReviewBackend implements Backend {
       this.reviewerIndex += 1;
       return { kind: "completed", output };
     }
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
     return {
       kind: "completed",
       output: { kind: "ship", branch: WORKTREE.branch, status: "pushed" },

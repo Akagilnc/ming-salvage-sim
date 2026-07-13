@@ -517,6 +517,7 @@ class DogfoodSingleSliceBackend implements Backend {
           kind: "ship",
           branch: ctx.worktree?.branch ?? REPLAY_WORKTREE.branch,
           status: "pushed",
+          pr: "pr://slice/offline-dogfood",
         },
       };
     }
@@ -596,13 +597,6 @@ class DogfoodFamilyBackend implements FamilyBackend {
     return this.currentHead;
   }
 
-  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
-    return { ok: true };
-  }
-
-  async findFamilyShippedPr(): ReturnType<NonNullable<FamilyBackend["findFamilyShippedPr"]>> {
-    return Promise.resolve({ ok: false, kind: "pr_missing", reason: "dogfood host has no PR" });
-  }
 }
 
 class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
@@ -2334,7 +2328,7 @@ async function providerStrongLegPassReplay(input: {
   };
 }
 
-async function familyShipMalformedAfterCmrReplay(): Promise<SeamReplay> {
+async function familyShipFailedAfterCmrReplay(): Promise<SeamReplay> {
   const convergedCmr: WorkerResult = {
     kind: "completed",
     output: {
@@ -2349,9 +2343,9 @@ async function familyShipMalformedAfterCmrReplay(): Promise<SeamReplay> {
   const backend = new DogfoodCmrFamilyBackend("family-head", [], [
     convergedCmr,
     convergedCmr,
-    { kind: "malformed", reason: "ship worker emitted no valid result" },
-    { kind: "malformed", reason: "ship worker emitted no valid result" },
-    { kind: "malformed", reason: "ship worker emitted no valid result" },
+    { kind: "failed", reason: "ship worker exited non-zero" },
+    { kind: "failed", reason: "ship worker exited non-zero" },
+    { kind: "failed", reason: "ship worker exited non-zero" },
   ]);
   const result = await runVerifyCmr({
     phase: "final",
@@ -2361,13 +2355,13 @@ async function familyShipMalformedAfterCmrReplay(): Promise<SeamReplay> {
   });
   const abort = backend.ledger.find((entry) => entry.status === "aborted");
   if (result.ok || abort?.stopSummary?.reason !== "infra_failure") {
-    throw new Error("dogfood family ship-malformed replay did not exhaust durable retries");
+    throw new Error("dogfood family ship-failed replay did not exhaust durable retries");
   }
   return {
     stopSummary: abort.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr",
-      mechanism: "ship_worker_contract",
+      mechanism: "ship_worker_exit",
       finalCmrPassed: true,
       shippedMarkerWritten: false,
       dispatches: backend.dispatches,
@@ -2562,7 +2556,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     familyBase: "family/433-provider",
   });
   const runnerModuleNotFoundSource = await runnerModuleNotFoundReplay();
-  const shipMalformedAfterCmrSource = await familyShipMalformedAfterCmrReplay();
+  const shipMalformedAfterCmrSource = await familyShipFailedAfterCmrReplay();
   const finalVerifyModuleNotFoundSource =
     await familyFinalVerifyModuleNotFoundReplay();
   const shipReviewDegradedSource = await familyShipReviewDegradedReplay();

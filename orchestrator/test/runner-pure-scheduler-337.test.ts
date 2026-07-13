@@ -223,6 +223,9 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
       "S5:coder:/tdd",
       "S6:reviewer:/code-review",
       "S7:ship:gstack-ship",
+      "S9:verify:/verify",
+      "S12:docRelease:/gstack-document-release",
+      "S11:cleanup:/cleanup",
     ]);
   });
 });

@@ -87,9 +87,9 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
       "src/family/ledger.ts": 1,
       "src/family/verifyCmr.ts": 4,
       "src/family/types.ts": 1,
-      "src/family/realFamilyBackend.ts": 2,
+      "src/family/realFamilyBackend.ts": 5,
     });
-    expect([...decisionSites.values()].reduce((sum, count) => sum + count, 0)).toBe(11);
+    expect([...decisionSites.values()].reduce((sum, count) => sum + count, 0)).toBe(14);
     expect(escalateTerminationDecisionSites).toBe(0);
   });
 

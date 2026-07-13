@@ -91,13 +91,6 @@ class FixturedShipBackend extends RealFamilyBackend {
     pr: "https://gh/pr/9",
   };
   openFamilyPrCount = 0;
-  verifiedPr:
-    | { ok: true; headOid: string; prUrl: string }
-    | { ok: false; kind: "pr_missing" | "observation_failed" | "mismatch"; reason: string } = {
-      ok: true,
-      headOid: "head-1",
-      prUrl: "u",
-    };
   protected override async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -109,11 +102,6 @@ class FixturedShipBackend extends RealFamilyBackend {
   override async openFamilyPr(): Promise<{ url: string }> {
     this.openFamilyPrCount += 1;
     throw new Error("openFamilyPr must not be reached — family ship via gstack-ship (#336)");
-  }
-  protected override verifyFamilyShipPr():
-    | { ok: true; headOid: string; prUrl: string }
-    | { ok: false; kind: "pr_missing" | "observation_failed" | "mismatch"; reason: string } {
-    return this.verifiedPr;
   }
 }
 
@@ -160,7 +148,7 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     if (res.kind === "completed" && res.output.kind === "ship") {
       expect(res.output.branch).toBe(FAMILY_BASE);
       expect(res.output.pr).toBe("u");
-      expect(res.output.prHead).toBe("head-1");
+      expect(res.output.prHead).toBeUndefined();
       expect(res.output.status).toBe("pr_opened");
     } else {
       throw new Error("expected a completed ship payload");
@@ -169,7 +157,7 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
 
   it("an escalate outcome ⇒ WorkerResult.escalated (a genuine block)", async () => {
     const be = fixtured();
-    be.outcome = { kind: "escalate", reason: "review ASK", diagnosis: "human must decide scope" };
+    be.outcome = { kind: "escalate", reason: "review ASK", diagnosis: "human must decide scope", escalationKind: "decision" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res.kind).toBe("escalated");
     if (res.kind === "escalated") expect(res.escalation.reason).toContain("review ASK");
@@ -189,26 +177,18 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(res.kind).toBe("malformed");
   });
 
-  // ── Finding 1 (cmr S336 r2): family_ship.md allows ONLY `pr_opened`; the shared
-  // parser also accepts `pushed` (legal for a SINGLE slice). A family worker that
-  // pushed-but-opened-no-PR must NOT be read as a family delivery — fail-closed to
-  // malformed so verifyCmr never returns ok:true on a phantom family PR.
-  it('a shipped outcome with status "pushed" (no PR) ⇒ malformed (family needs pr_opened)', async () => {
+  it('a shipped outcome with status "pushed" is completed worker truth', async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pushed" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("malformed");
-    if (res.kind === "malformed") expect(res.reason).toMatch(/pr_opened|pushed|PR/);
+    expect(res.kind).toBe("completed");
   });
 
-  it('a shipped "pr_opened" with no `pr` URL ⇒ malformed (family PR must carry a URL)', async () => {
+  it('a shipped "pr_opened" with no cargo URL remains completed', async () => {
     const be = fixtured();
-    // The shared parser already rejects pr_opened-without-pr at parse time; the
-    // family consumer is the defense-in-depth belt — a fixtured off-contract
-    // shipped (pr missing) must still fail-closed, never completed.
     be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("malformed");
+    expect(res.kind).toBe("completed");
   });
 
   it("a family ship worker without familyBase throws (the worker ships the base)", async () => {
@@ -233,18 +213,6 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(res.kind).toBe("completed");
   });
 
-  it("a pr_opened ship whose claimed host PR is CLOSED ⇒ durable escalation, never malformed re-ship", async () => {
-    const be = fixtured();
-    be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pr_opened", pr: "u" };
-    be.verifiedPr = {
-      ok: false,
-      kind: "mismatch",
-      reason: 'family PR "u" is CLOSED but must be OPEN',
-    };
-    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("escalated");
-    if (res.kind === "escalated") expect(res.escalation.reason).toMatch(/CLOSED.*OPEN/);
-  });
 
   it("the cmr worker is still routed to its own (cmr) path, NOT the ship seam", async () => {
     // #336 owns ship; a cmr worker must still go through runCmrWorker, not runShipWorker.
@@ -670,9 +638,6 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       }
       protected override mountShipAuth(): ShipAuth {
         return { claudeToken: "tok", ghToken: "gho_ok" };
-      }
-      protected override verifyFamilyShipPr(): { ok: true; headOid: string; prUrl: string } {
-        return { ok: true, headOid: "head-1", prUrl: "u" };
       }
       protected override async shipContainerRun(
         _spec: WorkerSpec,

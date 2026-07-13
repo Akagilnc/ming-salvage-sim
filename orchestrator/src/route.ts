@@ -42,10 +42,8 @@ export interface RouteContext {
    * run yet.
    */
   readonly output?: StepOutput;
-  /** Worker-reported S7 status, retained as telemetry only. */
-  readonly shipStatus?: string;
-  /** Host-observed truth: whether the shipped branch currently has an open PR. */
-  readonly hostPrPresent?: boolean;
+  /** Family child topology stops before the standalone online-review loop. */
+  readonly skipOnlineReview?: boolean;
   /** 1-based online review round for S9/S10 routing (#600 / ADR 0061). */
   readonly onlineReviewRound?: number;
 }
@@ -125,9 +123,7 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S7": {
-      // #824: the worker's shipStatus is telemetry, not routing authority. Only
-      // a fresh host-side GitHub observation decides whether S9+ is applicable.
-      if (ctx.hostPrPresent !== true) {
+      if (ctx.skipOnlineReview === true) {
         return { kind: "handoff", status: "success" };
       }
       return { kind: "next", step: "S9" };

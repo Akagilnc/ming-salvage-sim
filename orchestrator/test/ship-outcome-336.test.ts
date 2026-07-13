@@ -79,15 +79,14 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
     if (o.kind === "malformed") expect(o.reason).toContain("status");
   });
 
-  it("pr_opened MISSING pr (with branch) ⇒ malformed (a PR opened with no URL is unusable)", () => {
+  it("pr_opened without cargo URL remains a shipped worker report", () => {
     const o = parseShipOutcome('<ship>{"status": "pr_opened", "branch": "feat/x"}</ship>');
-    expect(o.kind).toBe("malformed");
-    if (o.kind === "malformed") expect(o.reason).toContain("pr");
+    expect(o.kind).toBe("shipped");
   });
 
   it("an escalate object ⇒ an escalate outcome (a genuine block, not a rerun)", () => {
     const o = parseShipOutcome(
-      '<ship>{"escalate": {"reason": "merge conflict", "diagnosis": "cannot auto-resolve base merge"}}</ship>',
+      '<ship>{"escalate": {"reason": "merge conflict", "diagnosis": "cannot auto-resolve base merge", "escalationKind": "decision"}}</ship>',
     );
     expect(o.kind).toBe("escalate");
     if (o.kind === "escalate") {
@@ -123,9 +122,9 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
     expect(parseShipOutcome("<ship>true</ship>").kind).toBe("malformed");
   });
 
-  it("a shipped object with no branch ⇒ malformed (a PR with no branch is unusable)", () => {
+  it("a shipped object with no branch keeps optional cargo optional", () => {
     expect(parseShipOutcome('<ship>{"status": "pr_opened", "pr": "u"}</ship>').kind).toBe(
-      "malformed",
+      "shipped",
     );
   });
 
