@@ -63,6 +63,7 @@ import type {
   IntegratedCmrResult,
 } from "../../src/family/types.js";
 import { DEFAULT_IMAGE_TAG, resolveImageTag } from "../../src/familyDriver.js";
+import { PROVISION_SUBPROCESS_TIMEOUT_MS } from "../../src/provisionNodeModules.js";
 import type { WorkerSpec } from "../../src/types.js";
 import * as telemetry from "../../src/telemetry.js";
 
@@ -2105,6 +2106,51 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
 // ═══════════════════════════ 5. runFamilyVerify ═════════════════════════════
 
 describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
+  it("gives declared npm build/test verification the provision-class subprocess budget", async () => {
+    const commands: Array<{
+      file: string;
+      args: string[];
+      timeoutMs: number | undefined;
+    }> = [];
+    class LongVerifyBackend extends RealFamilyBackend {
+      protected override sh(
+        file: string,
+        args: string[],
+        _cwd?: string,
+        timeoutMs?: number,
+      ): string {
+        commands.push({ file, args, timeoutMs });
+        return "";
+      }
+      protected override async installDeps(_cwd: string): Promise<void> {}
+      protected override isNodeProject(_cwd: string): boolean { return true; }
+      protected override packageScripts(_cwd: string): readonly string[] {
+        return ["build", "test"];
+      }
+    }
+    const backend = new LongVerifyBackend(
+      opts("/clone/root", { verifyCwd: "/clone/root/web" }),
+    );
+
+    await expect(backend.runFamilyVerify({
+      phase: "final",
+      familyBase: "family/293-base",
+    })).resolves.toEqual({ ok: true });
+
+    expect(commands.filter((command) => command.file === "npm")).toEqual([
+      {
+        file: "npm",
+        args: ["run", "build"],
+        timeoutMs: PROVISION_SUBPROCESS_TIMEOUT_MS,
+      },
+      {
+        file: "npm",
+        args: ["test"],
+        timeoutMs: PROVISION_SUBPROCESS_TIMEOUT_MS,
+      },
+    ]);
+  });
+
   it("records unknown counts without rewriting the project's typecheck or wave-unit commands", async () => {
     const commands: Array<{ file: string; args: string[] }> = [];
     class ObservedVerifyBackend extends RealFamilyBackend {

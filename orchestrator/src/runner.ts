@@ -4505,19 +4505,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       gitOutputLines(worktree, [
                         "rev-list", "--max-count=1", `${coderHeadBeforeStep}..HEAD`,
                       ]).length > 0;
-                    return hasCommit
-                      ? {
-                          kind: "completed" as const,
-                          output: {
-                            kind: "coder" as const,
-                            committed: true,
-                            commitsAdded: 1,
-                          },
-                        }
-                      : (coderNoCommitBudgetExhausted = true, {
-                          kind: "failed" as const,
-                          reason: errorMessage(err),
-                        });
+                    if (hasCommit) {
+                      return {
+                        kind: "completed" as const,
+                        output: {
+                          kind: "coder" as const,
+                          committed: true,
+                          commitsAdded: 1,
+                        },
+                      };
+                    }
+                    coderNoCommitBudgetExhausted = true;
+                    return {
+                      kind: "failed" as const,
+                      reason: errorMessage(err),
+                    };
                   }
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
@@ -4538,25 +4540,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         gitOutputLines(worktree, [
                           "rev-list", "--max-count=1", `${coderHeadBeforeStep}..HEAD`,
                         ]).length > 0;
-                      return hasCommit
-                      ? {
+                      if (hasCommit) {
+                        return {
                           kind: "completed" as const,
                           output: {
                             kind: "coder" as const,
                             committed: true,
                             commitsAdded: 1,
                           },
-                            ...(dispatched.sessionId !== undefined
-                              ? { sessionId: dispatched.sessionId }
-                              : {}),
-                          }
-                      : (coderNoCommitBudgetExhausted = true, {
-                            kind: "failed" as const,
-                            reason: dispatched.reason,
-                            ...(dispatched.sessionId !== undefined
-                              ? { sessionId: dispatched.sessionId }
-                              : {}),
-                          });
+                          ...(dispatched.sessionId !== undefined
+                            ? { sessionId: dispatched.sessionId }
+                            : {}),
+                        };
+                      }
+                      coderNoCommitBudgetExhausted = true;
+                      return {
+                        kind: "failed" as const,
+                        reason: dispatched.reason,
+                        ...(dispatched.sessionId !== undefined
+                          ? { sessionId: dispatched.sessionId }
+                          : {}),
+                      };
                     }
                     return dispatched;
                   }
