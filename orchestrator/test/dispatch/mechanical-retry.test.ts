@@ -1,14 +1,10 @@
 /**
  * #598 — generic mechanical retry MECHANISM (`withMechanicalRetry`).
  *
- * These tests validate the retry mechanism in isolation, at its own seam
- * (`withMechanicalRetry(spec, ctx, dispatch)`), NOT yet wired into
- * `dispatchWorker` / `dispatchFamilyWorker`. Placement relative to the two
- * existing semantic-retry layers (reviewer `MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS`
- * in runner.ts, CMR `OUTCOME_REWRITE_RETRY_CAP` in verifyCmr.ts) is a composition
- * decision the wiring step must get right — a naive innermost placement
- * double-counts those budgets and swallows throws they own. See #598 acceptance
- * "the generic layer firing only after those run".
+ * These tests validate the process-failure retry mechanism at its own seam
+ * (`withMechanicalRetry(spec, ctx, dispatch)`). Under ADR 0131, completed worker
+ * cargo never enters a retry budget; only a failed result or thrown process
+ * exception may trigger this bounded mechanical retry.
  *
  * The mechanism reads ONLY the outcome discriminant (`result.kind`) — never
  * worker-reported content. A process-level failure

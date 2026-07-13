@@ -71,7 +71,6 @@ import {
   type GhIssueJson,
 } from "../../src/realBackend.js";
 import type {
-  RepairEvidence,
   StepOutput,
   StepSpec,
   WorktreeHandle,
@@ -1401,7 +1400,7 @@ describe("RealBackend reviewer output contract", () => {
     ).not.toThrow();
   });
 
-  it("does not let unusable repair-evidence cargo change coder completion fate", () => {
+  it("does not let unknown coder cargo change completion fate", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
       sourceRepo: "/tmp/source",
@@ -1424,12 +1423,7 @@ describe("RealBackend reviewer output contract", () => {
         {
           committed: true,
           commitsAdded: 1,
-          repairEvidence: {
-            findingScope: {
-              identityKeys: ["correctness|orchestrator/src/x.ts:1|bug"],
-            },
-            patchSummary: "updated the fix",
-          },
+          notes: "worker-authored cargo",
         },
         1,
       ),
@@ -2309,22 +2303,6 @@ describe("realBackend extractCoderTag", () => {
       escalate: { reason: "blocked", diagnosis: "design gap" },
     })).toMatchObject({
       escalate: { reason: "blocked", diagnosis: "design gap" },
-    });
-  });
-
-  it("#551 accepts coder-fix repair evidence with same-class and regression checks through the real parser", () => {
-    const stdout =
-      '<coder>{"committed": true, "commitsAdded": 1, "repairEvidence": {"findingScope": {"identityKeys": ["correctness|orchestrator/src/realBackend.ts:1700|schema drift"], "locations": ["orchestrator/src/realBackend.ts"]}, "changedFiles": ["orchestrator/src/realBackend.ts"], "tests": ["npm test -- --run test/realBackend.logic.test.ts -t #551"], "sameClassBugScan": "rg \\"repairEvidenceSchema|isValidRepairEvidence\\" orchestrator/src orchestrator/test", "introducedRegressionCheck": "npm test -- --run test/family/verify-cmr-fix-loop.test.ts", "patchSummary": "thread #551 repair evidence through the real worker parser"}}</coder>';
-
-    expect(parseCoderSelfReport(extractCoderTag(stdout))).toMatchObject({
-      committed: true,
-      commitsAdded: 1,
-      repairEvidence: {
-        sameClassBugScan:
-          'rg "repairEvidenceSchema|isValidRepairEvidence" orchestrator/src orchestrator/test',
-        introducedRegressionCheck:
-          "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-      },
     });
   });
 

@@ -1095,14 +1095,6 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
               kind: "coder",
               committed: true,
               commitsAdded: 1,
-              repairEvidence: {
-                findingScope: { identityKeys: [correctnessKey] },
-                changedFiles: ["ming_sim/issues.py"],
-                tests: ["pytest tests/test_fiscal_config.py::test_loss_rate_batch_rebalance"],
-                sameClassBugScan: "rg 'validate_fiscal_config_value' ming_sim tests",
-                introducedRegressionCheck:
-                  "npm test -- --run test/family/verify-cmr-296.test.ts",
-              },
             },
           };
         }

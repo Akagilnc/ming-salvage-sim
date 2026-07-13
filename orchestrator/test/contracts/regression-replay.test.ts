@@ -334,7 +334,7 @@ describe("#451 dogfood replay fixture", () => {
       mechanism: "changed_shape_progress",
       findingShape: "changed_after_local_progress",
       implementationMovement: false,
-      movementEvidence: "scripted repairEvidence only; no real git worktree movement",
+      movementEvidence: "scripted coder receipts only; no real git worktree movement",
     });
     expect(rowsById.get("307-continue-fixing-targeted-reset")?.sourceEvidence).toMatchObject({
       seam: "runner",

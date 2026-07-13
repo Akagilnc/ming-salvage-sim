@@ -423,19 +423,6 @@ class ReviewFixRereviewBackend implements FamilyBackend {
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          repairEvidence: {
-            findingScope: {
-              identityKeys: [BLOCKING_FAMILY_CMR_KEY],
-              locations: [BLOCKING_FAMILY_CMR_FINDING.location],
-            },
-            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-            sameClassBugScan:
-              "rg \"runCmrCoderFix|cmr_fix_committed\" orchestrator/src/family orchestrator/test/family",
-            introducedRegressionCheck:
-              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-            patchSummary: "routed family CMR findings through coder-fix",
-          },
         },
       };
     }
@@ -636,19 +623,6 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          repairEvidence: {
-            findingScope: {
-              identityKeys: [this.blockingKey],
-              locations: [this.blockingFinding.location],
-            },
-            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-            sameClassBugScan:
-              "rg \"fixableCmrFindingKeysFromClassification\" orchestrator/src/family",
-            introducedRegressionCheck:
-              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-            patchSummary: "routed the self-deferred blocker through coder-fix",
-          },
         },
       };
     }
@@ -764,18 +738,6 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          repairEvidence: {
-            findingScope: {
-              identityKeys: [BLOCKING_FAMILY_CMR_KEY],
-              locations: [BLOCKING_FAMILY_CMR_FINDING.location],
-            },
-            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-            sameClassBugScan:
-              "rg \"restartFinalBarrier|runVerifyCmr\" orchestrator/src/family/verifyCmr.ts",
-            introducedRegressionCheck:
-              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-          },
         },
       };
     }
@@ -921,29 +883,6 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          repairEvidence: {
-            findingScope: {
-              identityKeys: [...(ctx.blockingFindingIdentityKeys ?? [])],
-              locations: [
-                ...(ctx.blockingFindingIdentityKeys?.includes(
-                  BLOCKING_FAMILY_CMR_KEY,
-                )
-                  ? [BLOCKING_FAMILY_CMR_FINDING.location]
-                  : []),
-                ...(ctx.blockingFindingIdentityKeys?.includes(
-                  SECOND_BLOCKING_FAMILY_CMR_KEY,
-                )
-                  ? [SECOND_BLOCKING_FAMILY_CMR_FINDING.location]
-                  : []),
-              ],
-            },
-            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-            sameClassBugScan:
-              "rg \"allowCoderFix|runCmrCoderFix\" orchestrator/src/family/verifyCmr.ts",
-            introducedRegressionCheck:
-              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-          },
         },
       };
     }
@@ -1053,7 +992,6 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
     }
 
     if (spec.kind === "coder") {
-      const fixedKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
       this.coderFixRound += 1;
       this.currentFamilyHead = `head-after-excessive-coder-fix-${this.coderFixRound}`;
       return {
@@ -1062,20 +1000,6 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          repairEvidence: {
-            findingScope: {
-              identityKeys: fixedKeys,
-              locations: EXCESSIVE_CMR_FIX_FINDINGS.filter((finding) =>
-                fixedKeys.includes(findingIdentityKey(finding)),
-              ).map((finding) => finding.location),
-            },
-            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-            sameClassBugScan:
-              "rg \"runIntegratedCmrPass|restartFinalBarrier\" orchestrator/src/family/verifyCmr.ts",
-            introducedRegressionCheck:
-              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-          },
         },
       };
     }
@@ -1203,7 +1127,6 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
     }
 
     if (spec.kind === "coder") {
-      const fixedKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
       this.coderFixRound += 1;
       this.currentFamilyHead = `head-after-dogfood-272-fix-${this.coderFixRound}`;
       return {
@@ -1212,20 +1135,6 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          repairEvidence: {
-            findingScope: {
-              identityKeys: fixedKeys,
-              locations: DOGFOOD_272_FINDINGS.filter((finding) =>
-                fixedKeys.includes(findingIdentityKey(finding)),
-              ).map((finding) => finding.location),
-            },
-            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-            sameClassBugScan:
-              "rg \"runIntegratedCmrPass|restartFinalBarrier\" orchestrator/src/family/verifyCmr.ts",
-            introducedRegressionCheck:
-              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-          },
         },
       };
     }
@@ -1356,7 +1265,6 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
     }
 
     if (spec.kind === "coder") {
-      const fixedKeys = [...(ctx.blockingFindingIdentityKeys ?? [])];
       this.coderFixRound += 1;
       this.currentFamilyHead = `head-after-nonconv-fix-${this.coderFixRound}`;
       return {
@@ -1365,19 +1273,6 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          repairEvidence: {
-            findingScope: {
-              identityKeys: fixedKeys,
-              locations: ESCALATE_NONCONV_FINDINGS.filter((finding) =>
-                fixedKeys.includes(findingIdentityKey(finding)),
-              ).map((finding) => finding.location),
-            },
-            changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-            tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-            sameClassBugScan: "rg \"escalate\" orchestrator/image/souls/cmr_completeness.md",
-            introducedRegressionCheck:
-              "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-          },
         },
       };
     }
@@ -1464,18 +1359,6 @@ class MissingRepairEvidenceThenGoodBackend extends ReviewFixRereviewBackend {
         kind: "coder",
         committed: false,
         commitsAdded: 0,
-        repairEvidence: {
-          findingScope: {
-            identityKeys: [BLOCKING_FAMILY_CMR_KEY],
-            locations: [BLOCKING_FAMILY_CMR_FINDING.location],
-          },
-          changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-          tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-          sameClassBugScan:
-            "rg \"runCmrCoderFix|cmr_fix_committed\" orchestrator/src/family orchestrator/test/family",
-          introducedRegressionCheck:
-            "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-        },
       },
     };
   }
@@ -1524,18 +1407,6 @@ class KnownCoderGitMismatchThenGoodBackend extends ReviewFixRereviewBackend {
         kind: "coder",
         committed: true,
         commitsAdded: 1,
-        repairEvidence: {
-          findingScope: {
-            identityKeys: [BLOCKING_FAMILY_CMR_KEY],
-            locations: [BLOCKING_FAMILY_CMR_FINDING.location],
-          },
-          changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-          tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-          sameClassBugScan:
-            "rg \"runCmrCoderFix|cmr_fix_committed\" orchestrator/src/family orchestrator/test/family",
-          introducedRegressionCheck:
-            "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-        },
       },
     };
   }
@@ -1580,29 +1451,12 @@ class MultipleEvidenceOnlyFailuresThenGoodBackend extends ReviewFixRereviewBacke
       };
     }
 
-    const completeEvidence = this.coderFixRound >= 3;
     return {
       kind: "completed",
       output: {
         kind: "coder",
         committed: false,
         commitsAdded: 0,
-        repairEvidence: {
-          findingScope: {
-            identityKeys: [BLOCKING_FAMILY_CMR_KEY],
-            locations: [BLOCKING_FAMILY_CMR_FINDING.location],
-          },
-          changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-          tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-          ...(completeEvidence
-            ? {
-                sameClassBugScan:
-                  "rg \"runCmrCoderFix|cmr_fix_committed\" orchestrator/src/family orchestrator/test/family",
-                introducedRegressionCheck:
-                  "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-              }
-            : {}),
-        },
       },
     };
   }
@@ -1627,19 +1481,6 @@ class NoHeadMovementThenGoodBackend extends ReviewFixRereviewBackend {
       blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
     });
 
-    const repairEvidence = {
-      findingScope: {
-        identityKeys: [BLOCKING_FAMILY_CMR_KEY],
-        locations: [BLOCKING_FAMILY_CMR_FINDING.location],
-      },
-      changedFiles: ["orchestrator/src/family/verifyCmr.ts"],
-      tests: ["npm test -- --run test/family/verify-cmr-fix-loop.test.ts"],
-      sameClassBugScan:
-        "rg \"runCmrCoderFix|cmr_fix_committed\" orchestrator/src/family orchestrator/test/family",
-      introducedRegressionCheck:
-        "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
-    };
-
     if (this.coderFixRound++ === 0) {
       return {
         kind: "completed",
@@ -1647,7 +1488,6 @@ class NoHeadMovementThenGoodBackend extends ReviewFixRereviewBackend {
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          repairEvidence,
         },
       };
     }
@@ -1659,7 +1499,6 @@ class NoHeadMovementThenGoodBackend extends ReviewFixRereviewBackend {
         kind: "coder",
         committed: true,
         commitsAdded: 1,
-        repairEvidence,
       },
     };
   }
@@ -1689,16 +1528,6 @@ class AlwaysHeadStuckCoderBackend extends ReviewFixRereviewBackend {
         kind: "coder",
         committed: false,
         commitsAdded: 0,
-        repairEvidence: {
-          findingScope: {
-            identityKeys: [BLOCKING_FAMILY_CMR_KEY],
-            locations: [BLOCKING_FAMILY_CMR_FINDING.location],
-          },
-          changedFiles: [],
-          tests: [],
-          sameClassBugScan: "n/a",
-          introducedRegressionCheck: "n/a",
-        },
       },
     };
   }
@@ -2849,8 +2678,6 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
           status: "accepted_suppressed",
           reason: trustedSuppression.reason,
           severity: "medium",
-          reopenAttempts: 0,
-          disputeAttempts: 1,
           source: trustedSuppression.source,
           scope: trustedSuppression.scope,
           boundedReopen: trustedSuppression.boundedReopen,

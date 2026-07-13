@@ -111,9 +111,9 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   cmr: "ak-cross-m-review",
   ship: "gstack-ship",
   merge: undefined,
-  // TODO(#600/#603): real /verify skill + prompt (verify.md) lands later; skeleton only.
+  // Verify runs the shipped /verify skill through verify.md.
   verify: "/verify",
-  // TODO(#600/#603): real /fixer skill + prompt (fixer.md) lands later; skeleton only.
+  // Fixer runs the shipped /fixer skill through fixer.md.
   fixer: "/fixer",
   cleanup: undefined,
   // #735: real 文档发布 — invoke /gstack-document-release (not a path-allowlist gate).

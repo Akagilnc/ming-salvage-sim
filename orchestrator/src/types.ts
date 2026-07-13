@@ -242,12 +242,9 @@ export interface FindingDisposition {
   readonly status: "unrepaired" | "wont_fix" | "rejected" | "accepted_suppressed";
   readonly reason: string;
   readonly severity: Finding["severity"];
-  readonly reopenAttempts: number;
   readonly source?: string;
   readonly scope?: string;
   readonly boundedReopen?: string;
-  /** One same-severity fresh-review dispute is allowed before suppression resumes. */
-  readonly disputeAttempts?: number;
 }
 
 /** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
@@ -289,11 +286,6 @@ export interface CoderOutput {
   readonly kind: "coder";
   readonly committed: boolean;
   readonly commitsAdded: number;
-  /**
-   * Optional scoped proof that the fix worker changed implementation, tests, or
-   * fixtures for an active finding. Generic "I tried" is not progress.
-   */
-  readonly repairEvidence?: RepairEvidence;
   /**
    * #677 legal refuse: identity keys the coder-fix worker declined to adopt
    * (AC/assertion conflict). Valid with a commit that fixes the other findings;
@@ -369,24 +361,6 @@ export interface FindingRepairScope {
   readonly reviewContext?: string;
   /** Optional feature/module area label from the coordinator. */
   readonly featureArea?: string;
-}
-
-/** Observable implementation/test movement a coder claims for a specific finding scope. */
-export interface RepairEvidence {
-  /** The active finding scope this movement is meant to close. */
-  readonly findingScope: FindingRepairScope;
-  /** Files whose implementation diff changed for this finding. */
-  readonly changedFiles?: ReadonlyArray<string>;
-  /** Test commands or test files added/changed for this finding. */
-  readonly tests?: ReadonlyArray<string>;
-  /** Fixtures/transcripts added or changed for this finding. */
-  readonly fixtures?: ReadonlyArray<string>;
-  /** Same-class bug scan performed after the fix, as a command/log pointer. */
-  readonly sameClassBugScan?: string;
-  /** Regression check performed after the fix, as a command/log pointer. */
-  readonly introducedRegressionCheck?: string;
-  /** Human-readable patch summary; accepted only with another concrete signal. */
-  readonly patchSummary?: string;
 }
 
 /**
@@ -1310,12 +1284,6 @@ export interface LedgerEntry {
    * (accepted suppression), not a runner content-classification (信封宪法, ADR 0062).
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
-  /**
-   * Runner-observed implementation/test paths that actually moved during a coder
-   * step. Persisted so resume replay can evaluate repairEvidence with the same
-   * evidence live S4 used.
-   */
-  readonly repairMovementPaths?: ReadonlyArray<string>;
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
   /**

@@ -48,6 +48,10 @@ export interface ApplyVerifySideEffectsResult {
   readonly threadsResolved: ReadonlyArray<string>;
 }
 
+class VerifyCargoSideEffectError extends Error {
+  override readonly name = "VerifyCargoSideEffectError";
+}
+
 /** Stable title for a deferred online-review tracking issue (#600 / #742). */
 export const DEFERRED_TRACKING_ISSUE_TITLE_PREFIX =
   "Deferred online review finding: ";
@@ -363,7 +367,7 @@ export function resolveReviewThread(
   repo: string,
   prNumber: number,
   threadId: string,
-): void {
+): boolean {
   let threadNodeId: string | undefined;
   let alreadyResolved = false;
   const nodes = paginateReviewThreadNodes(
@@ -386,11 +390,12 @@ export function resolveReviewThread(
     }
   }
   if (threadNodeId === undefined || threadNodeId.length === 0) {
-    throw new Error(
-      `onlineReviewSideEffects: no GraphQL review thread for comment id ${threadId}`,
+    console.warn(
+      `[orchestrator] skipped unresolvable verify cargo for thread ${threadId}; reviewer artifacts remain available to the next worker`,
     );
+    return false;
   }
-  if (alreadyResolved) return;
+  if (alreadyResolved) return true;
   const mutation = [
     "mutation($threadId:ID!){",
     "resolveReviewThread(input:{threadId:$threadId}){",
@@ -437,6 +442,7 @@ export function resolveReviewThread(
       `onlineReviewSideEffects: resolveReviewThread did not set isResolved=true for ${threadNodeId}`,
     );
   }
+  return true;
 }
 
 function findLandingThread(
@@ -452,7 +458,7 @@ function findLandingThread(
 }
 
 function landingThreadIdMismatchError(echoedId: string): Error {
-  return new Error(
+  return new VerifyCargoSideEffectError(
     `onlineReviewSideEffects: thread id ${echoedId} matches neither REST comment id nor GraphQL node id in landing`,
   );
 }
@@ -464,7 +470,7 @@ export function restCommentIdForReply(
 ): string {
   if (landingThreads === undefined || landingThreads.length === 0) {
     if (echoedId.startsWith("PRRT_")) {
-      throw new Error(
+      throw new VerifyCargoSideEffectError(
         `onlineReviewSideEffects: thread reply requires REST comment id, got GraphQL node id ${echoedId}`,
       );
     }
@@ -490,7 +496,7 @@ export function graphqlNodeIdForResolve(
     throw landingThreadIdMismatchError(echoedId);
   }
   if (thread.threadNodeId === undefined || thread.threadNodeId.length === 0) {
-    throw new Error(
+    throw new VerifyCargoSideEffectError(
       `onlineReviewSideEffects: landing thread ${thread.id} has no GraphQL node id for resolution`,
     );
   }
@@ -623,7 +629,8 @@ type VerifySideEffectPlan = {
 
 /**
  * Validate and normalize all disposition/thread mappings before any GitHub write.
- * Fail-closed: invalid thread ids in the batch must not create partial side effects.
+ * Invalid reviewer cargo makes the whole side-effect plan unpublishable; the
+ * caller skips it atomically while the review/fix topology continues.
  */
 export function planVerifySideEffects(
   input: ApplyVerifySideEffectsInput,
@@ -641,7 +648,7 @@ export function planVerifySideEffects(
     (verify.threadsToResolve?.length ?? 0) > 0 &&
     verify.isRecheck !== true
   ) {
-    throw new Error(
+    throw new VerifyCargoSideEffectError(
       "applyVerifySideEffects: threadsToResolve requires a fresh re-check verify (isRecheck)",
     );
   }
@@ -649,7 +656,7 @@ export function planVerifySideEffects(
     (verify.threadsToResolve?.length ?? 0) > 0 &&
     (input.fixingCommitSha === undefined || input.fixingCommitSha.length === 0)
   ) {
-    throw new Error(
+    throw new VerifyCargoSideEffectError(
       "applyVerifySideEffects: threadsToResolve requires fixingCommitSha on recheck",
     );
   }
@@ -817,7 +824,16 @@ export function applyVerifySideEffects(
 ): ApplyVerifySideEffectsResult {
   const { sh, prUrl, landingThreads } = input;
   const { repo, prNumber } = resolvePrRepoFromUrl(prUrl, input.repo);
-  const plan = planVerifySideEffects({ ...input, repo });
+  let plan: VerifySideEffectPlan;
+  try {
+    plan = planVerifySideEffects({ ...input, repo });
+  } catch (err) {
+    if (!(err instanceof VerifyCargoSideEffectError)) throw err;
+    console.warn(
+      `[orchestrator] skipped unpublishable verify cargo: ${err.message}; reviewer artifacts remain available to the next worker`,
+    );
+    return { deferredIssueUrls: [], repliesPosted: [], threadsResolved: [] };
+  }
   const deferredIssueUrls: string[] = [];
   const repliesPosted: OnlineReviewThreadReply[] = [];
   const threadsResolved: string[] = [];
@@ -852,8 +868,9 @@ export function applyVerifySideEffects(
         repliesPosted.push({ threadId: item.commentId, body: item.fixedReply });
       }
     }
-    resolveReviewThread(sh, repo, prNumber, item.nodeId);
-    threadsResolved.push(item.nodeId);
+    if (resolveReviewThread(sh, repo, prNumber, item.nodeId)) {
+      threadsResolved.push(item.nodeId);
+    }
   }
 
   return { deferredIssueUrls, repliesPosted, threadsResolved };

@@ -1294,8 +1294,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         status: "accepted_suppressed",
         reason: "accepted by family issue scope",
         severity: "medium",
-        reopenAttempts: 0,
-        disputeAttempts: 1,
         source: "issue #604 acceptance criteria",
         scope: "#604 family integrated CMR",
         boundedReopen: "reopen on higher severity or different scope",

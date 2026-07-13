@@ -259,7 +259,6 @@ import type {
   StepResult,
   StepSoul,
   StepSpec,
-  RepairEvidence,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -1278,7 +1277,6 @@ export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
   readonly escalate?: { readonly reason: string; readonly diagnosis: string };
-  readonly repairEvidence?: RepairEvidence;
 }
 
 /**
@@ -1700,44 +1698,9 @@ export interface RealBackendOptions {
  * disposition kinds — the only disposition a reviewer may emit is the
  * accepted-suppression governance carrier.
  */
-const findingRepairScopeSchema = z
-  .object({
-    identityKeys: z.array(z.string()).optional(),
-    locations: z.array(z.string()).optional(),
-    categories: z.array(z.string()).optional(),
-    findingGroup: z.string().optional(),
-    reviewContext: z.string().optional(),
-    featureArea: z.string().optional(),
-  })
-  .strict();
-const repairEvidenceSchema = z
-  .object({
-    findingScope: findingRepairScopeSchema,
-    changedFiles: z.array(z.string().min(1)).optional(),
-    tests: z.array(z.string().min(1)).optional(),
-    fixtures: z.array(z.string().min(1)).optional(),
-    sameClassBugScan: z.string().min(1).optional(),
-    introducedRegressionCheck: z.string().min(1).optional(),
-    patchSummary: z.string().optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (
-      (value.changedFiles?.length ?? 0) === 0 &&
-      (value.tests?.length ?? 0) === 0 &&
-      (value.fixtures?.length ?? 0) === 0
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message:
-          "repairEvidence requires changedFiles, tests, or fixtures; patchSummary alone is not concrete repair evidence",
-      });
-    }
-  })
-  .strict();
 const coderOutputSchema = z.object({
   committed: z.boolean(),
   commitsAdded: z.number().int().nonnegative(),
-  repairEvidence: repairEvidenceSchema.optional(),
   escalate: z
     .object({
       reason: z.string(),
@@ -2924,7 +2887,6 @@ export class RealBackend implements Backend {
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
       const receipt = raw as Record<string, unknown>;
-      const repairEvidence = repairEvidenceSchema.safeParse(receipt.repairEvidence);
       return {
         kind: "coder",
         committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
@@ -2934,7 +2896,6 @@ export class RealBackend implements Backend {
           receipt.commitsAdded >= 0
             ? receipt.commitsAdded
             : 0,
-        ...(repairEvidence.success ? { repairEvidence: repairEvidence.data } : {}),
       };
     }
 

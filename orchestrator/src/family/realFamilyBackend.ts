@@ -1899,9 +1899,6 @@ export class RealFamilyBackend implements FamilyBackend {
       kind: "coder",
       committed: output.committed,
       commitsAdded: output.commitsAdded,
-      ...(output.repairEvidence !== undefined
-        ? { repairEvidence: output.repairEvidence }
-        : {}),
       ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
     };
   }

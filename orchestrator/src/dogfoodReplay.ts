@@ -290,77 +290,6 @@ const REPLAY_WORKTREE: WorktreeHandle = {
   path: "/dogfood/replay",
 };
 
-function dogfoodRepairEvidence(input: {
-  readonly identityKeys?: ReadonlyArray<string>;
-  readonly findings?: ReadonlyArray<Finding>;
-  readonly changedFiles?: ReadonlyArray<string>;
-  readonly tests?: ReadonlyArray<string>;
-  readonly patchSummary?: string;
-}): NonNullable<Extract<StepOutput, { kind: "coder" }>["repairEvidence"]> {
-  const findings = input.findings ?? [BASE_FINDING];
-  return {
-    findingScope: {
-      identityKeys:
-        input.identityKeys ?? findings.map((item) => findingIdentityKey(item)),
-      locations: findings.map((item) => item.location),
-    },
-    changedFiles: input.changedFiles ?? ["orchestrator/src/dogfoodReplay.ts"],
-    tests: input.tests ?? ["npm test -- --run test/dogfood-replay-451.test.ts"],
-    sameClassBugScan:
-      'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
-    introducedRegressionCheck:
-      "npm test -- --run test/dogfood-replay-451.test.ts",
-    ...(input.patchSummary !== undefined
-      ? { patchSummary: input.patchSummary }
-      : {}),
-  };
-}
-
-function dogfoodS5CoderOutputForFindings(
-  findings: ReadonlyArray<Finding>,
-): StepOutput {
-  return {
-    kind: "coder",
-    committed: true,
-    commitsAdded: 1,
-    repairEvidence: dogfoodRepairEvidence({ findings }),
-  };
-}
-
-function completeDogfoodS5CoderOutput(
-  output: Extract<StepOutput, { kind: "coder" }>,
-  ctx?: DispatchContext,
-  landing?: WorkerLandingPayload,
-): StepOutput {
-  const existing = output.repairEvidence;
-  return {
-    ...output,
-    repairEvidence: {
-      ...dogfoodRepairEvidence({
-        identityKeys: ctx?.blockingFindingIdentityKeys,
-        findings: landing?.blockingFindings,
-        patchSummary: "scripted dogfood coder-fix replay",
-      }),
-      ...(existing ?? {}),
-      findingScope:
-        existing?.findingScope ??
-        dogfoodRepairEvidence({
-          identityKeys: ctx?.blockingFindingIdentityKeys,
-          findings: landing?.blockingFindings,
-        }).findingScope,
-      tests: existing?.tests ?? [
-        "npm test -- --run test/dogfood-replay-451.test.ts",
-      ],
-      sameClassBugScan:
-        existing?.sameClassBugScan ??
-        'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
-      introducedRegressionCheck:
-        existing?.introducedRegressionCheck ??
-        "npm test -- --run test/dogfood-replay-451.test.ts",
-    },
-  };
-}
-
 function ledgerEntry(
   step: SliceStepId,
   input?: {
@@ -479,15 +408,13 @@ class DogfoodSingleSliceBackend implements Backend {
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
     if (spec.id === "S5") this.coderAttempt += 1;
     const output = scripted ?? { kind: "coder", committed: true, commitsAdded: 1 };
-    return spec.id === "S5" && output.kind === "coder"
-      ? completeDogfoodS5CoderOutput(output)
-      : output;
+    return output;
   }
 
   async dispatchWorker(
     spec: WorkerSpec,
-    ctx: DispatchContext,
-    landing?: WorkerLandingPayload,
+    _ctx: DispatchContext,
+    _landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.dispatchedModels.push(`${spec.id}:${spec.model}`);
@@ -505,10 +432,7 @@ class DogfoodSingleSliceBackend implements Backend {
     const output = scripted ?? { kind: "coder", committed: true, commitsAdded: 1 };
     return {
       kind: "completed",
-      output:
-        spec.id === "S5" && output.kind === "coder"
-          ? completeDogfoodS5CoderOutput(output, ctx, landing)
-          : output,
+      output,
     };
   }
 
@@ -637,18 +561,6 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          repairEvidence: {
-            findingScope: {
-              identityKeys: ctx.blockingFindingIdentityKeys ?? [],
-            },
-            changedFiles: ["orchestrator/src/dogfoodReplay.ts"],
-            tests: ["dogfood replay fixture"],
-            sameClassBugScan:
-              'rg "repairEvidence|blockingFindingIdentityKeys" orchestrator/src orchestrator/test',
-            introducedRegressionCheck:
-              "npm test -- --run test/dogfood-replay-451.test.ts",
-            patchSummary: "scripted family CMR coder-fix replay",
-          },
         },
       };
     }
@@ -708,7 +620,7 @@ function noProgressDecisionLedger(
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
-      output: dogfoodS5CoderOutputForFindings(findings),
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
     }),
     ledgerEntry("S6", {
       output: {
@@ -719,7 +631,7 @@ function noProgressDecisionLedger(
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
-      output: dogfoodS5CoderOutputForFindings(findings),
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
     }),
     ledgerEntry("S6", {
       output: {
@@ -834,27 +746,11 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
         kind: "coder",
         committed: true,
         commitsAdded: 1,
-        repairEvidence: {
-          findingScope: {
-            identityKeys: [originalKey],
-            locations: ["orchestrator/src/runner.ts"],
-          },
-          changedFiles: ["orchestrator/src/runner.ts"],
-          tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
-        },
       },
       {
         kind: "coder",
         committed: true,
         commitsAdded: 1,
-        repairEvidence: {
-          findingScope: {
-            identityKeys: [changedKey],
-            locations: ["orchestrator/src/runner.ts"],
-          },
-          changedFiles: ["orchestrator/src/runner.ts"],
-          tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
-        },
       },
     ],
   );
@@ -869,7 +765,7 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
       mechanism: "changed_shape_progress",
       findingShape: "changed_after_local_progress",
       implementationMovement: false,
-      movementEvidence: "scripted repairEvidence only; no real git worktree movement",
+      movementEvidence: "scripted coder receipts only; no real git worktree movement",
       status: result.status,
       dispatched: backend.dispatched,
       originalFindingIdentityKey: originalKey,
