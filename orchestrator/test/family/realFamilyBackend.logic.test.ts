@@ -1449,6 +1449,54 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
 });
 
 describe("parseCmrOutcome accepted suppression contract", () => {
+  it("normalizes a missing stdout before reading a valid cmr sidecar", () => {
+    const dir = trackTempDir("cmr-outcome-missing-stdout-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        converged: true,
+        successfulLegs: ["gpt-5.6-sol"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        evidencePaths: ["cmr/review.json"],
+      }) + "\n",
+      "utf8",
+    );
+
+    const outcome = cmrOutcomeFromResult({
+      stdout: undefined as unknown as string,
+      outcomePath,
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: true,
+      findingsCount: 0,
+    });
+  });
+
+  it("preserves cmr verdict and findings sentinel semantics after trimming CRLF stdout", () => {
+    const outcome = cmrOutcomeFromResult({
+      stdout:
+        "\r\n  <cmr>" + JSON.stringify({
+          converged: false,
+          reason: "two findings remain",
+          successfulLegs: ["gpt-5.6-sol"],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          evidencePaths: ["cmr/review.json"],
+        }) + "</cmr>\r\nfindings = 2\r\n  ",
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      converged: false,
+      reason: "two findings remain",
+      findingsCount: 2,
+    });
+  });
+
   it("prefers a runner-owned outcome sidecar over malformed cmr stdout", () => {
     const dir = trackTempDir("cmr-outcome-");
     const outcomePath = join(dir, "outcome.json");

@@ -1098,11 +1098,14 @@ export function cmrPassAlreadyPassed(
     readonly routeFingerprint?: string;
   },
 ): boolean {
-  if (input.familyHeadAfter == null || input.familyHeadAfter.trim().length === 0) {
+  if (
+    input.familyHeadAfter === undefined ||
+    input.familyHeadAfter.trim().length === 0
+  ) {
     return false;
   }
   if (
-    input.routeFingerprint == null ||
+    input.routeFingerprint === undefined ||
     input.routeFingerprint.trim().length === 0
   ) {
     return false;
@@ -1117,9 +1120,9 @@ export function cmrPassAlreadyPassed(
       e.event !== "cmr_passed" ||
       e.phase !== "final" ||
       e.cmrPass !== input.cmrPass ||
-      e.familyHeadAfter == null ||
+      e.familyHeadAfter === undefined ||
       e.familyHeadAfter.trim().length === 0 ||
-      e.routeFingerprint == null ||
+      e.routeFingerprint === undefined ||
       e.routeFingerprint.trim() !== routeFingerprint
     ) {
       continue;

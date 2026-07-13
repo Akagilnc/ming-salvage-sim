@@ -3150,6 +3150,99 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     expect(backend.ledger.some((entry) => entry.status === "cmr_passed")).toBe(true);
   });
 
+  it("routes converged:false with zero findings through coder-fix with raw artifacts", async () => {
+    const backend = new CountChannelFixBackend({
+      kind: "completed",
+      sessionId: "cmr-reviewer-red-zero",
+      output: {
+        kind: "cmr",
+        converged: false,
+        reason: "reviewer explicitly reports that the pass has not converged",
+        findingsCount: 0,
+        findings: [],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        ...CMR_EVIDENCE,
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/red-zero-count",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
+    expect(coderIndex).toBeGreaterThan(0);
+    expect(backend.landings[coderIndex]).toMatchObject({
+      blockingFindings: [],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "cmr-reviewer-red-zero",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
+    expect(backend.ledger.slice(0, coderIndex).some((entry) => entry.status === "cmr_passed"))
+      .toBe(false);
+  });
+
+  it("routes converged:false with two structured findings as coder-fix cargo", async () => {
+    const secondFinding: Finding = {
+      ...BLOCKING_FAMILY_CMR_FINDING,
+      claim_quote: "a second blocking defect remains",
+      location: "orchestrator/src/family/ledger.ts:1122",
+    };
+    const backend = new CountChannelFixBackend({
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: false,
+        reason: "reviewer reports two structured findings",
+        findingsCount: 2,
+        findings: [BLOCKING_FAMILY_CMR_FINDING, secondFinding],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        ...CMR_EVIDENCE,
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/red-two-findings",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
+    expect(backend.landings[coderIndex]).toEqual({
+      blockingFindings: [BLOCKING_FAMILY_CMR_FINDING, secondFinding],
+    });
+  });
+
+  it("keeps converged:true with zero findings on the pass path", async () => {
+    const backend = new CountChannelFixBackend({
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: true,
+        findingsCount: 0,
+        findings: [],
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        ...CMR_EVIDENCE,
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/green-zero-count",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.some((dispatch) => dispatch.kind === "coder")).toBe(false);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({ status: "cmr_passed", cmrPass: "completeness" }),
+    );
+  });
+
   it("routes a reviewer with neither extractable count nor structure to coder-fix with raw artifact pointers and no decision park", async () => {
     const backend = new CountChannelFixBackend({
       kind: "malformed",

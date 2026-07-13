@@ -438,6 +438,41 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
     ).toBe(false);
   });
 
+  it.each(["familyHeadAfter", "routeFingerprint"] as const)(
+    "rejects an explicit null %s on a persisted cmr_passed row",
+    (field) => {
+      const entry = {
+        status: "cmr_passed",
+        event: "cmr_passed",
+        phase: "final",
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
+        [field]: null,
+      } as unknown as FamilyLedgerEntry;
+
+      expect(() => cmrPassAlreadyPassed([entry], {
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
+      })).toThrow();
+    },
+  );
+
+  it.each(["familyHeadAfter", "routeFingerprint"] as const)(
+    "rejects an explicit null %s in the current cmr pass lookup",
+    (field) => {
+      const input = {
+        cmrPass: "completeness",
+        familyHeadAfter: "head-1",
+        routeFingerprint: "route:v1",
+        [field]: null,
+      } as unknown as Parameters<typeof cmrPassAlreadyPassed>[1];
+
+      expect(() => cmrPassAlreadyPassed([], input)).toThrow();
+    },
+  );
+
   // #881 (#434 live-semantic revision): head advance explained only by
   // phase:final cmr_fix_committed rows AFTER the pass marker is still a skip;
   // unexplained (barrier-external) advance must re-verify.

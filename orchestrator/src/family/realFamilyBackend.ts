@@ -3440,6 +3440,7 @@ export function cmrOutcomeFromResult(result: {
   outcomePath?: string;
   stdout: string;
 }): CmrWorkerOutcome {
+  const stdout = (result.stdout ?? "").trim();
   if (result.outcomePath !== undefined) {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
@@ -3450,7 +3451,7 @@ export function cmrOutcomeFromResult(result: {
         );
         if (classified.kind !== "verdict") return classified;
         // ADR 0131: sentinel declaration wins; missing sentinel falls back to rows.
-        const declared = parseFindingsSentinel(result.stdout);
+        const declared = parseFindingsSentinel(stdout);
         return {
           ...classified,
           findingsCount: declared ?? classified.findings?.length ?? 0,
@@ -3467,9 +3468,9 @@ export function cmrOutcomeFromResult(result: {
   }
 
   // Stdout-only / blank-sidecar fallback preserves the same declaration channel.
-  const fromStdout = parseCmrOutcome(result.stdout, result.cmrReviewLegs);
+  const fromStdout = parseCmrOutcome(stdout, result.cmrReviewLegs);
   if (fromStdout.kind !== "verdict") return fromStdout;
-  const declared = parseFindingsSentinel(result.stdout);
+  const declared = parseFindingsSentinel(stdout);
   return {
     ...fromStdout,
     findingsCount: declared ?? fromStdout.findings?.length ?? 0,

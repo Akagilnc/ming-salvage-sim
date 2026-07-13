@@ -2227,10 +2227,10 @@ async function runIntegratedCmrPass(input: {
     }));
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
   }
-  // ADR 0131: the reviewer-declared count is the complete routing signal.
-  // Positive always enters coder-fix. Structured findings are optional cargo;
-  // when absent, the fixer receives the raw reviewer artifact pointers instead.
-  if (openFindingsCount > 0) {
+  // The worker's red verdict outranks its zero count: both are worker-declared
+  // fields, so the runner transports either red signal into coder-fix. Structured
+  // findings are optional cargo; when absent, raw reviewer artifacts travel instead.
+  if (!cmrResult.output.converged || openFindingsCount > 0) {
     const blockingFindings = cmrResult.output.findings ?? [];
     const blockingFindingIdentityKeys = [
       ...new Set(blockingFindings.map(findingIdentityKey)),
