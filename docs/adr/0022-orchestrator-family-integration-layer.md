@@ -7,6 +7,7 @@ Status: Accepted（2026-06-21；grill-with-docs 收敛 + 设计 cmr 5 轮 + 线�
 - #869 单一拥有现行 issue→merge 交付拓扑，包括 family 的准确接力顺序。
 - ADR 0131 单一拥有 Runner 三通道与零判断权。
 - ADR 0127 单一拥有 worker scene 的保留、恢复与窄删除规则。
+- 旧版“自治止于 PR、线上评审另走独立阶段”条款已废止；其反转决定与现行 owner 见 ADR 0061。
 
 本 ADR 只保留 family 的结构决定。旧版 S0–S8、整波 barrier、Runner ledger/HEAD reconcile、issue-body YAML 解析、线上评审边界与其他步骤细节均已废止，不得作为实现依据。
 
