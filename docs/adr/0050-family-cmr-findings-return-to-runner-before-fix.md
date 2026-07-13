@@ -4,7 +4,7 @@ Status: Accepted (#533/#553, 2026-07-03)
 
 Current authority: ADR 0131 定义 Runner 三通道，#869 定义现行接力拓扑。本 ADR 只保留 reviewer / fixer 角色分离与 fresh re-review 决策。
 
-Family CMR completeness/correctness workers are reviewer workers: they may gather review evidence, run the needed tests, dispatch review legs, and write findings to the findings state store, but they must not repair blocking findings themselves. A blocking finding returns control to the runner, which dispatches a separate coder-fix worker; after that worker updates the finding, the runner dispatches a fresh CMR reviewer over the current full diff.
+Family CMR completeness/correctness workers are reviewer workers: they may gather review evidence, run the needed tests, dispatch review legs, and write findings to the findings state store, but they must not repair blocking findings themselves. They self-report open-count and stop; every intermediate repair, verification, finalization, and re-review transition is owned only by #869. A fresh originating CMR reviewer always reviews the current full diff.
 
 Scope: this decision applies to family integrated CMR passes. It does not reopen the per-slice coder/reviewer/coder-fix separation already decided by 0030.
 
@@ -17,9 +17,9 @@ Professional workers inspect commits, tests, and repair evidence. The Runner is 
 ## Decision
 
 - CMR workers stop at findings, raw review evidence, and relevant test logs.
-- Reviewer 自报 open-count `>0` 后，Runner 按 #869 固定拓扑派独立 coder-fix；Runner 不读取 finding 内容。
-- coder-fix 完成修复或逐条证伪并执行 same-class scan 与 introduced-regression check；有 repo change 时由 Change Finalization 创建新的 non-amend commit，无变化时合法 no-op。
-- The fixer updates the corresponding finding as fixed or refuted; only a fresh reviewer may confirm closure or reopen it.
+- Reviewer 自报 open-count `>0` 后，Runner 只按 #869 固定拓扑接力；本 ADR 不保存任何中间顺序，Runner 不读取 finding 内容。
+- coder-fix 完成修复或逐条证伪并执行 same-class scan 与 introduced-regression check 后停止，不自行提交、复审或推进流程。
+- The fixer updates the corresponding finding as fixed or refuted; only a fresh originating reviewer may confirm closure or reopen it.
 - Fresh CMR re-review always reviews the current full diff. It must not only check whether the last finding appears closed.
 
 ## Tradeoff

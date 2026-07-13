@@ -14,7 +14,8 @@ reads worker prose or completion evidence**:
 1. **exit code** — process life or death; only a real process failure enters
    the mechanical retry lane.
 2. **reviewer self-declared open-count** — `0` closes the current review gate;
-   `>0` follows the fixed topology to a fixer and then a fresh reviewer. The
+   `>0` follows the fixed topology defined only in #869. This README does not
+   restate the intermediate repair/verification/finalization route, and the
    runner never derives or reconciles the number.
 3. **worker-raised decision gate** — relayed to the human unchanged; the runner
    never presses or interprets the gate itself.
@@ -308,10 +309,10 @@ role boundaries:
   single and family delivery. GitHub evidence is owned by the corresponding
   Action, never by the runner.
 
-Each real repair is a new non-amend commit; a valid refutation or no-change
-finalization may be a legal no-op. Every fixer performs the same-class scan and
-introduced-regression check before a fresh reviewer reads the current full
-diff. There is no README-defined round cap or alternate convergence rule.
+Each fixer performs the same-class scan and introduced-regression check, leaves
+its materials, and stops. Commit/no-op finalization, independent Verification,
+and fresh originating review occur only where #869 places them; this README
+defines no alternate order or round cap.
 
 Testing discipline (hard-won): fixtures must consume only real rendered
 artifacts (the rendered prompt text and production worker artifacts) — a
