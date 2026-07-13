@@ -545,7 +545,7 @@ _Avoid_: 子任务、subtask(太泛,不区分独立与否)
 _Avoid_: 主干、main、集成分支(太泛)
 
 **角色**:
-编排管线里一个定义好的职能单元(如 coder、reviewer、ship、merger)。每个角色有自己的一段固定流程、一个 profile 镜像、一份 soul。(commander 不是角色——它无 soul、是 runner 的确定性调度步,见 commander 词条。)同一条切片由不同角色接力(coder 写、reviewer 评),它们靠各自独立的 agent 上下文保持判断独立。
+编排管线里一个定义好的职能单元(如 coder、reviewer、ship、merger)。每个角色有自己的一段固定流程、一个 profile 镜像、一份 soul。同一条切片由不同角色接力(coder 写、reviewer 评),它们靠各自独立的 agent 上下文保持判断独立。
 _Avoid_: agent(太泛)、stage、阶段(混淆流程步与职能)
 
 **profile / 角色镜像**:
@@ -603,10 +603,6 @@ _Avoid_: outcome JSON、finding 分类器、commit hash 一致性闸、让 runne
 记录交付主流程已走到哪一步、哪些动作完成、哪些任务 parked，以及恢复原 worker session 所需定位信息的持久账本。它服务续跑与统计，不保存 commit before/after 对账材料，也不成为 runner 判卷的依据。
 _Avoid_: 日志、log(太泛)、history
 
-**commander**:
-家族模式的确定性交通调度。它读取父 issue 已有的 native sub-issues 与显式依赖，派出当前可运行的子片；每个子片合入并通过父分支验证后立即重算依赖、继续放行，不负责分解 epic 或创建 issue。
-_Avoid_: 分解器 / planner(它不分解)、原生 Plan stage(它 LLM 选片、本 commander 确定性读现成)
-
 **波次 / wave**:
 某一时刻同时满足依赖、可以并发启动的一组子片。波次只是启动快照，不是硬 barrier；已完成子片可先合入并释放其下游，不等待同批 parked 或仍在运行的子片。
 _Avoid_: 批次、轮(混淆评审轮)
@@ -616,8 +612,8 @@ _Avoid_: 批次、轮(混淆评审轮)
 _Avoid_: step ledger(那是单片的)、状态文件(太泛)
 
 **family escalation answer**:
-家族层 decision escalation 被人类回答后的 append-only 续跑信号。它是 family ledger 里的 `escalation_answered` 事件,不编辑/删除原来的 pause 或 `S8(escalate)` 行;runner 只用它重开 decision escalation,把答案传回对应 CMR / coder-fix / reviewer / ship worker。failure escalation 不被 answer row 自动重开。
-_Avoid_: 改写旧 ledger 行、把 answer 当新的需求 brief、用 answer 覆盖 runner 固定 repo/base/head 控制字段、把 failure escalation 当可自动恢复
+家族层 worker 主动提交的 decision gate 被人类回答后的续跑信号。Human Decision action 负责把答案关联回原请求，Lineage 单一持久化 pending request、answer 与关联关系；runner 只 opaque 转运并按固定流程恢复对应 worker，不读取或解释答案。进程失败不会因存在 answer 自动恢复。
+_Avoid_: 把 answer 当新的需求 brief、由 family ledger 重复持久化、让 runner 解释答案或覆盖固定控制字段、把进程失败当可自动恢复
 
 **路线 / route**:
 一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …),显式列出本轮**全部模型槽**(coder / per-slice reviewer / coder-fix / ship / merger / cmr 腿)各自用哪个模型。切路线 = 拨一个总开关、整套翻;任一槽可被单 env override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死),故没有槽能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(0031)
