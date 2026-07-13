@@ -3481,10 +3481,10 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(backend.resumeSessionCalls).toHaveLength(0);
   });
 
-  it("prior crash with last entry = coder committed:false (no S8 yet) → redispatches instead of treating it as terminal", async () => {
+  it("prior crash with last entry = coder committed:false (no S8 yet) → resumes into the next baton (S3) instead of treating it as terminal", async () => {
     // The prior run crashed AFTER persisting the 0-commit coder entry but
-    // BEFORE writing the S8 handoff. route(S2, committed:false) → error handoff.
-    // Recovery must report error, not collapse it into success.
+    // BEFORE the next baton. A completed coder entry advances to fresh review;
+    // committed:false is cargo, so recovery must not redispatch the coder.
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
@@ -3499,7 +3499,8 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.runStepIds).toContain("S2");
+    expect(backend.runStepIds).toContain("S3");
+    expect(backend.runStepIds).not.toContain("S2");
   });
 
   it("prior crash with an advisory S2 commit count resumes through review", async () => {
