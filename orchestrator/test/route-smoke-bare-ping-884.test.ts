@@ -135,6 +135,28 @@ class BarePingBackend extends RealBackend {
     this.pingCalls.push(call);
     return this.pingImpl(call);
   }
+
+  public async readProductionBarePingEnvironment(): Promise<{
+    home: string | undefined;
+    claudeToken: string | undefined;
+  }> {
+    const stdout = await super.execBarePing({
+      slug: "sonnet",
+      cwd: tmpdir(),
+      prompt: "unused",
+      nonce: "unused",
+      file: process.execPath,
+      args: [
+        "-e",
+        "process.stdout.write(JSON.stringify({home:process.env.HOME,claudeToken:process.env.CLAUDE_CODE_OAUTH_TOKEN}))",
+      ],
+      timeoutMs: 2_000,
+    });
+    return JSON.parse(stdout) as {
+      home: string | undefined;
+      claudeToken: string | undefined;
+    };
+  }
 }
 
 describe("#884 bare-ping pure helpers", () => {
@@ -188,6 +210,16 @@ describe("#884 bare-ping pure helpers", () => {
 });
 
 describe("#884 bare-ping production smoke", () => {
+  it("launches host bare ping with the same injected home and Claude token source as workers", async () => {
+    const home = tempHome();
+    const backend = new BarePingBackend(home, async (call) => call.nonce);
+
+    await expect(backend.readProductionBarePingEnvironment()).resolves.toEqual({
+      home,
+      claudeToken: "test-token",
+    });
+  });
+
   it("runs unique legs in parallel via bare ping (empty cwd, nonce oracle)", async () => {
     const home = tempHome();
     let active = 0;

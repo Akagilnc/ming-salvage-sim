@@ -2476,8 +2476,27 @@ export class RealBackend implements Backend {
       timeoutMs: input.timeoutMs,
       cwd: input.cwd,
       input: input.stdin,
-      env: process.env,
+      env: this.barePingEnvironment(),
     });
+  }
+
+  /** Host auth view used by bare-ping CLIs, aligned with worker auth sources. */
+  private barePingEnvironment(): NodeJS.ProcessEnv {
+    const home = this.opts.home ?? homedir();
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+    try {
+      const claudeToken = readFileSync(
+        join(home, ".sc-claude-token"),
+        "utf8",
+      ).trim();
+      if (claudeToken !== "") {
+        env.CLAUDE_CODE_OAUTH_TOKEN = claudeToken;
+      }
+    } catch {
+      // Missing Claude auth is rejected by assertProviderAuth before its ping.
+    }
+    return env;
   }
 
   /**

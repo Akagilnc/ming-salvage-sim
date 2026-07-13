@@ -124,6 +124,7 @@ import {
 } from "../findingFamilies.js";
 import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
 import {
+  PROVISION_SUBPROCESS_TIMEOUT_MS,
   provisionNodeModules,
   resolveTemplateProjectDir,
   runProvisionCommand,
@@ -480,12 +481,18 @@ export class RealFamilyBackend implements FamilyBackend {
    * — the same seam pattern RealBackend's `sh` uses. The default `cwd` is the
    * dedicated clone (every family git op anchors there).
    */
-  protected sh(file: string, args: string[], cwd?: string): string {
+  protected sh(
+    file: string,
+    args: string[],
+    cwd?: string,
+    timeoutMs?: number,
+  ): string {
     // Mixed read/write seam (merge/push/pr create + rev-parse). Default
     // no-retry so a timed-out mutation is never auto-replayed (#884 cmr r7).
     return shWithClock(file, args, {
       stage: `subprocess:${file}`,
       cwd: cwd ?? this.opts.workingRepo,
+      timeoutMs,
     });
   }
 
@@ -1258,7 +1265,12 @@ export class RealFamilyBackend implements FamilyBackend {
     const startedAt = process.hrtime.bigint();
     let passed = false;
     try {
-      const output = this.sh("npm", args, cwd);
+      const output = this.sh(
+        "npm",
+        args,
+        cwd,
+        PROVISION_SUBPROCESS_TIMEOUT_MS,
+      );
       passed = true;
       return output;
     } finally {
