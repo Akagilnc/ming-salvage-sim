@@ -4,6 +4,18 @@
 
 ## [未发布]
 
+## [0.26.0.0] — 2026-07-13
+
+### Added / Changed
+- **#873 编排器生存版**：拆 runner 收账/git-truthing/读字法庭；三通道 + head 未动短路 (#878) + 腿瞬断重试 (#879) + 交卷指针 (#880) + resume barrier (#881) + 外呼装钟/裸 ping (#884)。
+- `externalCall` 仅装钟（无重试中台）；重试归 `legTransientRetry`。
+- 旧 tool-smoke 证据 helper 删除；bare-ping 唯一点火路径。
+
+### Removed
+- verifyCmr accounting courts、git-truthing conviction、no-progress 等 runner 内容法庭与零引用孤儿 helper。
+
+
+
 ## [0.25.0.0] - 2026-07-05
 
 ### 新增
