@@ -1728,7 +1728,7 @@ async function withRouteEnv<T>(
 async function routeAccountingReplay(): Promise<SeamReplay> {
   // #875: leg-accounting court demolished. An undeclared extra successful leg is
   // worker prose — the pure helper may still describe the mismatch, but
-  // runVerifyCmr must survive and ship (strong-leg floor still sees declared strong).
+  // runVerifyCmr must survive and ship without reading the leg lists to route.
   const env = { ORCHESTRATOR_ROUTE: "claude-tight" };
   const route = resolveRouteModels("claude-tight", {});
   const declaredLegs = route.legCollections.cmrReview.map((leg) => leg.slug);
@@ -2997,7 +2997,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     replayScenario({
       id: "376-provider-degraded-blocking",
       issue: 376,
-      title: "required route leg is unavailable",
+      title: "CMR worker provider failure is blocking",
       classification: "provider_degraded",
       stopSummary: providerBlockingSource.stopSummary,
       source: "family",

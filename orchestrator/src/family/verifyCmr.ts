@@ -113,14 +113,12 @@ import {
 } from "../dispatchRetry.js";
 import { withLegTransientRetry } from "../legTransientRetry.js";
 import {
-  requiredCmrLegSkipFailure,
   modelRouteFingerprint,
   resolveActiveModelRoute,
   smokeRouteModels,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
-import { modelIsStrongLeg } from "../realBackend.js";
 import type {
   DispatchContext,
   EscalationAnswerPayload,
@@ -260,8 +258,7 @@ export interface VerifyCmrInput {
    * worker as artifact pointers (ADR 0130 case handoff). #875 demolished the
    * verifyCmr accounting court: the runner does NOT parse claim/disposition
    * coverage of these keys to abort a live run. Three-channel routing only
-   * (exit / findings count / decision gate) plus strong-leg floor, required-leg
-   * degradation, and real infra durable abort.
+   * (exit / findings count / decision gate), plus real infra durable abort.
    */
   readonly priorCmrFindingIdentityKeys?: readonly string[];
   /** Pass-scoped prior finding identity keys; preferred over the legacy flat set. */
@@ -334,86 +331,6 @@ async function runFamilyVerifyOrAbort(input: {
     stopSummary: familyVerifyFailureStopSummary(reason),
   });
   return { ok: false, ran: true };
-}
-
-/** ADR0032 floor: at least one successful CMR leg must be registry-marked strong. */
-export function meetsCmrFloor(successfulLegs: readonly string[]): boolean {
-  return successfulLegs.some(modelIsStrongLeg);
-}
-
-/**
- * Strong-leg floor credit: only route-declared successful legs count.
- * #875 demolished leg-accounting death (undeclared extras no longer kill), but
- * the retained floor must still mean "a route-selected strong leg ran" — an
- * undeclared strong slug cannot satisfy the floor by itself.
- */
-function routeDeclaredSuccessfulLegs(
-  successfulLegs: readonly string[],
-  resolvedRoute: ResolvedModelRoute,
-): readonly string[] {
-  const declared = new Set(
-    resolvedRoute.legCollections.cmrReview.map((leg) => leg.slug),
-  );
-  return successfulLegs.filter((slug) => declared.has(slug));
-}
-
-function cmrFloorFailureReason(input: {
-  readonly pass: IntegratedCmrPass;
-  readonly successfulLegs: readonly string[] | undefined;
-  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-  readonly resolvedRoute: ResolvedModelRoute;
-}): string | undefined {
-  const successfulLegs = input.successfulLegs;
-  if (successfulLegs === undefined || successfulLegs.length === 0) {
-    return `integrated cmr ${input.pass} floor failed: no successful leg set was reported`;
-  }
-  const creditedLegs = routeDeclaredSuccessfulLegs(
-    successfulLegs,
-    input.resolvedRoute,
-  );
-  if (meetsCmrFloor(creditedLegs)) return undefined;
-  const skipped =
-    input.skippedLegs !== undefined && input.skippedLegs.length > 0
-      ? `; skipped legs: ${input.skippedLegs
-          .map((leg) => `${leg.slug} (${leg.reason})`)
-          .join(", ")}`
-      : "";
-  return (
-    `integrated cmr ${input.pass} floor failed: route-declared successful legs [` +
-    `${creditedLegs.join(", ")}] include no strong leg` +
-    (creditedLegs.length === successfulLegs.length
-      ? ""
-      : ` (reported [${successfulLegs.join(", ")}]; undeclared legs do not credit the floor)`) +
-    skipped
-  );
-}
-
-function providerDegradedFloorStopSummary(input: {
-  readonly reason: string;
-  readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-}): StopSummary {
-  const providerDegraded =
-    input.skippedLegs !== undefined && input.skippedLegs.length > 0
-      ? input.skippedLegs.map((leg) =>
-          skippedLegProviderDegradation(leg, {
-            blocking: true,
-            repairHint: `restore provider availability for ${leg.slug} and rerun the CMR gate`,
-          }),
-        )
-      : [
-          {
-            reason: input.reason,
-            blocking: true,
-            repairHint: "restore a route-selected strong CMR provider leg and rerun the gate",
-          },
-        ];
-
-  return {
-    reason: "provider_degraded",
-    summary: input.reason,
-    repairHint: "restore the required CMR provider leg coverage and rerun",
-    metadata: { providerDegraded },
-  };
 }
 
 interface CmrRouteLegEvidence {
@@ -2183,50 +2100,6 @@ async function runIntegratedCmrPass(input: {
   // to coder-fix, which receives the findings or raw reviewer artifacts.
   const openFindingsCount =
     cmrResult.output.findingsCount ?? cmrResult.output.findings?.length ?? 0;
-  // #875: leg-accounting court demolished. successfulLegs/skippedLegs are worker
-  // prose for the degradation floor below — undeclared/duplicate/omitted legs no
-  // longer abort the run. Floor still credits only route-declared successful legs
-  // (undeclared strong must not satisfy ADR0032).
-  const floorFailure = cmrFloorFailureReason({
-    pass,
-    successfulLegs: cmrResult.output.successfulLegs,
-    skippedLegs: cmrResult.output.skippedLegs,
-    resolvedRoute,
-  });
-  if (floorFailure !== undefined) {
-    const skippedLegs = cmrResult.output.skippedLegs;
-    await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason: floorFailure,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: providerDegradedFloorStopSummary({
-        reason: floorFailure,
-        skippedLegs,
-      }),
-    }));
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
-  const requiredLegFailure = requiredCmrLegSkipFailure(
-    cmrResult.output.skippedLegs,
-    resolvedRoute,
-    // #875: double-reported successful+skipped is prose — success wins.
-    cmrResult.output.successfulLegs,
-  );
-  if (requiredLegFailure !== undefined) {
-    const skippedLegs = cmrResult.output.skippedLegs;
-    await persistFinalReviewRound("rejected", () => recordDurableAbort(familyBackend, {
-      phase: "final",
-      cmrPass: pass,
-      reason: requiredLegFailure,
-      familyHeadAfter: postWorkerFamilyHead,
-      stopSummary: providerDegradedFloorStopSummary({
-        reason: requiredLegFailure,
-        skippedLegs,
-      }),
-    }));
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
-  }
   // ADR 0131: the reviewer-declared count is the complete routing signal.
   // Positive always enters coder-fix. Structured findings are optional cargo;
   // when absent, the fixer receives the raw reviewer artifact pointers instead.
