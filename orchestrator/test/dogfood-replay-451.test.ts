@@ -449,7 +449,6 @@ describe("#451 dogfood replay fixture", () => {
       stopReason: "success",
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr",
-        helperSeam: "family_cmr_accounting",
         routeName: "claude-tight",
         declaredLegs: ["gpt-5.6-sol", "agy"],
         rejectedDefaultLeg: "opus",

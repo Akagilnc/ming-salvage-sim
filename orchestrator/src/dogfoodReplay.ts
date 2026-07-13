@@ -22,7 +22,6 @@ import type {
 import { findingIdentityKey } from "./findings.js";
 import {
   applyTightRoutePolicy,
-  cmrLegAccountingFailure,
   resolveRouteModels,
   smokeRouteModels,
   type ModelRouteEnv,
@@ -1726,20 +1725,12 @@ async function withRouteEnv<T>(
 }
 
 async function routeAccountingReplay(): Promise<SeamReplay> {
-  // #875: leg-accounting court demolished. An undeclared extra successful leg is
-  // worker prose — the pure helper may still describe the mismatch, but
-  // runVerifyCmr must survive and ship without reading the leg lists to route.
+  // #875: leg-accounting court demolished. Harness constructs an undeclared
+  // extra successful leg; runVerifyCmr must survive without judging leg lists.
   const env = { ORCHESTRATOR_ROUTE: "claude-tight" };
   const route = resolveRouteModels("claude-tight", {});
   const declaredLegs = route.legCollections.cmrReview.map((leg) => leg.slug);
   const rejectedDefaultLeg = "opus";
-  const failure = cmrLegAccountingFailure(
-    { successfulLegs: [...declaredLegs, rejectedDefaultLeg] },
-    env,
-  );
-  if (failure === undefined || !failure.includes(rejectedDefaultLeg)) {
-    throw new Error("dogfood route accounting helper did not flag undeclared legs");
-  }
   const backend = new DogfoodCmrFamilyBackend("route-accounting-head", [], [
     {
       kind: "completed",
@@ -1799,11 +1790,9 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
     stopSummary: pass.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr",
-      helperSeam: "family_cmr_accounting",
       routeName: route.routeName,
       declaredLegs,
       rejectedDefaultLeg,
-      failure,
       courtDemolished: true,
       dispatches: backend.dispatches,
       status: "success",
