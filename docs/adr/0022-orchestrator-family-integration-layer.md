@@ -24,7 +24,7 @@ Status: Accepted（2026-06-21；grill-with-docs 收敛 + 设计 cmr 5 轮 + 线�
 5. **zero-runnable 不等于自动终局。** 从未建立 family scene 且没有 durable obligation 时可 quiet success；已有 scene 时，是否仍有待合入、park、shared-tail 或 cleanup 义务由 Canonical Delivery Flow 与 Lineage 保存的流程位置决定，不能因本轮没有新 child 就丢失。
 6. **membership removal 是窄取消。** 未合 child 从 native sub-issues 移除后停止未来调度；若其 Worker Invocation 仍在运行，不杀进程、不删 worktree。实例不再运行后，由 Closure / Reclamation 只删除目标 worktree，保留 branch、Lineage / ledger、日志与 telemetry / 统计，不要求 success 或 normal exit，也不撤销已合代码。
 7. **closed 不等于销毁。** Closed child 退出 runnable set 并满足 issue 依赖，但其现场在父流程 terminal-success 与显式 cleanup 前保留；reopen + ready 可复用原 request / scene。Closed 只表达 issue 工作流状态，不证明某个 commit 已在 parent base；代码可用性由专业 Action / worker 验证，Runner 不做 commit / HEAD 对账。
-8. **Lineage 保存历史，不给 Runner 判卷。** Child 的完成、合入、park、关闭、移除与恢复位置可持久化供续跑和统计；具体 schema、Git reconciliation 与外部事实由 Lineage 和对应 Action 拥有。Runner 不读取 ledger 内容来判断专业工作是否完成。
+8. **Lineage 保存历史，不给 Runner 判卷。** Child 的完成、合入、park、关闭、移除与恢复位置可持久化供续跑和统计；Lineage 只拥有 locator / flow-position / owner-scoped record 的 schema 与持久化，Git reconciliation 与外部事实核验只归对应 Action。Runner 不读取 ledger 内容来判断专业工作是否完成。
 9. **CMR module context 属于专业评审。** module scope 与 cross-module defer 由 reviewer / skill 读取和裁决；Runner 不解析 issue-body YAML、不声明 undeveloped module、不分类 finding。
 
 ## Considered Options
