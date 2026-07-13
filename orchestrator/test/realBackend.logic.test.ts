@@ -1921,6 +1921,20 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         { outcomeLanding: { path: outcomePath, sandboxPath: ".orchestrator-outcome.json" } },
       ),
     ).toEqual(payload);
+
+    expect(
+      rawOutputFor(
+        {
+          stdout:
+            '<review>{"junk": true, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</review>',
+        },
+        reviewerSpec,
+        false,
+        { outcomeLanding: { path: outcomePath, sandboxPath: ".orchestrator-outcome.json" } },
+      ),
+    ).toMatchObject({
+      escalate: { reason: "owner choice", diagnosis: "review fork" },
+    });
   });
 
   it("does not label a multi-iteration coder stdout tag as a legacy fallback", () => {

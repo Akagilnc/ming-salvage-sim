@@ -372,10 +372,10 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     expect(o.kind).toBe("completed");
   });
 
-  it("still rings a stdout decision bell when unrelated sidecar cargo is unreadable", () => {
+  it("rings a stdout decision bell before unrelated parseable sidecar cargo", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-bell-"));
     const outcomePath = join(dir, "outcome.json");
-    writeFileSync(outcomePath, "{not json", "utf8");
+    writeFileSync(outcomePath, JSON.stringify({ unrelatedCargo: true }), "utf8");
 
     const o = shipOutcomeFromResult({
       stdout: '<ship>{"junk": true, "escalate": {"reason": "owner choice", "diagnosis": "ship fork"}}</ship>',

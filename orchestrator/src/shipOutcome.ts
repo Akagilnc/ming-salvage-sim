@@ -125,9 +125,10 @@ export function shipOutcomeFromResult(result: {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
         const classified = classifyShipOutcomePayload(sidecar, "ship worker outcome sidecar");
-        return classified.kind === "escalate" || classified.kind === "shipped"
-          ? classified
-          : { kind: "completed" };
+        if (classified.kind === "escalate") return classified;
+        const stdoutBell = parseShipOutcome(result.stdout);
+        if (stdoutBell.kind === "escalate") return stdoutBell;
+        return classified.kind === "shipped" ? classified : { kind: "completed" };
       }
     }
   } catch (err) {
