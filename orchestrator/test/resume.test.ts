@@ -3400,7 +3400,69 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
 // ─── AC4: recovery decides next step from ledger, not memory ──────────────────
 
 describe("S7 ship observation during resume setup (#824 r10)", () => {
-  it("re-observes an S7 host-observation infra park without re-dispatching ship", async () => {
+  it("rebuilds the resumed S7 ship output from a host-observed open PR before entering S9", async () => {
+    class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
+      observationCalls = 0;
+
+      async observeSliceShip(): Promise<{ shipped: boolean; prUrl: string }> {
+        this.observationCalls += 1;
+        return { shipped: true, prUrl: "pr://slice/offline-255" };
+      }
+    }
+
+    const backend = new ObservationRecoveryBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S7", {
+          kind: "ship",
+          branch: WORKTREE.branch,
+          status: "pushed",
+        }),
+        {
+          ...s8("escalate"),
+          escalationKind: "failure",
+          stopSummary: {
+            reason: "infra_failure",
+            summary: "S7 host delivery observation unavailable: timed out",
+            repairHint:
+              "restore host observation, then resume to observe delivery without re-running ship",
+          },
+        },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 891, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.observationCalls).toBe(1);
+    expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(0);
+    expect(backend.dispatchSpecs.some((spec) => spec.id === "S9")).toBe(true);
+    expect([...result.stepLedger].reverse().find((entry) => entry.step === "S7")?.output)
+      .toEqual(expect.objectContaining({
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }));
+    expect(backend.ledgerWrites).toContainEqual(expect.objectContaining({
+      step: "S7",
+      output: expect.objectContaining({
+        status: "pr_opened",
+        pr: "pr://slice/offline-255",
+      }),
+    }));
+    expect(result.stopSummary?.summary).not.toContain(
+      "requires a prior S7 pr_opened ship output with a PR URL",
+    );
+  });
+
+  it("rebuilds the resumed S7 ship output as pushed when host truth has no open PR", async () => {
     class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
       observationCalls = 0;
 
@@ -3442,6 +3504,17 @@ describe("S7 ship observation during resume setup (#824 r10)", () => {
     expect(result.status).toBe("success");
     expect(backend.observationCalls).toBe(1);
     expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(0);
+    expect(backend.dispatchSpecs.some((spec) => spec.id === "S9")).toBe(false);
+    expect([...result.stepLedger].reverse().find((entry) => entry.step === "S7")?.output)
+      .toEqual(expect.objectContaining({
+        kind: "ship",
+        branch: WORKTREE.branch,
+        status: "pushed",
+      }));
+    expect(backend.ledgerWrites).toContainEqual(expect.objectContaining({
+      step: "S7",
+      output: expect.objectContaining({ status: "pushed" }),
+    }));
   });
 
   it("turns transient gh failure into resumable S8(error) instead of rejecting runOrchestrator", async () => {

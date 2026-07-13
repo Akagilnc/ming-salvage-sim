@@ -2043,6 +2043,14 @@ describe("#823 family ship malformed-output recovery", () => {
     expect(backend.hostObservations).toBe(2);
     expect(backend.ledger.filter((entry) => entry.status === "ship_dispatch_attempt"))
       .toHaveLength(backend.shipDispatches);
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "ship_completed",
+      pr: "pr://family/823-after-throw",
+    }));
+    expect(backend.ledger).toContainEqual(expect.objectContaining({
+      status: "shipped",
+      pr: "pr://family/823-after-throw",
+    }));
     // This minimal backend does not implement the post-ship online-review path;
     // the regression seam is the pre-review dispatch/observation decision above.
     expect(result).toEqual({ ok: false, ran: true });
