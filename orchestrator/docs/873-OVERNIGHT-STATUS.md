@@ -1,5 +1,7 @@
 # #873 Overnight status (for owner after sleep)
 
+> **Historical record:** 战役前夜档案；其中 owner-gate 表述仅代表当时状态。
+
 > Written by autonomous session. **Not a ship claim until you confirm.**
 
 ## Branch

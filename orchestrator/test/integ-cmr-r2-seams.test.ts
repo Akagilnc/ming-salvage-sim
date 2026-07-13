@@ -224,10 +224,8 @@ describe("B: coder commitsAdded advisory telemetry", () => {
   });
 
   it("regression: committed:false with commitsAdded:0 advances to S3", async () => {
-    // Consistent 0-commit is still an error (the build worker produced nothing)
-    // but via the 0-commit route, with failedStep S2 — same surface, different
-    // cause. This pins that the B guard does NOT reject the legitimate
-    // consistent shape.
+    // A consistent 0-commit coder envelope still advances to the independent S3
+    // reviewer; its clean review then permits the normal S7 push path.
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);

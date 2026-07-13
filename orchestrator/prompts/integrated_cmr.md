@@ -33,7 +33,7 @@ Not converged:
 Escalation:
 
 ```text
-<cmr>{"escalate": {"reason": "<short>", "diagnosis": "<why the worker cannot converge>"}}</cmr>
+<cmr>{"escalate": {"reason": "<short>", "diagnosis": "<why the worker cannot converge>", "escalationKind": "decision"}}</cmr>
 ```
 
 Rules:
@@ -48,8 +48,8 @@ Rules:
   `skippedLegs` only when no declared leg was skipped.
 - When review-leg coverage is missing because quota exhaustion or provider
   degradation prevents cross-vendor coverage, report the jury shortfall through
-  your decision gate, or declare `findings >= 1` and explain the absent legs in
-  the review body.
+  your decision gate, or emit `findings = x`, where `x >= 1`, and explain the
+  absent legs in the review body.
 - On any converged verdict, `claimedFixedFindingIdentityKeys` and
   `priorFindingDispositions` are REQUIRED. Use empty arrays only when no
   claimed-fixed findings occurred in the CMR loop. If a prior claimed-fixed

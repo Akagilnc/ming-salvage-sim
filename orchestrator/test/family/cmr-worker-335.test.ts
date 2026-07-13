@@ -173,7 +173,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
 
   it("an escalate object ⇒ an escalate outcome (the worker is model-stuck)", () => {
     const o = parseCmrOutcome(
-      '<cmr>{"escalate": {"reason": "skill missing", "diagnosis": "ak-cross-m-review not on PATH"}}</cmr>',
+      '<cmr>{"escalate": {"reason": "skill missing", "diagnosis": "ak-cross-m-review not on PATH", "escalationKind": "decision"}}</cmr>',
     );
     expect(o.kind).toBe("escalate");
     if (o.kind === "escalate") {
@@ -562,8 +562,9 @@ describe("integrated CMR pass prompt closure contract", () => {
       const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
 
       expect(prompt).toMatch(
-        /review-leg coverage is missing[\s\S]*decision gate[\s\S]*findings\s*>=\s*1/i,
+        /review-leg coverage is missing[\s\S]*decision gate[\s\S]*findings\s*=\s*x[\s\S]*x\s*>=\s*1/i,
       );
+      expect(prompt).toContain('"escalationKind": "decision"');
     });
 
     it(`${promptName} requires closure arrays on converged output`, () => {
@@ -2027,7 +2028,11 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         writeFileSync(
           outcomePathAtRun,
           JSON.stringify({
-            escalate: { reason: "review unavailable", diagnosis: "synthetic test verdict" },
+            escalate: {
+              reason: "review unavailable",
+              diagnosis: "synthetic test verdict",
+              escalationKind: "decision",
+            },
           }),
           "utf8",
         );

@@ -1465,7 +1465,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     );
 
     const outcome = cmrOutcomeFromResult({
-      stdout: undefined as unknown as string,
+      stdout: undefined,
       outcomePath,
     });
 
@@ -1594,6 +1594,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
         escalate: {
           reason: "review unavailable",
           diagnosis: "diagnosis quoted the literal </cmr> delimiter",
+          escalationKind: "decision",
         },
       }) + "\n",
       "utf8",

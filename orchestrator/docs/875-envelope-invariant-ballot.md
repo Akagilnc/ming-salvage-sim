@@ -1,7 +1,9 @@
 # #875 Envelope 不变式全文票（Opus 转交 · 权威）
 
+> **Historical ballot record:** 现行法以 `docs/adr/0131-runner-three-channels-zero-judgment.md` 为准；实现细节以 #875 验收与代码为准。
+>
 > **ADR 0131 / S1b override（2026-07-13 owner）**：§1/§2 已被推翻——count 以 reviewer 自报为准，不与结构化数组对账；同 worker 重写梯废止。§3 保留并加强：runner 只按申报数路由，不复核卷面。
-
+>
 > 锚：**#875** / **#873 kill-axis** / **ADR 0129**（校验归写入点、runner 只查未决数）  
 > 停窄轮 r5–r11 拉锯的唯一裁判文。实现与后续 cmr 必须服从本票。
 

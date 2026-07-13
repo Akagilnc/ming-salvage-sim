@@ -257,14 +257,24 @@ export async function dispatchMonitoredCliWorker(
       resolve();
       return;
     }
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       child.removeListener("spawn", onSpawn);
       child.removeListener("error", onError);
-      // Clock fires → typed timeout only. Do NOT signal the child here
-      // (#873 kill-axis / cmr r10): spawn-ack timeout is not an idle/hang
-      // judgment, instance id is not yet captured, and a bare-pid signal
-      // can hit a reused PID. Termination stays on the post-handle idle
-      // path that verifies process identity.
+      // This child object is the exact instance launched above. Reap it before
+      // rejecting so a dispatch retry cannot leave two workers in one worktree.
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // It may have exited between the timeout and the signal.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // It may have exited during the TERM grace window.
+        }
+      }
       reject(
         new ExternalCallTimeoutError({
           stage: spawnStage,

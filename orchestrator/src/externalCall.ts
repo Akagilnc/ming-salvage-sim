@@ -118,9 +118,6 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
     ) {
       return "transient";
     }
-    if (hasTransientCodeInCauseChain(err)) {
-      return "transient";
-    }
     const status =
       Number.isInteger(e.status)
         ? (e.status as number)
@@ -131,6 +128,9 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
       if (status === 429) return "quota";
       if (status >= 500 && status <= 599) return "transient";
       if (status >= 100 && status <= 599) return "durable";
+    }
+    if (hasTransientCodeInCauseChain(err)) {
+      return "transient";
     }
   }
 
@@ -245,6 +245,7 @@ export function execFileAsyncWithTimeout(
         resolve(typeof stdout === "string" ? stdout : String(stdout ?? ""));
       },
     );
+    child.stdin?.once("error", reject);
     if (hasInput) {
       child.stdin?.end(opts.input);
     } else {
