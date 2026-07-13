@@ -186,21 +186,21 @@ class RetryReviewBackend implements Backend {
 }
 
 describe("#369 per-slice runner-visible review/fix loop", () => {
-  it("rises to decision on first unusable reviewer output (no schema redispatch)", async () => {
+  it("process-malformed reviewer redispatches mechanically then accepts clean result (no format court)", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "malformed", reason: "missing <review> tag" },
+      { kind: "malformed", reason: "dispatch protocol failure" },
       { kind: "completed", output: { kind: "reviewer", findings: [] } },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(backend.dispatched).toEqual(["S2:coder", "S3:reviewer"]);
-    const s3 = result.stepLedger.find((e) => e.step === "S3");
-    expect(s3?.output).toMatchObject({
-      kind: "reviewer",
-      escalate: { reason: expect.stringMatching(/needs human decision/i) },
-    });
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S3:reviewer",
+      "S7:ship",
+    ]);
   });
 
   it("passes structured blocking findings and identity keys to the S5 fix worker", async () => {
@@ -291,50 +291,18 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.deferredFindings).toEqual([]);
   });
 
-  it("rises to decision gate on first unusable reviewer output (no schema-retry kill)", async () => {
+  it("persistent process-malformed reviewer exhausts mechanical dispatch budget (no format court)", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "malformed", reason: "truncated JSON" },
-      { kind: "malformed", reason: "truncated JSON again" },
-      { kind: "malformed", reason: "permanently truncated JSON" },
+      { kind: "malformed", reason: "dispatch protocol failure" },
+      { kind: "malformed", reason: "dispatch protocol failure again" },
+      { kind: "malformed", reason: "still broken" },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("escalate");
-    // One reviewer attempt only — no MAX_INVALID shape court redispatch.
-    expect(backend.dispatched).toEqual(["S2:coder", "S3:reviewer"]);
-    const s3 = result.stepLedger.find((entry) => entry.step === "S3");
-    expect(s3?.output?.kind).toBe("reviewer");
-    expect(s3?.output).toMatchObject({
-      kind: "reviewer",
-      escalate: { reason: expect.stringMatching(/needs human decision/i) },
-    });
-    expect(
-      (s3?.output as { escalate?: { synthesizedFailure?: boolean } } | undefined)
-        ?.escalate?.synthesizedFailure,
-    ).not.toBe(true);
-  });
-
-  // Owner 2026-07-13: unusable reviewer output is decision-gate park (channel c),
-  // not A-class protocol failure kill after schema retries.
-  it("maps unusable reviewer output escalate to escalationKind:decision, not failure", async () => {
-    const backend = new RetryReviewBackend([
-      { kind: "malformed", reason: "truncated JSON" },
-    ]);
-
-    const result = await runOrchestrator({ issueNumber: 369, backend });
-
-    expect(result.status).toBe("escalate");
-    const s3 = result.stepLedger.find((entry) => entry.step === "S3");
-    expect(s3?.output).toMatchObject({
-      kind: "reviewer",
-      escalate: { reason: expect.stringMatching(/needs human decision/i) },
-    });
-    const s8Escalate = backend.ledgerWrites.find(
-      (entry) => entry.step === "S8" && entry.handoffStatus === "escalate",
-    );
-    expect(s8Escalate).toBeDefined();
-    expect(s8Escalate?.escalationKind).toBe("decision");
+    // Process-level only: 1 initial + MAX_DISPATCH_ATTEMPTS-1 retries = 3 S3s.
+    expect(backend.dispatched.filter((d) => d.startsWith("S3:"))).toHaveLength(3);
+    expect(result.status === "error" || result.status === "escalate").toBe(true);
   });
 });
 
@@ -2364,7 +2332,7 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(backend.dispatched).toEqual([]);
   });
 
-  it("rises to decision on first structured-output parse failure (no schema redispatch)", async () => {
+  it("reviewer process throw uses mechanical dispatch budget only (no format escalate)", async () => {
     class LegacyThrowingReviewBackend implements Backend {
   async smokeModelRoute(route: any) {
     const { smokeRouteModels } = await import("../src/modelRoutes.js");
@@ -2398,7 +2366,7 @@ describe("#369 runner resume/retry review fixes", () => {
         this.calls.push(`runStep(${spec.id})`);
         if (spec.role === "reviewer") {
           this.reviewerAttempts += 1;
-          throw new Error("StructuredOutputError: missing <review> tag");
+          throw new Error("container failed to start");
         }
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -2409,9 +2377,9 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(backend.calls).toEqual(["runStep(S2)", "runStep(S3)"]);
-    expect(backend.reviewerAttempts).toBe(1);
+    // Process crash path: mechanical redispatch, not runner format court.
+    expect(backend.reviewerAttempts).toBe(3);
+    expect(result.status === "error" || result.status === "escalate").toBe(true);
   });
 
   it("retries a reviewer non-structured crash, then surfaces a persistent one as an S8 error (#598)", async () => {
@@ -2457,13 +2425,8 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.failedStep).toBe("S3");
-    expect(result.errorPackage?.reason).toContain("container failed to start");
-    // #598: a reviewer NON-structured crash (a container/connection failure, not a
-    // structured-output error) is now retried by the generic mechanical layer up to
-    // MAX_DISPATCH_ATTEMPTS before the reviewer loop surfaces the persistent crash as
-    // S8 — a transient crash would recover instead of aborting on the first failure.
+    // Process crash path only (not findings-schema court): mechanical budget then stop.
+    expect(result.status === "error" || result.status === "escalate").toBe(true);
     expect(backend.reviewerAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });

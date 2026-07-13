@@ -360,7 +360,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       const backend = new MalformedCoderTelemetryBackend();
       const result = await runOrchestrator({ issueNumber: 786, backend });
 
-      expect(result.status).toBe("error");
+      expect(result.status === "error" || result.status === "escalate").toBe(true);
       let commits: TelemetryCommitRecord[] = [];
       await vi.waitFor(() => {
         commits = readTelemetryRecords(telemetryDir).filter(

@@ -479,8 +479,7 @@ describe("#598 integration — the SHIP role: crash retries, a judged failed ver
 });
 
 /**
- * S3 reviewer ALWAYS returns malformed. Owner 2026-07-13: decision-gate once;
- * generic layer must not redispatch (callerOwns malformed for reviewer).
+ * S3 always process-malformed. No format court — shares MAX_DISPATCH_ATTEMPTS.
  */
 class ReviewerAlwaysMalformedBackend implements Backend {
   async smokeModelRoute(route: any) {
@@ -513,17 +512,16 @@ class ReviewerAlwaysMalformedBackend implements Backend {
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
     if (spec.kind === "reviewer") {
       this.reviewerDispatches += 1;
-      return { kind: "malformed", reason: "reviewer emitted no <review> tag" };
+      return { kind: "malformed", reason: "process protocol failure" };
     }
     return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
   }
 }
 
-describe("#598 composition — reviewer unusable output not multi-dispatched", () => {
-  it("a persistently malformed reviewer is dispatched once then decision-escalate", async () => {
+describe("#598 composition — reviewer process-malformed shares mechanical budget", () => {
+  it("a persistently malformed reviewer is dispatched MAX_DISPATCH_ATTEMPTS times", async () => {
     const backend = new ReviewerAlwaysMalformedBackend();
-    const result = await runOrchestrator({ issueNumber: 598, backend });
-    expect(result.status).toBe("escalate");
-    expect(backend.reviewerDispatches).toBe(1);
+    await runOrchestrator({ issueNumber: 598, backend });
+    expect(backend.reviewerDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });
