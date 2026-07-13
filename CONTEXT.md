@@ -529,8 +529,8 @@ _Avoid_: 第二案头/独立急务界面；把六动作做成通用下旨的语�
 _Avoid_: CI、流水线(太泛)、hermes(那是一个具体后端不是编排器)
 
 **交付主流程**:
-编排器当前唯一的一条 issue→merge 路线。single 是只有一个切片的主流程，family 是有多个切片的主流程，online review 是两者共用的尾段；代码产出在 review 前经过 Change Finalization，shared tail 在 merge 外部成功后先记录 terminal-success 再显式 cleanup；流程层只决定何时调用哪个编排动作，不规定动作内部怎样完成。
-_Avoid_: 三套 workflow、Role Workflow Definition、可执行 DSL、把 wiki 逐字翻译成运行时流程
+编排器当前唯一的一条 issue→merge 路线。single 与 family 使用同一条主流程和共同尾段；准确动作顺序、接力与重入只读 #869，术语表不复制拓扑。
+_Avoid_: 三套 workflow、Role Workflow Definition、可执行 DSL、把 wiki 逐字翻译成运行时流程、在 glossary 保存第二份步骤表
 
 **编排动作**:
 交付主流程里一个目的明确的专业步骤，拥有该步必要 skill/capability 的绑定与实际调用，以及模型腿、外部副作用核验与合法空跑。skill 的方法与内容仍以版本化 skill 自身为真源，不复制进流程、runner 或 prompt。动作可以向 runner 提交需要人类决定，但不得跨角色私自推进后续流程；是否以及何时调用下一动作由流程层决定。
@@ -585,15 +585,15 @@ _Avoid_: 自评自修、顺手修一下、把 CMR reviewer 当 coder-fix。
 _Avoid_: reviewer 自修、amend 折叠、coder/fixer 完成时的 commit gate、无 commit 白跑或重试、runner 代判修复正确。
 
 **delivery-base Finding Repair**:
-来源无关的 Finding Repair scope，作用于当前 delivery branch/base；single 作用于 standalone branch，family 作用于 family base。shared-tail final Verification `>0` 固定使用它；single 不要求 family ledger、child merge 或 family repair scope。只有 family 增量合入后的父分支 Verification 红灯，才使用 `family-integration Finding Repair`。
-_Avoid_: 把 shared-tail final Verification 错派到 family-integration，或为 single 虚构 family base、ledger 或 repair scope。
+来源无关、作用于当前 delivery branch / base 的 Finding Repair scope；与只处理 family 增量合入接缝的 `family-integration Finding Repair` 相区别。准确调用位置只读 #869。
+_Avoid_: 把它等同 family-integration scope、为 single 虚构 family base / ledger、在 glossary 复制 gate matrix。
 
 **文档发布 (docRelease)**:
-线上评审 loop 收敛之后、自动合并之前的 worker 步：在 PR 头上跑 `/gstack-document-release`，把刚交付的代码与项目文档对齐。成功收尾（含合法空跑）后，当前 PR tip 固定再经 fresh online review，复审为 0 才允许 merge；若复审引发修复，修复收敛后重新经过 doc release 与 fresh online review。单切片与 family 共用同一步，不按来源或有无文档 commit 分叉。
-_Avoid_: 把文档发布当成 merge 本身、runner 直接改文档、用路径白名单当发布成败判据、按有无 commit 分叉、跳过 post-doc fresh review。
+把当前 PR 代码与项目文档对齐的共享 Action / worker；它自行判断合法空跑并核验自己的 commit / push 副作用。single 与 family 共用，准确调用与重入位置只读 #869。
+_Avoid_: 把文档发布当成 merge 本身、Runner 直接改文档或检查路径 / commit、在 glossary 复制 shared-tail 顺序。
 
 **文档发布空跑**:
-`/gstack-document-release` 判定当前无文档债、不产生 commit 的合法成功收尾。空跑仍算文档发布完成，但与有 commit 路径一样进入 post-doc fresh online review。
+`/gstack-document-release` 判定当前无文档债、不产生 commit 的合法成功收尾；后续固定流程仍只读 #869，不由 Runner 按“是否有 commit”分叉。
 _Avoid_: 把空跑当失败、为凑 commit 造空提交、把「没改文件」等同 skill 崩溃。
 
 **修复证据**:

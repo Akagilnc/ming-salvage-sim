@@ -1,5 +1,7 @@
 Status: Accepted（2026-07-06：grill 收敛 #366 → 16-issue 重切 → 本地 kill-axis cmr 2 轮收敛 → 线上 4-bot 3 轮收敛，PR #605 合入）
 
+Current authority: 线上评审仍属于编排器 shared tail；准确顺序只读 #869，Runner 边界只读 ADR 0131。PR / checks / threads 的读取与外部效果核验属于 Online Review / Delivery Action，不属于 Runner。
+
 # 0061: 编排器纳入线上 PR 评审 loop（反转 ADR 0022 decision 4）
 
 ## 背景
@@ -12,10 +14,10 @@ ADR 0022 decision 4 定「自治边界 = 分阶段到 PR：family 编排器跑�
 
 **决策要点**（详见 #366 PRD，编码细节归 to-issues 切片）：
 
-1. 轮询 bot 状态（reactions/reviews/checks/threads）是 host 侧确定性调度（runner 职责）；但"这条 finding 该修/该拒/该延"必须由 worker 读实际代码判断，runner 不猜。延续 ADR 0030 已立的收敛 loop 模型：**fresh verify-worker 核实 → fixer-worker 改+自查二连 → fresh verify-worker 复核**，不塞进一个 worker 兼两职（镜像 `cmrReviewerHeadMovedStopSummary` 已守护的 reviewer/coder 角色边界）。
+1. Online Review / Delivery Action 读取 reactions / reviews / checks / threads 并核验外部效果；专业 reviewer 判断 finding，fixer 修复与自查，fresh reviewer 复核。Runner 不读取 PR 状态或 finding 内容，只按 ADR 0131 三通道与 #869 固定拓扑调度。
 2. 单切片 PR 与 family PR 共用同一套 worker/skill，不按来源分叉设计。
 3. 不设"强证据/弱证据分级→人工升级"机制；verify-worker（强模型）自主判定，判错是可接受的小概率成本（线上评审本身 3 轮、可自纠错），真卡住走既有通用升级通道，不另建专用 defer 机制。
-4. ruleset/线程 resolved/CI 等客观条件满足即自动合并，不额外加人工确认闸。
+4. Merge / Delivery Action 核验 ruleset、线程与 CI 等客观条件后自动合并，不额外加人工确认闸；这些外部事实不进入 Runner。
 
 ## Considered Options
 
