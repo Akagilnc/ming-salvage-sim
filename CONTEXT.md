@@ -19,12 +19,12 @@ _Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamil
 _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue 建多个并行现场
 
 **家族子工作树（Family Child Worktree）**:
-家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，但 successor agent/session/checkpoint 按选棒结果决定，可变化，不另建替代现场。直接输入子 issue 号时，无既有 scene 才走单片模式的独立 worktree 和 PR；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
+家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，但 successor agent/session/checkpoint 按选棒结果决定，可变化，不另建替代现场。直接输入子 issue 号时，只有无既有 scene 且 Issue Admission 确认为 open + ready 叶子才走单片模式的独立 worktree 和 PR；closed/open-unready 无 scene 叶子 quiet skip；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
-**家族开工过滤（Family Admission Filter）**:
-Family Admission Action 在父 issue 首次启动及每次重入时读取 live GitHub membership、状态、标签与依赖，完成过滤和 cycle 处置并产出 GitHub 候选集；Canonical Delivery Flow 随后调用 Scene Provisioning / Recovery，恢复当前 flow 已有的 scene inventory 并检查新候选。只有该 Action 查询 locator，并分别报告“无既有 scene”“scene 属于当前 flow”“scene 属于其他 flow”三种交通事实；Generic Runner 据此机械地创建、恢复或局部 park，不重复任何查询或分类。行为契约见 ADR 0022 与 #871。
-_Avoid_: 先创建现场再过滤、用缓存或本地推断代替 live facts、让 Family Admission 读取 locator、让 Action 与 Runner 各做一遍 admission
+**议题准入（Issue Admission）**:
+单一负责 live GitHub 准入事实的 Action。目标无保留 scene 时，它读取目标状态、`ready-for-agent` 与 native sub-issues：closed 目标或 open-unready 叶子 quiet skip；open + ready 叶子可走 single；open parent 进入 family。family 首次启动及每次重入时，同一 Action 的 family 分支 refetch membership、状态、标签与依赖，完成过滤和 cycle 处置并产出候选/依赖交通事实。locator 与 scene 所有权只由 Scene Provisioning / Recovery 查询；保留 scene 永远优先重入 owning flow。准确调用位置只读 #869，产品契约见 #871。
+_Avoid_: 先创建现场再做无现场准入、用缓存或本地推断代替 live facts、让 Issue Admission 读取 locator、让 Action 与 Runner 各做一遍 admission
 
 **合并工（Merger Worker）**:
 只在子分支机械合并回父工作树发生真实 Git 冲突时出场、负责解决该次冲突的 worker。无冲突时由确定性合并直接完成，不调用模型。
