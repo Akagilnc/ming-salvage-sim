@@ -19,7 +19,7 @@ _Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamil
 _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue 建多个并行现场
 
 **家族子工作树（Family Child Worktree）**:
-家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，但 successor agent/session/checkpoint 按选棒结果决定，可变化，不另建替代现场。直接输入子 issue 号则走单片模式的独立 worktree 和 PR，不使用本术语。
+家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，但 successor agent/session/checkpoint 按选棒结果决定，可变化，不另建替代现场。直接输入子 issue 号时，无既有 scene 才走单片模式的独立 worktree 和 PR；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
 **家族开工过滤（Family Admission Filter）**:
