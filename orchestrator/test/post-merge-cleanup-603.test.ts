@@ -7,6 +7,7 @@ import {
   assessBranchDeletePrecondition,
   branchTipMatchesMergedHead,
   cleanupResultFromActs,
+  dispatchPostMergeCleanup,
   fetchPaginatedSubIssues,
   runPostMergeCleanup,
   shouldCloseParentIssue,
@@ -35,6 +36,41 @@ const PR_MERGED = {
   mergedHeadOid: MERGED_HEAD,
   convergedHeadOid: MERGED_HEAD,
 };
+
+describe("#891 offline cleanup dispatch is hermetic", () => {
+  it("does not execute gh when an offline test handle carries cleanup landing", () => {
+    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
+    const sh = vi.fn<Sh>(() => {
+      throw new Error("offline cleanup must not execute host CLI");
+    });
+
+    const result = dispatchPostMergeCleanup(
+      {
+        cleanupDispatch: {
+          coveredIssues: [603],
+          prUrl: "pr://slice/branch-cargo/feat%2Fissue-603",
+          prNumber: 603,
+          remoteBranchName: "feat/issue-603",
+          mergedHeadOid: MERGED_HEAD,
+          convergedHeadOid: MERGED_HEAD,
+        },
+      },
+      {
+        repo: REPO,
+        prUrl: "pr://slice/branch-cargo/feat%2Fissue-603",
+      },
+      sh,
+    );
+
+    expect(result).toEqual({
+      kind: "cleanup",
+      terminal: true,
+      ok: true,
+      branchOutcome: "already_gone",
+    });
+    expect(sh).not.toHaveBeenCalled();
+  });
+});
 
 function fakeSh(handlers: Record<string, (args: string[]) => string>): Sh {
   return (file, args) => {
