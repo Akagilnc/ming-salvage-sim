@@ -2,6 +2,8 @@ Status: Accepted（2026-07-06：源于 #497/#498 实证与 #604；本地 kill-ax
 
 > **前向更正（ADR 0129，2026-07-12 owner 重申）**：三通道保留，但 runner 不再消费 worker outcome JSON，也不做 finding id/disposition、commit/head、测试或证据一致性校验。信号②直接查询 findings 状态库未决数；专业判断和材料核验留在 reviewer/fixer 之间。
 
+> **前向废止（ADR 0131，2026-07-13 owner 裁决）**：本 ADR 信封宪法段「缺覆盖 = malformed outcome，走机械重试重派 reviewer」半句、typed-治理澄清段（「outcome-guard 必须在 worker 之外的 runner 层」及其形状/治理校验派生信封）**废止**——runner 零卷面校验；通道 (b) 改为「reviewer 自报 open-count，说几条就是几条，不派生不对账」；不可用卷面 callerOwns 一次 decision 上抛、零机械重派。三通道母法与决策门 durable 语义保留。见 ADR 0131。
+
 # 0062: 删除 runner 侧 finding 分类，失败 escalate 与人类决策门分家（回归 0026/0050，supersede #448/#449 路线）
 
 ## 决定
