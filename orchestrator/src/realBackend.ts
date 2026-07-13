@@ -65,10 +65,6 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
-import {
-  hasBoundedReopenCondition,
-  hasExplicitAcceptedSuppressionSource,
-} from "./acceptedSuppression.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
   execFileAsyncWithTimeout,
@@ -1285,11 +1281,6 @@ export interface SelfReportedCoder {
   readonly repairEvidence?: RepairEvidence;
 }
 
-/** A git SHA / abbreviation used by non-verdict bookkeeping parsers. */
-export function isLikelySha(s: string): boolean {
-  return /^[0-9a-f]{7,40}$/.test(s);
-}
-
 /**
  * Parse a persisted JSONL ledger (`steps.jsonl` contents) into entries —
  * FAIL-CLOSED on corruption (integ-cmr 256 r5, high).
@@ -1709,134 +1700,6 @@ export interface RealBackendOptions {
  * disposition kinds — the only disposition a reviewer may emit is the
  * accepted-suppression governance carrier.
  */
-const findingDispositionSchema = z
-  .object({
-    kind: z.literal("accepted_suppressed"),
-    source: z.string().min(1),
-    scope: z.string().min(1),
-    reason: z.string().min(1),
-    findingIdentity: z.string().min(1).optional(),
-    boundedReopen: z.string().min(1),
-  })
-  // #604 correctness r2 (C3): `.strict()` so a reviewer disposition carrying an
-  // unknown field (e.g. the deleted `targetModule`) is REJECTED here rather than
-  // silently stripped — parity with the family-side `cmrDispositionEvidenceSchema`
-  // which is already `.strict()`. Without this, this standalone reviewer entrance
-  // would quietly swallow a deleted field the other entrances now reject.
-  .strict()
-  .superRefine((disposition, ctx) => {
-    if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["source"],
-        message: "accepted_suppressed requires explicit user/ADR/issue source",
-      });
-    }
-    if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["boundedReopen"],
-        message: "accepted_suppressed requires bounded reopen condition",
-      });
-    }
-  });
-export const findingSchema = z.object({
-  severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
-  category: z.string(),
-  claim_quote: z.string(),
-  location: z.string(),
-  suggested_fix: z.string(),
-  action: z.enum(["fix_now", "wont_fix", "rejected"]),
-  disposition_reason: z.string().optional(),
-  disposition: findingDispositionSchema.optional(),
-}).superRefine((finding, ctx) => {
-  if (
-    (finding.severity === "critical" || finding.severity === "high") &&
-    finding.action !== "fix_now"
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["action"],
-      message: "critical/high findings must be fix_now",
-    });
-  }
-  // An accepted_suppressed governance disposition is only valid on a
-  // wont_fix/rejected finding — never on fix_now.
-  if (
-    finding.action !== "wont_fix" &&
-    finding.action !== "rejected" &&
-    finding.disposition?.kind === "accepted_suppressed"
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["disposition"],
-      message:
-        "accepted_suppressed disposition is only valid on wont_fix/rejected findings",
-    });
-  }
-  if (
-    (finding.action === "wont_fix" || finding.action === "rejected") &&
-    ((!finding.disposition_reason && !finding.disposition?.reason) ||
-      finding.disposition?.kind !== "accepted_suppressed")
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["disposition"],
-      message: "suppressed findings require accepted_suppressed disposition",
-    });
-  }
-});
-// #604 correctness r5 (E1): `.strict()` so a prior-finding disposition carrying an
-// unknown field (e.g. a deleted routing field like `targetModule`) is REJECTED
-// here rather than silently STRIPPED by zod — parity with the family-side
-// `cmrFindingDispositionSchema` (already `.strict()`) and the standalone
-// `findingDispositionSchema` (r2/C3). Exported so the strict contract is directly
-// exercisable. `.strict()` must go on the `.object()` before `.superRefine()`,
-// since `.superRefine()` returns a `ZodEffects` with no `.strict()`.
-export const priorFindingDispositionSchema = z.object({
-  identityKey: z.string().min(1),
-  status: z.enum([
-    "still-active",
-    "verified-closed",
-    "unable-to-assess",
-    "accepted_suppressed",
-  ]),
-  reason: z.string().optional(),
-  source: z.string().optional(),
-  scope: z.string().optional(),
-  boundedReopen: z.string().optional(),
-}).strict().superRefine((disposition, ctx) => {
-  if (disposition.status !== "accepted_suppressed") return;
-  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
-    if (disposition[field] === undefined || disposition[field].trim() === "") {
-      ctx.addIssue({
-        code: "custom",
-        path: [field],
-        message: `accepted_suppressed prior finding disposition requires ${field}`,
-      });
-    }
-  }
-  if (
-    disposition.source !== undefined &&
-    !hasExplicitAcceptedSuppressionSource(disposition.source)
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["source"],
-      message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
-    });
-  }
-  if (
-    disposition.boundedReopen !== undefined &&
-    !hasBoundedReopenCondition(disposition.boundedReopen)
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["boundedReopen"],
-      message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
-    });
-  }
-});
 const findingRepairScopeSchema = z
   .object({
     identityKeys: z.array(z.string()).optional(),

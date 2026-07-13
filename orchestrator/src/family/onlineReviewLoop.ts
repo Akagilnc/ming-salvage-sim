@@ -269,7 +269,7 @@ export function newerRoundTrigger(
 
 /**
  * Resolve the bot-poll freshness anchor for the current online review round.
- * Round 1 may fall back to the S7 ship ledger timestamp; round ≥2 requires a
+ * Round 1 may fall back to the family ship ledger timestamp; round ≥2 requires a
  * persisted re-trigger anchor and never reuses the ship anchor (#600 r25).
  * When fix-committed landed before retrigger (crash gap), reconstruct the
  * pending anchor from the fix record so resume stays in-band (#600 r27).

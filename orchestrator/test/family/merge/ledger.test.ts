@@ -19,8 +19,6 @@ import {
   familyAlreadyShipped,
   familyShippedRecordForReviewLoopResume,
   familyEscalationState,
-  hasBoundShippedMarker,
-  hasUnboundLegacyShippedMarker,
   mergedSet,
   recordAdmissionSkipped,
   recordCmrPassed,
@@ -171,31 +169,6 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
     expect(
       familyAlreadyShipped([{ status: "shipped", event: "shipped", phase: "final", pr: "u" }], "head-1"),
     ).toBe(false);
-    expect(
-      hasUnboundLegacyShippedMarker([{ status: "shipped", event: "shipped", phase: "final", pr: "u" }]),
-    ).toBe(true);
-    expect(
-      hasUnboundLegacyShippedMarker([
-        {
-          status: "shipped",
-          event: "shipped",
-          phase: "final",
-          pr: "u",
-          familyHeadAfter: 123,
-        } as unknown as FamilyLedgerEntry,
-      ]),
-    ).toBe(true);
-    expect(
-      hasBoundShippedMarker([
-        {
-          status: "shipped",
-          event: "shipped",
-          phase: "final",
-          pr: "u",
-          familyHeadAfter: "head-1",
-        },
-      ]),
-    ).toBe(true);
   });
 
   it("pin r28: familyShippedRecordForReviewLoopResume crash-point matrix (family)", () => {

@@ -537,7 +537,7 @@ export interface StepResult {
  *   - `coder`    → invoke `/tdd` (S2 implement / S5 fix), resume across rounds.
  *   - `reviewer` → invoke `/code-review` (S3/S6 per-slice review), fresh each round.
  *   - `cmr`      → invoke `ak-cross-m-review` (family integrated cmr), fresh.
- *   - `ship`     → invoke `gstack-ship` (S7 / family PR).
+ *   - `ship`     → invoke `gstack-ship` for the family PR. Child S7 is a local handoff.
  *   - `merge`    → family-layer merge (may use NO skill — ADR 0026); B 段, no A-段
  *                  consumer (shape only).
  */
@@ -960,11 +960,8 @@ export type CoderResult = CoderOutput;
 export type ReviewerResult = ReviewerOutput;
 
 /**
- * A family integrated-cmr worker's output (#335/#449). The consumer
- * `verifyCmr.ts` reads `converged`, and when the worker supplies structured
- * findings the GATE derives the blocking envelope + accepted-suppression governance
- * against the declared family module context before deciding whether the pass can
- * proceed (信封宪法, ADR 0062: typed governance derivation, never free-text fate分叉).
+ * A family integrated-cmr worker's output (#335/#449). The runner routes only
+ * the worker's self-reported findings count; all other reviewer fields are cargo.
  */
 export interface CmrResult {
   readonly kind: "cmr";
@@ -978,7 +975,7 @@ export interface CmrResult {
   readonly successfulLegs?: readonly string[];
   /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
   readonly skippedLegs?: readonly CmrSkippedLeg[];
-  /** Prior claimed-fixed findings the integrated CMR worker asks the runner to adjudicate. */
+  /** Prior claimed-fixed finding cargo reported by the integrated CMR worker. */
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit closure disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
@@ -988,7 +985,7 @@ export interface CmrResult {
   readonly findingsCount?: number;
   /** Cross-round grouped findings + recurring-class markers (#711). */
   readonly findingFamilies?: readonly FindingFamily[];
-  /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
+  /** Reviewer-referenced evidence artifact pointers transported as cargo. */
   readonly evidencePaths?: readonly string[];
   // NOTE: a STUCK cmr worker is the WorkerResult-level `{kind:"escalated"}` case,
   // NOT an `escalate` field on this `completed` payload (codex cmr R3b finding: a

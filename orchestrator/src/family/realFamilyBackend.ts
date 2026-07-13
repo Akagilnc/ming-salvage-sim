@@ -83,7 +83,6 @@ import {
   applyUniformCredentialProvisioning,
   hostOpenCodeAuthFile,
   candidateBranches,
-  extractCoderTag,
   lastSessionId,
   parseCoderSelfReport,
   SANDBOX_CODEX_DIR,
@@ -159,6 +158,7 @@ import type {
   CoderResult,
   DispatchContext,
   DocReleaseResult,
+  Escalation,
   WorkerMonitorHandle,
   Finding,
   FindingFamily,
@@ -1297,28 +1297,6 @@ export class RealFamilyBackend implements FamilyBackend {
     if (spec.kind === "coder") {
       return this.runFamilyCoderFixWorker(spec, ctx, landing);
     }
-    // S11 post-merge cleanup (#603): deterministic when landing carries pr_merged.
-    if (spec.kind === "cleanup") {
-      if (landing?.cleanupDispatch !== undefined) {
-        const ghSh: Sh = (file, args) =>
-          shWithClock(file, args, { stage: `dispatch:${file}` });
-        try {
-          const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
-          return { kind: "completed", output };
-        } catch (err) {
-          return {
-            kind: "failed",
-            reason: err instanceof Error ? err.message : String(err),
-          };
-        }
-      }
-      return {
-        kind: "failed",
-        reason:
-          "family cleanup worker requires cleanupDispatch landing; " +
-          "production dispatch never synthesizes a green receipt",
-      };
-    }
     // #735: real 文档发布 worker shares the family review-loop agent path
     // (invoke /gstack-document-release). Offline/test stubs stay on backends
     // that short-circuit dispatchWorker or on the legacy offline hatch.
@@ -1337,6 +1315,15 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const outcome = await this.runCmrWorker(spec, ctx);
     return this.cmrOutcomeToWorkerResult(outcome, ctx);
+  }
+
+  async runPostMergeCleanup(
+    landing: WorkerLandingPayload,
+    ctx: DispatchContext,
+  ): Promise<CleanupResult> {
+    const ghSh: Sh = (file, args) =>
+      shWithClock(file, args, { stage: `cleanup:${file}` });
+    return dispatchPostMergeCleanup(landing, ctx, ghSh);
   }
 
   /**
@@ -1396,7 +1383,10 @@ export class RealFamilyBackend implements FamilyBackend {
       // pass — verifyCmr.ts calls escalateFamily with this reason.
       return {
         kind: "escalated",
-        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+        escalation: outcome.escalation ?? {
+          reason: outcome.reason,
+          diagnosis: outcome.diagnosis,
+        },
         ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
       };
     }
@@ -1496,6 +1486,12 @@ export class RealFamilyBackend implements FamilyBackend {
           "scope (integrated CMR pass prompts); refusing to fall back to a possibly-stale " +
           "main...HEAD scope (a fail-open that would review the wrong diff). Provide " +
           "RealFamilyBackendOptions.familyBaseStartHead.",
+        escalation: runnerSynthesizedFailureEscalation({
+          reason:
+            "no familyBaseStartHead (cut SHA) recorded — cannot pin the cmr review scope",
+          diagnosis:
+            "the integrated cmr focus file must pin the exact cut-SHA review scope before launch",
+        }),
       };
     }
     // FAIL-CLOSED on the WORKER's OWN auth (codex cmr R4): when the cmr slot
@@ -1520,6 +1516,11 @@ export class RealFamilyBackend implements FamilyBackend {
           "cmrWorkerSpec must freeze the route-selected cmrReview leg collection before " +
           "dispatch. Refusing to re-read process.env in runCmrWorker because that can " +
           "write a route file that disagrees with the verified route fingerprint.",
+        escalation: runnerSynthesizedFailureEscalation({
+          reason: "cmr worker spec missing frozen review legs",
+          diagnosis:
+            "cmrWorkerSpec must freeze the route-selected review legs before launch",
+        }),
       };
     }
     const auth = this.mountCmrAuth();
@@ -1530,6 +1531,11 @@ export class RealFamilyBackend implements FamilyBackend {
           kind: "escalate",
           reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
           diagnosis: "typed provider availability preflight rejected the cmr launch before sc.run",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
+            diagnosis:
+              "typed provider availability preflight rejected the cmr launch before sc.run",
+          }),
         };
       }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
@@ -1542,6 +1548,12 @@ export class RealFamilyBackend implements FamilyBackend {
             "OWN auth, not a degradable reviewer leg. Without it the worker fails to start " +
             "and never emits a verdict; escalating here keeps the escalate续跑 semantics " +
             "(a thrown sc.run startup error would bypass verifyCmr's structured routing).",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason:
+              "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the cmr worker cannot start",
+            diagnosis:
+              "the selected top-level Claude CMR worker cannot start without its OAuth token",
+          }),
         };
       }
       // Check out the family base so the in-container ak-cross-m-review reviews the
@@ -1630,16 +1642,16 @@ export class RealFamilyBackend implements FamilyBackend {
       if (missingProvider !== undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason: `no ${missingProvider} auth — the family coder-fix provider cannot start`,
             diagnosis: "typed provider availability preflight rejected the coder-fix launch before sc.run",
-          },
+          }),
         };
       }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason:
               "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family coder-fix worker cannot start",
             diagnosis:
@@ -1647,7 +1659,7 @@ export class RealFamilyBackend implements FamilyBackend {
               "active route selects a Claude-family coderFix model; provide " +
               "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude " +
               "coderFix route.",
-          },
+          }),
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
@@ -2595,7 +2607,10 @@ export class RealFamilyBackend implements FamilyBackend {
       // decide) — the family escalate续跑 path (verifyCmr calls escalateFamily).
       return {
         kind: "escalated",
-        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+        escalation: outcome.escalation ?? {
+          reason: outcome.reason,
+          diagnosis: outcome.diagnosis,
+        },
       };
     }
     if (outcome.kind === "completed") {
@@ -2656,6 +2671,11 @@ export class RealFamilyBackend implements FamilyBackend {
           reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
           diagnosis:
             "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; typed provider availability preflight rejected the ship launch before sc.run",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
+            diagnosis:
+              "typed provider availability preflight rejected the ship launch before sc.run",
+          }),
         };
       }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
@@ -2663,6 +2683,11 @@ export class RealFamilyBackend implements FamilyBackend {
           kind: "escalate",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
           diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason:
+              "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
+            diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+          }),
         };
       }
       // FAIL-CLOSED on gh auth (cmr S336 r10): the family delivery's ONLY accepted
@@ -2683,6 +2708,11 @@ export class RealFamilyBackend implements FamilyBackend {
             "Provide a host gh login (`gh auth login`) so `gh auth token` yields a token " +
             "to inject as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a " +
             "late in-container `gh pr create` failure would surface as an opaque error).",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
+            diagnosis:
+              "the family ship worker cannot open its PR without host GitHub authentication",
+          }),
         };
       }
       // Check out the family base so gstack-ship delivers the RIGHT branch.
@@ -3125,6 +3155,7 @@ export type CmrWorkerOutcome =
       readonly kind: "escalate";
       readonly reason: string;
       readonly diagnosis: string;
+      readonly escalation?: Escalation;
       readonly sessionId?: string;
     };
 

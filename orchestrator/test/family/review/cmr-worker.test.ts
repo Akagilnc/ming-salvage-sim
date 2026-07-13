@@ -69,6 +69,7 @@ import {
   familyShipWorkerSpec,
 } from "../../../src/family/dispatchFamilyWorker.js";
 import { shipOutcomeFromResult } from "../../../src/shipOutcome.js";
+import { isRunnerSynthesizedFailureEscalation } from "../../../src/runnerEscalation.js";
 import type {
   DispatchContext,
   WorkerLandingPayload,
@@ -1846,6 +1847,7 @@ describe("#335 runCmrWorker — fail-closed when no cut SHA was recorded", () =>
     expect(res.kind).toBe("escalated");
     if (res.kind === "escalated") {
       expect(res.escalation.reason).toMatch(/familyBaseStartHead|cut SHA/i);
+      expect(isRunnerSynthesizedFailureEscalation(res.escalation)).toBe(true);
     }
   });
 });
@@ -1915,6 +1917,9 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
     });
     const res = await be.dispatchWorker(legacyClaudeCmrSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("escalated");
+    if (res.kind === "escalated") {
+      expect(isRunnerSynthesizedFailureEscalation(res.escalation)).toBe(true);
+    }
   });
 });
 

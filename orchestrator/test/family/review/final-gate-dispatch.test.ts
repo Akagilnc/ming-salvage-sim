@@ -327,7 +327,6 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       if (
         spec.kind === "verify" ||
         spec.kind === "fixer" ||
-        spec.kind === "cleanup" ||
         spec.kind === "docRelease"
       ) {
         return {
@@ -341,9 +340,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
                   committed: true,
                   fixCommitSha: "fixsha1111111111111111111111111111111111",
                 }
-                : spec.kind === "cleanup"
-                  ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
-                  : { kind: "docRelease", released: true },
+                : { kind: "docRelease", released: true },
         };
       }
       return { kind: "failed", reason: `unexpected worker ${spec.kind}` };
@@ -372,7 +369,6 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       { kind: "ship", promptFile: "family_ship.md" },
       { kind: "verify", promptFile: "verify.md" },
       { kind: "docRelease", promptFile: "docRelease.md" },
-      { kind: "cleanup", promptFile: "cleanup.md" },
     ]);
   });
 
@@ -407,7 +403,6 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
       { kind: "ship", promptFile: "family_ship.md", escalationAnswer },
       { kind: "verify", promptFile: "verify.md" },
       { kind: "docRelease", promptFile: "docRelease.md" },
-      { kind: "cleanup", promptFile: "cleanup.md" },
     ]);
   });
 });

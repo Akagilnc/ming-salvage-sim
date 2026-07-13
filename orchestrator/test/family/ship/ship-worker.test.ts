@@ -50,6 +50,7 @@ import {
   type ShipWorkerOutcome,
 } from "../../../src/shipOutcome.js";
 import type { DispatchContext, WorkerSpec } from "../../../src/types.js";
+import { isRunnerSynthesizedFailureEscalation } from "../../../src/runnerEscalation.js";
 
 /**
  * Read the model id an agent was built with off an agent — its CLI model flag is
@@ -348,6 +349,7 @@ describe("#336 family runShipWorker — fail-closed when the top-level Claude wo
     expect(res.kind).toBe("escalated");
     if (res.kind === "escalated") {
       expect(res.escalation.reason).toMatch(/claude|token|auth/i);
+      expect(isRunnerSynthesizedFailureEscalation(res.escalation)).toBe(true);
     }
   });
 });
@@ -418,6 +420,7 @@ describe("#336 family runShipWorker — fail-closed when gh auth is missing", ()
     expect(res.kind).toBe("escalated");
     if (res.kind === "escalated") {
       expect(res.escalation.reason).toMatch(/gh|github/i);
+      expect(isRunnerSynthesizedFailureEscalation(res.escalation)).toBe(true);
     }
   });
 });

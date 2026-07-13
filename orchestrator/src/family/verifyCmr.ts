@@ -61,6 +61,8 @@ import {
   runFamilyAutoMergeStage,
 } from "./familyAutoMerge.js";
 import { buildCleanupLanding } from "../postMergeCleanup.js";
+import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
+import { stubCleanupResult } from "../reviewLoopOutcome.js";
 import {
   shouldReclaimFamilyHost,
 } from "../hostReclaim.js";
@@ -70,7 +72,6 @@ import {
   type RoundTrigger,
 } from "../evidenceAdmissibility.js";
 import {
-  cleanupWorkerSpec,
   docReleaseWorkerSpec,
   fixerWorkerSpec,
   verifyWorkerSpec,
@@ -116,6 +117,7 @@ import {
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
+  CleanupResult,
   DispatchContext,
   EscalationAnswerPayload,
   Finding,
@@ -661,22 +663,33 @@ async function runCmrCoderFix(input: {
   if (fixResult.kind === "escalated") {
     const reason = fixResult.escalation.reason;
     const diagnosis = fixResult.escalation.diagnosis;
-    const stopSummary = decisionGateParkStopSummary({
-      summary: `${reason} — ${diagnosis}`,
-      repairHint: "answer the coder-fix worker's decision gate, then resume it in place",
-      heads: {
-        ...(familyHeadAfter !== undefined ? { actualFamilyHead: familyHeadAfter } : {}),
-        ...(currentFamilyHeadBefore !== undefined
-          ? { verifiedCmrHead: currentFamilyHeadBefore }
-          : {}),
-      },
-    });
+    const synthesizedFailure = isRunnerSynthesizedFailureEscalation(
+      fixResult.escalation,
+    );
+    const heads = {
+      ...(familyHeadAfter !== undefined ? { actualFamilyHead: familyHeadAfter } : {}),
+      ...(currentFamilyHeadBefore !== undefined
+        ? { verifiedCmrHead: currentFamilyHeadBefore }
+        : {}),
+    };
+    const stopSummary = synthesizedFailure
+      ? infraFailureStopSummary({
+          summary: `${reason} — ${diagnosis}`,
+          repairHint:
+            "repair the coder-fix worker startup/authentication failure, then re-feed the family run",
+          heads,
+        })
+      : decisionGateParkStopSummary({
+          summary: `${reason} — ${diagnosis}`,
+          repairHint: "answer the coder-fix worker's decision gate, then resume it in place",
+          heads,
+        });
     await familyBackend.escalateFamily?.({
       reason,
       diagnosis,
       familyHeadAfter,
       stopSummary,
-      escalationKind: "decision",
+      escalationKind: synthesizedFailure ? "failure" : "decision",
     });
     await recordDurableAbort(familyBackend, {
       phase: "final",
@@ -1708,13 +1721,25 @@ async function runIntegratedCmrPass(input: {
   if (cmrResult.kind === "escalated") {
     const reason = cmrResult.escalation.reason;
     const diagnosis = cmrResult.escalation.diagnosis;
-    const stopSummary = decisionGateParkStopSummary({
-      summary: `${reason} — ${diagnosis}`,
-      repairHint: "answer the CMR worker's decision gate, then resume it in place",
-      heads: postWorkerFamilyHead !== undefined
-        ? { actualFamilyHead: postWorkerFamilyHead }
-        : undefined,
-    });
+    const synthesizedFailure = isRunnerSynthesizedFailureEscalation(
+      cmrResult.escalation,
+    );
+    const stopSummary = synthesizedFailure
+      ? infraFailureStopSummary({
+          summary: `${reason} — ${diagnosis}`,
+          repairHint:
+            "repair the integrated CMR worker startup/configuration failure, then re-feed the family run",
+          heads: postWorkerFamilyHead !== undefined
+            ? { actualFamilyHead: postWorkerFamilyHead }
+            : undefined,
+        })
+      : decisionGateParkStopSummary({
+          summary: `${reason} — ${diagnosis}`,
+          repairHint: "answer the CMR worker's decision gate, then resume it in place",
+          heads: postWorkerFamilyHead !== undefined
+            ? { actualFamilyHead: postWorkerFamilyHead }
+            : undefined,
+        });
     await persistFinalReviewRound("accepted", async () => {
       await recordDurableAbort(familyBackend, {
         phase: "final",
@@ -1728,7 +1753,7 @@ async function runIntegratedCmrPass(input: {
         diagnosis,
         familyHeadAfter: postWorkerFamilyHead,
         stopSummary,
-        escalationKind: "decision",
+        escalationKind: synthesizedFailure ? "failure" : "decision",
       });
     });
     return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
@@ -2134,24 +2159,37 @@ export async function runVerifyCmr(
     );
     const escalationReason = shipResult.escalation.reason;
     const escalationDiagnosis = shipResult.escalation.diagnosis;
-    const stopSummary = decisionGateParkStopSummary({
-      summary: `${escalationReason} — ${escalationDiagnosis}`,
-      repairHint: "answer the family ship worker's decision gate, then resume it in place",
-      heads:
-        postShipFamilyHead !== undefined
-          ? { actualFamilyHead: postShipFamilyHead }
-          : undefined,
-    });
+    const synthesizedFailure = isRunnerSynthesizedFailureEscalation(
+      shipResult.escalation,
+    );
+    const heads =
+      postShipFamilyHead !== undefined
+        ? { actualFamilyHead: postShipFamilyHead }
+        : undefined;
+    const stopSummary = synthesizedFailure
+      ? infraFailureStopSummary({
+          summary: `${escalationReason} — ${escalationDiagnosis}`,
+          repairHint:
+            "repair the family ship worker startup/authentication failure, then re-feed the family run",
+          heads,
+        })
+      : decisionGateParkStopSummary({
+          summary: `${escalationReason} — ${escalationDiagnosis}`,
+          repairHint: "answer the family ship worker's decision gate, then resume it in place",
+          heads,
+        });
     await familyBackend.escalateFamily?.({
       reason: escalationReason,
       diagnosis: escalationDiagnosis,
       familyHeadAfter: postShipFamilyHead,
       stopSummary,
-      escalationKind: "decision",
+      escalationKind: synthesizedFailure ? "failure" : "decision",
     });
     await recordDurableAbort(familyBackend, {
       phase,
-      reason: `family ship worker escalated: ${escalationReason} — ${escalationDiagnosis}`,
+      reason: synthesizedFailure
+        ? `family ship worker startup failure: ${escalationReason} — ${escalationDiagnosis}`
+        : `family ship worker escalated: ${escalationReason} — ${escalationDiagnosis}`,
       familyHeadAfter: postShipFamilyHead,
       stopSummary,
     });
@@ -2357,7 +2395,6 @@ export async function runVerifyCmr(
     familyHeadAfter: convergedFamilyHead,
     prUrl: shipPr,
     ...(familyIssue !== undefined ? { familyIssue } : {}),
-    resolvedRoute,
     phase,
     recordAbortOnFailure: true,
   });
@@ -2378,7 +2415,6 @@ export async function ensureFamilyPostMergeCleanup(input: {
   readonly familyHeadAfter: string;
   readonly prUrl: string;
   readonly familyIssue?: number;
-  readonly resolvedRoute?: ResolvedModelRoute;
   readonly phase?: VerifyCmrPhase;
   /** When true (final barrier), write durable abort on cleanup failure. */
   readonly recordAbortOnFailure?: boolean;
@@ -2401,10 +2437,6 @@ export async function ensureFamilyPostMergeCleanup(input: {
   if (prMergedRow === undefined) {
     return { ok: true };
   }
-  // Resolve only when about to dispatch cleanup — short-circuits above must
-  // not fail on a broken ORCHESTRATOR_ROUTE after cleanup is already done /
-  // when pr_merged is not yet present.
-  const resolvedRoute = input.resolvedRoute ?? resolveActiveModelRoute();
   const familyRepo =
     process.env.ORCHESTRATOR_REPO?.trim() ?? "Akagilnc/ming-salvage-sim";
   const coveredIssues = [...mergedSet(ledger)];
@@ -2421,33 +2453,28 @@ export async function ensureFamilyPostMergeCleanup(input: {
       ...(familyIssue !== undefined ? { parentIssue: familyIssue } : {}),
     }),
   };
-  const cleanupResult = await dispatchOrAbort(
-    familyBackend,
-    cleanupWorkerSpec(resolvedRoute),
-    {
+  let reportedCleanup: CleanupResult;
+  try {
+    const cleanupContext: DispatchContext = {
       familyBase,
       ...(input.runId !== undefined ? { runId: input.runId } : {}),
-      modelRoute: resolvedRoute,
       repo: familyRepo,
       prUrl,
-    },
-    cleanupLanding,
-  );
-  const reportedCleanup =
-    cleanupResult.kind === "completed" && cleanupResult.output.kind === "cleanup"
-      ? cleanupResult.output
-      : undefined;
-  if (
-    cleanupResult.kind !== "completed" ||
-    (reportedCleanup !== undefined &&
-      (!reportedCleanup.terminal || !reportedCleanup.ok))
-  ) {
-    const reason =
-      cleanupResult.kind === "completed"
-        ? "family post-merge cleanup did not reach a terminal success outcome"
-        : cleanupResult.kind === "failed"
-          ? `family post-merge cleanup worker returned ${cleanupResult.kind}: ${cleanupResult.reason}`
-          : `family post-merge cleanup worker returned ${cleanupResult.kind}`;
+    };
+    if (familyBackend.runPostMergeCleanup !== undefined) {
+      reportedCleanup = await familyBackend.runPostMergeCleanup(
+        cleanupLanding,
+        cleanupContext,
+      );
+    } else if (offlineReviewLoopDispatchAdmissible(cleanupContext, familyRepo)) {
+      reportedCleanup = stubCleanupResult();
+    } else {
+      throw new Error("family backend is missing deterministic post-merge cleanup");
+    }
+  } catch (error) {
+    const reason = `family post-merge cleanup failed: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
     if (recordAbortOnFailure) {
       await familyBackend.recordAborted?.({
         phase,
@@ -2468,8 +2495,27 @@ export async function ensureFamilyPostMergeCleanup(input: {
     }
     return { ok: false, reason };
   }
-  if (reportedCleanup === undefined) {
-    return { ok: true };
+  if (!reportedCleanup.terminal || !reportedCleanup.ok) {
+    const reason = "family post-merge cleanup did not reach a terminal success outcome";
+    if (recordAbortOnFailure) {
+      await familyBackend.recordAborted?.({
+        phase,
+        familyBase,
+        errorPackage: { reason },
+        familyHeadAfter,
+      });
+      await recordDurableAbort(familyBackend, {
+        phase,
+        reason,
+        familyHeadAfter,
+        stopSummary: infraFailureStopSummary({
+          summary: reason,
+          repairHint:
+            "verify PR is MERGED with matching head, then re-run the family final barrier",
+        }),
+      });
+    }
+    return { ok: false, reason };
   }
   await recordPostMergeCleanup(familyBackend, {
     familyHeadAfter,

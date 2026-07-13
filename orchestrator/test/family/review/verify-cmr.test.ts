@@ -26,6 +26,7 @@ import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
+import { runnerSynthesizedFailureEscalation } from "../../../src/runnerEscalation.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type {
   FamilyBackend,
@@ -1274,6 +1275,131 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
+  it("runner-synthesized CMR startup failure is stamped failure, never decision", async () => {
+    const backend = new CapableFamilyBackend({
+      worker: (spec) => {
+        if (spec.kind !== "cmr") {
+          throw new Error(`unexpected worker ${spec.kind}`);
+        }
+        return {
+          kind: "escalated",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: "cmr worker auth missing",
+            diagnosis: "startup preflight rejected the launch",
+          }),
+        };
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-final-verify",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations).toContainEqual(expect.objectContaining({
+      escalationKind: "failure",
+      reason: "cmr worker auth missing",
+      stopSummary: expect.objectContaining({ reason: "infra_failure" }),
+    }));
+  });
+
+  it("runner-synthesized coder-fix startup failure is stamped failure, never decision", async () => {
+    const backend = new CapableFamilyBackend({
+      worker: (spec) => {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: false,
+              findingsCount: 1,
+              findings: [{
+                severity: "high",
+                category: "correctness",
+                claim_quote: "startup marker must retain runner provenance",
+                location: "src/family/verifyCmr.ts:coder-fix",
+                suggested_fix: "stamp the synthesized failure",
+                action: "fix_now",
+              }],
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              ...CMR_EVIDENCE,
+            },
+          };
+        }
+        if (spec.kind === "coder") {
+          return {
+            kind: "escalated",
+            escalation: runnerSynthesizedFailureEscalation({
+              reason: "coder-fix worker auth missing",
+              diagnosis: "startup preflight rejected the launch",
+            }),
+          };
+        }
+        throw new Error(`unexpected worker ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-final-verify",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations).toContainEqual(expect.objectContaining({
+      escalationKind: "failure",
+      reason: "coder-fix worker auth missing",
+      stopSummary: expect.objectContaining({ reason: "infra_failure" }),
+    }));
+  });
+
+  it("runner-synthesized ship startup failure is stamped failure, never decision", async () => {
+    const backend = new CapableFamilyBackend({
+      worker: (spec) => {
+        if (spec.kind === "cmr") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              findingsCount: 0,
+              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+              ...CMR_EVIDENCE,
+            },
+          };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "escalated",
+            escalation: runnerSynthesizedFailureEscalation({
+              reason: "ship worker auth missing",
+              diagnosis: "startup preflight rejected the launch",
+            }),
+          };
+        }
+        throw new Error(`unexpected worker ${spec.kind}`);
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/291-base",
+      familyBackend: backend,
+      familyHeadAfter: "head-after-final-verify",
+    });
+
+    expect(result).toEqual({ ok: false, ran: true });
+    expect(backend.escalations).toContainEqual(expect.objectContaining({
+      escalationKind: "failure",
+      reason: "ship worker auth missing",
+      stopSummary: expect.objectContaining({ reason: "infra_failure" }),
+    }));
+  });
+
   it("ESCALATED ship worker records the post-worker family head in the family pause", async () => {
     class EscalatingShipWorkerBackend extends BareFamilyBackend {
       readonly escalations: FamilyEscalation[] = [];
@@ -1398,7 +1524,7 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
 
 describe("cmr S336 r8 — a family worker that THROWS on startup is a documented gate result, not an escaped exception", () => {
   /**
-   * The single-slice runner wraps its S7 ship dispatch in try/catch → S8(error);
+   * The single-slice runner wraps its former terminal dispatch path in try/catch → S8(error);
    * verifyCmr did NOT wrap its cmr / ship dispatch. The token preflight (cmr S336 r8)
    * removes the missing-auth throw, but the worker ALSO `git checkout`s the family
    * base + writes the focus file + spins docker — any of which can still throw out of

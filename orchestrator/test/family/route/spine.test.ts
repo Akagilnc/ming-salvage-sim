@@ -123,6 +123,7 @@ class FakeFamilyBackend implements FamilyBackend {
   async readFamilyHead(_familyBase: string): Promise<string> {
     return this.head;
   }
+  runPostMergeCleanup?: FamilyBackend["runPostMergeCleanup"];
   resolveFamilyWorkingRepo(): string | undefined {
     return this.workingRepo;
   }
@@ -238,12 +239,6 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       }
       if (spec.kind === "docRelease") {
         return { kind: "completed", output: { kind: "docRelease", released: true } };
-      }
-      if (spec.kind === "cleanup") {
-        return {
-          kind: "completed",
-          output: { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" },
-        };
       }
       return { kind: "failed", reason: `unexpected ${spec.kind}` };
     };
@@ -371,14 +366,8 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
         familyHeadAfter: "family-base-0",
       },
     );
-    familyBackend.dispatchWorker = async (spec: any) => {
-      if (spec.kind === "cleanup") {
-        return {
-          kind: "failed",
-          reason: "gh auth expired while closing issues",
-        };
-      }
-      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    familyBackend.runPostMergeCleanup = async () => {
+      throw new Error("gh auth expired while closing issues");
     };
 
     const result = await runFamily({
@@ -421,21 +410,15 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       },
     );
     let cleanupDispatched = 0;
-    familyBackend.dispatchWorker = async (spec: any) => {
-      if (spec.kind === "cleanup") {
-        cleanupDispatched += 1;
-        return {
-          kind: "completed",
-          output: {
-            kind: "cleanup",
-            terminal: true,
-            ok: true,
-            branchOutcome: "deleted",
-            issuesClosed: [10],
-          },
-        };
-      }
-      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    familyBackend.runPostMergeCleanup = async () => {
+      cleanupDispatched += 1;
+      return {
+        kind: "cleanup",
+        terminal: true,
+        ok: true,
+        branchOutcome: "deleted",
+        issuesClosed: [10],
+      };
     };
 
     const result = await runFamily({
@@ -498,7 +481,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
           },
         };
       }
-      const skeletonKinds = new Set(["verify", "fixer", "cleanup", "docRelease"]);
+      const skeletonKinds = new Set(["verify", "fixer", "docRelease"]);
       if (skeletonKinds.has(spec.kind)) {
         return {
           kind: "completed",
@@ -515,9 +498,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
                   committed: true,
                   fixCommitSha: "fixsha1111111111111111111111111111111111",
                 }
-                : spec.kind === "cleanup"
-                  ? { kind: "cleanup", terminal: true, ok: true, branchOutcome: "already_gone" }
-                  : { kind: "docRelease", released: true },
+                : { kind: "docRelease", released: true },
         };
       }
       return { kind: "failed", reason: "unexpected kind in #596 r2 fresh-ship spine test" };

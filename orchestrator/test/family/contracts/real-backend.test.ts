@@ -49,7 +49,6 @@ import {
 import { FIX_FOCUS_LANDING_FILE } from "../../../src/findingFamilies.js";
 import { familyEscalationState } from "../../../src/family/ledger.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
-import { cleanupWorkerSpec } from "../../../src/dispatchWorker.js";
 import {
   SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_SKILLS_DIR,
@@ -158,19 +157,6 @@ describe("RealFamilyBackend live officer effort", () => {
       .agentForLiveSpec(liveSpec({ model: "grok-4.5" }), "grok-build")
       .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
     expect(command).toContain("grok --prompt-file /dev/stdin");
-  });
-});
-
-describe("RealFamilyBackend production review-loop receipts", () => {
-  it("does not synthesize cleanup success without a cleanup landing", async () => {
-    const backend = new RealFamilyBackend(opts(trackRepo()));
-    const result = await backend.dispatchWorker(cleanupWorkerSpec(), {
-      familyBase: "family/293-base",
-    });
-    expect(result).toMatchObject({
-      kind: "failed",
-      reason: expect.stringContaining("cleanupDispatch landing"),
-    });
   });
 });
 

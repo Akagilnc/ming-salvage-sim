@@ -213,7 +213,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
 
     await runOrchestrator({ issueNumber: 247, backend });
 
-    // S4/S7/S8 are runner/ship boundaries; S2 and S3 are agent workers.
+    // S4/S7/S8 are runner/handoff boundaries; S2 and S3 are agent workers.
     expect(backend.runStepIds).toEqual(["S2", "S3"]);
   });
 

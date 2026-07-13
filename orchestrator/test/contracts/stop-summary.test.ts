@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   providerDegradedStopSummary,
-  stopReasonForFindingDisposition,
   stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
 } from "../../src/stopSummary.js";
@@ -17,26 +16,6 @@ const FINDING: Finding = {
 };
 
 describe("stop summary vocabulary (#450)", () => {
-  // #604 correctness r2 (C4) / ADR 0062: the routing disposition kinds
-  // (owning_issue_still_red / cross_module / spec_conflict / infra_failure) were
-  // removed from the reviewer contract, so the only live input kind is
-  // `same_module` (verifyCmr.ts). The dead-branch cases are gone with the code.
-  it("maps the same-module finding disposition into the canonical stop reason", () => {
-    expect(
-      stopReasonForFindingDisposition({ kind: "same_module", finding: FINDING }),
-    ).toMatchObject({ reason: "same_module_still_red" });
-    expect(
-      stopReasonForFindingDisposition({
-        kind: "same_module",
-        finding: FINDING,
-        reason: "same-module blocker still red after fix",
-      }),
-    ).toMatchObject({
-      reason: "same_module_still_red",
-      summary: "same-module blocker still red after fix",
-    });
-  });
-
   it("keeps accepted suppressions on a success summary with bounded reopen metadata", () => {
     const summary = successStopSummary({
       acceptedSuppressions: [

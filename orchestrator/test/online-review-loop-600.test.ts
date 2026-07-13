@@ -9,7 +9,6 @@ import {
   withMechanicalRetry,
 } from "../src/dispatchRetry.js";
 import {
-  cleanupWorkerSpec,
   docReleaseWorkerSpec,
   verifyWorkerSpec,
   fixerWorkerSpec,
@@ -1498,12 +1497,13 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(calls.some((c) => c.includes("/replies"))).toBe(true);
   });
 
-  it("pin online R3 Codex P2: reject without reply and without reason fails closed", () => {
+  it("reject cargo without publishable evidence is logged and skipped", () => {
     const sh: Sh = () => {
       throw new Error("gh should not be called");
     };
-    expect(() =>
-      applyVerifySideEffects({
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(applyVerifySideEffects({
         sh,
         repo: "o/r",
         prUrl: "https://github.com/o/r/pull/42",
@@ -1518,8 +1518,13 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
             },
           ],
         },
-      }),
-    ).toThrow(/reject disposition.*requires a threadReplies entry or a non-empty reason/);
+      })).toEqual({ deferredIssueUrls: [], repliesPosted: [], threadsResolved: [] });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("skipped unpublishable reject disposition cargo t:2"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("applyVerifySideEffects posts evidence replies and creates defer issues", () => {
@@ -2209,7 +2214,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     ).toThrow(/gh api repos\/o\/r\/issues failed/);
   });
 
-  it("fixMarkedKeysFromVerify derives fix keys from dispositions", () => {
+  it("fixMarkedKeysFromVerify preserves a missing self-reported fix-key list", () => {
     expect(
       fixMarkedKeysFromVerify({
         kind: "verify",
@@ -2219,7 +2224,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
           { identityKey: "b", threadId: "2", action: "defer" },
         ],
       }),
-    ).toEqual(["a"]);
+    ).toEqual([]);
   });
 });
 
@@ -3914,6 +3919,7 @@ describe("#600 r26 runner-owned isRecheck", () => {
             return {
               kind: "verify",
               converged: false,
+              fixMarkedFindingIdentityKeys: [pinKey],
               findingDispositions: [
                 { identityKey: pinKey, threadId: "1", action: "fix" },
               ],
@@ -3976,6 +3982,7 @@ describe("#600 r26 runner-owned isRecheck", () => {
             return {
               kind: "verify",
               converged: false,
+              fixMarkedFindingIdentityKeys: [expectedKey],
               findingDispositions: [
                 { identityKey: expectedKey, threadId: "1", action: "fix" },
               ],
@@ -4050,6 +4057,35 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     });
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
     expect(verifyCalls).toBe(1);
+  });
+
+  it("unpublishable disposition cargo does not park a completed verify round", async () => {
+    const result = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => ({
+        kind: "verify",
+        converged: true,
+        findingDispositions: [
+          { identityKey: "cargo:thin", threadId: "2", action: "reject" },
+        ],
+      }),
+      dispatchFixer: async () => fixerCommitted(),
+      dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify) => {
+        applyVerifySideEffects({
+          sh: () => {
+            throw new Error("unpublishable cargo must not reach GitHub");
+          },
+          repo: "o/r",
+          prUrl: "https://github.com/o/r/pull/42",
+          verify,
+        });
+        return verify;
+      },
+      retriggerAfterFix: () => {},
+    });
+
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
   });
 
   it("pin deep self-check R8: CI failed + no fix marks parks without fixer", async () => {
@@ -4314,6 +4350,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
           return {
             kind: "verify",
             converged: false,
+            fixMarkedFindingIdentityKeys: ["finding:thread"],
             findingDispositions: [
               {
                 identityKey: "finding:thread",

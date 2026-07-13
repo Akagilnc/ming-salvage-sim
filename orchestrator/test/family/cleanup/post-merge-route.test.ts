@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
 import { ensureFamilyPostMergeCleanup } from "../../../src/family/verifyCmr.js";
 import * as verifyCmr from "../../../src/family/verifyCmr.js";
-import { resolveActiveModelRoute, smokeRouteModels } from "../../../src/modelRoutes.js";
 import type {
   Backend,
   IssueMeta,
@@ -76,7 +75,7 @@ class FakeFamilyBackend implements FamilyBackend {
   resolveFamilyWorkingRepo(): string | undefined {
     return undefined;
   }
-  dispatchWorker?: FamilyBackend["dispatchWorker"];
+  runPostMergeCleanup?: FamilyBackend["runPostMergeCleanup"];
 }
 
 function epicWith(...childIssues: number[]): FamilyEpic {
@@ -131,12 +130,8 @@ describe("#603 ensureFamilyPostMergeCleanup — route after short-circuit", () =
     ).resolves.toEqual({ ok: true });
   });
 
-  it("dispatch path uses threaded resolvedRoute when env route is broken", async () => {
+  it("deterministic cleanup ignores a broken agent route", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "totally-unknown-route-603");
-    const goodRoute = await smokeRouteModels(
-      resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" }),
-      async () => ({ cliVersion: "test" }),
-    );
     const familyBackend = new FakeFamilyBackend();
     familyBackend.ledger.push({
       status: "pr_merged",
@@ -149,20 +144,14 @@ describe("#603 ensureFamilyPostMergeCleanup — route after short-circuit", () =
       familyHeadAfter: "family-base-0",
     });
     let cleanupDispatched = 0;
-    familyBackend.dispatchWorker = async (spec) => {
-      if (spec.kind === "cleanup") {
-        cleanupDispatched += 1;
-        return {
-          kind: "completed",
-          output: {
-            kind: "cleanup",
-            terminal: true,
-            ok: true,
-            branchOutcome: "deleted",
-          },
-        };
-      }
-      return { kind: "failed", reason: `unexpected ${spec.kind}` };
+    familyBackend.runPostMergeCleanup = async () => {
+      cleanupDispatched += 1;
+      return {
+        kind: "cleanup",
+        terminal: true,
+        ok: true,
+        branchOutcome: "deleted",
+      };
     };
 
     await expect(
@@ -171,52 +160,15 @@ describe("#603 ensureFamilyPostMergeCleanup — route after short-circuit", () =
         familyBase: "family/603-base",
         familyHeadAfter: "family-base-0",
         prUrl: "pr://family/603",
-        resolvedRoute: goodRoute,
       }),
     ).resolves.toEqual({ ok: true });
     expect(cleanupDispatched).toBe(1);
   });
 
-  it("completed cleanup without receipt cargo advances without synthesizing failure", async () => {
-    const goodRoute = await smokeRouteModels(
-      resolveActiveModelRoute({ ORCHESTRATOR_ROUTE: "normal" }),
-      async () => ({ cliVersion: "test" }),
-    );
-    const familyBackend = new FakeFamilyBackend();
-    familyBackend.ledger.push({
-      status: "pr_merged",
-      event: "pr_merged",
-      phase: "final",
-      pr: "pr://family/603",
-      prNumber: 603,
-      remoteBranchName: "family/603-base",
-      mergedHeadOid: "family-base-0",
-      familyHeadAfter: "family-base-0",
-    });
-    familyBackend.dispatchWorker = async (spec) =>
-      spec.kind === "cleanup"
-        ? {
-            kind: "completed",
-            output: { kind: "coder", committed: false, commitsAdded: 0 },
-          }
-        : { kind: "failed", reason: `unexpected ${spec.kind}` };
-
-    await expect(
-      ensureFamilyPostMergeCleanup({
-        familyBackend,
-        familyBase: "family/603-base",
-        familyHeadAfter: "family-base-0",
-        prUrl: "pr://family/603",
-        resolvedRoute: goodRoute,
-        recordAbortOnFailure: true,
-      }),
-    ).resolves.toEqual({ ok: true });
-    expect(familyBackend.ledger.some((entry) => entry.status === "aborted")).toBe(false);
-  });
 });
 
-describe("#603 requirePostMergeCleanupForAlreadyDone — threads resolvedRoute", () => {
-  it("already_done re-entry passes resolvedRoute into ensureFamilyPostMergeCleanup", async () => {
+describe("#603 requirePostMergeCleanupForAlreadyDone — deterministic host path", () => {
+  it("already_done re-entry does not route cleanup through an agent model", async () => {
     const ensureSpy = vi
       .spyOn(verifyCmr, "ensureFamilyPostMergeCleanup")
       .mockResolvedValue({ ok: true });
@@ -255,11 +207,7 @@ describe("#603 requirePostMergeCleanupForAlreadyDone — threads resolvedRoute",
     expect(result.stopSummary?.reason).toBe("already_done");
     expect(ensureSpy).toHaveBeenCalled();
     for (const call of ensureSpy.mock.calls) {
-      expect(call[0]).toEqual(
-        expect.objectContaining({
-          resolvedRoute: expect.objectContaining({ routeName: expect.any(String) }),
-        }),
-      );
+      expect(call[0]).not.toHaveProperty("resolvedRoute");
     }
   });
 });
