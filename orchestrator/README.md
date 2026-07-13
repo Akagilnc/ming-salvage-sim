@@ -301,7 +301,8 @@ role boundaries:
   reports its own unresolved open-count; the runner never reads the findings or
   checks the repair.
 - Integrated completeness and correctness remain distinct professional review
-  actions over the assembled family base. Their methods live in the versioned
+  actions over the assembled delivery base (a single slice branch or family
+  base). Their methods live in the versioned
   review skills, not in the runner or this README.
 - Online review, repair, document release and merge use the same shared tail for
   single and family delivery. GitHub evidence is owned by the corresponding

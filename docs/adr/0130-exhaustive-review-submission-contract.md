@@ -4,7 +4,7 @@ Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive c
 
 ## 决定
 
-评审腿的交付标准从「挖到可钉死的发现即可收工」改为**穷尽本轮可见面**：一轮内把看见的**所有发现**（不限严重度——严重度是行属性，不是入库门槛）逐条写入 findings 状态库（ADR 0129）后才算交付完成；不分「已演练/未演练」档。评审腿退出前必须自报 open-count；无法完成交卷时只能由该 worker 自按 decision gate，或让自身 invocation 非零退出，不给 Runner 增设“卷面不可用”第四通道。**fixer 的第一个任务是对 open 行逐条实证真伪**：真→修 + 同类横扫后翻 fixed，伪→翻 refuted + 证据留言，由下轮 fresh 复审员验证后终翻。本契约适用**一切评审模式**（家族 completeness / correctness、per-slice、doc 模式），**计划统一落地于** ak-cross-m-review skill 单一来源（实现任务归 #873，skill 侧工单已派；wiki §额外硬规则第 8 条已先行载入），编排器侧（含 per-slice reviewer 腿）只经角色文件指针引用、不复写第二份。
+评审腿的交付标准从「挖到可钉死的发现即可收工」改为**穷尽本轮可见面**：一轮内把看见的**所有发现**（不限严重度——严重度是行属性，不是入库门槛）逐条写入 findings 状态库（ADR 0129）后才算交付完成；不分「已演练/未演练」档。评审腿退出前必须自报 open-count；无法完成交卷时只能由该 worker 自按 decision gate，或让自身 invocation 非零退出，不给 Runner 增设“卷面不可用”第四通道。**fixer 的第一个任务是对 open 行逐条实证真伪**：真→修 + 同类横扫后翻 fixed，伪→翻 refuted + 证据留言，由下轮 fresh 复审员验证后终翻。本契约适用**一切评审模式**（家族 completeness / correctness、per-slice、doc 模式），契约真源就是本 ADR；各评审 Action 由各自 versioned role / skill 消费，per-slice 不因此调用 `ak-cross-m-review`，Runner 只保留指针、不复写第二份。
 
 ## 根因（实证数据与出处：#860 正文与 grill 评论、#861 裁决串；EXAM-818 对照见 #856）
 
