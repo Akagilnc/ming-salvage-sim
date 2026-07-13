@@ -1,6 +1,6 @@
-Status: Proposed（2026-07-12 owner 亲授设计，值守誊录；待 doc-mode cmr 收敛）
+Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive clear）
 
-> **限缩（ADR 0131，2026-07-13 owner 裁决）**：写入点校验不含 count-vs-array 对账——count = reviewer 自报（说几条就是几条），申报对不对由 fixer 读卷判断；「拒收→同 worker 重写」梯废止，不可用卷面 callerOwns 一次 decision 上抛。findings 状态库、交通警察定理、fresh 终翻规则不变。
+> **限缩（ADR 0131，2026-07-13 owner 裁决）**：写入点校验不含 count-vs-array 对账——count = reviewer 自报（说几条就是几条），申报对不对由 fixer 读卷判断；「拒收→同 worker 重写」梯废止；不可用卷面处置按 ADR 0131 分治（评审类递 fixer 原料、runner 永不自己按决策门）。findings 状态库、交通警察定理、fresh 终翻规则不变。
 
 # 0129: findings 状态库——复审写行、修复翻状态、复审再验再翻；纠错在写入点
 
@@ -12,11 +12,12 @@ Status: Proposed（2026-07-12 owner 亲授设计，值守誊录；待 doc-mode c
 
 runner 是交通警察，不是刑警：能力多大，责任才配多大——TS 代码没有判断能力，就不得在简单调度里妄图「接住」LLM 本就不稳定的输出；校验归写入点、由有判断力的写入方自纠。
 
-因此 runner 不比较 commit/head hash，不核对 commit、测试、报告或修复证据是否一致，也不判断 coder/reviewer/fixer 的专业工作是否合格。这些材料由下一位 reviewer/fixer 读取和判断；runner 只根据三态交通灯派下一棒。
+因此 runner 不为 review/fix 专业工作比较 commit/head hash，不核对 commit、测试、报告或修复证据是否一致，也不判断 coder/reviewer/fixer 的专业工作是否合格。这些材料由下一位 reviewer/fixer 读取和判断；runner 只根据三态交通灯派下一棒。此边界不禁止 Git 自身为完成 merge、冲突落地或崩溃 reconcile 而机械读取 refs；ADR 0022 的 merge-base/HEAD 检查不构成评审法庭。
 
 ## Supersede / 沿革
 
 - ADR 0030「四判词由 runner 断言覆盖 / 压制预算 / 翻案上限」段：法庭拆除，判词沦为行状态与留言；争议行反复翻转的终止兜底 = 复审员自升级决策门（#597），不设 runner 计数器。
+- ADR 0050「blocking finding 返回 runner 后再派 fixer」沿革为状态库未决行驱动三态调度；reviewer / fixer / fresh reviewer 的角色分离不变。
 - ADR 0062「typed 治理豁免」句：**收账法庭形态**的豁免对象消失；但 accepted_suppressed 的受信授权校验（谁拍的/管多大/何时重开）**在写入点原样保留**——无授权手续的压制写入被接口当场拒绝、错误反馈给写入方，与本 ADR 的写入点纠错原语同构（r2 codex P0）。三通道语义不变，信号②取数改为库查询。
 - 落账文件作为发现载体的机制：沿革为库；富内容仍 worker 间直达、不经 runner 判断面。
 - 2026-07-12 夜实证：收账法庭两次误杀活 run（多报真修复被判死）；r23 证明形式核验拦不住填表完美的假话——真相守卫从来是 fresh 跨模型复审 + 行为演练 + verify 测试 + 线上闸，法庭只提供假安全感。
