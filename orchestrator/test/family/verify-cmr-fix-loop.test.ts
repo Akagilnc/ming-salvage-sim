@@ -32,6 +32,7 @@ import type {
 import type {
   DispatchContext,
   Finding,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
@@ -457,6 +458,87 @@ class ReviewFixRereviewBackend implements FamilyBackend {
       };
     }
 
+    return onlineReviewLoopWorkerOrThrow(spec);
+  }
+}
+
+class CountChannelFixBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  readonly dispatches: DispatchRecord[] = [];
+  readonly landings: Array<WorkerLandingPayload | undefined> = [];
+  readonly escalations: FamilyEscalation[] = [];
+  currentFamilyHead = "head-before-count-channel-fix";
+  private completenessRound = 0;
+
+  constructor(private readonly firstCmrResult: WorkerResult) {}
+
+  async mergeChildIntoFamilyBase(): Promise<never> {
+    throw new Error("not used");
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
+  }
+  async verifyFamilyShippedPr(): Promise<{ ok: true }> {
+    return { ok: true };
+  }
+  async runFamilyVerify(): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+  async escalateFamily(escalation: FamilyEscalation): Promise<void> {
+    this.escalations.push(escalation);
+  }
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      cmrPass: ctx.cmrPass,
+      blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys,
+    });
+    this.landings.push(landing);
+    if (spec.kind === "cmr") {
+      if (ctx.cmrPass === "completeness" && this.completenessRound++ === 0) {
+        return this.firstCmrResult;
+      }
+      return {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          findingsCount: 0,
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          ...CMR_EVIDENCE,
+        },
+      };
+    }
+    if (spec.kind === "coder") {
+      this.currentFamilyHead = "head-after-count-channel-fix";
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      };
+    }
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase!,
+          status: "pr_opened",
+          pr: `pr://${ctx.familyBase}`,
+          prHead: this.currentFamilyHead,
+        },
+      };
+    }
     return onlineReviewLoopWorkerOrThrow(spec);
   }
 }
@@ -2169,7 +2251,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     }));
   });
 
-  it("records a known coder/git mismatch as telemetry; #878 redispatches fix until head moves then re-reviews", async () => {
+  it("records a known coder/git mismatch as telemetry and sends it to fresh re-review", async () => {
     const backend = new KnownCoderGitMismatchThenGoodBackend();
 
     const result = await runVerifyCmr({
@@ -2179,8 +2261,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result.ran).toBe(true);
-    // #878: first empty-handed fix (head stuck) → second fix (head moves) → re-review.
-    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "coder")).toHaveLength(2);
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "coder")).toHaveLength(1);
     expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr").length).toBeGreaterThan(1);
     expect(backend.ledger.some(
       (entry) => entry.status === "aborted" && /repair evidence gate failed/.test(entry.reason ?? ""),
@@ -2191,15 +2272,6 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
         /telemetry family\/git baseline unknown|warning coder_self_report|left family head unmoved/,
       ),
     }));
-    // No cmr between the two coder-fix redispatches (head-not-moved short-circuit).
-    const coderIndexes = backend.dispatches
-      .map((d, i) => (d.kind === "coder" ? i : -1))
-      .filter((i) => i >= 0);
-    expect(
-      backend.dispatches
-        .slice(coderIndexes[0]! + 1, coderIndexes[1]!)
-        .every((d) => d.kind !== "cmr"),
-    ).toBe(true);
   });
 
   it("does not retry coder-fix in the observation layer when repair evidence is incomplete", async () => {
@@ -2238,13 +2310,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.telemetryRepoResolutions).toBe(2);
   });
 
-  /**
-   * #878 head-not-moved short-circuit (positive):
-   * fix leg completed but family head did not advance → skip re-review
-   * (no S3/cmr between) and redispatch the fix leg (S5/coder) until head moves.
-   * Head position is scheduling plumbing, not judgment.
-   */
-  it("#878 head not moved → no re-review dispatch, redispatch coder-fix (positive)", async () => {
+  it("head not moved → fixed topology still alternates to fresh re-review", async () => {
     const backend = new NoHeadMovementThenGoodBackend();
 
     const result = await runVerifyCmr({
@@ -2254,15 +2320,9 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     });
 
     expect(result).toEqual({ ok: true, ran: true });
-    // Positive schedule: cmr → coder (head stuck) → coder (head moves) → cmr re-review …
-    // NO cmr between the two coder-fix dispatches.
+    // HEAD does not authorize an extra fixer dispatch or a runner-authored park.
     expect(backend.dispatches).toEqual([
       expect.objectContaining({ kind: "cmr", cmrPass: "completeness" }),
-      expect.objectContaining({
-        kind: "coder",
-        promptFile: "coder_fix.md",
-        blockingFindingIdentityKeys: [BLOCKING_FAMILY_CMR_KEY],
-      }),
       expect.objectContaining({
         kind: "coder",
         promptFile: "coder_fix.md",
@@ -2277,13 +2337,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       expect.objectContaining({ kind: "ship" }),
       ...ONLINE_REVIEW_DISPATCH_TAIL,
     ]);
-    const coderIndexes = backend.dispatches
-      .map((d, i) => (d.kind === "coder" ? i : -1))
-      .filter((i) => i >= 0);
-    expect(coderIndexes).toHaveLength(2);
-    // No re-review (cmr) may land between the two fix redispatches.
-    const between = backend.dispatches.slice(coderIndexes[0]! + 1, coderIndexes[1]!);
-    expect(between.every((d) => d.kind !== "cmr")).toBe(true);
+    expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(1);
   });
 
   /**
@@ -2320,28 +2374,21 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(1);
   });
 
-  it("#878 forever head-stuck coder → one redispatch then decision-gate rise (not abort)", async () => {
+  it("head-stuck coder does not let the runner author a decision gate", async () => {
     const backend = new AlwaysHeadStuckCoderBackend();
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/878-head-stuck-budget",
       familyBackend: backend,
     });
-    // Head unmoved after initial + 1 redispatch → park for human, not kill-abort.
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toEqual({ ok: true, ran: true });
     const coders = backend.dispatches.filter((d) => d.kind === "coder");
-    expect(coders).toHaveLength(2);
+    expect(coders).toHaveLength(1);
     const cmrAfterFirstCoder = backend.dispatches
       .slice(backend.dispatches.findIndex((d) => d.kind === "coder") + 1)
       .filter((d) => d.kind === "cmr");
-    expect(cmrAfterFirstCoder).toHaveLength(0);
-    // Decision channel (c): escalateFamily, not durable aborted ledger.
-    expect(backend.escalations).toHaveLength(1);
-    expect(backend.escalations[0]?.escalationKind).toBe("decision");
-    expect(backend.escalations[0]?.stopSummary?.reason).toBe(
-      "decision_gate_park",
-    );
-    expect(backend.escalations[0]?.reason).toMatch(/human decision|head still unmoved/i);
+    expect(cmrAfterFirstCoder.length).toBeGreaterThan(0);
+    expect(backend.escalations).toEqual([]);
     expect(
       backend.ledger.some(
         (e) =>
@@ -2711,7 +2758,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toHaveLength(1);
   });
 
-  it("blocking family CMR stop summary selects a blocking result, not an earlier suppression", async () => {
+  it("positive reviewer count routes every structured finding without reading suppression content", async () => {
     const suppressed: Finding = {
       severity: "medium",
       category: "correctness",
@@ -2786,56 +2833,29 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       },
     });
 
-    // #604 slice 2 / ADR 0062: the spec_conflict blocker no longer terminates the
-    // family on its content classification — it is counted and routed through
-    // coder-fix (this backend has no coder-fix worker, so the family still fails).
-    // The blocking-vs-suppression stop-summary selection invariant now lives on the
-    // cmr_reviewed row recorded before coder-fix runs.
     expect(result).toEqual({ ok: false, ran: true });
-    // #604 slice 3 / ADR 0062: the fat classification blob no longer persists. The
-    // blocking-vs-suppression SELECTION invariant now lives on the retained
-    // stopSummary (the blocking finding is selected over the earlier suppression),
-    // the BLOCKING key lands on the thin envelope, and the suppression governance is
-    // in `cmrDispositions` — never a results[] audit on the ledger.
-    // #604 slice 4 (ADR 0062): the routing classification is gone, so the retained
-    // stop-summary reason for a blocking family finding is the generic
-    // `same_module_still_red` StopReason word ("blocking, fix and rerun"), and the
-    // blocking-findings reason string keys the finding by its `blocking:` label.
-    // #604 F5 (信封宪法 ADR 0062): the retained stopSummary carries only a THIN
-    // FindingDescriptor (identity + severity + summary), NOT the full Finding —
-    // rich reviewer content never persists on the ledger; it travels in the live
-    // coder-fix landing payload instead.
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_reviewed",
       event: "cmr_reviewed",
-      blockingFindingIdentityKeys: [findingIdentityKey(blocker)],
+      blockingFindingIdentityKeys: [
+        findingIdentityKey(suppressed),
+        findingIdentityKey(blocker),
+      ],
       stopSummary: expect.objectContaining({
         reason: "same_module_still_red",
-        findingDescriptor: {
-          identityKey: findingIdentityKey(blocker),
-          severity: blocker.severity,
-          summary: expect.any(String),
-        },
       }),
     }));
-    // The full Finding rich content must NOT persist on the ledger stopSummary.
     const reviewedRow = backend.ledger.find(
       (entry) => entry.status === "cmr_reviewed",
     );
     expect(reviewedRow?.stopSummary).not.toHaveProperty("finding");
+    expect(reviewedRow?.stopSummary).not.toHaveProperty("findingDescriptor");
     const reviewed = backend.ledger.find((entry) => entry.status === "cmr_reviewed");
     expect(reviewed).not.toHaveProperty("cmrFindingClassification");
-    expect(reviewed?.cmrDispositions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          identityKey:
-            "correctness|orchestrator/src/family/verifycmr.ts:1|accepted hub-loss gap",
-          status: "accepted_suppressed",
-        }),
-      ]),
+    expect(reviewed).not.toHaveProperty("cmrDispositions");
+    expect(reviewed?.reason).toBe(
+      "integrated cmr completeness reviewer declared 2 open findings",
     );
-    expect(reviewed?.reason).toContain(`blocking:${findingIdentityKey(blocker)}`);
-    expect(reviewed?.reason).not.toContain("accepted_suppressed");
   });
 
   it("#875: untrusted accepted_suppressed disposition prose does not kill a converged pass", async () => {
@@ -2963,12 +2983,13 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           ...CMR_EVIDENCE,
+          findingsCount: 0,
           findings: [findingWithDisposition],
         },
       }),
     });
-    // #604 slice 3 / ADR 0062: cross-round prior dispositions are threaded from the
-    // thin `cmrDispositions` governance field, not the retired fat blob.
+    // Historical governance rows remain readable, but the current runner routes
+    // solely by the reviewer declaration and does not classify their content.
     backend.ledger.push({
       status: "cmr_passed",
       event: "cmr_passed",
@@ -3098,6 +3119,62 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
         ],
       }),
     );
+  });
+
+  it.each([
+    ["missing findings", undefined],
+    ["empty findings", [] as const],
+  ])("routes reviewer-declared count 3 with %s through coder-fix", async (_label, findings) => {
+    const backend = new CountChannelFixBackend({
+      kind: "completed",
+      output: {
+        kind: "cmr",
+        converged: false,
+        reason: "reviewer declared three open findings",
+        findingsCount: 3,
+        ...(findings !== undefined ? { findings } : {}),
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        ...CMR_EVIDENCE,
+      },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/count-channel",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches[0]?.kind).toBe("cmr");
+    expect(backend.dispatches[1]?.kind).toBe("coder");
+    expect(backend.ledger.some((entry) => entry.status === "cmr_passed")).toBe(true);
+  });
+
+  it("routes a reviewer with neither extractable count nor structure to coder-fix with raw artifact pointers and no decision park", async () => {
+    const backend = new CountChannelFixBackend({
+      kind: "malformed",
+      reason: "reviewer outcome sidecar was unreadable",
+      sessionId: "cmr-reviewer-session",
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/raw-reviewer-artifacts",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
+    expect(coderIndex).toBeGreaterThan(0);
+    expect(backend.landings[coderIndex]).toMatchObject({
+      blockingFindings: [],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "cmr-reviewer-session",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
+    expect(backend.escalations).toEqual([]);
+    expect(JSON.stringify(backend.ledger)).not.toContain('"escalationKind":"decision"');
   });
 });
 

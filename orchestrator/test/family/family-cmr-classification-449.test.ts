@@ -1749,7 +1749,7 @@ module_scope:
   // behavior is covered by "populates run-option undeveloped modules into the family
   // gate context" above.
 
-  it("records accepted_suppressed dispositions in successful CMR stop summary metadata", async () => {
+  it("honors an explicit zero declaration without classifying structured findings", async () => {
     const suppressedFindingBase: Finding = {
       ...finding,
       severity: "medium",
@@ -1777,6 +1777,7 @@ module_scope:
       output: {
         kind: "cmr",
         converged: true,
+        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -1825,20 +1826,9 @@ module_scope:
     expect(backend.ledger[0]).toMatchObject({
       status: "cmr_passed",
       cmrPass: "completeness",
-      stopSummary: {
-        reason: "success",
-        metadata: {
-          acceptedSuppressions: [
-            expect.objectContaining({
-              source: "#303",
-              scope: expect.stringContaining("#287 hub-loss / central C_ accounts"),
-              findingIdentity: expect.stringMatching(/route accounting follow-up/i),
-              boundedReopen: expect.stringMatching(/severity escalat/i),
-            }),
-          ],
-        },
-      },
+      stopSummary: { reason: "success" },
     });
+    expect(backend.ledger[0]?.stopSummary?.metadata).not.toHaveProperty("acceptedSuppressions");
   });
 
   // #604 slice 4 (ADR 0062): the cross-module-defer PASS is gone, so a pass row is no
@@ -1846,7 +1836,7 @@ module_scope:
   // is that a PASS carrying an accepted-suppression + a skipped (provider-degraded) leg
   // preserves BOTH on the stop summary metadata. The former cross_module finding is
   // dropped (it would now block); the pass reason is "success".
-  it("preserves accepted suppression and skipped-leg metadata on CMR pass rows", async () => {
+  it("preserves skipped-leg metadata without classifying structured findings", async () => {
     const suppressedFindingBase: Finding = {
       ...finding,
       severity: "medium",
@@ -1873,6 +1863,7 @@ module_scope:
       output: {
         kind: "cmr",
         converged: true,
+        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol"],
         skippedLegs: [{ slug: "agy", reason: "agy quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
@@ -1923,14 +1914,6 @@ module_scope:
       stopSummary: {
         reason: "success",
         metadata: {
-          acceptedSuppressions: [
-            expect.objectContaining({
-              source: "#445",
-              scope: expect.stringContaining("orchestrator/src/family"),
-              findingIdentity: expect.stringMatching(/family ledger audit note/i),
-              boundedReopen: expect.stringMatching(/severity escalat/i),
-            }),
-          ],
           providerDegraded: [
             expect.objectContaining({
               leg: "agy",
@@ -1941,6 +1924,7 @@ module_scope:
         },
       },
     });
+    expect(backend.ledger[0]?.stopSummary?.metadata).not.toHaveProperty("acceptedSuppressions");
   });
 
   // #604 slice 4 (ADR 0062): DELETED "shipped summary preserves material CMR

@@ -1504,33 +1504,6 @@ export class RealFamilyBackend implements FamilyBackend {
         kind: "malformed",
         reason: outcome.reason,
         ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
-        ...(outcome.cmrLegAccountingPayload !== undefined
-          ? { cmrLegAccountingPayload: outcome.cmrLegAccountingPayload }
-          : {}),
-        ...(outcome.priorVerdict !== undefined
-          ? {
-              cmrPriorOutput: {
-                kind: "cmr",
-                ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-                converged: outcome.priorVerdict.converged,
-                ...(outcome.priorVerdict.reason !== undefined
-                  ? { reason: outcome.priorVerdict.reason }
-                  : {}),
-                successfulLegs: outcome.priorVerdict.successfulLegs,
-                ...(outcome.priorVerdict.skippedLegs !== undefined
-                  ? { skippedLegs: outcome.priorVerdict.skippedLegs }
-                  : {}),
-                claimedFixedFindingIdentityKeys:
-                  outcome.priorVerdict.claimedFixedFindingIdentityKeys,
-                priorFindingDispositions:
-                  outcome.priorVerdict.priorFindingDispositions,
-                ...(outcome.priorVerdict.findings !== undefined
-                  ? { findings: outcome.priorVerdict.findings }
-                  : {}),
-                evidencePaths: outcome.priorVerdict.evidencePaths,
-              },
-            }
-          : {}),
       };
     }
     return {
@@ -1730,137 +1703,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
-  /* ADR 0131 deleted the same-worker outcome rewrite ladder.
-  protected async runCmrOutcomeRewrite(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-    attempt: number,
-  ): Promise<CmrWorkerOutcome | Extract<WorkerResult, { kind: "outcome_protocol_failure" }>> {
-    if (ctx.familyBase === undefined) {
-      return {
-        kind: "malformed",
-        reason: "cmr outcome rewrite requires ctx.familyBase",
-        ...(protocolFailure.sessionId !== undefined
-          ? { sessionId: protocolFailure.sessionId }
-          : {}),
-      };
-    }
-    if (protocolFailure.sessionId === undefined) {
-      return {
-        kind: "malformed",
-        reason:
-          "cmr outcome rewrite requires the malformed worker sessionId to resume the same producing worker",
-      };
-    }
-    const frozenReviewLegs = spec.cmrReviewLegs;
-    if (frozenReviewLegs === undefined) {
-      return {
-        kind: "malformed",
-        reason: "cmr outcome rewrite requires frozen review legs on the worker spec",
-        sessionId: protocolFailure.sessionId,
-      };
-    }
-    const auth = this.mountCmrAuth();
-    try {
-      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
-      if (missingProvider !== undefined) {
-        return {
-          kind: "malformed",
-          reason: `cmr outcome rewrite cannot resume without ${missingProvider} auth`,
-          sessionId: protocolFailure.sessionId,
-        };
-      }
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
-        return {
-          kind: "malformed",
-          reason:
-            "cmr outcome rewrite cannot resume the same Claude worker without CLAUDE_CODE_OAUTH_TOKEN",
-          sessionId: protocolFailure.sessionId,
-        };
-      }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      const gitBefore = this.captureOutcomeRewriteGitEvidence();
-      const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
-      try {
-        const result = await this.runAgentSandbox({
-          name: `family-cmr-findings-supplement-${ctx.cmrPass ?? "legacy"}-${attempt}`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: this.opts.workingRepo,
-          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
-          agent: this.agentForSpec(spec, ctx),
-          maxIterations: 1,
-          completionSignal: spec.completionSignal,
-          branchStrategy: { type: "head" },
-          resumeSession: protocolFailure.sessionId,
-          promptFile: join(this.opts.promptsDir, OUTCOME_REWRITE_PROMPT),
-          promptArgs: {
-            ATTEMPT: String(attempt),
-            FAILURE_REASON: protocolFailure.reason,
-            WORKER_KIND: spec.kind,
-            CMR_PASS: ctx.cmrPass ?? "legacy",
-            COMPLETION_SIGNAL: spec.completionSignal,
-          },
-        });
-        if (protocolFailure.cmrPriorOutput !== undefined) {
-          // Opus/#875/ADR 0129: count is never an independent setter — even on the
-          // findings-supplement rewrite path. Derive from structured array; reject
-          // sentinel mismatch at write-point for full rewrite (no lying count).
-          const priorVerdict = cmrResultToWorkerVerdict(
-            protocolFailure.cmrPriorOutput,
-          );
-          const derivedCount = priorVerdict.findings?.length ?? 0;
-          const sentinel = parseFindingsSentinel(result.stdout);
-          if (sentinel === undefined) {
-            return {
-              kind: "malformed",
-              reason: `same reviewer supplement attempt ${attempt} omitted findings = x`,
-              sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-              priorVerdict,
-            };
-          }
-          if (sentinel !== derivedCount) {
-            return {
-              kind: "malformed",
-              reason:
-                `same reviewer supplement attempt ${attempt}: findings = ${sentinel} ` +
-                `does not match structured findings length ${derivedCount} ` +
-                `(write-point; count is derived)`,
-              sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-              priorVerdict,
-            };
-          }
-          return {
-            ...priorVerdict,
-            findingsCount: derivedCount,
-            sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-          };
-        }
-        const outcome = withCmrSession(
-          cmrOutcomeFromResult({
-            ...result,
-            cmrReviewLegs: frozenReviewLegs,
-            outcomePath: outcomeLanding.path,
-          }),
-          lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-        );
-        const gitFailure = this.outcomeRewriteGitFailure({
-          before: gitBefore,
-          after: this.captureOutcomeRewriteGitEvidence(),
-          attempt,
-          sessionId: outcome.sessionId,
-        });
-        if (gitFailure !== undefined) return gitFailure;
-        return outcome;
-      } finally {
-        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
-      }
-    } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
-    }
-  }
-
-  */
+  // ADR 0131 removed the same-worker outcome rewrite ladder.
   protected async runAgentSandbox(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
@@ -2438,57 +2281,6 @@ export class RealFamilyBackend implements FamilyBackend {
         sessionId: lastSessionIdIfPresent(result),
       };
     }
-  }
-
-  private captureOutcomeRewriteGitEvidence(): {
-    readonly head: string;
-    readonly trackedStatus: readonly string[];
-  } {
-    const trackedStatus = this.sh("git", [
-      "status",
-      "--short",
-      "--untracked-files=no",
-    ], this.opts.workingRepo).trim();
-    return {
-      head: this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo).trim(),
-      trackedStatus: trackedStatus === "" ? [] : trackedStatus.split(/\r?\n/),
-    };
-  }
-
-  private outcomeRewriteGitFailure(input: {
-    readonly before: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
-    readonly after: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
-    readonly attempt: number;
-    readonly sessionId?: string;
-  }): Extract<WorkerResult, { kind: "outcome_protocol_failure" }> | undefined {
-    const headMoved = input.before.head !== input.after.head;
-    const trackedDirty = input.after.trackedStatus.length > 0;
-    if (!headMoved && !trackedDirty) return undefined;
-
-    const commitEvidence = headMoved
-      ? this.sh("git", [
-          "log",
-          "--oneline",
-          `${input.before.head}..${input.after.head}`,
-        ], this.opts.workingRepo)
-      : "";
-    const reasons = [
-      headMoved
-        ? `outcome rewrite moved HEAD from ${input.before.head} to ${input.after.head}; commits: ${
-            commitEvidence === "" ? "(no descendant commits listed)" : commitEvidence
-          }`
-        : undefined,
-      trackedDirty
-        ? `outcome rewrite left tracked changes: ${input.after.trackedStatus.join("; ")}`
-        : undefined,
-    ].filter((reason): reason is string => reason !== undefined);
-
-    return {
-      kind: "outcome_protocol_failure",
-      reason: reasons.join(" | "),
-      attempts: input.attempt,
-      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
-    };
   }
 
   /**
@@ -3530,11 +3322,6 @@ export type CmrWorkerOutcome =
       readonly kind: "malformed";
       readonly reason: string;
       readonly sessionId?: string;
-      readonly priorVerdict?: Extract<CmrWorkerOutcome, { readonly kind: "verdict" }>;
-      readonly cmrLegAccountingPayload?: {
-        readonly successfulLegs?: readonly string[];
-        readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-      };
     };
 
 interface CmrSkippedLeg {
@@ -3547,25 +3334,6 @@ function withCmrSession(
   sessionId: string | undefined,
 ): CmrWorkerOutcome {
   return sessionId === undefined ? outcome : { ...outcome, sessionId };
-}
-
-function cmrResultToWorkerVerdict(
-  output: CmrResult,
-): Extract<CmrWorkerOutcome, { readonly kind: "verdict" }> {
-  return {
-    kind: "verdict",
-    converged: output.converged,
-    ...(output.reason !== undefined ? { reason: output.reason } : {}),
-    successfulLegs: output.successfulLegs ?? [],
-    ...(output.skippedLegs !== undefined ? { skippedLegs: output.skippedLegs } : {}),
-    claimedFixedFindingIdentityKeys: output.claimedFixedFindingIdentityKeys,
-    priorFindingDispositions: output.priorFindingDispositions,
-    ...(output.findings !== undefined ? { findings: output.findings } : {}),
-    ...(output.findingFamilies !== undefined
-      ? { findingFamilies: output.findingFamilies }
-      : {}),
-    evidencePaths: output.evidencePaths ?? [],
-  };
 }
 
 function lastSessionIdIfPresent(result: unknown): string | undefined {
@@ -3650,12 +3418,7 @@ export interface MergerAuth {
  * completion proof and verdict source. Legacy/no-sidecar workers still require the
  * Sandcastle completion signal before stdout fallback is trusted.
  */
-/**
- * ADR 0129 / #875 write-point: after a successful verdict classify, require
- * `findings = N` on stdout to match the structured array length. Applies to
- * BOTH the outcome sidecar path and the stdout-only fallback (blank sidecar /
- * missing path) so neither entry can soft-pass a lying independent count.
- */
+/** Preserve the reviewer-declared sentinel count; structured rows are fallback cargo. */
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
@@ -3671,9 +3434,7 @@ export function cmrOutcomeFromResult(result: {
           "cmr worker outcome sidecar",
         );
         if (classified.kind !== "verdict") return classified;
-        // Opus/#875/#ADR0129: structured findings array is the single source of
-        // truth; open-count is DERIVED (array length). Never trust an independent
-        // count field against the array.
+        // ADR 0131: sentinel declaration wins; missing sentinel falls back to rows.
         const declared = parseFindingsSentinel(result.stdout);
         return {
           ...classified,
@@ -3690,7 +3451,7 @@ export function cmrOutcomeFromResult(result: {
     }
   }
 
-  // Stdout-only / blank-sidecar fallback: same write-point sentinel gate.
+  // Stdout-only / blank-sidecar fallback preserves the same declaration channel.
   const fromStdout = parseCmrOutcome(result.stdout, result.cmrReviewLegs);
   if (fromStdout.kind !== "verdict") return fromStdout;
   const declared = parseFindingsSentinel(result.stdout);
@@ -4076,7 +3837,7 @@ function classifyCmrOutcomePayload(
       ...(converged.findings !== undefined
         ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
         : {}),
-      // Opus: findingsCount is always derived from the structured array.
+      // This payload-only parser cannot see the stdout sentinel; rows are its fallback.
       findingsCount:
         converged.findings !== undefined ? converged.findings.length : 0,
       ...attachSanitizedFindingFamilies({}, converged.findingFamilies),

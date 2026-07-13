@@ -1066,9 +1066,9 @@ export interface CmrResult {
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit closure disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
-  /** Structured CMR findings for family-level suppression classification. */
+  /** Structured CMR findings passed through as worker cargo. */
   readonly findings?: readonly Finding[];
-  /** Canonical reviewer count parsed from its required `findings = x` fragment. */
+  /** Reviewer-declared count, falling back to structured row count when absent. */
   readonly findingsCount?: number;
   /** Cross-round grouped findings + recurring-class markers (#711). */
   readonly findingFamilies?: readonly FindingFamily[];
@@ -1259,12 +1259,6 @@ export type WorkerResult =
       readonly kind: "malformed";
       readonly reason: string;
       readonly sessionId?: string;
-      /** Semantic verdict retained while the same reviewer supplements its count fragment. */
-      readonly cmrPriorOutput?: CmrResult;
-      readonly cmrLegAccountingPayload?: {
-        readonly successfulLegs?: readonly string[];
-        readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-      };
     }
   | {
       readonly kind: "outcome_protocol_failure";
