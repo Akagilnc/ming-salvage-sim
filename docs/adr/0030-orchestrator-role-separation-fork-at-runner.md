@@ -6,6 +6,8 @@ Revised by: ADR 0129（findings 状态机、写入点校验与三态取数收口
 
 partially-supersedes: ADR 0026（「cmr = 一条带记忆 worker 兼 fixer / 无 runner 轮间 loop / findings 不在 worker 间传」这一条被反转；ADR 0026 的 runner=纯调度其余部分仍有效）
 
+> **前向废止（ADR 0129 + ADR 0131，2026-07-13）**：本 ADR 裁定状态段的 runner 覆盖断言（claimed-fixed 四判词 disposition 覆盖、压制预算、翻案计数器）已整段拆除且不得复活；reviewer / coder-fix 角色分离仍有效。见 ADR 0131。
+
 ## 决定
 
 per-slice 与 integrated cmr 的「评审 → 修复 → 复审」收敛 loop，从「单 worker session 内部跑完」**拆回 runner 调度层**：coder / reviewer / coder-fix 是各自 runner 派的独立 worker/容器。reviewer 把 findings 写入状态库，runner 只按未决 0 / 未决 >0 / 需要人三态派下一棒；fixer 更新行状态，fresh reviewer 在**当前全 diff** 上复验后确认关闭或打回重开。**通用原则：任一 must-pass-first 闸不得埋进单 worker loop，必须落成 runner 调度边界。**
