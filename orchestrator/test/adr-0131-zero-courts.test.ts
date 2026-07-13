@@ -32,6 +32,9 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
       "isValidFinding", "isBlockingFinding", "isValidVerifyResult",
       "isValidFixerResult", "isValidCleanupResult", "isValidDocReleaseResult",
     ]) expect(source).not.toContain(symbol);
+    expect(source).not.toContain("isReviewerStructuredOutputError");
+    expect(stripComments(readFileSync(new URL("../src/route.ts", import.meta.url), "utf8")))
+      .not.toContain("pendingBlockingFindings");
     expect(source).not.toMatch(/\.severity\b/);
     expect(source).not.toMatch(/\.action\b/);
     expect(source).not.toMatch(

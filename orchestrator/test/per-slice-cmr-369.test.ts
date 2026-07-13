@@ -326,7 +326,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             { identityKey: blockingKey, status: "still-active" },
           ],
         },
-        pendingBlockingFindings: [blocking],
       }),
     ).toEqual({ kind: "next", step: "S7" });
   });

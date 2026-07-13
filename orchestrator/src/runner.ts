@@ -2471,7 +2471,7 @@ function latestLedgerStopSummary(
   return undefined;
 }
 
-function isReviewerStructuredOutputError(err: unknown): boolean {
+function isStructuredOutputError(err: unknown): boolean {
   return err instanceof Error && err.name === "StructuredOutputError";
 }
 
@@ -4459,7 +4459,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                         "result" in outcome
                           ? outcome.result.kind === "malformed" ||
                             outcome.result.kind === "outcome_protocol_failure"
-                          : isReviewerStructuredOutputError(outcome.error),
+                          : isStructuredOutputError(outcome.error),
                       rethrowOnExhaustion: true,
                     }
                   : {};
@@ -4472,23 +4472,44 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   // dispatchMonitoredCliWorker atomically via
                   // dispatchWorkerWithMonitor; RealBackend hooks make this the
                   // production branch. Handle persisted AT SPAWN (not post-exit).
-                  const outcome = await dispatchWorkerWithMonitor(
-                    backend,
-                    s,
-                    c,
-                    landingPayload,
-                    {
-                      onMonitorHandleSpawned: async (handle) => {
-                        stepMonitorHandle = handle;
-                        try {
-                          await persistMonitorHandleAtSpawn(s.id, handle);
-                        } catch {
-                          // Best-effort: spawn-time ledger write must not abort
-                          // the worker; post-step emitLedger still records it.
-                        }
+                  let outcome: Awaited<ReturnType<typeof dispatchWorkerWithMonitor>>;
+                  try {
+                    outcome = await dispatchWorkerWithMonitor(
+                      backend,
+                      s,
+                      c,
+                      landingPayload,
+                      {
+                        onMonitorHandleSpawned: async (handle) => {
+                          stepMonitorHandle = handle;
+                          try {
+                            await persistMonitorHandleAtSpawn(s.id, handle);
+                          } catch {
+                            // Best-effort: spawn-time ledger write must not abort
+                            // the worker; post-step emitLedger still records it.
+                          }
+                        },
                       },
-                    },
-                  );
+                    );
+                  } catch (err) {
+                    if (expectedKind !== "coder" || !isStructuredOutputError(err)) {
+                      throw err;
+                    }
+                    const hasCommit = coderHeadBeforeStep !== undefined &&
+                      gitOutputLines(worktree, [
+                        "rev-list", "--max-count=1", `${coderHeadBeforeStep}..HEAD`,
+                      ]).length > 0;
+                    return hasCommit
+                      ? {
+                          kind: "completed" as const,
+                          output: {
+                            kind: "coder" as const,
+                            committed: true,
+                            commitsAdded: 1,
+                          },
+                        }
+                      : { kind: "failed" as const, reason: errorMessage(err) };
+                  }
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
                   }
@@ -4498,7 +4519,38 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   // deliberately does not delay spawn / first output (#793).
                   await outcome.telemetryEnvironmentStamp;
                   const dispatched = outcome.result;
-                  if (dispatched.kind !== "completed") return dispatched;
+                  if (dispatched.kind !== "completed") {
+                    if (
+                      expectedKind === "coder" &&
+                      (dispatched.kind === "malformed" ||
+                        dispatched.kind === "outcome_protocol_failure")
+                    ) {
+                      const hasCommit = coderHeadBeforeStep !== undefined &&
+                        gitOutputLines(worktree, [
+                          "rev-list", "--max-count=1", `${coderHeadBeforeStep}..HEAD`,
+                        ]).length > 0;
+                      return hasCommit
+                      ? {
+                          kind: "completed" as const,
+                          output: {
+                            kind: "coder" as const,
+                            committed: true,
+                            commitsAdded: 1,
+                          },
+                            ...(dispatched.sessionId !== undefined
+                              ? { sessionId: dispatched.sessionId }
+                              : {}),
+                          }
+                        : {
+                            kind: "failed" as const,
+                            reason: dispatched.reason,
+                            ...(dispatched.sessionId !== undefined
+                              ? { sessionId: dispatched.sessionId }
+                              : {}),
+                          };
+                    }
+                    return dispatched;
+                  }
                   const dispatchedEscalation = escalateOf(dispatched.output);
                   if (dispatchedEscalation !== undefined) {
                     return dispatched;
@@ -4506,17 +4558,47 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
                   if (
                     expectedKind === "coder" &&
-                    dispatched.output?.kind === "coder" &&
-                    !dispatched.output.committed &&
-                    dispatched.output.selfReportDiscrepancy === undefined
+                    dispatched.output?.kind !== "coder"
                   ) {
+                    const hasCommit = coderHeadBeforeStep !== undefined &&
+                      gitOutputLines(worktree, [
+                        "rev-list", "--max-count=1", `${coderHeadBeforeStep}..HEAD`,
+                      ]).length > 0;
+                    if (hasCommit) {
                       return {
-                        kind: "failed" as const,
-                        reason: `${step}: coder worker produced no commits (committed:false)`,
+                        kind: "completed" as const,
+                        output: {
+                          kind: "coder" as const,
+                          committed: true,
+                          commitsAdded: 1,
+                        },
                         ...(dispatched.sessionId !== undefined
                           ? { sessionId: dispatched.sessionId }
                           : {}),
                       };
+                    }
+                    return {
+                      kind: "failed" as const,
+                      reason: `${step}: coder receipt unusable and git has no new commit`,
+                      ...(dispatched.sessionId !== undefined
+                        ? { sessionId: dispatched.sessionId }
+                        : {}),
+                    };
+                  }
+
+                  if (
+                    expectedKind === "coder" &&
+                    dispatched.output.kind === "coder" &&
+                    !dispatched.output.committed &&
+                    dispatched.output.selfReportDiscrepancy === undefined
+                  ) {
+                    return {
+                      kind: "failed" as const,
+                      reason: `${step}: coder worker produced no commits (committed:false)`,
+                      ...(dispatched.sessionId !== undefined
+                        ? { sessionId: dispatched.sessionId }
+                        : {}),
+                    };
                   }
                   return dispatched;
                 },
@@ -4524,7 +4606,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
               if (result.kind === "completed") completeMechanicalRetryInvocation(step);
             } catch (err) {
-              if (expectedKind === "reviewer" && isReviewerStructuredOutputError(err)) {
+              if (expectedKind === "reviewer" && isStructuredOutputError(err)) {
                 const escalation: Escalation = {
                   reason: "reviewer 交卷不可用，需人拍",
                   diagnosis: `${errorMessage(err)}`,
@@ -4897,13 +4979,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             // Control envelope only: role kind so findings-count channel can run.
             // Do not inspect individual finding fields (findings schema court).
             if (output?.kind !== "reviewer") {
-              return await errorTermination(
+              const actualKind = output?.kind ?? typeof output;
+              const escalation: Escalation = {
+                reason: "reviewer 交卷角色不可用，需人拍",
+                diagnosis:
+                  `${step}: expected reviewer, got ${actualKind}; ` +
+                  `sessionId=${stepSessionId ?? sessionId}`,
+              };
+              return await escalateTermination(
                 step,
-                new Error(
-                  `${step}: worker completed without a reviewer-kind envelope ` +
-                    `(process/protocol; runner does not validate findings schema). ` +
-                    `Got: ${describeOutput(output)}.`,
-                ),
+                escalation,
+                stepSessionId,
+                "decision",
+                { kind: "reviewer", findings: [], escalate: escalation },
+                decisionGateParkStopSummary({
+                  summary: escalation.diagnosis,
+                  repairHint:
+                    "inspect the reviewer role mismatch, answer the decision gate, then re-feed",
+                }),
               );
             }
             if (!Array.isArray(output.findings)) {
@@ -4927,15 +5020,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 }),
               );
             }
-          } else if (output?.kind !== "coder") {
-            const escalation: Escalation = {
-              reason: "coder 交卷不可用，需人拍",
-              diagnosis: `${step}: ${describeOutput(output)}`,
-            };
-            return await escalateTermination(
-              step, escalation, stepSessionId, "decision",
-              { kind: "coder", committed: false, commitsAdded: 0, escalate: escalation },
-            );
           }
         }
         lastOutput = output;
@@ -5566,13 +5650,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     "kind" in o &&
                     o.kind === "thrown" &&
                     (o.error instanceof VerifyWorkerWorktreeDirtyError ||
-                      isReviewerStructuredOutputError(o.error)),
+                      isStructuredOutputError(o.error)),
                   rethrowOnExhaustion: true,
                 }
               : {
                   callerOwns: (o) =>
                     "kind" in o && o.kind === "thrown" &&
-                    isReviewerStructuredOutputError(o.error),
+                    isStructuredOutputError(o.error),
                   rethrowOnExhaustion: true,
                 };
           if (
@@ -6390,7 +6474,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           stepSessionId = result.sessionId;
           lastOutput = output;
         } catch (err) {
-          if (isReviewerStructuredOutputError(err)) {
+          if (isStructuredOutputError(err)) {
             const escalation: Escalation = {
               reason: `${reviewStep} 交卷不可用，需人拍`,
               diagnosis: errorMessage(err),
@@ -6672,9 +6756,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const decision = route({
       from: step,
       output: lastOutput,
-      ...(step === "S4"
-        ? { pendingBlockingFindings }
-        : {}),
       ...(step === "S7"
         ? {
             shipStatus:

@@ -314,7 +314,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     }
   });
 
-  it("records a committed coder HEAD movement before rejecting its malformed output", async () => {
+  it("derives a committed coder envelope from git and continues to S3 when the receipt is malformed", async () => {
     const root = mkdtempSync(join(tmpdir(), "orch-786-malformed-coder-"));
     const telemetryDir = join(root, ".ledger-786");
     execFileSync("git", ["init", "--initial-branch=main", root]);
@@ -343,24 +343,30 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
         this.ctxs.push(ctx);
         if (spec.kind === "coder") {
           execFileSync("git", ["-C", root, "commit", "--allow-empty", "-m", "worker commit"]);
-          return {
-            kind: "completed",
-            output: {
-              kind: "coder",
-              committed: true,
-              commitsAdded: "malformed",
-            } as unknown as StepOutput,
-          };
+          const err = new Error("coder outcome JSON was truncated");
+          err.name = "StructuredOutputError";
+          throw err;
         }
-        throw new Error("malformed coder output must stop before review");
+        return spec.kind === "ship"
+          ? {
+              kind: "completed",
+              output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
+            }
+          : {
+              kind: "completed",
+              output: { kind: "reviewer", findings: [] },
+            };
       }
     }
 
     try {
       const backend = new MalformedCoderTelemetryBackend();
       const result = await runOrchestrator({ issueNumber: 786, backend });
-
-      expect(result.status === "error" || result.status === "escalate").toBe(true);
+      expect(result.status).toBe("success");
+      expect(backend.specs.filter((spec) => spec.id === "S2")).toHaveLength(1);
+      expect(backend.specs.filter((spec) => spec.id === "S3")).toHaveLength(1);
+      expect(result.stepLedger.find((entry) => entry.step === "S2")?.output)
+        .toMatchObject({ kind: "coder", committed: true });
       let commits: TelemetryCommitRecord[] = [];
       await vi.waitFor(() => {
         commits = readTelemetryRecords(telemetryDir).filter(
