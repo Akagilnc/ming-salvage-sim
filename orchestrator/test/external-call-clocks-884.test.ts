@@ -37,8 +37,13 @@ describe("#884 external-call clocks", () => {
     const enet = new Error("connect ENETUNREACH");
     (enet as { code?: string }).code = "ENETUNREACH";
     expect(classifyExternalCallFailure(enet)).toBe("transient");
-    expect(classifyExternalCallFailure({ status: 503 })).toBe("transient");
+    expect(classifyExternalCallFailure({ status: 500 })).toBe("transient");
+    expect(classifyExternalCallFailure({ status: 599 })).toBe("transient");
+    expect(classifyExternalCallFailure({ status: 500.5 })).toBe("durable");
     expect(classifyExternalCallFailure({ statusCode: 429 })).toBe("quota");
+    expect(classifyExternalCallFailure({ status: 100 })).toBe("durable");
+    expect(classifyExternalCallFailure({ status: 99 })).toBe("durable");
+    expect(classifyExternalCallFailure({ status: 600 })).toBe("durable");
     expect(classifyExternalCallFailure(new Error("auth token expired"))).toBe(
       "durable",
     );
