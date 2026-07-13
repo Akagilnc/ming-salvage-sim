@@ -53,6 +53,8 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
 4. `ORCHESTRATOR_CODER_MODEL` 显式覆盖时，跳过 Coder-Rec（运维优先）。
 5. 无 `Coder-Rec:` 行 → 保持当前 `ORCHESTRATOR_ROUTE` 预设 coder。
 
+Coder-Rec 只服务 coder / coderFix。delivery/shared-tail 的 Finding Repair 使用自身 Action capability / route，不读取本花名册。
+
 ## 池分工硬原则
 
 **coder 池与 reviewer 池尽量异源。** 硬规则：coder 花名册条目不得与当前 reviewer / CMR 腿 **同 slug 双挂**（`poolSeparationViolation`）；冲突时顺位跳到下一个合法项。单池全家桶仅作池外无人时的降级形态。

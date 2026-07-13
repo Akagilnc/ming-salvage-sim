@@ -624,7 +624,7 @@ _Avoid_: step ledger(那是单片的)、状态文件(太泛)
 _Avoid_: 把 answer 当新的需求 brief、由 family ledger 重复持久化、让 runner 解释答案或覆盖固定控制字段、把进程失败当可自动恢复
 
 **路线 / route**:
-一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …),显式列出本轮**全部模型槽**(coder / per-slice reviewer / coder-fix / ship / merger / cmr 腿)各自用哪个模型。切路线 = 拨一个总开关、整套翻;任一槽可被单 env override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死),故没有槽能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(0031)
+一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定模型。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。切路线 = 拨一个总开关、整套翻；任一 seat 可被单独 override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死)，故没有 seat 能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(0031)
 _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
 
 **cheap vs tight**(某家族吃紧的两档):
@@ -632,7 +632,7 @@ _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
 _Avoid_: 把 cheap 当「主动用便宜档」(不是,是额度不足被迫省)、把 cheap/tight 当两套无关路线(只差一条 cmr 腿)
 
 **模型槽 / model slot**:
-一条路线里可独立赋模型的一个角色位(coder / reviewer / fix / ship / merger / 各 cmr 腿)。日常切换多半只动其中 1-2 槽(走 override),不是整路线重写。
+一条路线里可独立赋模型的一个 Action / worker seat；是否需要模型及能力要求由 owning Action 声明，Policy / route registry 承接，不在词表复制一张静态槽位清单。日常切换多半只动其中 1-2 个 seat(走 override)，不是整路线重写。
 _Avoid_: 角色(角色是职能单元,槽是它在某路线里的模型赋值位)
 
 **后端注册表 / registry**:
