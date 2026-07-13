@@ -39,13 +39,14 @@ const defaultSleepMs = (ms: number): Promise<void> =>
 /**
  * Classify a thrown provider / transport error for leg-level retry policy.
  *
- * - `quota` — 429 / rate-limit / quota wall → immediate degrade, no retry
- * - `transient` — connection reset/close / timeout / 5xx → retry up to ×2 then degrade
+ * - `quota` — numeric status/statusCode 429 → immediate degrade, no retry
+ * - `transient` — typed timeout, allowlisted code, or numeric 5xx
+ *   → retry up to ×2 then degrade
  * - `other` — auth missing, semantic smoke failure, etc. → no retry
  *
- * Single source: {@link classifyExternalCallFailure} (typed timeout, status-first
- * 5xx-over-quota text, structured status codes). Maps durable → other so the
- * leg helper stays on the three #879 classes without a parallel text court.
+ * Single source: {@link classifyExternalCallFailure} (three structured sources,
+ * no free-text court). Maps durable → other so the leg helper stays on the
+ * three #879 classes without a parallel classifier.
  */
 export function classifyLegFailure(error: unknown): LegFailureClass {
   const klass = classifyExternalCallFailure(error);

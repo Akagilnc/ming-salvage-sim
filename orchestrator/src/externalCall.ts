@@ -69,8 +69,8 @@ export class ExternalCallTimeoutError extends Error {
 
 /**
  * Pure class helper for #879 leg retry. No loop, no recorder, no attempts.
- * Order: typed timeout/code → structured HTTP → free-text timeout/conn
- * before digits → simple HTTP token → quota words → network words.
+ * Sources: typed timeout, allowlisted error code, numeric HTTP status.
+ * Everything else is durable; free text is never classified.
  */
 export function classifyExternalCallFailure(err: unknown): ExternalFailureClass {
   if (err instanceof ExternalCallTimeoutError) return "transient";
@@ -100,83 +100,19 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
       return "transient";
     }
     const status =
-      typeof e.status === "number"
-        ? e.status
-        : typeof e.statusCode === "number"
-          ? e.statusCode
+      Number.isInteger(e.status)
+        ? (e.status as number)
+        : Number.isInteger(e.statusCode)
+          ? (e.statusCode as number)
           : undefined;
-    if (status === 429) return "quota";
-    if (status !== undefined && status >= 500 && status <= 599) return "transient";
-    if (status !== undefined && status >= 100 && status <= 599) return "durable";
-  }
-
-  const msg = externalFailureText(err);
-  const lower = msg.toLowerCase();
-
-  if (
-    lower.includes("etimedout") ||
-    lower.includes("econnreset") ||
-    lower.includes("econnrefused") ||
-    lower.includes("socket hang up") ||
-    lower.includes("connection reset") ||
-    lower.includes("connection closed") ||
-    lower.includes("connection aborted") ||
-    lower.includes("connection refused") ||
-    lower.includes("broken pipe") ||
-    lower.includes("timed out") ||
-    lower.includes("timeout") ||
-    lower.includes("aborted")
-  ) {
-    return "transient";
-  }
-
-  const http =
-    lower.match(/\bhttp\s*([1-5]\d\d)\b/) ??
-    lower.match(/\bstatus(?:\s*code)?\s*[:=]?\s*([1-5]\d\d)\b/);
-  if (http !== null) {
-    const code = Number(http[1]);
-    if (code === 429) return "quota";
-    if (code >= 500 && code <= 599) return "transient";
-    return "durable";
-  }
-  if (/\b429\b/.test(lower)) return "quota";
-  if (
-    lower.includes("rate limit") ||
-    lower.includes("rate-limit") ||
-    lower.includes("rate_limit") ||
-    lower.includes("too many requests") ||
-    lower.includes("quota") ||
-    msg.includes("额度") ||
-    msg.includes("余额不足") ||
-    msg.includes("配额")
-  ) {
-    return "quota";
-  }
-  if (lower.includes("network") || lower.includes("http 5")) return "transient";
-  return "durable";
-}
-
-function externalFailureText(err: unknown): string {
-  if (err === null || typeof err !== "object") {
-    return err instanceof Error ? err.message : String(err);
-  }
-  const e = err as {
-    readonly message?: unknown;
-    readonly stdout?: unknown;
-    readonly stderr?: unknown;
-    readonly name?: unknown;
-  };
-  const parts: string[] = [];
-  if (typeof e.name === "string" && e.name.length > 0) parts.push(e.name);
-  if (typeof e.message === "string" && e.message.length > 0) parts.push(e.message);
-  for (const stream of [e.stdout, e.stderr] as const) {
-    if (typeof stream === "string" && stream.trim().length > 0) {
-      parts.push(stream);
-    } else if (Buffer.isBuffer(stream) && stream.length > 0) {
-      parts.push(stream.toString("utf8"));
+    if (status !== undefined) {
+      if (status === 429) return "quota";
+      if (status >= 500 && status <= 599) return "transient";
+      if (status >= 100 && status <= 599) return "durable";
     }
   }
-  return parts.join("\n");
+
+  return "durable";
 }
 
 function isTimeoutLikeExecError(err: unknown): boolean {
@@ -185,12 +121,10 @@ function isTimeoutLikeExecError(err: unknown): boolean {
     readonly killed?: unknown;
     readonly signal?: unknown;
     readonly code?: unknown;
-    readonly message?: unknown;
   };
   if (e.killed === true) return true;
   if (e.signal === "SIGTERM" || e.signal === "SIGKILL") return true;
   if (e.code === "ETIMEDOUT") return true;
-  if (typeof e.message === "string" && /timed? ?out/i.test(e.message)) return true;
   return false;
 }
 
