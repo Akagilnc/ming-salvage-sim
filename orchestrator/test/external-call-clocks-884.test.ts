@@ -40,6 +40,12 @@ describe("#884 external-call clocks", () => {
     expect(classifyExternalCallFailure({ status: 500 })).toBe("transient");
     expect(classifyExternalCallFailure({ status: 599 })).toBe("transient");
     expect(classifyExternalCallFailure({ status: 500.5 })).toBe("durable");
+    expect(
+      classifyExternalCallFailure({ status: 500.5, statusCode: 429 }),
+    ).toBe("quota");
+    expect(
+      classifyExternalCallFailure({ status: Number.NaN, statusCode: 503 }),
+    ).toBe("transient");
     expect(classifyExternalCallFailure({ statusCode: 429 })).toBe("quota");
     expect(classifyExternalCallFailure({ status: 100 })).toBe("durable");
     expect(classifyExternalCallFailure({ status: 99 })).toBe("durable");
