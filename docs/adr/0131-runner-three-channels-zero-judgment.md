@@ -16,9 +16,14 @@ runner 只准做三件事，三件之外零判断权：
 
 **卷面不可用（信封提取不出）按角色真源分治——决策门准入原则（owner 2026-07-13）：人环只接真决策；凡人唯一合理回答是「重试」的，不许上人环，机器按既有机械线自理。且「认定不可用」本身就是判断，runner 无权下；runner 更无权自己按决策门（通道 (c) 只转运 worker 按的门，runner 替按 = 伪造门铃，与 synthesizedFailure 同罪）。**
 - **评审类 worker（reviewer / verify 等）**：产出=卷面本身——信号提取不出时 runner 零判断零 park，按固定拓扑把卷面**原料**（stdout / sidecar artifact 指针，0129 递指针本职）递给下一个智慧体 **fixer**：fixer 读原料，读得懂多少判多少，读不懂打回 reviewer 或自己 raise。零机械重派、零重写梯、零 runner 发起的 park。
-- **coder / ship 类 worker**：产出=git commit / PR 等**外部可查事实**，交卷条只是回执——回执不可读**不上人环**：git 图**有新 commit**（二值存在判断：headBefore..HEAD 非空即有，不数个数、不看 head 位置、不评内容）→ 照常进评审（回执作废不碍事，评审审的是活不是条）；无 commit → 走既有白跑机械重派预算（#592）；**预算耗尽 runner 也不下结论——照常推进到评审步，由 reviewer（智慧体）判**：空 diff 写 findings 打回或 raise 给人。不怕死循环：reviewer 与 coder/fixer 都有 raise 到人的能力，环必被某个智慧体掐断。仅**进程反复崩溃**的耗尽（#598，连活都不存在、无物可判）仍走 infra park。
+- **coder / ship 类 worker（2026-07-13 晚 owner 修订：「严格三件事，没有例外」——本条原「git/host 外部事实真源」例外废止）**：completed（exit 0）= OK，照常进下一棒；交卷条内容只作 cargo 透传（cargo 缺失不改命运，下一棒 worker 自己可查）。交付/提交自证归 worker soul：报成功前自验（真实 commit / PR 已在）+ 幂等条款（已交付直接报成功）。白跑由下一棒智慧体接住：reviewer 判空 diff，写 findings 打回或 raise。runner 永不用 git/host 查询（rev-list / ls-remote / gh pr view）裁 worker 成败；runner 自己的操作性 git（worktree、合并队列、resume 幂等记账）不在此列。不怕死循环：reviewer 与 coder/fixer 都有 raise 到人的能力，环必被某个智慧体掐断。仅**进程反复崩溃**的耗尽（#598）仍走 infra park。
 
-synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (a) 进程事实或上述外部真源事实派生，永不得由卷面判断合成。kill-axis（承 #873）：任何拆除不得以「换一个更温和的校验」收尾。卷面质量归交卷契约（ADR 0130，worker 侧 soul/skill）；发现搬运走 artifact pointer / findings 状态库（ADR 0129）。
+synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (a) 进程事实派生（2026-07-13 晚 owner 修订：git/host 外部事实来源随真源例外一并废止），永不得由卷面判断合成。kill-axis（承 #873）：任何拆除不得以「换一个更温和的校验」收尾。卷面质量归交卷契约（ADR 0130，worker 侧 soul/skill）；发现搬运走 artifact pointer / findings 状态库（ADR 0129）。
+
+## 修订（2026-07-13 晚，owner 亲裁，随 #891 落地）
+
+- **「严格三件事，没有例外」**：本 ADR 原「coder/ship 真源 = git/host 外部事实二值存在」例外废止（见上修订后条文）。ship 侧观测管道（S7 host-truth 探针/OID 比对/观测重试/park-resume 重观测）与 coder 侧 commit 判庭（rev-list 检查、白跑预算 #592 lane）整体拆除；自证与幂等归 worker soul。
+- **建闸双门槛（与三通道同位阶）**：新增任何 runner/评审环防御机制前必过两问——①合宪（不建庭、不读卷、不替按门）②值得（场景发生概率×后果 vs 投入；下游智慧体环兜底为默认答案）。立法实证：S7 观测管道防 <0.1% 场景、六轮生五 bug、终局净 −4589 行拆除。
 
 ## 取代（旧 ADR 已就地标过时并指针到本 ADR）
 

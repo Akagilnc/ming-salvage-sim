@@ -56,13 +56,16 @@ Corollaries, all mechanically enforced by
   Only repeated process crashes (#598 — no work, no paper to judge) still take
   the infra park. A readable-but-wrong submission is likewise the next wisdom's
   problem (the fixer bounces it back to the reviewer or raises).
-  `synthesizedFailure` may only ever be derived from channel-1 process facts or
-  git/host external truth, and a missing result is never synthesized into
+  `synthesizedFailure` may only ever be derived from channel-1 process facts
+  (the git/host external-truth source was revoked 2026-07-13: three channels,
+  no exceptions), and a missing result is never synthesized into
   success (`findings: []` / `converged: true`) — nor into failure.
-- **Git truth for coder commits; ship owns delivery truth.** Commit evidence
-  comes from `git rev-list <headBefore>..HEAD` (final-graph reachability).
-  A ship worker's exit-zero completion routes as success; any reported PR URL
-  is cargo for downstream workers, not a runner verdict input.
+- **The worker's OK is OK — no git verdicts.** A coder or ship worker's
+  exit-zero completion routes forward as-is; self-verification (real commit /
+  PR exists) and idempotency live in the worker soul, an empty diff is judged
+  by the next reviewer, and any reported PR URL is cargo for downstream
+  workers, not a runner verdict input. The runner never runs
+  `git rev-list` / `ls-remote` / `gh pr view` to adjudicate a worker.
 - **`*_STEP_COMPLETE` sentinels are optional telemetry.** In every prompt/soul
   they may appear only inside the canonical optional-telemetry sentence; the
   sweep test fails any other mention, so no prompt edit can silently restore a
