@@ -423,7 +423,21 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
     expect(backend.ledger.filter((row) => row.status === "cmr_passed")).toHaveLength(2);
   });
 
-  it("#855 review: a coder-fix worker whose outcome is malformed once is mechanically retried (only the CMR reviewer path caller-owns malformed)", async () => {
+  it.each([
+    {
+      kind: "malformed" as const,
+      reason: "outcome sidecar was truncated",
+      sessionId: "coder-fix-session-malformed",
+    },
+    {
+      kind: "outcome_protocol_failure" as const,
+      reason: "coder-fix outcome protocol remained unusable",
+      attempts: 1,
+      sessionId: "coder-fix-session-protocol",
+    },
+  ])(
+    "ADR 0131: coder-fix $kind raises one family decision park without retry or durable abort",
+    async (workerFailure) => {
     const findingKey =
       "completeness|ming_sim/knowledge.py:1|明发旨意/邸报所载 = 人人该知";
     const finding: Finding = {
@@ -500,28 +514,9 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         if (spec.kind === "coder") {
           coderDispatches += 1;
           if (coderDispatches === 1) {
-            // Transient garbage outcome — must retry mechanically, NOT surface
-            // as caller-owned terminal (the coder-fix caller has no malformed
-            // follow-up loop and would abort the gate).
-            return { kind: "malformed", reason: "outcome sidecar was truncated" };
+            return workerFailure;
           }
-          backend.currentFamilyHead = "head-after-completeness-fix";
-          return {
-            kind: "completed",
-            output: {
-              kind: "coder",
-              committed: true,
-              commitsAdded: 1,
-              repairEvidence: {
-                findingScope: { identityKeys: [findingKey] },
-                changedFiles: ["ming_sim/knowledge.py"],
-                tests: ["pytest tests/test_character_knowledge_489.py"],
-                sameClassBugScan: "rg 'propagate' ming_sim tests",
-                introducedRegressionCheck:
-                  "npm test -- --run test/family/verify-cmr-296.test.ts",
-              },
-            },
-          };
+          throw new Error("malformed coder-fix must not be mechanically retried");
         }
         if (spec.kind === "ship") {
           return {
@@ -571,11 +566,16 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
 
     expect(result.ran).toBe(true);
     expect(coderDispatches).toBe(1);
-    // The gate converged instead of aborting on the transient malformed outcome.
-    expect(
-      backend.aborted.some((e) => /malformed|sidecar/i.test(e.errorPackage.reason)),
-    ).toBe(false);
-  });
+    expect(backend.aborted).toEqual([]);
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]).toMatchObject({
+      escalationKind: "decision",
+      stopSummary: { reason: "decision_gate_park" },
+    });
+    expect(backend.escalations[0]?.reason).toContain(workerFailure.reason);
+    expect(backend.escalations[0]?.reason).toContain(workerFailure.sessionId);
+    },
+  );
 
   it("checks CMR leg floor before routing fix_now findings to coder-fix", async () => {
     const weakLegFinding: Finding = {

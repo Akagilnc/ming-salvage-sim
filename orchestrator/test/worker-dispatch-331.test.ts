@@ -464,6 +464,44 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
   });
 });
 
+describe("ADR 0131 reviewer count envelope", () => {
+  it("parks exactly once when a reviewer does not declare a countable findings array", async () => {
+    class NonArrayFindingsBackend extends DispatchBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.kind === "reviewer") {
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: "not-an-array" } as unknown as StepOutput,
+            sessionId: "reviewer-session-non-array",
+          };
+        }
+        if (spec.kind !== "coder") {
+          throw new Error(`must park before dispatching ${spec.id}`);
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    const backend = new NonArrayFindingsBackend();
+    const result = await runOrchestrator({ issueNumber: 331, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.stopSummary?.summary).toContain("reviewer 未申报可数卷面");
+    expect(result.stopSummary?.summary).toContain("reviewer-session-non-array");
+    expect(backend.specs.filter((spec) => spec.kind === "reviewer")).toHaveLength(1);
+    expect(backend.specs.some((spec) => spec.id === "S5" || spec.id === "S7")).toBe(false);
+    expect(
+      backend.persistedLedger.filter((entry) => entry.handoffStatus === "escalate"),
+    ).toHaveLength(1);
+  });
+});
+
 describe("#596 S9 (verify) worker must return a valid verify payload — finding 6 defensive (runner r7b)", () => {
   /**
    * A backend that returns a *completed* result for S9 but with *undefined* output.
