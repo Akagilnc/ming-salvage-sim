@@ -16,7 +16,9 @@ runner 只准做三件事，三件之外零判断权：
 
 **Quota/capacity 生命周期归 Worker Invocation Action。** 该 Action 在内部调用 Policy 机械求值 seat/park/relay，并拥有 park、wake、relay、crash/re-entry 直到本次 invocation 真正完成的完整生命周期。parked 或 relayed 工作仍有未完成义务时，Action 不得向 Flow 宣告成功；Lineage 持久化当前 Action 的未完成义务与必要 recovery anchor。ordinary retry/resume 复用同一 scene、Capsule 与当前角色的 role-scoped session；relay 是换棒，保留 scene、worktree、baton 以及旧 session/checkpoint records，但 successor agent/session/checkpoint 按 ADR 0126/0127 的选棒结果决定，可发生变化，不要求 same session。Runner 只按固定 flow position 重调未完成 Action，不知道 park reason、provider、pool 或 resetAt，也不增加第四信号。
 
-**明确要求产出代码的 coder / fixer 类动作**：允许记录代码 commit 有/无这一机械事实；有 commit 照常进评审，无 commit 照既有白跑机械线处理，Runner 不知道 HEAD、不数 commit、不评内容。
+**Change Finalization 之后的 commit 二值事实**：Coder / Finding Repair 只产出未 finalization 的变更并自查，随后固定进入 Verification；Verification=0 后固定调用 Change Finalization。该 Action 单一拥有 commit/no-op：有 repo change 就建立新的 non-amend commit，无 repo change 就合法 no-op，并由 Action 自己核验副作用、以正常 exit 表示完成。Runner 此后可以机械记录该 Action 最终有没有新增 commit，但不得据此选择下一步、重试前一动作或判断 repo 是否变化；它不知道 HEAD、不数 commit、不读内容。
+**固定后继**：Change Finalization 完成后，Flow 固定继续 fresh reviewer 或下一固定动作；删除 coder/fixer 完成时的 commit gate、“无 commit 就白跑/重试”路由，以及“如产生 repo change 才调用 Change Finalization”的条件。
+**Finding Repair scope**：shared-tail final Verification 的 `>0` 固定派来源无关的 `delivery-base Finding Repair`，作用于当前 delivery branch/base；single 使用 standalone branch，family 使用 family base。只有 family 增量合入后的父分支 Verification 红灯使用 `family-integration Finding Repair`。
 **Delivery Action**：ship / PR / merge 等外部效果只由 Delivery Action 自己执行和核验；Runner 不查外部效果，也不把这些动作混入 commit 有/无二值权限。
 
 synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (a) 进程事实或上述外部真源事实派生，永不得由卷面判断合成。kill-axis（承 #873）：任何拆除不得以「换一个更温和的校验」收尾。卷面质量归交卷契约（ADR 0130，worker 侧 soul/skill）；发现搬运走 artifact pointer / findings 状态库（ADR 0129）。
