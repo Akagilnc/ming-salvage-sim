@@ -2848,6 +2848,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let deferredFindings: Finding[] = [];
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
+  let coderNoCommitBudgetExhausted = false;
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
   let lastCoderRepairEvidence: RepairEvidence | undefined;
@@ -4359,6 +4361,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           let attempts = 0;
           for (;;) {
             attempts += 1;
+            if (step === "S2") coderNoCommitBudgetExhausted = false;
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
             >["result"];
@@ -4414,6 +4417,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 step === "S5" || step === "S6"
                   ? {
                       blockingFindings: pendingBlockingFindings,
+                      ...(step === "S5" && pendingRawReviewerArtifacts !== undefined
+                        ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
+                        : {}),
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
                         : {}),
@@ -4508,7 +4514,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                             commitsAdded: 1,
                           },
                         }
-                      : { kind: "failed" as const, reason: errorMessage(err) };
+                      : (coderNoCommitBudgetExhausted = true, {
+                          kind: "failed" as const,
+                          reason: errorMessage(err),
+                        });
                   }
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
@@ -4541,13 +4550,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                               ? { sessionId: dispatched.sessionId }
                               : {}),
                           }
-                        : {
+                      : (coderNoCommitBudgetExhausted = true, {
                             kind: "failed" as const,
                             reason: dispatched.reason,
                             ...(dispatched.sessionId !== undefined
                               ? { sessionId: dispatched.sessionId }
                               : {}),
-                          };
+                          });
                     }
                     return dispatched;
                   }
@@ -4577,6 +4586,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                           : {}),
                       };
                     }
+                    coderNoCommitBudgetExhausted = true;
                     return {
                       kind: "failed" as const,
                       reason: `${step}: coder receipt unusable and git has no new commit`,
@@ -4592,6 +4602,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     !dispatched.output.committed &&
                     dispatched.output.selfReportDiscrepancy === undefined
                   ) {
+                    coderNoCommitBudgetExhausted = true;
                     return {
                       kind: "failed" as const,
                       reason: `${step}: coder worker produced no commits (committed:false)`,
@@ -4607,18 +4618,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               if (result.kind === "completed") completeMechanicalRetryInvocation(step);
             } catch (err) {
               if (expectedKind === "reviewer" && isStructuredOutputError(err)) {
-                const escalation: Escalation = {
-                  reason: "reviewer 交卷不可用，需人拍",
-                  diagnosis: `${errorMessage(err)}`,
+                pendingBlockingFindings = [];
+                pendingBlockingFindingIdentityKeys = [];
+                pendingRawReviewerArtifacts = {
+                  ...(stepMonitorHandle?.logPath !== undefined
+                    ? { stdoutPath: stepMonitorHandle.logPath }
+                    : {}),
+                  ...(stepMonitorHandle?.resultPath !== undefined
+                    ? { sidecarPath: stepMonitorHandle.resultPath }
+                    : {}),
+                  statement: "the previous reviewer raw artifacts are here",
                 };
-                return await escalateTermination(
-                  step, escalation, undefined, "decision",
-                  { kind: "reviewer", findings: [], escalate: escalation },
-                  decisionGateParkStopSummary({
-                    summary: `${step}: ${escalation.reason}: ${escalation.diagnosis}`,
-                    repairHint: "inspect the unusable reviewer envelope and decide how to continue",
-                  }),
-                );
+                step = "S5";
+                continue orchestratorStepLoop;
               }
               throw err;
             }
@@ -4626,23 +4638,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
             if (unwrapped === undefined) {
               if (
-                (expectedKind === "reviewer" || expectedKind === "coder") &&
+                expectedKind === "reviewer" &&
                 (result.kind === "malformed" || result.kind === "outcome_protocol_failure")
               ) {
-                const escalation: Escalation = {
-                  reason: `${expectedKind} 交卷不可用，需人拍`,
-                  diagnosis: reason ?? `${step}: unusable ${expectedKind} envelope`,
+                pendingBlockingFindings = [];
+                pendingBlockingFindingIdentityKeys = [];
+                pendingRawReviewerArtifacts = {
+                  ...(stepMonitorHandle?.logPath !== undefined
+                    ? { stdoutPath: stepMonitorHandle.logPath }
+                    : {}),
+                  ...(stepMonitorHandle?.resultPath !== undefined
+                    ? { sidecarPath: stepMonitorHandle.resultPath }
+                    : {}),
+                  ...(result.sessionId !== undefined
+                    ? { reviewerSessionId: result.sessionId }
+                    : {}),
+                  statement: "the previous reviewer raw artifacts are here",
                 };
-                const decisionOutput: StepOutput = expectedKind === "reviewer"
-                  ? { kind: "reviewer", findings: [], escalate: escalation }
-                  : { kind: "coder", committed: false, commitsAdded: 0, escalate: escalation };
-                return await escalateTermination(
-                  step, escalation, result.sessionId, "decision", decisionOutput,
-                  decisionGateParkStopSummary({
-                    summary: `${step}: ${escalation.reason}: ${escalation.diagnosis}`,
-                    repairHint: `inspect the unusable ${expectedKind} envelope and decide how to continue`,
-                  }),
-                );
+                step = "S5";
+                continue orchestratorStepLoop;
               }
               // #686 P2-b: mechanical-retry exhaustion is a relay candidate —
               // hand off when a live baton exists; durable abort only when none.
@@ -4746,6 +4760,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
               const exhaustionReason =
                 reason ?? `worker ${step} returned ${result.kind} after bounded redispatch`;
+              if (step === "S2" && coderNoCommitBudgetExhausted) {
+                output = { kind: "coder", committed: false, commitsAdded: 0 };
+                stepSessionId = result.sessionId;
+                break;
+              }
               return await escalateTermination(
                 step,
                 {
@@ -4979,46 +4998,40 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             // Control envelope only: role kind so findings-count channel can run.
             // Do not inspect individual finding fields (findings schema court).
             if (output?.kind !== "reviewer") {
-              const actualKind = output?.kind ?? typeof output;
-              const escalation: Escalation = {
-                reason: "reviewer 交卷角色不可用，需人拍",
-                diagnosis:
-                  `${step}: expected reviewer, got ${actualKind}; ` +
-                  `sessionId=${stepSessionId ?? sessionId}`,
+              pendingBlockingFindings = [];
+              pendingBlockingFindingIdentityKeys = [];
+              pendingRawReviewerArtifacts = {
+                ...(stepMonitorHandle?.logPath !== undefined
+                  ? { stdoutPath: stepMonitorHandle.logPath }
+                  : {}),
+                ...(stepMonitorHandle?.resultPath !== undefined
+                  ? { sidecarPath: stepMonitorHandle.resultPath }
+                  : {}),
+                ...(stepSessionId !== undefined
+                  ? { reviewerSessionId: stepSessionId }
+                  : {}),
+                statement: "the previous reviewer raw artifacts are here",
               };
-              return await escalateTermination(
-                step,
-                escalation,
-                stepSessionId,
-                "decision",
-                { kind: "reviewer", findings: [], escalate: escalation },
-                decisionGateParkStopSummary({
-                  summary: escalation.diagnosis,
-                  repairHint:
-                    "inspect the reviewer role mismatch, answer the decision gate, then re-feed",
-                }),
-              );
+              step = "S5";
+              continue orchestratorStepLoop;
             }
             if (!Array.isArray(output.findings)) {
-              const escalation: Escalation = {
-                reason: "reviewer 未申报可数卷面，需人拍",
-                diagnosis:
-                  `${step}: reviewer findings is not an array; ` +
-                  `sessionId=${stepSessionId ?? sessionId}`,
+              pendingBlockingFindings = [];
+              pendingBlockingFindingIdentityKeys = [];
+              pendingRawReviewerArtifacts = {
+                ...(stepMonitorHandle?.logPath !== undefined
+                  ? { stdoutPath: stepMonitorHandle.logPath }
+                  : {}),
+                ...(stepMonitorHandle?.resultPath !== undefined
+                  ? { sidecarPath: stepMonitorHandle.resultPath }
+                  : {}),
+                ...(stepSessionId !== undefined
+                  ? { reviewerSessionId: stepSessionId }
+                  : {}),
+                statement: "the previous reviewer raw artifacts are here",
               };
-              return await escalateTermination(
-                step,
-                escalation,
-                stepSessionId,
-                "decision",
-                { kind: "reviewer", findings: [], escalate: escalation },
-                decisionGateParkStopSummary({
-                  summary:
-                    `reviewer 未申报可数卷面；sessionId=${stepSessionId ?? sessionId}`,
-                  repairHint:
-                    "inspect the reviewer envelope, answer the decision gate, then re-feed",
-                }),
-              );
+              step = "S5";
+              continue orchestratorStepLoop;
             }
           }
         }
@@ -5062,6 +5075,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
+        if (step === "S5") pendingRawReviewerArtifacts = undefined;
         break;
       }
 
@@ -5845,16 +5859,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
             }
             if (result.kind === "malformed" || result.kind === "outcome_protocol_failure") {
-              const escalation: Escalation = {
-                reason: `${reviewStep} 交卷不可用，需人拍`,
-                diagnosis: result.reason,
-              };
-              return await escalateTermination(
-                reviewStep, escalation, result.sessionId, "decision", undefined,
-                decisionGateParkStopSummary({
-                  summary: `${reviewStep}: ${escalation.reason}: ${escalation.diagnosis}`,
-                  repairHint: "inspect the unusable worker envelope and decide how to continue",
-                }),
+              return await errorTermination(
+                reviewStep,
+                new Error(`${reviewStep} worker returned ${result.kind}: ${result.reason}`),
               );
             }
             return await errorTermination(
@@ -5871,16 +5878,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             reviewStep === "S11" ? "cleanup" : "docRelease";
           if (result.output?.kind !== expectedReviewKind) {
             const badKind = (result.output as { kind?: unknown } | undefined | null)?.kind;
-            const escalation: Escalation = {
-              reason: `${reviewStep} 交卷不可用，需人拍`,
-              diagnosis: `output kind '${String(badKind)}'`,
-            };
-            return await escalateTermination(
-              reviewStep, escalation, result.sessionId, "decision", undefined,
-              decisionGateParkStopSummary({
-                summary: `${reviewStep}: ${escalation.reason}: ${escalation.diagnosis}`,
-                repairHint: "inspect the unusable worker envelope and decide how to continue",
-              }),
+            return await errorTermination(
+              reviewStep,
+              new Error(`${reviewStep} worker returned output kind '${String(badKind)}'`),
             );
           }
           completeMechanicalRetryInvocation(reviewStep);
@@ -6475,17 +6475,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           lastOutput = output;
         } catch (err) {
           if (isStructuredOutputError(err)) {
-            const escalation: Escalation = {
-              reason: `${reviewStep} 交卷不可用，需人拍`,
-              diagnosis: errorMessage(err),
-            };
-            return await escalateTermination(
-              reviewStep, escalation, undefined, "decision", undefined,
-              decisionGateParkStopSummary({
-                summary: `${reviewStep}: ${escalation.reason}: ${escalation.diagnosis}`,
-                repairHint: "inspect the unusable worker envelope and decide how to continue",
-              }),
-            );
+            return await errorTermination(reviewStep, err);
           }
           if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
             const escalation: Escalation = {
@@ -6747,6 +6737,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // A relay baton is a step-local override. Once its relayed step has
     // durably completed, normal downstream roles must reselect their own route.
     clearCompletedRelayState(step, output);
+
+    if (step === "S2" && coderNoCommitBudgetExhausted) {
+      coderNoCommitBudgetExhausted = false;
+      step = "S3";
+      continue;
+    }
 
     // The runner — not the agent — decides the next step.
     // The runner owns the review/fix loop, but termination is still not a blind

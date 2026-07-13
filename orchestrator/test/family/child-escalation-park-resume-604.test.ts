@@ -684,8 +684,7 @@ describe("#604 slice 5 — A/B: failure-kind child outcome is NOT parked", () =>
             ? Number(worktree.branch.match(/child-(\d+)/)![1])
             : -1;
         if (spec.id === "S2" && issue === this.failIssue) {
-          // 0 commits → route() sends S2 → S8(error), NOT escalate.
-          return { kind: "coder", committed: false, commitsAdded: 0 };
+          throw new Error("coder process crashed");
         }
         return super.runStep(spec, worktree);
       }
@@ -740,8 +739,7 @@ describe("#604 r1 (P1-a ②) — a real failure in the wave is not masked by a d
             ? Number(worktree.branch.match(/child-(\d+)/)![1])
             : -1;
         if (spec.id === "S2" && issue === this.failIssue) {
-          // 0 commits → route() sends S2 → S8(error): a real infra/protocol failure.
-          return { kind: "coder", committed: false, commitsAdded: 0 };
+          throw new Error("coder process crashed");
         }
         return super.runStep(spec, worktree);
       }

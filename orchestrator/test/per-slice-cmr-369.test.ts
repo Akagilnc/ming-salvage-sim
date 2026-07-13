@@ -186,7 +186,7 @@ class RetryReviewBackend implements Backend {
 }
 
 describe("#369 per-slice runner-visible review/fix loop", () => {
-  it("malformed reviewer escalates once without redispatch", async () => {
+  it("malformed reviewer sends raw material to S5 then fresh S6", async () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "dispatch protocol failure" },
       { kind: "completed", output: { kind: "reviewer", findings: [] } },
@@ -194,10 +194,13 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("success");
     expect(backend.dispatched).toEqual([
       "S2:coder",
       "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
+      "S7:ship",
     ]);
   });
 
@@ -289,18 +292,18 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.deferredFindings).toEqual([]);
   });
 
-  it("malformed reviewer uses no mechanical dispatch budget", async () => {
+  it("malformed reviewer uses no mechanical dispatch budget and reaches fixer", async () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "dispatch protocol failure" },
-      { kind: "malformed", reason: "dispatch protocol failure again" },
-      { kind: "malformed", reason: "still broken" },
+      { kind: "completed", output: { kind: "reviewer", findings: [] } },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     // Process-level only: 1 initial + MAX_DISPATCH_ATTEMPTS-1 retries = 3 S3s.
     expect(backend.dispatched.filter((d) => d.startsWith("S3:"))).toHaveLength(1);
-    expect(result.status).toBe("escalate");
+    expect(backend.dispatched.some((d) => d.startsWith("S5:"))).toBe(true);
+    expect(result.status).toBe("success");
   });
 });
 

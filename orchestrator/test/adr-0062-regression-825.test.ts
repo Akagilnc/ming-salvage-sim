@@ -109,6 +109,7 @@ const WORKTREE: WorktreeHandle = {
 class ScriptedRunnerBackend implements Backend {
   readonly ledger: PersistentLedgerEntry[] = [];
   readonly dispatches: string[] = [];
+  readonly landings: Array<WorkerLandingPayload | undefined> = [];
   private readonly attempts = new Map<string, number>();
 
   constructor(
@@ -141,10 +142,11 @@ class ScriptedRunnerBackend implements Backend {
   }
   async push() {}
   async writeLedger(entry: PersistentLedgerEntry) { this.ledger.push(entry); }
-  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext, _landing?: WorkerLandingPayload) {
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext, landing?: WorkerLandingPayload) {
     const attempt = (this.attempts.get(spec.id) ?? 0) + 1;
     this.attempts.set(spec.id, attempt);
     this.dispatches.push(`${spec.id}:${spec.kind}:${attempt}`);
+    this.landings.push(landing);
     return this.script(spec, attempt, ctx);
   }
 }
@@ -173,15 +175,11 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     });
     const result = await runOrchestrator({ issueNumber: 825, backend });
     if (target === "S3") {
-      expect(result.status).toBe("escalate");
+      expect(result.status).toBe("success");
       expect(backend.dispatches.filter((row) => row.startsWith(`${target}:`))).toHaveLength(1);
-      expect(result.stepLedger.filter((row) => row.step === "S8")).toHaveLength(1);
-      expect(result.stepLedger.at(-1)?.step).toBe("S8");
-      expect(backend.ledger.at(-1)).toMatchObject({
-        step: "S8", handoffStatus: "escalate", escalationKind: "decision",
-      });
+      expect(backend.dispatches.some((row) => row.startsWith("S5:"))).toBe(true);
       expect(JSON.stringify(result.stepLedger)).not.toContain('"synthesizedFailure"');
-      expect(result.stepLedger.at(-1)?.stopSummary?.reason).not.toBe("failure");
+      expect(JSON.stringify(backend.ledger)).not.toContain('"escalationKind":"decision"');
       return;
     }
     if (target === "S2") {
@@ -248,6 +246,21 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     expect(result.status).toBe("success");
     expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(2);
     expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
+  });
+
+  it("coder no-commit budget exhaustion advances to S3 without synthesized infra failure", async () => {
+    const backend = new ScriptedRunnerBackend((spec) =>
+      spec.id === "S2"
+        ? { kind: "completed", output: { kind: "coder", committed: false, commitsAdded: 0 } }
+        : validWorkerResult(spec));
+
+    const result = await runOrchestrator({ issueNumber: 825, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(3);
+    expect(backend.dispatches.filter((row) => row.startsWith("S3:"))).toHaveLength(1);
+    expect(JSON.stringify(result.stepLedger)).not.toContain('"synthesizedFailure"');
+    expect(JSON.stringify(backend.ledger)).not.toContain('"escalationKind":"decision"');
   });
 });
 

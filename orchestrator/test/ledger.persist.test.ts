@@ -377,9 +377,11 @@ describe("persisted step ledger (#249)", () => {
         return trailingSlashWorktree;
       },
       async writeSnapshot() { /* no-op */ },
-      async runStep() {
+      async runStep(spec) {
         // This path only needs a committed worker payload to reach ledger writes.
-        return { kind: "coder", committed: true, commitsAdded: 1 };
+        return spec.role === "coder"
+          ? { kind: "coder", committed: true, commitsAdded: 1 }
+          : { kind: "reviewer", findings: [] };
       },
       async push() { /* no-op */ },
       async writeLedger(_entry, stateDir) {

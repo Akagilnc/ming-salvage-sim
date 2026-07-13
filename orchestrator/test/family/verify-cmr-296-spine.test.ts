@@ -804,7 +804,7 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
   // epic child is ledger-merged, and return "incomplete" honestly.
   class FailingCoderChildBackend extends ChildBackend {
     override async runStep(spec: StepSpec): Promise<StepOutput> {
-      if (spec.role === "coder") return { kind: "coder", committed: false, commitsAdded: 0 };
+      if (spec.role === "coder") throw new Error("coder process crashed");
       return { kind: "reviewer", findings: [] };
     }
   }
