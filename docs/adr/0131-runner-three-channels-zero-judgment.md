@@ -8,7 +8,7 @@ Runner 是交通警察，只准处理三种交通信号：进程的 exit code、
 
 ## 取代
 
-本决定取代 ADR 0050、0062、0129、#598、#875 与旧 README 中一切让 Runner 校验卷面、派生或对账 count、依据 commit/HEAD/证据重试或裁决、替 worker 合成 decision/failure 的条款；进程崩溃的机械重试与 worker 自验仍保留在各自所有者内。
+本决定只取代 ADR 0050、0062、0129、#598、#875 与旧 README 中那些让 Runner 校验卷面、派生或对账 count、依据 commit/HEAD/证据重试或裁决、替 worker 合成 decision/failure 的条款；其余专业契约继续保留，进程崩溃的机械重试与 worker 自验仍在各自所有者内。
 
 ## 后果
 
