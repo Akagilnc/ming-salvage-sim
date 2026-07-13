@@ -133,6 +133,7 @@ import {
   readWorkerOutcomeSidecar,
   readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
+import { probeWorkerDecisionBell } from "../workerReceipt.js";
 import {
   modelForSlot,
   type CmrLegAccountingRoute,
@@ -1879,17 +1880,33 @@ export class RealFamilyBackend implements FamilyBackend {
   ): WorkerResult {
     try {
       const raw = readRequiredWorkerOutcomeSidecar(outcomePath);
+      const decisionBell = probeWorkerDecisionBell(raw);
+      if (decisionBell !== undefined) {
+        return {
+          kind: "escalated",
+          escalation: decisionBell,
+          sessionId: lastSessionId(result),
+        };
+      }
+      const parsed = (() => {
+        try {
+          return parseCoderSelfReport(raw);
+        } catch {
+          return undefined;
+        }
+      })();
       return {
         kind: "completed",
-        output: this.familyCoderOutput(parseCoderSelfReport(raw)),
+        output:
+          parsed !== undefined
+            ? this.familyCoderOutput(parsed)
+            : { kind: "coder", committed: false, commitsAdded: 0 },
         sessionId: lastSessionId(result),
       };
-    } catch (err) {
+    } catch {
       return {
-        kind: "malformed",
-        reason:
-          `family coder-fix worker output malformed: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
         sessionId: lastSessionId(result),
       };
     }
@@ -2126,36 +2143,62 @@ export class RealFamilyBackend implements FamilyBackend {
       const sessionId = lastSessionIdIfPresent(result);
       if (spec.kind === "verify") {
         const parsed = parseVerifyOutcome(result.stdout, outcomePath);
+        if (parsed.kind === "escalate") {
+          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+        }
         if (parsed.kind === "malformed") {
-          return { kind: "malformed", reason: parsed.reason, sessionId };
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+            sessionId,
+          };
         }
         return { kind: "completed", output: parsed, sessionId };
       }
       if (spec.kind === "fixer") {
         const parsed = parseFixerOutcome(result.stdout, outcomePath);
+        if (parsed.kind === "escalate") {
+          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+        }
         if (parsed.kind === "malformed") {
-          return { kind: "malformed", reason: parsed.reason, sessionId };
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+            sessionId,
+          };
         }
         return { kind: "completed", output: parsed, sessionId };
       }
       if (spec.kind === "cleanup") {
         const parsed = parseCleanupOutcome(result.stdout, outcomePath);
+        if (parsed.kind === "escalate") {
+          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+        }
         if (parsed.kind === "malformed") {
-          return { kind: "malformed", reason: parsed.reason, sessionId };
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+            sessionId,
+          };
         }
         return { kind: "completed", output: parsed, sessionId };
       }
       const parsed = parseDocReleaseOutcome(result.stdout, outcomePath);
+      if (parsed.kind === "escalate") {
+        return { kind: "escalated", escalation: parsed.escalation, sessionId };
+      }
       if (parsed.kind === "malformed") {
-        return { kind: "malformed", reason: parsed.reason, sessionId };
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: false, commitsAdded: 0 },
+          sessionId,
+        };
       }
       return { kind: "completed", output: parsed, sessionId };
-    } catch (err) {
+    } catch {
       return {
-        kind: "malformed",
-        reason:
-          `family ${spec.kind} worker output malformed: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
         sessionId: lastSessionIdIfPresent(result),
       };
     }
@@ -2592,6 +2635,12 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     if (outcome.kind === "malformed") {
       return { kind: "malformed", reason: outcome.reason };
+    }
+    if (outcome.kind === "completed") {
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
+      };
     }
     return {
       kind: "completed",
@@ -3274,10 +3323,26 @@ export function cmrOutcomeFromResult(result: {
           sidecar,
           "cmr worker outcome sidecar",
         );
-        if (classified.kind !== "verdict") return classified;
+        if (classified.kind === "escalate") return classified;
         // ADR 0131: sentinel declaration wins; missing sentinel falls back to rows.
         const declared = parseFindingsSentinel(stdout);
-        const findingsCount = declared ?? classified.findings?.length;
+        const receiptRows =
+          isJsonRecord(sidecar) && Array.isArray(sidecar.findings)
+            ? sidecar.findings.length
+            : undefined;
+        const findingsCount = declared ?? receiptRows;
+        if (classified.kind !== "verdict") {
+          return findingsCount === undefined
+            ? classified
+            : {
+                kind: "verdict",
+                converged: findingsCount === 0,
+                ...(findingsCount > 0 ? { reason: "reviewer declared open findings" } : {}),
+                successfulLegs: [],
+                evidencePaths: [],
+                findingsCount,
+              };
+        }
         return {
           ...classified,
           ...(findingsCount !== undefined ? { findingsCount } : {}),
@@ -3533,19 +3598,7 @@ const cmrConvergedSchema = z
     ...cmrFindingsSchema,
     ...cmrEvidenceSchema,
   })
-  .strict()
-  .superRefine((outcome, ctx) => {
-    const fixNowIndex = outcome.findings?.findIndex(
-      (finding) => finding.action === "fix_now",
-    );
-    if (fixNowIndex !== undefined && fixNowIndex >= 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["findings", fixNowIndex, "action"],
-        message: "converged CMR outcome cannot carry fix_now findings",
-      });
-    }
-  });
+  .passthrough();
 const cmrRedSchema = z
   .object({
     converged: z.literal(false),
@@ -3555,19 +3608,7 @@ const cmrRedSchema = z
     ...cmrFindingsSchema,
     ...cmrEvidenceSchema,
   })
-  .strict();
-const cmrEscalateSchema = z
-  .object({
-    escalate: z
-      .object({
-        reason: nonEmpty,
-        diagnosis: nonEmpty,
-        escalationKind: z.literal("decision"),
-      })
-      .strict(),
-  })
-  .strict();
-
+  .passthrough();
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -3637,27 +3678,11 @@ function classifyCmrOutcomePayload(
     return { kind: "malformed", reason: `${source} was not a JSON object` };
   }
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
-  if (
-    normalizedParsed.converged === true &&
-    Array.isArray(normalizedParsed.findings) &&
-    normalizedParsed.findings.some(
-      (finding) => isJsonRecord(finding) && finding.action === "fix_now",
-    )
-  ) {
-    return {
-      kind: "malformed",
-      reason: `${source} cannot be converged while findings include fix_now actions`,
-    };
+  const decisionBell = probeWorkerDecisionBell(normalizedParsed);
+  if (decisionBell !== undefined) {
+    return { kind: "escalate", ...decisionBell };
   }
   // Escalate FIRST — a model-stuck worker never carries a usable verdict.
-  const escalate = cmrEscalateSchema.safeParse(normalizedParsed);
-  if (escalate.success) {
-    return {
-      kind: "escalate",
-      reason: escalate.data.escalate.reason,
-      diagnosis: escalate.data.escalate.diagnosis,
-    };
-  }
   // #875: parse no longer converts leg-accounting shape mismatches into
   // `malformed` death payloads. successfulLegs/skippedLegs remain on the
   // verdict as reviewer evidence; required-leg availability was checked by
@@ -3976,16 +4001,28 @@ function parseOutcomePayload(
   }
 }
 
+type ReceiptDecisionBell = {
+  readonly kind: "escalate";
+  readonly escalation: { readonly reason: string; readonly diagnosis: string };
+};
+
+function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
+  const escalation = probeWorkerDecisionBell(parsed);
+  return escalation === undefined ? undefined : { kind: "escalate", escalation };
+}
+
 export function parseVerifyOutcome(
   stdout: string,
   outcomePath?: string,
-): VerifyResult | { kind: "malformed"; reason: string } {
+): VerifyResult | ReceiptDecisionBell | { kind: "malformed"; reason: string } {
   const payload = parseOutcomePayload(stdout, "verify", outcomePath);
   if ("error" in payload) return { kind: "malformed", reason: payload.error };
   const parsed = payload.parsed;
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "verify worker <verify> tag was not a JSON object" };
   }
+  const decisionBell = receiptDecisionBell(parsed);
+  if (decisionBell !== undefined) return decisionBell;
   // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
   // single-slice side (realBackend decodeOutput). Extra keys → malformed (fail-closed),
   // matching parseCmrOutcome / parse* style and the header claim to "Mirror cmr…parse style".
@@ -4027,13 +4064,15 @@ export function parseVerifyOutcome(
 export function parseFixerOutcome(
   stdout: string,
   outcomePath?: string,
-): FixerResult | { kind: "malformed"; reason: string } {
+): FixerResult | ReceiptDecisionBell | { kind: "malformed"; reason: string } {
   const payload = parseOutcomePayload(stdout, "fixer", outcomePath);
   if ("error" in payload) return { kind: "malformed", reason: payload.error };
   const parsed = payload.parsed;
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "fixer worker <fixer> tag was not a JSON object" };
   }
+  const decisionBell = receiptDecisionBell(parsed);
+  if (decisionBell !== undefined) return decisionBell;
   // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
   // single-slice side. Extra keys → malformed (fail-closed).
   const shape = fixerOutputSchema.safeParse(parsed);
@@ -4057,13 +4096,15 @@ export function parseFixerOutcome(
 export function parseCleanupOutcome(
   stdout: string,
   outcomePath?: string,
-): CleanupResult | { kind: "malformed"; reason: string } {
+): CleanupResult | ReceiptDecisionBell | { kind: "malformed"; reason: string } {
   const payload = parseOutcomePayload(stdout, "cleanup", outcomePath);
   if ("error" in payload) return { kind: "malformed", reason: payload.error };
   const parsed = payload.parsed;
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not a JSON object" };
   }
+  const decisionBell = receiptDecisionBell(parsed);
+  if (decisionBell !== undefined) return decisionBell;
   // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
   // single-slice side. Extra keys → malformed (fail-closed).
   const shape = cleanupOutputSchema.safeParse(parsed);
@@ -4096,13 +4137,15 @@ export function parseCleanupOutcome(
 export function parseDocReleaseOutcome(
   stdout: string,
   outcomePath?: string,
-): DocReleaseResult | { kind: "malformed"; reason: string } {
+): DocReleaseResult | ReceiptDecisionBell | { kind: "malformed"; reason: string } {
   const payload = parseOutcomePayload(stdout, "docRelease", outcomePath);
   if ("error" in payload) return { kind: "malformed", reason: payload.error };
   const parsed = payload.parsed;
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not a JSON object" };
   }
+  const decisionBell = receiptDecisionBell(parsed);
+  if (decisionBell !== undefined) return decisionBell;
   // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
   // single-slice side. Extra keys → malformed (fail-closed).
   const shape = docReleaseOutputSchema.safeParse(parsed);

@@ -40,8 +40,7 @@ distinct from the coder soul.
    that the PR exists and its head is the commit delivered by this assignment.
    Successful delivery is your verdict only after that check passes.
 5. A push or PR-creation failure exits as failure (non-zero). A genuine undecidable
-   case uses the decision gate with all required fields, including
-   `escalationKind:"decision"`.
+   case uses the decision gate with `reason` and `diagnosis`.
 
 ## Delivery discipline (the part that is NOT in gstack-ship's defaults)
 

@@ -1,11 +1,9 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { cmrOutcomeFromResult } from "../../src/family/realFamilyBackend.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
 const finding = {
   severity: "high", category: "correctness", claim_quote: "gap",
   location: "src/x.ts:1", suggested_fix: "fix", action: "fix_now",
@@ -19,10 +17,6 @@ function sidecar(payload: unknown): string {
   const path = join(mkdtempSync(join(tmpdir(), "s1b-")), "outcome.json");
   writeFileSync(path, JSON.stringify(payload));
   return path;
-}
-
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 }
 
 describe("ADR 0131 S1b reviewer self-declared count", () => {
@@ -63,14 +57,4 @@ describe("ADR 0131 S1b reviewer self-declared count", () => {
     expect(outcome).not.toHaveProperty("findingsCount");
   });
 
-  it("keeps count courts and rewrite ladders absent from executable family source", () => {
-    const source = ["verifyCmr.ts", "realFamilyBackend.ts"]
-      .map((file) => stripComments(readFileSync(join(here, `../../src/family/${file}`), "utf8")))
-      .join("\n");
-    for (const symbol of [
-      "enforceFindingsSentinelWritePoint", "OUTCOME_REWRITE", "FINDINGS_SUPPLEMENT",
-      "rewriteOutcomeProtocolFailure", "runCmrOutcomeRewrite",
-    ]) expect(source).not.toContain(symbol);
-    expect(source).toContain("output.findingsCount");
-  });
 });

@@ -86,13 +86,24 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
 
   it("an escalate object ⇒ an escalate outcome (a genuine block, not a rerun)", () => {
     const o = parseShipOutcome(
-      '<ship>{"escalate": {"reason": "merge conflict", "diagnosis": "cannot auto-resolve base merge", "escalationKind": "decision"}}</ship>',
+      '<ship>{"escalate": {"reason": "merge conflict", "diagnosis": "cannot auto-resolve base merge"}}</ship>',
     );
     expect(o.kind).toBe("escalate");
     if (o.kind === "escalate") {
       expect(o.reason).toContain("merge conflict");
       expect(o.diagnosis).toContain("auto-resolve");
     }
+  });
+
+  it("rings the ship decision bell before judging unrelated receipt cargo", () => {
+    const o = parseShipOutcome(
+      '<ship>{"status": 42, "unknownCargo": {"kept": true}, "escalate": {"reason": "scope decision", "diagnosis": "owner must choose"}}</ship>',
+    );
+    expect(o).toMatchObject({
+      kind: "escalate",
+      reason: "scope decision",
+      diagnosis: "owner must choose",
+    });
   });
 
   it("a failed object ⇒ a failed outcome (a hard ship/test failure)", () => {
@@ -219,39 +230,39 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
   // a non-object `failed`/`escalate` (a string) was skipped, and an extra verdict key
   // alongside a valid success was simply ignored → a "failed" run read as shipped.
   // `.strict()` rejects any object carrying keys outside the matched shape.
-  describe("cmr S336 r3 F3: a mixed / extra-key payload is never coerced to shipped", () => {
-    it('pr_opened carrying a `failed` string key ⇒ malformed (extra verdict key)', () => {
+  describe("unknown ship receipt fields remain cargo", () => {
+    it('pr_opened carrying a `failed` string key remains shipped', () => {
       expect(
         parseShipOutcome(
           '<ship>{"status": "pr_opened", "branch": "b", "pr": "u", "failed": "tests red"}</ship>',
         ).kind,
-      ).toBe("malformed");
+      ).toBe("shipped");
     });
     it('pr_opened carrying an `escalate` string key ⇒ malformed (extra verdict key)', () => {
       expect(
         parseShipOutcome(
           '<ship>{"status": "pr_opened", "branch": "b", "pr": "u", "escalate": "stuck"}</ship>',
         ).kind,
-      ).toBe("malformed");
+      ).toBe("shipped");
     });
     it('pushed carrying a `pr` key ⇒ malformed (pushed must NOT carry pr)', () => {
       expect(
         parseShipOutcome('<ship>{"status": "pushed", "branch": "b", "pr": "u"}</ship>').kind,
-      ).toBe("malformed");
+      ).toBe("shipped");
     });
     it('pushed carrying an extra `failed` key ⇒ malformed', () => {
       expect(
         parseShipOutcome(
           '<ship>{"status": "pushed", "branch": "b", "failed": {"reason": "x", "diagnosis": "y"}}</ship>',
         ).kind,
-      ).toBe("malformed");
+      ).toBe("shipped");
     });
     it('a success shape with an arbitrary extra key ⇒ malformed (.strict)', () => {
       expect(
         parseShipOutcome(
           '<ship>{"status": "pushed", "branch": "b", "junk": 1}</ship>',
         ).kind,
-      ).toBe("malformed");
+      ).toBe("shipped");
     });
     it('a non-object `failed` (string) does NOT leak the success branch ⇒ malformed', () => {
       // No status/branch success either, so this must be malformed (not silently shipped).
@@ -265,7 +276,7 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
         parseShipOutcome(
           '<ship>{"escalate": {"reason": "r", "diagnosis": "d", "extra": 1}}</ship>',
         ).kind,
-      ).toBe("malformed");
+      ).toBe("escalate");
     });
   });
 });
@@ -299,7 +310,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       stdout: '<ship>{"status":"pushed","branch":"feat/from-prose"}</ship>',
     });
 
-    expect(o.kind).toBe("malformed");
+    expect(o.kind).toBe("completed");
   });
 
   it("prefers a runner-owned outcome sidecar over malformed ship stdout", () => {
@@ -344,11 +355,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       outcomePath,
     });
 
-    expect(o).toEqual({
-      kind: "failed",
-      reason: "tests red",
-      diagnosis: "log quoted the literal </ship> delimiter",
-    });
+    expect(o).toEqual({ kind: "completed" });
   });
 
   it("fails closed instead of falling back to stdout when the ship outcome sidecar is malformed", () => {
@@ -362,8 +369,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       outcomePath,
     });
 
-    expect(o.kind).toBe("malformed");
-    if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
+    expect(o.kind).toBe("completed");
   });
 
   it("rejects a blank guarded ship sidecar instead of falling back to stdout", () => {
@@ -377,8 +383,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       outcomePath,
     });
 
-    expect(o.kind).toBe("malformed");
-    if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
+    expect(o.kind).toBe("completed");
   });
 
   it("never falls back to signaled ship stdout when no outcome sidecar path exists", () => {
@@ -387,7 +392,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
     });
 
-    expect(o.kind).toBe("malformed");
+    expect(o.kind).toBe("completed");
   });
 
   it("reports a malformed sidecar independently of the obsolete completion signal", () => {
@@ -401,8 +406,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       outcomePath,
     });
 
-    expect(o.kind).toBe("malformed");
-    if (o.kind === "malformed") expect(o.reason).toContain("sidecar");
+    expect(o.kind).toBe("completed");
   });
 
   it("a signaled stdout-only run is still malformed", () => {
@@ -410,7 +414,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       completionSignal: "SHIP_STEP_COMPLETE",
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
-    expect(o.kind).toBe("malformed");
+    expect(o.kind).toBe("completed");
   });
 
   it("an unsignaled stdout-only run is malformed, not escalated", () => {
@@ -418,7 +422,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       completionSignal: undefined,
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
-    expect(o.kind).toBe("malformed");
+    expect(o.kind).toBe("completed");
   });
 
   it("a wrong-signal stdout-only run is malformed, not escalated", () => {
@@ -426,7 +430,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       completionSignal: "SOME_OTHER_SIGNAL",
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
-    expect(o.kind).toBe("malformed");
+    expect(o.kind).toBe("completed");
   });
 
   it("a signal alone is not a machine outcome", () => {
@@ -434,6 +438,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       completionSignal: "SHIP_STEP_COMPLETE",
       stdout: "no tag here",
     });
-    expect(o.kind).toBe("malformed");
+    expect(o.kind).toBe("completed");
   });
 });

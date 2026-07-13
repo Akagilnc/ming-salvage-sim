@@ -40,7 +40,7 @@ Not converged:
 Escalation:
 
 ```text
-<cmr>{"escalate": {"reason": "<short>", "diagnosis": "<why the worker cannot converge>", "escalationKind": "decision"}}</cmr>
+<cmr>{"escalate": {"reason": "<short>", "diagnosis": "<why the worker cannot converge>"}}</cmr>
 ```
 
 Rules:

@@ -261,12 +261,14 @@ import {
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
+import { probeWorkerDecisionBell } from "./workerReceipt.js";
 import type {
   AgentStepRunOptions,
   Backend,
   CliMonitorSpawnSpec,
   DispatchContext,
   Finding,
+  PriorFindingDisposition,
   IssueMeta,
   IssueSnapshot,
   IssueSnapshotMeta,
@@ -278,7 +280,6 @@ import type {
   StepSoul,
   StepSpec,
   RepairEvidence,
-  CoderEscalation,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -1343,7 +1344,7 @@ export function stripJsonFence(s: string): string {
 export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
-  readonly escalate?: CoderEscalation;
+  readonly escalate?: { readonly reason: string; readonly diagnosis: string };
   readonly repairEvidence?: RepairEvidence;
 }
 
@@ -1986,11 +1987,13 @@ const coderOutputSchema = z.object({
     .object({
       reason: z.string(),
       diagnosis: z.string(),
-      escalationKind: z.enum(["decision", "failure"]),
-      synthesizedFailure: z.boolean().optional(),
     })
     .optional(),
 });
+
+// Typed extraction may locate a receipt, but it must not judge the receipt
+// before decodeOutput gets the independent decision-bell probe.
+const workerReceiptSchema = z.object({}).passthrough();
 
 // #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
 // and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
@@ -2032,7 +2035,7 @@ export const verifyOutputSchema = z.preprocess(
       // Accepts camelCase + snake_case top-level via normalizeFindingFamiliesWireAliases.
       findingFamilies: z.unknown().optional(),
     })
-    .strict(),
+    .passthrough(),
 );
 export const fixerOutputSchema = z
   .object({
@@ -2040,7 +2043,7 @@ export const fixerOutputSchema = z
     alreadySatisfied: z.boolean().optional(),
     fixCommitSha: z.string().min(1).optional(),
   })
-  .strict()
+  .passthrough()
   .superRefine((data, ctx) => {
     if (data.committed && data.alreadySatisfied === true) {
       ctx.addIssue({
@@ -2085,7 +2088,7 @@ export const cleanupOutputSchema = z
       .optional(),
     skippedReasons: z.array(z.string()).optional(),
   })
-  .strict()
+  .passthrough()
   .superRefine((val, ctx) => {
     if (val.terminal === false && val.ok === true) {
       ctx.addIssue({
@@ -2096,7 +2099,7 @@ export const cleanupOutputSchema = z
   });
 export const docReleaseOutputSchema = z
   .object({ released: z.boolean() })
-  .strict();
+  .passthrough();
 
 /** Parse a coder worker self-report with the same schema the single-slice path uses. */
 export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
@@ -3174,23 +3177,8 @@ export class RealBackend implements Backend {
 
   /** Build the output definition for a step's role. */
   private outputFor(spec: StepSpec): sc.OutputDefinition {
-    if (spec.role === "reviewer") {
-      return sc.Output.object({ tag: "review", schema: reviewerOutputSchema });
-    }
-    if (spec.role === "verify") {
-      return sc.Output.object({ tag: "verify", schema: verifyOutputSchema });
-    }
-    if (spec.role === "fixer") {
-      return sc.Output.object({ tag: "fixer", schema: fixerOutputSchema });
-    }
-    if (spec.role === "cleanup") {
-      return sc.Output.object({ tag: "cleanup", schema: cleanupOutputSchema });
-    }
-    if (spec.role === "docRelease") {
-      return sc.Output.object({ tag: "docRelease", schema: docReleaseOutputSchema });
-    }
-    // default (and legacy coder path)
-    return sc.Output.object({ tag: "coder", schema: coderOutputSchema });
+    const tag = spec.role === "reviewer" ? "review" : spec.role;
+    return sc.Output.object({ tag, schema: workerReceiptSchema });
   }
 
   /**
@@ -3216,15 +3204,11 @@ export class RealBackend implements Backend {
         if (sidecar !== undefined) return sidecar;
       }
     } catch (err) {
-      if (spec.role === "reviewer") {
-        const wrapped = new Error(
-          `StructuredOutputError: reviewer outcome sidecar was not valid JSON: ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-        );
-        wrapped.name = "StructuredOutputError";
-        throw wrapped;
-      }
-      throw err;
+      console.warn(
+        `[orchestrator] telemetry: ${spec.id}-${spec.role} outcome sidecar is unreadable cargo: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
     }
     if (typedOutputUsed && result.output !== undefined) return result.output;
     // Stdout tags are the primary machine channel for multi-iteration coders;
@@ -3255,58 +3239,62 @@ export class RealBackend implements Backend {
     // exists. It cannot turn the absence of every outcome channel into a
     // success-shaped coder result: that is a structural protocol failure, owned
     // by the runner's bounded redispatch and exhaustion escalation path.
-    const err = new Error(
-      `StructuredOutputError: ${spec.id}-${spec.role} produced no worker outcome ` +
-        "sidecar, typed output, or legacy stdout tag",
-    );
-    err.name = "StructuredOutputError";
-    throw err;
+    return undefined;
   }
 
   private decodeOutput(
     spec: StepSpec,
     raw: unknown,
   ): StepOutput {
-    if (raw === undefined) {
-      throw new Error(
-        `realBackend: ${spec.id}-${spec.role} reached decodeOutput without a machine outcome`,
-      );
+    const decisionBell = probeWorkerDecisionBell(raw);
+    if (decisionBell !== undefined) {
+      return spec.role === "coder"
+        ? {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: decisionBell,
+          }
+        : { kind: "reviewer", findings: [], escalate: decisionBell };
     }
     if (spec.role === "reviewer") {
-      const r = reviewerOutputSchema.parse(raw);
-      const findings: Finding[] = r.findings.map((f) =>
-        normalizeReviewerFinding({ ...f }),
-      );
+      if (
+        raw === null ||
+        typeof raw !== "object" ||
+        !Array.isArray((raw as { findings?: unknown }).findings)
+      ) {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
+      const receipt = raw as {
+        findings: ReadonlyArray<Finding>;
+        priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
+      };
       return {
         kind: "reviewer",
-        findings,
-        ...(r.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: r.priorFindingDispositions }
+        findings: receipt.findings,
+        ...(Array.isArray(receipt.priorFindingDispositions)
+          ? { priorFindingDispositions: receipt.priorFindingDispositions }
           : {}),
-        ...(r.escalate ? { escalate: r.escalate } : {}),
       };
     }
     // Coder completion is worker-authored. The next reviewer judges the diff.
     if (spec.role === "coder") {
-      const out = coderOutputSchema.parse(raw);
-      return out.escalate
-        ? {
-            kind: "coder",
-            committed: out.committed,
-            commitsAdded: out.commitsAdded,
-            ...(out.repairEvidence !== undefined
-              ? { repairEvidence: out.repairEvidence }
-              : {}),
-            escalate: out.escalate,
-          }
-        : {
-            kind: "coder",
-            committed: out.committed,
-            commitsAdded: out.commitsAdded,
-            ...(out.repairEvidence !== undefined
-              ? { repairEvidence: out.repairEvidence }
-              : {}),
-          };
+      if (raw === null || typeof raw !== "object") {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
+      const receipt = raw as Record<string, unknown>;
+      const repairEvidence = repairEvidenceSchema.safeParse(receipt.repairEvidence);
+      return {
+        kind: "coder",
+        committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
+        commitsAdded:
+          typeof receipt.commitsAdded === "number" &&
+          Number.isInteger(receipt.commitsAdded) &&
+          receipt.commitsAdded >= 0
+            ? receipt.commitsAdded
+            : 0,
+        ...(repairEvidence.success ? { repairEvidence: repairEvidence.data } : {}),
+      };
     }
 
     // #596 F2 AC2: wire the 4 new kinds into real decodeOutput using isValid*Result
@@ -3314,7 +3302,11 @@ export class RealBackend implements Backend {
     // (zod parse throws; or explicit guard fail) mirroring reviewer/coder style+wording.
     // Shape-valid but false flags (converged:false etc) pass this layer (no semantic).
     if (spec.role === "verify") {
-      const v = verifyOutputSchema.parse(raw);
+      const parsed = verifyOutputSchema.safeParse(raw);
+      if (!parsed.success) {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
+      const v = parsed.data;
       const candidate: VerifyResult = {
         kind: "verify",
         ...attachSanitizedFindingFamilies(
@@ -3339,34 +3331,28 @@ export class RealBackend implements Backend {
           v.findingFamilies,
         ),
       };
-      if (!isValidVerifyResult(candidate)) {
-        const err = new Error(
-          "realBackend: verify output did not satisfy isValidVerifyResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
       return candidate;
     }
     if (spec.role === "fixer") {
-      const f = fixerOutputSchema.parse(raw);
+      const parsed = fixerOutputSchema.safeParse(raw);
+      if (!parsed.success) {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
+      const f = parsed.data;
       const candidate: FixerResult = {
         kind: "fixer",
         committed: f.committed,
         ...(f.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
         ...(f.fixCommitSha !== undefined ? { fixCommitSha: f.fixCommitSha } : {}),
       };
-      if (!isValidFixerResult(candidate)) {
-        const err = new Error(
-          "realBackend: fixer output did not satisfy isValidFixerResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
       return candidate;
     }
     if (spec.role === "cleanup") {
-      const c = cleanupOutputSchema.parse(raw);
+      const parsed = cleanupOutputSchema.safeParse(raw);
+      if (!parsed.success) {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
+      const c = parsed.data;
       const candidate: CleanupResult = {
         kind: "cleanup",
         terminal: c.terminal,
@@ -3380,25 +3366,15 @@ export class RealBackend implements Backend {
           ? { skippedReasons: c.skippedReasons }
           : {}),
       };
-      if (!isValidCleanupResult(candidate)) {
-        const err = new Error(
-          "realBackend: cleanup output did not satisfy isValidCleanupResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
       return candidate;
     }
     if (spec.role === "docRelease") {
-      const d = docReleaseOutputSchema.parse(raw);
-      const candidate: DocReleaseResult = { kind: "docRelease", released: d.released };
-      if (!isValidDocReleaseResult(candidate)) {
-        const err = new Error(
-          "realBackend: docRelease output did not satisfy isValidDocReleaseResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
+      const parsed = docReleaseOutputSchema.safeParse(raw);
+      if (!parsed.success) {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
       }
+      const d = parsed.data;
+      const candidate: DocReleaseResult = { kind: "docRelease", released: d.released };
       return candidate;
     }
 
@@ -3757,6 +3733,12 @@ export class RealBackend implements Backend {
       // the shared `withMechanicalRetry` path (the dogfood-362 / family-405 incident
       // class), so it maps to the retryable `malformed` kind — NOT a judged verdict.
       return { kind: "malformed", reason: outcome.reason };
+    }
+    if (outcome.kind === "completed") {
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
+      };
     }
     return {
       kind: "completed",

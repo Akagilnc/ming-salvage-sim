@@ -65,7 +65,7 @@ Success:
 Escalation (example shows escalating BEFORE any commit — committed:false, commitsAdded:0):
 
 ```text
-<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<what is wrong and why you cannot proceed>", "escalationKind": "decision"}}</coder>
+<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<what is wrong and why you cannot proceed>"}}</coder>
 ```
 
 Rules:
@@ -78,8 +78,7 @@ Rules:
   if you already made a baseline / fix commit and THEN hit an escalating blocker in
   the second review, report `committed:true` with the real count PLUS `escalate` —
   NOT `committed:false, commitsAdded:0`. `escalate` is orthogonal to the count.
-- `escalate`, when present, contains `reason`, `diagnosis`, and the worker-selected
-  `escalationKind` (`decision` or `failure`).
+- `escalate`, when present, contains `reason` and `diagnosis`.
 - Emit the `<coder>` tag as the last typed tag; if you iterate, the last typed
   `<coder>` tag is the one that counts. The optional telemetry line below may follow it.
 - For optional telemetry, you may print CODER_STEP_COMPLETE on its own final line.

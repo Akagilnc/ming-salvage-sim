@@ -288,7 +288,7 @@ export interface CoderOutput {
   /** #677 refuse detail records paired with {@link refusedFindingIdentityKeys}. */
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Any agent step may signal it is stuck (route() reads this first). */
-  readonly escalate?: CoderEscalation;
+  readonly escalate?: Escalation;
 }
 
 /** Output of a reviewer step (S3/S6). Empty findings ⇒ approve only when no prior finding needs adjudication. */
@@ -304,7 +304,7 @@ export interface ReviewerOutput {
 export interface Escalation {
   readonly reason: string;
   readonly diagnosis: string;
-  /** Required on coder self-reports; optional on legacy/internal escalation carriers. */
+  /** Transport-authored durable kind; workers do not declare it. */
   readonly escalationKind?: EscalationKind;
   /**
    * #604 correctness r1 (P1-a) / ADR 0062: TRUE marks an escalate the RUNNER
@@ -316,11 +316,6 @@ export interface Escalation {
    * worker-emitted escalate (decision).
    */
   readonly synthesizedFailure?: boolean;
-}
-
-/** Coder workers must select the gate kind; the runner only transports it. */
-export interface CoderEscalation extends Escalation {
-  readonly escalationKind: EscalationKind;
 }
 
 /** Escalation bucket recorded on a terminal S8 entry (#439). */

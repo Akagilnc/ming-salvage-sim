@@ -173,13 +173,24 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
 
   it("an escalate object ⇒ an escalate outcome (the worker is model-stuck)", () => {
     const o = parseCmrOutcome(
-      '<cmr>{"escalate": {"reason": "skill missing", "diagnosis": "ak-cross-m-review not on PATH", "escalationKind": "decision"}}</cmr>',
+      '<cmr>{"escalate": {"reason": "skill missing", "diagnosis": "ak-cross-m-review not on PATH"}}</cmr>',
     );
     expect(o.kind).toBe("escalate");
     if (o.kind === "escalate") {
       expect(o.reason).toContain("skill missing");
       expect(o.diagnosis).toContain("not on PATH");
     }
+  });
+
+  it("rings the CMR decision bell before judging the rest of the reviewer receipt", () => {
+    const o = parseCmrOutcome(
+      '<cmr>{"converged": "garbage", "extra": [1,2,3], "escalate": {"reason": "design fork", "diagnosis": "owner choice required"}}</cmr>',
+    );
+    expect(o).toMatchObject({
+      kind: "escalate",
+      reason: "design fork",
+      diagnosis: "owner choice required",
+    });
   });
 
   it("only the LAST <cmr> tag is read (the worker may iterate)", () => {
@@ -213,17 +224,17 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
   // Integrated CMR pass prompts: "must match one of the shapes above exactly". A mixed /
   // extra-key / garbage payload must NOT coerce into a pass — fail-CLOSED.
   describe("Finding A — strict shape (no extra/mixed keys, non-empty verdict fields)", () => {
-    it("a mixed converged+escalate payload ⇒ malformed (not a pass)", () => {
+    it("a mixed converged+escalate payload rings the decision bell first", () => {
       // A success key carried ALONGSIDE an escalate verdict is off-contract — it
       // must NOT slip through to a converged pass.
       expect(
         parseCmrOutcome(
           '<cmr>{"converged": true, "escalate": {"reason": "r", "diagnosis": "d"}}</cmr>',
         ).kind,
-      ).toBe("malformed");
+      ).toBe("escalate");
     });
 
-    it("converged:true carrying an EXTRA key ⇒ malformed (strict)", () => {
+    it("converged:true tolerates unknown cargo keys", () => {
       expect(
         parseCmrOutcome(
           `<cmr>${JSON.stringify({
@@ -234,7 +245,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           })}</cmr>`,
         ).kind,
       ).toBe(
-        "malformed",
+        "verdict",
       );
     });
 
@@ -343,7 +354,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       }
     });
 
-    it("converged:true with fix_now findings ⇒ malformed (unresolved blockers are not green)", () => {
+    it("does not let finding content override the reviewer-declared verdict channel", () => {
       const o = parseCmrOutcome(
         `<cmr>${JSON.stringify({
           converged: true,
@@ -362,10 +373,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
         })}</cmr>`,
       );
 
-      expect(o.kind).toBe("malformed");
-      if (o.kind === "malformed") {
-        expect(o.reason).toContain("fix_now");
-      }
+      expect(o.kind).toBe("verdict");
     });
 
     it("converged:true without closure arrays ⇒ malformed (absence is not closure)", () => {
@@ -564,7 +572,6 @@ describe("integrated CMR pass prompt closure contract", () => {
       expect(prompt).toMatch(
         /review-leg coverage is missing[\s\S]*decision gate[\s\S]*findings\s*=\s*x[\s\S]*x\s*>=\s*1/i,
       );
-      expect(prompt).toContain('"escalationKind": "decision"');
     });
 
     it(`${promptName} requires closure arrays on converged output`, () => {

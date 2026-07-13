@@ -1250,22 +1250,24 @@ export function workerResultToStep(
     // Attach the escalate to a minimal role-shaped output so route()'s
     // escalate-first edge fires (the runner checks `output.escalate` before the
     // full role schema).
+    const transportedEscalation = {
+      reason: result.escalation.reason,
+      diagnosis: result.escalation.diagnosis,
+      escalationKind:
+        result.escalation.synthesizedFailure === true ? "failure" as const : "decision" as const,
+      ...(result.escalation.synthesizedFailure === true
+        ? { synthesizedFailure: true }
+        : {}),
+    };
     const output: StepOutput =
       expectedKind === "coder"
         ? {
             kind: "coder",
             committed: false,
             commitsAdded: 0,
-            escalate: {
-              ...result.escalation,
-              escalationKind:
-                result.escalation.escalationKind ??
-                (result.escalation.synthesizedFailure === true
-                  ? "failure"
-                  : "decision"),
-            },
+            escalate: transportedEscalation,
           }
-        : { kind: "reviewer", findings: [], escalate: result.escalation };
+        : { kind: "reviewer", findings: [], escalate: transportedEscalation };
     // PRESERVE the worker's sessionId on the escalate path (codex cmr R4 finding):
     // the human-answer resume (planResume → resumeSession) resumes the recorded
     // ledger sessionId; dropping it here would resume the wrong (run-level UUID)

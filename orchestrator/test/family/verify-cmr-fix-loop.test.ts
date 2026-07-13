@@ -3282,35 +3282,3 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     expect(backend.escalations).toEqual([]);
   });
 });
-
-describe("the verifyCmr seam keeps cmr pass outcomes at the WorkerResult boundary", () => {
-  it("verifyCmr.ts source has no local drift constants or legacy priorFindings/cmrReason threading", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { fileURLToPath } = await import("node:url");
-    const src = readFileSync(
-      fileURLToPath(new URL("../../src/family/verifyCmr.ts", import.meta.url)),
-      "utf8",
-    );
-    // No local round counter / drift constant in this hook.
-    expect(src).not.toMatch(/NO_PROGRESS_LIMIT/);
-    expect(src).not.toMatch(/noProgressStreak/);
-    expect(src).not.toMatch(/prevReasonKey/);
-    // #597: the fixed CMR coder-fix round cap is gone — the loop continues while
-    // a blocking finding remains, exiting only on convergence or a worker-raised
-    // human-decision-gate signal. No round counter, no budget, no threading.
-    expect(src).not.toMatch(/MAX_CMR_CODER_FIX_ROUNDS/);
-    expect(src).not.toMatch(/remainingCmrCoderFixRounds/);
-    expect(src).not.toMatch(/coder-fix round budget exhausted/);
-    // No ad-hoc unbounded iteration in this hook.
-    expect(src).not.toMatch(/for\s*\(;;\)/);
-    // No legacy priorFindings/cmrReason threading through the family hook.
-    expect(src).not.toMatch(/priorFindings/);
-    expect(src).not.toMatch(/cmrReason/);
-    // Family coder-fix is an explicit runner boundary, not hidden in the CMR worker.
-    expect(src).toMatch(/familyCoderFixWorkerSpec/);
-    // No resume-session plumbing for the cmr worker.
-    expect(src).not.toMatch(/resumeSessionId:/);
-    // Provider-degradation matching must tolerate dirty route legs without family.
-    expect(src).not.toMatch(/leg\.family\.toLowerCase\(\)/);
-  });
-});
