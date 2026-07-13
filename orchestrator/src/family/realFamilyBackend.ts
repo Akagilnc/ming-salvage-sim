@@ -3277,9 +3277,10 @@ export function cmrOutcomeFromResult(result: {
         if (classified.kind !== "verdict") return classified;
         // ADR 0131: sentinel declaration wins; missing sentinel falls back to rows.
         const declared = parseFindingsSentinel(stdout);
+        const findingsCount = declared ?? classified.findings?.length;
         return {
           ...classified,
-          findingsCount: declared ?? classified.findings?.length ?? 0,
+          ...(findingsCount !== undefined ? { findingsCount } : {}),
         };
       }
     } catch (err) {
@@ -3296,9 +3297,10 @@ export function cmrOutcomeFromResult(result: {
   const fromStdout = parseCmrOutcome(stdout, result.cmrReviewLegs);
   if (fromStdout.kind !== "verdict") return fromStdout;
   const declared = parseFindingsSentinel(stdout);
+  const findingsCount = declared ?? fromStdout.findings?.length;
   return {
     ...fromStdout,
-    findingsCount: declared ?? fromStdout.findings?.length ?? 0,
+    ...(findingsCount !== undefined ? { findingsCount } : {}),
   };
 }
 

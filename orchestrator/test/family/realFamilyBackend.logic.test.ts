@@ -1349,8 +1349,8 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     expect(outcome).toMatchObject({
       kind: "verdict",
       converged: true,
-      findingsCount: 0,
     });
+    expect(outcome).not.toHaveProperty("findingsCount");
   });
 
   it("preserves cmr verdict and findings sentinel semantics after trimming CRLF stdout", () => {

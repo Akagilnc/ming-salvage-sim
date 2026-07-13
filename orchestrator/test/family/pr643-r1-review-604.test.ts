@@ -44,11 +44,12 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 
-const STUCK: Escalation = {
+const STUCK = {
   reason: "Design-level ambiguity: unclear whether child field X should be optional",
   diagnosis:
     "The child issue body says 'optional' in one place but 'required' in another; a product decision is required before implementation can proceed.",
-};
+  escalationKind: "decision",
+} satisfies Escalation;
 
 // A single-slice backend whose `escalateIssue` child decision-escalates on its
 // first S2; every other child completes cleanly (mirrors the slice-5 fake).
@@ -91,7 +92,12 @@ class EscalatingChildBackend implements Backend {
     this.runStepCalls.push({ issue, step: spec.id });
     if (spec.id === "S2" && issue === this.escalateIssue && !this.escalatedRuns.has(issue)) {
       this.escalatedRuns.add(issue);
-      const out: CoderOutput = { kind: "coder", committed: false, commitsAdded: 0, escalate: STUCK };
+      const out: CoderOutput = {
+        kind: "coder",
+        committed: false,
+        commitsAdded: 0,
+        escalate: { ...STUCK, escalationKind: "decision" },
+      };
       return out;
     }
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };

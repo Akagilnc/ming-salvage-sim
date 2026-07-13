@@ -268,6 +268,16 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
+  it.each(["coder_implement.md", "coder_fix.md"])(
+    "%s keeps the required escalationKind in its coder escalation example",
+    (name) => {
+      const prompt = read(name);
+      expect(prompt).toMatch(
+        /"escalate"\s*:\s*\{[^}]*"escalationKind"\s*:\s*"decision"/s,
+      );
+    },
+  );
+
   it("fix/review prompt files stay thin and leave path/review method to the soul", () => {
     const fix = read("coder_fix.md");
     expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);

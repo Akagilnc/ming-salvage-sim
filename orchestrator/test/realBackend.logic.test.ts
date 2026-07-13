@@ -2533,12 +2533,26 @@ describe("realBackend extractCoderTag", () => {
 
   it("returns an escalate payload when the coder tag carries one", () => {
     const stdout =
-      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "design gap"}}</coder>';
-    expect(extractCoderTag(stdout)).toEqual({
+      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "design gap", "escalationKind": "decision"}}</coder>';
+    expect(parseCoderSelfReport(extractCoderTag(stdout))).toEqual({
       committed: false,
       commitsAdded: 0,
-      escalate: { reason: "blocked", diagnosis: "design gap" },
+      escalate: {
+        reason: "blocked",
+        diagnosis: "design gap",
+        escalationKind: "decision",
+      },
     });
+  });
+
+  it("rejects a coder escalation that omits required escalationKind", () => {
+    expect(() =>
+      parseCoderSelfReport({
+        committed: false,
+        commitsAdded: 0,
+        escalate: { reason: "blocked", diagnosis: "design gap" },
+      }),
+    ).toThrow();
   });
 
   it("#551 accepts coder-fix repair evidence with same-class and regression checks through the real parser", () => {

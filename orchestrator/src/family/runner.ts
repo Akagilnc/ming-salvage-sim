@@ -1107,6 +1107,7 @@ export async function runFamily(
           diagnosis:
             first.diagnosis ??
             "Append an escalation_answered ledger row carrying this childIssue to reopen the parked child.",
+          escalationKind: "decision",
         },
         stopSummary: familyStopSummary({
           status: "escalated",

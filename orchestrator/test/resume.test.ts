@@ -1197,7 +1197,11 @@ describe("#439 decision-escalate answer channel", () => {
             kind: "coder",
             committed: false,
             commitsAdded: 0,
-            escalate: { reason: "design ambiguity", diagnosis: "needs a human answer" },
+            escalate: {
+              reason: "design ambiguity",
+              diagnosis: "needs a human answer",
+              escalationKind: "decision",
+            },
           },
           "session-escalated-S2",
         ),
@@ -1225,7 +1229,11 @@ describe("#439 decision-escalate answer channel", () => {
             kind: "coder",
             committed: false,
             commitsAdded: 0,
-            escalate: { reason: "design ambiguity", diagnosis: "needs a human answer" },
+            escalate: {
+              reason: "design ambiguity",
+              diagnosis: "needs a human answer",
+              escalationKind: "decision",
+            },
           },
           "session-escalated-S2",
         ),
@@ -1264,6 +1272,7 @@ describe("#439 decision-escalate answer channel", () => {
               escalate: {
                 reason: "design ambiguity",
                 diagnosis: "needs a human answer",
+                escalationKind: "decision",
               },
             },
             "session-escalated-S2",
@@ -1298,6 +1307,7 @@ describe("#439 decision-escalate answer channel", () => {
             escalate: {
               reason: "design ambiguity",
               diagnosis: "needs a human answer",
+              escalationKind: "decision",
             },
           },
           "session-escalated-S2",
@@ -1337,6 +1347,7 @@ describe("#439 decision-escalate answer channel", () => {
               escalate: {
                 reason: "design ambiguity",
                 diagnosis: "needs a human answer",
+                escalationKind: "decision",
               },
             },
             "session-escalated-S2",
@@ -1367,7 +1378,11 @@ describe("#439 decision-escalate answer channel", () => {
             kind: "coder",
             committed: false,
             commitsAdded: 0,
-            escalate: { reason: "design ambiguity", diagnosis: "needs a human answer" },
+            escalate: {
+              reason: "design ambiguity",
+              diagnosis: "needs a human answer",
+              escalationKind: "decision",
+            },
           },
           "session-escalated-S2",
         ),
@@ -1454,6 +1469,7 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
             escalate: {
               reason: "design ambiguity",
               diagnosis: "needs product decision on field X",
+              escalationKind: "decision",
             },
           },
           "session-escalated-S2",
@@ -3315,7 +3331,11 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
             kind: "coder",
             committed: false,
             commitsAdded: 0,
-            escalate: { reason: "r", diagnosis: "d" },
+            escalate: {
+              reason: "r",
+              diagnosis: "d",
+              escalationKind: "decision",
+            },
           },
           "session-escalated-S2",
         ),

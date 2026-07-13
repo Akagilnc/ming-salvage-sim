@@ -286,7 +286,11 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          escalate: { reason: "stuck on design", diagnosis: "needs human input" },
+          escalate: {
+            reason: "stuck on design",
+            diagnosis: "needs human input",
+            escalationKind: "decision",
+          },
         };
       }
       return { kind: "reviewer", findings: [] };
@@ -330,7 +334,11 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
           kind: "coder",
           committed: true,
           commitsAdded: 1,
-          escalate: { reason: "stuck", diagnosis: "needs human" },
+          escalate: {
+            reason: "stuck",
+            diagnosis: "needs human",
+            escalationKind: "decision",
+          },
         };
       }
       return { kind: "reviewer", findings: [] };

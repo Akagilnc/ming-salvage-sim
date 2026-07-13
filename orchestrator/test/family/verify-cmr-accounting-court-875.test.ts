@@ -171,6 +171,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
       ...CMR_EVIDENCE,
@@ -197,6 +198,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [
@@ -228,6 +230,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: ["gpt-5.6-sol", "agy", "opus"],
       ...CMR_EVIDENCE,
     });
@@ -258,6 +261,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: ["gpt-5.6-sol"],
       skippedLegs: [{ slug: "gpt-5.6-sol", reason: "quota (double-report noise)" }],
       ...CMR_EVIDENCE,
@@ -290,6 +294,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: ["opus"],
       ...CMR_EVIDENCE,
     });

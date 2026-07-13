@@ -115,7 +115,12 @@ class AbortingFamilyBackend implements FamilyBackend {
     return this.script.verify?.(req) ?? { ok: true };
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
-    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
+    const result =
+      this.script.cmr?.(req) ?? {
+        converged: true,
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      };
+    return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     return { url: `pr://${req.familyBase}`, prHead: this.currentFamilyHead };

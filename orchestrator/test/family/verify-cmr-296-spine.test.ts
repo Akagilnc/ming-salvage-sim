@@ -148,7 +148,11 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    return this.script.cmr?.(req) ?? { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] };
+    const result = this.script.cmr?.(req) ?? {
+      converged: true,
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+    };
+    return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);

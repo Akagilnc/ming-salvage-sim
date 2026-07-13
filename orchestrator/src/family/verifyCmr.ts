@@ -1836,6 +1836,46 @@ async function runIntegratedCmrPass(input: {
     finalReviewRoundDisposition = "rejected";
     return postWorkerGitAbort;
   }
+  const routeRawReviewerArtifactsToFix = async (
+    reason: string,
+    sessionId: string | undefined,
+  ): Promise<IntegratedCmrPassOutcome> => {
+    const rawReviewerArtifacts = reviewerArtifactPointers(
+      reviewerMonitorHandle,
+      sessionId,
+    );
+    await persistFinalReviewRound("accepted", () =>
+      recordCmrReviewed(familyBackend, {
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        blockingFindingIdentityKeys: [],
+      }),
+    );
+    const fixRound = await runCmrCoderFix({
+      pass,
+      familyBackend,
+      familyBase,
+      ...(runId !== undefined ? { runId } : {}),
+      blockingFindings: [],
+      blockingFindingIdentityKeys: [],
+      rawReviewerArtifacts,
+      familyHeadBefore: postWorkerFamilyHead,
+      escalationAnswer,
+      familyIssue,
+      resolvedRoute,
+    });
+    if (!fixRound.result.ok) return fixRound;
+    return {
+      result: { ok: true, ran: true },
+      familyHeadAfter: fixRound.familyHeadAfter,
+      restartFinalBarrier: {
+        familyHeadAfter: fixRound.familyHeadAfter,
+        priorCmrFindingIdentityKeysByPass:
+          priorCmrFindingIdentityKeysByPass ?? {},
+      },
+    };
+  };
   if (cmrResult.kind === "escalated") {
     const reason = cmrResult.escalation.reason;
     const diagnosis = cmrResult.escalation.diagnosis;
@@ -1874,41 +1914,10 @@ async function runIntegratedCmrPass(input: {
           ? `family integrated cmr ${pass} worker malformed: ${cmrResult.reason}`
           : `family integrated cmr ${pass} worker returned no valid result (crash/malformed)`;
     if (cmrResult.kind === "malformed" || cmrResult.kind === "outcome_protocol_failure") {
-      const rawReviewerArtifacts = reviewerArtifactPointers(
-        reviewerMonitorHandle,
+      return await routeRawReviewerArtifactsToFix(
+        `integrated cmr ${pass} reviewer raw artifacts require fixer inspection`,
         cmrResult.sessionId,
       );
-      await persistFinalReviewRound("accepted", () =>
-        recordCmrReviewed(familyBackend, {
-          cmrPass: pass,
-          reason: `integrated cmr ${pass} reviewer raw artifacts require fixer inspection`,
-          familyHeadAfter: postWorkerFamilyHead,
-          blockingFindingIdentityKeys: [],
-        }),
-      );
-      const fixRound = await runCmrCoderFix({
-        pass,
-        familyBackend,
-        familyBase,
-        ...(runId !== undefined ? { runId } : {}),
-        blockingFindings: [],
-        blockingFindingIdentityKeys: [],
-        rawReviewerArtifacts,
-        familyHeadBefore: postWorkerFamilyHead,
-        escalationAnswer,
-        familyIssue,
-        resolvedRoute,
-      });
-      if (!fixRound.result.ok) return fixRound;
-      return {
-        result: { ok: true, ran: true },
-        familyHeadAfter: fixRound.familyHeadAfter,
-        restartFinalBarrier: {
-          familyHeadAfter: fixRound.familyHeadAfter,
-          priorCmrFindingIdentityKeysByPass:
-            priorCmrFindingIdentityKeysByPass ?? {},
-        },
-      };
     }
     const stopSummary = cmrResult.kind === "failed"
         ? cmrWorkerFailedStopSummary({
@@ -1939,7 +1948,13 @@ async function runIntegratedCmrPass(input: {
   // the structured row count as the declaration. Declaration accuracy belongs
   // to coder-fix, which receives the findings or raw reviewer artifacts.
   const openFindingsCount =
-    cmrResult.output.findingsCount ?? cmrResult.output.findings?.length ?? 0;
+    cmrResult.output.findingsCount ?? cmrResult.output.findings?.length;
+  if (openFindingsCount === undefined) {
+    return await routeRawReviewerArtifactsToFix(
+      `integrated cmr ${pass} reviewer omitted both count channels; raw artifacts require fixer inspection`,
+      cmrResult.sessionId,
+    );
+  }
   // ADR 0131: the reviewer-declared count is the complete routing signal.
   // Positive always enters coder-fix. Structured findings are optional cargo;
   // when absent, the fixer receives the raw reviewer artifact pointers instead.

@@ -28,7 +28,7 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
   it("routes any present escalation ticket, including empty strings, to decision", () => {
     expect(route({ from: "S2", output: {
       kind: "coder", committed: true, commitsAdded: 1,
-      escalate: { reason: "", diagnosis: "" },
+      escalate: { reason: "", diagnosis: "", escalationKind: "decision" },
     } })).toEqual({ kind: "handoff", status: "escalate" });
   });
 
@@ -126,13 +126,14 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     }
 
     expect(Object.fromEntries(decisionSites)).toEqual({
-      "src/family/runner.ts": 3,
+      "src/runner.ts": 1,
+      "src/family/runner.ts": 4,
       "src/family/ledger.ts": 1,
       "src/family/verifyCmr.ts": 4,
       "src/family/types.ts": 1,
       "src/family/realFamilyBackend.ts": 5,
     });
-    expect([...decisionSites.values()].reduce((sum, count) => sum + count, 0)).toBe(14);
+    expect([...decisionSites.values()].reduce((sum, count) => sum + count, 0)).toBe(16);
     expect(escalateTerminationDecisionSites).toBe(0);
   });
 

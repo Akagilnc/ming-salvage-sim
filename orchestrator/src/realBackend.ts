@@ -278,6 +278,7 @@ import type {
   StepSoul,
   StepSpec,
   RepairEvidence,
+  CoderEscalation,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -1342,7 +1343,7 @@ export function stripJsonFence(s: string): string {
 export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
-  readonly escalate?: { readonly reason: string; readonly diagnosis: string };
+  readonly escalate?: CoderEscalation;
   readonly repairEvidence?: RepairEvidence;
 }
 
@@ -1982,7 +1983,12 @@ const coderOutputSchema = z.object({
   commitsAdded: z.number().int().nonnegative(),
   repairEvidence: repairEvidenceSchema.optional(),
   escalate: z
-    .object({ reason: z.string(), diagnosis: z.string() })
+    .object({
+      reason: z.string(),
+      diagnosis: z.string(),
+      escalationKind: z.enum(["decision", "failure"]),
+      synthesizedFailure: z.boolean().optional(),
+    })
     .optional(),
 });
 

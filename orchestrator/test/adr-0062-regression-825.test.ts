@@ -390,7 +390,11 @@ describe("#825 Group C — durable decision park and in-place resume", () => {
         row("S0"), row("S1"),
         row("S2", {
           kind: "coder", committed: false, commitsAdded: 0,
-          escalate: { reason: "decision needed", diagnosis: "choose A or B" },
+          escalate: {
+            reason: "decision needed",
+            diagnosis: "choose A or B",
+            escalationKind: "decision",
+          },
         }, "session-decision-825"),
         { ...row("S8"), handoffStatus: "escalate", escalationKind: "decision" },
         {

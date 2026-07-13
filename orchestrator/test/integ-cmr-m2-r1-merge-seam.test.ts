@@ -295,7 +295,11 @@ describe("Finding 2: malformed-escalate-terminated run reports error on re-feed 
             committed: false,
             commitsAdded: 0,
             // malformed escalate: non-null but NOT a valid Escalation.
-            escalate: {} as unknown as { reason: string; diagnosis: string },
+            escalate: {} as unknown as {
+              reason: string;
+              diagnosis: string;
+              escalationKind: "decision";
+            },
           },
           "session-malformed-S2",
         ),
@@ -334,6 +338,7 @@ describe("Finding 2: malformed-escalate-terminated run reports error on re-feed 
             escalate: {
               reason: "design ambiguity",
               diagnosis: "needs product decision on field X",
+              escalationKind: "decision",
             },
           },
           "session-escalated-S2",
@@ -462,6 +467,7 @@ describe("normal-handoff S8 writeLedger throw persists a tagged error S8 (#252 â
             escalate: {
               reason: "design ambiguity",
               diagnosis: "needs product decision on field X",
+              escalationKind: "decision",
             },
           };
         }
@@ -509,6 +515,7 @@ describe("normal-handoff S8 writeLedger throw persists a tagged error S8 (#252 â
             escalate: {
               reason: "design ambiguity",
               diagnosis: "needs product decision on field X",
+              escalationKind: "decision",
             },
           },
           "session-escalated-S2",

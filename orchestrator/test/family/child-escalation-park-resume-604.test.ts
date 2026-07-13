@@ -48,11 +48,12 @@ import type {
   ReconcileGit,
 } from "../../src/family/types.js";
 
-const STUCK: Escalation = {
+const STUCK = {
   reason: "Design-level ambiguity: unclear whether child #N field X should be optional",
   diagnosis:
     "The child issue body says 'optional' in one place but 'required' in another; a product decision is required before implementation can proceed.",
-};
+  escalationKind: "decision",
+} satisfies Escalation;
 
 const ORIGINAL_SESSION_ID = "child-11-decision-gate-session";
 
@@ -145,7 +146,7 @@ class EscalatingChildBackend implements Backend {
         kind: "coder",
         committed: false,
         commitsAdded: 0,
-        escalate: STUCK,
+        escalate: { ...STUCK, escalationKind: "decision" },
       };
       return { output: out, sessionId: ORIGINAL_SESSION_ID };
     }
@@ -809,7 +810,11 @@ describe("#604 r4 (D5) — a synthesized-failure escalate is not parked", () => 
             kind: "coder",
             committed: false,
             commitsAdded: 0,
-            escalate: { ...STUCK, synthesizedFailure: true },
+            escalate: {
+              ...STUCK,
+              escalationKind: "failure",
+              synthesizedFailure: true,
+            },
           };
           return out;
         }
