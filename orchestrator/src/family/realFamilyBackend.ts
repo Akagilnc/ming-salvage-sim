@@ -3349,6 +3349,8 @@ export function cmrOutcomeFromResult(result: {
         };
       }
     } catch (err) {
+      const stdoutBell = parseCmrOutcome(stdout, result.cmrReviewLegs);
+      if (stdoutBell.kind === "escalate") return stdoutBell;
       return {
         kind: "malformed",
         reason:
@@ -3982,6 +3984,17 @@ function parseOutcomePayload(
         return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
       }
     } catch (err) {
+      const last = extractLastTag(stdout, tag);
+      if (last !== undefined) {
+        try {
+          const parsed = JSON.parse(last.trim());
+          if (probeWorkerDecisionBell(parsed) !== undefined) {
+            return { parsed, source: `${tag} worker <${tag}> tag` };
+          }
+        } catch {
+          // The sidecar and compatibility receipt are both unreadable cargo.
+        }
+      }
       return {
         error: `${tag} worker outcome sidecar protocol failure: ${err instanceof Error ? err.message : String(err)}`,
       };

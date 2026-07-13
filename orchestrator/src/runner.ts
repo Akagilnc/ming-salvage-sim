@@ -1334,6 +1334,12 @@ function escalationKindForHandoff(
   if (status !== "escalate") return undefined;
   const escalation = escalateOf(output);
   if (escalation == null || !isValidEscalation(escalation)) return "failure";
+  if (
+    escalation.escalationKind === "decision" ||
+    escalation.escalationKind === "failure"
+  ) {
+    return escalation.escalationKind;
+  }
   return escalation.synthesizedFailure === true ? "failure" : "decision";
 }
 

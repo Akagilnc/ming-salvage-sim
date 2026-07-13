@@ -372,6 +372,23 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     expect(o.kind).toBe("completed");
   });
 
+  it("still rings a stdout decision bell when unrelated sidecar cargo is unreadable", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-bell-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    const o = shipOutcomeFromResult({
+      stdout: '<ship>{"junk": true, "escalate": {"reason": "owner choice", "diagnosis": "ship fork"}}</ship>',
+      outcomePath,
+    });
+
+    expect(o).toMatchObject({
+      kind: "escalate",
+      reason: "owner choice",
+      diagnosis: "ship fork",
+    });
+  });
+
   it("rejects a blank guarded ship sidecar instead of falling back to stdout", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-blank-"));
     const outcomePath = join(dir, "outcome.json");
