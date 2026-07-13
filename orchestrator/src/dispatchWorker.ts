@@ -1223,7 +1223,7 @@ function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
  *     the global escalate edge → S8(escalate)).
  *   - `failed` / `malformed` → returns `{ unwrapped: undefined, reason }`: the
  *     runner maps a non-completed result to S8(error) carrying `reason`. The
- *     output is `undefined` so the runner's `isValidStepOutput` guard rejects it
+ *     output is `undefined` so the runner treats the control envelope as unusable
  *     uniformly. (#331's legacy wrapper never produces these; #334's real workers
  *     do.)
  *

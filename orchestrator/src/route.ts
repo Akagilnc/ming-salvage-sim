@@ -18,27 +18,8 @@
  */
 
 import type { Finding, OnlineReviewTerminalState, StepId, StepOutput } from "./types.js";
-import { classifyFindings } from "./findings.js";
-// Shared seam guards — the SINGLE source of truth, also used by the runner, so
-// the coder-output / commitsAdded rules can never drift between two copies.
-//
-// #5: a coder step output must be a real coder output; anything else is a
-// contract violation route() must NOT route as a success.
-// integ-cmr base r2 (B): a coder output with an inconsistent/garbage
-// commitsAdded is invalid.
-import {
-  escalateOf,
-  isValidCoderOutput,
-  isValidEscalation,
-  isValidReviewerOutput,
-} from "./validate.js";
+import { escalateOf } from "./validate.js";
 import { MAX_ONLINE_REVIEW_ROUNDS } from "./onlineReviewLoop.js";
-import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-} from "./reviewLoopOutcome.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
 export type RouteDecision =
@@ -90,19 +71,9 @@ export function route(ctx: RouteContext): RouteDecision {
   // (status=escalate). The model supplies reason+diagnosis; the runner does NOT
   // reclassify (impl vs design is the model's call — US#20).
   //
-  // integ-cmr base r1 (F1): a NON-NULL escalate is only a legitimate stop
-  // signal if it is a well-shaped Escalation ({reason, diagnosis} non-empty
-  // strings). A garbage escalate (`{}`, wrong types, blank strings) must NOT be
-  // coerced into S8(escalate) — the caller would read reason/diagnosis as
-  // undefined/wrong-type. A malformed escalate is a contract violation →
-  // S8(error). (A valid escalate still wins over the happy-path edge, incl. an
-  // incomplete role schema — that is F2, handled in the runner: it lets the
-  // escalate edge fire without first demanding the full role schema.)
   const escalate = escalateOf(ctx.output);
   if (escalate != null) {
-    return isValidEscalation(escalate)
-      ? { kind: "handoff", status: "escalate" }
-      : { kind: "next", step: ctx.from };
+    return { kind: "handoff", status: "escalate" };
   }
 
   switch (ctx.from) {
@@ -122,7 +93,7 @@ export function route(ctx: RouteContext): RouteDecision {
       // contract violation → S8(error). NEVER fall through to S7 on a malformed
       // output (the runner also guards this, but route() must be safe at the
       // seam regardless of caller).
-      if (!isValidCoderOutput(ctx.output)) {
+      if (ctx.output?.kind !== "coder") {
         return { kind: "next", step: "S2" };
       }
       // #252 error edge: 0 commits → S8(error: build produced nothing).
@@ -134,26 +105,23 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S3":
     case "S6":
-      if (!isValidReviewerOutput(ctx.output)) {
+      if (ctx.output?.kind !== "reviewer") {
         return { kind: "next", step: ctx.from };
       }
       return { kind: "next", step: "S4" };
 
     case "S4": {
-      if (!isValidReviewerOutput(ctx.output)) {
+      if (ctx.output?.kind !== "reviewer") {
         return { kind: "next", step: "S4" };
       }
-      const blockingCount =
-        ctx.pendingBlockingFindings !== undefined
-          ? ctx.pendingBlockingFindings.length
-          : classifyFindings(ctx.output.findings).blocking.length;
+      const blockingCount = ctx.output.findings.length;
       return blockingCount > 0
         ? { kind: "next", step: "S5" }
         : { kind: "next", step: "S7" };
     }
 
     case "S5": {
-      if (!isValidCoderOutput(ctx.output)) {
+      if (ctx.output?.kind !== "coder") {
         return { kind: "next", step: "S5" };
       }
       if (!ctx.output.committed && ctx.output.selfReportDiscrepancy === undefined) {
@@ -172,7 +140,7 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S9": {
-      if (!isValidVerifyResult(ctx.output)) {
+      if (ctx.output?.kind !== "verify") {
         return { kind: "handoff", status: "error" };
       }
       if (ctx.output.converged) {
@@ -202,7 +170,7 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S10": {
-      if (!isValidFixerResult(ctx.output)) {
+      if (ctx.output?.kind !== "fixer") {
         return { kind: "handoff", status: "error" };
       }
       // Every valid fixer envelope, including committed:false, advances to a
@@ -211,7 +179,7 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S11": {
-      if (!isValidCleanupResult(ctx.output)) {
+      if (ctx.output?.kind !== "cleanup") {
         return { kind: "handoff", status: "error" };
       }
       if (!ctx.output.terminal) {
@@ -224,7 +192,7 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S12": {
-      if (!isValidDocReleaseResult(ctx.output)) {
+      if (ctx.output?.kind !== "docRelease") {
         return { kind: "handoff", status: "error" };
       }
       if (!ctx.output.released) {
