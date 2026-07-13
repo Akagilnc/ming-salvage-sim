@@ -1,8 +1,6 @@
 /**
- * Step-output validation — the SINGLE source of truth for the agent↔runner
- * seam contract (PRD #244 contract layer). Both the runner (before routing) and
- * route() (defense-in-depth at the seam) use these guards, so the rules can
- * never drift between two hand-written copies.
+ * Legacy domain validators retained only for non-runner consumers. ADR 0131
+ * forbids runner/route from using these functions as routing courts.
  *
  * Why this is load-bearing (integ-cmr base r2, finding A):
  *   route()'s S4 compares `severity`/`action` by EXACT string. A malformed
@@ -14,18 +12,14 @@
  */
 
 import type {
-  CoderOutput,
   Escalation,
   Finding,
   FindingDispositionEvidence,
   PriorFindingDisposition,
   RepairEvidence,
-  ReviewerOutput,
-  ReviewFixRefuseRecord,
   StepOutput,
 } from "./types.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
-import { reviewFixDecisionGate } from "./reviewFixAssertionGate.js";
 
 /** Exact severity enum (no whitespace / case drift tolerated). */
 const SEVERITIES: ReadonlySet<string> = new Set([
@@ -237,9 +231,7 @@ function isValidDispositionEvidence(
  */
 export function isValidEscalation(e: unknown): e is Escalation | null | undefined {
   if (e == null) return true; // absent / undefined / null = no escalate.
-  if (typeof e !== "object") return false;
-  const obj = e as Record<string, unknown>;
-  return isFilledString(obj.reason) && isFilledString(obj.diagnosis);
+  return typeof e === "object";
 }
 
 /**
@@ -390,91 +382,4 @@ export function isBlockingFinding(f: Finding): boolean {
   return (
     f.severity === "critical" || f.severity === "high" || f.action === "fix_now"
   );
-}
-
-/** Validate coder envelope shape without adjudicating its self-reported commit fields. */
-export function isValidCoderOutput(o: StepOutput | undefined): o is CoderOutput {
-  if (o == null || typeof o !== "object") return false;
-  if (o.kind !== "coder") return false;
-  const c = o as CoderOutput;
-  // F1: a non-null escalate must be a well-shaped Escalation (reason+diagnosis,
-  // both non-empty strings). A garbage escalate is a contract violation even if
-  // the happy-path fields are present.
-  if (!isValidEscalation(c.escalate)) return false;
-  if (
-    c.repairEvidence !== undefined &&
-    !isValidRepairEvidence(c.repairEvidence)
-  ) {
-    return false;
-  }
-  if (!isValidLegalRefuseFields(c)) return false;
-  return true;
-}
-
-function isValidRefuseRecord(r: unknown): r is ReviewFixRefuseRecord {
-  if (r === null || r === undefined || typeof r !== "object") return false;
-  const rec = r as ReviewFixRefuseRecord;
-  return (
-    typeof rec.identityKey === "string" &&
-    rec.identityKey.trim().length > 0 &&
-    typeof rec.finding === "string" &&
-    rec.finding.trim().length > 0 &&
-    typeof rec.acceptanceCriterion === "string" &&
-    rec.acceptanceCriterion.trim().length > 0 &&
-    typeof rec.conflictReason === "string" &&
-    rec.conflictReason.trim().length > 0
-  );
-}
-
-/** #677: refuse keys + records must be absent together, or gate-valid together. */
-function isValidLegalRefuseFields(c: CoderOutput): boolean {
-  const keys = c.refusedFindingIdentityKeys;
-  const records = c.refuseRecords;
-  if (keys === undefined && records === undefined) return true;
-  if (!Array.isArray(keys) || !Array.isArray(records)) return false;
-  if (keys.length === 0 && records.length === 0) return true;
-  if (!keys.every((k) => typeof k === "string" && k.trim().length > 0)) {
-    return false;
-  }
-  if (!records.every(isValidRefuseRecord)) return false;
-  const legal = reviewFixDecisionGate({ records });
-  if (legal === undefined) return false;
-  if (legal.refusedFindingIdentityKeys.length !== keys.length) return false;
-  return keys.every((k, i) => k === legal.refusedFindingIdentityKeys[i]);
-}
-
-/**
- * A reviewer step output is valid iff it is `{kind:'reviewer', findings:Array}`
- * AND every finding ELEMENT is valid (finding A). A non-array `findings` or any
- * malformed element makes the whole output invalid → S8(error); route() must
- * never coerce it into a push.
- */
-export function isValidReviewerOutput(
-  o: StepOutput | undefined,
-): o is ReviewerOutput {
-  if (o == null || typeof o !== "object") return false;
-  const obj = o as unknown as Record<string, unknown>;
-  if (obj.kind !== "reviewer") return false;
-  // F1: same escalate-shape contract as the coder output.
-  if (!isValidEscalation(obj.escalate)) return false;
-  if (!Array.isArray(obj.findings)) return false;
-  if (!obj.findings.every(isValidFinding)) return false;
-  if (obj.priorFindingDispositions === undefined) return true;
-  return (
-    Array.isArray(obj.priorFindingDispositions) &&
-    obj.priorFindingDispositions.every(isValidPriorFindingDisposition)
-  );
-}
-
-/**
- * Validate an agent-step output against the step's expected role. Used by the
- * runner before route() and (defense-in-depth) inside route() itself.
- */
-export function isValidStepOutput(
-  output: StepOutput | undefined,
-  expectedKind: "coder" | "reviewer",
-): boolean {
-  return expectedKind === "coder"
-    ? isValidCoderOutput(output)
-    : isValidReviewerOutput(output);
 }

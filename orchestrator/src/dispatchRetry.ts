@@ -2,7 +2,7 @@
  * #598 — generic mechanical retry at the shared dispatch seam.
  *
  * Runner function (a) (ADR 0062 / #604): a worker dispatch that ends in a
- * PROCESS-LEVEL failure (a returned `failed`/`malformed`/`outcome_protocol_failure`
+ * PROCESS-LEVEL failure (a returned `failed`
  * kind, a thrown exception, or a "no completion signal" case surfacing as one of
  * those) is retried with a FRESH (non-resume) session for the SAME step, up to a
  * small fixed bound. A result that parsed into a valid, JUDGED shape
@@ -51,11 +51,7 @@ const defaultRetrySleepMs = (ms: number): Promise<void> =>
 
 /** The `WorkerResult` kinds that are a process-level failure (retryable). */
 function isProcessFailure(result: WorkerResult): boolean {
-  return (
-    result.kind === "failed" ||
-    result.kind === "malformed" ||
-    result.kind === "outcome_protocol_failure"
-  );
+  return result.kind === "failed";
 }
 
 /** Force a retry dispatch to be FRESH: a resume dispatch never resumes the old session. */
