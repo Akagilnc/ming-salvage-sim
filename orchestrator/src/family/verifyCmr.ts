@@ -111,6 +111,7 @@ import {
   MAX_DISPATCH_ATTEMPTS,
   withMechanicalRetry,
 } from "../dispatchRetry.js";
+import { withLegTransientRetry } from "../legTransientRetry.js";
 import {
   requiredCmrLegSkipFailure,
   modelRouteFingerprint,
@@ -176,8 +177,28 @@ import {
 import type {
   FamilyBackend,
   FamilyVerifyResult,
+  FindFamilyShippedPrResult,
   IntegratedCmrPass,
 } from "./types.js";
+
+async function observeFamilyShippedPr(
+  familyBackend: FamilyBackend,
+  request: { readonly familyBase: string; readonly expectedHead: string },
+): Promise<FindFamilyShippedPrResult> {
+  try {
+    return await withLegTransientRetry(() =>
+      familyBackend.findFamilyShippedPr!(request),
+    );
+  } catch (err) {
+    return {
+      ok: false,
+      kind: "observation_failed",
+      reason: `family ship host observation unavailable: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
+  }
+}
 
 /** Which of the two ADR 0022 decision-3 verify points is running. */
 export type VerifyCmrPhase = "wave" | "final";
@@ -2689,7 +2710,7 @@ async function runVerifyCmrWithShipTruthAttempt(
                   ? "ship dispatch threw and current family HEAD could not be observed"
                   : "ship dispatch threw and backend has no host PR discovery capability",
             }
-          : await familyBackend.findFamilyShippedPr({ familyBase, expectedHead });
+          : await observeFamilyShippedPr(familyBackend, { familyBase, expectedHead });
       if (observed.ok) {
         candidate = {
           kind: "completed",
@@ -2738,7 +2759,7 @@ async function runVerifyCmrWithShipTruthAttempt(
                 ? "malformed ship receipt and current family HEAD could not be observed"
                 : "malformed ship receipt and backend has no host PR discovery capability",
           }
-        : await familyBackend.findFamilyShippedPr({ familyBase, expectedHead });
+        : await observeFamilyShippedPr(familyBackend, { familyBase, expectedHead });
     if (observed.ok) {
       shipResult = {
         kind: "completed",

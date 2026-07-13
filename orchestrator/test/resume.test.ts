@@ -3400,6 +3400,50 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
 // ─── AC4: recovery decides next step from ledger, not memory ──────────────────
 
 describe("S7 ship observation during resume setup (#824 r10)", () => {
+  it("re-observes an S7 host-observation infra park without re-dispatching ship", async () => {
+    class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
+      observationCalls = 0;
+
+      async observeSliceShip(): Promise<{ shipped: boolean }> {
+        this.observationCalls += 1;
+        return { shipped: true };
+      }
+    }
+
+    const backend = new ObservationRecoveryBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        entry("S7", {
+          kind: "ship",
+          branch: WORKTREE.branch,
+          status: "pushed",
+        }),
+        {
+          ...s8("escalate"),
+          escalationKind: "failure",
+          stopSummary: {
+            reason: "infra_failure",
+            summary: "S7 host delivery observation unavailable: timed out",
+            repairHint:
+              "restore host observation, then resume to observe delivery without re-running ship",
+          },
+        },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 891, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.observationCalls).toBe(1);
+    expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(0);
+  });
+
   it("turns transient gh failure into resumable S8(error) instead of rejecting runOrchestrator", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");

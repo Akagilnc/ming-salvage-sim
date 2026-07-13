@@ -1978,7 +1978,7 @@ describe("#823 family ship malformed-output recovery", () => {
     }));
   });
 
-  it("observes host truth after a ship dispatch throws instead of blindly re-dispatching", async () => {
+  it("retries transient host observation after a ship throw without re-dispatching", async () => {
     class ThrowsAfterMutatingShipBackend extends BareFamilyBackend {
       shipDispatches = 0;
       hostObservations = 0;
@@ -2022,6 +2022,11 @@ describe("#823 family ship malformed-output recovery", () => {
         pr: string;
       }> {
         this.hostObservations += 1;
+        if (this.hostObservations === 1) {
+          throw Object.assign(new Error("family host observation timed out"), {
+            code: "ETIMEDOUT",
+          });
+        }
         return { ok: true, pr: "pr://family/823-after-throw" };
       }
     }
@@ -2035,7 +2040,7 @@ describe("#823 family ship malformed-output recovery", () => {
     });
 
     expect(backend.shipDispatches).toBe(1);
-    expect(backend.hostObservations).toBe(1);
+    expect(backend.hostObservations).toBe(2);
     expect(backend.ledger.filter((entry) => entry.status === "ship_dispatch_attempt"))
       .toHaveLength(backend.shipDispatches);
     // This minimal backend does not implement the post-ship online-review path;
