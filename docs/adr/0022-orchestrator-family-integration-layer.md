@@ -4,6 +4,8 @@ Status: Accepted（2026-06-21；grill-with-docs 收敛 + 设计 cmr 5 轮 + 线�
 
 > **前向更正（ADR 0061，2026-07-06 Accepted 起生效）**：下文「决定 4」的"线上 bot cmr + merge 复用现有 pr-review-loop 的独立自治阶段"已被 **ADR 0061 反转**——线上评审 loop 纳入编排器自身，自治边界从"止于 PR"推进到"止于 merge"（#366）。本 ADR 其余决定不受影响。
 
+> **前向更正（#869 Canonical Delivery Flow）**：下文「决定 3」原先的“每波 fan-out barrier / 本波合完再 verify / 再开下一波”时序废止。wave 只表示同一时刻的启动快照；每个 child 完成即进入串行 merge → 父分支 Verification，绿色后立即重算依赖并释放新 ready child，不等待同批 parked 或仍在运行的 child。
+
 ## 背景
 
 ADR 0016/0017 把家族层（父 epic → 多子片并行 fan-out + 合回家族 base）显式 deferred。现做。
@@ -12,14 +14,14 @@ ADR 0016/0017 把家族层（父 epic → 多子片并行 fan-out + 合回家族
 
 Sandcastle 原生（文档/issues 优先核过、代码验证）：
 - 并发 fan-out 安全的**唯一**前提 = 每 child 一个 distinct named branch（README「fork is session-only」；`head`/`merge-to-head` 并发不安全）。
-- `parallel-planner` 模板的 **Plan stage 是「读现成 open issue 列表 → 选本轮 unblocked」的调度/选择器**（`plan-prompt.md` 实读：输入 already-filtered ready issues、输出 `{id,title,branch}`），**不分解 epic、不建 sub-issue**（cmr R1 三腿 + 源码核实）。Execute=`Promise.allSettled`，Merge=纯 LLM prompt。
+- `parallel-planner` 模板的 **Plan stage 是「读现成 open issue 列表 → 选本轮 unblocked」的调度/选择器**（`plan-prompt.md` 实读：输入 already-filtered ready issues、输出 `{id,title,branch}`），**不分解 epic、不建 sub-issue**（cmr R1 三腿 + 源码核实）。原生模板的 Execute=`Promise.allSettled`、Merge=纯 LLM prompt；当前 family 不采用其整批 merge barrier。
 - **库无多分支整合原语**（`dist/index.d.ts` 无 `merge`/`integrate`）；merge 真强项 = per-run `merge-to-head` 回灌（库级、副作用保全），作用在 **slice/run 级**——单片 coder run 已在用。
 
 ## 决定
 
 公开入口以已有 family scene/ledger 优先，先认回 family；仅从未建立 family scene 的首次入口才以 live native sub-issue 数量区分 family 与 standalone。故最后一个成员被移除后重入仍留在 family 路径：先停止该成员未来调度；若对应 Worker Invocation 仍在运行，不杀进程、不删 worktree，待该实例不再运行后由 Closure/Reclamation 只删除目标 worktree，保留 branch、Lineage/ledger、日志与 telemetry，不要求 success 或 normal exit，也不回滚已合入代码；不会因 live count 为 0 误建 standalone scene。
 
-1. **commander = 确定性波次调度（runner 步，非 LLM 分解器）**：父 epic 的现成子片由 `to-issues` 在**编排器外**切好、发成 GitHub native sub-issues + 显式 `blocked_by`（单一真相）。父流程开工第一步读取 live GitHub 状态、标签和 sub-issue 数量：`closed` 子片退出当前调度并满足依赖（包括此前按单片模式独立完成者），但已有 family worktree 保留到父流程 terminal-success + 显式 GC，期间 reopen + `ready-for-agent` 可复用原现场；open 但无 `ready-for-agent` 的子片不启动；open + `ready-for-agent` 但自身仍有 sub-issues 的子片显式列为 unsupported nested family 并跳过；只有 open + `ready-for-agent` 的叶子子片进入显式 `blocked_by` DAG → 拓扑分波（未阻塞者并发为一波、被阻塞者下波）→ fan-out。当前只支持一层 family，不递归展开孙 issue。**不自分解、不用原生 Plan 的 LLM 依赖推断**（我们有显式 `blocked_by`，无需 LLM 再猜，且原生 Plan 只是 selector、会重推已有的边）。切片质量由切片那一步（design session 带 PRD/ADR 上下文）保证，非编排器职责。
+1. **commander = 确定性波次调度（runner 步，非 LLM 分解器）**：父 epic 的现成子片由 `to-issues` 在**编排器外**切好、发成 GitHub native sub-issues + 显式 `blocked_by`（单一真相）。父流程开工第一步读取 live GitHub 状态、标签和 sub-issue 数量：`closed` 子片退出当前调度并满足依赖（包括此前按单片模式独立完成者），但已有 family worktree 保留到父流程 terminal-success + 显式 GC，期间 reopen + `ready-for-agent` 可复用原现场；open 但无 `ready-for-agent` 的子片不启动；open + `ready-for-agent` 但自身仍有 sub-issues 的子片显式列为 unsupported nested family 并跳过；只有 open + `ready-for-agent` 的叶子子片进入显式 `blocked_by` DAG → 拓扑分波（未阻塞者并发为一个启动快照、被阻塞者待依赖释放后再启动）→ fan-out。wave 不是完成 barrier。当前只支持一层 family，不递归展开孙 issue。**不自分解、不用原生 Plan 的 LLM 依赖推断**（我们有显式 `blocked_by`，无需 LLM 再猜，且原生 Plan 只是 selector、会重推已有的边）。切片质量由切片那一步（design session 带 PRD/ADR 上下文）保证，非编排器职责。
 
    过滤后没有新可运行叶子只表示本次 admission 不创建新 child worktree、不派 child worker，不得抹掉或绕过既有 family 义务：
    - 从未建立 family scene 且没有未完成 delivery 时，报告跳过原因并 quiet success；不建 family/child worktree、不派 worker、不建 PR、不 park。
@@ -29,9 +31,9 @@ Sandcastle 原生（文档/issues 优先核过、代码验证）：
 
 2. **fan-out = Sandcastle 原生 fork + 每子片 distinct branch**，跑在该 invocation 的独立 clone（ADR 0024）内故安全。每子片**复用单片 S0-S8 流程，但家族模式下 S7 的 `backend.push` 替换为本地 no-op**（子片只本地提交到自己分支、不 push 远端——共享 clone 内多个子片并发 push 会撞 `.git/refs/remotes` 引用锁；codex R3 指出「完整复用 S0-S8」含强制 S7 push、与「不 push」矛盾，故此处显式碰 S7）；只有家族 base 在末尾开 PR 时 push 一次。**家族 context（parentIssue / family ledger 引用）经 RunnerOptions 传入子片 runner**，使其 S0 走 ledger 口径（决定 6③）+ S7 走 no-op（agy R3）。base 从家族 base 切（家族模式闸适配见决定 6、base 取值见决定 7）。
 
-3. **merger = 薄编排器（确定性骨架 + 点状 LLM）**，与原生「整段 LLM」相反，**分两层时序**：
-   - **每波（fan-out barrier）**：① **cycle-check**：排波前对 `blocked_by` 图做无环校验，有环 → fail-closed 升级（不死锁）；② 把**本波**已过审子片分支**串行 `git merge --no-ff`** 落家族 base——家族整合是**已提交分支间的 branch-to-branch 合并**，库无此原语 → Backend seam 后的**确定性 `git merge`**，**不是 `merge-to-head`**（后者是 slice/run 级回灌、已在单片 coder run 用）；冲突才上 LLM（`resolving-merge-conflicts` soul），原生一上来就 LLM、本设计确定性优先；③ 每合一片即写 family ledger（决定 5）；④ **本波合完跑一次 family verify（typecheck + 单测）fail-fast**——红即中止、不再排下一波（避免白跑下游波，agy R2）。下一波从**更新后的家族 base** 切（拿到上波依赖）。
-   - **全波合完一次（末尾）**：⑤ 确定性 **全量** family verify；⑥ 整合后 cross-model **cmr 承重闸**（抓跨片接缝；原生零评审）。**说明**：每波 LLM 解的冲突合并，其承重审是末尾这道 cmr（决定 4「止于 cmr 绿」）；若中途 verify 红而中止，这些 LLM 合并留在家族 base + ledger 供人 triage（不被 cmr 审但可查），符合「不静默吞」（Claude R2）。
+3. **merger = 薄编排器（确定性骨架 + 点状 LLM）**，与原生「整段 LLM」相反，采用 **child 级增量合入 + 末尾 integrated gates**：
+   - **增量时序**：① 对 live `blocked_by` 图执行既有 cycle-check；有环时走既有 decision gate，不启动受影响 child。② 每个已过审 child 完成即进入串行 merge queue，以 **`git merge --no-ff`** 落家族 base——家族整合是**已提交分支间的 branch-to-branch 合并**，库无此原语 → Backend seam 后的**确定性 `git merge`**，**不是 `merge-to-head`**；只有真实冲突才启动 merger worker（`resolving-merge-conflicts` soul）。③ 每合一片即写 family ledger（决定 5）。④ 每次合入后立即执行父分支 Verification；绿色即重算依赖并释放新 ready child，新 child 从**更新后的家族 base**切出。parked 或仍在运行的同批 child 不阻塞已完成 child 的合入及其独立下游。父分支红灯时暂停新的 dispatch 与后续 merge，但不终止已运行 worker；按既有 integration repair → fresh Verification 恢复绿色后继续。
+   - **末尾时序**：全部必要 child 已合入且 durable obligations 完成、越过 final barrier 后，仍执行确定性**全量** family Verification 与既有 integrated completeness → integrated correctness 承重闸。真实冲突中由 merger worker 产生的合并同样受这些末尾闸覆盖；若增量 Verification 红灯，这些已落合并保留在家族 base + ledger 供修复与复核，符合“不静默吞”。
 
    **family CMR module context contract**：family/child issue 可在正文中提供唯一结构化区块 `## Module Declaration` + fenced YAML，runner 只解析该区块，不从标题、散文、日志或临时 reviewer 文本推断 module 边界。issue-body YAML 允许字段仅为 `module`、`module_scope`。其中 `module_scope` 是当前 family/child 已拥有的文件/目录 surface；「刻意不在本 family base 内开发、但可作为 cross-module defer target 的目标 module」只能由 runner/run-option/route metadata 提供，不扩展 issue-body YAML。CMR 的 `cross_module` defer 只有在 target 命中 runner 声明的 undeveloped module、且该 target 不属于当前 module context 时才可放行；当前 module context 只用于归因和阻塞判定，未声明 target 一律留在本 family gate 内继续修。
 
@@ -39,11 +41,11 @@ Sandcastle 原生（文档/issues 优先核过、代码验证）：
 
 5. **family ledger**（家族 base worktree 的 sibling、worktree 外）= **append-only 事件账本**，每合一片即写一条（至少 `{childIssue, childBranch, childHead, wave, familyHeadBefore, familyHeadAfter, status}`），verify/cmr 失败写 `aborted` 事件（携带当时 family head）。**幂等不变式 + 崩溃窗口 reconcile**（cmr R2 三腿一致：merge 成功但 ledger 没写就崩的窗口须有可实现契约）：merger 只在该片 merge commit **已落家族 base 之后**才写其 `merged` 条。崩溃续跑先 reconcile，比对 ledger 末条 `familyHeadAfter` 与 live HEAD：① 一致 → 信已合集合、跳过已合、续合；② **live HEAD 领先 ledger（merge 成功、ledger 未写就崩的常规窗口）→ 不 abort**：对每个未记账子片查 `git merge-base --is-ancestor childHead liveHEAD`（**若该子片 branch/childHead 尚不存在——崩在它任何提交前——跳过 merge-base、当「未合」从头跑、不报错，agy R4**；存在且其合并已落）→ 补写一条 **`status:"merged"` + `event:"reconciled"`** 的 ledger 条（**保持 `status==merged`，使决定 6 的解阻塞谓词照样计入**——codex R3：若补成 `status:"reconciled"`，谓词 `status==merged` 不计、reconciled 的 blocker 仍被判未合、死锁）、续合；真有未落 / 不一致的 → fail-closed 升级。**即家族版 reconcile 比单片 `checkBranchHeadConsistency`「mismatch 直接 abort」更宽**，才兑现「幂等续合」（agy/codex R2）。字段级 JSON 留 TDD。
 
-6. **家族模式的闸适配（与单片 S0 闸四点差异）**：① 家族入口**接受父 epic**（单片 S0 闸「无 sub-issues 才放行」是单片规则，家族模式对 epic 反转该条）；直接输入某个子 issue 则仍可走单片流程，使用独立 worktree、独立 PR，不建立父 worktree。② **依赖满足判据 = GitHub-closed 或本 family ledger-merged**：父流程开始前已独立完成并 closed 的 blocker 已满足；本次 family 内刚合进家族 base、尚未 closed 的 blocker 则由 ledger `merged` 满足。只看 closed 会让本次 family barrier 死锁，只看 ledger 会重做此前已独立完成的子片。③ **子片各自的家族 S0 依赖门使用同一联合判据**；rfa + 自己无 sub-issues 两项不变（`## Agent Brief` 可选、有则为最权威部分）。故 `to-issues` 发的待执行子片必须带 `ready-for-agent`。④ **家族外（external）`blocked_by` 在父 epic 进来时显式预检**：外部 blocker 不会进入本 family ledger，只能由 live GitHub `closed` 满足；凡仍 open 即拒整个 family run，并列出具体阻塞关系。admission 与每次 resume 都重新读取 live GitHub metadata。
+6. **家族模式的闸适配（与单片 S0 闸四点差异）**：① 家族入口**接受父 epic**（单片 S0 闸「无 sub-issues 才放行」是单片规则，家族模式对 epic 反转该条）；直接输入某个子 issue 则仍可走单片流程，使用独立 worktree、独立 PR，不建立父 worktree。② **依赖满足判据 = GitHub-closed 或本 family ledger-merged**：父流程开始前已独立完成并 closed 的 blocker 已满足；本次 family 内刚合进家族 base、尚未 closed 的 blocker 则由 ledger `merged` 满足。只看 closed 会让 `blocked_by` 调度死锁，只看 ledger 会重做此前已独立完成的子片。③ **子片各自的家族 S0 依赖门使用同一联合判据**；rfa + 自己无 sub-issues 两项不变（`## Agent Brief` 可选、有则为最权威部分）。故 `to-issues` 发的待执行子片必须带 `ready-for-agent`。④ **家族外（external）`blocked_by` 在父 epic 进来时显式预检**：外部 blocker 不会进入本 family ledger，只能由 live GitHub `closed` 满足；凡仍 open 即拒整个 family run，并列出具体阻塞关系。admission 与每次 resume 都重新读取 live GitHub metadata。
 
 这里的 GitHub `closed` 只表示该 prerequisite 在 issue 工作流中已不再未决，包括 wontfix；它解除调度依赖，但不声称某个 commit 已存在于当前 family base。当前 base 上的代码可用性由接棒的专业 worker 与 family verify 判断，runner 不读取关闭原因，也不做 commit/head 对账。
 
-7. **家族 base = dedicated clone 上的本地分支**，merger 合并累积在本地。子片**从本地家族 base 切**（非 `origin/<family-base>`）——`cutRefFor` 当前对有远端的 base 取 `origin/<base>`，对本地家族分支会切到缺上波提交的陈旧 base（agy R1）；家族 base 须走本地引用。
+7. **家族 base = dedicated clone 上的本地分支**，merger 合并累积在本地。子片**从本地家族 base 切**（非 `origin/<family-base>`）——`cutRefFor` 当前对有远端的 base 取 `origin/<base>`，对本地家族分支会切到缺此前增量合入提交的陈旧 base（agy R1）；家族 base 须走本地引用。
 
 ## Considered Options
 
@@ -55,7 +57,8 @@ Sandcastle 原生（文档/issues 优先核过、代码验证）：
 
 ## Consequences
 
-- 家族 base 必须 clone-rooted（ADR 0024，每 invocation 独立 clone）；否则 fork 波次原样重踩 prune 跨 session/invocation 互毁。
+- 家族 base 必须 clone-rooted（ADR 0024，每 invocation 独立 clone）；否则并发启动的 child 原样重踩 prune 跨 session/invocation 互毁。
+- wave 只记录并发启动快照，不构成完成 barrier；child 完成即串行合入并逐次通过父分支 Verification，绿色后立即释放依赖，局部 park 不扩散为整批阻塞。
 - 新增持久件：**family ledger**（append-only + 幂等不变式见决定 5；字段级 JSON 留 TDD）。
 - 家族整合 = 确定性 `git merge`（库无 branch-to-branch 原语）；`merge-to-head` 仅 slice 级回灌、在单片 coder run 内——两者不混。
 - 切片在外部 design session 做（带上下文、质量较稳）；下游闸（merger 冲突 / family verify / 整合 cmr）兜的是 **conflicting + seam-broken** 错切，**coherent-but-wrong（自洽但分错）的错切仍可能漏过下游**，靠切片那步的判断 + post-merge 游玩兜（honest caveat，非下游全兜）。
