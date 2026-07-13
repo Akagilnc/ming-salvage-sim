@@ -392,7 +392,6 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
         // runner recovered `secondKey` from the following cmr_fix_committed row, not
         // this review row); the thin equivalent is an empty envelope.
         blockingFindingIdentityKeys: [],
-        cmrDispositions: [],
       } as FamilyLedgerEntry,
       {
         status: "cmr_fix_committed",
@@ -481,7 +480,6 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
         // #604 slice 3 / ADR 0062: the runner recovers protected prior keys from the
         // thin `blockingFindingIdentityKeys` envelope, not the retired fat blob.
         blockingFindingIdentityKeys: [priorKey],
-        cmrDispositions: [],
       } as FamilyLedgerEntry,
     );
 
@@ -605,7 +603,6 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
         // #604 slice 3 / ADR 0062: thin equivalent of the old `blocking: []` blob —
         // an empty envelope yields no recoverable prior keys.
         blockingFindingIdentityKeys: [],
-        cmrDispositions: [],
       } as FamilyLedgerEntry,
       {
         status: "aborted",

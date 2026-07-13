@@ -45,7 +45,6 @@ import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type { VerifyCmrInput, VerifyCmrResult } from "../../../src/family/verifyCmr.js";
-import type { FindingDisposition } from "../../../src/types.js";
 
 /** A single-slice Backend that drives every child to S8(success). */
 class ChildBackend implements Backend {
@@ -318,7 +317,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             cmrPass: "correctness",
             // #604 slice 3 / ADR 0062: the runner reads only the thin envelope now.
             blockingFindingIdentityKeys: [priorKey],
-            cmrDispositions: [],
           },
           {
             status: "cmr_passed",
@@ -393,7 +391,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             cmrPass: "correctness",
             // #604 slice 3 / ADR 0062: the runner reads only the thin envelope now.
             blockingFindingIdentityKeys: [oldKey],
-            cmrDispositions: [],
           },
           {
             status: "aborted",
@@ -402,7 +399,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             cmrPass: "correctness",
             // #604 slice 3 / ADR 0062: the runner reads only the thin envelope now.
             blockingFindingIdentityKeys: [newKey, newerKey],
-            cmrDispositions: [],
           },
         );
       }
@@ -449,7 +445,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-before-coder-fix",
             // #604 slice 3 / ADR 0062: the runner reads only the thin envelope now.
             blockingFindingIdentityKeys: [priorKey],
-            cmrDispositions: [],
           },
           {
             status: "aborted",
@@ -515,7 +510,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             familyHeadAfter: "head-before-coder-fix",
             // #604 slice 3 / ADR 0062: the runner reads only the thin envelope now.
             blockingFindingIdentityKeys: [priorKey],
-            cmrDispositions: [],
           },
           {
             status: "aborted",
@@ -579,7 +573,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
           familyHeadAfter: "head-before-coder-fix",
           // #604 slice 3 / ADR 0062: the runner reads only the thin envelope now.
           blockingFindingIdentityKeys: [priorKey],
-          cmrDispositions: [],
         } as FamilyLedgerEntry,
         {
           status: "aborted",
@@ -626,7 +619,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
           familyHeadAfter: "head-before-coder-fix",
           // #604 slice 3 / ADR 0062: the runner reads only the thin envelope now.
           blockingFindingIdentityKeys: [priorKey],
-          cmrDispositions: [],
         } as FamilyLedgerEntry,
         {
           status: "aborted",
@@ -1138,8 +1130,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
 
   // #604 slice 3 / ADR 0062: the runner reads only the THIN control envelope. A
   // red integrated CMR review must persist `blockingFindingIdentityKeys` (the
-  // runner's only pending-key source) + `cmrDispositions` (the gate's cross-round
-  // prior-disposition source) — NOT the fat `cmrFindingClassification` structure
+  // runner's only pending-key source) — NOT the fat `cmrFindingClassification` structure
   // (Finding full text / results[] audit / dispositions[] merged into one blob).
   describe("thin CMR envelope on the ledger (#604 slice 3 / ADR 0062)", () => {
     const CMR_LEGS = ["opus", "gpt-5.6-sol", "agy"] as const;
@@ -1207,8 +1198,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       expect(reviewed).toBeDefined();
       // The runner's only pending-key source is present…
       expect(reviewed!.blockingFindingIdentityKeys).toEqual([blockerKey]);
-      // Content-derived disposition judgment belongs to the worker, not the runner.
-      expect(reviewed).not.toHaveProperty("cmrDispositions");
       // The fat structure the runner used to read from is GONE.
       expect(reviewed).not.toHaveProperty("cmrFindingClassification");
     });
@@ -1229,7 +1218,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             cmrPass: "correctness",
             familyHeadAfter: "head-before-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
-            cmrDispositions: [],
           } satisfies FamilyLedgerEntry,
           {
             status: "aborted",
@@ -1267,7 +1255,6 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
             cmrPass: "correctness",
             familyHeadAfter: "head-before-coder-fix",
             blockingFindingIdentityKeys: [blockerKey],
-            cmrDispositions: [],
           } satisfies FamilyLedgerEntry,
           {
             status: "cmr_fix_committed",
@@ -1288,41 +1275,5 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
       expect(pending.correctness).toEqual([blockerKey]);
     });
 
-    it("reads cross-round prior dispositions from cmrDispositions, not the fat blob", () => {
-      const prior: FindingDisposition = {
-        identityKey: blockerKey,
-        status: "accepted_suppressed",
-        reason: "accepted by family issue scope",
-        severity: "medium",
-        source: "issue #604 acceptance criteria",
-        scope: "#604 family integrated CMR",
-        boundedReopen: "reopen on higher severity or different scope",
-      };
-      class PriorDispositionBackend extends FakeFamilyBackend {
-        constructor() {
-          super();
-          this.ledger.push(
-            { childIssue: 10, status: "merged" },
-            {
-              status: "cmr_reviewed",
-              event: "cmr_reviewed",
-              phase: "final",
-              cmrPass: "correctness",
-              familyHeadAfter: "head-prior",
-              blockingFindingIdentityKeys: [blockerKey],
-              cmrDispositions: [prior],
-            } as FamilyLedgerEntry,
-          );
-        }
-      }
-      const backend = new PriorDispositionBackend();
-      // The gate reads the latest cmrDispositions off the ledger for its next pass.
-      // With the fat blob removed, the read must come from `cmrDispositions`.
-      const seen = backend.ledger
-        .slice()
-        .reverse()
-        .find((entry) => entry.cmrDispositions !== undefined);
-      expect(seen?.cmrDispositions).toEqual([prior]);
-    });
   });
 });

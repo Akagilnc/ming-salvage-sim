@@ -22,7 +22,6 @@ import type {
   CleanupResult,
   EscalationAnswerPayload,
   EscalationKind,
-  FindingDisposition,
 } from "../types.js";
 import { isValidCleanupResult } from "../reviewLoopOutcome.js";
 import {
@@ -86,8 +85,6 @@ export interface AbortedRecord {
    * carries nothing (`undefined`), which the runner treats as an unclassified abort.
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
-  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
-  readonly cmrDispositions?: readonly FindingDisposition[];
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
 }
@@ -140,8 +137,6 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
-  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
-  readonly cmrDispositions?: readonly FindingDisposition[];
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
 }
@@ -157,8 +152,6 @@ export interface CmrReviewedRecord {
    * reads ONLY this off a `cmr_reviewed` row.
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
-  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
-  readonly cmrDispositions?: readonly FindingDisposition[];
   readonly stopSummary?: StopSummary;
 }
 
@@ -291,7 +284,6 @@ export async function recordAborted(
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
-      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({
@@ -323,7 +315,6 @@ export async function recordCmrPassed(
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
-      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         successStopSummary(
@@ -354,7 +345,6 @@ export async function recordCmrReviewed(
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
-      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({

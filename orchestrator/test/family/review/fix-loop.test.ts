@@ -2527,7 +2527,6 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
     expect(reviewedRow?.stopSummary).not.toHaveProperty("findingDescriptor");
     const reviewed = backend.ledger.find((entry) => entry.status === "cmr_reviewed");
     expect(reviewed).not.toHaveProperty("cmrFindingClassification");
-    expect(reviewed).not.toHaveProperty("cmrDispositions");
     expect(reviewed?.reason).toBe(
       "integrated cmr completeness reviewer declared 2 open findings",
     );
@@ -2665,26 +2664,6 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
         },
       }),
     });
-    // Historical governance rows remain readable, but the current runner routes
-    // solely by the reviewer declaration and does not classify their content.
-    backend.ledger.push({
-      status: "cmr_passed",
-      event: "cmr_passed",
-      phase: "final",
-      cmrPass: "completeness",
-      cmrDispositions: [
-        {
-          identityKey,
-          status: "accepted_suppressed",
-          reason: trustedSuppression.reason,
-          severity: "medium",
-          source: trustedSuppression.source,
-          scope: trustedSuppression.scope,
-          boundedReopen: trustedSuppression.boundedReopen,
-        },
-      ],
-    });
-
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/291-base",
