@@ -8,7 +8,7 @@ Accepted
 
 ## Decision
 
-Coder/CoderFix 的资源触发（额度墙/池死/hang-with-live-pool）与专业评审 Action 声明的质量不收敛触发，共用 #767 的 `Coder-Rec: X → Y → Z` 一张表、同一顺序；编排器不设第二张 coder relay 专用 fallback 表。资源触发时多走一步 ADR 0124 的正交查池：当前模型先换活池（同模型换马甲），全池死才顺位下一模型。Reviewer / Verification 的 seat 与 relay 继续受各自 Action 的角色能力和 route 约束，不读取 Coder-Rec。
+Coder/CoderFix 的资源触发（额度墙/池死/hang-with-live-pool）与专业评审 Action 声明的质量不收敛触发，共用 #767 的 `Coder-Rec: X → Y → Z` 一张表、同一顺序；编排器不设第二张 coder relay 专用 fallback 表。资源触发时多走一步 ADR 0124 的正交查池：当前模型先换活池（同模型换马甲），全池死才顺位下一模型。Reviewer / Verification 及 delivery/shared-tail Finding Repair 的 seat 与 relay 继续受各自 Action 的角色能力和 route 约束，不读取 Coder-Rec。
 
 ## Consequences
 
