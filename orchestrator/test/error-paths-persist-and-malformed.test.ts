@@ -216,7 +216,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("#5 malformed S2 build output → S8(error), never silent bypass", () => {
-  it("S2 wrong-kind output → one decision escalation", async () => {
+  it("S2 wrong-kind output with no git commit exhausts the mechanical line", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -231,13 +231,36 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("escalate");
-    expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(1);
-    expect(result.stopSummary?.reason).toBe("spec_conflict");
+    expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(3);
+    expect(result.stopSummary?.reason).toBe("infra_failure");
     // A malformed S2 output must NEVER be coerced into a committed success.
     expect(pushed).toBe(false);
   });
 
-  it("S2 undefined output escalates once without mechanical redispatch", async () => {
+  it("S3 wrong-kind output raises exactly one decision park without redispatch", async () => {
+    const backend = new SpyBackend();
+    let pushed = false;
+    backend.push = async () => {
+      pushed = true;
+    };
+    backend.runStep = async (spec) => {
+      backend.runStepIds.push(spec.id);
+      return spec.role === "reviewer"
+        ? { kind: "coder", committed: true, commitsAdded: 1 }
+        : { kind: "coder", committed: true, commitsAdded: 1 };
+    };
+
+    const result = await runOrchestrator({ issueNumber: 244, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(backend.runStepIds.filter((id) => id === "S3")).toHaveLength(1);
+    expect(result.stepLedger.at(-1)?.step).toBe("S8");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.stepLedger.at(-1)?.stopSummary?.summary).toContain("sessionId=");
+    expect(pushed).toBe(false);
+  });
+
+  it("S2 undefined output with no git commit mechanically redispatches", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -256,9 +279,9 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(coderAttempts).toBe(1);
-    expect(pushed).toBe(false);
+    expect(result.status).toBe("success");
+    expect(coderAttempts).toBe(2);
+    expect(pushed).toBe(true);
   });
 
   it("S2 permanently returns garbage → bounded failure escalation, NOT pushed", async () => {

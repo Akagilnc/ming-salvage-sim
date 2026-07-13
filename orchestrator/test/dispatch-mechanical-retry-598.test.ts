@@ -12,8 +12,10 @@
  *
  * The mechanism reads ONLY the outcome discriminant (`result.kind`) — never
  * worker-reported content. A process-level failure
- * (`failed`/`malformed`/`outcome_protocol_failure` or a thrown exception) retries
- * with a FRESH (non-resume) session for the same step, up to MAX_DISPATCH_ATTEMPTS;
+ * (`failed` or a thrown process exception) retries with a FRESH (non-resume)
+ * session for the same step, up to MAX_DISPATCH_ATTEMPTS. Unusable reviewer
+ * receipts are caller-owned decisions; unusable coder receipts are first
+ * reconciled against git truth, and only a no-commit result enters this budget.
  * a judged `completed`/`escalated` passes through with ZERO retry; bounded
  * exhaustion returns the last failure (runner function (a), #604).
  */

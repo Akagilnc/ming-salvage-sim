@@ -17,7 +17,7 @@
  * shared mechanical retry layer owns the bound and exhaustion escalation.
  */
 
-import type { Finding, OnlineReviewTerminalState, StepId, StepOutput } from "./types.js";
+import type { OnlineReviewTerminalState, StepId, StepOutput } from "./types.js";
 import { escalateOf } from "./validate.js";
 import { MAX_ONLINE_REVIEW_ROUNDS } from "./onlineReviewLoop.js";
 
@@ -42,12 +42,6 @@ export interface RouteContext {
    * run yet.
    */
   readonly output?: StepOutput;
-  /**
-   * Blocking findings selected at S4 from the findings-count channel (#877).
-   * Disposition prose (still-active / verified-closed) is not a fate channel —
-   * only findings re-emitted in `findings[]` keep the fix loop open.
-   */
-  readonly pendingBlockingFindings?: ReadonlyArray<Finding>;
   /** Worker-reported S7 status, retained as telemetry only. */
   readonly shipStatus?: string;
   /** Host-observed truth: whether the shipped branch currently has an open PR. */
