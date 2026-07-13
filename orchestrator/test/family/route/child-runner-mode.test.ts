@@ -38,7 +38,7 @@ import type {
   WorktreeHandle,
 } from "../../../src/types.js";
 
-/** A fake that records the base passed to prepareWorktree + push invocations. */
+/** A fake that records the base passed to prepareWorktree. */
 class FamilyModeBackend implements Backend {
   async smokeModelRoute(route: any) {
     const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
@@ -46,12 +46,10 @@ class FamilyModeBackend implements Backend {
   }
   readonly calls: string[] = [];
   prepareBase: string | undefined;
-  pushCount = 0;
 
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
   }
@@ -78,10 +76,6 @@ class FamilyModeBackend implements Backend {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
   }
-  async push(worktree: WorktreeHandle): Promise<void> {
-    this.calls.push(`push(${worktree.branch})`);
-    this.pushCount += 1;
-  }
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
 
@@ -97,7 +91,7 @@ describe("runner family-mode adaptations (#293)", () => {
     expect(backend.calls).toContain("prepareWorktree(294, family/293-base)");
   });
 
-  it("S7 is a local handoff (push never called), still reaches success", async () => {
+  it("S7 is a local handoff and still reaches success", async () => {
     const backend = new FamilyModeBackend();
     const result = await runOrchestrator({
       issueNumber: 294,
@@ -106,9 +100,6 @@ describe("runner family-mode adaptations (#293)", () => {
     });
     expect(result.status).toBe("success");
     expect(result.branch).toBe("feat/child-294");
-    // Decision 2: the child does NOT push remotely; push is never called.
-    expect(backend.pushCount).toBe(0);
-    expect(backend.calls.some((c) => c.startsWith("push("))).toBe(false);
     // It still ran the full S0→S8 sequence (S7 just no-ops). ADR 0030 keeps the
     // reviewer and classification boundaries visible before the local ship step.
     expect(result.stepLedger.map((e) => e.step)).toEqual([

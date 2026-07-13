@@ -62,11 +62,9 @@ class ChildBackend implements Backend {
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
   readonly prepareBases: string[] = [];
-  pushCount = 0;
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
   }
@@ -90,9 +88,6 @@ class ChildBackend implements Backend {
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
-  }
-  async push(): Promise<void> {
-    this.pushCount += 1;
   }
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
@@ -546,7 +541,6 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       "family/293-base",
     ]);
     // S7 no-op: no remote push from any child.
-    expect(singleSliceBackend.pushCount).toBe(0);
   });
 
   it("family ledger records each merged child append-only (#293 acceptance 3)", async () => {

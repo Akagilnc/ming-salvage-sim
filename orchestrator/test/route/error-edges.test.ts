@@ -52,7 +52,6 @@ class ErrorEdgeBackend implements Backend {
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
   }
@@ -72,7 +71,6 @@ class ErrorEdgeBackend implements Backend {
     }
     return { kind: "reviewer", findings: [] };
   }
-  async push(_w: WorktreeHandle): Promise<void> {}
   // #249 integration: writeLedger is part of the Backend seam; this suite
   // asserts error edges, not ledger persistence, so it is a no-op.
   async writeLedger(

@@ -43,8 +43,6 @@ class HappyPathBackend implements Backend {
   readonly ledgerWrites: PersistentLedgerEntry[] = [];
   /** Vitest mock call-order marker for sandbox dispatch. */
   readonly markRunStep = vi.fn();
-  /** Number of times push() was invoked. */
-  pushCount = 0;
   /** The single resident worktree handed out (asserts persistence/reuse). */
   readonly worktree: WorktreeHandle = {
     branch: "feat/orchestrator/issue-247",
@@ -55,9 +53,6 @@ class HappyPathBackend implements Backend {
   // #255: fresh-run defaults (this suite is the happy-path regression).
   async findResumeState(): Promise<ResumeState | undefined> {
     return undefined;
-  }
-  async cleanResidue(): Promise<void> {
-    // no-op
   }
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
@@ -107,11 +102,6 @@ class HappyPathBackend implements Backend {
       return { kind: "reviewer", findings: [] };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
-  }
-
-  async push(worktree: WorktreeHandle): Promise<void> {
-    this.calls.push(`push(${worktree.branch})`);
-    this.pushCount += 1;
   }
 
   // #249: writeLedger is part of the Backend seam; the happy-path fake is a
@@ -193,7 +183,6 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     expect(backend.ledgerWrites.at(-1)?.stopSummary?.reason).toBe("success");
 
     // The child runner never pushes; family merge/ship owns remote delivery.
-    expect(backend.pushCount).toBe(0);
 
     // The step ledger records the runner's decisions in canonical order —
     // S3 is the fresh full-diff reviewer and S4 records the runner classification.
@@ -244,7 +233,6 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
 
     // A committed build plus clean independent review → local handoff succeeds.
     expect(result.status).toBe("success");
-    expect(backend.pushCount).toBe(0);
   });
 
   it("only takes an issue number as input and uses versioned promptFiles (no ad-hoc prompts)", async () => {

@@ -89,7 +89,6 @@ describe("#439 decision-escalate answer channel", () => {
 
     expect(result.status).toBe("escalate");
     expect(backend.dispatchSpecs).toEqual([]);
-    expect(backend.cleanResidueCount).toBe(0);
   });
 
   it("decision-escalate with a malformed blank answer row remains paused", async () => {
@@ -101,7 +100,6 @@ describe("#439 decision-escalate answer channel", () => {
 
     expect(result.status).toBe("escalate");
     expect(backend.dispatchSpecs).toEqual([]);
-    expect(backend.cleanResidueCount).toBe(0);
   });
 
   it("#877: continue_fixing answer for historical no-progress park needs findings-count keys (disposition prose alone is not enough)", async () => {
@@ -179,7 +177,6 @@ describe("#439 decision-escalate answer channel", () => {
 
     expect(result.status).toBe("escalate");
     expect(backend.dispatchSpecs).toEqual([]);
-    expect(backend.cleanResidueCount).toBe(0);
   });
 
   it("unknown tagged escalationKind remains terminal even if an answer row is appended", async () => {
@@ -194,7 +191,6 @@ describe("#439 decision-escalate answer channel", () => {
 
     expect(result.status).toBe("escalate");
     expect(backend.dispatchSpecs).toEqual([]);
-    expect(backend.cleanResidueCount).toBe(0);
   });
 
   it("legacy untagged agent decision escalation without an appended answer remains paused", async () => {
@@ -225,7 +221,6 @@ describe("#439 decision-escalate answer channel", () => {
 
     expect(result.status).toBe("escalate");
     expect(backend.resumeSessionCalls).toHaveLength(0);
-    expect(backend.cleanResidueCount).toBe(0);
   });
 
   it("legacy untagged agent decision escalation reopens only after an appended answer", async () => {

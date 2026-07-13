@@ -72,7 +72,6 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     expect(backend.prepareWorktreeCount).toBe(0);
     // #661 owner ruling: resume continues the worker scene; it never resets
     // or cleans uncommitted/partial worker output before re-entry.
-    expect(backend.cleanResidueCount).toBe(0);
   });
 
   it("AC2: continues from S3 (route successor of a committed S2) — does NOT re-run S0/S1/S2", async () => {
@@ -83,7 +82,6 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // The committed S2 routes to a fresh reviewer; S2 itself is not re-dispatched.
     expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
-    expect(backend.pushCount).toBe(0);
     // S0 gate / S1 load are NOT re-executed (no re-cut, no re-snapshot write).
     // #767 may re-fetch issue meta/body for Coder-Rec on the resume path.
     expect(backend.calls).not.toContain("prepareWorktree(255, main)");
@@ -514,10 +512,8 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
       "review/fix loop made no progress",
     );
     // Resume replays empty S6 still-active as findings=0 → local handoff.
-    expect(backend.pushCount).toBe(0);
   });
 });
-
 
 describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", () => {
   it("ledger stopping at a committed S2 resumes at the route successor S3, not S0", async () => {
@@ -540,7 +536,6 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
     // Resumed to local handoff purely from ledger truth.
-    expect(backend.pushCount).toBe(0);
     expect(result.status).toBe("success");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0", "S1", "S2", "S3", "S4", "S7", "S8",
@@ -645,10 +640,8 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(result.status).toBe("success");
   });
 
-  it("a terminal-status resume does NOT run cleanResidue (a clean failure must not flip a finished run's status)", async () => {
+  it("a terminal-status resume reports the finished run without mutating its worktree", async () => {
     // Re-feeding a completed run is a pure status report — no worktree mutation.
-    // cleanResidue must NOT be invoked, so a transient git failure during clean
-    // can never turn an already-finished success into an error.
     const resumeState: ResumeState = {
       worktree: WORKTREE,
       stateDir: STATE_DIR,
@@ -665,6 +658,5 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.cleanResidueCount).toBe(0);
   });
 });

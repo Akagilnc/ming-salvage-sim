@@ -108,7 +108,6 @@ class RetryReviewBackend implements Backend {
   async findResumeState(): Promise<ResumeState | undefined> {
     return this.resumeState && materializeResumeState(this.resumeState);
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
   }
@@ -132,7 +131,6 @@ class RetryReviewBackend implements Backend {
     if (spec.role === "reviewer") return { kind: "reviewer", findings: [] };
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
-  async push(): Promise<void> {}
   async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
     this.ledgerWrites.push(entry);
   }
@@ -2285,7 +2283,6 @@ describe("#369 runner resume/retry review fixes", () => {
       reviewerAttempts = 0;
 
       async findResumeState(): Promise<undefined> { return undefined; }
-      async cleanResidue(): Promise<void> {}
       async resumeSession(spec: StepSpec): Promise<StepOutput> {
         return this.runStep(spec);
       }
@@ -2313,7 +2310,6 @@ describe("#369 runner resume/retry review fixes", () => {
         }
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      async push(): Promise<void> {}
       async writeLedger(): Promise<void> {}
     }
     const backend = new LegacyThrowingReviewBackend();
@@ -2334,7 +2330,6 @@ describe("#369 runner resume/retry review fixes", () => {
       reviewerAttempts = 0;
 
       async findResumeState(): Promise<undefined> { return undefined; }
-      async cleanResidue(): Promise<void> {}
       async resumeSession(spec: StepSpec): Promise<StepOutput> {
         return this.runStep(spec);
       }
@@ -2361,7 +2356,6 @@ describe("#369 runner resume/retry review fixes", () => {
         }
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      async push(): Promise<void> {}
       async writeLedger(): Promise<void> {}
     }
     const backend = new FailingReviewBackend();
@@ -2442,7 +2436,6 @@ describe("#369 legacy S5 landing file", () => {
     const backend: Backend = {
       async smokeModelRoute(route) { return route; },
       async findResumeState() { return undefined; },
-      async cleanResidue() {},
       async resumeSession() {
         throw new Error("not expected");
       },
@@ -2541,7 +2534,6 @@ describe("#369 legacy S5 landing file", () => {
     const backend: Backend = {
       async smokeModelRoute(route) { return route; },
       async findResumeState() { return undefined; },
-      async cleanResidue() {},
       async resumeSession() {
         throw new Error("not expected");
       },
@@ -2617,7 +2609,6 @@ describe("#369 legacy S5 landing file", () => {
     const backend: Backend = {
       async smokeModelRoute(route) { return route; },
       async findResumeState() { return undefined; },
-      async cleanResidue() {},
       async resumeSession() {
         throw new Error("not expected");
       },

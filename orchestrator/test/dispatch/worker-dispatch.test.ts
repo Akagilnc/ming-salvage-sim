@@ -82,7 +82,6 @@ class DispatchBackend implements Backend {
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(): Promise<StepOutput> {
     throw new Error("resumeSession should not be called directly (#331)");
   }
@@ -701,7 +700,7 @@ describe("#796 Coder-Rec host dispatch", () => {
 });
 
 describe("#331 legacyDispatchWorker — forwards to the existing methods", () => {
-  /** A minimal legacy backend exposing only runStep + push (no dispatchWorker). */
+  /** A minimal legacy backend exposing only runStep/resumeSession (no dispatchWorker). */
   class LegacyBackend {
     runStepCalls: StepSpec[] = [];
     resumeCalls: string[] = [];

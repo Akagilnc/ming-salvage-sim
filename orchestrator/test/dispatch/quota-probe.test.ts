@@ -717,7 +717,6 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
     async findResumeState(): Promise<undefined> {
       return undefined;
     }
-    async cleanResidue(): Promise<void> {}
     async resumeSession(): Promise<StepOutput> {
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
@@ -741,7 +740,6 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
       // Prefer dispatchWorker path below.
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    async push(): Promise<void> {}
     async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
       this.ledgerWrites.push(entry);
     }

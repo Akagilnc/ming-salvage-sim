@@ -458,7 +458,6 @@ class ReviewWorkerBackend implements Backend {
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(): Promise<StepOutput> {
     throw new Error("resumeSession should not be called directly (#334)");
   }

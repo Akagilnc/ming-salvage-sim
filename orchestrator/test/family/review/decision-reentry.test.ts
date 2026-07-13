@@ -44,7 +44,6 @@ class UnusedChildBackend implements Backend {
   async findResumeState(): Promise<ResumeState | undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(): Promise<StepOutput> {
     throw new Error("resumeSession must not be called on the early-return path");
   }
@@ -61,7 +60,6 @@ class UnusedChildBackend implements Backend {
   async runStep(_spec: StepSpec, _worktree?: WorktreeHandle): Promise<StepOutput> {
     throw new Error("runStep must not be called on the early-return path");
   }
-  async push(): Promise<void> {}
   async writeLedger(_entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {}
 }
 

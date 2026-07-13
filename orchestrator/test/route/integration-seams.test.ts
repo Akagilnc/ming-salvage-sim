@@ -85,14 +85,10 @@ class SpyBackend implements Backend {
     stateDir: string;
   }> = [];
   readonly runStepIds: string[] = [];
-  pushed = false;
 
   // #255 resume seam: fresh-run fake → no residue (runner consults this first).
   async findResumeState(): Promise<undefined> {
     return undefined;
-  }
-  async cleanResidue(): Promise<void> {
-    // no-op
   }
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
@@ -114,9 +110,6 @@ class SpyBackend implements Backend {
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
     return { kind: "reviewer", findings: [] };
-  }
-  async push(_w: WorktreeHandle): Promise<void> {
-    this.pushed = true;
   }
   async writeLedger(
     entry: PersistentLedgerEntry,
@@ -143,7 +136,6 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.pushed).toBe(false);
   });
 
   it("committed:false with commitsAdded:2 advances to reviewer", async () => {
@@ -220,7 +212,6 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     const backend = new SpyBackend(); // default: true/1
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("success");
-    expect(backend.pushed).toBe(false);
   });
 
   it("regression: committed:false with commitsAdded:0 advances to S3", async () => {
@@ -236,7 +227,6 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("success");
     expect(backend.runStepIds).toContain("S3");
-    expect(backend.pushed).toBe(false);
   });
 });
 
@@ -380,7 +370,6 @@ describe("E: S8 ledger-write failure attributes the real failing step", () => {
     // The white run advances through review and local handoff; the failing operation is
     // still the S8 ledger write, not a fabricated S2 court.
     expect(result.errorPackage?.failedStep).not.toBe("S7");
-    expect(backend.pushed).toBe(false);
   });
 
   it("approve handoff whose S8 write throws → failedStep attributes to the S8 write step", async () => {

@@ -344,7 +344,6 @@ describe("#422 model route presets", () => {
       async findResumeState(): Promise<undefined> {
         return undefined;
       }
-      async cleanResidue(): Promise<void> {}
       async resumeSession(): Promise<StepOutput> {
         throw new Error("not used");
       }
@@ -391,7 +390,6 @@ describe("#422 model route presets", () => {
           },
         };
       }
-      async push(): Promise<void> {}
       async writeLedger(): Promise<void> {}
     }
 
@@ -459,7 +457,6 @@ describe("#422 model route presets", () => {
       async findResumeState(): Promise<undefined> {
         throw new Error("backend should not run");
       }
-      async cleanResidue(): Promise<void> {}
       async resumeSession(_spec: StepSpec): Promise<StepOutput> {
         throw new Error("backend should not run");
       }
@@ -474,9 +471,6 @@ describe("#422 model route presets", () => {
       }
       async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
-        throw new Error("backend should not run");
-      }
-      async push(): Promise<void> {
         throw new Error("backend should not run");
       }
       async writeLedger(): Promise<void> {}

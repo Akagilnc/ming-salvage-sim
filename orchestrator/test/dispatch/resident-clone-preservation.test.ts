@@ -5,8 +5,7 @@
  * may be reachable from preparation or compatibility cleanup seams.
  *
  * Drives the REAL RealBackend via the same `sh`/clone seam subclass as the build
- * test (zero git / Docker), exercising the reuse path of prepareWorktree which
- * calls cleanResidueAt.
+ * test (zero git / Docker), exercising the reuse path of prepareWorktree.
  */
 
 import { dirname, join } from "node:path";
@@ -103,14 +102,4 @@ describe("#661 resident scene preservation", () => {
     expect(b.gitCalls.some((c) => c.cwd === EXISTING_WT && /^(reset --hard|clean -fd)/.test(c.args.join(" ")))).toBe(false);
   });
 
-  it("the compatibility cleanResidue() seam is a no-op", async () => {
-    const b = newBackend();
-    RecordingBackend.gitCalls = [];
-    await b.cleanResidue({ branch: BRANCH, base: "main", path: EXISTING_WT });
-
-    const ran = b.gitCalls.map((c) => c.args.join(" "));
-    expect(ran).not.toContain("reset --hard HEAD");
-    expect(ran).not.toContain("clean -fd");
-    expect(ran.some((r) => r.includes("worktree prune"))).toBe(false);
-  });
 });

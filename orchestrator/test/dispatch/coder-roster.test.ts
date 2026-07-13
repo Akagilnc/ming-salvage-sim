@@ -533,7 +533,6 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     async findResumeState(): Promise<ResumeState | undefined> {
       return undefined;
     }
-    async cleanResidue(): Promise<void> {}
     async resumeSession(spec: StepSpec): Promise<StepOutput> {
       return this.runStep(spec);
     }
@@ -569,7 +568,6 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
       }
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    async push(): Promise<void> {}
     async writeLedger(_e: PersistentLedgerEntry): Promise<void> {}
   }
 

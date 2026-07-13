@@ -406,7 +406,6 @@ describe("#884 driver stage line logs", () => {
       async findResumeState(): Promise<ResumeState | undefined> {
         return undefined;
       }
-      async cleanResidue() {}
       async resumeSession(_spec: StepSpec): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -462,7 +461,6 @@ describe("#884 driver stage line logs", () => {
         // Any remaining role (verify/fixer/cleanup/docRelease): keep the loop moving.
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      async push() {}
       async writeLedger() {}
     }
     try {

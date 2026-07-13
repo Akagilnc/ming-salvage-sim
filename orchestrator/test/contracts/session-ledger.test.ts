@@ -47,7 +47,6 @@ class SeamExtensionBackend implements Backend {
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput | StepResult> {
     return this.runStep(spec);
   }
@@ -76,7 +75,6 @@ class SeamExtensionBackend implements Backend {
     // Real per-step session id keyed on the step id so each step is distinct.
     return { output, sessionId: `sess-${spec.id}` };
   }
-  async push(): Promise<void> {}
   async writeLedger(
     entry: PersistentLedgerEntry,
     _stateDir: string,

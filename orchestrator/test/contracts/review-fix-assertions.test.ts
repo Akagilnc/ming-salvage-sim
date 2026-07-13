@@ -994,7 +994,6 @@ class FixLoopBackend implements Backend {
   async findResumeState(): Promise<ResumeState | undefined> {
     return this.opts.resumeState;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
   }
@@ -1018,7 +1017,6 @@ class FixLoopBackend implements Backend {
     if (spec.role === "reviewer") return { kind: "reviewer", findings: [] };
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
-  async push(): Promise<void> {}
   async writeLedger(
     entry: PersistentLedgerEntry,
     _stateDir: string,

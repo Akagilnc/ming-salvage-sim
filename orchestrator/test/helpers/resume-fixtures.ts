@@ -25,7 +25,6 @@
  * Strategy: extend the Backend fake with
  *   - findResumeState(issueNumber) → ResumeState | undefined  (the host-side
  *     check that detects an existing resident worktree + persisted ledger)
- *   - cleanResidue(worktree)                                  (reset/clean/prune)
  *   - resumeSession(spec, worktree, sessionId)                (Sandcastle-native)
  * A fresh run returns undefined from findResumeState (no residue) → behaves
  * exactly like before. A resume run pre-loads a ResumeState whose ledger stops
@@ -154,7 +153,7 @@ export function escalationAnswer(
  * - If `resumeState` is provided, findResumeState returns it (the issue has
  *   residue: existing worktree + persisted ledger). Otherwise it returns
  *   undefined (fresh run).
- * - Records cleanResidue / prepareWorktree / resumeSession / runStep calls so
+ * - Records prepareWorktree / resumeSession / runStep calls so
  *   the tests can assert reuse-vs-recut and resume-vs-fresh-session.
  */
 export class ResumeBackend implements Backend {
@@ -169,8 +168,6 @@ export class ResumeBackend implements Backend {
   /** Each resumeSession call: [stepId, sessionId]. */
   readonly resumeSessionCalls: Array<[string, string]> = [];
   prepareWorktreeCount = 0;
-  cleanResidueCount = 0;
-  pushCount = 0;
 
   constructor(private readonly resumeState?: ResumeState) {}
 
@@ -179,11 +176,6 @@ export class ResumeBackend implements Backend {
   ): Promise<ResumeState | undefined> {
     this.calls.push(`findResumeState(${issueNumber})`);
     return this.resumeState;
-  }
-
-  async cleanResidue(_worktree: WorktreeHandle): Promise<void> {
-    this.calls.push("cleanResidue");
-    this.cleanResidueCount += 1;
   }
 
   async resumeSession(
@@ -256,11 +248,6 @@ export class ResumeBackend implements Backend {
   ): Promise<number> {
     this.calls.push(`countCommitsBetween(${fromHead}, ${toHead})`);
     return this.commitCountsBetween.get(`${fromHead}..${toHead}`) ?? 1;
-  }
-
-  async push(worktree: WorktreeHandle): Promise<void> {
-    this.calls.push(`push(${worktree.branch})`);
-    this.pushCount += 1;
   }
 
   async writeLedger(

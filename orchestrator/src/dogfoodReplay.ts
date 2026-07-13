@@ -428,8 +428,6 @@ class DogfoodSingleSliceBackend implements Backend {
     return this.resumeState;
   }
 
-  async cleanResidue(): Promise<void> {}
-
   async resumeSession(
     spec: StepSpec,
     _worktree: WorktreeHandle,

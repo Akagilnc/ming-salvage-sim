@@ -69,16 +69,12 @@ class SeamOnlyBackend implements Backend {
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   // The three legacy productive methods: any DIRECT runner call is a bug.
   async runStep(): Promise<StepOutput> {
     throw new Error("runStep called directly — runner is not a pure scheduler");
   }
   async resumeSession(): Promise<StepOutput> {
     throw new Error("resumeSession called directly — runner is not a pure scheduler");
-  }
-  async push(): Promise<void> {
-    throw new Error("push called directly — runner is not a pure scheduler");
   }
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     return {
