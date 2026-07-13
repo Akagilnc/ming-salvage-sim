@@ -47,12 +47,6 @@ PR opened:
 <ship>{"status": "pr_opened", "branch": "<the shipped branch>", "pr": "<the PR url>"}</ship>
 ```
 
-Pushed but no PR:
-
-```text
-<ship>{"status": "pushed", "branch": "<the shipped branch>"}</ship>
-```
-
 Escalation:
 
 ```text
@@ -68,7 +62,8 @@ Failure:
 Rules:
 
 - The JSON must match one of the shapes above exactly.
-- `status` is `pr_opened` or `pushed`; `pr_opened` must include `pr`.
+- Success is only `status: "pr_opened"` and must include `pr`; if no PR exists,
+  emit failure and exit non-zero.
 - Every string field you emit (`branch`, `pr`, `reason`, `diagnosis`) must be
   non-empty after trimming — the runner validates them as trimmed-non-empty
   (`shipOutcome.ts`) and rejects a blank/whitespace value.

@@ -48,6 +48,7 @@ import {
   childEscalationAnswer,
   familyEscalationState,
   familyReviewLoopConvergedForHead,
+  familyShippedRecordForReviewLoopResume,
   familyPostMergeCleanupForHead,
   familyPrMergedForHead,
   hasBoundShippedMarker,
@@ -58,12 +59,14 @@ import {
   recordChildDecisionParked,
   recordFamilyEscalated,
   recordMerged,
+  recordReviewLoopConverged,
   unansweredChildEscalations,
 } from "./ledger.js";
 import { mergeChild } from "./merger.js";
 import { reconcileFamilyLedger } from "./reconcile.js";
 import {
   ensureFamilyPostMergeCleanup,
+  runFamilyOnlineReviewLoop,
   runVerifyCmr,
 } from "./verifyCmr.js";
 import {
@@ -933,18 +936,9 @@ export async function runFamily(
     initialFamilyLedger = await familyBackend.readFamilyLedger();
   }
   const priorEscalation = familyEscalationState(initialFamilyLedger);
-  const resumableLegacyFamilyShipPark =
-    priorEscalation?.escalation.escalationKind === "failure" &&
-    priorEscalation.escalation.phase === "final" &&
-    initialFamilyLedger.some(
-      (entry) => (entry as { readonly status: string }).status === "ship_completed",
-    );
   if (priorEscalation !== undefined) {
     const { escalation, answer } = priorEscalation;
-    if (
-      !resumableLegacyFamilyShipPark &&
-      (escalation.escalationKind !== "decision" || answer === undefined)
-    ) {
+    if (escalation.escalationKind !== "decision" || answer === undefined) {
       const ledgerMerged = mergedSet(initialFamilyLedger);
       return {
         status: "escalated",
@@ -1916,6 +1910,130 @@ export async function runFamily(
       familyBase,
       familyHead,
       stopSummary: alreadyDoneSummary,
+      children,
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    };
+  }
+
+  // `shipped` is the durable checkpoint written immediately after the ship
+  // worker opens the PR. A crash after that write resumes at online review;
+  // verify/CMR/ship must not run twice. This is bookkeeping, not a delivery
+  // verdict: the worker already pressed the ship success button.
+  const shippedRecord = familyShippedRecordForReviewLoopResume(
+    preFinalLedger,
+    preFinalFamilyHead,
+  );
+  if (shippedRecord !== undefined) {
+    const ledgerMerged = await currentMerged(familyBackend);
+    const children: FamilyChildResult[] = epic.children.map((child) =>
+      ledgerMerged.has(child.issue)
+        ? { issue: child.issue, status: "already_done" as const }
+        : { issue: child.issue, status: "skipped" as const },
+    );
+    const reviewLoop = await runFamilyOnlineReviewLoop({
+      familyBackend,
+      familyBase,
+      runId,
+      ship: {
+        kind: "ship",
+        branch: familyBase,
+        pr: shippedRecord.pr,
+        prHead: shippedRecord.familyHeadAfter,
+        status: "pr_opened",
+      },
+      resolvedRoute: activeRoutePolicy.route,
+      ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
+    });
+    if (!reviewLoop.ok) {
+      const stopSummary =
+        reviewLoop.stopSummary ??
+        infraFailureStopSummary({
+          summary: "family online review loop did not converge during shipped resume",
+          repairHint: "repair or answer the worker-reported stop, then re-feed the family run",
+        });
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind:
+          stopSummary.reason === "decision_gate_park" ? "decision" : "failure",
+        phase: "final",
+        reason: stopSummary.summary,
+        familyHeadAfter: preFinalFamilyHead,
+        stopSummary,
+      });
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead: preFinalFamilyHead,
+        stopSummary,
+        children,
+      };
+    }
+
+    const convergedHead =
+      (await readCurrentFamilyHead(familyBackend, familyBase)) ??
+      preFinalFamilyHead ??
+      shippedRecord.familyHeadAfter;
+    await recordReviewLoopConverged(familyBackend, {
+      pr: shippedRecord.pr,
+      familyHeadAfter: convergedHead,
+      ...(shippedRecord.stopSummary !== undefined
+        ? { stopSummary: shippedRecord.stopSummary }
+        : {}),
+    });
+    const autoMerge = await runFamilyAutoMergeStage({
+      familyBackend,
+      familyBase,
+      convergedHeadOid: convergedHead,
+      prUrl: shippedRecord.pr,
+    });
+    if (familyAutoMergeIncomplete(autoMerge)) {
+      const stopSummary =
+        autoMerge.stopSummary ??
+        decisionGateParkStopSummary({
+          summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
+          repairHint: "resolve the worker-reported merge stop, then re-feed the family run",
+        });
+      await recordFamilyEscalated(familyBackend, {
+        escalationKind:
+          stopSummary.reason === "decision_gate_park" ? "decision" : "failure",
+        phase: "final",
+        reason: stopSummary.summary,
+        familyHeadAfter: convergedHead,
+        stopSummary,
+      });
+      return {
+        status: "escalated",
+        familyBase,
+        familyHead: convergedHead,
+        stopSummary,
+        children,
+      };
+    }
+
+    familyHead = convergedHead;
+    const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
+      familyBackend,
+      familyBase,
+      runId,
+      familyHeadAfter: convergedHead,
+      prUrl: shippedRecord.pr,
+      familyIssue: epic.issue,
+      resolvedRoute: activeRoutePolicy.route,
+      children,
+      ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    });
+    if (cleanupBlocked !== undefined) return cleanupBlocked;
+    return {
+      status: "success",
+      familyBase,
+      familyHead,
+      stopSummary: {
+        reason: "already_done",
+        summary: "family review loop resumed from the shipped checkpoint and converged",
+      },
       children,
       ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
         ? { admissionSkipped: epic.admissionSkipped }

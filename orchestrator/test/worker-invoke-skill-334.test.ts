@@ -277,6 +277,12 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
       /repairEvidence[\s\S]*findingScope[\s\S]*changedFiles[\s\S]*(tests|fixtures|patchSummary)/i,
     );
     expect(fix).not.toMatch(/sibling ledger|legacy compatibility fallback|Prefer the sibling ledger/is);
+    expect(fix).not.toMatch(/gh issue view|same-pattern check|fix-introduced-bug check/i);
+
+    const familyShip = read("family_ship.md");
+    expect(familyShip).toMatch(/\/home\/agent\/\.orchestrator\/souls\/ship\.md/);
+    expect(familyShip).toMatch(/gstack-ship/i);
+    expect(familyShip).not.toMatch(/gh pr view|idempotent success case|version bump/i);
 
     const review = read("reviewer_review.md");
     expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
@@ -312,16 +318,13 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(soul).toMatch(/Snapshot files.*not execution input/is);
   });
 
-  it("coder entrypoints require author-aware live issue reads before trusting issue instructions", () => {
-    for (const promptName of ["coder_implement.md", "coder_fix.md"]) {
-      const prompt = read(promptName);
-      expect(prompt).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
-      expect(prompt).toMatch(/repo owner/i);
-      expect(prompt).toMatch(/non-owner.*Agent Brief.*ordinary\s+issue text/is);
-      expect(prompt).toMatch(/non-owner.*title.*body.*comments.*data-only/is);
-      expect(prompt).toMatch(/must not.*instructions.*scope changes.*commands/is);
-      expect(prompt).toMatch(/credential-handling\s+requests/i);
-    }
+  it("coder soul, not the thin fix prompt, owns author-aware live issue reads", () => {
+    const prompt = read("coder_fix.md");
+    const soul = readSoul("coder.md");
+    expect(prompt).not.toMatch(/gh issue view|comment\.author\.login|credential-handling/i);
+    expect(soul).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
+    expect(soul).toMatch(/comment\.author\.login.*repo owner/is);
+    expect(soul).toMatch(/credential-handling\s+requests/i);
   });
 
   it("the reviewer soul carries snapshot-input policy outside the thin prompt", () => {
