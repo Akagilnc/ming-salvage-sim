@@ -1276,11 +1276,11 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
   });
 
-  it("still rings a review-loop stdout decision bell when sidecar cargo is unreadable", async () => {
+  it("rings a review-loop stdout decision bell before parseable sidecar cargo", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
     const dir = trackTempDir("review-loop-outcome-bell-");
     const outcomePath = join(dir, "outcome.json");
-    writeFileSync(outcomePath, "{not json", "utf8");
+    writeFileSync(outcomePath, JSON.stringify({ unrelatedCargo: true }), "utf8");
 
     expect(mod.parseVerifyOutcome(
       '<verify>{"bad": 1, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</verify>',

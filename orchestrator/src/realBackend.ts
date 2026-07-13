@@ -1319,6 +1319,26 @@ export function extractDocReleaseTag(stdout: string): unknown | undefined {
   return extractTaggedJson(stdout, "docRelease");
 }
 
+function extractRoleReceipt(stdout: string, role: StepSpec["role"]): unknown | undefined {
+  try {
+    return role === "coder"
+      ? extractCoderTag(stdout)
+      : role === "reviewer"
+        ? extractReviewerTag(stdout)
+        : role === "verify"
+          ? extractVerifyTag(stdout)
+          : role === "fixer"
+            ? extractFixerTag(stdout)
+            : role === "cleanup"
+              ? extractCleanupTag(stdout)
+              : role === "docRelease"
+                ? extractDocReleaseTag(stdout)
+                : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Read a runner-owned worker outcome sidecar.
  *
@@ -3198,51 +3218,31 @@ export class RealBackend implements Backend {
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown | undefined {
+    const compatibility = extractRoleReceipt(result.stdout, spec.role);
+    const compatibilityBell = probeWorkerDecisionBell(compatibility);
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
-        if (sidecar !== undefined) return sidecar;
+        if (sidecar !== undefined) {
+          if (probeWorkerDecisionBell(sidecar) !== undefined) return sidecar;
+          if (compatibilityBell !== undefined) return compatibility;
+          return sidecar;
+        }
       }
     } catch (err) {
       console.warn(
         `[orchestrator] telemetry: ${spec.id}-${spec.role} outcome sidecar is unreadable cargo: ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
-      const compatibility =
-        spec.role === "coder"
-          ? extractCoderTag(result.stdout)
-          : spec.role === "reviewer"
-            ? extractReviewerTag(result.stdout)
-            : spec.role === "verify"
-              ? extractVerifyTag(result.stdout)
-              : spec.role === "fixer"
-                ? extractFixerTag(result.stdout)
-                : spec.role === "cleanup"
-                  ? extractCleanupTag(result.stdout)
-                  : spec.role === "docRelease"
-                    ? extractDocReleaseTag(result.stdout)
-                    : undefined;
-      return probeWorkerDecisionBell(compatibility) !== undefined
-        ? compatibility
-        : undefined;
+      return compatibilityBell !== undefined ? compatibility : undefined;
     }
-    if (typedOutputUsed && result.output !== undefined) return result.output;
+    if (typedOutputUsed && result.output !== undefined) {
+      if (probeWorkerDecisionBell(result.output) !== undefined) return result.output;
+      if (compatibilityBell !== undefined) return compatibility;
+      return result.output;
+    }
     // Stdout tags are the primary machine channel for multi-iteration coders;
     // elsewhere they are compatibility for a missing typed result.
-    const compatibility =
-      spec.role === "coder"
-        ? extractCoderTag(result.stdout)
-        : spec.role === "reviewer"
-          ? extractReviewerTag(result.stdout)
-          : spec.role === "verify"
-            ? extractVerifyTag(result.stdout)
-            : spec.role === "fixer"
-              ? extractFixerTag(result.stdout)
-              : spec.role === "cleanup"
-                ? extractCleanupTag(result.stdout)
-                : spec.role === "docRelease"
-                  ? extractDocReleaseTag(result.stdout)
-                  : undefined;
     if (compatibility !== undefined) {
       if (typedOutputUsed) {
         console.warn(

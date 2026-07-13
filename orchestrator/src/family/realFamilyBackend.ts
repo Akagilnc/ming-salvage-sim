@@ -3324,6 +3324,8 @@ export function cmrOutcomeFromResult(result: {
           "cmr worker outcome sidecar",
         );
         if (classified.kind === "escalate") return classified;
+        const stdoutBell = parseCmrOutcome(stdout, result.cmrReviewLegs);
+        if (stdoutBell.kind === "escalate") return stdoutBell;
         // ADR 0131: sentinel declaration wins; missing sentinel falls back to rows.
         const declared = parseFindingsSentinel(stdout);
         const receiptRows =
@@ -3981,6 +3983,19 @@ function parseOutcomePayload(
     try {
       const sidecar = readWorkerOutcomeSidecar(outcomePath);
       if (sidecar !== undefined) {
+        if (probeWorkerDecisionBell(sidecar) === undefined) {
+          const last = extractLastTag(stdout, tag);
+          if (last !== undefined) {
+            try {
+              const compatibility = JSON.parse(last.trim());
+              if (probeWorkerDecisionBell(compatibility) !== undefined) {
+                return { parsed: compatibility, source: `${tag} worker <${tag}> tag` };
+              }
+            } catch {
+              // Compatibility cargo is unreadable and carries no extractable bell.
+            }
+          }
+        }
         return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
       }
     } catch (err) {
