@@ -11,27 +11,34 @@ ledger-backed step machine (S0–S12) and dispatches sandboxed CLI **workers**
   base, merged by a merger worker, closed by an integrated CMR
   (completeness + correctness + cross-model review legs) and a family ship.
 
-## Constitution (ADR 0062 — the envelope rules)
+## Constitution (ADR 0131 — three channels, zero judgment; lineage ADR 0062)
 
 The runner is a pure dispatcher. It counts exactly three signals and **never
 reads worker prose**:
 
-1. **exit 0/1** → abnormal exit gets a step-level mechanical retry; normal exit
+1. **exit 0/1** → true process-level failure (non-zero exit / crash / no
+   completion signal) gets a step-level mechanical retry; normal exit
    continues.
-2. **findings count 0 / non-0** → zero passes the gate; non-zero routes back to
-   the coder/fixer loop. Whether work is "good" is decided only by the next
-   reviewer/verify worker, never by parsing the previous worker's words.
+2. **self-declared open-count 0 / non-0** → zero passes the gate; non-zero
+   routes back to the coder/fixer loop. The count is the reviewer's own
+   declaration (sentinel value; absent a sentinel form, the rows it wrote).
+   The runner never derives it, never reconciles count-vs-rows, never
+   re-classifies severity/action. Whether the declaration matches the papers
+   is the fixer's judgment when it reads the submission — never the runner's.
 3. **decision-gate signal** → durable park; the answer resumes the SAME worker
    session in place (`resumeSessionId`).
 
 Corollaries, all mechanically enforced by
 `test/adr-0062-regression-825.test.ts`:
 
-- A worker that did real work but delivered a defective report (bad JSON,
-  missing sidecar, wrong self-count, no sentinel) is a **shape failure**:
-  bounded mechanical redispatch of that step → exhausted = escalate. Never a
-  run abort, never fabricated success (a missing result is never synthesized
-  into `findings: []` / `converged: true`).
+- A worker that delivered an **unusable report** (the envelope cannot be
+  extracted: no kind, no count, undecodable output) is never judged, never
+  mechanically redispatched, and never dressed up as a process failure. The
+  caller owns it: **one `decision` escalate to the human**. A readable-but-
+  wrong submission is the next wisdom's problem (the fixer bounces it back to
+  the reviewer or raises). `synthesizedFailure` may only ever be derived from
+  channel-1 process facts, and a missing result is never synthesized into
+  success (`findings: []` / `converged: true`) — nor into failure.
 - **Git/host truth over worker words.** Commit evidence comes from
   `git rev-list <headBefore>..HEAD` (final-graph reachability); a
   worker-reported PR URL is an advisory hint that is verified

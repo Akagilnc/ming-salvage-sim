@@ -1,5 +1,7 @@
 Status: Proposed（2026-07-12 owner 亲授设计，值守誊录；待 doc-mode cmr 收敛）
 
+> **限缩（ADR 0131，2026-07-13 owner 裁决）**：写入点校验不含 count-vs-array 对账——count = reviewer 自报（说几条就是几条），申报对不对由 fixer 读卷判断；「拒收→同 worker 重写」梯废止，不可用卷面 callerOwns 一次 decision 上抛。findings 状态库、交通警察定理、fresh 终翻规则不变。
+
 # 0129: findings 状态库——复审写行、修复翻状态、复审再验再翻；纠错在写入点
 
 ## 决定
