@@ -76,22 +76,18 @@ export function isFilledString(v: unknown): v is string {
 const nonEmpty = z.string().trim().min(1);
 
 /**
- * The four — and ONLY four — `<ship>` shapes (cmr S336 r3 architecture
- * centralization). Each is `.strict()` so any EXTRA key (a mixed success+verdict
- * payload, an off-contract field) is rejected → malformed. This collapses the
- * three previously hand-written guard families (success / escalate / failed) into
- * one declarative discriminated union, closing the whole "too-lax shape leaks the
- * success branch" fail-open class the per-slice cmr kept re-surfacing (r1/r2/r3).
+ * Cargo decoding for the non-bell `<ship>` shapes. The independent escalation
+ * probe runs first and tolerates every sibling key; these schemas only enrich
+ * transported cargo and never decide whether a clean worker process may continue.
  *
  * Mirrors prompts/ship.md + family_ship.md (the union of the two contracts):
  *   1. `{status:"pushed",    branch}`            — shipped, no pr (pr MUST be absent);
  *   2. `{status:"pr_opened", branch, pr}`        — shipped, pr REQUIRED;
  *   3. `{escalate:{reason, diagnosis}}` — a genuine block;
  *   4. `{failed:{reason, diagnosis}}`            — a hard ship/test failure.
- * All string fields are non-empty (trimmed). `.strict()` is the F3 belt: a
- * `{status:"pr_opened", branch, pr, failed:"…"}` (a success carrying a verdict key)
- * or a `{status:"pushed", branch, pr}` (pushed must not carry pr) no longer slips
- * through to a fabricated success.
+ * Known success fields are non-empty when present. Unknown sibling fields remain
+ * cargo. The legacy `failed` decoder stays narrow, but failing it has no routing
+ * effect after a clean process exit.
  */
 const pushedSchema = z
   .object({ status: z.literal("pushed"), branch: nonEmpty.optional() })
@@ -110,8 +106,8 @@ const failedSchema = z
 /**
  * Read the runner-owned machine sidecar for a process that already exited cleanly.
  * `completionSignal` and `stdout` remain in the input shape as worker telemetry,
- * but neither can decide the route (ADR 0062 / #820). Missing or malformed machine
- * output is returned as `malformed` for the caller's single-step redispatch path.
+ * but neither can decide the route (ADR 0062 / #820). The bell is probed across
+ * sidecar and stdout independently; everything else is best-effort cargo.
  */
 export function shipOutcomeFromResult(result: {
   completionSignal?: string | string[];
@@ -147,17 +143,10 @@ export function shipOutcomeFromResult(result: {
  *   - `{"status": "pr_opened", "branch": string, "pr": string}`→ shipped (pr REQUIRED);
  *   - `{"escalate": {"reason": string, "diagnosis": string}}`  → escalate;
  *   - `{"failed":   {"reason": string, "diagnosis": string}}`  → failed.
- * Classification is centralized into four `.strict()` zod schemas (cmr S336 r3):
- * each shape is matched by `safeParse`, every string field is non-empty (trimmed),
- * and `.strict()` rejects any extra key. Anything that matches no schema (no tag /
- * invalid JSON / non-object / blank branch or pr / an UNKNOWN status / `pr_opened`
- * missing its `pr` URL / a mixed success+verdict payload / a garbage
- * escalate/failed) → malformed (fail-CLOSED: the gate must never read an ambiguous
- * or off-contract run as a delivery). This one declarative union replaces the
- * earlier hand-written guard families and closes the recurring "too-lax shape leaks
- * the success branch" fail-open class (r1 bare-string status, r2 garbage
- * escalate/failed, r3 blank branch/pr + mixed payloads). Only the LAST `<ship>` tag
- * is read (the worker may iterate / self-rerun).
+ * The escalation block is probed before cargo parsing and accepts unknown sibling
+ * fields. Success/failed decoding below is retained for telemetry enrichment only;
+ * a cargo parse miss cannot override the clean exit or suppress a bell. Only the
+ * LAST `<ship>` tag is read (the worker may iterate / self-rerun).
  */
 export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
   const re = /<ship>([\s\S]*?)<\/ship>/g;
@@ -192,12 +181,8 @@ function classifyShipOutcomePayload(
       ...decisionBell,
     };
   }
-  // Centralized classification (cmr S336 r3): try each of the four — and only four —
-  // strict schemas. A `.strict()` match rejects any extra key (a mixed
-  // success+verdict payload, the r3 F3 fail-open) and any blank string field (the
-  // r3 F2 fail-open); a non-object escalate/failed (a string) simply fails to match
-  // and falls through to malformed (never leaking the success branch). Escalate /
-  // failed are tried FIRST — a stuck/failed ship never carries a usable status.
+  // Best-effort cargo enrichment after the independent bell probe. A parse miss
+  // may reduce cargo richness, but shipOutcomeFromResult never lets it change fate.
   const failed = failedSchema.safeParse(parsed);
   if (failed.success) {
     return { kind: "failed", reason: failed.data.failed.reason, diagnosis: failed.data.failed.diagnosis };

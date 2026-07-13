@@ -3383,18 +3383,15 @@ export function parseFindingsSentinel(stdout: string): number | undefined {
 const nonEmpty = z.string().trim().min(1);
 
 /**
- * The three — and ONLY three — `<cmr>` shapes (integ-cmr int-r1, Finding A;
- * mirrors shipOutcome.ts `.strict()` union). Each is `.strict()` so any EXTRA /
- * mixed key (a converged success carrying an `escalate` verdict, an off-contract
- * field) is rejected → malformed, closing the same "too-lax shape leaks the pass
- * branch" fail-open the ship parser was already hardened against. The contract is
- * the integrated CMR pass prompts' "must match one of the shapes above exactly":
+ * Cargo decoding for the non-bell `<cmr>` shapes. The independent escalation
+ * probe runs first and tolerates every sibling key; verdict parsing only enriches
+ * cargo for the reviewer-count probe. The recognized shapes are:
  *   1. `{converged:true, successfulLegs, skippedLegs?, evidencePaths}`           — converged;
  *   2. `{converged:false, reason, successfulLegs, skippedLegs?, evidencePaths}`  — not converged;
  *   3. `{escalate:{reason, diagnosis}}`            — could not run the review.
  * Verdicts must also account for every default CMR leg: each must be either
  * successful or explicitly skipped.
- * Escalate is tried FIRST (a stuck worker carries no usable verdict).
+ * The bell is probed before every verdict schema.
  */
 const cmrLegSlugSchema = z.string().trim().min(1);
 const cmrSkippedLegSchema = z
@@ -3640,12 +3637,9 @@ function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<strin
  * Parse the cmr worker's `<cmr>{…}</cmr>` outcome from its stdout (#335). Pure so
  * it is unit-tested without a container.
  *
- * integ-cmr int-r1 (Finding A): classification is centralized into three
- * `.strict()` zod schemas (mirroring shipOutcome.ts). `safeParse` rejects every
- * EXTRA / mixed key, a NON-boolean `converged`, a blank `reason`, and a garbage
- * escalate (blank reason/diagnosis) → all map to malformed (fail-CLOSED: the gate
- * must NEVER read an ambiguous or off-contract run as a pass). Only the LAST
- * `<cmr>` tag is read (the worker may iterate).
+ * The independent bell probe precedes verdict cargo parsing, so unrelated schema
+ * defects cannot suppress escalation. Verdict parsing is tolerant cargo support;
+ * reviewer fate comes from its declared count. Only the LAST `<cmr>` tag is read.
  */
 export function parseCmrOutcome(
   stdout: string,
