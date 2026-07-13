@@ -833,6 +833,17 @@ export interface WorkerLandingPayload {
    * them to the landing file; the runner does not read them.
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
+  /**
+   * S5 only: opaque pointers to the preceding reviewer's raw products when no
+   * countable findings envelope was available. The runner transports these
+   * facts; the fixer reads the artifacts and decides what they mean.
+   */
+  readonly rawReviewerArtifacts?: {
+    readonly stdoutPath?: string;
+    readonly sidecarPath?: string;
+    readonly reviewerSessionId?: string;
+    readonly statement: "the previous reviewer raw artifacts are here";
+  };
   /** #677 mechanical signal; reviewer must trace the assertion to authority. */
   readonly preexistingAssertionTouched?: boolean;
   /**

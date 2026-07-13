@@ -35,6 +35,7 @@ import type {
   WorkerOutcomeLandingFile,
   WorkerResult,
   WorkerSpec,
+  WorkerLandingPayload,
   WorktreeHandle,
 } from "../src/types.js";
 
@@ -471,13 +472,19 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
 });
 
 describe("ADR 0131 reviewer count envelope", () => {
-  it("parks exactly once when a reviewer does not declare a countable findings array", async () => {
+  it("dispatches S5 with the reviewer's raw artifact facts when findings are not countable", async () => {
     class NonArrayFindingsBackend extends DispatchBackend {
+      readonly landings: Array<WorkerLandingPayload | undefined> = [];
+      reviewerCalls = 0;
       override async dispatchWorker(
         spec: WorkerSpec,
         ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
       ): Promise<WorkerResult> {
+        this.landings.push(landing);
         if (spec.kind === "reviewer") {
+          this.reviewerCalls += 1;
+          if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
           this.specs.push(spec);
           this.ctxs.push(ctx);
           return {
@@ -486,8 +493,13 @@ describe("ADR 0131 reviewer count envelope", () => {
             sessionId: "reviewer-session-non-array",
           };
         }
-        if (spec.kind !== "coder") {
-          throw new Error(`must park before dispatching ${spec.id}`);
+        if (spec.id === "S5") {
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
         }
         return super.dispatchWorker(spec, ctx);
       }
@@ -496,15 +508,42 @@ describe("ADR 0131 reviewer count envelope", () => {
     const backend = new NonArrayFindingsBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(result.stopSummary?.reason).toBe("decision_gate_park");
-    expect(result.stopSummary?.summary).toContain("reviewer 未申报可数卷面");
-    expect(result.stopSummary?.summary).toContain("reviewer-session-non-array");
-    expect(backend.specs.filter((spec) => spec.kind === "reviewer")).toHaveLength(1);
-    expect(backend.specs.some((spec) => spec.id === "S5" || spec.id === "S7")).toBe(false);
-    expect(
-      backend.persistedLedger.filter((entry) => entry.handoffStatus === "escalate"),
-    ).toHaveLength(1);
+    expect(result.status).toBe("success");
+    expect(backend.specs.filter((spec) => spec.kind === "reviewer")).toHaveLength(2);
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThan(-1);
+    expect(backend.landings[s5Index]).toMatchObject({
+      blockingFindings: [],
+      rawReviewerArtifacts: { reviewerSessionId: "reviewer-session-non-array" },
+    });
+    expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
+  });
+
+  it("dispatches S5 when the reviewer returns the wrong role kind", async () => {
+    class WrongReviewerKindBackend extends DispatchBackend {
+      reviewerCalls = 0;
+      override async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        if (spec.kind === "reviewer") {
+          this.reviewerCalls += 1;
+          if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+            sessionId: "reviewer-session-wrong-kind",
+          };
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    const backend = new WrongReviewerKindBackend();
+    const result = await runOrchestrator({ issueNumber: 331, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.specs.some((spec) => spec.id === "S5")).toBe(true);
+    expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
   });
 });
 
@@ -556,8 +595,8 @@ describe("#596 S9 (verify) worker must return a valid verify payload — finding
   it("S9 worker returning completed-with-undefined-output exhausts bounded redispatch without a TypeError", async () => {
     const backend = new S9UndefinedOutputBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("escalate");
-    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.reason).toContain("output kind 'undefined'");
   });
 });
 

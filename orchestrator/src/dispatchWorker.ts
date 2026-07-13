@@ -317,6 +317,9 @@ function writeFixFindingsLandingFile(
         // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
         // ADR 0062) — never from the runner's thin DispatchContext.
         blockingFindings: landing?.blockingFindings ?? [],
+        ...(landing?.rawReviewerArtifacts !== undefined
+          ? { rawReviewerArtifacts: landing.rawReviewerArtifacts }
+          : {}),
         blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
         ...(ctx.preexistingAssertionTouched === true
           ? { preexistingAssertionTouched: true }

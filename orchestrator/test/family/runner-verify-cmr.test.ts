@@ -1335,7 +1335,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         // The failing child is dispatched on its own runner; we fail the coder for
         // EVERY run here and pair it with a single-failing-child epic below.
         if (spec.role === "coder") {
-          return { kind: "coder", committed: false, commitsAdded: 0 };
+          throw new Error("coder process crashed");
         }
         return { kind: "reviewer", findings: [] };
       }
@@ -1360,7 +1360,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     class OneChildFailsBackend extends ChildBackend {
       override async runStep(spec: StepSpec): Promise<StepOutput> {
         if (spec.role === "coder") {
-          return { kind: "coder", committed: false, commitsAdded: 0 };
+          throw new Error("coder process crashed");
         }
         return { kind: "reviewer", findings: [] };
       }

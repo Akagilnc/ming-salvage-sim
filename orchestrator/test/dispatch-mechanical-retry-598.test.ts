@@ -508,16 +508,18 @@ class ReviewerAlwaysMalformedBackend implements Backend {
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
     if (spec.kind === "reviewer") {
       this.reviewerDispatches += 1;
-      return { kind: "malformed", reason: "process protocol failure" };
+      return this.reviewerDispatches === 1
+        ? { kind: "malformed", reason: "process protocol failure" }
+        : { kind: "completed", output: { kind: "reviewer", findings: [] } };
     }
     return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
   }
 }
 
 describe("#598 composition — reviewer malformed belongs to the caller", () => {
-  it("a malformed reviewer is dispatched once", async () => {
+  it("a malformed reviewer advances through fixer to a fresh reviewer", async () => {
     const backend = new ReviewerAlwaysMalformedBackend();
     await runOrchestrator({ issueNumber: 598, backend });
-    expect(backend.reviewerDispatches).toBe(1);
+    expect(backend.reviewerDispatches).toBe(2);
   });
 });

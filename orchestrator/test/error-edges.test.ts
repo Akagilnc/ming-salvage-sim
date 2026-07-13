@@ -85,7 +85,7 @@ class BaseBackend implements Backend {
 // ─── 0-commit (S2 coder_implement returns committed:false) ─────────────────
 
 describe("S2 coder 0-commit bounded mechanical redispatch", () => {
-  it("redispatches through the shared bound, then failure-escalates without reaching S3", async () => {
+  it("redispatches through the shared bound, then advances to S3", async () => {
     const runStepIds: string[] = [];
     const backend = new BaseBackend();
     backend.runStep = async (spec) => {
@@ -98,16 +98,13 @@ describe("S2 coder 0-commit bounded mechanical redispatch", () => {
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(runStepIds).not.toContain("S3");
+    expect(result.status).toBe("success");
+    expect(runStepIds).toContain("S3");
     expect(runStepIds.filter((id) => id === "S2")).toHaveLength(MAX_DISPATCH_ATTEMPTS);
-    expect(result.stopSummary?.reason).toBe("infra_failure");
-    expect(result.stopSummary?.summary).toContain(
-      `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
-    );
+    expect(JSON.stringify(result.stepLedger)).not.toContain("synthesizedFailure");
   });
 
-  it("converges to S8 handoff(status=error) with an error package identifying S2", async () => {
+  it("leaves the empty-diff judgment to the reviewer", async () => {
     const backend = new BaseBackend();
     backend.runStep = async (spec) => {
       if (spec.role === "coder") {
@@ -118,12 +115,11 @@ describe("S2 coder 0-commit bounded mechanical redispatch", () => {
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(result.errorPackage?.failedStep).toBe("S2");
-    expect(result.stopSummary?.reason).toBe("infra_failure");
+    expect(result.status).toBe("success");
+    expect(result.stepLedger.some((entry) => entry.step === "S3")).toBe(true);
   });
 
-  it("records S8 in the ledger on 0-commit error path", async () => {
+  it("records S2 and S3 before the ordinary success handoff", async () => {
     const backend = new BaseBackend();
     backend.runStep = async (spec) => {
       if (spec.role === "coder") {
@@ -138,11 +134,8 @@ describe("S2 coder 0-commit bounded mechanical redispatch", () => {
     expect(steps).toContain("S8");
     // Must include S2 entry.
     expect(steps).toContain("S2");
-    // Must NOT include S3 (reviewer skipped).
-    expect(steps).not.toContain("S3");
-    expect(result.stepLedger.find((entry) => entry.step === "S8")?.stopSummary?.reason).toBe(
-      "infra_failure",
-    );
+    expect(steps).toContain("S3");
+    expect(result.stepLedger.find((entry) => entry.step === "S8")?.stopSummary?.reason).toBe("success");
   });
 });
 
@@ -268,7 +261,7 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
     expect(result.errorPackage).toBeUndefined();
   });
 
-  it("0-commit exhaustion yields failure escalation — distinct from success and decision park", async () => {
+  it("0-commit exhaustion proceeds to reviewer judgment", async () => {
     const backend = new BaseBackend();
     backend.runStep = async (spec) => {
       if (spec.role === "coder") {
@@ -277,9 +270,8 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
       return { kind: "reviewer", findings: [] };
     };
     const result = await runOrchestrator({ issueNumber: 252, backend });
-    expect(result.status).toBe("escalate");
-    expect(result.status).not.toBe("success");
-    expect(result.stopSummary?.reason).toBe("infra_failure");
+    expect(result.status).toBe("success");
+    expect(result.stepLedger.some((entry) => entry.step === "S3")).toBe(true);
   });
 
   it("escalate signal yields S8(status=escalate) — distinct from error", async () => {
@@ -315,11 +307,11 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
     expect(successResult.branch).toBe(WORKTREE.branch);
     expect(successResult.errorPackage).toBeUndefined();
 
-    // error (0-commit)
+    // error (process crash)
     const errorBackend = new BaseBackend();
     errorBackend.runStep = async (spec) => {
       if (spec.role === "coder") {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
+        throw new Error("coder process crashed");
       }
       return { kind: "reviewer", findings: [] };
     };

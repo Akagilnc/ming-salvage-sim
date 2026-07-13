@@ -146,7 +146,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     expect(backend.pushed).toBe(true);
   });
 
-  it("committed:false with commitsAdded:2 (inconsistent) → S8(error)", async () => {
+  it("committed:false with commitsAdded:2 advances to reviewer", async () => {
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
@@ -157,8 +157,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("escalate");
-    expect(result.errorPackage?.failedStep).toBe("S2");
+    expect(result.status).toBe("success");
   });
 
   it("missing commitsAdded continues", async () => {
@@ -189,7 +188,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     expect(result.status).toBe("success");
   });
 
-  it("negative commitsAdded (-1) → S8(error)", async () => {
+  it("negative commitsAdded (-1) remains advisory on a white run", async () => {
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
@@ -200,8 +199,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("escalate");
-    expect(result.errorPackage?.failedStep).toBe("S2");
+    expect(result.status).toBe("success");
   });
 
   it("non-number commitsAdded ('1') continues", async () => {
@@ -225,7 +223,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     expect(backend.pushed).toBe(true);
   });
 
-  it("regression: committed:false with commitsAdded:0 (consistent) → S8(error) for 0-commit (not for shape)", async () => {
+  it("regression: committed:false with commitsAdded:0 advances to S3", async () => {
     // Consistent 0-commit is still an error (the build worker produced nothing)
     // but via the 0-commit route, with failedStep S2 — same surface, different
     // cause. This pins that the B guard does NOT reject the legitimate
@@ -233,12 +231,14 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      return { kind: "coder", committed: false, commitsAdded: 0 };
+      return spec.role === "coder"
+        ? { kind: "coder", committed: false, commitsAdded: 0 }
+        : { kind: "reviewer", findings: [] };
     };
     const result = await runOrchestrator({ issueNumber: 244, backend });
-    expect(result.status).toBe("escalate");
-    expect(result.errorPackage?.failedStep).toBe("S2");
-    expect(backend.pushed).toBe(false);
+    expect(result.status).toBe("success");
+    expect(backend.runStepIds).toContain("S3");
+    expect(backend.pushed).toBe(true);
   });
 });
 
@@ -321,11 +321,11 @@ describe("D: writeLedger failure re-persists the failing step (best-effort)", ()
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("escalate");
+    expect(result.status).toBe("error");
     // The persisted ledger must still record the failing step S2 (best-effort
     // re-persist) — not vanish because recordFailingStep:false skipped it.
     const persisted = backend.ledgerCalls.map((c) => c.entry.step);
-    expect(persisted).not.toContain("S2");
+    expect(persisted).toContain("S2");
     expect(persisted).toContain("S8");
   });
 
@@ -381,10 +381,11 @@ describe("E: S8 ledger-write failure attributes the real failing step", () => {
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("escalate");
-    // push never ran on a 0-commit error path → must not be attributed to S7.
+    expect(result.status).toBe("error");
+    // The white run advances through review and ship; the failing operation is
+    // still the S8 ledger write, not a fabricated S2 court.
     expect(result.errorPackage?.failedStep).not.toBe("S7");
-    expect(backend.pushed).toBe(false);
+    expect(backend.pushed).toBe(true);
   });
 
   it("approve handoff (S7 push success) whose S8 write throws → failedStep attributes to the S8 write step", async () => {

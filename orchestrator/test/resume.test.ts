@@ -953,9 +953,8 @@ describe("#824 durable mechanical redispatch budget", () => {
     const backend = new ResumeBackend(resumeState);
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      return spec.role === "coder"
-        ? { kind: "coder", committed: false, commitsAdded: 0 }
-        : { kind: "reviewer", findings: [] };
+      if (spec.role === "coder") throw new Error("coder process crashed");
+      return { kind: "reviewer", findings: [] };
     };
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
