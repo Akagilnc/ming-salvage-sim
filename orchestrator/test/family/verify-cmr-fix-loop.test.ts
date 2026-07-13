@@ -3150,7 +3150,9 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     expect(backend.ledger.some((entry) => entry.status === "cmr_passed")).toBe(true);
   });
 
-  it("routes converged:false with zero findings through coder-fix with raw artifacts", async () => {
+  // Channel two says "0 converges"; owner ruling 2026-07-13 confirms the
+  // reviewer-declared count is the sole routing signal, regardless of `converged`.
+  it("routes converged:false with zero declared findings to cmr_passed", async () => {
     const backend = new CountChannelFixBackend({
       kind: "completed",
       sessionId: "cmr-reviewer-red-zero",
@@ -3172,20 +3174,13 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     });
 
     expect(result).toEqual({ ok: true, ran: true });
-    const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
-    expect(coderIndex).toBeGreaterThan(0);
-    expect(backend.landings[coderIndex]).toMatchObject({
-      blockingFindings: [],
-      rawReviewerArtifacts: {
-        reviewerSessionId: "cmr-reviewer-red-zero",
-        statement: "the previous reviewer raw artifacts are here",
-      },
-    });
-    expect(backend.ledger.slice(0, coderIndex).some((entry) => entry.status === "cmr_passed"))
-      .toBe(false);
+    expect(backend.dispatches.some((dispatch) => dispatch.kind === "coder")).toBe(false);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({ status: "cmr_passed", cmrPass: "completeness" }),
+    );
   });
 
-  it("routes converged:false with two structured findings as coder-fix cargo", async () => {
+  it("routes two declared findings through coder-fix despite converged:false", async () => {
     const secondFinding: Finding = {
       ...BLOCKING_FAMILY_CMR_FINDING,
       claim_quote: "a second blocking defect remains",
