@@ -136,7 +136,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 ### agent brief —— ready-for-agent 的契约
 
 > [!important] brief（存在时）是最权威契约；**可选**——无 brief 则以整个 issue（body + 讨论）为准
-> issue 移到 `ready-for-agent` 时若发一条结构化 `## Agent Brief` 评论，那是 AFK agent 工作的最权威规格。但 brief **不是强制**（用户 2026-06-22 拍：`to-issues` 切片未必带它、工具不能这么死板）：编排器 S0 闸不因缺 brief 拒收，coder **读整个 issue**（body + 全部 comments）实现，brief 在则为其中最权威、durable 的那部分。
+> issue 移到 `ready-for-agent` 时若发一条结构化 `## Agent Brief` 评论，那是 AFK agent 工作的最权威规格。但 brief **不是强制**（用户 2026-06-22 拍：`to-issues` 切片未必带它、工具不能这么死板）：现有 legacy S0 不因缺 brief 拒收；canonical cutover 后，缺 brief 同样不是 Issue Admission 的拒收条件。coder **读整个 issue**（body + 全部 comments）实现，brief 在则为其中最权威、durable 的那部分。
 
 **四原则**：① **durability over precision**——不写文件路径/行号（会过时），写接口/类型/行为契约、点名 symbol；② **behavioral not procedural**——写做什么不写怎么改；③ 完整可测验收；④ 显式 out-of-scope 防镀金。
 
@@ -152,7 +152,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **`Blocked by` = 散文约定**：写子 issue body 里，靠抓 issue 的人读了、看 blocker 关没关、没关就先不开。**GitHub 不强制**（本项目补 native blocked_by，见下）。
 - **AFK / HITL**：AFK 可甩多 session 真并行；HITL（要人在环）串行在你的注意力上。
 - **context hygiene**：grill → to-prd → to-issues 留在同一上下文窗口；每个子 issue **开新 session** 走 implement（内联 `/tdd`；手动流可接 `/code-review`，编排器在 internal self-check 后按 #869 由独立 Verification、Change Finalization 与 reviewer 接力；互相独立才能真并行），别拿上一个 issue 的脏 context 接下一个。
-- **Coder-Rec（设计时标注推荐 coder）**：每个切片 issue body 加一行推荐 + 补位顺序；编排器 S0/resume 只读查表（见 [CODER_ROSTER.md](CODER_ROSTER.md) / [#767](https://github.com/Akagilnc/ming-salvage-sim/issues/767)）。缺省不改 route 预设。复制模板：
+- **Coder-Rec（设计时标注推荐 coder）**：每个切片 issue body 加一行推荐 + 补位顺序；现有 legacy S0/resume 只读查表，canonical cutover 后仅 coder/coderFix 的 owning Action 与 Policy 消费，Runner 不读（见 [CODER_ROSTER.md](CODER_ROSTER.md) / [#767](https://github.com/Akagilnc/ming-salvage-sim/issues/767)）。缺省不改 route 预设。复制模板：
 
 ```text
 Coder-Rec: grok-4.5 → terra@med → luna@med
