@@ -22,7 +22,6 @@ import type {
   EscalationAnswerPayload,
   EscalationKind,
   Finding,
-  FindingDisposition,
   PriorFindingDisposition,
   WorkerLandingPayload,
   WorkerMonitorHandle,
@@ -295,16 +294,6 @@ export interface FamilyLedgerEntry {
    * (defined-but-empty), preserving its "no pending keys" short-circuit.
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
-  /**
-   * The governance side-channel the CMR GATE (not the runner) reads to track
-   * cross-round prior dispositions (#604 slice 3 / ADR 0062). Carries the
-   * accepted-suppression / owning-issue dispositions the classifier
-   * produced this pass, so a later pass can honour a prior accepted suppression
-   * without re-blocking. Split out of the old `cmrFindingClassification` blob so
-   * the runner's control envelope (`blockingFindingIdentityKeys`) and the gate's
-   * governance data live in separate, purpose-scoped fields.
-   */
-  readonly cmrDispositions?: readonly FindingDisposition[];
   /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the

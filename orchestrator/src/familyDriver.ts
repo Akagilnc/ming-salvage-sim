@@ -19,7 +19,8 @@
  *      `reconcileGit()` resume seam and a live `refetchEpic` rebuild hook — and
  *      calls {@link runFamily}, which fans the children out in dependency waves,
  *      serially merges each reviewed branch into the family base, and (via the
- *      verify-cmr hook) runs the family verify + integrated cmr + STOPS at the PR.
+ *      verify-cmr hook) runs the family verify + integrated cmr, then continues
+ *      through online review, automatic merge, and post-merge cleanup.
  *
  * SEAM BOUNDARY — what the driver does NOT hardcode:
  *   - The integrated cmr is a CONTAINER cmr WORKER (#335): the
@@ -641,8 +642,8 @@ export function codexFastRunLog(codexFast: boolean): string {
  *
  * Reads the epic's children from live GitHub, constructs the two real seams on the
  * SAME family clone, cuts the local family base from main, and runs the family
- * spine. STOPS at the PR (the family orchestrator's autonomy ends there; online
- * bot cmr + merge to main are the separate pr-review-loop stage).
+ * spine through the final barrier, including online review, automatic merge to
+ * main, and post-merge cleanup.
  *
  * @returns the {@link FamilyRunResult} — the per-child outcomes + the merged
  *   family base HEAD + the honest run status (success / verify_failed / incomplete

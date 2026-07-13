@@ -2081,16 +2081,16 @@ export async function runVerifyCmr(
       correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
   }
   const cmrPassedFamilyHeadAfter = correctnessFamilyHeadAfter;
-  // Both CMR passes converged. Fall through to 止于 PR (the ship worker) below.
+  // Both CMR passes converged. Continue through ship, online review, auto-merge,
+  // and post-merge cleanup below.
 
-  // ── 止于 PR (decision 4): green verify + converged cmr ⇒ open the family PR and
-  //    STOP. Online bot cmr + merge to main are the separate pr-review-loop stage,
-  //    NOT this layer (this never merges). No PR capability ⇒ the terminal action
-  //    cannot run; verify + cmr already ran, so `{ok:true}` would report `"success"`
-  //    for a run whose PR never opened — fail-safe to `ok:false` (NOT the no-op). ──
-  // 止于 PR is a FAMILY SHIP WORKER through the unified seam. Without that
-  // worker capability the terminal action cannot run and the barrier remains
-  // incomplete.
+  // ── Ship stage: green verify + converged CMR ⇒ open the family PR, then the
+  //    same final barrier continues through online review, auto-merge, and cleanup.
+  //    No PR capability means that continuation cannot start; verify + CMR already
+  //    ran, so `{ok:true}` would report `"success"` for a run whose PR never opened
+  //    — fail-safe to `ok:false` (NOT the no-op). The ship action is a FAMILY SHIP
+  //    WORKER through the unified seam. Without that worker capability the final
+  //    barrier remains incomplete.
   if (familyBackend.dispatchWorker === undefined) {
     const reason =
       "family ship worker unavailable after converged CMR: backend has no dispatchWorker capability";

@@ -2,8 +2,8 @@
  * PR #643 R3 bot-review round (#604 Layer 3).
  *
  * Gemini R3 flagged the SAME null-tolerance class it raised in R1, now spread
- * across the runner + verifyCmr ledger scanners: optional ARRAY carrier fields
- * (`blockingFindingIdentityKeys`, `cmrDispositions`) were guarded with strict
+ * across the runner + verifyCmr ledger scanners: the optional ARRAY carrier field
+ * `blockingFindingIdentityKeys` was guarded with strict
  * `=== undefined` / `!== undefined` before a `.length` access. A durable JSONL
  * row that serialized an absent field as `null` (rather than omitting it) slips
  * past the strict guard and throws `TypeError: Cannot read properties of null
