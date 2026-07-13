@@ -8,9 +8,9 @@
 2. **数 findings 计数** —— 读 reviewer **自报**的 open-count：**说几条就是几条**（0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒：修复腿之后必派 fresh 复审，fixer 自翻的行在 fresh 终翻前仍计未决（ADR 0129）。轮到谁由拓扑写死，runner 仍只读数）。runner 不派生、不复核、不拿数组长度对账。
 3. **转决策门** —— worker 自己按的 decision/raise 原样递给人。转运，不裁决。
 
-**从不读字。** 卷面（findings 数组、散文、任何内容）只给下一个智慧体读：fixer 读卷，数对不上 / 读不懂 → 打回 reviewer 或 raise（走决策门）。**存在即违宪、发现即砍**：runner 对 worker 输出做任何格式 / schema / 合法性校验（处置再温柔也算，「写入点对账」也算）；runner 复核或覆写 worker 自报的计数（count-vs-array 一致性闸、按数组长度改写自报数）；runner 读出 malformed / protocol-failure 后计次机械重派；runner 替 worker 编造 failure（synthesizedFailure = 伪造信封签名——仅通道①进程事实或 git/host 外部事实派生的 infra 包除外）。
+**从不读字。** 卷面（findings 数组、散文、任何内容）只给下一个智慧体读：fixer 读卷，数对不上 / 读不懂 → 打回 reviewer 或 raise（走决策门）。**存在即违宪、发现即砍**：runner 对 worker 输出做任何格式 / schema / 合法性校验（处置再温柔也算，「写入点对账」也算）；runner 复核或覆写 worker 自报的计数（count-vs-array 一致性闸、按数组长度改写自报数）；runner 读出 malformed / protocol-failure 后计次机械重派；runner 替 worker 编造 failure（synthesizedFailure = 伪造信封签名——仅通道①进程事实派生的 infra 包除外）。
 
-**卷面不可用（信封提取不出）按角色真源分治——决策门准入原则：人环只接真决策；「认定不可用」本身就是判断，runner 无权下；runner 更无权自己按决策门（通道③只转运 worker 按的门，替按=伪造门铃）。** 评审类 worker（reviewer/verify，产出=卷面本身）→ runner 零判断零 park，把卷面原料（artifact 指针）按固定拓扑递给 fixer：fixer 读原料，读不懂打回 reviewer 或自己 raise；coder/ship 类（产出=git commit/PR 外部事实，条只是回执）→ git **有新 commit**（二值存在：非空即有，不数个数不看 head 不评内容）照常进评审，无 commit 走既有白跑机械预算（#592）——**预算耗尽 runner 也不下结论，照常推进到评审步由 reviewer 判**（空 diff 打回或 raise）。智慧体（reviewer/coder/fixer）都能 raise，环必被某个智慧体掐断；仅进程反复崩溃的耗尽（#598，无活无卷可判）仍 infra park。卷面质量归交卷契约（ADR 0130，住 worker 侧 soul / skill）；发现搬运走 artifact pointer（ADR 0129 findings 状态库）。
+**卷面不可用（信封提取不出）按角色真源分治——决策门准入原则：人环只接真决策；「认定不可用」本身就是判断，runner 无权下；runner 更无权自己按决策门（通道③只转运 worker 按的门，替按=伪造门铃）。** 评审类 worker（reviewer/verify，产出=卷面本身）→ runner 零判断零 park，把卷面原料（artifact 指针）按固定拓扑递给 fixer：fixer 读原料，读不懂打回 reviewer 或自己 raise。coder/fixer/ship 的提交、PR 与外部副作用由对应 Action 自己完成和核验；runner 不读取 commit、HEAD、diff、PR 或其他完成证据，空 diff、假修复与未完成副作用交给下一位专业 worker 判断。智慧体（reviewer/coder/fixer）都能 raise，环必被某个智慧体掐断；仅进程反复崩溃的耗尽（#598，无活无卷可判）仍 infra park。卷面质量归交卷契约（ADR 0130，住 worker 侧 soul / skill）；发现搬运走 artifact pointer（ADR 0129 findings 状态库）。
 
 ## 其余铁律
 

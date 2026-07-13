@@ -1,83 +1,30 @@
 # Ming Orchestrator — operator's manual
 
-Multi-agent build pipeline for `Akagilnc/ming-salvage-sim`. A **runner** walks a
-ledger-backed step machine (S0–S12) and dispatches sandboxed CLI **workers**
-(coder, reviewer, merger, ship, …) into containers. Two entry shapes:
-
-- **single-slice** — one issue through S0(rfa gate) → S2(code) → S3(review) →
-  S5(fix loop) → S7(ship) → S9(verify) → S10(fixer) → S12(docRelease) →
-  S11(cleanup) → S8(terminal).
-- **family** — an epic's children built in waves on a shared `family/<epic>`
-  base, merged by a merger worker, closed by an integrated CMR
-  (completeness + correctness + cross-model review legs) and a family ship.
+Multi-agent build pipeline for `Akagilnc/ming-salvage-sim`. The current
+implementation still contains legacy single and family control paths; #863
+tracks their replacement by one Canonical Delivery Flow. Exact delivery order
+has one design source (#869) and executable flow tests; this README does not
+define a second copy.
 
 ## Constitution (ADR 0131 — three channels, zero judgment; lineage ADR 0062)
 
-The runner is a pure dispatcher. It counts exactly three signals and **never
-reads worker prose**:
+The runner is a pure dispatcher. It accepts exactly three signals and **never
+reads worker prose or completion evidence**:
 
-1. **exit 0/1** → true process-level failure (non-zero exit / crash / no
-   completion signal) gets a step-level mechanical retry; normal exit
-   continues.
-2. **self-declared open-count 0 / non-0** → zero passes the gate; non-zero
-   keeps the loop going on the fixed topology (after a fix leg a fresh review
-   leg always follows — ADR 0129 keeps fixer-flipped rows open until a fresh
-   reviewer closes them; whose turn it is comes from the topology, never from
-   a runner judgment). The count is the reviewer's own declaration (sentinel
-   value; absent a sentinel form, the rows it wrote **are** the declaration —
-   counting them is reading channel 2 itself, not reconciling it against
-   anything, because no second claim exists). The runner never derives a
-   check, never re-classifies severity/action. Whether the declaration
-   matches the papers is the fixer's judgment when it reads the submission —
-   never the runner's.
-3. **decision-gate signal** → durable park; the answer resumes the SAME worker
-   session in place (`resumeSessionId`).
+1. **exit code** — process life or death; only a real process failure enters
+   the mechanical retry lane.
+2. **reviewer self-declared open-count** — `0` closes the current review gate;
+   `>0` follows the fixed topology to a fixer and then a fresh reviewer. The
+   runner never derives or reconciles the number.
+3. **worker-raised decision gate** — relayed to the human unchanged; the runner
+   never presses or interprets the gate itself.
 
-Corollaries, all mechanically enforced by
-`test/adr-0062-regression-825.test.ts`:
-
-- A worker whose **envelope cannot be extracted** (no kind, no count,
-  undecodable output) is never judged, never mechanically redispatched, and
-  never dressed up as a process failure — and the runner never presses the
-  decision gate for it either. Deeming a paper "unusable" is itself a judgment
-  the runner has no authority to make; the decision gate only relays a gate a
-  worker itself pressed, and a runner pressing it is a forged doorbell.
-  Disposition splits by the worker's source of truth. **Reviewer/verify**
-  (their output IS the paper): the runner makes zero judgment and zero park and
-  hands the raw artifact pointers down the fixed topology to the fixer, who
-  reads what it can, bounces the rest back to the reviewer, or raises.
-  **Coder/ship** (their output is a git commit / PR — an external fact; the
-  slip is only a receipt): an unreadable receipt never goes to the human — a
-  **new commit on the graph** (`git rev-list <headBefore>..HEAD` non-empty; not
-  counted, head not inspected, content not judged) proceeds to review anyway;
-  no commit runs the existing empty-run mechanical budget (#592), and even when
-  that budget is exhausted the runner draws no conclusion — it advances to the
-  review step and lets the reviewer judge the empty diff (bounce or raise).
-  Only repeated process crashes (#598 — no work, no paper to judge) still take
-  the infra park. A readable-but-wrong submission is likewise the next wisdom's
-  problem (the fixer bounces it back to the reviewer or raises).
-  `synthesizedFailure` may only ever be derived from channel-1 process facts or
-  git/host external truth, and a missing result is never synthesized into
-  success (`findings: []` / `converged: true`) — nor into failure.
-- **Git/host truth over worker words.** Commit evidence comes from
-  `git rev-list <headBefore>..HEAD` (final-graph reachability); a
-  worker-reported PR URL is an advisory hint that is verified
-  (open + head branch + head repository owner) or discarded — a rejected hint
-  never reaches downstream steps. Self-reported numbers are telemetry only.
-- **`*_STEP_COMPLETE` sentinels are optional telemetry.** In every prompt/soul
-  they may appear only inside the canonical optional-telemetry sentence; the
-  sweep test fails any other mention, so no prompt edit can silently restore a
-  lie-detector gate.
-- **Mutating dispatches are exactly-once.** Family ship writes a durable
-  two-phase attempt marker (reserve before launch, confirm on spawn), a durable
-  `ship_completed` record before host observation, and re-dispatches only when
-  host truth confirms `pr_missing`. A mismatch (e.g. a deliberately closed PR)
-  escalates durably instead of re-shipping. Retry budgets live in the ledger
-  (`mechanical_redispatch_attempt` rows) and survive crash/re-feed;
-  legitimate repeated rounds (slow-CI S9 re-polls) never consume them.
-- **Observation failure ≠ confirmed absence.** A failed `gh`/git lookup is a
-  retryable observation problem (its own bounded lane), never proof that the
-  mutation didn't land and never a reason to abort a resume.
+Commits, HEAD, diffs, PRs, tests, findings, report shape and external-effect
+evidence are never runner inputs. Each Action performs and verifies its own
+side effects; the next professional worker judges empty work or a false fix.
+Detailed operational rules live in `orchestrator/CLAUDE.md`; professional
+methods live in versioned souls/skills/actions; delivery topology lives in
+#869 and executable flow tests.
 
 ## Igniting a family run (cold start — everything a fresh session needs)
 
