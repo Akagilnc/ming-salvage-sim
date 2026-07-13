@@ -2342,8 +2342,8 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     // Budget exhaust without head move → operational fail, not infinite restart.
     expect(result).toEqual({ ok: false, ran: true });
     const coders = backend.dispatches.filter((d) => d.kind === "coder");
-    // 1 initial + MAX_HEAD_STUCK_REDISPATCHES(3) = 4, never unbounded.
-    expect(coders).toHaveLength(4);
+    // 1 initial + MAX_HEAD_STUCK_REDISPATCHES(1) = 2, then durable raise.
+    expect(coders).toHaveLength(2);
     // Must not re-enter cmr after budget exhaust (would reset the local counter).
     const cmrAfterFirstCoder = backend.dispatches
       .slice(backend.dispatches.findIndex((d) => d.kind === "coder") + 1)
