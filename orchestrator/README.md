@@ -383,9 +383,11 @@ not sub-poll TTFB. When non-null the monotonic order holds:
 
 ### `review_round` semantics
 
-`review_round` is an append-only observation after the integrated-CMR runner has
-finished its terminal gates. `finalDisposition` says whether that runner accepted
-the review result; rejected rows are telemetry only and never alter routing.
+This section documents the legacy implementation until #898 makes its control
+path unreachable; it is not target Generic Runner authority. `review_round` is
+an append-only observation after the legacy integrated-CMR path has finished its
+current terminal gates. `finalDisposition` records whether that legacy path
+accepted the review result; rejected rows are telemetry only and never alter routing.
 `findingsBySeverity`, identity-key lists, and closure dispositions are `null` when
 the worker did not produce a parseable CMR payload. `identityMatch` is always
 `exact_identity_match`: keys already present in earlier rows of the same pass are
@@ -397,6 +399,9 @@ to `fixed`
 (`verified-closed`), `refuted` (`accepted_suppressed`), or `deferred`
 (`still-active` / `unable-to-assess`). These rows are telemetry only: they have no
 review, fix-loop, or ADR 0062 routing authority.
+
+The canonical cutover must remove Runner-side review-payload parsing; retained
+telemetry, if any, is emitted outside Generic Runner.
 
 Field-level JSDoc lives on `TelemetryCollectRecord.first_output_at` in
 `src/telemetry.ts`; the stamp site is `noteFirstOutputIfPastBaseline` /
