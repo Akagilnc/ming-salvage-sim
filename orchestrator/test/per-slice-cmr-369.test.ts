@@ -2379,7 +2379,7 @@ describe("#369 runner resume/retry review fixes", () => {
 
     // Process crash path: mechanical redispatch, not runner format court.
     expect(backend.reviewerAttempts).toBe(3);
-    expect(result.status === "error" || result.status === "escalate").toBe(true);
+    expect(result.status).toBe("error");
   });
 
   it("retries a reviewer non-structured crash, then surfaces a persistent one as an S8 error (#598)", async () => {
@@ -2426,7 +2426,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     // Process crash path only (not findings-schema court): mechanical budget then stop.
-    expect(result.status === "error" || result.status === "escalate").toBe(true);
+    expect(result.status).toBe("error");
     expect(backend.reviewerAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });

@@ -51,6 +51,14 @@ describe("#884 external-call clocks", () => {
       classifyExternalCallFailure({ status: Number.NaN, statusCode: 503 }),
     ).toBe("transient");
     expect(classifyExternalCallFailure({ statusCode: 429 })).toBe("quota");
+    expect(
+      classifyExternalCallFailure({
+        status: 429,
+        cause: Object.assign(new Error("socket reset"), {
+          code: "ECONNRESET",
+        }),
+      }),
+    ).toBe("quota");
     expect(classifyExternalCallFailure({ status: 100 })).toBe("durable");
     expect(classifyExternalCallFailure({ status: 99 })).toBe("durable");
     expect(classifyExternalCallFailure({ status: 600 })).toBe("durable");
@@ -135,6 +143,17 @@ describe("#884 external-call clocks", () => {
     });
   });
 
+  it("subprocess stdin EPIPE rejects the call instead of escaping the promise", async () => {
+    const input = "x".repeat(16 * 1024 * 1024);
+    await expect(
+      execFileAsyncWithTimeout(
+        process.execPath,
+        ["-e", "process.stdin.destroy(); setTimeout(() => process.exit(0), 20)"],
+        { stage: "bare-ping:stdin", timeoutMs: 2_000, input },
+      ),
+    ).rejects.toMatchObject({ code: "EPIPE" });
+  });
+
   it("sync subprocess seam carries timeout + stage", () => {
     expect(() =>
       execFileWithTimeout(
@@ -214,9 +233,11 @@ describe("#884 external-call clocks", () => {
     expect(workerMonitor).toMatch(/dispatch:\$\{input\.stepId\}:spawn/);
     expect(workerMonitor).toMatch(/ExternalCallTimeoutError/);
     const spawnTimer = workerMonitor.match(
-      /const timer = setTimeout\(\(\) => \{([\s\S]*?)\}, spawnTimeoutMs\)/,
+      /const timer = setTimeout\(async \(\) => \{([\s\S]*?)\}, spawnTimeoutMs\)/,
     );
     expect(spawnTimer?.[1] ?? "").toMatch(/ExternalCallTimeoutError/);
+    expect(spawnTimer?.[1] ?? "").toMatch(/child\.kill\("SIGTERM"\)/);
+    expect(spawnTimer?.[1] ?? "").toMatch(/child\.kill\("SIGKILL"\)/);
     expect(spawnTimer?.[1] ?? "").not.toMatch(/process\.kill\s*\(/);
   });
 });

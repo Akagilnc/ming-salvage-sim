@@ -497,6 +497,7 @@ describe("ADR 0131 reviewer count envelope", () => {
           this.ctxs.push(ctx);
           return {
             kind: "completed",
+            // Deliberately inject an illegal reviewer shape to exercise raw-artifact fallback.
             output: { kind: "reviewer", findings: "not-an-array" } as unknown as StepOutput,
             sessionId: "reviewer-session-non-array",
           };

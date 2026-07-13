@@ -3303,8 +3303,8 @@ export class RealFamilyBackend implements FamilyBackend {
 /**
  * The classified outcome of the integrated cmr WORKER's run (#335). One of:
  *   - `verdict`   — the worker produced a `{converged, reason?, successfulLegs}`
- *     verdict plus the leg slugs that actually reviewed (the normal case;
- *     `verifyCmr.ts` reads `converged` and enforces ADR0032's strong-leg floor);
+ *     verdict plus reviewer-reported leg evidence (the normal case; route smoke
+ *     has already checked required-leg availability before worker dispatch);
  *   - `escalate`  — the worker is model-stuck (skill missing / no leg ran / it
  *     could not produce a verdict) ⇒ the runner's escalate续跑 fork, NOT a pass;
  *   - `malformed` — the run emitted no parseable `<cmr>` tag ⇒ the gate must never
@@ -3438,7 +3438,7 @@ export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
   outcomePath?: string;
-  stdout: string;
+  stdout?: string;
 }): CmrWorkerOutcome {
   const stdout = (result.stdout ?? "").trim();
   if (result.outcomePath !== undefined) {
@@ -3508,12 +3508,11 @@ const cmrSkippedLegSchema = z
   .object({ slug: cmrLegSlugSchema, reason: nonEmpty })
   .strict();
 // #875 kill-axis: leg lists are worker prose at parse — non-array / empty /
-// chatty skip elements must not shape-kill the whole verdict. Soft-parse keeps
-// usable slugs; empty/missing successful legs fall through to the retained
-// strong-leg floor (provider_degraded), not parse-time malformed death.
+// chatty skip elements must not shape-kill the whole verdict. Required-leg
+// availability is checked earlier by route smoke, not recreated in this parser.
 function softParseSuccessfulLegs(raw: unknown): string[] {
   // Always a string[] on the verdict type (CmrWorkerOutcome requires it).
-  // Missing / non-array / empty → [] and the strong-leg floor handles fate.
+  // Missing / non-array / empty remains [] for the mechanical downstream reader.
   if (!Array.isArray(raw)) return [];
   const kept: string[] = [];
   for (const item of raw) {
@@ -3731,7 +3730,15 @@ const cmrRedSchema = z
   })
   .strict();
 const cmrEscalateSchema = z
-  .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
+  .object({
+    escalate: z
+      .object({
+        reason: nonEmpty,
+        diagnosis: nonEmpty,
+        escalationKind: z.literal("decision"),
+      })
+      .strict(),
+  })
   .strict();
 
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
@@ -3826,8 +3833,8 @@ function classifyCmrOutcomePayload(
   }
   // #875: parse no longer converts leg-accounting shape mismatches into
   // `malformed` death payloads. successfulLegs/skippedLegs remain on the
-  // verdict for the strong-leg / required-leg degradation floor; undeclared
-  // or incomplete lists are worker prose, not a parse-time kill.
+  // verdict as reviewer evidence; required-leg availability was checked by
+  // route smoke, and incomplete lists are worker prose, not a parse-time kill.
   if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
     const converged = cmrConvergedSchema.parse(normalizedParsed);
     const successfulLegs = softParseSuccessfulLegs(converged.successfulLegs);
