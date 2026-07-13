@@ -17,7 +17,7 @@ Status: Accepted（2026-06-21；grill-with-docs 收敛 + 设计 cmr 5 轮 + 线�
 ## Decision
 
 1. **只调度现成子片。** Family Admission Action 在首次启动与每次 re-entry 读取 live native membership、状态、标签和依赖，完成过滤与 cycle 处置并产出 GitHub 候选集和依赖交通事实；Canonical Delivery Flow 随后调用 Scene Provisioning / Recovery，恢复当前 flow 已有的 scene inventory 并检查新候选。只有该 Action 查询 locator，并分别报告“无既有 scene”“scene 属于当前 flow”“scene 属于其他 flow”三种交通事实；Generic Runner 据此机械地创建、恢复或局部 park，不重复抓取、分类或查询 locator。当前只支持一层 family；仍有 sub-issues 的 child 不作为可运行叶子，递归 family 留待后续设计。
-2. **一个父现场、每子片一个独立现场。** Parent base 是唯一家族整合面；每个可运行 child 从当时的 parent base 切出 distinct branch / worktree。直接输入一个叶子 issue 时仍走 single，不虚构 parent base。
+2. **一个父现场、每子片一个独立现场。** Parent base 是唯一家族整合面；每个可运行 child 从当时的 parent base 切出 distinct branch / worktree。直接输入一个无既有 scene 的叶子 issue 时才走 single；已有 scene（含 terminal failure 后保留者）一律重入 owning flow，不虚构 parent base 或建立第二现场。
 3. **增量合入而非整波 barrier。** 已完成 child 可独立进入 family integration；不等待同批 parked 或仍在运行的 child。合并、冲突处理、外部效果核验与 crash reconciliation 由 Family Integration Merge Action 自己拥有；准确调用顺序、父分支 Verification 与恢复接力只读 #869。
 4. **依赖与局部暂停是交通状态。** Live `blocked_by` 决定哪些 child 可被放行。一个 child 的 decision gate 只阻塞自己、依赖它的下游与 final barrier；不影响独立 child。父分支 Verification 红灯时的暂停与恢复语义只读 #869，Runner 不读取验证内容。
 5. **zero-runnable 不等于自动终局。** 从未建立 family scene 且没有 durable obligation 时可 quiet success；已有 scene 时，是否仍有待合入、park、shared-tail 或 cleanup 义务由 Canonical Delivery Flow 与 Lineage 保存的流程位置决定，不能因本轮没有新 child 就丢失。
