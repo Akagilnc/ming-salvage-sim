@@ -19,7 +19,7 @@ Sandcastle 原生（文档/issues 优先核过、代码验证）：
 
 公开入口以已有 family scene/ledger 优先，先认回 family；仅从未建立 family scene 的首次入口才以 live native sub-issue 数量区分 family 与 standalone。故最后一个成员被移除后重入仍留在 family 路径，执行成员取消与窄清理，不会因 live count 为 0 误建 standalone scene。
 
-1. **commander = 确定性波次调度（runner 步，非 LLM 分解器）**：父 epic 的子片由 `to-issues` 在**编排器外**切好、发成 GitHub native sub-issues + 显式 `blocked_by`（单一真相）。父流程开工第一步读取 live GitHub 状态、标签和 sub-issue 数量：`closed` 子片退出当前调度并满足依赖（包括此前按单片模式独立完成者），但已有 family worktree 保留到父流程 terminal-success + 显式 GC，期间 reopen + ready 可复用原现场；open 但无 `ready-for-agent` 的子片不启动；open + ready 但自身仍有 sub-issues 的子片显式列为 unsupported nested family 并跳过；只有 open + ready 的叶子子片进入显式 `blocked_by` DAG → 拓扑分波（未阻塞者并发为一波、被阻塞者下波）→ fan-out。当前只支持一层 family，不递归展开孙 issue。**不自分解、不用原生 Plan 的 LLM 依赖推断**（我们有显式 `blocked_by`，无需 LLM 再猜，且原生 Plan 只是 selector、会重推已有的边）。切片质量由切片那一步（design session 带 PRD/ADR 上下文）保证，非编排器职责。
+1. **commander = 确定性波次调度（runner 步，非 LLM 分解器）**：父 epic 的现成子片由 `to-issues` 在**编排器外**切好、发成 GitHub native sub-issues + 显式 `blocked_by`（单一真相）。父流程开工第一步读取 live GitHub 状态、标签和 sub-issue 数量：`closed` 子片退出当前调度并满足依赖（包括此前按单片模式独立完成者），但已有 family worktree 保留到父流程 terminal-success + 显式 GC，期间 reopen + ready 可复用原现场；open 但无 `ready-for-agent` 的子片不启动；open + ready-for-agent 但自身仍有 sub-issues 的子片显式列为 unsupported nested family 并跳过；只有 open + ready-for-agent 的叶子子片进入显式 `blocked_by` DAG → 拓扑分波（未阻塞者并发为一波、被阻塞者下波）→ fan-out。当前只支持一层 family，不递归展开孙 issue。**不自分解、不用原生 Plan 的 LLM 依赖推断**（我们有显式 `blocked_by`，无需 LLM 再猜，且原生 Plan 只是 selector、会重推已有的边）。切片质量由切片那一步（design session 带 PRD/ADR 上下文）保证，非编排器职责。
 
    过滤后没有新可运行叶子只表示本次 admission 不创建新 child worktree、不派 child worker，不得抹掉或绕过既有 family 义务：
    - 从未建立 family scene 且没有未完成 delivery 时，报告跳过原因并 quiet success；不建 family/child worktree、不派 worker、不建 PR、不 park。
