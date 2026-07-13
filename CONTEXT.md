@@ -23,8 +23,8 @@ _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue �
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
 **家族开工过滤（Family Admission Filter）**:
-父 issue 首次启动及每次重入时，在创建现场前根据 live GitHub facts 选择可运行的家族子 issue。行为契约见 ADR 0022 与 #871。
-_Avoid_: 先创建现场再过滤、用缓存或本地推断代替 live GitHub facts
+Family Admission Action 在父 issue 首次启动及每次重入时，于创建现场前读取 live GitHub facts 并完成过滤；Generic Runner 只按其产出的可运行集合与依赖交通事实调度，不重复抓取、分类或检查 cycle。行为契约见 ADR 0022 与 #871。
+_Avoid_: 先创建现场再过滤、用缓存或本地推断代替 live GitHub facts、让 Action 与 Runner 各做一遍 admission
 
 **合并工（Merger Worker）**:
 只在子分支机械合并回父工作树发生真实 Git 冲突时出场、负责解决该次冲突的 worker。无冲突时由确定性合并直接完成，不调用模型。
@@ -35,8 +35,8 @@ _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代�
 _Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
 
 **Worker Invocation 生命周期**:
-Worker Invocation Action 单一拥有 worker crash/re-entry、retry budget 消耗、是否重派 worker 以及 scene/session recovery 的专业语义；Lineage 只保存该 owner 的未完成义务、locator 与恢复记录，不解释内容。Runner 只依据 exit-code 通道，在同一 fixed flow position 机械重调尚未完成的 Action；ordinary retry/resume 恢复当前角色原 session，relay 则保留 scene、worktree、baton 与旧 session/checkpoint records，successor session 按选棒结果决定。
-_Avoid_: 让 Runner 自己消费 retry budget 或重派 worker、把 relay 写成 same-session、把 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
+Scene Provisioning / Recovery 单一拥有 scene identity、locator 与 live handle 的找回和重连。Worker Invocation Action 消费已恢复的 Capsule handle，只拥有该 scene 内的 worker crash/re-entry、retry budget、是否重派 worker，以及 worker 进程与当前角色 session 的恢复；Lineage 只保存各 owner 的未完成义务、locator 与恢复记录，不解释内容。Runner 只依据 exit-code 通道，在同一 fixed flow position 机械重调尚未完成的 Action；ordinary retry/resume 恢复当前角色原 session，relay 则保留 scene、worktree、baton 与旧 session/checkpoint records，successor session 按选棒结果决定。
+_Avoid_: 让 Runner 自己消费 retry budget 或重派 worker、让 Worker Invocation 重建 scene/locator/live handle、把 relay 写成 same-session、把 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
 
 ### Runtime And LLM
 
