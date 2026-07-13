@@ -67,7 +67,21 @@ class CapableFamilyBackend implements FamilyBackend {
     this.cmrCalls.push(req);
     return this.cmrConverged
       ? { converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }
-      : { converged: false, reason: "cross-slice seam mismatch" };
+      : {
+          converged: false,
+          reason: "cross-slice seam mismatch",
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          findings: [
+            {
+              severity: "high",
+              category: "correctness",
+              claim_quote: "cross-slice seam mismatch",
+              location: "family integration seam",
+              suggested_fix: "repair the cross-slice seam",
+              action: "fix_now",
+            },
+          ],
+        };
   }
   async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
     this.prCalls.push(req);
@@ -187,7 +201,7 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
     expect(be.prCalls).toEqual([{ familyBase: "feat/330" }]);
   });
 
-  it("final barrier: a red cmr verdict is routed as escalate (no PR), ok:false", async () => {
+  it("final barrier: a positive reviewer open-count enters coder-fix (no PR), ok:false", async () => {
     const be = new CapableFamilyBackend();
     be.cmrConverged = false;
     const res = await runVerifyCmr({
@@ -197,7 +211,7 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
     });
 
     expect(res.ok).toBe(false);
-    // cmr ran; PR did NOT open on a red verdict.
+    // cmr ran; PR did NOT open while the reviewer-declared count is positive.
     expect(be.cmrCalls.length).toBe(1);
     expect(be.prCalls.length).toBe(0);
   });

@@ -559,6 +559,14 @@ describe("integrated CMR pass prompt closure contract", () => {
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
   ]) {
+    it(`${promptName} makes missing review-leg coverage the worker's positive verdict duty`, () => {
+      const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
+
+      expect(prompt).toMatch(
+        /review-leg coverage is missing[\s\S]*decision gate[\s\S]*findings\s*>=\s*1/i,
+      );
+    });
+
     it(`${promptName} requires closure arrays on converged output`, () => {
       const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
 

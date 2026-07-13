@@ -46,6 +46,10 @@ Rules:
 - If a declared leg was unavailable at runtime, omit it from `successfulLegs` and
   include it in `skippedLegs` with a short visible flag reason. Omit
   `skippedLegs` only when no declared leg was skipped.
+- When review-leg coverage is missing because quota exhaustion or provider
+  degradation prevents cross-vendor coverage, report the jury shortfall through
+  your decision gate, or declare `findings >= 1` and explain the absent legs in
+  the review body.
 - On any converged verdict, `claimedFixedFindingIdentityKeys` and
   `priorFindingDispositions` are REQUIRED. Use empty arrays only when no
   claimed-fixed findings occurred in the CMR loop. If a prior claimed-fixed

@@ -22,7 +22,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { meetsCmrFloor, runVerifyCmr } from "../../src/family/verifyCmr.js";
+import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
@@ -235,93 +235,40 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
 });
 
 describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)", () => {
-  it("ADR0032 pure floor predicate covers strong and non-strong survival combinations", () => {
-    expect(meetsCmrFloor(["gpt-5.6-sol"])).toBe(true);
-    expect(meetsCmrFloor(["opus"])).toBe(true);
-    expect(meetsCmrFloor(["agy"])).toBe(false);
-    expect(meetsCmrFloor(["agy", "gemini"])).toBe(false);
-    expect(meetsCmrFloor(["glm", "haiku", "spark"])).toBe(false);
-  });
-
-  it("ADR0032 floor: agy-only survived CMR ⇒ escalate, even when the worker reports converged", async () => {
-    class AgyOnlyCmrBackend extends BareFamilyBackend {
-      readonly escalations: FamilyEscalation[] = [];
-      readonly prCalls: OpenFamilyPrRequest[] = [];
-
-      async runFamilyVerify(): Promise<FamilyVerifyResult> {
-        return { ok: true };
-      }
-
-      async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        if (spec.kind === "cmr") {
-          return {
-            kind: "completed",
-            output: {
-              kind: "cmr",
-              cmrPass: ctx.cmrPass,
-              converged: true,
-              successfulLegs: ["agy"],
-              skippedLegs: [
-                { slug: "opus", reason: "auth unavailable" },
-                { slug: "gpt-5.6-sol", reason: "auth unavailable" },
-              ],
-              ...CMR_EVIDENCE,
-            },
-          };
-        }
-        this.prCalls.push({ familyBase: ctx.familyBase! });
-        return {
-          kind: "completed",
-          output: {
-            kind: "ship",
-            branch: ctx.familyBase!,
-            status: "pr_opened",
-            pr: `pr://${ctx.familyBase!}`,
-          },
-        };
-      }
-
-      async escalateFamily(esc: FamilyEscalation): Promise<void> {
-        this.escalations.push(esc);
-      }
-    }
-
-    const backend = new AgyOnlyCmrBackend();
+  it("worker-declared zero passes even when leg prose reports missing cross-vendor coverage", async () => {
+    const backend = new CapableFamilyBackend({
+      verify: () => ({ ok: true }),
+      cmr: () => ({
+        converged: true,
+        successfulLegs: ["agy"],
+        skippedLegs: [
+          { slug: "opus", reason: "auth unavailable" },
+          { slug: "gpt-5.6-sol", reason: "auth unavailable" },
+        ],
+        ...CMR_EVIDENCE,
+      }),
+    });
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/291-base",
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toEqual({ ok: true, ran: true });
     expect(backend.escalations).toEqual([]);
-    expect(backend.prCalls).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      phase: "final",
-      cmrPass: "completeness",
-      reason: expect.stringContaining("floor"),
-      stopSummary: expect.objectContaining({
-        reason: "provider_degraded",
-        metadata: expect.objectContaining({
-          providerDegraded: expect.arrayContaining([
-            expect.objectContaining({
-              leg: "opus",
-              reason: "auth unavailable",
-              blocking: true,
-            }),
-            expect.objectContaining({
-              leg: "gpt-5.6-sol",
-              reason: "auth unavailable",
-              blocking: true,
-            }),
-          ]),
-        }),
-      }),
-    }));
+    expect(backend.prCalls).toHaveLength(1);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_passed"),
+    ).toHaveLength(2);
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          entry.stopSummary?.reason === "provider_degraded",
+      ),
+    ).toBe(false);
   });
-it("checks CMR leg floor before routing fix_now findings to coder-fix", async () => {
+  it("positive open-count routes to coder-fix regardless of leg prose", async () => {
     const weakLegFinding: Finding = {
       severity: "medium",
       category: "correctness",
@@ -353,25 +300,24 @@ it("checks CMR leg floor before routing fix_now findings to coder-fix", async ()
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.prCalls).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      event: "aborted",
-      phase: "final",
-      cmrPass: "completeness",
-      reason: expect.stringContaining("floor"),
-      stopSummary: expect.objectContaining({ reason: "provider_degraded" }),
-    }));
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_fix_committed"),
+    ).toBe(false);
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          entry.stopSummary?.reason === "provider_degraded",
+      ),
     ).toBe(false);
   });
 
   it("#875: undeclared successful legs no longer kill the run (leg-accounting court demolished)", async () => {
     // Pre-#875: extra undeclared "opus" on claude-tight → infra_failure court death.
-    // Post-#875: leg lists are prose; strong-leg floor still sees gpt-5.6-sol.
+    // Post-#875: leg lists are prose and do not enter runner routing.
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
@@ -403,7 +349,7 @@ it("checks CMR leg floor before routing fix_now findings to coder-fix", async ()
     ).toHaveLength(2);
   });
 
-  it("rejects an anchor-leg skip through the integrated CMR wiring", async () => {
+  it("does not route on an anchor-leg skip reported as worker prose", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
       cmr: () => ({
@@ -417,13 +363,19 @@ it("checks CMR leg floor before routing fix_now findings to coder-fix", async ()
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: false, ran: true });
-    expect(backend.cmrCalls).toHaveLength(1);
-    expect(backend.prCalls).toEqual([]);
-    expect(backend.ledger).toContainEqual(expect.objectContaining({
-      status: "aborted",
-      reason: expect.stringMatching(/anchor.*opus/i),
-    }));
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.cmrCalls).toHaveLength(2);
+    expect(backend.prCalls).toHaveLength(1);
+    expect(
+      backend.ledger.filter((entry) => entry.status === "cmr_passed"),
+    ).toHaveLength(2);
+    expect(
+      backend.ledger.some(
+        (entry) =>
+          entry.status === "aborted" &&
+          entry.stopSummary?.reason === "provider_degraded",
+      ),
+    ).toBe(false);
   });
 
   it("fingerprints the resolved route without re-throwing an already accepted tight-route violation", async () => {

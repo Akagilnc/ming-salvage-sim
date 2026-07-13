@@ -11,8 +11,8 @@
  * Flip pattern (#862 / #861): tests that once asserted "kill the run" now
  * assert "run survives / three-channel routing continues".
  *
- * Keep (out of this court's scope): real infra durable abort, CMR leg floor /
- * required-leg provider degradation, decision-gate park.
+ * Keep (out of this court's scope): real infra durable abort and decision-gate
+ * park.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -288,11 +288,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     );
   });
 
-  it("floor still fails when only an undeclared strong leg is reported (no route-declared strong credit)", async () => {
-    // After accounting-court demolition, undeclared legs must not kill via
-    // routeAccounting — but they also must not *satisfy* the retained strong-leg
-    // floor. claude-tight declares gpt-5.6-sol (+ optional agy); opus alone is
-    // strong-but-undeclared and must still trip provider_degraded floor.
+  it("worker-declared zero ships without runner leg-floor adjudication", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     const backend = new ScriptedCmrBackend({
       kind: "cmr",
@@ -308,18 +304,18 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toEqual({ ok: true, ran: true });
     expect(isCourtAbort(backend.ledger)).toBe(false);
-    const abort = backend.ledger.find((entry) => entry.status === "aborted");
-    expect(abort?.stopSummary?.reason).toBe("provider_degraded");
-    expect(String(abort?.reason ?? "")).toMatch(/floor failed/i);
     expect(
       backend.ledger.some(
         (entry) =>
           entry.status === "aborted" &&
-          entry.stopSummary?.metadata?.routeAccounting !== undefined,
+          entry.stopSummary?.reason === "provider_degraded",
       ),
     ).toBe(false);
+    expect(backend.ledger.some((entry) => entry.status === "cmr_passed")).toBe(
+      true,
+    );
   });
 
   it("#875 Opus: open-count is array-derived — lying findingsCount is ignored at runner", async () => {

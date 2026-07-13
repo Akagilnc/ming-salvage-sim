@@ -10,7 +10,6 @@ import {
   printableRouteLineup,
   resolveRouteModels,
   degradeOptionalRouteSmokeFailures,
-  requiredCmrLegSkipFailure,
 } from "../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
@@ -120,7 +119,7 @@ describe("#422 model route presets", () => {
     expect(degradeOptionalRouteSmokeFailures(overridden).dropped).toEqual([]);
   });
 
-  it("allows an optional CMR leg death but rejects an absent anchor", () => {
+  it("keeps optional and anchor CMR leg reports as envelope accounting data", () => {
     const route = resolveRouteModels("normal", {});
     expect(cmrLegAccountingFailure({
       successfulLegs: ["gpt-5.6-sol", "opus"],
@@ -130,18 +129,6 @@ describe("#422 model route presets", () => {
       successfulLegs: ["gpt-5.6-sol", "agy"],
       skippedLegs: [{ slug: "opus", reason: "quota exhausted" }],
     }, route)).toBeUndefined();
-    expect(requiredCmrLegSkipFailure(
-      [{ slug: "opus", reason: "quota exhausted" }],
-      route,
-    )).toMatch(/anchor.*opus/i);
-    // #875: double-reported successful+skipped is prose — success wins.
-    expect(
-      requiredCmrLegSkipFailure(
-        [{ slug: "opus", reason: "quota exhausted" }],
-        route,
-        ["opus", "gpt-5.6-sol"],
-      ),
-    ).toBeUndefined();
   });
 
   it("single-slot overrides win over the selected base route", () => {
