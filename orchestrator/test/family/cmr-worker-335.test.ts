@@ -70,7 +70,12 @@ import {
 } from "../../src/family/dispatchFamilyWorker.js";
 import { cmrLegAccountingFailure } from "../../src/modelRoutes.js";
 import type { ShipWorkerOutcome } from "../../src/shipOutcome.js";
-import type { DispatchContext, WorkerResult, WorkerSpec } from "../../src/types.js";
+import type {
+  DispatchContext,
+  WorkerLandingPayload,
+  WorkerResult,
+  WorkerSpec,
+} from "../../src/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const realPromptsDir = join(here, "..", "..", "prompts");
@@ -827,6 +832,61 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     ).rejects.toThrow("outcome landing failed");
     expect(existsSync(join(repo, ".orchestrator-fix-findings.json"))).toBe(false);
   });
+
+  it.each([
+    [
+      "malformed reviewer",
+      {
+        reviewerSessionId: "cmr-reviewer-malformed",
+        sidecarPath: "/ledger/cmr-malformed.json",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    ],
+    [
+      "reviewer-declared positive count with empty findings",
+      {
+        reviewerSessionId: "cmr-reviewer-empty-findings",
+        stdoutPath: "/ledger/cmr-empty-findings.log",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    ],
+  ] as const)(
+    "transports raw reviewer artifacts into family coder-fix findings for %s",
+    (_label, rawReviewerArtifacts) => {
+      const repo = realRepo335();
+
+      class FixFindingsBackend extends RealFamilyBackend {
+        public writeFixFindings(
+          ctx: DispatchContext,
+          landing: WorkerLandingPayload,
+        ): { path: string; sandboxPath: string } {
+          return this.writeFamilyFixFindingsFile(ctx, landing);
+        }
+      }
+
+      const be = new FixFindingsBackend({
+        workingRepo: repo,
+        familyBase: "fb",
+        ledgerDir: mkDir("family-coder-raw-artifacts-ledger-"),
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+      });
+
+      const landing = be.writeFixFindings(
+        { familyBase: "fb", blockingFindingIdentityKeys: [] },
+        { blockingFindings: [], rawReviewerArtifacts },
+      );
+
+      expect(JSON.parse(readFileSync(landing.path, "utf8"))).toEqual({
+        blockingFindings: [],
+        rawReviewerArtifacts,
+        blockingFindingIdentityKeys: [],
+      });
+    },
+  );
 
   it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {
     const be = fixtured();
