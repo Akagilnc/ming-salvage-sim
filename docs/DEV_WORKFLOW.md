@@ -47,9 +47,9 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
  └ to-issues ─────── PRD 切薄垂直切片子 issue（Parent + What to build + 验收 + Blocked by + AFK/HITL）
         ↑ grill →(decision-mapping)→ to-prd → to-issues 留同一不间断窗口，别中途 compact（smart zone ~120k）
  └ 〔项目加〕设计评审闸 ── 本地 cmr + 线上 bot（审含切片布线的设计全家）→ merge → ADR Accepted（切片的 ready-for-agent 闸后统一贴，闸前 hold）
- └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）
-          → 跑 typecheck/单测/全量 → baseline commit
-          → 单评（手动流 /code-review；编排器 runner 派 /code-review reviewer）→ fix commits
+ └ (每个 issue 开新 session) implement ── 按 PRD/issue 实现：约定 seam 调 /tdd（never refactor while RED）→ 跑 typecheck/单测/全量
+          → 手动/单 session：baseline commit → /code-review → fix commits
+          → 编排器：Implementation 停在 internal self-check；后续 Verification → Change Finalization baseline → /code-review 的准确接力只读 #869
         ▼
      merge commit（不 squash）→ 关子 issue；全完 → 人手动关父
         （prototype 按需绕道，handoff 出/回桥接）
@@ -68,16 +68,16 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 | `codebase-design` | A 规划·架构词汇 | 深模块设计共享词汇（Module/Interface/Depth/Seam…，被 tdd/improve 挂用）|
 | `to-prd` | B 立项 | grill 透后**综合成完整 PRD**（不访谈），含两层设计，发 issue tracker 当父 |
 | `to-issues` | B 立项 | PRD 切薄垂直切片子 issue（tracer bullet）+ 依赖序 |
-| `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → typecheck/单测/全量 → baseline commit → 单评 → fix commits；自治/编排器内联流程，不直接 invoke umbrella |
+| `implement` | C 实现（逐片，各开新 session）| umbrella：按 PRD/issue 实现，约定 seam 调 `/tdd` → typecheck/单测/全量；手动流随后 baseline commit → 单评 → fix commits；编排器只内联到 internal self-check，后续接力只读 #869，不直接 invoke umbrella |
 | `tdd` | C 实现（被 implement 调）| 红绿重构；**代码级实现在这现场长**；never refactor while RED |
-| `code-review` | C 实现·收尾 | Matt 单评：固定点 diff 的 Standards + Spec 两轴 review；取代旧内置 `/review` 作为 canonical 收尾评审。它评 `fixed-point...HEAD`，所以手动/单 session implement 也要在 baseline commit 后跑；编排器里由 runner 派 `/code-review` reviewer worker 跑，coder worker 不自启 review；reviewer soul 固定传 `origin/main`（不存在则 `main`），不让 AFK worker 停下来问 fixed point |
+| `code-review` | C 实现·收尾 | Matt 单评：固定点 diff 的 Standards + Spec 两轴 review；取代旧内置 `/review` 作为 canonical 收尾评审。它评 `fixed-point...HEAD`，所以手动/单 session implement 要在 baseline commit 后跑；编排器只在 independent Verification 收敛、Change Finalization 建 baseline 后由 #869 派独立 reviewer，coder worker 不自启 review；reviewer soul 固定传 `origin/main`（不存在则 `main`），不让 AFK worker 停下来问 fixed point |
 | `diagnosing-bugs` | C 旁路（硬 bug）| 硬 bug / 性能 regression 调查（旧名 `diagnose`）|
 | `improve-codebase-architecture` | 保养 | 据 CONTEXT + ADR 找深挖/重构，产出回 A 当新想法 |
 | `triage` | 入口匝道（非主线）| **外来** issue（你没创建的）走五态状态机、贴标签、发 agent brief |
 | `handoff` | 横切 | session 间交付（context 满 / 绕道 prototype 的桥）|
 
 > [!note] 本项目在 Matt 之上加的闸（非 Matt canonical）
-> 本项目在 ③ 之后插一道**设计评审**（`ak-cross-m-review` 本地 cmr + 线上 bot，收敛 ADR），在 ⑥ baseline commit 之后插一道**代码评审**（Matt `/code-review` 单评 + per-slice cmr + ship-pre + 线上 bot）。其中 `/code-review` 是 Matt 原装，per-slice cmr / ship-pre / 线上 bot 是本项目质量装置；编排器中 coder/reviewer 角色必须分离，`/code-review` 属于 runner 派出的 reviewer worker，不属于 coder worker 自评。详见 [[cross-model-review]] / [[pr-review-loop]]。
+> 本项目在 ③ 之后插一道**设计评审**（`ak-cross-m-review` 本地 cmr + 线上 bot，收敛 ADR）。手动流在 ⑥ baseline commit 后进入**代码评审**（Matt `/code-review` 单评 + per-slice cmr + ship-pre + 线上 bot）；编排器的 Verification、Change Finalization 与 `/code-review` 位置只读 #869。`/code-review` 是 Matt 原装，per-slice cmr / ship-pre / 线上 bot 是本项目质量装置；coder/reviewer 角色必须分离，`/code-review` 不属于 coder worker 自评。详见 [[cross-model-review]] / [[pr-review-loop]]。
 
 ### to-prd —— 完整 PRD（含两层设计，别漏）
 
@@ -151,7 +151,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 - **垂直切片（tracer bullet）**：每片穿透所有层、独立可 demo/merge。**禁横切**（先全 schema 再全 UI = 谁也独立不了）。
 - **`Blocked by` = 散文约定**：写子 issue body 里，靠抓 issue 的人读了、看 blocker 关没关、没关就先不开。**GitHub 不强制**（本项目补 native blocked_by，见下）。
 - **AFK / HITL**：AFK 可甩多 session 真并行；HITL（要人在环）串行在你的注意力上。
-- **context hygiene**：grill → to-prd → to-issues 留在同一上下文窗口；每个子 issue **开新 session** 走 implement（内联 `/tdd` + 单评；手动流可用 `/code-review`，编排器由 runner 派 `/code-review` reviewer；互相独立才能真并行），别拿上一个 issue 的脏 context 接下一个。
+- **context hygiene**：grill → to-prd → to-issues 留在同一上下文窗口；每个子 issue **开新 session** 走 implement（内联 `/tdd`；手动流可接 `/code-review`，编排器在 internal self-check 后按 #869 由独立 Verification、Change Finalization 与 reviewer 接力；互相独立才能真并行），别拿上一个 issue 的脏 context 接下一个。
 - **Coder-Rec（设计时标注推荐 coder）**：每个切片 issue body 加一行推荐 + 补位顺序；编排器 S0/resume 只读查表（见 [CODER_ROSTER.md](CODER_ROSTER.md) / [#767](https://github.com/Akagilnc/ming-salvage-sim/issues/767)）。缺省不改 route 预设。复制模板：
 
 ```text
@@ -219,7 +219,7 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
   - 标签 Matt 纯化：35 → 7（删 `priority/area/type` 等 28 个）。
   - triage 36 个 backlog：fan-out 分类 → 7 ready-for-agent / 20 ready-for-human / 2 关闭 / 7 tracker 留空。
 - **本页校订（2026-06-18）**：对照 skill 原文修正三处真错——① `to-prd` 实为「grill 之后」（不访谈，只综合）；② `to-prd` 产**完整 PRD**含 Implementation/Testing Decisions 两层设计（先前误写成薄 issue）；③ `triage` 是**入口匝道**、不对 `to-issues` 产出用——并补「设计六层阶梯」消歧。
-- **本页校订（2026-07-02）**：同步 Matt 新增 `code-review` 与 `implement`：`implement` 是 umbrella（自治/编排器内联，不直接 invoke），baseline commit 后单评改为 `/code-review` 两轴 Standards + Spec；本项目 per-slice cmr 仍是额外跨模型闸，二者叠加非替代。编排器里保持 runner-visible role boundary：coder 不自评，`code-review` 由 runner 派 reviewer worker 执行。
+- **本页校订（2026-07-02）**：同步 Matt 新增 `code-review` 与 `implement`：`implement` 是 umbrella（自治/编排器内联，不直接 invoke）；手动流在 baseline commit 后用 `/code-review` 做 Standards + Spec 两轴单评，本项目 per-slice cmr 仍是额外跨模型闸，二者叠加非替代。编排器 coder 不自评且不建 baseline，Verification、Change Finalization 与独立 `/code-review` reviewer 的准确接力只读 #869。
 - **关联**：ship 后的 PR 评审循环见 [[pr-review-loop]]；自治 TDD 实现 loop 见 [[tdd-autonomous-dev]]；设计阶段 cross-model 评审见 [[cross-model-review]]。
 
 > [!note] 状态：严格按 Matt 试水中（完全实验，非照抄）
