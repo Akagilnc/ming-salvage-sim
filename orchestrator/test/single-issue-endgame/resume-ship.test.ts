@@ -57,6 +57,17 @@ import {
   MissingCoderTagBackend,
 } from "../helpers/resume-fixtures.js";
 
+// ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker
+//
+// ship.md promises ship `escalate` = a real blocker the human answers → the
+// runner RE-OPENS S7. S7 is a runner-ACTION step, not an agent step, and ship
+// outputs deliberately do NOT carry an `escalate` field (escalateOf returns
+// undefined for them) — so the agent escalate-resume path (Case 2) cannot fire.
+// Instead, a prior S7 escalate leaves the ledger ending with an UNTAGGED-output
+// S7 entry + a trailing tagged S8(escalate). Recovery must recognise this pattern
+// and RE-DISPATCH the S7 ship worker (re-run the push/ship), NOT report the prior
+// escalate as a terminal status (which would leave the slice permanently stuck).
+
 describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r1 C-1)", () => {
   /**
    * Prior run reached S7, the ship worker escalated (gstack-ship STOP/HITL). The
@@ -272,7 +283,6 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
     expect(backend.resumeSessionCalls[0]![0]).toBe("S2");
   });
 });
-
 // ─── AC4: recovery decides next step from ledger, not memory ──────────────────
 
 describe("S7 ship failure resume", () => {
@@ -318,4 +328,3 @@ describe("S7 ship failure resume", () => {
   });
 
 });
-

@@ -57,6 +57,8 @@ import {
   MissingCoderTagBackend,
 } from "../helpers/resume-fixtures.js";
 
+// ─── AC3 + AC4: escalate-resume — SAME machine, via resumeSession + sessionId ─
+
 describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/AC4)", () => {
   /**
    * Escalate scenario: the prior run escalated at S2 (coder hit a design-level
@@ -1740,15 +1742,3 @@ describe("escalate-resume: human answered, re-feed → resumeSession (#255 AC3/A
     }
   });
 });
-
-// ─── C-1 (integ-cmr int-r1): S7 SHIP escalate-resume re-dispatches the ship worker
-//
-// ship.md promises ship `escalate` = a real blocker the human answers → the
-// runner RE-OPENS S7. S7 is a runner-ACTION step, not an agent step, and ship
-// outputs deliberately do NOT carry an `escalate` field (escalateOf returns
-// undefined for them) — so the agent escalate-resume path (Case 2) cannot fire.
-// Instead, a prior S7 escalate leaves the ledger ending with an UNTAGGED-output
-// S7 entry + a trailing tagged S8(escalate). Recovery must recognise this pattern
-// and RE-DISPATCH the S7 ship worker (re-run the push/ship), NOT report the prior
-// escalate as a terminal status (which would leave the slice permanently stuck).
-

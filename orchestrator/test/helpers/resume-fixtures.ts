@@ -471,6 +471,3 @@ export class MissingCoderTagBackend extends ResumeBackend {
     return super.runStep(spec, worktree);
   }
 }
-
-// ─── AC: fresh run is unaffected (no residue) ────────────────────────────────
-

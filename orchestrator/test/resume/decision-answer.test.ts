@@ -465,6 +465,3 @@ describe("#439 decision-escalate answer channel", () => {
     expect(backend.dispatchSpecs[0]?.id).toBe("S7");
   });
 });
-
-// ─── AC3 + AC4: escalate-resume — SAME machine, via resumeSession + sessionId ─
-
