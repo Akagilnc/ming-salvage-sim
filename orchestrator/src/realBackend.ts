@@ -3884,7 +3884,6 @@ export class RealBackend implements Backend {
       if (missingProvider !== undefined) {
         return {
           kind: "escalate",
-          escalationKind: "decision",
           reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
           diagnosis:
             "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; provider availability preflight rejected the ship launch before sc.run",
@@ -3893,7 +3892,6 @@ export class RealBackend implements Backend {
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
-          escalationKind: "decision",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
           diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
         };
@@ -3910,7 +3908,6 @@ export class RealBackend implements Backend {
       if (auth.ghToken === undefined) {
         return {
           kind: "escalate",
-          escalationKind: "decision",
           reason: "no gh auth (GH_TOKEN) — the ship worker cannot push / `gh pr create`",
           diagnosis:
             "the ship worker invokes gstack-ship, which pushes over https + runs " +

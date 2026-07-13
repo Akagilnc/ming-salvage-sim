@@ -51,8 +51,6 @@ export type ShipWorkerOutcome =
       readonly kind: "escalate";
       readonly reason: string;
       readonly diagnosis: string;
-      /** Runner-authored preflight stamp; worker receipts never declare this. */
-      readonly escalationKind?: "decision" | "failure";
     }
   | { readonly kind: "failed"; readonly reason: string; readonly diagnosis: string }
   | { readonly kind: "malformed"; readonly reason: string };
