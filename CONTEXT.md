@@ -35,8 +35,8 @@ _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代�
 _Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
 
 **Worker Invocation 生命周期**:
-Scene Provisioning / Recovery 单一拥有 scene identity、locator 与 live handle 的找回和重连。Worker Invocation Action 消费已恢复的 Capsule handle，只拥有该 scene 内的 worker crash/re-entry、retry budget、是否重派 worker，以及 worker 进程与当前角色 session 的恢复；Lineage 只保存各 owner 的未完成义务、locator 与恢复记录，不解释内容。Runner 只依据 exit-code 通道，在同一 fixed flow position 机械重调尚未完成的 Action；ordinary retry/resume 恢复当前角色原 session，relay 则保留 scene、worktree、baton 与旧 session/checkpoint records，successor session 按选棒结果决定。
-_Avoid_: 让 Runner 自己消费 retry budget 或重派 worker、让 Worker Invocation 重建 scene/locator/live handle、把 relay 写成 same-session、把 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
+Execution Capsule 只持有 live scene identity / handle，Lineage 只保存 locator 与恢复记录，Scene Provisioning / Recovery 单一查询 Lineage 并找回或重连同一 scene。Worker Invocation Action 消费已恢复的 Capsule handle，只拥有该 scene 内的 worker crash/re-entry、内部 worker retry budget、是否重派 worker，以及 worker 进程与当前角色 session 的恢复。Runner 只依据 exit-code 通道，在同一 fixed flow position 执行 #598 的有界进程重试；耗尽即终止 run，不进入下一 Action。ordinary retry/resume 恢复当前角色原 session，relay 则保留 scene、worktree、baton 与旧 session/checkpoint records，successor session 按选棒结果决定。
+_Avoid_: 让 Runner 消费 Worker Invocation 内部的 worker retry budget 或选择重派 worker、把有界进程重试变成第四通道、让 Worker Invocation 重建 scene/locator/live handle、把 relay 写成 same-session、把 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
 
 ### Runtime And LLM
 
