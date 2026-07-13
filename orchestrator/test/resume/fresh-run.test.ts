@@ -57,6 +57,8 @@ import {
   MissingCoderTagBackend,
 } from "../helpers/resume-fixtures.js";
 
+// ─── AC: fresh run is unaffected (no residue) ────────────────────────────────
+
 describe("fresh run (no residue) is unchanged (#255)", () => {
   it("findResumeState returns undefined → runs the full fixed topology, cuts a fresh worktree", async () => {
     const backend = new ResumeBackend(); // no resumeState
@@ -93,6 +95,3 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
     expect(result.stopSummary.reason).toBe("infra_failure");
   });
 });
-
-// ─── AC1 + AC2: crash-resume — branch/worktree exists, ledger stops at S2 ─────
-

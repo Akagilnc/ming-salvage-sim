@@ -57,6 +57,8 @@ import {
   MissingCoderTagBackend,
 } from "../helpers/resume-fixtures.js";
 
+// ─── AC1 + AC2: crash-resume — branch/worktree exists, ledger stops at S2 ─────
+
 describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 0030)", () => {
   /**
    * Crash scenario (ADR 0030): the prior run completed S0, S1, S2 (the build
@@ -402,7 +404,6 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     expect(result.stopSummary?.summary).toContain("payload was malformed");
   });
 });
-
 describe("#824 durable mechanical redispatch budget", () => {
   it("continues the prior S2 attempt count after a crash instead of granting a fresh budget", async () => {
     const resumeState: ResumeState = {
@@ -744,4 +745,3 @@ describe("re-feeding a terminated run reports its TRUE status (#255 review fix)"
     expect(backend.cleanResidueCount).toBe(0);
   });
 });
-
