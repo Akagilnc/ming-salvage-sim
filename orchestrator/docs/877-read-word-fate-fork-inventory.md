@@ -20,7 +20,7 @@ Principle (#861 / #873): runner is a traffic cop — **exit code / findings coun
 | Site | Why kept |
 |------|----------|
 | Three-channel shape (`kind` / `converged` bool / findings array type) | Exit / findings / decision envelope |
-| `classifyFindings` + trusted accepted_suppression → envelope count | ADR 0062 typed governance → findings count |
+| `classifyFindings` + trusted accepted_suppression → envelope count | **已废止（ADR 0131）**：S4 只按申报行数路由 |
 | CMR floor / required-leg skip | Real provider infra degradation |
 | Tracked worktree dirty after read-only verify | Real dirty residue (S2 kept) |
 | HEAD position reads | Routing plumbing (S4 head short-circuit) |
