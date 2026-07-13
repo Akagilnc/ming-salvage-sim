@@ -307,20 +307,10 @@ export interface ReviewerOutput {
   readonly escalate?: Escalation;
 }
 
-/** Stuck signal (ADR 0018 §5): model-judged, runner-routed — not agent-driven. */
+/** Worker-authored stuck signal. Transport metadata is not part of this contract. */
 export interface Escalation {
   readonly reason: string;
   readonly diagnosis: string;
-  /** Transport-authored durable kind; workers do not declare it. */
-  readonly escalationKind?: EscalationKind;
-  /**
-   * TRUE marks an escalate the runner synthesized solely from channel-1 process
-   * facts (for example, bounded crash retries exhausted). Receipt shape, cargo,
-   * git, and host observations may never set it. The decision gate fires only
-   * for a worker-emitted decision escalate; synthesized failures remain in the
-   * transport-authored `escalationKind:"failure"` bucket.
-   */
-  readonly synthesizedFailure?: boolean;
 }
 
 /** Escalation bucket recorded on a terminal S8 entry (#439). */
@@ -531,11 +521,8 @@ export interface StepResult {
 // ─────────────────────── unified worker-dispatch seam ───────────────────────
 // ADR 0026 / PRD #330: every step that produces or changes the worked artifact
 // is a WORKER dispatched through ONE seam, `dispatchWorker(spec, ctx)`. #331 is a
-// PURE PREFACTOR: these shapes are defined and the call sites route through the
-// seam, but `dispatchWorker` is a LEGACY WRAPPER forwarding to the existing
-// methods (runStep / resumeSession / push / runIntegratedCmr / openFamilyPr), so
-// external behaviour is unchanged. Per-worker output VALUES land in later slices
-// (#334 coder/reviewer, #335 cmr, #336 ship); #331 only fixes the field shapes.
+// The call sites route through the unified seam. A narrow legacy wrapper remains
+// only for older integrated-CMR review backends.
 
 /**
  * Which kind of work a worker performs. Drives the {@link WorkerResult} payload

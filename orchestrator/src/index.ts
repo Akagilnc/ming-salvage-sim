@@ -134,7 +134,6 @@ export {
   readFamilyEpic,
   buildFamilyEpic,
   parseSubIssueAdmission,
-  parseSubIssueNumbers,
   cutFamilyBase,
   resolveCodexFast,
 } from "./familyDriver.js";
@@ -176,8 +175,6 @@ export type {
   FamilyVerifyErrorPackage,
   IntegratedCmrRequest,
   IntegratedCmrResult,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
   FamilyAbortedEvent,
   FamilyEscalation,
 } from "./family/types.js";

@@ -26,15 +26,19 @@
 
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
+import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { mergedSet } from "../../../src/family/ledger.js";
 import type {
   Backend,
+  DispatchContext,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
   WorktreeHandle,
+  WorkerResult,
+  WorkerSpec,
 } from "../../../src/types.js";
 import type {
   FamilyAbortedEvent,
@@ -47,8 +51,6 @@ import type {
   IntegratedCmrResult,
   MergeRequest,
   MergeResult,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
 } from "../../../src/family/types.js";
 
 class ChildBackend implements Backend {
@@ -123,8 +125,23 @@ class AbortingFamilyBackend implements FamilyBackend {
       };
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
-  async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    return { url: `pr://${req.familyBase}`, prHead: this.currentFamilyHead };
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    if (spec.kind === "cmr") {
+      return legacyDispatchFamilyWorker(this, spec, ctx);
+    }
+    if (spec.kind === "ship") {
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase!,
+          pr: `pr://${ctx.familyBase!}`,
+          prHead: this.currentFamilyHead,
+          status: "pr_opened",
+        },
+      };
+    }
+    return legacyDispatchFamilyWorker(this, spec, ctx);
   }
   async recordAborted(event: FamilyAbortedEvent): Promise<void> {
     this.aborted.push(event);

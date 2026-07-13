@@ -83,9 +83,6 @@ import {
   type Sh as ProvisionSh,
 } from "./provisionNodeModules.js";
 import {
-  normalizeFindingFamiliesWireAliases,
-} from "./findingFamilies.js";
-import {
   sourceAuthFailureStopSummary,
   type StopSummary,
 } from "./stopSummary.js";
@@ -1924,112 +1921,6 @@ const coderOutputSchema = z.object({
 // Typed extraction may locate a receipt, but it must not judge the receipt
 // before decodeOutput gets the independent decision-bell probe.
 const workerReceiptSchema = z.unknown();
-
-// #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
-// and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
-// from reviewLoopOutcome.ts (per AC2). .strict() so off-shape (extra keys, wrong types) fails closed.
-const onlineReviewFindingDispositionSchema = z
-  .object({
-    identityKey: z.string().min(1),
-    threadId: z.string().min(1),
-    action: z.enum(["fix", "reject", "defer"]),
-    reason: z.string().optional(),
-  })
-  .strict();
-
-const onlineReviewThreadReplySchema = z
-  .object({
-    threadId: z.string().min(1),
-    body: z.string().min(1),
-  })
-  .strict();
-
-/** Verify wire schema — normalizes `finding_families` before strict key check. */
-export const verifyOutputSchema = z.preprocess(
-  normalizeFindingFamiliesWireAliases,
-  z
-    .object({
-      converged: z.boolean(),
-      findingDispositions: z
-        .array(onlineReviewFindingDispositionSchema)
-        .optional(),
-      fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
-      threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
-      threadsToResolve: z.array(z.string()).optional(),
-      deferredIssueUrls: z.array(z.string()).optional(),
-      terminalState: z
-        .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
-        .optional(),
-      isRecheck: z.boolean().optional(),
-      // #711: malformed families degrade to no brief — never block the verify gate.
-      // Accepts camelCase + snake_case top-level via normalizeFindingFamiliesWireAliases.
-      findingFamilies: z.unknown().optional(),
-    })
-    .passthrough(),
-);
-export const fixerOutputSchema = z
-  .object({
-    committed: z.boolean(),
-    alreadySatisfied: z.boolean().optional(),
-    fixCommitSha: z.string().min(1).optional(),
-  })
-  .passthrough()
-  .superRefine((data, ctx) => {
-    if (data.committed && data.alreadySatisfied === true) {
-      ctx.addIssue({
-        code: "custom",
-        message: "alreadySatisfied is incompatible with committed:true",
-      });
-    }
-    if (
-      data.committed === true &&
-      (data.fixCommitSha === undefined || data.fixCommitSha.length === 0)
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "fixCommitSha is required when committed is true",
-      });
-    }
-    if (
-      data.committed === false &&
-      data.alreadySatisfied === true &&
-      data.fixCommitSha === undefined
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "fixCommitSha is required when alreadySatisfied is true",
-      });
-    }
-  });
-export const cleanupOutputSchema = z
-  .object({
-    terminal: z.boolean(),
-    ok: z.boolean(),
-    issuesClosed: z.array(z.number().int().positive()).optional(),
-    parentIssueClosed: z.boolean().optional(),
-    branchOutcome: z
-      .enum([
-        "deleted",
-        "already_gone",
-        "skipped_tip_drift",
-        "skipped_pr_not_merged",
-        "skipped_precondition",
-      ])
-      .optional(),
-    skippedReasons: z.array(z.string()).optional(),
-  })
-  .passthrough()
-  .superRefine((val, ctx) => {
-    if (val.terminal === false && val.ok === true) {
-      ctx.addIssue({
-        code: "custom",
-        message: "non-terminal cleanup must not report ok:true",
-      });
-    }
-  });
-export const docReleaseOutputSchema = z
-  .object({ released: z.boolean() })
-  .passthrough();
 
 /** Parse a coder worker self-report with the same schema the single-slice path uses. */
 export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {

@@ -35,6 +35,7 @@ import {
 } from "../modelRoutes.js";
 import { logDriverStage } from "../stageLog.js";
 import { isStepId } from "../types.js";
+import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
   Backend,
   EscalationAnswerPayload,
@@ -270,12 +271,7 @@ function readChildDecisionEscalation(
     });
   const escalation = escalateOf(agentEntry?.output);
   if (escalation == null || !isValidEscalation(escalation)) return undefined;
-  // #604 correctness r1 (P1-a): a RUNNER-synthesized failure escalate (malformed
-  // reviewer output exhausted / retries exhausted — marked `synthesizedFailure`)
-  // is a PROTOCOL FAILURE, not a worker-proactive decision. The child must keep
-  // the A-class `"failed"` behaviour (return undefined), never be parked as a
-  // B-class decision. Only a genuine worker-emitted escalate parks.
-  if (escalation.synthesizedFailure === true) return undefined;
+  if (isRunnerSynthesizedFailureEscalation(escalation)) return undefined;
   return {
     reason: escalation.reason,
     diagnosis: escalation.diagnosis,
@@ -1106,7 +1102,6 @@ export async function runFamily(
           diagnosis:
             first.diagnosis ??
             "Append an escalation_answered ledger row carrying this childIssue to reopen the parked child.",
-          escalationKind: "decision",
         },
         stopSummary: familyStopSummary({
           status: "escalated",

@@ -52,7 +52,6 @@ const STUCK = {
   reason: "Design-level ambiguity: unclear whether child #N field X should be optional",
   diagnosis:
     "The child issue body says 'optional' in one place but 'required' in another; a product decision is required before implementation can proceed.",
-  escalationKind: "decision",
 } satisfies Escalation;
 
 const ORIGINAL_SESSION_ID = "child-11-decision-gate-session";
@@ -146,7 +145,7 @@ class EscalatingChildBackend implements Backend {
         kind: "coder",
         committed: false,
         commitsAdded: 0,
-        escalate: { ...STUCK, escalationKind: "decision" },
+        escalate: STUCK,
       };
       return { output: out, sessionId: ORIGINAL_SESSION_ID };
     }
@@ -772,72 +771,5 @@ describe("#604 r1 (P1-a ②) — a real failure in the wave is not masked by a d
     // The failing child is honestly failed and never merged.
     expect(result.children.find((c) => c.issue === 12)?.status).toBe("failed");
     expect(familyBackend.merges.some((m) => m.childIssue === 12)).toBe(false);
-  });
-});
-
-// ─── test 8 (D5): a SYNTHESIZED-FAILURE escalate is A-class, never parked ────────
-//
-// #604 correctness r4 (D5): a child that ESCALATES (result.status === "escalate")
-// but whose escalate payload is marked `synthesizedFailure:true` (the runner
-// synthesized it from a protocol/infra failure — e.g. reviewer output exhausted
-// its bounded reruns) is A-class FAILURE, not a B-class answerable decision. The
-// `readChildDecisionEscalation` guard (`synthesizedFailure === true → undefined`)
-// must keep it out of the park path: the family status is `failed`/`incomplete`,
-// no `child_decision_parked` row is written, and the run is NOT `escalated`.
-// Deleting that guard (routing synthesized failures to park) turns an infra
-// failure into a human-answerable pause — this test goes RED if the guard is
-// removed.
-
-describe("#604 r4 (D5) — a synthesized-failure escalate is not parked", () => {
-  it("child escalate carrying synthesizedFailure → family failed, NO child_decision_parked, not escalated", async () => {
-    // A child whose coder S2 escalates with a SYNTHESIZED-FAILURE escalate (the
-    // protocol/infra bucket), distinct from the worker-proactive decision
-    // escalate the base backend emits.
-    class SynthesizedFailureChildBackend extends EscalatingChildBackend {
-      constructor(private readonly synthIssue: number) {
-        super(-1); // never emits a genuine decision escalate
-      }
-      override async runStep(
-        spec: StepSpec,
-        worktree?: WorktreeHandle,
-      ): Promise<StepOutput | StepResult> {
-        const issue =
-          worktree !== undefined && /child-(\d+)/.test(worktree.branch)
-            ? Number(worktree.branch.match(/child-(\d+)/)![1])
-            : -1;
-        if (spec.id === "S2" && issue === this.synthIssue) {
-          const out: CoderOutput = {
-            kind: "coder",
-            committed: false,
-            commitsAdded: 0,
-            escalate: {
-              ...STUCK,
-              escalationKind: "failure",
-              synthesizedFailure: true,
-            },
-          };
-          return out;
-        }
-        return super.runStep(spec, worktree);
-      }
-    }
-    const singleSliceBackend = new SynthesizedFailureChildBackend(11);
-    const familyBackend = new FakeFamilyBackend();
-
-    const result = await runFamily({
-      epic: epicWith(11),
-      familyBackend,
-      singleSliceBackend,
-      familyBase: "family/604-base",
-    });
-
-    // NOT parked as an answerable decision.
-    expect(
-      familyBackend.ledger.some((e) => e.event === "child_decision_parked"),
-    ).toBe(false);
-    expect(result.status).not.toBe("escalated");
-    // A-class failure: the child is recorded failed and never merged.
-    expect(result.children.find((c) => c.issue === 11)?.status).toBe("failed");
-    expect(familyBackend.merges.some((m) => m.childIssue === 11)).toBe(false);
   });
 });

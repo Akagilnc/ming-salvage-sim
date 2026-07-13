@@ -23,6 +23,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
+import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
@@ -35,8 +36,6 @@ import type {
   IntegratedCmrResult,
   FamilyAbortedEvent,
   FamilyEscalation,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
   MergeRequest,
 } from "../../../src/family/types.js";
 import type { DispatchContext, Finding, WorkerResult, WorkerSpec } from "../../../src/types.js";
@@ -44,6 +43,15 @@ import type { DispatchContext, Finding, WorkerResult, WorkerSpec } from "../../.
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
 } as const;
+
+interface TestShipRequest {
+  readonly familyBase: string;
+}
+
+interface TestShipResult {
+  readonly url: string;
+  readonly prHead?: string;
+}
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -60,7 +68,7 @@ class CapableFamilyBackend implements FamilyBackend {
   readonly cmrCalls: IntegratedCmrRequest[] = [];
   readonly aborted: FamilyAbortedEvent[] = [];
   readonly escalations: FamilyEscalation[] = [];
-  readonly prCalls: OpenFamilyPrRequest[] = [];
+  readonly prCalls: TestShipRequest[] = [];
   readonly readFamilyHeadCalls: string[] = [];
   currentFamilyHead = "head-1";
 
@@ -68,16 +76,10 @@ class CapableFamilyBackend implements FamilyBackend {
     private readonly script: {
       verify?: (req: FamilyVerifyRequest) => FamilyVerifyResult;
       cmr?: (req: IntegratedCmrRequest) => IntegratedCmrResult;
-      pr?: (req: OpenFamilyPrRequest) => OpenFamilyPrResult;
+      pr?: (req: TestShipRequest) => TestShipResult;
       worker?: (spec: WorkerSpec, ctx: DispatchContext) => WorkerResult | Promise<WorkerResult>;
     } = {},
-  ) {
-    if (script.worker !== undefined) {
-      this.dispatchWorker = async (spec, ctx) => script.worker!(spec, ctx);
-    }
-  }
-
-  declare readonly dispatchWorker?: FamilyBackend["dispatchWorker"];
+  ) {}
 
   // ── core merge/ledger seam (unchanged from #293) ──
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -109,12 +111,32 @@ class CapableFamilyBackend implements FamilyBackend {
       };
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
-  async openFamilyPr(req: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    this.prCalls.push(req);
-    return this.script.pr?.(req) ?? {
-      url: `pr://${req.familyBase}`,
-      prHead: this.currentFamilyHead,
-    };
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    if (this.script.worker !== undefined) {
+      return this.script.worker(spec, ctx);
+    }
+    if (spec.kind === "cmr") {
+      return legacyDispatchFamilyWorker(this, spec, ctx);
+    }
+    if (spec.kind === "ship") {
+      const request = { familyBase: ctx.familyBase! };
+      this.prCalls.push(request);
+      const shipped = this.script.pr?.(request) ?? {
+        url: `pr://${request.familyBase}`,
+        prHead: this.currentFamilyHead,
+      };
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: request.familyBase,
+          pr: shipped.url,
+          ...(shipped.prHead !== undefined ? { prHead: shipped.prHead } : {}),
+          status: "pr_opened",
+        },
+      };
+    }
+    return legacyDispatchFamilyWorker(this, spec, ctx);
   }
 
   // ── #298-owned abort/escalate seam (minimal shapes #296 only CALLS) ──
@@ -1350,7 +1372,7 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
     expect(result).toEqual({ ok: false, ran: true });
   });
 
-  it("a backend with verify + cmr but WITHOUT openFamilyPr (final phase) FAILS-SAFE to ok:false — the terminal 止于-PR step could not run", async () => {
+  it("a backend with verify + cmr but WITHOUT dispatchWorker (final phase) FAILS-SAFE to ok:false — the terminal 止于-PR step could not run", async () => {
     // verify green + cmr converged, but the PR capability is missing → the terminal
     // action (decision 4, 止于 PR) cannot run. {ok:true} would report "success" for a
     // run whose PR never opened; fail-safe to {ok:false, ran:true} instead.

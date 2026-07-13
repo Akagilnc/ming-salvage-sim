@@ -1,7 +1,6 @@
 /**
  * #336 — the FAMILY ship step (止于 PR) is a CONTAINER ship WORKER that invokes
- * `gstack-ship`, replacing the inline `RealFamilyBackend.openFamilyPr` (a bare
- * `git push` + `gh pr create`).
+ * `gstack-ship` through the unified worker seam.
  *
  * The family ship worker = the 2b container's TOP-LEVEL claude; it `Skill`-invokes
  * `gstack-ship` over the family base and STOPS at the PR (止于 PR — the online bot
@@ -93,18 +92,12 @@ class FixturedShipBackend extends RealFamilyBackend {
     status: "pr_opened",
     pr: "https://gh/pr/9",
   };
-  openFamilyPrCount = 0;
   protected override async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<ShipWorkerOutcome> {
     this.runShipCalls.push({ spec, ctx });
     return this.outcome;
-  }
-  // The inline openFamilyPr must NEVER back the ship worker path (#336 replaces it).
-  override async openFamilyPr(): Promise<{ url: string }> {
-    this.openFamilyPrCount += 1;
-    throw new Error("openFamilyPr must not be reached — family ship via gstack-ship (#336)");
   }
 }
 
@@ -129,7 +122,6 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     const spec = be.runShipCalls[0]!.spec;
     expect(spec.kind).toBe("ship");
     expect(spec.skill).toBe("gstack-ship");
-    expect(be.openFamilyPrCount).toBe(0); // never the inline openFamilyPr
   });
 
   it("the family ship spec is a WRITE/coder worker with an iterative budget, while cmr is a single clean review pass", () => {
@@ -229,14 +221,6 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res.kind).toBe("escalated");
     expect(be.runShipCalls.length).toBe(0);
-  });
-});
-
-describe("#336 the inline family openFamilyPr is no longer the ship path", () => {
-  it("a family ship dispatch never calls openFamilyPr (gstack-ship replaces it)", async () => {
-    const be = fixtured();
-    await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(be.openFamilyPrCount).toBe(0);
   });
 });
 
@@ -491,9 +475,8 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     });
   }
 
-  it("pins the configured non-main PR target base (the openFamilyPr --base contract)", () => {
-    // The legacy openFamilyPr opened the PR with `gh pr create --base this.opts.base`.
-    // gstack-ship instead INFERS the base from the repo default branch (main), so a
+  it("pins the configured non-main PR target base in the ship focus", () => {
+    // gstack-ship infers the base from the repo default branch (main), so a
     // configured non-main target (an integration branch) would silently regress to a
     // main-targeted PR. The focus file MUST pin the configured base so the worker
     // overrides gstack-ship's inference.

@@ -8,7 +8,6 @@
  *   - appendFamilyLedger/read  → a sibling JSONL OUTSIDE the family base worktree
  *   - runFamilyVerify          → `npx tsc --noEmit` + `npx vitest run`
  *   - runIntegratedCmr         → a thin wrap of local `ak-cross-m-review` (seam)
- *   - openFamilyPr             → `gh pr create` (push family base + open PR; STOP)
  *   - recordAborted            → one phase-level `aborted` ledger append
  *   - escalateFamily           → a durable stuck-point record (resume entry)
  *   - ReconcileGit four predicates → `git rev-parse` / `--verify` / `merge-base`
@@ -727,7 +726,6 @@ describe("RealFamilyBackend construction-time prompt validation (gap g, same-typ
 describe("family CMR prompt output contract", () => {
   it("pins priorFindingDispositions to the parser's status field, not prose-only disposition", () => {
     for (const file of [
-      "integrated_cmr.md",
       "integrated_cmr_completeness.md",
       "integrated_cmr_correctness.md",
     ]) {
@@ -2348,33 +2346,6 @@ describe("RealFamilyBackend runIntegratedCmr (#291 ak-cross-m-review seam)", () 
     expect(b.cmrCalls).toEqual([{ familyBase: "family/293-base", llmResolvedChildren: [10] }]);
     expect(res).toEqual({ converged: false, reason: "field-name mismatch across slices" });
   });
-});
-
-// ═══════════════════════════ 7. openFamilyPr ════════════════════════════════
-
-describe("RealFamilyBackend openFamilyPr (#291 push + gh pr create, 止于 PR)", () => {
-  it("pushes the family base, opens a PR against the configured base, returns the url", async () => {
-    const b = new FakeSeamsBackend(opts(trackRepo(), { base: "integ/291-wave3" }));
-    b.prViewResponse = {
-      baseRefName: "integ/291-wave3",
-      headRefName: "family/293-base",
-      headRefOid: "pr-head-777",
-      headRepositoryOwner: { login: "Akagilnc" },
-      state: "OPEN",
-    };
-    const res = await b.openFamilyPr({ familyBase: "family/293-base" });
-    expect(res.url).toContain("/pull/777");
-    // The SOLE remote push is here.
-    const push = b.shCalls.find((c) => c.file === "git" && c.args[0] === "push");
-    expect(push?.args).toEqual(["push", "-u", "origin", "family/293-base"]);
-    // gh pr create targets the configured base (integration branch), head = family base.
-    const pr = b.shCalls.find((c) => c.file === "gh" && c.args[1] === "create");
-    expect(pr?.args).toContain("--base");
-    expect(pr?.args).toContain("integ/291-wave3");
-    expect(pr?.args).toContain("--head");
-    expect(pr?.args).toContain("family/293-base");
-  });
-
 });
 
 // ═══════════════════════════ 8. recordAborted / escalate ════════════════════

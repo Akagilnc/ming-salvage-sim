@@ -48,7 +48,6 @@ const STUCK = {
   reason: "Design-level ambiguity: unclear whether child field X should be optional",
   diagnosis:
     "The child issue body says 'optional' in one place but 'required' in another; a product decision is required before implementation can proceed.",
-  escalationKind: "decision",
 } satisfies Escalation;
 
 // A single-slice backend whose `escalateIssue` child decision-escalates on its
@@ -96,7 +95,7 @@ class EscalatingChildBackend implements Backend {
         kind: "coder",
         committed: false,
         commitsAdded: 0,
-        escalate: { ...STUCK, escalationKind: "decision" },
+        escalate: STUCK,
       };
       return out;
     }

@@ -4,6 +4,8 @@ Sweep beyond S1 (#875 verifyCmr accounting court) and S2 (#876 git-truthing conv
 
 Principle (#861 / #873): runner is a traffic cop — **exit code / findings count / decision gate**. Do not parse worker prose/state to branch fate. No milder validators.
 
+> 历史快照：以下清单记录 #877 当时的现场与裁定，不代表 ADR 0131 / #891 后的现行实现状态。
+
 ## Inventory + disposition
 
 | ID | Site | Pre-#877 fate | Action | Survival test |

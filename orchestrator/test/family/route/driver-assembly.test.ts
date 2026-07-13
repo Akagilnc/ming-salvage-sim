@@ -2,7 +2,6 @@
  * #291 Unit B — the family DRIVER's pure assembly pieces (no container, no live
  * GitHub): epic-read from `gh`, FamilyEpic build, local family-base cut.
  *
- *   - parseSubIssueNumbers: extract child issue NUMBERS from `gh … --json subIssues`.
  *   - buildFamilyEpic:      compose the FamilyEpic from children + blocked_by edges.
  *   - readFamilyEpic:       the gh-read end-to-end with an injected `sh`.
  *   - cutFamilyBase:        the LOCAL family-base cut on a real temp clone +
@@ -31,7 +30,6 @@ import {
   FamilyExternalBlockerError,
   inferVerifyCwd,
   parseSubIssueAdmission,
-  parseSubIssueNumbers,
   readFamilyEpic,
   type Sh,
 } from "../../../src/familyDriver.js";
@@ -87,72 +85,6 @@ describe("#4 inferVerifyCwd (diff → verifyCwd)", () => {
 
   it("returns undefined for an empty diff (caller falls back to default)", () => {
     expect(inferVerifyCwd([], subprojects, root)).toBeUndefined();
-  });
-});
-
-describe("#291 parseSubIssueNumbers", () => {
-  it("reads child numbers from the {subIssues:{nodes,totalCount}} object", () => {
-    const parsed = { subIssues: { nodes: [{ number: 11 }, { number: 12 }], totalCount: 2 } };
-    expect(parseSubIssueNumbers(parsed)).toEqual([11, 12]);
-  });
-  it("de-dupes (first-seen order) and skips non-numeric / odd shapes", () => {
-    const parsed = {
-      subIssues: { nodes: [{ number: 11 }, { number: 11 }, { foo: 1 }, { number: 13 }] },
-    };
-    expect(parseSubIssueNumbers(parsed)).toEqual([11, 13]);
-  });
-  it("skips CLOSED sub-issues (re-run epic with done children), keeps OPEN + state-less", () => {
-    const parsed = {
-      subIssues: {
-        nodes: [
-          { number: 341, state: "CLOSED" },
-          { number: 370, state: "OPEN" },
-          { number: 378, state: "OPEN" },
-          { number: 99 }, // state-less ⇒ kept (the single-slice S0 gate is the backstop)
-        ],
-      },
-    };
-    expect(parseSubIssueNumbers(parsed)).toEqual([370, 378, 99]);
-  });
-  it("skips CLOSED case-insensitively — lowercase 'closed' from a REST/legacy gh surface (gemini #384)", () => {
-    const parsed = {
-      subIssues: {
-        nodes: [
-          { number: 341, state: "closed" },
-          { number: 370, state: "Closed" },
-          { number: 378, state: "open" },
-        ],
-      },
-    };
-    expect(parseSubIssueNumbers(parsed)).toEqual([378]);
-  });
-  it("keeps open non-ready and parent children; admission filtering lives in parseSubIssueAdmission (#436)", () => {
-    const parsed = {
-      subIssues: {
-        nodes: [
-          { number: 341, state: "CLOSED", labels: [{ name: "ready-for-agent" }] },
-          { number: 370, state: "OPEN", labels: [{ name: "enhancement" }] },
-          {
-            number: 378,
-            state: "OPEN",
-            labels: [{ name: "ready-for-agent" }],
-            sub_issues_summary: { total: 2 },
-          },
-          { number: 99, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
-        ],
-      },
-    };
-
-    expect(parseSubIssueNumbers(parsed)).toEqual([370, 378, 99]);
-  });
-  it("returns [] for a missing / non-object subIssues (never throws)", () => {
-    expect(parseSubIssueNumbers({})).toEqual([]);
-    expect(parseSubIssueNumbers({ subIssues: null })).toEqual([]);
-    expect(parseSubIssueNumbers({ subIssues: { nodes: "nope" } })).toEqual([]);
-  });
-  it("a null / undefined `parsed` (e.g. JSON.parse returned null) ⇒ [] (never a TypeError) (online R2 Gemini)", () => {
-    expect(parseSubIssueNumbers(null)).toEqual([]);
-    expect(parseSubIssueNumbers(undefined)).toEqual([]);
   });
 });
 

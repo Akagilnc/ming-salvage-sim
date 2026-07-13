@@ -5,16 +5,14 @@
  * The family-LEVEL worker steps — integrated cross-model cmr over the merged
  * family base, runner-visible coder-fix for blocking CMR findings, and the
  * family-base ship/PR — are dispatched through ONE seam instead of hiding work
- * inside the per-method `runIntegratedCmr` / `openFamilyPr`.
+ * inside per-method runner hooks.
  *
  *   - {@link cmrWorkerSpec} / {@link familyCoderFixWorkerSpec} /
  *     {@link familyShipWorkerSpec} — the declarative {@link WorkerSpec}s for the
  *     family workers.
  *   - {@link dispatchFamilyWorker} — the free function the verify-cmr hook calls.
- *     It uses `familyBackend.dispatchWorker` when implemented, else forwards to the
- *     legacy `runIntegratedCmr` / `openFamilyPr` (#331 prefactor — behaviour
- *     unchanged for legacy cmr/ship). The real container cmr worker lands in #335;
- *     the runner-visible CMR coder-fix worker lands in #550.
+ *     It uses `familyBackend.dispatchWorker` when implemented; the only legacy
+ *     fallback retained is integrated-CMR review.
  *
  * NOTE the DispatchContext for a family worker carries `familyBase` (the caller
  * has only the base string, no single-slice worktree path — PRD #330 R2);
@@ -56,7 +54,6 @@ import type {
   FamilyBackend,
   IntegratedCmrPass,
   IntegratedCmrResult,
-  OpenFamilyPrResult,
 } from "./types.js";
 
 const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
@@ -160,16 +157,15 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
 
 /**
  * THE family seam entry point: dispatch a family worker, preferring the backend's
- * unified `dispatchWorker` when implemented, else the legacy forwarding wrapper
- * (#331 prefactor). The verify-cmr hook calls ONLY this for the cmr / family-ship
- * worker steps.
+ * unified `dispatchWorker` when implemented, else the legacy CMR-review wrapper.
+ * The verify-cmr hook calls only this for family worker steps.
  *
- * Returns the discriminated {@link WorkerResult}. For #331 the legacy wrapper
- * always yields `completed` (forwarding `runIntegratedCmr` / `openFamilyPr`):
+ * Returns the discriminated {@link WorkerResult}. The legacy review wrapper
+ * yields `completed` from `runIntegratedCmr`:
  *   - cmr → `completed` with a {@link CmrResult} payload (`red` IS `completed`).
  *   - coder-fix → requires a backend implementing the unified seam (no legacy
  *     family method can safely make persistent fix commits).
- *   - family ship → `completed` with a {@link ShipResult} payload.
+ *   - family ship → requires the unified seam.
  */
 export async function dispatchFamilyWorker(
   familyBackend: FamilyBackend,
@@ -405,11 +401,8 @@ function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
  * The #331 PREFACTOR thin wrapper: forward a family worker to the EXISTING
  * `FamilyBackend` methods and wrap into a {@link WorkerResult}.
  *
- * The two optional legacy methods (`runIntegratedCmr` / `openFamilyPr`) gate the
- * dispatch: when absent the verify-cmr hook already degrades to its
- * INCOMPLETE_GATE path, so this wrapper is only reached when the capability
- * exists. A missing capability throws (the hook never calls dispatch without
- * first checking the legacy method exists — see verifyCmr.ts).
+ * The optional legacy `runIntegratedCmr` method gates this reviewer-only
+ * fallback. Ship always uses the unified worker seam.
  */
 export async function legacyDispatchFamilyWorker(
   familyBackend: FamilyBackend,
@@ -469,31 +462,6 @@ export async function legacyDispatchFamilyWorker(
           : {}),
         ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
         ...(cmr.evidencePaths !== undefined ? { evidencePaths: cmr.evidencePaths } : {}),
-      },
-    };
-  }
-
-  if (spec.kind === "ship") {
-    if (familyBackend.openFamilyPr === undefined) {
-      throw new Error(
-        "legacyDispatchFamilyWorker: backend has no openFamilyPr capability",
-      );
-    }
-    const pr: OpenFamilyPrResult = await familyBackend.openFamilyPr({
-      familyBase,
-    });
-    const prHead =
-      typeof pr.prHead === "string" && pr.prHead.trim().length > 0
-        ? pr.prHead.trim()
-        : undefined;
-    return {
-      kind: "completed",
-      output: {
-        kind: "ship",
-        branch: familyBase,
-        pr: pr.url,
-        ...(prHead !== undefined ? { prHead } : {}),
-        status: "pr_opened",
       },
     };
   }

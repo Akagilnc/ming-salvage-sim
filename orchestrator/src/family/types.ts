@@ -539,8 +539,7 @@ export interface FamilyBackend {
    * THE unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330
    * #331) — parallel to {@link Backend.dispatchWorker}. The family-LEVEL worker
    * steps (integrated cmr over the merged family base, the family-base ship/PR)
-   * are dispatched through this ONE method instead of the per-method seam
-   * (`runIntegratedCmr` / `openFamilyPr`).
+   * are dispatched through this ONE method.
    *
    * The {@link DispatchContext} for a family worker carries `familyBase` (the
    * caller has only the base string, no single-slice worktree path — PRD #330 R2);
@@ -548,14 +547,12 @@ export interface FamilyBackend {
    * same discriminated union: a cmr `red` verdict is `completed` (with a
    * {@link CmrResult} payload), NOT `failed`.
    *
-   * #331 PREFACTOR: the runner's family verify-cmr hook ALWAYS dispatches through
-   * the free function `dispatchFamilyWorker(familyBackend, spec, ctx)`
-   * (verifyCmr.ts), which calls THIS method when implemented, else forwards to the
-   * legacy `runIntegratedCmr` / `openFamilyPr` — external behaviour unchanged. The
-   * real container cmr worker (#335) and family ship worker land later.
+   * The runner's family verify-cmr hook always dispatches through the free
+   * function `dispatchFamilyWorker(familyBackend, spec, ctx)` (verifyCmr.ts).
+   * Legacy integrated-CMR backends retain only the reviewer fallback.
    *
-   * OPTIONAL during the prefactor so the existing fakes need no change; new tests
-   * inject it to assert the family dispatch sequence + spec.
+   * Optional so verify-only and legacy integrated-CMR test backends remain valid;
+   * the production backend implements it for every family worker role.
    */
   dispatchWorker?(
     spec: WorkerSpec,
@@ -626,13 +623,6 @@ export interface FamilyBackend {
    * `ak-cross-m-review` pipeline (a薄封装 behind this seam).
    */
   runIntegratedCmr?(request: IntegratedCmrRequest): Promise<IntegratedCmrResult>;
-  /**
-   * #296 止于 PR seam (ADR 0022 decision 4): after a green verify + converged
-   * cmr, open the family-base PR and STOP — the family orchestrator's autonomy
-   * ends here. Online bot cmr + merge to main are the separate pr-review-loop
-   * stage, NOT this layer (so this seam never merges).
-   */
-  openFamilyPr?(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult>;
   /**
    * Absolute git working directory for the family base clone. Optional — used to
    * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
@@ -746,20 +736,6 @@ export interface IntegratedCmrResult {
   readonly findings?: readonly Finding[];
   /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
   readonly evidencePaths?: readonly string[];
-}
-
-/** What opening the family PR needs (decision 4, 止于 PR). */
-export interface OpenFamilyPrRequest {
-  /** The family base branch the PR is opened FROM. */
-  readonly familyBase: string;
-}
-
-/** The opened-PR result. */
-export interface OpenFamilyPrResult {
-  /** The opened PR's URL (or a synthetic handle in the fake). */
-  readonly url: string;
-  /** The opened PR's head commit SHA/OID, verified from PR metadata when available. */
-  readonly prHead?: string;
 }
 
 /**

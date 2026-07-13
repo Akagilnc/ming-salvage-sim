@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { legacyDispatchWorker } from "../../src/dispatchWorker.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import {
-  adjudicatePriorClaimedFixedFindings,
   classifyFindings,
   findingIdentityKey,
 } from "../../src/findings.js";
@@ -361,37 +360,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
-  it("#877: prior key/payload drift never throws (disposition court demolished)", () => {
-    const orphanKey = "correctness|src/runner.ts:404|missing finding payload";
-
-    expect(() =>
-      adjudicatePriorClaimedFixedFindings({
-        priorFindings: [],
-        priorIdentityKeys: [orphanKey],
-        review: {
-          kind: "reviewer",
-          findings: [],
-          priorFindingDispositions: [
-            { identityKey: orphanKey, status: "still-active" },
-          ],
-        },
-      }),
-    ).not.toThrow();
-    const adjudication = adjudicatePriorClaimedFixedFindings({
-      priorFindings: [],
-      priorIdentityKeys: [orphanKey],
-      review: {
-        kind: "reviewer",
-        findings: [],
-        priorFindingDispositions: [
-          { identityKey: orphanKey, status: "still-active" },
-        ],
-      },
-    });
-    expect(adjudication.stillOpen).toEqual([]);
-    expect(adjudication.verifiedClosedIdentityKeys).toEqual([orphanKey]);
-  });
-
   it("ships only after the fresh re-review explicitly verifies a claimed-fixed finding closed", async () => {
     const backend = new RetryReviewBackend([
       { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
@@ -664,6 +632,32 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S5:coder",
       "S6:reviewer",
 
+    ]);
+  });
+
+  it("continues to fresh review when the best-effort HEAD read fails after S5", async () => {
+    const worktree = makeGitWorktree();
+    const backend = new RetryReviewBackend(
+      [
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        { kind: "completed", output: { kind: "reviewer", findings: [] } },
+      ],
+      undefined,
+      [{ kind: "coder", committed: true, commitsAdded: 1 }],
+      worktree,
+      (_attempt, wt) => {
+        renameSync(join(wt.path, ".git"), join(wt.path, ".git-unavailable"));
+      },
+    );
+
+    const result = await runOrchestrator({ issueNumber: 427, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual([
+      "S2:coder",
+      "S3:reviewer",
+      "S5:coder",
+      "S6:reviewer",
     ]);
   });
 
@@ -2056,7 +2050,6 @@ describe("#369 runner resume/retry review fixes", () => {
             escalate: {
               reason: "needs answer",
               diagnosis: "human answered; resume or fresh fallback may run",
-              escalationKind: "decision",
             },
           },
         },
@@ -2676,107 +2669,6 @@ describe("#369 finding identity and classification", () => {
       severity: "high",
       reopenAttempts: 1,
     });
-  });
-
-  it("treats accepted_suppressed prior claimed-fixed dispositions as terminal closure", () => {
-    const key = findingIdentityKey(finding);
-
-    const adjudication = adjudicatePriorClaimedFixedFindings({
-      priorFindings: [finding],
-      priorIdentityKeys: [key],
-      acceptedSuppressionSources: [
-        {
-          source: "issue #448 acceptance criteria",
-          scope: "same claimed-fixed finding",
-          reason: "accepted by the owner for this bounded scope",
-          findingIdentity: key,
-          boundedReopen: "reopen on higher severity or different scope",
-        },
-      ],
-      review: {
-        kind: "reviewer",
-        findings: [],
-        priorFindingDispositions: [
-          {
-            identityKey: key,
-            status: "accepted_suppressed",
-            source: "issue #448 acceptance criteria",
-            scope: "same claimed-fixed finding",
-            reason: "accepted by the owner for this bounded scope",
-            boundedReopen: "reopen on higher severity or different scope",
-          },
-        ],
-      },
-    });
-
-    expect(adjudication.stillOpen).toEqual([]);
-    expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
-  });
-
-  it("#877: high prior keys absent from findings[] close via findings-count (disposition prose ignored)", () => {
-    const highFinding: Finding = {
-      ...finding,
-      severity: "high",
-      action: "fix_now",
-    };
-    const key = findingIdentityKey(highFinding);
-
-    const adjudication = adjudicatePriorClaimedFixedFindings({
-      priorFindings: [highFinding],
-      priorIdentityKeys: [key],
-      acceptedSuppressionSources: [
-        {
-          source: "issue #448 acceptance criteria",
-          scope: "same claimed-fixed finding",
-          reason: "accepted by the owner for this bounded scope",
-          findingIdentity: key,
-          boundedReopen: "reopen on higher severity or different scope",
-        },
-      ],
-      review: {
-        kind: "reviewer",
-        findings: [],
-        priorFindingDispositions: [
-          {
-            identityKey: key,
-            status: "accepted_suppressed",
-            source: "issue #448 acceptance criteria",
-            scope: "same claimed-fixed finding",
-            reason: "accepted by the owner for this bounded scope",
-            boundedReopen: "reopen on higher severity or different scope",
-          },
-        ],
-      },
-    });
-
-    expect(adjudication.stillOpen).toEqual([]);
-    expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
-  });
-
-  it("#877: reviewer-created accepted_suppressed disposition prose does not reopen findings[]=empty", () => {
-    const key = findingIdentityKey(finding);
-
-    const adjudication = adjudicatePriorClaimedFixedFindings({
-      priorFindings: [finding],
-      priorIdentityKeys: [key],
-      review: {
-        kind: "reviewer",
-        findings: [],
-        priorFindingDispositions: [
-          {
-            identityKey: key,
-            status: "accepted_suppressed",
-            source: "reviewer judgement",
-            scope: "same claimed-fixed finding",
-            reason: "the reviewer decided this is acceptable",
-            boundedReopen: "maybe reconsider later",
-          },
-        ],
-      },
-    });
-
-    expect(adjudication.stillOpen).toEqual([]);
-    expect(adjudication.verifiedClosedIdentityKeys).toEqual([key]);
   });
 
   it("requires accepted_suppressed prior dispositions to carry the suppression reason", () => {

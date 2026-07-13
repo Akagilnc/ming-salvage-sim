@@ -1,12 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { route } from "../../src/route.js";
+import { probeWorkerDecisionBell } from "../../src/workerReceipt.js";
 
 describe("ADR 0131 zero-judgment runner constitution", () => {
   it("routes any present escalation ticket, including empty strings, to decision", () => {
     expect(route({ from: "S2", output: {
       kind: "coder", committed: true, commitsAdded: 1,
-      escalate: { reason: "", diagnosis: "", escalationKind: "decision" },
+      escalate: { reason: "", diagnosis: "" },
     } })).toEqual({ kind: "handoff", status: "escalate" });
+  });
+
+  it("treats the escalate block itself as the decision bell", () => {
+    expect(probeWorkerDecisionBell({ escalate: {} })).toEqual({
+      reason: "",
+      diagnosis: "",
+    });
+    expect(
+      probeWorkerDecisionBell({ escalate: { reason: "", diagnosis: "" } }),
+    ).toEqual({ reason: "", diagnosis: "" });
   });
 
   it("routes S4 solely by reviewer-declared findings count", () => {

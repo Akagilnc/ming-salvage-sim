@@ -24,9 +24,8 @@
  *     family base; green → {ok:true}, red → {ok:false, errorPackage:{reason}}.
  *   - runIntegratedCmr         → a thin wrap of the local `ak-cross-m-review`
  *     pipeline behind the {@link runCmr} protected seam.
- *   - openFamilyPr             → push the family base + `gh pr create` and STOP
- *     (the family orchestrator's autonomy ends at the PR; online bot cmr + merge
- *     are the separate pr-review-loop stage).
+ *   - dispatchWorker(ship)     → the `gstack-ship` worker opens the family PR;
+ *     online bot CMR + merge remain the separate PR-review-loop stage.
  *   - recordAborted            → the #296 in-memory back-compat seam (a no-op
  *     here): the durable PHASE-LEVEL `aborted` entry is `recordDurableAbort`'s job
  *     (verifyCmr.ts calls both; only the durable writer appends — exactly one entry).
@@ -71,6 +70,7 @@ import {
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
+import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   effortForLiveOfficer,
   isBillingPoolDispatchId,
@@ -189,8 +189,6 @@ import type {
   IntegratedCmrResult,
   MergeRequest,
   MergeResult,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
   ReconcileGit,
 } from "./types.js";
 
@@ -231,9 +229,7 @@ export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
  * family ship worker runs (cmr S336 r5): it pins the family base branch + the
  * CONFIGURED PR target base (`opts.base`) + the repo slug, so the in-container
  * `gstack-ship` opens the family PR against the RIGHT base. Without it gstack-ship
- * INFERS the base from the repo default branch (main) — silently regressing the
- * legacy `openFamilyPr` `gh pr create --base this.opts.base` contract whenever the
- * family run targets a non-main integration branch (e.g. `integ/291-wave3`).
+ * infers the repo default branch and cannot honor a non-main integration target.
  */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
@@ -303,7 +299,7 @@ export interface RealFamilyBackendOptions {
    * Precedence: `verifyCwd` (explicit) > `resolveVerifyCwd()` (inferred) > `workingRepo`.
    */
   readonly resolveVerifyCwd?: () => string | undefined;
-  /** GitHub repo slug for `gh` (`owner/name`) — for openFamilyPr. */
+  /** GitHub repo slug for `gh` (`owner/name`). */
   readonly repo: string;
   /** The base branch the family PR targets (e.g. an integration branch or "main"). */
   readonly base: string;
@@ -1286,7 +1282,7 @@ export class RealFamilyBackend implements FamilyBackend {
    *   - coder (#550): a family coder-fix worker invoking `/tdd` for blocking CMR
    *     findings (`runFamilyCoderFixWorker`).
    *   - ship (#336): a container ship worker invoking `gstack-ship` 止于 PR
-   *     (`dispatchShipWorker`) — this REPLACED the legacy inline `openFamilyPr`.
+   *     (`dispatchShipWorker`).
    * Every OTHER family worker kind (merge — B 段) still forwards to the legacy
    * wrapper until its own slice wires it.
    *
@@ -1306,8 +1302,8 @@ export class RealFamilyBackend implements FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (spec.kind === "ship") {
-      // #336: the family ship step (止于 PR) is a CONTAINER ship WORKER invoking
-      // `gstack-ship` (replacing the inline `openFamilyPr`).
+      // #336: the family ship step (止于 PR) is a container ship worker invoking
+      // `gstack-ship`.
       return this.dispatchShipWorker(spec, ctx);
     }
     if (spec.kind === "coder") {
@@ -1937,25 +1933,23 @@ export class RealFamilyBackend implements FamilyBackend {
       if (missingProvider !== undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason: `no ${missingProvider} auth — the family ${spec.kind} provider cannot start`,
             diagnosis: "typed provider availability preflight rejected the review-loop launch before sc.run",
-            synthesizedFailure: true,
-          },
+          }),
         };
       }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason:
               `no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family ${spec.kind} worker cannot start`,
             diagnosis:
               `the family ${spec.kind} worker is a top-level Claude worker when the ` +
               "active route selects a Claude-family model; provide " +
               "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude route.",
-            synthesizedFailure: true,
-          },
+          }),
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
@@ -2722,10 +2716,9 @@ export class RealFamilyBackend implements FamilyBackend {
       // Check out the family base so gstack-ship delivers the RIGHT branch.
       this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
       // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
-      // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise INFERS
-      // the base from the repo default branch (main), regressing the legacy
-      // `openFamilyPr` `gh pr create --base this.opts.base` contract on a non-main
-      // target. Written AFTER the checkout (the file lives in the family-base
+      // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise infers
+      // the repo default branch and misses a configured non-main target. Written
+      // AFTER the checkout (the file lives in the family-base
       // worktree) and BEFORE the container so the worker can read it.
       this.writeShipFocusFile(ctx);
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
@@ -2786,8 +2779,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * r5): the family base branch + the CONFIGURED PR target base (`opts.base`) + the
    * repo slug. The worker's prompt reads it FIRST so the in-container `gstack-ship`
    * opens the family PR against the configured base instead of its inferred repo
-   * default — preserving the legacy `openFamilyPr` `--base this.opts.base` contract
-   * (the lone load-bearing item gstack-ship cannot infer: `--head` = the checked-out
+   * default (the lone load-bearing item gstack-ship cannot infer: `--head` = the checked-out
    * branch, `--repo` = the clone's origin, title/body/CHANGELOG = the skill's own,
    * push = the skill's; ONLY the non-default target base is unknowable to it).
    * `protected` so a unit test can fixture it without a real worktree.
@@ -2997,39 +2989,6 @@ export class RealFamilyBackend implements FamilyBackend {
     // Shared helper forces readonly:true at every site.
     mounts.push(soulsMount(this.opts.soulsDir));
     return { imageName: this.opts.imageName, env, mounts };
-  }
-
-  // ─────────────────────────── open PR (止于 PR) — legacy inline ───────────────
-
-  /**
-   * LEGACY inline 止于 PR (push family base + `gh pr create`). RETAINED as a
-   * `protected`-style fallback the production seam no longer reaches: ADR 0026 /
-   * #336 makes 止于 PR a ship WORKER (gstack-ship via {@link dispatchShipWorker}).
-   * A direct caller (a test / a back-compat path bypassing the unified seam) may
-   * still reach it; verifyCmr always dispatches through dispatchFamilyWorker.
-   */
-  async openFamilyPr(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    const repo = this.opts.workingRepo;
-    // ONLY here do we push the family base + open the PR — and STOP (the family
-    // orchestrator's autonomy ends at the PR; online bot cmr + merge are the
-    // separate pr-review-loop stage). This is the SOLE remote push.
-    this.sh("git", ["push", "-u", "origin", request.familyBase], repo);
-    const url = this.sh(
-      "gh",
-      [
-        "pr",
-        "create",
-        "--repo",
-        this.opts.repo,
-        "--base",
-        this.opts.base,
-        "--head",
-        request.familyBase,
-        "--fill",
-      ],
-      repo,
-    );
-    return { url };
   }
 
   // ─────────────────────────── aborted / escalate ───────────────────────────

@@ -346,8 +346,10 @@ the image or written to orchestrator state.
 3. **Online bot rounds** (after a PR opens): sourcery / codex-connector /
    gemini / coderabbit threads are worked finding-by-finding — fix as a new
    commit, reply with the commit hash, resolve the thread; refutations are
-   replied with verifiable evidence instead of code. Merge requires
-   mergeState CLEAN **and** zero unresolved threads.
+   replied with verifiable evidence instead of code. Before the runner performs
+   its own merge, host state may require mergeState CLEAN and zero unresolved
+   threads. This gates only the runner's merge action; it never judges or
+   reclassifies a worker receipt.
 
 Ticket discipline for fix rounds: every ticket carries a sweep clause ("fix the
 finding, then sweep for the same class and print a self-audit checklist").

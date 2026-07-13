@@ -1129,10 +1129,8 @@ export function rebuildS5ReverifySignalsFromLedger(
           afterFix,
         });
       } catch {
-        // Live S5 remains fail-closed. Resume rebuild must not abort an
-        // otherwise-recoverable plan when HEADs are not locally resolvable
-        // (protocol-failure recovery fixtures / missing worktree). Refuse
-        // keys still restore from the S5 coder output below.
+        // Host-git observations are best-effort bookkeeping. Missing local
+        // objects must not change the worker receipt's route.
         preexistingAssertionTouched = false;
       }
     }
@@ -1207,18 +1205,10 @@ function latestContinueFixingAfter(
 
 function escalationKindForHandoff(
   status: HandoffStatus,
-  output: StepOutput | undefined,
 ): EscalationKind | undefined {
-  if (status !== "escalate") return undefined;
-  const escalation = escalateOf(output);
-  if (escalation == null || !isValidEscalation(escalation)) return "failure";
-  if (
-    escalation.escalationKind === "decision" ||
-    escalation.escalationKind === "failure"
-  ) {
-    return escalation.escalationKind;
-  }
-  return escalation.synthesizedFailure === true ? "failure" : "decision";
+  // This call site only transports route()'s worker-raised decision gate.
+  // Process failures use escalateTermination(..., "failure") directly.
+  return status === "escalate" ? "decision" : undefined;
 }
 
 /**
@@ -3555,7 +3545,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 {
                   reason: `${step} mechanical redispatch exhausted`,
                   diagnosis: exhaustionReason,
-                  synthesizedFailure: true,
                 },
                 result.sessionId,
                 "failure",
@@ -3586,7 +3575,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     kind: "coder",
                     committed: false,
                     commitsAdded: 0,
-                    escalate: { ...escalation, escalationKind: "decision" },
+                    escalate: escalation,
                   }
                 : { kind: "reviewer", findings: [], escalate: escalation };
             return await escalateTermination(
@@ -3749,8 +3738,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           return await errorTermination(step, err);
         }
 
-        // The routing gate owns a fresh HEAD capture independent of telemetry.
-        // Telemetry may reuse this load-bearing evidence, never supply it.
+        // Fresh host HEAD capture is best-effort telemetry/bookkeeping only.
+        // Its availability cannot change the worker receipt's route.
         const coderHeadAfterStep = expectedKind === "coder"
           ? gitHead(worktree)
           : undefined;
@@ -3833,21 +3822,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             coderHeadBeforeStep,
           );
           if (step === "S5" && coderHeadBeforeStep !== undefined) {
-            try {
-              const afterFix = coderHeadAfterStep;
-              if (afterFix === undefined) {
-                throw new Error(
-                  "reviewFixAssertionSignal: unable to read HEAD after S5 (fail-closed)",
-                );
+            const afterFix = coderHeadAfterStep;
+            if (afterFix !== undefined) {
+              try {
+                preexistingAssertionTouchedForReverify = reviewFixAssertionSignal({
+                  worktreePath: worktree.path,
+                  sliceBase: worktree.base,
+                  beforeFix: coderHeadBeforeStep,
+                  afterFix,
+                });
+              } catch {
+                preexistingAssertionTouchedForReverify = false;
               }
-              preexistingAssertionTouchedForReverify = reviewFixAssertionSignal({
-                worktreePath: worktree.path,
-                sliceBase: worktree.base,
-                beforeFix: coderHeadBeforeStep,
-                afterFix,
-              });
-            } catch (err) {
-              return await errorTermination(step, err);
             }
           }
           // #677: legal refuse — wire decision gate on the real S5 path.
@@ -4008,7 +3994,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           decision.status,
           undefined,
           undefined,
-          escalationKindForHandoff(decision.status, lastOutput),
+          escalationKindForHandoff(decision.status),
           handoffStopSummary,
         );
       } catch (err) {

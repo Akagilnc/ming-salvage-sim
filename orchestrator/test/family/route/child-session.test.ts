@@ -44,7 +44,6 @@ const STUCK = {
   reason: "Design-level ambiguity: unclear whether child field X should be optional",
   diagnosis:
     "The child issue body says 'optional' in one place but 'required' in another; a product decision is required.",
-  escalationKind: "decision",
 } satisfies Escalation;
 
 /** The real per-step sandbox session id the provider surfaces on the escalated step. */
@@ -102,7 +101,7 @@ class SessionSurfacingChildBackend implements Backend {
         kind: "coder",
         committed: false,
         commitsAdded: 0,
-        escalate: { ...STUCK, escalationKind: "decision" },
+        escalate: STUCK,
       };
       // Surface the real per-step session id via the StepResult shape.
       return { output, sessionId: SURFACED_SESSION_ID };

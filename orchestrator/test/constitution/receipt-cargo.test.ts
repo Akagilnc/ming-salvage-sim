@@ -11,10 +11,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import {
-  adjudicatePriorClaimedFixedFindings,
-  findingIdentityKey,
-} from "../../src/findings.js";
+import { findingIdentityKey } from "../../src/findings.js";
 import { enforceRunnerOwnedRecheck } from "../../src/family/onlineReviewLoop.js";
 import {
   isValidVerifyResult,
@@ -143,9 +140,7 @@ class ScriptedReviewBackend implements Backend {
 
 describe("#877 residual read-word fate forks — survival", () => {
   it("R1: S6 empty findings without priorFindingDispositions ships (disposition court demolished)", async () => {
-    // Pre-#877: adjudicatePriorClaimedFixedFindings threw "omitted required
-    // disposition" → contract_drift kill at S4. Post-#877: findings count=0 is
-    // the only channel; disposition prose is not required.
+    // Findings count=0 is the only channel; disposition prose is not required.
     const backend = new ScriptedReviewBackend([
       { kind: "reviewer", findings: [BLOCKING] },
       { kind: "reviewer", findings: [] },
@@ -179,43 +174,6 @@ describe("#877 residual read-word fate forks — survival", () => {
 
     expect(result.status).toBe("success");
     expect(result.errorPackage?.reason ?? "").not.toMatch(/no progress/i);
-  });
-
-  it("R1 unit: adjudicatePriorClaimedFixedFindings never throws on chatty/sloppy disposition prose", () => {
-    expect(() =>
-      adjudicatePriorClaimedFixedFindings({
-        priorFindings: [BLOCKING],
-        priorIdentityKeys: [BLOCKING_KEY],
-        review: {
-          kind: "reviewer",
-          findings: [],
-          // missing disposition entirely
-        },
-      }),
-    ).not.toThrow();
-
-    expect(() =>
-      adjudicatePriorClaimedFixedFindings({
-        priorFindings: [],
-        priorIdentityKeys: [BLOCKING_KEY],
-        review: {
-          kind: "reviewer",
-          findings: [],
-          priorFindingDispositions: [
-            { identityKey: BLOCKING_KEY, status: "still-active" },
-          ],
-        },
-      }),
-    ).not.toThrow();
-
-    const missing = adjudicatePriorClaimedFixedFindings({
-      priorFindings: [BLOCKING],
-      priorIdentityKeys: [BLOCKING_KEY],
-      review: { kind: "reviewer", findings: [] },
-    });
-    // findings-count channel: absence from findings ⇒ not still-open
-    expect(missing.stillOpen).toEqual([]);
-    expect(missing.verifiedClosedIdentityKeys).toEqual([BLOCKING_KEY]);
   });
 
   it("R4: enforceRunnerOwnedRecheck never returns contradiction; forces runner truth", () => {

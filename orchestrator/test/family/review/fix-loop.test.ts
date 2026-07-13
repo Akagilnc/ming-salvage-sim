@@ -468,7 +468,10 @@ class CountChannelFixBackend implements FamilyBackend {
   currentFamilyHead = "head-before-count-channel-fix";
   private completenessRound = 0;
 
-  constructor(private readonly firstCmrResult: WorkerResult) {}
+  constructor(
+    private readonly firstCmrResult: WorkerResult,
+    private readonly coderResult?: WorkerResult,
+  ) {}
 
   async mergeChildIntoFamilyBase(): Promise<never> {
     throw new Error("not used");
@@ -517,7 +520,7 @@ class CountChannelFixBackend implements FamilyBackend {
     }
     if (spec.kind === "coder") {
       this.currentFamilyHead = "head-after-count-channel-fix";
-      return {
+      return this.coderResult ?? {
         kind: "completed",
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
@@ -3250,6 +3253,64 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     });
     expect(backend.escalations).toEqual([]);
     expect(JSON.stringify(backend.ledger)).not.toContain('"escalationKind":"decision"');
+  });
+
+  it("routes a completed reviewer carrying a non-cmr shape to coder-fix as raw artifacts", async () => {
+    const backend = new CountChannelFixBackend({
+      kind: "completed",
+      sessionId: "cmr-reviewer-wrong-shape",
+      output: { kind: "ship", branch: "family/wrong-shape", status: "pushed" },
+    });
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/wrong-reviewer-shape",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
+    expect(backend.landings[coderIndex]).toMatchObject({
+      blockingFindings: [],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "cmr-reviewer-wrong-shape",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
+    expect(backend.ledger.some((entry) => entry.status === "aborted")).toBe(false);
+  });
+
+  it("sends a completed coder carrying a non-coder shape to a fresh reviewer", async () => {
+    const backend = new CountChannelFixBackend(
+      {
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: false,
+          findingsCount: 1,
+          findings: [BLOCKING_FAMILY_CMR_FINDING],
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          ...CMR_EVIDENCE,
+        },
+      },
+      {
+        kind: "completed",
+        output: { kind: "ship", branch: "family/wrong-coder-shape", status: "pushed" },
+      },
+    );
+
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/wrong-coder-shape",
+      familyBackend: backend,
+    });
+
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.filter((dispatch) => dispatch.kind === "cmr")).toHaveLength(3);
+    expect(backend.ledger).toContainEqual(
+      expect.objectContaining({ status: "cmr_fix_committed", cmrPass: "completeness" }),
+    );
+    expect(backend.ledger.some((entry) => entry.status === "aborted")).toBe(false);
   });
 
   it("routes a completed reviewer missing its declared count to raw artifacts even with finding cargo", async () => {
