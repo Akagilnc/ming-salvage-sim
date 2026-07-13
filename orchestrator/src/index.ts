@@ -7,7 +7,6 @@ export {
   findingDescriptor,
   infraFailureStopSummary,
   providerDegradedStopSummary,
-  stopReasonForFindingDisposition,
   stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
 } from "./stopSummary.js";

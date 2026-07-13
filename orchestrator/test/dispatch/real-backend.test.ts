@@ -41,7 +41,6 @@ import {
   ensureExcluded,
   extractAgentBrief,
   extractCoderTag,
-  isLikelySha,
   isReadyForAgent,
   issueNumberFromBranch,
   lastSessionId,
@@ -908,16 +907,6 @@ describe("realBackend lastSessionId", () => {
   it("returns undefined when no iteration carries a sessionId", () => {
     expect(lastSessionId({ iterations: [{}, {}] })).toBeUndefined();
     expect(lastSessionId({ iterations: [] })).toBeUndefined();
-  });
-});
-
-describe("realBackend isLikelySha", () => {
-  it("accepts 7–40 lower-hex, rejects branch names / upper / short", () => {
-    expect(isLikelySha("abc1234")).toBe(true);
-    expect(isLikelySha("a".repeat(40))).toBe(true);
-    expect(isLikelySha("feat/x")).toBe(false);
-    expect(isLikelySha("ABC1234")).toBe(false);
-    expect(isLikelySha("abc12")).toBe(false);
   });
 });
 

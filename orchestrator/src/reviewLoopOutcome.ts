@@ -2,7 +2,8 @@
  * Family review-loop worker outcome seam (#596).
  *
  * Defines the typed payload shapes and compatibility results consumed by the
- * family S9 verify → S10 fixer → S11 cleanup → S12 docRelease endgame.
+ * family S9 verify / S10 fixer / S12 docRelease agent outcomes plus the
+ * host-deterministic S11 cleanup result.
  */
 
 import type {
@@ -56,7 +57,7 @@ export function stubFixerResult(): FixerResult {
   return { kind: "fixer", committed: true, fixCommitSha: "stub-fix-sha" };
 }
 
-/** Deterministic skeleton verdict used by offline/test paths for S11. */
+/** Deterministic host-cleanup result used by explicit offline/test paths. */
 export function stubCleanupResult(): CleanupResult {
   return {
     kind: "cleanup",
@@ -86,8 +87,6 @@ export function skeletonReviewLoopWorkerResult(
       return { kind: "completed", output: stubVerifyResult() };
     case "fixer":
       return { kind: "completed", output: stubFixerResult() };
-    case "cleanup":
-      return { kind: "completed", output: stubCleanupResult() };
     case "docRelease":
       return { kind: "completed", output: stubDocReleaseResult() };
     default:

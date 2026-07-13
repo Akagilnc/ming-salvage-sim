@@ -692,9 +692,9 @@ export function planVerifySideEffects(
     });
   }
 
-  // Reject dispositions require an evidence reply on the PR thread (online R3
-  // Codex P2). Synthesize from disposition.reason when the worker omitted
-  // threadReplies; fail closed when reason is also missing.
+  // Reject dispositions with publishable evidence get a PR-thread reply. A thin
+  // disposition is reviewer cargo, not a runner failure: skip that side effect
+  // and leave the original worker artifacts for the next worker to inspect.
   for (const disposition of verify.findingDispositions ?? []) {
     if (disposition.action !== "reject") {
       continue;
@@ -710,9 +710,10 @@ export function planVerifySideEffects(
     }
     const reason = disposition.reason?.trim() ?? "";
     if (reason.length === 0) {
-      throw new Error(
-        `applyVerifySideEffects: reject disposition for ${disposition.identityKey} requires a threadReplies entry or a non-empty reason`,
+      console.warn(
+        `[orchestrator] skipped unpublishable reject disposition cargo ${disposition.identityKey}; reviewer artifacts remain available to the next worker`,
       );
+      continue;
     }
     const body = reason.toLowerCase().startsWith("rejected:")
       ? reason
@@ -858,14 +859,9 @@ export function applyVerifySideEffects(
   return { deferredIssueUrls, repliesPosted, threadsResolved };
 }
 
-/** Derive fix-marked identity keys from verify dispositions when omitted. */
+/** Preserve only the verify worker's self-reported fix-marked identity keys. */
 export function fixMarkedKeysFromVerify(verify: VerifyResult): string[] {
-  if (verify.fixMarkedFindingIdentityKeys !== undefined) {
-    return [...verify.fixMarkedFindingIdentityKeys];
-  }
-  return (verify.findingDispositions ?? [])
-    .filter((d) => d.action === "fix")
-    .map((d) => d.identityKey);
+  return [...(verify.fixMarkedFindingIdentityKeys ?? [])];
 }
 
 /** Preserve the thread that a fix-marked identity was judged against. */

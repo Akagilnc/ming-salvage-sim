@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
 import {
-  cleanupWorkerSpec,
   dispatchWorker,
   docReleaseWorkerSpec,
   fixerWorkerSpec,
@@ -599,7 +598,7 @@ describe("#796 Coder-Rec host dispatch", () => {
     },
   );
 
-  it("derives every route-backed worker factory host from its selected slot", () => {
+  it("derives every agent-worker factory host from its selected route slot", () => {
     const route = {
       ...SMOKED_ROUTE,
       slots: {
@@ -615,7 +614,6 @@ describe("#796 Coder-Rec host dispatch", () => {
     expect(familyShipWorkerSpec(route).host).toBe("opencode");
     expect(verifyWorkerSpec(route).host).toBe("codex");
     expect(fixerWorkerSpec(route).host).toBe("claude");
-    expect(cleanupWorkerSpec(route).host).toBe("cursor");
     expect(docReleaseWorkerSpec(route).host).toBe("opencode");
   });
 

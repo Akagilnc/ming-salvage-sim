@@ -560,6 +560,14 @@ export interface FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /**
+   * Host-deterministic post-merge cleanup seam (#603). Cleanup is not an agent
+   * worker: no prompt, soul, model route, or reviewer judgment is involved.
+   */
+  runPostMergeCleanup?(
+    landing: WorkerLandingPayload,
+    ctx: DispatchContext,
+  ): Promise<CleanupResult>;
+  /**
    * #786: reinstall this backend's image / souls / prompts fingerprints before
    * its first sidecar environment row. Family and single-slice dispatch share
    * the same lazy, fail-open telemetry provider contract.
@@ -697,9 +705,8 @@ export interface IntegratedCmrRequest {
   /** Parsed module context supplied by the runner; the worker must not invent it. */
   readonly moduleContext?: FamilyModuleContext;
   /**
-   * Runner-owned prior finding identity keys that this CMR worker may adjudicate
-   * as claimed-fixed. Claimed-fixed keys outside this set are stale/self-claimed
-   * closure and must fail closed at the family gate.
+   * Prior finding identity keys transported to the CMR worker as review context.
+   * The runner does not adjudicate the worker's closure cargo.
    */
   readonly priorCmrFindingIdentityKeys?: readonly string[];
 }
@@ -716,13 +723,13 @@ export interface IntegratedCmrResult {
   readonly successfulLegs?: readonly string[];
   /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-  /** Prior claimed-fixed findings the integrated CMR result asks the runner to adjudicate. */
+  /** Prior claimed-fixed finding cargo reported by the integrated CMR worker. */
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured findings to classify at the family gate (#449). */
   readonly findings?: readonly Finding[];
-  /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
+  /** Reviewer-referenced evidence artifact pointers transported as cargo. */
   readonly evidencePaths?: readonly string[];
 }
 

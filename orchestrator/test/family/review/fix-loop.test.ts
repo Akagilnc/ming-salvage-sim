@@ -147,7 +147,6 @@ describe("review-round persistence immunity", () => {
 const ONLINE_REVIEW_DISPATCH_TAIL = [
   expect.objectContaining({ kind: "verify", promptFile: "verify.md" }),
   expect.objectContaining({ kind: "docRelease", promptFile: "docRelease.md" }),
-  expect.objectContaining({ kind: "cleanup", promptFile: "cleanup.md" }),
 ] as const;
 
 /** Deterministic skeleton for verify/fixer/cleanup/docRelease after ship (#600). */
@@ -2884,7 +2883,6 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       "ship",
       "verify",
       "docRelease",
-      "cleanup",
     ]);
   });
 it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", async () => {

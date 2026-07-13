@@ -1798,13 +1798,6 @@ function untrustedExecutableInstructionSummary(
 
 function stopSummaryForEscalation(escalation: Escalation): StopSummary {
   const reason = `${escalation.reason}: ${escalation.diagnosis}`;
-  if (/review\/fix loop made no progress/i.test(escalation.reason)) {
-    return {
-      reason: "same_module_still_red",
-      summary: reason,
-      repairHint: "repair the same-module finding or change the implementation strategy before rerun",
-    };
-  }
   return {
     reason: "spec_conflict",
     summary: reason,

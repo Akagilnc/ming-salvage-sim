@@ -53,10 +53,6 @@ export interface StopSummary {
    * live coder-fix landing payload instead.
    */
   readonly findingDescriptor?: FindingDescriptor;
-  // #604 correctness r2 (C4): targetModule/owningIssue/missingSurface/nextStep
-  // were only ever set by the removed dead route-kind branches of
-  // stopReasonForFindingDisposition — no producer sets them and no consumer
-  // reads them off a StopSummary. Removed with the dead branches (ADR 0062).
   readonly metadata?: StopSummaryMetadata;
 }
 
@@ -137,31 +133,6 @@ export interface TrustBoundarySummary {
   readonly rejectedAuthor: string;
   readonly trustedAuthor: string;
   readonly sourceKind: string;
-}
-
-// #604 correctness r2 (C4) / ADR 0062: the routing disposition kinds
-// (owning_issue_still_red / cross_module / spec_conflict / infra_failure) were
-// deleted from the reviewer contract — the runner is a pure scheduler that
-// counts blocking findings, it does not read a route kind. The only live caller
-// (verifyCmr.ts) passes `same_module`, so those four input branches were
-// unreachable dead code (with their derived StopSummary fields
-// targetModule/owningIssue/missingSurface/nextStep). They are removed here. The
-// `StopReason` union keeps its reserved runner terminal-state words unchanged.
-export type FindingDispositionStopInput = {
-  readonly kind: "same_module";
-  readonly finding: Finding;
-  readonly reason?: string;
-};
-
-export function stopReasonForFindingDisposition(
-  input: FindingDispositionStopInput,
-): StopSummary {
-  const summary = input.reason ?? "same-module finding is still red";
-  return {
-    reason: "same_module_still_red",
-    summary,
-    findingDescriptor: findingDescriptor(input.finding, summary),
-  };
 }
 
 export function successStopSummary(input?: {

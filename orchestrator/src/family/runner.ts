@@ -461,7 +461,6 @@ async function requirePostMergeCleanupForAlreadyDone(input: {
     familyHeadAfter: input.familyHeadAfter,
     prUrl: input.prUrl,
     familyIssue: input.familyIssue,
-    resolvedRoute: input.resolvedRoute,
     recordAbortOnFailure: false,
   });
   if (cleanup.ok) return undefined;

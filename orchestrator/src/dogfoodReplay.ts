@@ -1928,7 +1928,7 @@ async function familyClosureSurvives(input: {
 
 async function closureNegativeReplay(): Promise<SeamReplay> {
   // #875: family verifyCmr court shapes that used to kill now SURVIVE. Single-
-  // slice runner S6 may still adjudicate its own path; family shapes are the
+  // slice S6 reviewer may still report its own path; family shapes are the
   // court this slice demolishes.
   const stillActiveKey = "correctness|src/closure.ts:1|still active";
   const unableKey = "correctness|src/closure.ts:2|unable";

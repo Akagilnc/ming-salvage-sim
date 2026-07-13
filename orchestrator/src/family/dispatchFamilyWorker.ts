@@ -469,7 +469,6 @@ export async function legacyDispatchFamilyWorker(
   if (
     spec.kind === "verify" ||
     spec.kind === "fixer" ||
-    spec.kind === "cleanup" ||
     spec.kind === "docRelease"
   ) {
     // Explicit offline/test injection only. Production reaches no synthetic

@@ -102,8 +102,8 @@ const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
  *   coder → `/tdd`, reviewer → `/code-review`, cmr → `ak-cross-m-review`,
- *   ship → `gstack-ship`, merge → none; review-loop: verify/fixer/cleanup/docRelease
- *   (stubs only in #596; real in #600/#603).
+ *   ship → `gstack-ship`, merge → none; review-loop agents: verify/fixer/docRelease.
+ *   Cleanup is the S11 host-deterministic endgame action, not an agent skill.
  *
  * #331 PREFACTOR: this is only the DECLARED routing on the spec (so #337's "coder
  * 手搓 TDD 不 invoke /tdd" regression assertion has a target). The legacy wrapper
@@ -119,8 +119,7 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
   verify: "/verify",
   // TODO(#600/#603): real /fixer skill + prompt (fixer.md) lands later; skeleton only.
   fixer: "/fixer",
-  // TODO(#600/#603): real /cleanup skill + prompt (cleanup.md) lands later; skeleton only.
-  cleanup: "/cleanup",
+  cleanup: undefined,
   // #735: real 文档发布 — invoke /gstack-document-release (not a path-allowlist gate).
   docRelease: "/gstack-document-release",
 };
@@ -322,10 +321,9 @@ export function stepSpecToWorkerSpec(
 }
 
 // Prompt status: verify.md / fixer.md real paths shipped in #600;
-// docRelease.md real path shipped in #735; cleanup real host path remains #603.
+// docRelease.md real path shipped in #735. Cleanup is host-deterministic (#603).
 export const VERIFY_PROMPT_FILE = "verify.md";
 export const FIXER_PROMPT_FILE = "fixer.md";
-export const CLEANUP_PROMPT_FILE = "cleanup.md";
 export const DOCRELEASE_PROMPT_FILE = "docRelease.md";
 
 /** Family S9 online-review / PR-check worker spec (#600 real prompt). */
@@ -370,30 +368,6 @@ export function fixerWorkerSpec(
     maxIter: 5,
     model,
     soul: "fixer",
-    toolchain: [],
-  };
-}
-
-/** Family S11 cleanup worker spec (#596 skeleton; real host path is #603). */
-// TODO(#603): cleanup skill/prompt wiring is still skeleton here.
-export function cleanupWorkerSpec(
-  route?: ResolvedModelRoute,
-  billingPool?: BillingPoolId,
-): WorkerSpec {
-  const model = route?.slots.cleanup ?? modelForSlot("cleanup");
-  return {
-    id: "S11",
-    kind: "cleanup",
-    role: "cleanup",
-    host: workerHostForModel(model, billingPool),
-    session: "fresh",
-    contextRetention: "clean",
-    skill: SKILL_FOR_KIND.cleanup,
-    promptFile: CLEANUP_PROMPT_FILE,
-    completionSignal: "CLEANUP_STEP_COMPLETE",
-    maxIter: 1,
-    model,
-    soul: "cleanup",
     toolchain: [],
   };
 }

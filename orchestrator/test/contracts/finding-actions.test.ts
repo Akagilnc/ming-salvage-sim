@@ -8,7 +8,6 @@
 import { describe, expect, it } from "vitest";
 
 import { cmrReviewerFindingSchema } from "../../src/family/realFamilyBackend.js";
-import { findingSchema } from "../../src/realBackend.js";
 import type { Finding } from "../../src/types.js";
 
 const strayDeferFinding = {
@@ -21,11 +20,6 @@ const strayDeferFinding = {
 };
 
 describe("#617 — defer removed from Finding.action", () => {
-  it("standalone reviewer zod schema rejects action: defer", () => {
-    const result = findingSchema.safeParse(strayDeferFinding);
-    expect(result.success).toBe(false);
-  });
-
   it("family CMR reviewer zod schema rejects action: defer", () => {
     const result = cmrReviewerFindingSchema.safeParse(strayDeferFinding);
     expect(result.success).toBe(false);
