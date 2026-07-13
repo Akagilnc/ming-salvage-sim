@@ -7,8 +7,9 @@
 ## [0.26.0.0] — 2026-07-13
 
 ### Added / Changed
-- **#873 编排器生存版**：拆 runner 收账/git-truthing/读字法庭；三通道 + head 未动短路 (#878) + 腿瞬断重试 (#879) + 交卷指针 (#880) + resume barrier (#881) + 外呼装钟/裸 ping (#884)。
-- `externalCall` 仅装钟（无重试中台）；重试归 `legTransientRetry`。
+- **#873 编排器生存版（核心重构）**：拆 runner 收账/git-truthing/读字法庭，切换为三通道路由（exit code / 自报 findings 数 / 决策门，ADR 0131）。
+- **机械补丁**：head 未动短路 (#878)、腿瞬断重试 (#879)、交卷指针 (#880)、resume barrier (#881)。
+- **S8 外围**：`externalCall` 仅装钟（无重试中台），重试归 `legTransientRetry`；route smoke 简化为裸 ping (#884)。
 - 旧 tool-smoke 证据 helper 删除；bare-ping 唯一点火路径。
 
 ### Removed
