@@ -1642,7 +1642,7 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     expect(calls.some((c) => c.includes("-X PUT"))).toBe(false);
   });
 
-  it("#742 final: does not match an unrelated thread when firstCommentId is undefined", () => {
+  it("#742 final: skips unrelated thread cargo when firstCommentId is undefined", () => {
     const calls: string[] = [];
     const sh: Sh = (file, args) => {
       calls.push(`${file} ${args.join(" ")}`);
@@ -1666,9 +1666,10 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       return "[]";
     };
 
-    expect(() => resolveReviewThread(sh, "o/r", 42, "undefined")).toThrow(
-      /no GraphQL review thread/,
-    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(resolveReviewThread(sh, "o/r", 42, "undefined")).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("skipped unresolvable"));
+    warn.mockRestore();
 
     expect(calls.some((call) => call.includes("resolveReviewThread"))).toBe(false);
   });
@@ -1687,11 +1688,12 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     ).toThrow(/conflicts with PR URL repo/);
   });
 
-  it("applyVerifySideEffects refuses thread resolution without recheck + fixing commit", () => {
+  it("applyVerifySideEffects skips thread resolution without recheck + fixing commit", () => {
     const sh: Sh = () => {
       throw new Error("gh should not be called");
     };
-    expect(() =>
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
       applyVerifySideEffects({
         sh,
         repo: "o/r",
@@ -1702,8 +1704,8 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
           threadsToResolve: ["99"],
         },
       }),
-    ).toThrow(/isRecheck/);
-    expect(() =>
+    ).toEqual({ deferredIssueUrls: [], repliesPosted: [], threadsResolved: [] });
+    expect(
       applyVerifySideEffects({
         sh,
         repo: "o/r",
@@ -1715,7 +1717,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
           threadsToResolve: ["99"],
         },
       }),
-    ).toThrow(/fixingCommitSha/);
+    ).toEqual({ deferredIssueUrls: [], repliesPosted: [], threadsResolved: [] });
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
   });
 
   it("pin r19: pre-existing unrelated reply still gets fixed evidence reply before resolve", () => {
@@ -2143,11 +2147,12 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
     ).toHaveLength(1);
   });
 
-  it("pin r23: unknown thread id with landing → terminal", () => {
+  it("pin r23: unknown thread id with landing is skipped as cargo", () => {
     const sh: Sh = () => {
       throw new Error("gh should not be called");
     };
-    expect(() =>
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
       applyVerifySideEffects({
         sh,
         repo: "o/r",
@@ -2159,7 +2164,9 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
           threadReplies: [{ threadId: "UNKNOWN_THREAD", body: "rejected: x" }],
         },
       }),
-    ).toThrow(/matches neither REST comment id nor GraphQL node id in landing/);
+    ).toEqual({ deferredIssueUrls: [], repliesPosted: [], threadsResolved: [] });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("UNKNOWN_THREAD"));
+    warn.mockRestore();
   });
 
   it("pin r25: invalid thread id in batch → zero GitHub writes occurred", () => {
@@ -2168,7 +2175,8 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
       calls.push(`${file} ${args.join(" ")}`);
       return "https://github.com/o/r/issues/99";
     };
-    expect(() =>
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
       applyVerifySideEffects({
         sh,
         repo: "o/r",
@@ -2187,8 +2195,10 @@ describe("#600 GitHub side effects (#600 AC5/AC6)", () => {
           ],
         },
       }),
-    ).toThrow(/matches neither REST comment id nor GraphQL node id in landing/);
+    ).toEqual({ deferredIssueUrls: [], repliesPosted: [], threadsResolved: [] });
     expect(calls).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("UNKNOWN_THREAD"));
+    warn.mockRestore();
   });
 
   it("applyVerifySideEffects fails closed on invalid prUrl", () => {
@@ -4088,6 +4098,59 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 1 });
   });
 
+  it("incomplete verify resolution cargo continues through the fixer topology", async () => {
+    let verifyCalls = 0;
+    let fixerCalls = 0;
+    let fixerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
+    const result = await runOnlineReviewLoopStage(stageShip, {
+      poll: async () => baseSnapshot,
+      dispatchVerify: async () => {
+        verifyCalls += 1;
+        if (verifyCalls > 1) {
+          return { kind: "verify", converged: true } satisfies VerifyResult;
+        }
+        return {
+          kind: "rawReviewerArtifacts",
+          artifacts: {
+            stdoutPath: "/artifacts/verify-round-1.stdout",
+            statement: "the previous reviewer raw artifacts are here",
+          },
+          verify: {
+            kind: "verify",
+            converged: false,
+            threadsToResolve: ["99"],
+          },
+        };
+      },
+      dispatchFixer: async (landing) => {
+        fixerCalls += 1;
+        fixerArtifacts = landing.rawReviewerArtifacts;
+        return fixerNotFixed();
+      },
+      dispatchDocRelease: async () => true,
+      applySideEffects: (_landing, verify, fixingCommitSha) => {
+        applyVerifySideEffects({
+          sh: () => {
+            throw new Error("incomplete resolution cargo must not reach GitHub");
+          },
+          repo: "o/r",
+          prUrl: "https://github.com/o/r/pull/42",
+          verify,
+          fixingCommitSha,
+        });
+        return verify;
+      },
+      retriggerAfterFix: () => {},
+    });
+
+    expect(result).toEqual({ ok: true, terminalState: "mergeable", round: 2 });
+    expect(fixerCalls).toBe(1);
+    expect(fixerArtifacts).toEqual({
+      stdoutPath: "/artifacts/verify-round-1.stdout",
+      statement: "the previous reviewer raw artifacts are here",
+    });
+  });
+
   it("pin deep self-check R8: CI failed + no fix marks parks without fixer", async () => {
     let fixerCalls = 0;
     let accountedVerify: VerifyResult | undefined;
@@ -4643,11 +4706,12 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
     );
   });
 
-  it("pin r40: recheck side effects fail-closed when fix SHA missing (no wrong GH link)", () => {
+  it("pin r40: recheck side effects skip resolution when fix SHA is missing", () => {
     const sh: Sh = () => {
       throw new Error("gh should not be called when fixingCommitSha is missing");
     };
-    expect(() =>
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
       applyVerifySideEffects({
         sh,
         repo: "o/r",
@@ -4660,7 +4724,9 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
         },
         landingThreads: [],
       }),
-    ).toThrow(/fixingCommitSha/);
+    ).toEqual({ deferredIssueUrls: [], repliesPosted: [], threadsResolved: [] });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("fixingCommitSha"));
+    warn.mockRestore();
   });
 
   it("pin r33 family: fixer alreadySatisfied records fix marker path via envelope SHA", async () => {

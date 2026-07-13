@@ -498,19 +498,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
-  it("requires observable scope-local repair evidence before counting a still-active round as progress", async () => {
-    const scopedEvidence = {
+  it("keeps routing by fresh reviewer declarations across repeated coder receipts", async () => {
+    const coderReceipt = {
       kind: "coder" as const,
       committed: true,
       commitsAdded: 1,
-      repairEvidence: {
-        findingScope: {
-          identityKeys: [blockingKey],
-          locations: ["src/runner.ts"],
-        },
-        changedFiles: ["src/runner.ts"],
-        tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
-      },
     };
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
@@ -548,7 +540,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
       ],
       undefined,
-      [scopedEvidence, scopedEvidence, scopedEvidence],
+      [coderReceipt, coderReceipt, coderReceipt],
       worktree,
       (attempt, wt) => {
         const srcDir = join(wt.path, "src");
@@ -620,15 +612,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
-  it("counts scoped test-file repair evidence as observable progress", async () => {
-    const scopedTestEvidence = {
+  it("does not derive progress from coder receipt details", async () => {
+    const coderReceipt = {
       kind: "coder" as const,
       committed: true,
       commitsAdded: 1,
-      repairEvidence: {
-        findingScope: { identityKeys: [blockingKey] },
-        tests: ["test/per-slice-cmr-369.test.ts"],
-      },
     };
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
@@ -666,7 +654,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
       ],
       undefined,
-      [scopedTestEvidence, scopedTestEvidence, scopedTestEvidence],
+      [coderReceipt, coderReceipt, coderReceipt],
       worktree,
       (attempt, wt) => {
         const testDir = join(wt.path, "test");
@@ -712,15 +700,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     ]);
   });
 
-  it("does not treat command-valued tests repair evidence as declared changed paths", async () => {
-    const commandOnlyTestEvidence = {
+  it("does not derive changed paths from coder receipt cargo", async () => {
+    const coderReceipt = {
       kind: "coder" as const,
       committed: true,
       commitsAdded: 1,
-      repairEvidence: {
-        findingScope: { identityKeys: [blockingKey] },
-        tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
-      },
     };
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
@@ -758,7 +742,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
       ],
       undefined,
-      [commandOnlyTestEvidence, commandOnlyTestEvidence, commandOnlyTestEvidence],
+      [coderReceipt, coderReceipt, coderReceipt],
       worktree,
       (attempt, wt) => {
         const srcDir = join(wt.path, "src");
@@ -837,13 +821,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             kind: "coder",
             committed: true,
             commitsAdded: 1,
-            repairEvidence: {
-              findingScope: { identityKeys: [blockingKey] },
-              changedFiles: ["src/runner.ts"],
-              tests: ["npm test -- --run test/per-slice-cmr-369.test.ts"],
-            },
           },
-          repairMovementPaths: ["src/runner.ts"],
         },
       ],
     };
@@ -2162,7 +2140,6 @@ describe("#369 runner resume/retry review fixes", () => {
       status: "accepted_suppressed" as const,
       reason: "Accepted outside this slice",
       severity: "medium" as const,
-      reopenAttempts: 0,
       source: "issue #369 resume fixture",
       scope: "accepted risk survives resume",
       boundedReopen: "reopen on material severity upgrade",

@@ -326,7 +326,6 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       status: "rejected",
       reason: "reviewer-only rejection without owner authority",
       severity: "medium",
-      reopenAttempts: 0,
     };
     class ResumeAfterS4Backend extends HappyPathBackend {
       // This fixture deliberately resumes after S4; keep the inherited broad return type.

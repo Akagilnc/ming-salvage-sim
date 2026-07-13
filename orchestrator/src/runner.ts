@@ -141,7 +141,6 @@ import type {
   IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
-  RepairEvidence,
   ResumeState,
   RunInput,
   RunResult,
@@ -294,8 +293,6 @@ function buildPersistentEntry(opts: {
   escalationKind?: EscalationKind;
   /** ADR0030 S4 classification state, persisted for resume replay. */
   findingDispositions?: ReadonlyArray<FindingDisposition>;
-  /** Runner-observed files changed by a coder step, for resume replay. */
-  repairMovementPaths?: ReadonlyArray<string>;
   /** Terminal stop reason summary (#450). */
   stopSummary?: StopSummary;
   /** External CLI worker monitor handle (#684). */
@@ -323,9 +320,6 @@ function buildPersistentEntry(opts: {
   }
   if (opts.findingDispositions !== undefined) {
     entry = { ...entry, findingDispositions: opts.findingDispositions };
-  }
-  if (opts.repairMovementPaths !== undefined) {
-    entry = { ...entry, repairMovementPaths: opts.repairMovementPaths };
   }
   if (opts.stopSummary !== undefined) {
     entry = { ...entry, stopSummary: opts.stopSummary };
@@ -951,20 +945,6 @@ function matchingContinueFixingKeys(
   return broadMatches.length === 1 ? broadMatches : [];
 }
 
-function normalizeGitPath(path: string): string | undefined {
-  const trimmed = path.trim();
-  if (trimmed.length === 0) return undefined;
-  const renameTarget = trimmed.includes(" -> ")
-    ? trimmed.slice(trimmed.lastIndexOf(" -> ") + 4)
-    : trimmed;
-  const unquoted =
-    renameTarget.startsWith('"') && renameTarget.endsWith('"')
-      ? renameTarget.slice(1, -1)
-      : renameTarget;
-  const normalized = unquoted.trim().replace(/\\/g, "/");
-  return normalized.length > 0 ? normalized : undefined;
-}
-
 export function normalizeGitOutputLines(output: string): string[] {
   return output
     .split(/\r?\n/)
@@ -991,54 +971,6 @@ function gitOutputLines(
 function gitHead(worktree: WorktreeHandle | undefined): string | undefined {
   return gitOutputLines(worktree, ["rev-parse", "HEAD"])[0];
 }
-function actualRepairMovementPaths(
-  worktree: WorktreeHandle | undefined,
-  sinceHead?: string,
-): ReadonlyArray<string> {
-  if (worktree === undefined) return [];
-  const paths = new Set<string>();
-  const add = (path: string | undefined): void => {
-    if (path !== undefined) paths.add(path);
-  };
-
-  if (sinceHead !== undefined) {
-    for (const line of gitOutputLines(worktree, [
-      "diff",
-      "--name-only",
-      `${sinceHead}..HEAD`,
-    ])) {
-      add(normalizeGitPath(line));
-    }
-  }
-  for (const line of gitOutputLines(worktree, ["status", "--porcelain"])) {
-    add(normalizeGitPath(line.length > 3 ? line.slice(3) : line));
-  }
-
-  return [...paths];
-}
-
-// #877/#873: repairEvidenceMatchesKey + reviewerObservedProgress deleted —
-// zero callers after no-progress content courts demolished (Opus ship-pre low).
-
-interface LatestCoderRepair {
-  readonly repairEvidence?: RepairEvidence;
-  readonly repairMovementPaths: ReadonlyArray<string>;
-}
-
-function latestCoderRepair(ledger: ReadonlyArray<LedgerEntry>): LatestCoderRepair {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    const output = entry.output;
-    if (output?.kind === "coder") {
-      return {
-        repairEvidence: output.repairEvidence,
-        repairMovementPaths: entry.repairMovementPaths ?? [],
-      };
-    }
-  }
-  return { repairMovementPaths: [] };
-}
-
 /**
  * #677: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
  *
@@ -2158,7 +2090,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
-  let lastCoderActualRepairPaths: ReadonlyArray<string> = [];
   let preexistingAssertionTouchedForReverify = false;
   let refusedFindingIdentityKeysForReverify: readonly string[] = [];
   // Preserve the full ledger for relay and resume accounting.
@@ -2246,7 +2177,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
-    repairMovementPaths?: ReadonlyArray<string>,
     monitorHandle?: import("./types.js").WorkerMonitorHandle,
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
@@ -2262,7 +2192,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       handoffStatus,
       escalationKind,
       findingDispositions,
-      repairMovementPaths,
       stopSummary,
       monitorHandle,
     });
@@ -2366,7 +2295,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     findingDispositions?: ReadonlyArray<FindingDisposition>,
     escalationKind?: EscalationKind,
     stopSummary?: StopSummary,
-    repairMovementPaths?: ReadonlyArray<string>,
   ): Promise<void> {
     try {
       await emitLedger(
@@ -2378,7 +2306,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         findingDispositions,
         escalationKind,
         stopSummary,
-        repairMovementPaths,
       );
     } catch {
       // Swallow: error termination must not be derailed by a ledger I/O fault.
@@ -2413,7 +2340,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       recordInMemory?: boolean;
       output?: StepOutput;
       findingDispositions?: ReadonlyArray<FindingDisposition>;
-      repairMovementPaths?: ReadonlyArray<string>;
       stopSummary?: StopSummary;
     },
   ): Promise<RunResult> {
@@ -2453,9 +2379,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ...(opts?.findingDispositions !== undefined
             ? { findingDispositions: opts.findingDispositions }
             : {}),
-          ...(opts?.repairMovementPaths !== undefined
-            ? { repairMovementPaths: opts.repairMovementPaths }
-            : {}),
         });
       }
       await persistBestEffort(
@@ -2467,7 +2390,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         opts?.findingDispositions,
         undefined,
         undefined,
-        opts?.repairMovementPaths,
       );
     }
 
@@ -2768,9 +2690,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
     findingDispositions = [...replayedS4.findingDispositions];
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
-    const latestRepair = latestCoderRepair(plan.priorLedger);
-    lastCoderActualRepairPaths = latestRepair.repairMovementPaths;
-
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;
     // resume recomputes them from the persisted S5 coder row + ledger HEADs.
@@ -3710,10 +3629,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
         lastOutput = output;
         if (output.kind === "coder") {
-          lastCoderActualRepairPaths = actualRepairMovementPaths(
-            worktree,
-            coderHeadBeforeStep,
-          );
           if (step === "S5" && coderHeadBeforeStep !== undefined) {
             const afterFix = coderHeadAfterStep;
             if (afterFix !== undefined) {
@@ -3781,8 +3696,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     const stepFindingDispositions =
       step === "S4" ? findingDispositions : undefined;
-    const stepRepairMovementPaths =
-      output?.kind === "coder" ? lastCoderActualRepairPaths : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
@@ -3798,9 +3711,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(stepSessionId !== undefined ? { sessionId: stepSessionId } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
-        : {}),
-      ...(stepRepairMovementPaths !== undefined
-        ? { repairMovementPaths: stepRepairMovementPaths }
         : {}),
       // #684: surface the CLI monitor handle in-memory too (resume rebuild parity).
       ...(stepMonitorHandle !== undefined
@@ -3824,7 +3734,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         stepFindingDispositions,
         undefined,
         undefined,
-        stepRepairMovementPaths,
         stepMonitorHandle,
       );
     } catch (err) {
@@ -3839,7 +3748,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         recordInMemory: false,
         output,
         findingDispositions: stepFindingDispositions,
-        repairMovementPaths: stepRepairMovementPaths,
       });
     }
 
