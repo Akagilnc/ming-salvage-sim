@@ -2229,9 +2229,9 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
   "typescript",
 ] as const;
 
-// Removed MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS (owner 2026-07-13 / #873 spirit):
-// invalid/malformed reviewer output is NOT a "legal schema court" that retries
-// then kills. Rise once to the human decision gate (channel c).
+// #873 / ADR 0062: runner has NO authority to judge reviewer output format
+// (findings schema, tags, zod). Format belongs at write-point / worker.
+// Runner only: process exit / open findings count / worker-raised decision gate.
 
 /**
  * The fixed StepSpecs for single-slice worker steps. Versioned promptFiles,
@@ -2489,17 +2489,6 @@ function latestLedgerStopSummary(
     if (stopSummary != null) return stopSummary;
   }
   return undefined;
-}
-
-function isReviewerStructuredOutputError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return (
-    err.name === "ZodError" ||
-    err.name === "StructuredOutputError" ||
-    /StructuredOutputError|structured output|missing <review>|<review>|ZodError/i.test(
-      err.message,
-    )
-  );
 }
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
@@ -4494,23 +4483,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //
               // Note: S9 online-review verify uses a separate path with read-only
               // contract_drift — that intent is preserved there.
-              const retryOpts: MechanicalRetryOptions =
-                expectedKind === "reviewer"
-                  ? {
-                      // Reviewer unusable output is decision-gate material, not
-                      // process-crash redispatch fodder (owner 2026-07-13).
-                      callerOwns: (o) => {
-                        if ("result" in o) {
-                          return (
-                            o.result.kind === "malformed" ||
-                            o.result.kind === "outcome_protocol_failure"
-                          );
-                        }
-                        return isReviewerStructuredOutputError(o.error);
-                      },
-                      rethrowOnExhaustion: true,
-                    }
-                  : {};
+              // Reviewer: no format court, no special callerOwns. Process crash
+              // still uses generic mechanical retry; completed results pass through
+              // without isValidStepOutput (owner 2026-07-13).
+              const retryOpts: MechanicalRetryOptions = {};
               const durableRetryOpts = durableMechanicalRetryOptions(step, retryOpts);
               result = await withMechanicalRetry(
                 workerSpec,
@@ -4555,36 +4531,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     return dispatched;
                   }
 
-                  // #824 / ADR 0062: a process may exit cleanly while its control
-                  // envelope is unusable.  Shape failures and coder
-                  // `committed:false` are therefore mechanical dispatch failures,
-                  // not first-sighting run terminals.  Re-express them at the
-                  // shared WorkerResult seam so withMechanicalRetry owns the one
-                  // bounded lifecycle (fresh redispatch, MAX_DISPATCH_ATTEMPTS).
-                  if (!isValidStepOutput(dispatched.output, expectedKind)) {
-                    return {
-                      kind: "malformed" as const,
-                      reason:
-                        `${step}: completed worker output does not match the ` +
-                        `${expectedKind} contract`,
-                      ...(dispatched.sessionId !== undefined
-                        ? { sessionId: dispatched.sessionId }
-                        : {}),
-                    };
-                  }
-                  if (
-                    expectedKind === "coder" &&
-                    dispatched.output.kind === "coder" &&
-                    !dispatched.output.committed &&
-                    dispatched.output.selfReportDiscrepancy === undefined
-                  ) {
-                    return {
-                      kind: "malformed" as const,
-                      reason: `${step}: coder worker produced no commits (committed:false)`,
-                      ...(dispatched.sessionId !== undefined
-                        ? { sessionId: dispatched.sessionId }
-                        : {}),
-                    };
+                  // Coder only: shape/commit envelope for mechanical retry.
+                  // Reviewer: runner never judges findings schema (#873).
+                  if (expectedKind === "coder") {
+                    if (!isValidStepOutput(dispatched.output, "coder")) {
+                      return {
+                        kind: "malformed" as const,
+                        reason:
+                          `${step}: completed worker output does not match the ` +
+                          `coder contract`,
+                        ...(dispatched.sessionId !== undefined
+                          ? { sessionId: dispatched.sessionId }
+                          : {}),
+                      };
+                    }
+                    if (
+                      dispatched.output.kind === "coder" &&
+                      !dispatched.output.committed &&
+                      dispatched.output.selfReportDiscrepancy === undefined
+                    ) {
+                      return {
+                        kind: "malformed" as const,
+                        reason: `${step}: coder worker produced no commits (committed:false)`,
+                        ...(dispatched.sessionId !== undefined
+                          ? { sessionId: dispatched.sessionId }
+                          : {}),
+                      };
+                    }
                   }
                   return dispatched;
                 },
@@ -4592,72 +4565,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               );
               if (result.kind === "completed") completeMechanicalRetryInvocation(step);
             } catch (err) {
-              if (
-                expectedKind === "reviewer" &&
-                isReviewerStructuredOutputError(err)
-              ) {
-                // Rise to human decision gate — do not schema-retry-then-kill.
-                output = {
-                  kind: "reviewer",
-                  findings: [],
-                  escalate: {
-                    reason: "reviewer output invalid — needs human decision",
-                    diagnosis:
-                      `step ${step}: ${errorMessage(err)} ` +
-                      "(not a content court; human settles resume vs redispatch)",
-                  },
-                };
-                stepSessionId = undefined;
-                break;
-              }
+              // No reviewer format→escalate synthesis. Process throws bubble out.
               throw err;
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
-            const retryableReviewerFailure =
-              expectedKind === "reviewer" &&
-              (unwrapped === undefined ||
-                !isValidStepOutput(
-                  "output" in (unwrapped ?? {}) && !("kind" in (unwrapped ?? {}))
-                    ? (unwrapped as { output: StepOutput }).output
-                    : (unwrapped as StepOutput | undefined),
-                  "reviewer",
-                ));
-
-            if (retryableReviewerFailure) {
-              if (isRelayCandidateExhaustion(reason)) {
-                // Pool/dispatch wall — still a human/relay problem, not a schema kill.
-                output = {
-                  kind: "reviewer",
-                  findings: [],
-                  escalate: {
-                    reason: "reviewer dispatch exhausted — needs human decision",
-                    diagnosis: reason ?? "reviewer output remained unusable",
-                  },
-                };
-                stepSessionId =
-                  result.kind === "malformed" || result.kind === "failed"
-                    ? result.sessionId
-                    : undefined;
-                break;
-              }
-              // No multi-attempt "legal schema" court: rise to decision gate once.
-              output = {
-                kind: "reviewer",
-                findings: [],
-                escalate: {
-                  reason: "reviewer output invalid — needs human decision",
-                  diagnosis:
-                    reason ??
-                    `step ${step} produced unusable reviewer output ` +
-                      "(human settles; runner does not retry-kill on shape)",
-                },
-              };
-              stepSessionId =
-                result.kind === "completed" || result.kind === "escalated"
-                  ? result.sessionId
-                  : undefined;
-              break;
-            }
 
             if (unwrapped === undefined) {
               // #686 P2-b: mechanical-retry exhaustion is a relay candidate —
@@ -4991,7 +4902,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
         if (!carriesEscalate) {
-          if (!isValidStepOutput(output, expectedKind)) {
+          if (expectedKind === "reviewer") {
+            // Control envelope only: role kind so findings-count channel can run.
+            // Do NOT run isValidReviewerOutput (findings field schema court).
+            if (output?.kind !== "reviewer") {
+              return await errorTermination(
+                step,
+                new Error(
+                  `${step}: worker completed without a reviewer-kind envelope ` +
+                    `(process/protocol; runner does not validate findings schema). ` +
+                    `Got: ${describeOutput(output)}.`,
+                ),
+              );
+            }
+            if (!Array.isArray(output.findings)) {
+              // Count channel needs an array; missing array = empty open-count,
+              // not a content court over individual finding fields.
+              output = { ...output, findings: [] };
+            }
+          } else if (!isValidStepOutput(output, expectedKind)) {
             return await errorTermination(
               step,
               new Error(

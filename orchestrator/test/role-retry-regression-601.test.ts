@@ -466,30 +466,28 @@ describe("#601 AC#2 carve-out — JUDGED ship verdicts are NOT retried (decided 
   });
 });
 
-// ───────────────────── AC #6: reviewer unusable output → decision once (no schema court) ─────────────────────
+// ───────────────────── AC #6: reviewer process-malformed uses generic budget only ─────────────────────
 
 /**
- * S3 reviewer ALWAYS returns malformed. Owner 2026-07-13: rise to human decision
- * once — generic mechanical layer must not redispatch ×3, and there is no
- * MAX_INVALID_REVIEWER shape-retry loop.
+ * S3 always returns process-level malformed. Runner does not format-judge;
+ * generic MAX_DISPATCH_ATTEMPTS applies like other roles.
  */
 class ReviewerAlwaysMalformedBackend extends RoleRetryBackend {
   reviewerDispatches = 0;
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
     if (spec.kind === "reviewer") {
       this.reviewerDispatches += 1;
-      return { kind: "malformed", reason: "reviewer emitted no <review> tag" };
+      return { kind: "malformed", reason: "process protocol failure" };
     }
     return cleanSuccessTail(spec);
   }
 }
 
-describe("#601 AC#6 — reviewer unusable output rises once (not schema-retry kill)", () => {
-  it("a persistently malformed reviewer is dispatched exactly once then decision-escalate", async () => {
+describe("#601 AC#6 — reviewer process-malformed uses shared mechanical budget", () => {
+  it("a persistently malformed reviewer is dispatched MAX_DISPATCH_ATTEMPTS times", async () => {
     const backend = new ReviewerAlwaysMalformedBackend();
-    const result = await runOrchestrator({ issueNumber: 601, backend });
-    expect(result.status).toBe("escalate");
-    expect(backend.reviewerDispatches).toBe(1);
+    await runOrchestrator({ issueNumber: 601, backend });
+    expect(backend.reviewerDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });
 
