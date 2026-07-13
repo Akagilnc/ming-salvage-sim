@@ -47,6 +47,8 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
 
 ## 编排器只读行为
 
+下列 1/2/4/5 记录当前 legacy 接线；canonical cutover 后 Coder-Rec 只由 coder/coderFix 的 owning Action 与 Policy 消费，Runner 不读，边界见 #870。第 3 条的质量换棒仍由 Professional Review Action 声明、Policy 求值。
+
 1. Issue intake 读 issue body；**仅当存在 `Coder-Rec:` 行**时覆盖 coder（+ coderFix）槽。
 2. 派工第一个花名册合法项。
 3. 专业评审 Action 声明质量不收敛并要求 coder/coderFix 换棒时 → 顺位补位；花名册不数评审轮、不读 findings。
