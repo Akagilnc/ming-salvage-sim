@@ -366,6 +366,28 @@ describe("family-ledger.recordCmrPassed / cmrPassAlreadyPassed (#434 resume guar
     ).toBe(false);
   });
 
+  it("normalizes persisted route fingerprint whitespace before comparison", () => {
+    expect(
+      cmrPassAlreadyPassed(
+        [
+          {
+            status: "cmr_passed",
+            event: "cmr_passed",
+            phase: "final",
+            cmrPass: "completeness",
+            familyHeadAfter: "head-1",
+            routeFingerprint: "  route:v1  ",
+          },
+        ],
+        {
+          cmrPass: "completeness",
+          familyHeadAfter: "head-1",
+          routeFingerprint: "route:v1",
+        },
+      ),
+    ).toBe(true);
+  });
+
   it("cmrPassAlreadyPassed FAILS CLOSED on malformed, headless, or route-less rows", () => {
     expect(
       cmrPassAlreadyPassed(

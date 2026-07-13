@@ -78,7 +78,12 @@ import {
   type GhBlockedBy,
   type GhIssueJson,
 } from "../src/realBackend.js";
-import type { RepairEvidence, StepOutput, StepSpec } from "../src/types.js";
+import type {
+  RepairEvidence,
+  StepOutput,
+  StepSpec,
+  WorktreeHandle,
+} from "../src/types.js";
 import type * as sc from "@ai-hero/sandcastle";
 import { resolveRouteModels } from "../src/modelRoutes.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
@@ -1174,6 +1179,62 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
       return tempHome("rb-home-prompts-");
     },
   };
+
+  class HostTruthBackend extends RealBackend {
+    readonly calls: string[] = [];
+    remoteRef = "abc123\trefs/heads/feat/891";
+    openPr: unknown[] = [];
+    protected override cloneDirExists(): boolean {
+      return true;
+    }
+    protected override sh(file: string, args: string[]): string {
+      this.calls?.push(`${file} ${args.join(" ")}`);
+      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+        return ".git";
+      }
+      if (file === "git" && args[0] === "ls-remote") return this.remoteRef;
+      if (file === "gh" && args[0] === "pr" && args[1] === "list") {
+        return JSON.stringify(this.openPr);
+      }
+      return "";
+    }
+  }
+
+  const shipWorktree: WorktreeHandle = {
+    branch: "feat/891",
+    base: "main",
+    path: "/tmp/feat-891",
+  };
+
+  it("observes a remote branch plus its open PR from host truth", async () => {
+    const backend = new HostTruthBackend({ ...baseOpts, promptsDir: realPromptsDir });
+    backend.openPr = [{
+      number: 891,
+      url: "https://github.com/owner/name/pull/891",
+      state: "OPEN",
+      headRefName: shipWorktree.branch,
+      headRefOid: "abc123",
+      headRepositoryOwner: { login: "owner" },
+      mergeStateStatus: "CLEAN",
+    }];
+
+    await expect(backend.observeSliceShip(shipWorktree)).resolves.toEqual({
+      shipped: true,
+      prUrl: "https://github.com/owner/name/pull/891",
+    });
+  });
+
+  it("observes pushed-only delivery when the remote branch has no open PR", async () => {
+    const backend = new HostTruthBackend({ ...baseOpts, promptsDir: realPromptsDir });
+    await expect(backend.observeSliceShip(shipWorktree)).resolves.toEqual({ shipped: true });
+  });
+
+  it("reports unshipped from an absent remote branch without querying PRs", async () => {
+    const backend = new HostTruthBackend({ ...baseOpts, promptsDir: realPromptsDir });
+    backend.remoteRef = "";
+    await expect(backend.observeSliceShip(shipWorktree)).resolves.toEqual({ shipped: false });
+    expect(backend.calls.some((call) => call.startsWith("gh pr list"))).toBe(false);
+  });
 
   it("allocates a fresh home for each base option access", () => {
     const firstHome = baseOpts.home;

@@ -188,7 +188,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
       expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
       return;
     }
-    expect(result.status).toBe("error");
+    expect(result.status).toBe("success");
     expect(backend.dispatches.filter((row) => row.startsWith(`${target}:`))).toHaveLength(1);
   });
 

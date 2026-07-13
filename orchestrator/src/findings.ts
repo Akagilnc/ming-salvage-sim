@@ -178,7 +178,7 @@ function reopenedDisposition(
   return {
     ...disposition,
     severity: finding.severity,
-    reopenAttempts: disposition.reopenAttempts + 1,
+    reopenAttempts: (disposition.reopenAttempts ?? 0) + 1,
   };
 }
 

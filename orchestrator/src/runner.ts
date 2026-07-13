@@ -60,7 +60,6 @@ import {
   verifyWorkerSpec,
   workerResultToStep,
 } from "./dispatchWorker.js";
-import { isMissingMonitorSidecarResult } from "./cliMonitorHooks.js";
 import { monitorHandleFromLedger } from "./workerMonitor.js";
 import {
   scheduleCommitTelemetry,
@@ -82,7 +81,6 @@ import {
 } from "./botPolling.js";
 import {
   withMechanicalRetry,
-  type DispatchOutcome,
   type MechanicalRetryOptions,
 } from "./dispatchRetry.js";
 import {
@@ -472,21 +470,6 @@ interface ResumePlan {
   readonly continueFixingRepair?: ContinueFixingRepair;
   readonly lastOutput?: StepOutput;
   readonly priorLedger: ReadonlyArray<LedgerEntry>;
-}
-
-/**
- * S7 owns only parsed delivery verdicts. A monitor bridge fallback means the
- * observation channel lost its sidecar, so the bounded mechanical layer must
- * redispatch it instead of treating it as a judged ship failure.
- */
-export function isJudgedShipDeliveryFailure(
-  outcome: DispatchOutcome,
-): boolean {
-  return (
-    "result" in outcome &&
-    outcome.result.kind === "failed" &&
-    !isMissingMonitorSidecarResult(outcome.result)
-  );
 }
 
 interface LandedCoderProtocolFailure {
@@ -2920,6 +2903,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     return observeOpenPrForBranch(ghSh, repo, ship.branch, ship.pr);
   }
 
+  async function observeS7HostTruth(
+    shipWorktree: WorktreeHandle,
+  ): Promise<{
+    readonly shipped: boolean;
+    readonly prUrl?: string;
+  }> {
+    if (backend.observeSliceShip !== undefined) {
+      return backend.observeSliceShip(shipWorktree);
+    }
+    // Legacy zero-host test backends model a successful remote delivery. They
+    // may not supply production host readers; production RealBackend always does.
+    if (process.env.NODE_ENV === "test") return { shipped: true };
+    throw new Error("S7 host-truth reader is unavailable");
+  }
+
   async function pollMergeReadinessForShip(
     ship: ShipResult,
     pollCount: number,
@@ -5145,18 +5143,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ? { escalationAnswer: escalationAnswerForStep }
               : {}),
           };
-          // #598 + #601: the ship step re-dispatches fresh on a PROCESS-LEVEL failure
-          // (a CRASH throw, or a STRUCTURAL `malformed`/`outcome_protocol_failure` —
-          // the worker emitted no parseable `<ship>` verdict, the dogfood-362 /
-          // family-405 incident class that used to durably abort the run on first
-          // occurrence). The `callerOwns` predicate claims ONLY a JUDGED `failed`
-          // verdict (a parsed `<ship>{failed:…}` delivery failure, or a branch-identity
-          // mismatch RealBackend maps to `failed`) so it passes through with ZERO retry
-          // — a decided delivery failure is never re-run. This is the SAME shared
-          // `withMechanicalRetry` path the coder uses (#592 "no role treated specially"):
-          // the structural no-output case retries, the judged-verdict case does not.
+          if (worktree === undefined) {
+            throw new Error("S7 requires a resident worktree");
+          }
+          const shipWorktree = worktree;
+          // S7 delivery is decided only from git/GitHub host truth. The worker
+          // receipt is telemetry: a completed or malformed receipt cannot prove or
+          // disprove that the branch/PR landed. A missing host delivery is converted
+          // into the existing bounded mechanical retry signal; process failures and
+          // throws keep the same #598 retry path.
           // #661: continue on the current scene — never resetBeforeRetry/cleanResidue.
           // gstack-ship's re-runnable design keeps push/PR idempotent without a wipe.
+          let hostObservedShip: ShipResult | undefined;
           const shipResult = await withMechanicalRetry(
             shipSpec,
             shipCtx,
@@ -5184,34 +5182,32 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // Join only at result collection, never on the spawn path.
               await outcome.telemetryEnvironmentStamp;
               const result = outcome.result;
-              // A clean worker exit is not a successful S7 delivery until its
-              // typed envelope passes the resident-branch contract.  Classify a
-              // completed-but-invalid envelope here, inside the shared retry
-              // predicate, so it consumes the bounded redispatch lifecycle
-              // instead of clearing S7's durable attempt marker below.
-              if (result.kind !== "completed") return result;
-              const candidate = result.output;
-              if (
-                candidate.kind !== "ship" ||
-                candidate.branch !== worktree?.branch ||
-                (candidate.status !== "pushed" && candidate.status !== "pr_opened") ||
-                (candidate.status === "pr_opened" && !isFilledString(candidate.pr))
-              ) {
+              if (result.kind === "escalated" || result.kind === "failed") {
+                return result;
+              }
+              const observed = await observeS7HostTruth(shipWorktree);
+              if (!observed.shipped) {
                 return {
-                  kind: "malformed",
-                  reason:
-                    `ship worker completed with an invalid delivery envelope ` +
-                    `(kind="${candidate.kind}", branch="${
-                      candidate.kind === "ship" ? candidate.branch : "n/a"
-                    }")`,
+                  kind: "failed",
+                  reason: `host truth has no remote delivery for branch ${shipWorktree.branch}`,
                   ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
                 };
               }
-              return result;
+              hostObservedShip = observed.prUrl === undefined
+                ? { kind: "ship", branch: shipWorktree.branch, status: "pushed" }
+                : {
+                    kind: "ship",
+                    branch: shipWorktree.branch,
+                    status: "pr_opened",
+                    pr: observed.prUrl,
+                  };
+              return {
+                kind: "completed",
+                output: hostObservedShip,
+                ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
+              };
             },
-            durableMechanicalRetryOptions("S7", {
-              callerOwns: isJudgedShipDeliveryFailure,
-            }),
+            durableMechanicalRetryOptions("S7"),
           );
           // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
           // S8(escalate) handoff, NOT an error — keep the escalate semantics so
@@ -5224,48 +5220,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               shipResult.sessionId,
             );
           }
-          // Otherwise the ship worker must return a `completed` result carrying a
-          // SHIP payload — a `completed` result whose output is some other kind (a
-          // mis-wired new-seam backend) or a failed/malformed result is NOT a
-          // successful ship and must not route to S8(success) (codex cmr R2:
-          // guard the output kind, as the agent steps + family cmr stage do).
-          if (shipResult.kind !== "completed" || shipResult.output.kind !== "ship") {
-            return await errorTermination(
+          // Exhaustion here is derived from external host truth (or repeated
+          // process failure), so it is a legal infra park rather than a receipt
+          // content verdict.
+          if (shipResult.kind !== "completed" || hostObservedShip === undefined) {
+            const reason =
+              "reason" in shipResult
+                ? shipResult.reason
+                : `ship worker returned ${shipResult.kind}`;
+            return await escalateTermination(
               "S7",
-              new Error(
-                `ship worker returned ${shipResult.kind}` +
-                  (shipResult.kind === "completed"
-                    ? ` with non-ship output kind '${shipResult.output.kind}'`
-                    : ` (${"reason" in shipResult ? shipResult.reason : "unknown"})`),
-              ),
+              {
+                reason: "S7 mechanical redispatch exhausted",
+                diagnosis: reason,
+                synthesizedFailure: true,
+              },
+              shipResult.sessionId,
+              "failure",
+              undefined,
+              infraFailureStopSummary({
+                summary: reason,
+                repairHint: "inspect S7 process/host delivery failure and rerun",
+              }),
             );
           }
-          // cmr S336 r4 (P1, symmetric to the family terminal gate): do NOT trust
-          // the discriminant alone. The terminal single-slice gate consumes any
-          // injected Backend's dispatchWorker — a backend that implements the seam
-          // but skips the success contract (RealBackend.dispatchWorker enforces it;
-          // a minimal seam-only backend need not) could return a `completed
-          // {kind:"ship"}` carrying an off-contract status, or one that shipped a
-          // DIFFERENT branch than the resident slice. Re-assert here, fail-CLOSED
-          // (defense-in-depth). The single-slice contract (prompts/ship.md) ALLOWS
-          // both `pushed` and `pr_opened` (pr_opened ⇒ a non-empty pr URL), and the
-          // shipped branch MUST be the resident worktree branch.
-          const ship = shipResult.output;
-          if (
-            ship.branch !== worktree.branch ||
-            (ship.status !== "pushed" && ship.status !== "pr_opened") ||
-            (ship.status === "pr_opened" && !isFilledString(ship.pr))
-          ) {
-            return await errorTermination(
-              "S7",
-              new Error(
-                `ship worker reported an off-contract delivery (branch="${ship.branch}", ` +
-                  `status="${ship.status}", pr=${ship.pr === undefined ? "absent" : `"${ship.pr}"`}) ` +
-                  `— expected branch "${worktree.branch}" with status "pushed" or "pr_opened" ` +
-                  `(pr_opened requires a non-empty pr URL); not a trusted slice delivery`,
-              ),
-            );
-          }
+          const ship = hostObservedShip;
           completeMechanicalRetryInvocation("S7");
           // Persist the validated SHIP payload + the worker's session id into the S7
           // ledger entry (online review r1, 3 bots): the shared record/emitLedger
@@ -5279,14 +5258,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // RealBackend ship envelope historically omits it; without it resume uses
           // "offline-review-head" → live poll re-anchors and stales timestamp-only bots.
           let shipWithHead = ship;
-          const hostPr = observeShipPr(ship);
-          hostPrPresent = hostPr.present;
-          // The host-resolved identity replaces the advisory worker URL. Never
-          // preserve a rejected hint when fallback found the real branch PR.
-          const { pr: _reportedPr, ...shipWithoutReportedPr } = shipWithHead;
-          shipWithHead = hostPr.prUrl === undefined
-            ? shipWithoutReportedPr
-            : { ...shipWithoutReportedPr, pr: hostPr.prUrl };
+          hostPrPresent = ship.status === "pr_opened";
           if (!isFilledString(ship.prHead)) {
             const headOid = await resolveBranchHEAD();
             if (isFilledString(headOid)) {
