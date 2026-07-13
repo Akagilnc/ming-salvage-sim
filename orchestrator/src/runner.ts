@@ -3796,7 +3796,42 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       if (resumedS7Observation?.shipped) {
         const parkedBoundaryIndex = resumeLedger.lastIndexOf(resumeTail!);
-        resumeLedger = resumeLedger.slice(0, parkedBoundaryIndex);
+        let parkedShipIndex = parkedBoundaryIndex - 1;
+        while (
+          parkedShipIndex >= 0 &&
+          !(
+            resumeLedger[parkedShipIndex]?.step === "S7" &&
+            resumeLedger[parkedShipIndex]?.output?.kind === "ship"
+          )
+        ) {
+          parkedShipIndex -= 1;
+        }
+        const parkedShipEntry = resumeLedger[parkedShipIndex]!;
+        const resumedHostShip: ShipResult =
+          resumedS7Observation.prUrl === undefined
+            ? { kind: "ship", branch: worktree.branch, status: "pushed" }
+            : {
+                kind: "ship",
+                branch: worktree.branch,
+                status: "pr_opened",
+                pr: resumedS7Observation.prUrl,
+              };
+        const resumedHostShipEntry: PersistentLedgerEntry = {
+          ...parkedShipEntry,
+          output: resumedHostShip,
+          branchHEAD: await resolveBranchHEAD(),
+          ts: new Date().toISOString(),
+        };
+        try {
+          await backend.writeLedger(resumedHostShipEntry, stateDir);
+        } catch (err) {
+          return await errorTermination("S7", err);
+        }
+        resumeLedger = resumeLedger
+          .slice(0, parkedBoundaryIndex)
+          .map((entry, index) =>
+            index === parkedShipIndex ? resumedHostShipEntry : entry,
+          );
         executableResumeLedger = executableLedgerEntries(resumeLedger);
         resumeTail = executableResumeLedger.at(-1);
       }
