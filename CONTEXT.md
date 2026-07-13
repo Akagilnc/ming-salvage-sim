@@ -23,7 +23,7 @@ _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue �
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
 **家族开工过滤（Family Admission Filter）**:
-Family Admission Action 在父 issue 首次启动及每次重入时读取 live GitHub membership、状态、标签与依赖，完成过滤和 cycle 处置并产出 GitHub 候选集；Canonical Delivery Flow 随后为每个候选调用 Scene Provisioning / Recovery，由它单一查询 locator 并产出 `available` 或 `occupied/owning-flow` 交通事实。Generic Runner 只据候选、依赖与占用事实调度，不重复任何查询或分类。行为契约见 ADR 0022 与 #871。
+Family Admission Action 在父 issue 首次启动及每次重入时读取 live GitHub membership、状态、标签与依赖，完成过滤和 cycle 处置并产出 GitHub 候选集；Canonical Delivery Flow 随后调用 Scene Provisioning / Recovery，恢复当前 flow 已有的 scene inventory 并检查新候选。只有该 Action 查询 locator，并分别报告“无既有 scene”“scene 属于当前 flow”“scene 属于其他 flow”三种交通事实；Generic Runner 据此机械地创建、恢复或局部 park，不重复任何查询或分类。行为契约见 ADR 0022 与 #871。
 _Avoid_: 先创建现场再过滤、用缓存或本地推断代替 live facts、让 Family Admission 读取 locator、让 Action 与 Runner 各做一遍 admission
 
 **合并工（Merger Worker）**:

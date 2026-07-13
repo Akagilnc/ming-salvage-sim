@@ -1,12 +1,12 @@
-# Family CMR findings return to runner before fixes
+# Integrated CMR reviewer / fixer separation
 
 Status: Accepted (#533/#553, 2026-07-03)
 
 Current authority: ADR 0131 定义 Runner 三通道，#869 定义现行接力拓扑。本 ADR 只保留 reviewer / fixer 角色分离与 fresh re-review 决策。
 
-Family CMR completeness/correctness workers are reviewer workers: they may gather review evidence, run the needed tests, dispatch review legs, and write findings to the findings state store, but they must not repair blocking findings themselves. They self-report open-count and stop; every intermediate repair, verification, finalization, and re-review transition is owned only by #869. A fresh originating CMR reviewer always reviews the current full diff.
+Integrated completeness/correctness workers are reviewer workers over the assembled delivery base, whether that base is a single slice branch or a family base. They may gather review evidence, run the needed tests, dispatch review legs, and write findings to the findings state store, but they must not repair blocking findings themselves. They self-report open-count and stop; every intermediate repair, verification, finalization, and re-review transition is owned only by #869. A fresh originating CMR reviewer always reviews the current full diff.
 
-Scope: this decision applies to family integrated CMR passes. It does not reopen the per-slice coder/reviewer/coder-fix separation already decided by 0030.
+Scope: this decision applies to integrated CMR passes in the shared tail for both single and family delivery. It does not reopen the per-slice coder/reviewer/fixer separation already decided by 0030.
 
 ## Why
 
@@ -18,7 +18,7 @@ Professional workers inspect commits, tests, and repair evidence. The Runner is 
 
 - CMR workers stop at findings, raw review evidence, and relevant test logs.
 - Reviewer 自报 open-count `>0` 后，Runner 只按 #869 固定拓扑接力；本 ADR 不保存任何中间顺序，Runner 不读取 finding 内容。
-- coder-fix 完成修复或逐条证伪并执行 same-class scan 与 introduced-regression check 后停止，不自行提交、复审或推进流程。
+- Finding Repair Action 完成修复或逐条证伪并执行 same-class scan 与 introduced-regression check 后停止，不自行提交、复审或推进流程。
 - The fixer updates the corresponding finding as fixed or refuted; only a fresh originating reviewer may confirm closure or reopen it.
 - Fresh CMR re-review always reviews the current full diff. It must not only check whether the last finding appears closed.
 
