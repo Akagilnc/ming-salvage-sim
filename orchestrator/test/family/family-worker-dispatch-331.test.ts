@@ -992,11 +992,14 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     });
     expect(res.ok).toBe(false);
     expect(be.escalations.length).toBe(1);
+    expect(be.escalations[0]).toMatchObject({
+      reason: "stuck",
+      diagnosis: "needs human",
+      escalationKind: "decision",
+    });
     expect(be.escalations[0]?.stopSummary).toMatchObject({
-      reason: "infra_failure",
-      metadata: {
-        ship: { shipPrState: "ship-worker-escalated" },
-      },
+      reason: "decision_gate_park",
+      summary: "stuck — needs human",
     });
     expect(be.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
@@ -1004,8 +1007,8 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
       phase: "final",
       reason: expect.stringContaining("family ship worker escalated"),
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
-        summary: expect.stringContaining("family ship worker escalated"),
+        reason: "decision_gate_park",
+        summary: "stuck — needs human",
       }),
     }));
   });
@@ -1025,10 +1028,8 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
       phase: "final",
       reason: expect.stringContaining("family ship worker escalated"),
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
-        metadata: expect.objectContaining({
-          ship: { shipPrState: "ship-worker-escalated" },
-        }),
+        reason: "decision_gate_park",
+        summary: "stuck — needs human",
       }),
     }));
   });

@@ -1444,16 +1444,25 @@ it("checks CMR leg floor before routing fix_now findings to coder-fix", async ()
 
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
-    expect(backend.escalations[0]?.reason).toContain("completeness cmr");
-    expect(backend.escalations[0]?.familyHeadAfter).toBe("head-after-final-verify");
+    expect(backend.escalations[0]).toMatchObject({
+      reason: "completeness cmr needs human review",
+      diagnosis: "review workers disagreed on whether the pass can converge",
+      escalationKind: "decision",
+      familyHeadAfter: "head-after-final-verify",
+      stopSummary: {
+        reason: "decision_gate_park",
+        summary:
+          "completeness cmr needs human review — review workers disagreed on whether the pass can converge",
+      },
+    });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       cmrPass: "completeness",
-      reason:
-        "completeness cmr needs human review — review workers disagreed on whether the pass can converge",
+      reason: "completeness cmr needs human review",
       familyHeadAfter: "head-after-final-verify",
+      stopSummary: expect.objectContaining({ reason: "decision_gate_park" }),
     }));
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
@@ -1509,8 +1518,14 @@ it("checks CMR leg floor before routing fix_now findings to coder-fix", async ()
     expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]).toMatchObject({
-      reason: "ship needs human review — release note conflict",
+      reason: "ship needs human review",
+      diagnosis: "release note conflict",
+      escalationKind: "decision",
       familyHeadAfter: "head-after-ship-worker-bump",
+      stopSummary: {
+        reason: "decision_gate_park",
+        summary: "ship needs human review — release note conflict",
+      },
     });
   });
 });
