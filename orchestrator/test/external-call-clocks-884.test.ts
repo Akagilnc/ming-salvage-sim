@@ -2,6 +2,9 @@
  * #884 — external-call clocks only (S8).
  * Retry policy lives in #879 legTransientRetry — not re-tested as a platform here.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   classifyExternalCallFailure,
@@ -18,7 +21,7 @@ import {
 } from "../src/legTransientRetry.js";
 
 describe("#884 external-call clocks", () => {
-  it("classifies timeout / connection-reset / 5xx as transient, 429 as quota", () => {
+  it("classifies failures from typed timeout, code, and numeric status only", () => {
     expect(
       classifyExternalCallFailure(
         new ExternalCallTimeoutError({
@@ -28,38 +31,17 @@ describe("#884 external-call clocks", () => {
         }),
       ),
     ).toBe("transient");
-    expect(classifyExternalCallFailure(new Error("read ECONNRESET"))).toBe(
-      "transient",
-    );
-    expect(classifyExternalCallFailure(new Error("socket hang up"))).toBe(
-      "transient",
-    );
     const eai = new Error("getaddrinfo EAI_AGAIN api.example.com");
     (eai as { code?: string }).code = "EAI_AGAIN";
     expect(classifyExternalCallFailure(eai)).toBe("transient");
     const enet = new Error("connect ENETUNREACH");
     (enet as { code?: string }).code = "ENETUNREACH";
     expect(classifyExternalCallFailure(enet)).toBe("transient");
-    expect(classifyExternalCallFailure(new Error("HTTP 503 unavailable"))).toBe(
-      "transient",
-    );
-    expect(classifyExternalCallFailure(new Error("HTTP 429 rate limit"))).toBe(
-      "quota",
-    );
-    expect(classifyExternalCallFailure(new Error("quota exceeded"))).toBe(
-      "quota",
-    );
+    expect(classifyExternalCallFailure({ status: 503 })).toBe("transient");
+    expect(classifyExternalCallFailure({ statusCode: 429 })).toBe("quota");
     expect(classifyExternalCallFailure(new Error("auth token expired"))).toBe(
       "durable",
     );
-    expect(
-      classifyExternalCallFailure(
-        "HTTP 503 upstream quota / rate limit text in 503 body",
-      ),
-    ).toBe("transient");
-    expect(
-      classifyExternalCallFailure("exit 1: HTTP 429 rate limit exceeded"),
-    ).toBe("quota");
     const auth401 = Object.assign(new Error("network authentication failed"), {
       status: 401,
     });
@@ -68,32 +50,30 @@ describe("#884 external-call clocks", () => {
       status: 403,
     });
     expect(classifyExternalCallFailure(forbid403)).toBe("durable");
-    expect(classifyExternalCallFailure(new Error("HTTP 401 unauthorized"))).toBe(
-      "durable",
+    expect(classifyExternalCallFailure({ status: 401 })).toBe("durable");
+  });
+
+  it("treats unstructured rate-limit text as durable and does not retry", async () => {
+    const failure = new Error("rate limit exceeded");
+    expect(classifyExternalCallFailure(failure)).toBe("durable");
+    let attempts = 0;
+    await expect(
+      withLegTransientRetry(async () => {
+        attempts += 1;
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(attempts).toBe(1);
+  });
+
+  it("has no free-text failure classification court", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(join(here, "../src/externalCall.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    expect(source).not.toMatch(
+      /(?:includes|match|test)\s*\([^\n]*(?:rate.?limit|quota|额度|配额|too many requests|timed?\s?out)/i,
     );
-    expect(
-      classifyExternalCallFailure(new Error("request timed out after 120 seconds")),
-    ).toBe("transient");
-    expect(
-      classifyExternalCallFailure(
-        new Error("connection closed after 300 seconds"),
-      ),
-    ).toBe("transient");
-    expect(
-      classifyExternalCallFailure(
-        new Error("quota exceeded; remaining credits 500"),
-      ),
-    ).toBe("quota");
-    expect(
-      classifyExternalCallFailure(
-        new Error("network error: rate limit exceeded"),
-      ),
-    ).toBe("quota");
-    const stdoutOnly = Object.assign(new Error("Command failed: opencode"), {
-      stdout: "network error: ECONNRESET",
-      stderr: "",
-    });
-    expect(classifyExternalCallFailure(stdoutOnly)).toBe("transient");
   });
 
   it("provider hang: non-cooperative promise still times out", async () => {
@@ -171,9 +151,6 @@ describe("#884 external-call clocks", () => {
   });
 
   it("production seams route host sh through shWithClock (clock only)", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join, dirname } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
     const here = dirname(fileURLToPath(import.meta.url));
     const realBackend = readFileSync(
       join(here, "../src/realBackend.ts"),
