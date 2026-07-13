@@ -589,11 +589,11 @@ _Avoid_: reviewer 自修、amend 折叠、coder/fixer 完成时的 commit gate�
 _Avoid_: 把 shared-tail final Verification 错派到 family-integration，或为 single 虚构 family base、ledger 或 repair scope。
 
 **文档发布 (docRelease)**:
-线上评审 loop 收敛之后、自动合并之前的 worker 步：在 PR 头上跑 `/gstack-document-release`，把刚交付的代码与项目文档对齐。成功收尾（含合法空跑）才算发布完成；有文档 commit 时由该 worker 推到 PR 远端头。单切片与 family 共用同一步，不按来源分叉。
-_Avoid_: 把文档发布当成 merge 本身、runner 直接改文档、用路径白名单当发布成败判据、只在本地 commit 不推远端。
+线上评审 loop 收敛之后、自动合并之前的 worker 步：在 PR 头上跑 `/gstack-document-release`，把刚交付的代码与项目文档对齐。成功收尾（含合法空跑）后，当前 PR tip 固定再经 fresh online review，复审为 0 才允许 merge；若复审引发修复，修复收敛后重新经过 doc release 与 fresh online review。单切片与 family 共用同一步，不按来源或有无文档 commit 分叉。
+_Avoid_: 把文档发布当成 merge 本身、runner 直接改文档、用路径白名单当发布成败判据、按有无 commit 分叉、跳过 post-doc fresh review。
 
 **文档发布空跑**:
-`/gstack-document-release` 判定当前无文档债、不产生 commit 的合法成功收尾。空跑仍算文档发布完成，不挡后续自动合并。
+`/gstack-document-release` 判定当前无文档债、不产生 commit 的合法成功收尾。空跑仍算文档发布完成，但与有 commit 路径一样进入 post-doc fresh online review。
 _Avoid_: 把空跑当失败、为凑 commit 造空提交、把「没改文件」等同 skill 崩溃。
 
 **修复证据**:

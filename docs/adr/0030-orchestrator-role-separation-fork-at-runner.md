@@ -2,19 +2,17 @@
 
 Status: Accepted（2026-06-29；本地 cmr 8 轮[完整性 4 + 正确性 4] + 线上 bot 3 轮双闸收敛，PR #425）
 
-Revised by: ADR 0129（findings 状态机、写入点校验与三态取数收口；角色分离决定不变）
+Current authority: ADR 0131 定义 Runner 三通道，#869 定义现行接力拓扑，ADR 0129 定义 findings 跨 worker 流转。本 ADR 只保留 coder / reviewer / coder-fix 角色分离。
 
 partially-supersedes: ADR 0026（「cmr = 一条带记忆 worker 兼 fixer / 无 runner 轮间 loop / findings 不在 worker 间传」这一条被反转；ADR 0026 的 runner=纯调度其余部分仍有效）
 
-> **前向废止（ADR 0129 + ADR 0131，2026-07-13）**：本 ADR 裁定状态段的 runner 覆盖断言（claimed-fixed 四判词 disposition 覆盖、压制预算、翻案计数器）已整段拆除且不得复活；reviewer / coder-fix 角色分离仍有效。见 ADR 0131。
-
 ## 决定
 
-per-slice 与 integrated cmr 的「评审 → 修复 → 复审」收敛 loop，从「单 worker session 内部跑完」**拆回 runner 调度层**：coder / reviewer / coder-fix 是各自 runner 派的独立 worker/容器。reviewer 把 findings 写入状态库，runner 只按未决 0 / 未决 >0 / 需要人三态派下一棒；fixer 更新行状态，fresh reviewer 在**当前全 diff** 上复验后确认关闭或打回重开。**通用原则：任一 must-pass-first 闸不得埋进单 worker loop，必须落成 runner 调度边界。**
+per-slice 与 integrated CMR 的「评审 → 修复 → 复审」收敛 loop，从「单 worker session 内部跑完」**拆回 Runner 调度层**：coder / reviewer / coder-fix 是各自独立的 worker / 容器。reviewer 把 findings 写入状态库并自报 open-count；Runner 只按 ADR 0131 三通道与 #869 固定拓扑派下一棒，不查询状态库。fixer 更新行状态，fresh reviewer 在**当前 full diff** 上复验后确认关闭或打回重开。**通用原则：任一 must-pass-first 闸不得埋进单 worker loop，必须落成 Runner 调度边界。**
 
 跨轮发现及其裁定由 findings 状态库承接，不靠任一 worker 的 session 记忆。字段、状态跳转与 accepted suppression 授权在写入点校验；runner 不分类 finding，不管理 disposition，不比较 commit/head 或测试证据。
 
-**integrated cmr 拆分**：step5 完整性 与 step6 正确性 是两道**有序** runner-dispatched pass —— step5 先过才派 step6、step5 fail 即停、每 pass 判决落 findings 状态库（细节见子片 #419；本 ADR 把它从纯指针升为决定）。
+integrated completeness 与 integrated correctness 保持为两个独立 reviewer 角色；准确顺序、修复接力与收敛条件只读 #869，不在本 ADR 保存第二份流程。
 
 ## 为什么
 
@@ -22,7 +20,7 @@ ADR 0026 押注「一条带记忆的 worker 主 session 兼 fixer，凭 in-sessi
 
 ## Tradeoff（如实记，不粉饰 0026）
 
-代价 = 失去 0026 看重的 in-session 记忆（worker 记得上轮报过/改过啥、凭记忆收敛）。替代 = runner-visible findings 状态库：跨轮状态写进可审制品而非藏在一条 session 记忆里。**「findings-as-data 跨 worker 传」在 0026 被判错架构，此处明确翻案**——它不是「模拟记忆」，是 reviewer 独立性 + 可观测性的载体（每轮 fresh reviewer 冷读当前全 diff，不复查自己旧 finding）。换言之：用**可观测 + 独立**换掉**会侵蚀的自律记忆**。coder 仍可兼 fixer（同一模型接 fix worker），但 review 是独立 worker、不是 coder 自评。
+代价 = 失去 0026 看重的 in-session 记忆（worker 记得上轮报过/改过啥、凭记忆收敛）。替代 = 跨 worker findings 状态库：跨轮状态写进可审制品而非藏在一条 session 记忆里。**「findings-as-data 跨 worker 传」在 0026 被判错架构，此处明确翻案**——它不是「模拟记忆」，是 reviewer 独立性 + 可观测性的载体（每轮 fresh reviewer 冷读当前全 diff，不复查自己旧 finding）。换言之：用**可观测 + 独立**换掉**会侵蚀的自律记忆**。coder 仍可兼 fixer（同一模型接 fix worker），但 review 是独立 worker、不是 coder 自评。
 
 ## 追踪
 
