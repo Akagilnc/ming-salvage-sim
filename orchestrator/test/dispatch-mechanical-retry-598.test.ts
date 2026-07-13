@@ -22,6 +22,7 @@
 
 import { describe, expect, it } from "vitest";
 import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../src/dispatchRetry.js";
+import { MAX_LEG_TRANSIENT_ATTEMPTS } from "../src/legTransientRetry.js";
 import { isCapacityRelayError } from "../src/relayDispatch.js";
 import { runOrchestrator } from "../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
@@ -468,6 +469,47 @@ describe("#598 integration — the SHIP role: process retry plus host-truth deli
     const result = await runOrchestrator({ issueNumber: 598, backend });
     expect(result.status).toBe("escalate");
     expect(backend.shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+  });
+
+  it("parks without redispatching ship when host observation stays unavailable", async () => {
+    class ObservationUnavailableBackend extends ShipScriptBackend {
+      override async observeSliceShip(): Promise<{ shipped: boolean }> {
+        this.hostObservationCalls += 1;
+        throw Object.assign(new Error("host observation timed out"), {
+          code: "ETIMEDOUT",
+        });
+      }
+    }
+
+    const backend = new ObservationUnavailableBackend(0);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("infra_failure");
+    expect(result.errorPackage?.failedStep).toBe("S7");
+    expect(backend.shipDispatches).toBe(1);
+    expect(backend.hostObservationCalls).toBe(MAX_LEG_TRANSIENT_ATTEMPTS);
+  });
+
+  it("recovers a transient host observation outage without redispatching ship", async () => {
+    class ObservationRecoversBackend extends ShipScriptBackend {
+      override async observeSliceShip(): Promise<{ shipped: boolean }> {
+        this.hostObservationCalls += 1;
+        if (this.hostObservationCalls === 1) {
+          throw Object.assign(new Error("host observation timed out once"), {
+            code: "ETIMEDOUT",
+          });
+        }
+        return { shipped: true };
+      }
+    }
+
+    const backend = new ObservationRecoversBackend(0);
+    const result = await runOrchestrator({ issueNumber: 598, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.shipDispatches).toBe(1);
+    expect(backend.hostObservationCalls).toBe(2);
   });
 
   it("a malformed ship receipt is accepted when host truth has the PR", async () => {

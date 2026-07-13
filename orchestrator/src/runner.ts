@@ -83,6 +83,7 @@ import {
   withMechanicalRetry,
   type MechanicalRetryOptions,
 } from "./dispatchRetry.js";
+import { withLegTransientRetry } from "./legTransientRetry.js";
 import {
   isQuotaWaitForResetError,
   QuotaWaitForResetError,
@@ -231,6 +232,7 @@ import type {
   StepOutput,
   StepSpec,
   WorkerLandingPayload,
+  WorkerResult,
   WorktreeHandle,
 } from "./types.js";
 
@@ -3764,16 +3766,57 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       resumeLedger = [...resumeLedger, repairIntentEntry];
     }
-    const executableResumeLedger = executableLedgerEntries(resumeLedger);
-    const resumeTail = executableResumeLedger.at(-1);
+    let executableResumeLedger = executableLedgerEntries(resumeLedger);
+    let resumeTail = executableResumeLedger.at(-1);
+    const parkedS7Ship = lastShipFromLedger(executableResumeLedger);
+    const s7HostObservationPark =
+      resumeTail?.step === "S8" &&
+      resumeTail.handoffStatus === "escalate" &&
+      resumeTail.escalationKind === "failure" &&
+      lastNonTerminalStep(executableResumeLedger) === "S7" &&
+      parkedS7Ship !== undefined;
+    let resumedS7Observation:
+      | { readonly shipped: boolean; readonly prUrl?: string }
+      | undefined;
+    if (s7HostObservationPark) {
+      if (worktree === undefined) {
+        return await errorTermination(
+          "S7",
+          new Error("S7 host-observation park requires a resident worktree"),
+        );
+      }
+      const resumeWorktree = worktree;
+      try {
+        resumedS7Observation = await withLegTransientRetry(() =>
+          observeS7HostTruth(resumeWorktree),
+        );
+      } catch {
+        // The prior infra park remains the durable visible state. A re-feed only
+        // re-observes; it never turns an observation outage into another ship.
+      }
+      if (resumedS7Observation?.shipped) {
+        const parkedBoundaryIndex = resumeLedger.lastIndexOf(resumeTail!);
+        resumeLedger = resumeLedger.slice(0, parkedBoundaryIndex);
+        executableResumeLedger = executableLedgerEntries(resumeLedger);
+        resumeTail = executableResumeLedger.at(-1);
+      }
+    }
     const resumeRouteFrom =
       resumeTail?.step === "S8" && resumeTail.handoffStatus === undefined
         ? lastNonTerminalStep(executableResumeLedger)
         : resumeTail?.step;
     const resumedShip =
       resumeRouteFrom === "S7" ? lastShipFromLedger(resumeLedger) : undefined;
-    let resumedHostPr: ReturnType<typeof observeShipPr> | undefined;
-    if (resumedShip !== undefined) {
+    let resumedHostPr: ReturnType<typeof observeShipPr> | undefined =
+      resumedS7Observation?.shipped
+        ? {
+            present: resumedS7Observation.prUrl !== undefined,
+            ...(resumedS7Observation.prUrl !== undefined
+              ? { prUrl: resumedS7Observation.prUrl }
+              : {}),
+          }
+        : undefined;
+    if (resumedShip !== undefined && resumedHostPr === undefined) {
       try {
         resumedHostPr = observeShipPr(resumedShip);
       } catch (err) {
@@ -5149,81 +5192,101 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const shipWorktree = worktree;
           // S7 delivery is decided only from git/GitHub host truth. The worker
           // receipt is telemetry: a completed or malformed receipt cannot prove or
-          // disprove that the branch/PR landed. A missing host delivery is converted
-          // into the existing bounded mechanical retry signal; process failures and
-          // throws keep the same #598 retry path.
+          // disprove that the branch/PR landed. Keep worker-process retry and the
+          // read-only host observation on separate pipes: an observation outage must
+          // never re-dispatch this side-effecting worker.
           // #661: continue on the current scene — never resetBeforeRetry/cleanResidue.
           // gstack-ship's re-runnable design keeps push/PR idempotent without a wipe.
           let hostObservedShip: ShipResult | undefined;
-          const shipResult = await withMechanicalRetry(
-            shipSpec,
-            shipCtx,
-            async (s, c) => {
-              // #684: production monitored dispatch (CLI → handle atomic with spawn).
-              const outcome = await dispatchWorkerWithMonitor(
-                backend,
-                s,
-                c,
-                undefined,
-                {
-                  onMonitorHandleSpawned: async (handle) => {
-                    stepMonitorHandle = handle;
-                    try {
-                      await persistMonitorHandleAtSpawn(s.id, handle);
-                    } catch {
-                      // Best-effort spawn-time persist.
-                    }
+          let shipResult: WorkerResult;
+          while (true) {
+            shipResult = await withMechanicalRetry(
+              shipSpec,
+              shipCtx,
+              async (s, c) => {
+                // #684: production monitored dispatch (CLI → handle atomic with spawn).
+                const outcome = await dispatchWorkerWithMonitor(
+                  backend,
+                  s,
+                  c,
+                  undefined,
+                  {
+                    onMonitorHandleSpawned: async (handle) => {
+                      stepMonitorHandle = handle;
+                      try {
+                        await persistMonitorHandleAtSpawn(s.id, handle);
+                      } catch {
+                        // Best-effort spawn-time persist.
+                      }
+                    },
                   },
-                },
-              );
-              if (outcome.monitorHandle !== undefined) {
-                stepMonitorHandle = outcome.monitorHandle;
-              }
-              // Join only at result collection, never on the spawn path.
-              await outcome.telemetryEnvironmentStamp;
-              const result = outcome.result;
-              if (result.kind === "escalated" || result.kind === "failed") {
-                return result;
-              }
-              const observed = await observeS7HostTruth(shipWorktree);
-              if (!observed.shipped) {
-                return {
-                  kind: "failed",
-                  reason: `host truth has no remote delivery for branch ${shipWorktree.branch}`,
-                  ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
-                };
-              }
-              hostObservedShip = observed.prUrl === undefined
-                ? { kind: "ship", branch: shipWorktree.branch, status: "pushed" }
-                : {
-                    kind: "ship",
-                    branch: shipWorktree.branch,
-                    status: "pr_opened",
-                    pr: observed.prUrl,
-                  };
-              return {
-                kind: "completed",
-                output: hostObservedShip,
-                ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
-              };
-            },
-            durableMechanicalRetryOptions("S7"),
-          );
-          // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
-          // S8(escalate) handoff, NOT an error — keep the escalate semantics so
-          // the human-answer resume re-opens it (codex cmr R4 finding). #331's
-          // legacy wrapper never escalates; the real ship worker (#336) does.
-          if (shipResult.kind === "escalated") {
-            return await escalateTermination(
-              "S7",
-              shipResult.escalation,
-              shipResult.sessionId,
+                );
+                if (outcome.monitorHandle !== undefined) {
+                  stepMonitorHandle = outcome.monitorHandle;
+                }
+                // Join only at result collection, never on the spawn path.
+                await outcome.telemetryEnvironmentStamp;
+                return outcome.result;
+              },
+              durableMechanicalRetryOptions("S7"),
             );
+            // A ship worker that ESCALATES (gstack-ship STOP/HITL) is an
+            // S8(escalate) handoff, NOT an error — keep the escalate semantics so
+            // the human-answer resume re-opens it (codex cmr R4 finding). #331's
+            // legacy wrapper never escalates; the real ship worker (#336) does.
+            if (shipResult.kind === "escalated") {
+              return await escalateTermination(
+                "S7",
+                shipResult.escalation,
+                shipResult.sessionId,
+              );
+            }
+            if (shipResult.kind === "failed") break;
+            try {
+              const observed = await withLegTransientRetry(() =>
+                observeS7HostTruth(shipWorktree),
+              );
+              if (observed.shipped) {
+                hostObservedShip = observed.prUrl === undefined
+                  ? { kind: "ship", branch: shipWorktree.branch, status: "pushed" }
+                  : {
+                      kind: "ship",
+                      branch: shipWorktree.branch,
+                      status: "pr_opened",
+                      pr: observed.prUrl,
+                    };
+              }
+            } catch (err) {
+              const reason =
+                `S7 host delivery observation unavailable: ${
+                  err instanceof Error ? err.message : String(err)
+                }`;
+              return await escalateTermination(
+                "S7",
+                {
+                  reason: "S7 host observation unavailable",
+                  diagnosis: reason,
+                  synthesizedFailure: true,
+                },
+                shipResult.sessionId,
+                "failure",
+                { kind: "ship", branch: shipWorktree.branch, status: "pushed" },
+                infraFailureStopSummary({
+                  summary: reason,
+                  repairHint:
+                    "restore host observation, then resume to observe delivery without re-running ship",
+                }),
+              );
+            }
+            if (hostObservedShip !== undefined) break;
+            // A successful host observation that proves no delivery authorizes a
+            // replacement dispatch. This loop is separate from process retry;
+            // an observation throw returns above and can never reach this edge.
           }
           // Exhaustion here is derived from external host truth (or repeated
           // process failure), so it is a legal infra park rather than a receipt
           // content verdict.
-          if (shipResult.kind !== "completed" || hostObservedShip === undefined) {
+          if (hostObservedShip === undefined) {
             const reason =
               "reason" in shipResult
                 ? shipResult.reason
