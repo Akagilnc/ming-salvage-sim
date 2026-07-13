@@ -131,9 +131,11 @@ export function shipOutcomeFromResult(result: {
       }
     }
   } catch (err) {
-    return { kind: "completed" };
+    const stdoutBell = parseShipOutcome(result.stdout);
+    return stdoutBell.kind === "escalate" ? stdoutBell : { kind: "completed" };
   }
-  return { kind: "completed" };
+  const stdoutBell = parseShipOutcome(result.stdout);
+  return stdoutBell.kind === "escalate" ? stdoutBell : { kind: "completed" };
 }
 
 /**

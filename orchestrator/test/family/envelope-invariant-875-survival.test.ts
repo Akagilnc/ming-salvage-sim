@@ -57,4 +57,18 @@ describe("ADR 0131 S1b reviewer self-declared count", () => {
     expect(outcome).not.toHaveProperty("findingsCount");
   });
 
+  it("rings a CMR stdout decision bell even when sidecar cargo is unreadable", () => {
+    const outcomePath = join(mkdtempSync(join(tmpdir(), "s1b-bell-")), "outcome.json");
+    writeFileSync(outcomePath, "{not json");
+    const outcome = cmrOutcomeFromResult({
+      stdout: '<cmr>{"junk": 1, "escalate": {"reason": "owner choice", "diagnosis": "CMR fork"}}</cmr>',
+      outcomePath,
+    });
+    expect(outcome).toMatchObject({
+      kind: "escalate",
+      reason: "owner choice",
+      diagnosis: "CMR fork",
+    });
+  });
+
 });

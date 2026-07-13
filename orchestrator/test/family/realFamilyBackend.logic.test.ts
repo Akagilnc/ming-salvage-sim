@@ -1276,6 +1276,21 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ).toMatchObject({ kind: "malformed", reason: expect.stringContaining("sidecar protocol failure") });
   });
 
+  it("still rings a review-loop stdout decision bell when sidecar cargo is unreadable", async () => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const dir = trackTempDir("review-loop-outcome-bell-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(outcomePath, "{not json", "utf8");
+
+    expect(mod.parseVerifyOutcome(
+      '<verify>{"bad": 1, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</verify>',
+      outcomePath,
+    )).toMatchObject({
+      kind: "escalate",
+      escalation: { reason: "owner choice", diagnosis: "review fork" },
+    });
+  });
+
   it("pin r39: committed:true without fixCommitSha is malformed on family parseFixerOutcome", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
     const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);

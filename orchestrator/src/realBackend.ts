@@ -1993,7 +1993,7 @@ const coderOutputSchema = z.object({
 
 // Typed extraction may locate a receipt, but it must not judge the receipt
 // before decodeOutput gets the independent decision-bell probe.
-const workerReceiptSchema = z.object({}).passthrough();
+const workerReceiptSchema = z.unknown();
 
 // #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
 // and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
@@ -3208,7 +3208,23 @@ export class RealBackend implements Backend {
         `[orchestrator] telemetry: ${spec.id}-${spec.role} outcome sidecar is unreadable cargo: ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
-      return undefined;
+      const compatibility =
+        spec.role === "coder"
+          ? extractCoderTag(result.stdout)
+          : spec.role === "reviewer"
+            ? extractReviewerTag(result.stdout)
+            : spec.role === "verify"
+              ? extractVerifyTag(result.stdout)
+              : spec.role === "fixer"
+                ? extractFixerTag(result.stdout)
+                : spec.role === "cleanup"
+                  ? extractCleanupTag(result.stdout)
+                  : spec.role === "docRelease"
+                    ? extractDocReleaseTag(result.stdout)
+                    : undefined;
+      return probeWorkerDecisionBell(compatibility) !== undefined
+        ? compatibility
+        : undefined;
     }
     if (typedOutputUsed && result.output !== undefined) return result.output;
     // Stdout tags are the primary machine channel for multi-iteration coders;
