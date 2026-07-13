@@ -26,41 +26,16 @@ import { resolveRouteModels } from "../src/modelRoutes.js";
 import { RealBackend } from "../src/realBackend.js";
 
 describe("#879 classifyLegFailure — transient vs quota vs other", () => {
-  it("classifies connection reset / close / ECONNRESET / 5xx as transient", () => {
-    expect(classifyLegFailure(new Error("read ECONNRESET"))).toBe("transient");
-    expect(classifyLegFailure(new Error("socket hang up"))).toBe("transient");
-    expect(classifyLegFailure(new Error("Connection reset by peer"))).toBe(
-      "transient",
-    );
-    expect(classifyLegFailure(new Error("connection closed unexpectedly"))).toBe(
-      "transient",
-    );
-    expect(classifyLegFailure(new Error("HTTP 503 service overloaded"))).toBe(
-      "transient",
-    );
-    expect(classifyLegFailure(new Error("HTTP 502 Bad Gateway"))).toBe(
-      "transient",
-    );
-    expect(classifyLegFailure(new Error("fetch failed: network error"))).toBe(
-      "transient",
-    );
+  it("classifies allowlisted codes / numeric 5xx as transient", () => {
+    expect(classifyLegFailure({ code: "ECONNRESET" })).toBe("transient");
+    expect(classifyLegFailure({ code: "ECONNREFUSED" })).toBe("transient");
+    expect(classifyLegFailure({ status: 503 })).toBe("transient");
+    expect(classifyLegFailure({ statusCode: 502 })).toBe("transient");
   });
 
-  it("classifies 429 / rate-limit / quota as quota (no retry)", () => {
-    expect(classifyLegFailure(new Error("HTTP 429 rate limit exceeded"))).toBe(
-      "quota",
-    );
-    expect(classifyLegFailure(new Error("provider status 429"))).toBe(
-      "quota",
-    );
-    expect(classifyLegFailure(new Error("rate limit: resets at noon"))).toBe(
-      "quota",
-    );
-    expect(classifyLegFailure(new Error("quota exhausted for opus"))).toBe(
-      "quota",
-    );
-    expect(classifyLegFailure(new Error("too many requests"))).toBe("quota");
-    expect(classifyLegFailure(new Error("额度不足，请稍后重试"))).toBe("quota");
+  it("classifies numeric 429 as quota (no retry)", () => {
+    expect(classifyLegFailure({ status: 429 })).toBe("quota");
+    expect(classifyLegFailure({ statusCode: 429 })).toBe("quota");
   });
 
   it("does not treat permanent/auth failures as transient", () => {
@@ -75,7 +50,7 @@ describe("#879 classifyLegFailure — transient vs quota vs other", () => {
     ).toBe("other");
   });
 
-  it("classifies ExternalCallTimeoutError / timed-out text as transient (bare-ping path)", () => {
+  it("classifies ExternalCallTimeoutError / AbortError as transient (bare-ping path)", () => {
     // Production bare-ping throws ExternalCallTimeoutError from externalCall.ts;
     // must share status-first + timeout policy with classifyExternalCallFailure.
     expect(
@@ -87,21 +62,9 @@ describe("#879 classifyLegFailure — transient vs quota vs other", () => {
         }),
       ),
     ).toBe("transient");
-    expect(classifyLegFailure(new Error("external call timed out at stage x"))).toBe(
-      "transient",
-    );
     const abortish = new Error("The operation was aborted");
     abortish.name = "AbortError";
     expect(classifyLegFailure(abortish)).toBe("transient");
-  });
-
-  it("status-first: explicit HTTP 5xx beats quota vocabulary (align externalCall)", () => {
-    expect(classifyLegFailure(new Error("HTTP 503 service overloaded quota"))).toBe(
-      "transient",
-    );
-    expect(classifyLegFailure(new Error("HTTP 502 Bad Gateway quota"))).toBe(
-      "transient",
-    );
   });
 
   it("classifies EAI_AGAIN / ENETUNREACH as transient (DNS/route blip)", () => {
@@ -120,7 +83,11 @@ describe("#879 withLegTransientRetry — positive / negative pair", () => {
     const result = await withLegTransientRetry(
       async () => {
         calls += 1;
-        if (calls < 3) throw new Error("read ECONNRESET");
+        if (calls < 3) {
+          throw Object.assign(new Error("transport failed"), {
+            code: "ECONNRESET",
+          });
+        }
         return "ok";
       },
       { sleepMs: async () => {} },
@@ -137,11 +104,11 @@ describe("#879 withLegTransientRetry — positive / negative pair", () => {
       withLegTransientRetry(
         async () => {
           calls += 1;
-          throw new Error("HTTP 502 Bad Gateway");
+          throw Object.assign(new Error("provider failed"), { status: 502 });
         },
         { sleepMs: async () => {} },
       ),
-    ).rejects.toThrow(/HTTP 502/);
+    ).rejects.toThrow(/provider failed/);
     expect(calls).toBe(3);
   });
 
@@ -151,11 +118,13 @@ describe("#879 withLegTransientRetry — positive / negative pair", () => {
       withLegTransientRetry(
         async () => {
           calls += 1;
-          throw new Error("HTTP 429 rate limit exceeded");
+          throw Object.assign(new Error("provider rejected request"), {
+            status: 429,
+          });
         },
         { sleepMs: async () => {} },
       ),
-    ).rejects.toThrow(/429/);
+    ).rejects.toThrow(/provider rejected request/);
     expect(calls).toBe(1);
   });
 
@@ -286,7 +255,9 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
       const backend = new BarePingSmokeBackend(home, async ({ nonce }) => {
         attempts += 1;
         if (attempts <= 2) {
-          throw new Error("read ECONNRESET");
+          throw Object.assign(new Error("transport failed"), {
+            code: "ECONNRESET",
+          });
         }
         // #884 oracle: a full line equal to the nonce (optional short preface).
         return `thought\n${nonce}\n`;
@@ -307,7 +278,9 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
     const home = prepareHome();
     try {
       const backend = new BarePingSmokeBackend(home, async () => {
-        throw new Error("HTTP 429 rate limit exceeded");
+        throw Object.assign(new Error("provider rejected request"), {
+          status: 429,
+        });
       });
       const smoked = await backend.smokeModelRoute(resolveRouteModels("normal", {}));
       const uniqueSlugs = new Set(
@@ -318,7 +291,8 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
       expect(backend.pingCalls.length).toBe(uniqueSlugs.size);
       expect(
         Object.values(smoked.smoke).every(
-          (s) => s.state === "failed" && /429/.test(s.error),
+          (s) =>
+            s.state === "failed" && /provider rejected request/.test(s.error),
         ),
       ).toBe(true);
     } finally {
