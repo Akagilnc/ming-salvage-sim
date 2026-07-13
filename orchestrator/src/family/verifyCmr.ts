@@ -2991,7 +2991,7 @@ async function runVerifyCmrWithShipTruthAttempt(
       familyHeadAfter: exactPostShipFamilyHead,
       stopSummary,
     });
-    if (shippedPrVerification.kind === "pr_missing") {
+    if (shippedPrVerification.kind !== "observation_failed") {
       await closeShipStreak("exhausted");
     }
     return { ok: false, ran: true };

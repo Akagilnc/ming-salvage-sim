@@ -17,7 +17,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runFamily } from "../../src/family/runner.js";
-import { recordFamilyEscalationAnswered } from "../../src/family/ledger.js";
+import {
+  recordFamilyEscalated,
+  recordFamilyEscalationAnswered,
+  recordShipCompleted,
+  recordShipDispatchAttempt,
+  recordShipDispatchReservation,
+  recordShipStreakOpened,
+} from "../../src/family/ledger.js";
 import { smokeRouteModels } from "../../src/modelRoutes.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
@@ -124,6 +131,7 @@ class FakeFamilyBackend implements FamilyBackend {
   verifyFamilyShippedPr?: (
     _req: VerifyFamilyShippedPrRequest,
   ) => Promise<VerifyFamilyShippedPrResult>;
+  runFamilyVerify?: FamilyBackend["runFamilyVerify"];
   dispatchWorker?: (spec: any, ctx?: any) => Promise<any>;
 }
 
@@ -151,6 +159,97 @@ function seedShippedOnly(backend: FakeFamilyBackend): void {
 }
 
 describe("#744 family decision_gate parks for human (production seam)", () => {
+  it("re-enters the family ship ladder after an observation park and spends only the remaining dispatch budget", async () => {
+    const familyBackend = new FakeFamilyBackend();
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: HEAD,
+    });
+    await recordShipStreakOpened(familyBackend, {
+      shipStreakId: "ship-streak-resume-false",
+      shipAttemptsAtOpen: 0,
+      shipInfraAttemptsAtOpen: 0,
+    });
+    await recordShipDispatchReservation(familyBackend, {
+      phase: "final",
+      shipDispatchId: "ship-before-observation-park",
+    });
+    await recordShipDispatchAttempt(familyBackend, {
+      phase: "final",
+      shipDispatchId: "ship-before-observation-park",
+    });
+    await recordShipCompleted(familyBackend, {
+      pr: "pr://family/stale-observation-locator",
+      branch: FAMILY_BASE,
+    });
+    await recordFamilyEscalated(familyBackend, {
+      escalationKind: "failure",
+      phase: "final",
+      reason: "family ship PR failed host verification after observation attempts",
+      familyHeadAfter: HEAD,
+      stopSummary: {
+        reason: "infra_failure",
+        summary: "family ship PR host observation unavailable",
+        repairHint: "restore host observation and re-feed",
+        metadata: {
+          ship: {
+            currentFamilyHead: HEAD,
+            shipPrState: "host-verification-failed",
+          },
+        },
+      },
+    });
+
+    let shipDispatches = 0;
+    familyBackend.runFamilyVerify = async () => ({ ok: true });
+    familyBackend.verifyFamilyShippedPr = async () => ({
+      ok: false,
+      kind: "pr_missing",
+      reason: "host confirms no family PR delivery",
+    });
+    familyBackend.dispatchWorker = async (spec) => {
+      if (spec.kind === "cmr") {
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: true,
+            successfulLegs: ["gpt-5.6-sol", "opus", "agy"],
+            evidencePaths: ["cmr/review-summary.json"],
+          },
+        };
+      }
+      if (spec.kind === "ship") {
+        shipDispatches += 1;
+        return {
+          kind: "completed",
+          output: {
+            kind: "ship",
+            branch: FAMILY_BASE,
+            status: "pr_opened",
+            pr: `pr://family/retry-${shipDispatches}`,
+          },
+        };
+      }
+      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+      return skeleton ?? { kind: "failed", reason: `unexpected ${spec.kind}` };
+    };
+
+    const result = await runFamily({
+      epic,
+      familyBackend,
+      singleSliceBackend: new UnusedChildBackend(),
+      familyBase: FAMILY_BASE,
+    });
+
+    expect(result.status).toBe("verify_failed");
+    expect(shipDispatches).toBe(MAX_DISPATCH_ATTEMPTS - 1);
+    expect(
+      familyBackend.ledger.filter((entry) => entry.status === "ship_dispatch_attempt"),
+    ).toHaveLength(MAX_DISPATCH_ATTEMPTS);
+  });
+
   it("shipped-resume + verify decision escalate → escalated with decision_gate_park + escalationKind decision (not failure)", async () => {
     const familyBackend = new FakeFamilyBackend();
     seedShippedOnly(familyBackend);

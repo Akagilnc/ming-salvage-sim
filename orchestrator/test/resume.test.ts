@@ -57,6 +57,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 import { runOrchestrator } from "../src/runner.js";
+import { MAX_DISPATCH_ATTEMPTS } from "../src/dispatchRetry.js";
 import { route } from "../src/route.js";
 import { parseLedgerJsonl } from "../src/realBackend.js";
 import { buildRoundTrigger } from "../src/evidenceAdmissibility.js";
@@ -3400,6 +3401,132 @@ describe("S7 ship escalate-resume re-dispatches the ship worker (integ-cmr int-r
 // ─── AC4: recovery decides next step from ledger, not memory ──────────────────
 
 describe("S7 ship observation during resume setup (#824 r10)", () => {
+  it("re-dispatches S7 within the remaining durable budget when resumed host truth confirms no delivery", async () => {
+    class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
+      observationCalls = 0;
+
+      async observeSliceShip(): Promise<{ shipped: boolean }> {
+        this.observationCalls += 1;
+        return { shipped: this.observationCalls > 1 };
+      }
+    }
+
+    const backend = new ObservationRecoveryBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        {
+          ...entry("S7"),
+          step: "mechanical_redispatch_attempt",
+          event: "mechanical_redispatch_attempt",
+          forStep: "S7",
+          mechanicalRedispatchAttempt: 1,
+        },
+        entry("S7", {
+          kind: "ship",
+          branch: WORKTREE.branch,
+          status: "pushed",
+        }),
+        {
+          ...s8("escalate"),
+          escalationKind: "failure",
+          stopSummary: {
+            reason: "infra_failure",
+            summary: "S7 host delivery observation unavailable: timed out",
+            repairHint:
+              "restore host observation, then resume to observe delivery without re-running ship",
+          },
+        },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 891, backend });
+
+    expect(result.status).toBe("success");
+    expect(backend.observationCalls).toBe(2);
+    expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(1);
+    expect(backend.ledgerWrites).toContainEqual(expect.objectContaining({
+      step: "mechanical_redispatch_attempt",
+      forStep: "S7",
+      mechanicalRedispatchAttempt: 2,
+    }));
+    expect(
+      backend.ledgerWrites.filter(
+        (written) =>
+          written.step === "mechanical_redispatch_attempt" && written.forStep === "S7",
+      ),
+    ).toHaveLength(1);
+    expect(MAX_DISPATCH_ATTEMPTS).toBeGreaterThan(2);
+  });
+
+  it("keeps the resumed non-delivery parked when the durable S7 redispatch budget is exhausted", async () => {
+    class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
+      observationCalls = 0;
+
+      async observeSliceShip(): Promise<{ shipped: boolean }> {
+        this.observationCalls += 1;
+        return { shipped: false };
+      }
+    }
+
+    const redispatchMarkers = Array.from(
+      { length: MAX_DISPATCH_ATTEMPTS },
+      (_, index): PersistentLedgerEntry => ({
+        ...entry("S7"),
+        step: "mechanical_redispatch_attempt",
+        event: "mechanical_redispatch_attempt",
+        forStep: "S7",
+        mechanicalRedispatchAttempt: index + 1,
+      }),
+    );
+    const backend = new ObservationRecoveryBackend({
+      worktree: WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry("S3", { kind: "reviewer", findings: [] }),
+        entry("S4"),
+        ...redispatchMarkers,
+        entry("S7", {
+          kind: "ship",
+          branch: WORKTREE.branch,
+          status: "pushed",
+        }),
+        {
+          ...s8("escalate"),
+          escalationKind: "failure",
+          stopSummary: {
+            reason: "infra_failure",
+            summary: "S7 host delivery observation unavailable: timed out",
+            repairHint:
+              "restore host observation, then resume to observe delivery without re-running ship",
+          },
+        },
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 891, backend });
+
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary.reason).toBe("infra_failure");
+    expect(result.errorPackage?.failedStep).toBe("S7");
+    expect(backend.observationCalls).toBe(1);
+    expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(0);
+    expect(
+      backend.ledgerWrites.filter(
+        (written) =>
+          written.step === "mechanical_redispatch_attempt" && written.forStep === "S7",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("rebuilds the resumed S7 ship output from a host-observed open PR before entering S9", async () => {
     class ObservationRecoveryBackend extends DispatchRecordingResumeBackend {
       observationCalls = 0;

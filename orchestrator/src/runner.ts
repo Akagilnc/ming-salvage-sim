@@ -3797,10 +3797,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           observeS7HostTruth(resumeWorktree),
         );
       } catch {
-        // The prior infra park remains the durable visible state. A re-feed only
-        // re-observes; it never turns an observation outage into another ship.
+        // While host truth remains unavailable, keep the prior infra park and do
+        // not re-dispatch the side-effecting ship worker.
       }
-      if (resumedS7Observation?.shipped) {
+      if (resumedS7Observation !== undefined) {
         const parkedBoundaryIndex = resumeLedger.lastIndexOf(resumeTail!);
         let parkedShipIndex = parkedBoundaryIndex - 1;
         while (
@@ -3812,32 +3812,40 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         ) {
           parkedShipIndex -= 1;
         }
-        const parkedShipEntry = resumeLedger[parkedShipIndex]!;
-        const resumedHostShip: ShipResult =
-          resumedS7Observation.prUrl === undefined
-            ? { kind: "ship", branch: worktree.branch, status: "pushed" }
-            : {
-                kind: "ship",
-                branch: worktree.branch,
-                status: "pr_opened",
-                pr: resumedS7Observation.prUrl,
-              };
-        const resumedHostShipEntry: PersistentLedgerEntry = {
-          ...parkedShipEntry,
-          output: resumedHostShip,
-          branchHEAD: await resolveBranchHEAD(),
-          ts: new Date().toISOString(),
-        };
-        try {
-          await backend.writeLedger(resumedHostShipEntry, stateDir);
-        } catch (err) {
-          return await errorTermination("S7", err);
+        if (resumedS7Observation.shipped) {
+          const parkedShipEntry = resumeLedger[parkedShipIndex]!;
+          const resumedHostShip: ShipResult =
+            resumedS7Observation.prUrl === undefined
+              ? { kind: "ship", branch: worktree.branch, status: "pushed" }
+              : {
+                  kind: "ship",
+                  branch: worktree.branch,
+                  status: "pr_opened",
+                  pr: resumedS7Observation.prUrl,
+                };
+          const resumedHostShipEntry: PersistentLedgerEntry = {
+            ...parkedShipEntry,
+            output: resumedHostShip,
+            branchHEAD: await resolveBranchHEAD(),
+            ts: new Date().toISOString(),
+          };
+          try {
+            await backend.writeLedger(resumedHostShipEntry, stateDir);
+          } catch (err) {
+            return await errorTermination("S7", err);
+          }
+          resumeLedger = resumeLedger
+            .slice(0, parkedBoundaryIndex)
+            .map((entry, index) =>
+              index === parkedShipIndex ? resumedHostShipEntry : entry,
+            );
+        } else {
+          // Host truth proved that the parked dispatch did not deliver. Drop the
+          // stale S7 receipt + S8 observation park, but retain the preceding
+          // durable redispatch markers so the fixed route re-enters S7 with only
+          // the remaining bounded budget.
+          resumeLedger = resumeLedger.slice(0, parkedShipIndex);
         }
-        resumeLedger = resumeLedger
-          .slice(0, parkedBoundaryIndex)
-          .map((entry, index) =>
-            index === parkedShipIndex ? resumedHostShipEntry : entry,
-          );
         executableResumeLedger = executableLedgerEntries(resumeLedger);
         resumeTail = executableResumeLedger.at(-1);
       }
