@@ -313,7 +313,6 @@ describe("#422 model route presets", () => {
     vi.resetModules();
 
     const { stepSpecsForEnv } = await import("../../src/runner.js");
-    const { shipWorkerSpec } = await import("../../src/dispatchWorker.js");
     const { cmrWorkerSpec, familyShipWorkerSpec } = await import(
       "../../src/family/dispatchFamilyWorker.js"
     );
@@ -324,7 +323,6 @@ describe("#422 model route presets", () => {
     expect(stepSpecs.S3.model).toBe("gpt-5.6-sol");
     expect(stepSpecs.S5.model).toBe("gpt-5.6-terra");
     expect(stepSpecs.S6.model).toBe("gpt-5.6-sol");
-    expect(shipWorkerSpec().model).toBe("gpt-5.6-terra");
     expect(cmrWorkerSpec("fresh", "completeness").model).toBe("gpt-5.6-sol");
     expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.6-sol");
     expect(familyShipWorkerSpec().model).toBe("gpt-5.6-terra");

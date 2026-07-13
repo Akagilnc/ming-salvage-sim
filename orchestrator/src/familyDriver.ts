@@ -525,11 +525,9 @@ function readFamilyModuleDeclarations(
 }
 
 /**
- * Read the epic's child issues, failing closed if there are NONE (online R2 Codex
- * P2): a leaf issue mis-passed as an epic — or an empty/odd `subIssues` payload —
- * yields zero children, which `runFamily` would treat as already-complete (`every`
- * over `[]` is vacuously true) → a final verify/cmr on a base with no slices → an
- * empty PR. Reject it at admission with a concrete message.
+ * Read native children and normalize a leaf issue to a family-of-one. Existing
+ * families whose children are all non-runnable still fail closed; only the
+ * absence of native sub-issues selects the degenerate one-child family.
  */
 function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssueAdmission {
   const allSubIssueNodes: unknown[] = [];
@@ -547,10 +545,13 @@ function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssu
     console.warn(skipped.message);
   }
   const childNumbers = [...admission.admitted];
+  if (allSubIssueNodes.length === 0) {
+    return { admitted: [epicIssue], skipped: [] };
+  }
   if (childNumbers.length === 0) {
     throw new Error(
       `family admission rejected: epic #${epicIssue} has no runnable child issues ` +
-        `(not an epic, native sub-issues are empty, or all children were skipped) — nothing to orchestrate`,
+        `(all native children were skipped) — nothing to orchestrate`,
     );
   }
   return admission;

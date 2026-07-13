@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
 import { mergeChild } from "../../src/family/merger.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
-import { runOnlineReviewLoopStage } from "../../src/onlineReviewLoop.js";
+import { runOnlineReviewLoopStage } from "../../src/family/onlineReviewLoop.js";
 import { buildRoundTrigger } from "../../src/evidenceAdmissibility.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type { PrReviewSnapshot } from "../../src/botPolling.js";
@@ -156,9 +156,6 @@ function validWorkerResult(spec: WorkerSpec): WorkerResult {
   if (spec.kind === "reviewer") {
     return { kind: "completed", output: { kind: "reviewer", findings: [] } };
   }
-  if (spec.kind === "ship") {
-    return { kind: "completed", output: { kind: "ship", branch: WORKTREE.branch, status: "pushed" } };
-  }
   const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
   if (skeleton !== undefined) return skeleton;
   return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
@@ -168,7 +165,6 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
   it.each([
     ["coder bad JSON sidecar", "S2"],
     ["cmr reviewer missing sidecar", "S3"],
-    ["ship no sentinel", "S7"],
   ] as const)("Group A: %s continues after process-level redispatch (no format court)", async (_name, target) => {
     const backend = new ScriptedRunnerBackend((spec, attempt) => {
       if (spec.id === target && attempt === 1) {
@@ -191,8 +187,6 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
       expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
       return;
     }
-    expect(result.status).toBe("success");
-    expect(backend.dispatches.filter((row) => row.startsWith(`${target}:`))).toHaveLength(1);
   });
 
   it("Group A coder completed report advances without git adjudication", async () => {
@@ -334,7 +328,6 @@ describe("#825 Group A family roles", () => {
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "f:1", threadId: "thread-f1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["f:1"] }),
         dispatchFixer: async () => { fixerCalls += 1; return { kind: "fixer", committed: false }; },
-        dispatchCleanup: async () => true,
         dispatchDocRelease: async () => true,
         applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},
@@ -363,7 +356,6 @@ describe("#825 Group D — no git output enters findings-driven reviewer/fixer l
           ? { kind: "verify", converged: false, findingDispositions: [{ identityKey: "fresh:1", threadId: "thread-fresh1", action: "fix" }] }
           : { kind: "verify", converged: true, isRecheck: true, fixMarkedFindingIdentityKeys: ["fresh:1"] }),
         dispatchFixer: async () => ({ kind: "fixer", committed: false }),
-        dispatchCleanup: async () => true,
         dispatchDocRelease: async () => true,
         applySideEffects: (_landing, verify) => verify,
         retriggerAfterFix: () => {},

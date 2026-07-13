@@ -300,29 +300,6 @@ describe("RealBackend findResumeState old-branch fallback (#593)", () => {
     expect(await backend.findResumeState(ISSUE)).toBeUndefined();
   });
 
-  it("pin r34: live HEAD advanced past ledger HEAD continues resume (no abort)", async () => {
-    const wtRoot = mkDir("wt-head-advanced-resume-");
-    const existingWt = join(wtRoot, "issue-593");
-    mkdirSync(existingWt, { recursive: true });
-
-    const backend = newBackend(porcelainForBranch(NEW_BRANCH, existingWt));
-    backend.liveHeadSha = ADVANCED_HEAD_SHA;
-    const ledgerLine = `${JSON.stringify({
-      step: "S9",
-      branchHEAD: LEDGER_HEAD_SHA,
-      output: { kind: "online_review", verdict: "needs_fix" },
-    })}\n`;
-    const stateDir = writeLedger(existingWt, ISSUE, ledgerLine);
-
-    const resume = await backend.findResumeState(ISSUE);
-
-    expect(resume).toBeDefined();
-    expect(resume?.worktree.path).toBe(existingWt);
-    expect(resume?.stateDir).toBe(stateDir);
-    expect(resume?.ledger).toHaveLength(1);
-    expect(resume?.ledger[0]?.branchHEAD).toBe(LEDGER_HEAD_SHA);
-  });
-
   it("corrupt ledger still aborts resume (infra fail-closed)", async () => {
     const wtRoot = mkDir("wt-corrupt-ledger-resume-");
     const existingWt = join(wtRoot, "issue-593");

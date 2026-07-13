@@ -543,13 +543,29 @@ describe("#291 readFamilyEpic (injected gh sh)", () => {
       "repos/Akagilnc/ming-salvage-sim/issues/291/sub_issues?per_page=100&page=2",
     ]);
   });
-  it("fails closed when the epic has NO child issues (a leaf issue / empty-or-odd subIssues) (online R2 Codex P2)", () => {
-    // An epic with zero children would let `runFamily` treat the empty set as
-    // already-complete (`every` over [] is vacuously true) → final verify/cmr on a
-    // base with no slices → an empty PR. Admission must reject it.
-    const sh: Sh = (file, args) =>
-      String(args[1]).includes("/sub_issues") ? JSON.stringify([]) : "[]";
-    expect(() => readFamilyEpic(404, "Akagilnc/ming-salvage-sim", sh)).toThrow(/no child issues|child/i);
+  it("normalizes a leaf issue to one family child", () => {
+    const sh: Sh = (_file, args) => {
+      if (String(args[1]).includes("/sub_issues")) return "[]";
+      if (args[0] === "issue" && args[1] === "view") {
+        return JSON.stringify({ number: 404, body: "", author: { login: "Akagilnc" } });
+      }
+      if (String(args[1]).includes("/dependencies/blocked_by")) return "[]";
+      return "OWNER";
+    };
+    expect(readFamilyEpic(404, "Akagilnc/ming-salvage-sim", sh)).toMatchObject({
+      issue: 404,
+      children: [{ issue: 404, blockedBy: [] }],
+    });
+  });
+
+  it("still fails closed when an existing family's children are all skipped", () => {
+    const sh: Sh = (_file, args) =>
+      String(args[1]).includes("/sub_issues")
+        ? JSON.stringify([{ number: 405, state: "CLOSED" }])
+        : "[]";
+    expect(() => readFamilyEpic(404, "Akagilnc/ming-salvage-sim", sh)).toThrow(
+      /all native children were skipped/,
+    );
   });
 });
 

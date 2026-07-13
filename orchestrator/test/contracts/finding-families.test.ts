@@ -12,14 +12,13 @@ import {
   mergePriorRoundFindings,
   priorCmrFindingsFromFamilyLedger,
   priorOnlineReviewFindingsFromFamilyLedger,
-  priorOnlineReviewFindingsFromLedger,
   sanitizeFindingFamilies,
 } from "../../src/findingFamilies.js";
 import {
   parseCmrOutcome,
   parseVerifyOutcome,
 } from "../../src/family/realFamilyBackend.js";
-import { runOnlineReviewLoopStage } from "../../src/onlineReviewLoop.js";
+import { runOnlineReviewLoopStage } from "../../src/family/onlineReviewLoop.js";
 import { verifyOutputSchema } from "../../src/realBackend.js";
 import { isValidVerifyResult } from "../../src/reviewLoopOutcome.js";
 import type {
@@ -328,152 +327,6 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     }
   });
 
-  it("priorOnlineReviewFindingsFromLedger collects rounds before the current one", () => {
-    const ledger: LedgerEntry[] = [
-      {
-        step: "S9",
-        output: {
-          kind: "verify",
-          converged: false,
-          fixMarkedFindingIdentityKeys: ["t:1"],
-        } satisfies VerifyResult,
-      },
-      { step: "S10", output: { kind: "fixer", committed: true, fixCommitSha: "abc" } },
-      {
-        step: "S9",
-        output: {
-          kind: "verify",
-          converged: false,
-          fixMarkedFindingIdentityKeys: ["t:2"],
-        } satisfies VerifyResult,
-      },
-    ];
-    expect(priorOnlineReviewFindingsFromLedger(ledger, 3)).toEqual([
-      { round: 1, fixMarkedFindingIdentityKeys: ["t:1"] },
-      { round: 2, fixMarkedFindingIdentityKeys: ["t:2"] },
-    ]);
-  });
-
-  it("keys S9 rows by round number, not array position (CI-pending timeouts do not shift rounds)", () => {
-    // runner.ts parks CI-pending by persisting an S9 verify row without
-    // incrementing onlineReviewRound — so a later real re-verify shares the
-    // same round. Position-based slice(0, priorCount) would keep the stale
-    // pending row and drop the real fix-marked findings.
-    const ledger: LedgerEntry[] = [
-      {
-        step: "S9",
-        output: {
-          kind: "verify",
-          converged: false,
-          fixMarkedFindingIdentityKeys: ["t:r1"],
-        } satisfies VerifyResult,
-      },
-      {
-        step: "S10",
-        output: { kind: "fixer", committed: true, fixCommitSha: "fix-1" },
-      },
-      // r2 CI-pending timeout: extra S9 row, same logical round, stale keys
-      {
-        step: "S9",
-        output: {
-          kind: "verify",
-          converged: false,
-          fixMarkedFindingIdentityKeys: ["stale-pending"],
-        } satisfies VerifyResult,
-      },
-      // r2 real re-verify after resume / CI completes
-      {
-        step: "S9",
-        output: {
-          kind: "verify",
-          converged: false,
-          fixMarkedFindingIdentityKeys: ["t:r2-real"],
-        } satisfies VerifyResult,
-      },
-    ];
-    expect(priorOnlineReviewFindingsFromLedger(ledger, 3)).toEqual([
-      { round: 1, fixMarkedFindingIdentityKeys: ["t:r1"] },
-      { round: 2, fixMarkedFindingIdentityKeys: ["t:r2-real"] },
-    ]);
-  });
-
-  it("does not let a resume-seeded ledger prefix double-count inferred rounds", () => {
-    const s9Round1: LedgerEntry = {
-      step: "S9",
-      output: {
-        kind: "verify",
-        converged: false,
-        fixMarkedFindingIdentityKeys: ["t:r1"],
-      } satisfies VerifyResult,
-    };
-    const s10Round1: LedgerEntry = {
-      step: "S10",
-      output: { kind: "fixer", committed: true, fixCommitSha: "fix-1" },
-    };
-    const s9Round2: LedgerEntry = {
-      step: "S9",
-      output: {
-        kind: "verify",
-        converged: false,
-        fixMarkedFindingIdentityKeys: ["t:r2"],
-      } satisfies VerifyResult,
-    };
-
-    // S7 resume planning seeds these same entry objects into the in-memory
-    // ledger before appending new rows. Reference de-duplication must preserve
-    // the original inferred round sequence.
-    expect(
-      priorOnlineReviewFindingsFromLedger(
-        mergeResumeLedgerHistory(
-          [s9Round1, s10Round1],
-          [s9Round1, s10Round1, s9Round2],
-        ),
-        3,
-      ),
-    ).toEqual([
-      { round: 1, fixMarkedFindingIdentityKeys: ["t:r1"] },
-      { round: 2, fixMarkedFindingIdentityKeys: ["t:r2"] },
-    ]);
-  });
-
-  it("prefers non-empty fix-marked keys when a later pending row would overwrite", () => {
-    const ledger: LedgerEntry[] = [
-      {
-        step: "S9",
-        output: {
-          kind: "verify",
-          converged: false,
-          fixMarkedFindingIdentityKeys: ["t:r1-real"],
-        } satisfies VerifyResult,
-      },
-      // Same round, empty pending re-poll must not erase r1
-      {
-        step: "S9",
-        output: {
-          kind: "verify",
-          converged: false,
-          fixMarkedFindingIdentityKeys: [],
-        } satisfies VerifyResult,
-      },
-      {
-        step: "S10",
-        output: { kind: "fixer", committed: true, fixCommitSha: "fix-1" },
-      },
-      {
-        step: "S9",
-        output: {
-          kind: "verify",
-          converged: false,
-          fixMarkedFindingIdentityKeys: ["t:r2"],
-        } satisfies VerifyResult,
-      },
-    ];
-    expect(priorOnlineReviewFindingsFromLedger(ledger, 3)).toEqual([
-      { round: 1, fixMarkedFindingIdentityKeys: ["t:r1-real"] },
-      { round: 2, fixMarkedFindingIdentityKeys: ["t:r2"] },
-    ]);
-  });
-
   it("mergePriorRoundFindings unions by round (later source wins same round)", () => {
     expect(
       mergePriorRoundFindings(
@@ -489,7 +342,7 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     ]);
   });
 
-  it("priorOnlineReviewFindingsFromFamilyLedger reads fix_committed markers (not S9 rows)", () => {
+  it("priorOnlineReviewFindingsFromFamilyLedger reads fix_committed markers", () => {
     const familyLedger = [
       {
         event: "online_review_fix_committed",
@@ -509,17 +362,6 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
         familyHeadAfter: "sha2",
       },
     ];
-    // Old S9-shaped extractor on family rows yields nothing:
-    expect(
-      priorOnlineReviewFindingsFromLedger(
-        familyLedger as ReadonlyArray<{
-          readonly step?: string;
-          readonly output?: StepOutput;
-        }>,
-        3,
-      ),
-    ).toEqual([]);
-    // Family-aware extractor recovers prior rounds:
     expect(priorOnlineReviewFindingsFromFamilyLedger(familyLedger, 3)).toEqual([
       { round: 1, fixMarkedFindingIdentityKeys: ["silence:r1"] },
       { round: 2, fixMarkedFindingIdentityKeys: ["silence:r2"] },
@@ -578,75 +420,6 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     expect(soul).toMatch(/\.fix-focus\.md/);
   });
 
-  it("r3 fixer dispatch writes .fix-focus.md with recurring markers (runner pure IO)", async () => {
-    const worktree = mkdtempSync(join(tmpdir(), "fix-focus-711-"));
-    const stateDir = mkdtempSync(join(tmpdir(), "fix-focus-state-711-"));
-    worktrees.push(worktree, stateDir);
-    const landingPayload: WorkerLandingPayload = {
-      onlineReviewSnapshot: {
-        prUrl: "https://github.com/o/r/pull/42",
-        headOid: "abc",
-        totalFindingCount: 1,
-        quiescent: false,
-        bots: {
-          coderabbit: { state: "complete", findingCount: 1 },
-          sourcery: { state: "complete", findingCount: 0 },
-          codex: { state: "complete", findingCount: 0 },
-          gemini: { state: "complete", findingCount: 0 },
-        },
-        droppedBots: [],
-        threads: [],
-        checkRuns: [],
-      },
-      onlineReviewRound: 3,
-      fixMarkedFindingIdentityKeys: ["t:3"],
-      findingFamilies: [
-        silenceFamily(
-          ["t:3"],
-          [1, 2],
-          "Same class recurred — sweep all silence-as-green sites.",
-        ),
-      ],
-    };
-    const spec = fixerWorkerSpec();
-    // A defined dispatchWorker skips the offline skeleton short-circuit so the
-    // legacy path reaches landing + fix-focus writes (same pattern as #600 r17).
-    const legacyBackend = {
-      dispatchWorker: async () => ({
-        kind: "completed" as const,
-        output: {
-          kind: "fixer",
-          committed: true,
-          fixCommitSha: "deadbeef",
-        },
-      }),
-      async runStep(): Promise<StepOutput> {
-        return {
-          kind: "fixer",
-          committed: true,
-          fixCommitSha: "deadbeef",
-        };
-      },
-    } as unknown as Backend;
-    await legacyDispatchWorker(
-      legacyBackend,
-      spec,
-      {
-        worktree: { branch: "feat/x", base: "main", path: worktree },
-        stateDir,
-        repo: "o/r",
-        prUrl: "https://github.com/o/r/pull/42",
-        onlineReviewRound: 3,
-      },
-      landingPayload,
-    );
-    const fixFocusPath = join(stateDir, "fix-focus.md");
-    const fixFocus = readFileSync(fixFocusPath, "utf8");
-    expect(fixFocus).toContain("Recurring from rounds: 1, 2");
-    expect(fixFocus).toContain("silence-not-green");
-    expect(fixFocus).toContain("sweep all silence-as-green sites");
-    expect(fixFocus.toLowerCase()).not.toMatch(/run same-type/);
-  });
 });
 
 describe("#711 three-round reviewer→ledger→fixer path + no-briefing baseline", () => {

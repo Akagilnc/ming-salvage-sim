@@ -21,11 +21,11 @@ import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The single-slice step sequence (ADR 0030): the runner owns the visible
+ * The child-slice step sequence (ADR 0030): the runner owns the visible
  * per-slice review/fix loop.
  *
  *   S0 gate → S1 context → S2 implement → S3 review → S4 classify
- *     → S7 ship when clean
+ *     → S7 local handoff when clean
  *     → S5 fix → S6 fresh full-diff review → S4 re-check while blocking remains
  *     → S8 handoff
  *
@@ -35,7 +35,8 @@ import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
  * making per-round verdicts visible in the ledger instead of hiding the loop inside
  * one coder session.
  */
-export type StepId =
+/** Executable child-slice topology. The runner routes only these steps. */
+export type SliceStepId =
   | "S0"
   | "S1"
   | "S2"
@@ -44,11 +45,17 @@ export type StepId =
   | "S5"
   | "S6"
   | "S7"
-  | "S8"
+  | "S8";
+
+/** Family endgame worker labels; these are not child-runner route steps. */
+export type FamilyEndgameWorkerId =
   | "S9"
   | "S10"
   | "S11"
   | "S12";
+
+/** Any durable worker/ledger label across the child and family machines. */
+export type StepId = SliceStepId | FamilyEndgameWorkerId;
 
 /**
  * Durable ledger rows normally identify a canonical orchestrator step.  Retry
@@ -61,7 +68,7 @@ export function isStepId(step: LedgerStepId): step is StepId {
   return step !== "mechanical_redispatch_attempt";
 }
 
-/** Which role a single-slice worker runs under. */
+/** Worker roles shared by child and family dispatch. */
 export type StepRole =
   | "coder"
   | "reviewer"
@@ -400,68 +407,6 @@ export interface ContinueFixingEvent {
   readonly reason?: string;
 }
 
-/** Phase-level marker: online bot review loop converged for a PR head (#600). */
-export interface OnlineReviewConvergedEvent {
-  readonly event: "online_review_converged";
-  readonly prUrl: string;
-  readonly prHead: string;
-  readonly onlineReviewRound: number;
-}
-
-/** Phase-level marker: PR auto-merged after review loop + doc-release (#602). */
-export interface PrMergedEvent {
-  readonly event: "pr_merged";
-  readonly prUrl: string;
-  readonly prNumber: number;
-  readonly remoteBranchName: string;
-  readonly mergedHeadOid: string;
-  readonly prHead: string;
-}
-
-/** Round ≥2 freshness anchor persisted after S10 re-trigger (#600 r25). */
-export interface OnlineReviewRoundRetriggerEvent {
-  readonly event: "online_review_round_retrigger";
-  readonly roundTriggerHeadOid: string;
-  readonly roundTriggerAt: string;
-  readonly onlineReviewRound: number;
-}
-
-/** Fixer commit marker persisted after retrigger (#600 r27 crash-safe ordering). */
-export interface OnlineReviewFixCommittedEvent {
-  readonly event: "online_review_fix_committed";
-  readonly fixCommitSha: string;
-  readonly onlineReviewRound: number;
-  /** Fix-marked identity keys from the verify that drove this fix (#743). */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-  /** Original thread binding for each fix-marked identity (#743 resume authority). */
-  readonly fixMarkedFindingThreads?: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
-}
-
-/**
- * Bots clean + CI red, no fix-marked findings (#600 R18). Resume re-enters S9
- * (re-poll CI), not S10 empty fixer.
- */
-export interface OnlineReviewCiFailedEvent {
-  readonly event: "online_review_ci_failed";
-  readonly prUrl?: string;
-  readonly prHead?: string;
-  readonly onlineReviewRound: number;
-}
-
-/**
- * Bots green but CI still pending past overdue window (#600 R20). Park
- * resumable at S9 — not S8(error) terminal.
- */
-export interface OnlineReviewCiPendingEvent {
-  readonly event: "online_review_ci_pending";
-  readonly prUrl?: string;
-  readonly prHead?: string;
-  readonly onlineReviewRound: number;
-}
-
 /**
  * #683 — idle-threshold quota probe hit a 429/limit wall. Step is parked for
  * quota reset (runner status escalate, not S8(error)). #686 forks this
@@ -530,12 +475,6 @@ export interface RouteDegradedEvent {
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
-  | OnlineReviewConvergedEvent
-  | PrMergedEvent
-  | OnlineReviewRoundRetriggerEvent
-  | OnlineReviewFixCommittedEvent
-  | OnlineReviewCiFailedEvent
-  | OnlineReviewCiPendingEvent
   | QuotaWaitForResetEvent
   | RelayBatonHandoffEvent
   | WorkerMonitorSpawnedEvent
@@ -836,21 +775,21 @@ export interface WorkerLandingPayload {
    * findings the fixer declined; fresh re-review must adjudicate them.
    */
   readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
-  /** S9/S10 online review workers: paginated bot/thread snapshot (#600). */
+  /** Family online review workers: paginated bot/thread snapshot. */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
-  /** S9/S10: ship delivery metadata threaded from S7 (pr URL/head). */
+  /** Family PR delivery metadata threaded into the review loop. */
   readonly shipDelivery?: {
     readonly branch: string;
     readonly pr?: string;
     readonly prHead?: string;
     readonly status: string;
   };
-  /** S9/S10: 1-based online review round (runner-enforced cap). */
+  /** 1-based family online review round (runner-enforced cap). */
   readonly onlineReviewRound?: number;
-  /** S10 fixer only: fix-marked finding identity keys from verify worker. */
+  /** Family fixer: fix-marked finding identity keys from verify worker. */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /**
-   * S9/S10: the original review thread bound to each fixer-approved identity.
+   * Original review thread bound to each fixer-approved identity.
    * A key alone is not authority to close another thread that happens to claim
    * the same identity.
    */
@@ -858,11 +797,11 @@ export interface WorkerLandingPayload {
     readonly identityKey: string;
     readonly threadId: string;
   }>;
-  /** S9 verify: prior online-review rounds from ledger (#711). */
+  /** Prior family online-review rounds from ledger (#711). */
   readonly priorRoundFindings?: ReadonlyArray<PriorRoundFindingSnapshot>;
-  /** S10 fixer / S5 coder-fix: pattern briefs from prior judge worker (#711). */
+  /** Family fixer / child S5 coder-fix: pattern briefs from prior judge worker. */
   readonly findingFamilies?: ReadonlyArray<FindingFamily>;
-  /** S11 cleanup (#603): host-computed close set + durable pr_merged record. */
+  /** Family cleanup: host-computed close set + durable pr_merged record. */
   readonly cleanupDispatch?: {
     readonly coveredIssues: ReadonlyArray<number>;
     readonly parentIssue?: number;
@@ -891,8 +830,8 @@ export interface DispatchContext {
   /** The immutable route selected for this run, including its smoke records. */
   readonly modelRoute?: ResolvedModelRoute;
   /**
-   * The resident slice worktree (ADR 0017 commit truth). MANDATORY for
-   * single-slice workers (coder/reviewer/ship S7); OPTIONAL for family-level
+   * The resident child worktree (ADR 0017 commit truth). MANDATORY for
+   * child coder/reviewer workers; OPTIONAL for family-level
    * workers (cmr / family ship) whose caller only has `familyBase: string` and
    * lets the backend infer the working repo (PRD #330 R2). When present, asserts
    * the worker's commits only land on this one worktree.
@@ -958,7 +897,7 @@ export interface DispatchContext {
     readonly familyHeadAfter?: string;
   }>;
   /**
-   * S5 coder-fix, S7 ship, or family-level CMR/ship worker: the human answer that
+   * S5 coder-fix or family-level CMR/ship worker: the human answer that
    * reopened a prior decision-escalate pause (#439). The runner passes it to the
    * re-dispatched worker so the resume instruction is visible without deleting or
    * rewriting the terminal ledger row that paused the run.
@@ -975,7 +914,7 @@ export interface DispatchContext {
    * FAMILY cmr worker only: the child issue numbers whose merge into the family
    * base was LLM-resolved (#295) — forwarded to the integrated cmr 承重闸 so it
    * focuses on the merges a machine touched (PRD #330 / #291 缺口 1). Undefined for
-   * single-slice workers and for a conflict-free family run.
+   * child workers and for a conflict-free family run.
    */
   readonly llmResolvedChildren?: ReadonlyArray<number>;
   /**
@@ -992,9 +931,9 @@ export interface DispatchContext {
    * closure keys outside this protected set.
    */
   readonly priorCmrFindingIdentityKeys?: ReadonlyArray<string>;
-  /** S9/S10 online review: opened PR URL from S7 ship (undefined when pushed-only). */
+  /** Family online review: opened PR URL. */
   readonly prUrl?: string;
-  /** S9/S10 online review: verified PR head OID/SHA. */
+  /** Family online review: verified PR head OID/SHA. */
   readonly prHead?: string;
   /** GitHub `owner/repo` for gh api polling. */
   readonly repo?: string;
@@ -1071,7 +1010,7 @@ export interface CmrSkippedLeg {
 }
 
 /**
- * A ship worker's output (S7 / family PR, #336). `gstack-ship` does more than
+ * A family ship worker's output (#336). `gstack-ship` does more than
  * push+PR (merge-base / tests / review gate / VERSION / CHANGELOG + STOP/HITL);
  * the non-success routing is a #336 concern — the SHAPE is fixed here.
  */
@@ -1091,7 +1030,7 @@ export interface ShipResult {
   // WorkerResult-level `{kind:"escalated"}` case (PRD #330 R2), NOT an `escalate`
   // field on this `completed` payload — a `completed ShipResult` means a PR opened
   // / push landed. (codex cmr R3b: a payload-level escalate would be ignored by
-  // the S7 / family-ship consumers, which route a completed ship to success.)
+  // the family-ship consumer, which routes a completed ship to success.)
 }
 
 /**
@@ -1139,8 +1078,7 @@ export interface VerifyResult {
 }
 
 /**
- * Post-review fixer worker output (#596 skeleton). The skeleton stubs a
- * deterministic `committed:true` verdict so the S10 step seam is exercisable.
+ * Family post-review fixer worker output (#596).
  */
 export interface FixerResult {
   readonly kind: "fixer";
@@ -1410,31 +1348,6 @@ export interface LedgerEntry {
   readonly repairMovementPaths?: ReadonlyArray<string>;
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
-  /** Online review converged marker (#600): PR URL covered by this convergence. */
-  readonly prUrl?: string;
-  /** Online review converged marker (#600): reviewed PR head SHA. */
-  readonly prHead?: string;
-  /** Online review converged marker (#600): final round number. */
-  readonly onlineReviewRound?: number;
-  /** Online review round re-trigger marker (#600 r25): anchored PR head OID. */
-  readonly roundTriggerHeadOid?: string;
-  /** Online review round re-trigger marker (#600 r25): ISO instant the round began. */
-  readonly roundTriggerAt?: string;
-  /** Online review fix_committed marker (#600 r27): fixing commit SHA. */
-  readonly fixCommitSha?: string;
-  /**
-   * Online review fix_committed marker (#743): fix-marked identity keys from the
-   * verify that drove this fix — durable resume authority (family-parity).
-   */
-  readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-  /**
-   * Online review fix_committed marker (#743): original thread binding for each
-   * fix-marked identity — resume must not depend on last-S9 shape alone.
-   */
-  readonly fixMarkedFindingThreads?: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
   /**
    * Monitor handle for an in-flight external CLI worker (#684). Persisted so a
    * resumed run can rebuild alive/idle/kill judgment without global pgrep.
@@ -1704,8 +1617,7 @@ export interface Backend {
   /**
    * THE unified worker-dispatch seam (ADR 0026 / PRD #330 #331).
    *
-   * Every productive single-slice worker step (S2/S3/S5/S6 agent workers + S7
-   * ship; legacy compatibility may still map reviewer specs) is
+   * Every productive child-slice worker step (S2/S3/S5/S6) is
    * dispatched through this ONE method: the runner hands a {@link WorkerSpec}
    * (what to invoke, host, fresh|resume, soul, skill) + a {@link DispatchContext}
    * (worktree, stateDir, resumeSessionId, audit snapshot when present) and gets
@@ -1717,7 +1629,7 @@ export interface Backend {
    * through the free function `dispatchWorker(backend, spec, ctx)` (runner.ts),
    * which calls THIS method when a backend implements it, else falls back to
    * `legacyDispatchWorker` — forwarding to the existing methods
-   * (`runStep`/`resumeSession` for agent workers, `push` for the S7 ship worker),
+   * (`runStep`/`resumeSession` for agent workers),
    * so external behaviour is unchanged (regression green) and every existing fake
    * Backend keeps working without change. The real worker dispatch (invoke
    * `/tdd` / `/code-review` / `gstack-ship`) lands in #334/#336. The legacy methods
@@ -1777,8 +1689,6 @@ export interface Backend {
     spec: WorkerSpec,
     ctx: DispatchContext,
   ): Promise<MonitoredWorkerIdleDisposition>;
-  /** S7: push the resident slice branch (no PR, no merge). */
-  push(worktree: WorktreeHandle): Promise<void>;
   /**
    * #256 (optional, ledger true-value): resolve a step's promptFile to its raw
    * CONTENT so the runner can hash the content (real anti-tampering audit)
@@ -1812,24 +1722,7 @@ export interface Backend {
    * `<stateDir>/steps.jsonl`.  The runner calls this once per step, including
    * the S8 handoff entry, BEFORE returning the final result.
    */
-  /**
-   * Optional (#600): inject bot-poll results for the online review loop in explicit
-   * offline/test handles only (`pr://…` + `ORCHESTRATOR_OFFLINE_REVIEW_POLL`). When
-   * absent the runner uses live `gh` polling or `offlinePrReviewSnapshot` under the
-   * same central admissibility gate — never for live GitHub PR URLs outside test mode.
-   */
-  pollOnlineReviewState?(input: {
-    readonly repo: string;
-    readonly prUrl: string;
-    readonly pollCount: number;
-  }): Promise<OnlineReviewLandingSnapshot>;
   writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void>;
-  /**
-   * Optional (#603): reclaim the resident slice worktree at terminal success
-   * (ADR 0024 explicit GC). Must only be called when the host ledger shows a
-   * terminal cleanup row — never on park/retry/failure.
-   */
-  reapResidentWorktree?(worktree: WorktreeHandle): Promise<void>;
 }
 
 /** Runner-owned S5 findings file made visible inside the worker sandbox. */
@@ -1851,7 +1744,6 @@ export interface WorkerOutcomeLandingFile {
 /** Optional agent-step execution metadata consumed by real sandboxes. */
 export interface AgentStepRunOptions {
   readonly fixFindingsLanding?: FixFindingsLandingFile;
-  readonly onlineReviewLanding?: FixFindingsLandingFile;
   readonly fixFocusLanding?: FixFindingsLandingFile;
   readonly outcomeLanding?: WorkerOutcomeLandingFile;
   /**
@@ -1866,34 +1758,29 @@ export interface AgentStepRunOptions {
 // ──────────────────────────── run result ────────────────────────────
 
 /**
- * Family-run context carried into a CHILD slice's single-slice runner (ADR 0022
+ * Family-run context carried into a CHILD slice's runner (ADR 0022
  * decision 2: the RunnerOptions seam through which the family layer passes its
- * context down to the reused single-slice runner).
+ * context down to the reused child runner).
  *
- * When present, the child slice runs in FAMILY MODE — three differences from a
- * standalone single-slice run (ADR 0022 decision 2/6/7):
+ * Every child slice runs in FAMILY MODE. The family layer supplies the local
+ * base and parent key through this context:
  *   - `familyBase` replaces "main" as the cut base (children cut from the LOCAL
  *     family base the merger accumulates onto — decision 7);
- *   - `noPush` makes S7 a LOCAL NO-OP (decision 2: a shared-clone concurrent
- *     remote push would clash on `.git/refs/remotes`; only the family base PRs
- *     once at the end);
  *   - `parentIssue` is the family run key (ADR 0024) the child reuses for its
  *     clone + the ledger口径 (decision 6③) — carried for #294/#298 to read.
  *
- * Absent ⇒ a normal standalone single-slice run (base=main, S7 pushes) — the
- * existing single-slice tests pass `RunInput` without this field, unchanged.
+ * S7 always hands the local child commit back to the family merger. Only the
+ * family base is shipped after integrated verification.
  */
 export interface FamilyContext {
   /** The parent epic issue number (the family run key, ADR 0024). */
   readonly parentIssue: number;
   /** The local family base branch the child cuts from (ADR 0022 decision 7). */
   readonly familyBase: string;
-  /** When true, S7 push is a LOCAL no-op (ADR 0022 decision 2). */
-  readonly noPush: boolean;
   /**
    * #294 (ADR 0022 decision 6③): the child's `blocked_by` issue numbers the
    * family commander has confirmed MERGED into the family base (the ledger-merged
-   *口径). In family mode the child's own single-slice S0 `blocked_by` gate treats
+   *口径). The child's own S0 `blocked_by` gate treats
    * a still-open-on-GitHub blocker as SATISFIED iff it is in this set — because
    * the commander only fans a child out once every blocker is ledger-merged, but
    * the blocker's GitHub issue need not be `closed`. Without this, a child the
@@ -1906,7 +1793,7 @@ export interface FamilyContext {
   readonly mergedBlockers?: ReadonlyArray<number>;
 }
 
-/** Input to the orchestrator: an issue number + the Backend seam (+ optional family context). */
+/** Internal child-runner input. Production family calls always supply family context. */
 export interface RunInput {
   readonly issueNumber: number;
   readonly backend: Backend;
@@ -1916,9 +1803,9 @@ export interface RunInput {
    */
   readonly repairIntent?: ContinueFixingEvent;
   /**
-   * Family-run context (ADR 0022 decision 2). Present ⇒ this is a CHILD slice of
-   * a family run (family base + no-op push). Absent ⇒ a standalone single-slice
-   * run (the v0.1 behaviour — base=main, S7 pushes).
+   * Family-run context (ADR 0022 decision 2). Production supplies it for every
+   * child. Absence is retained only for focused S0–S8 skeleton tests; S7 still
+   * performs a local handoff and never ships.
    */
   readonly family?: FamilyContext;
   /**

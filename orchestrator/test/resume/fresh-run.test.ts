@@ -9,15 +9,6 @@ import { runOrchestrator } from "../../src/runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { route } from "../../src/route.js";
 import { parseLedgerJsonl } from "../../src/realBackend.js";
-import { buildRoundTrigger } from "../../src/evidenceAdmissibility.js";
-import {
-  ONLINE_REVIEW_SNAPSHOT_FILE,
-  onlineReviewRoundFromLedger,
-  lastOnlineReviewFixCommitShaFromLedger,
-} from "../../src/onlineReviewLoop.js";
-import * as onlineReviewLoop from "../../src/onlineReviewLoop.js";
-import * as autoMerge from "../../src/autoMerge.js";
-import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
   Finding,
@@ -27,33 +18,26 @@ import type {
   ResumeState,
   DispatchContext,
   OnlineReviewLandingSnapshot,
-  PrMergedEvent,
   StepId,
   StepOutput,
   StepSpec,
-  VerifyResult,
-  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
 
 import {
-  PrMergedLedgerFixture,
   WORKTREE,
   STATE_DIR,
   CLAIMED_FIXED_FINDING,
   CLAIMED_FIXED_KEY,
-  stubAutoMergeMergedForLiveReviewTests,
   entry,
-  writeResumeOnlineReviewSnapshot,
   s8,
   coderProtocolFailureS8,
   malformedCoderPayloadFailureS8,
   escalationAnswer,
   ResumeBackend,
   DispatchRecordingResumeBackend,
-  ReviewLoopResumeBackend,
   MissingCoderTagBackend,
 } from "../helpers/resume-fixtures.js";
 
@@ -66,9 +50,9 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
     const result = await runOrchestrator({ issueNumber: 255, backend });
 
     expect(result.status).toBe("success");
-    // Full happy path executed (ADR 0030: gate + load + implement + review + classify + ship).
+    // Full child path executed (gate + load + implement + review + local handoff).
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S9", "S12", "S12", "S11", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
     // Fresh cut: prepareWorktree called once; cleanResidue never called.
     expect(backend.prepareWorktreeCount).toBe(1);

@@ -26,18 +26,11 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     } })).toEqual({ kind: "next", step: "S6" });
   });
 
-  it("kind mismatch never decides redispatch or error fate", () => {
+  it("child kind mismatch never decides redispatch or error fate", () => {
     const wrong = { kind: "coder", committed: false, commitsAdded: 0 } as const;
     expect(route({ from: "S3", output: wrong })).toEqual({ kind: "next", step: "S4" });
     expect(route({ from: "S6", output: wrong })).toEqual({ kind: "next", step: "S4" });
     expect(route({ from: "S4", output: wrong })).toEqual({ kind: "next", step: "S5" });
-    expect(route({ from: "S9", output: wrong })).toEqual({ kind: "next", step: "S10" });
-    expect(route({ from: "S10", output: wrong })).toEqual({ kind: "next", step: "S9" });
-    expect(route({ from: "S11", output: wrong })).toEqual({
-      kind: "handoff",
-      status: "success",
-    });
-    expect(route({ from: "S12", output: wrong })).toEqual({ kind: "next", step: "S11" });
   });
 
 });

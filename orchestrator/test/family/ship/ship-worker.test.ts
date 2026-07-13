@@ -31,7 +31,11 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as sc from "@ai-hero/sandcastle";
-import { RealFamilyBackend, SHIP_FOCUS_FILENAME } from "../../../src/family/realFamilyBackend.js";
+import {
+  RealFamilyBackend,
+  SHIP_FOCUS_FILENAME,
+  type ShipAuth,
+} from "../../../src/family/realFamilyBackend.js";
 import {
   modelIdForSlug,
   SANDBOX_CODEX_DIR,
@@ -43,7 +47,6 @@ import {
   SPAWNED_WORKER_ENV,
 } from "../../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../../src/family/dispatchFamilyWorker.js";
-import type { ShipAuth } from "../../../src/realBackend.js";
 import type { ShipWorkerOutcome } from "../../../src/shipOutcome.js";
 import type { DispatchContext, WorkerSpec } from "../../../src/types.js";
 

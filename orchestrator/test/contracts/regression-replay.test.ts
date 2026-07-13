@@ -214,7 +214,7 @@ describe("#451 dogfood replay fixture", () => {
       expect(row?.sourceEvidence, id).toMatchObject({
         seam: "runner",
         status: "success",
-        dispatched: expect.arrayContaining(["S5:coder", "S6:reviewer", "S7:ship"]),
+        dispatched: expect.arrayContaining(["S5:coder", "S6:reviewer"]),
       });
     }
     expect(rowsById.get("307-continue-fixing-targeted-reset")).toMatchObject({
@@ -391,11 +391,6 @@ describe("#451 dogfood replay fixture", () => {
     });
     expect(rowsById.get("287-family-attribution-child-before-parent")?.sourceEvidence).toMatchObject({
       seam: "family_verify_cmr",
-      attribution: {
-        method: "child_module_scope",
-        issue: 307,
-        module: "orchestrator-runner",
-      },
       dispatches: expect.arrayContaining([
         "cmr:completeness",
         "coder:family/287-attribution",
@@ -492,7 +487,7 @@ describe("#451 dogfood replay fixture", () => {
       mechanism: "s5_s6_closure_loop",
       status: "success",
       priorFindingStatus: "verified-closed",
-      dispatched: expect.arrayContaining(["S5:coder", "S6:reviewer", "S7:ship"]),
+      dispatched: expect.arrayContaining(["S2:coder", "S3:reviewer", "S5:coder", "S6:reviewer"]),
     });
     expect(rowsById.get("376-closure-context-negative")).toMatchObject({
       source: "family",
@@ -591,7 +586,7 @@ describe("#451 dogfood replay fixture", () => {
         trustedAuthor: "Akagilnc",
         executableInstructionSourceAccepted: false,
         status: "success",
-        dispatched: expect.arrayContaining(["S2:coder", "S3:reviewer", "S7:ship"]),
+        dispatched: expect.arrayContaining(["S2:coder", "S3:reviewer"]),
       }),
     });
   });

@@ -32,24 +32,14 @@
  * at step k, then asserts the runner reuses, cleans, and continues from k+1.
  */
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { runOrchestrator } from "../../src/runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { route } from "../../src/route.js";
 import { parseLedgerJsonl } from "../../src/realBackend.js";
-import { buildRoundTrigger } from "../../src/evidenceAdmissibility.js";
-import {
-  ONLINE_REVIEW_SNAPSHOT_FILE,
-  onlineReviewRoundFromLedger,
-  lastOnlineReviewFixCommitShaFromLedger,
-} from "../../src/onlineReviewLoop.js";
-import * as onlineReviewLoop from "../../src/onlineReviewLoop.js";
-import * as autoMerge from "../../src/autoMerge.js";
-import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
   Finding,
@@ -58,19 +48,13 @@ import type {
   PersistentLedgerEntry,
   ResumeState,
   DispatchContext,
-  OnlineReviewLandingSnapshot,
-  PrMergedEvent,
   StepId,
   StepOutput,
   StepSpec,
-  VerifyResult,
-  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
-
-export type PrMergedLedgerFixture = PersistentLedgerEntry & PrMergedEvent;
 
 // ─── shared fixtures ──────────────────────────────────────────────────────────
 
@@ -94,23 +78,6 @@ export const CLAIMED_FIXED_FINDING: Finding = {
 export const CLAIMED_FIXED_KEY =
   "correctness|orchestrator/src/runner.ts:1061|do not rely on omitting a finding to mean it is closed.";
 
-export function stubAutoMergeMergedForLiveReviewTests(
-  livePr: string,
-  mergedHeadOid: string,
-): ReturnType<typeof vi.spyOn> {
-  return vi.spyOn(autoMerge, "runAutoMergeStage").mockResolvedValue({
-    ok: true,
-    terminalState: "merged",
-    record: {
-      prUrl: livePr,
-      prNumber: 255,
-      remoteBranchName: WORKTREE.branch,
-      mergedHeadOid,
-      convergedHeadOid: mergedHeadOid,
-    },
-  });
-}
-
 /** Build a persisted ledger entry (the resume truth on disk). */
 export function entry(
   step: StepId,
@@ -126,43 +93,6 @@ export function entry(
     ts: "2026-06-21T00:00:00.000Z",
     ...(output !== undefined ? { output } : {}),
   };
-}
-
-export function writeResumeOnlineReviewSnapshot(stateDir: string): void {
-  mkdirSync(stateDir, { recursive: true });
-  writeFileSync(
-    join(stateDir, ONLINE_REVIEW_SNAPSHOT_FILE),
-    `${JSON.stringify(
-      {
-        repo: "Akagilnc/ming-salvage-sim",
-        prNumber: 0,
-        prUrl: "pr://slice/offline-255",
-        headOid: "deadbeefcommitsha",
-        pollCount: 1,
-        bots: {
-          coderabbit: { state: "complete", findingCount: 1 },
-          sourcery: { state: "complete", findingCount: 0 },
-          codex: { state: "complete", findingCount: 0 },
-          gemini: { state: "complete", findingCount: 0 },
-        },
-        threads: [
-          {
-            id: "100",
-            threadNodeId: "PRRT_resumeThread",
-            body: "fix this",
-            authorLogin: "bot",
-            isResolved: false,
-          },
-        ],
-        checkRuns: [],
-        totalFindingCount: 1,
-        quiescent: true,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
 }
 
 /** Build a terminal S8 entry tagged with its handoff status (#255). */
@@ -339,59 +269,18 @@ export class ResumeBackend implements Backend {
     this.ledgerWrites.push(entry);
   }
 
-  async pollOnlineReviewState(input: {
-    repo: string;
-    prUrl: string;
-    pollCount: number;
-  }): Promise<OnlineReviewLandingSnapshot> {
-    void input;
-    return {
-      prUrl: "pr://slice/offline-255",
-      headOid: "deadbeefcommitsha",
-      totalFindingCount: 0,
-      quiescent: true,
-      bots: {
-        coderabbit: { state: "complete", findingCount: 0 },
-        sourcery: { state: "complete", findingCount: 0 },
-        codex: { state: "complete", findingCount: 0 },
-        gemini: { state: "complete", findingCount: 0 },
-      },
-      droppedBots: [],
-      threads: [],
-      checkRuns: [],
-    };
-  }
 }
 
 export class DispatchRecordingResumeBackend extends ResumeBackend {
   readonly dispatchSpecs: WorkerSpec[] = [];
   readonly dispatchContexts: DispatchContext[] = [];
-  readonly dispatchLandings: Array<WorkerLandingPayload | undefined> = [];
 
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
-    landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     this.dispatchSpecs.push(spec);
     this.dispatchContexts.push(ctx);
-    this.dispatchLandings.push(landing);
-
-    if (spec.kind === "ship") {
-      if (ctx.worktree === undefined) {
-        throw new Error("test backend: ship dispatch requires a worktree");
-      }
-      await this.push(ctx.worktree);
-      return {
-        kind: "completed",
-        output: { kind: "ship", branch: ctx.worktree.branch, status: "pushed" },
-      };
-    }
-
-    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-    if (skeleton !== undefined) {
-      return skeleton;
-    }
 
     const stepSpec = spec as unknown as StepSpec;
     if (spec.id === "S6") {
@@ -411,50 +300,6 @@ export class DispatchRecordingResumeBackend extends ResumeBackend {
         ? await this.resumeSession(stepSpec, ctx.worktree!, ctx.resumeSessionId)
         : await this.runStep(stepSpec, ctx.worktree!);
     return { kind: "completed", output };
-  }
-}
-
-/** Records landing + drives verify→fixer→recheck for #600 r7 resume tests. */
-export class ReviewLoopResumeBackend extends DispatchRecordingResumeBackend {
-  verifyDispatchCount = 0;
-
-  override async dispatchWorker(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    landing?: WorkerLandingPayload,
-  ): Promise<WorkerResult> {
-    if (spec.kind === "verify") {
-      this.verifyDispatchCount += 1;
-      this.dispatchSpecs.push(spec);
-      this.dispatchContexts.push(ctx);
-      this.dispatchLandings.push(landing);
-      if (this.verifyDispatchCount === 1) {
-        return {
-          kind: "completed",
-          output: {
-            kind: "verify",
-            converged: true,
-            ...(landing?.fixMarkedFindingIdentityKeys?.length
-              ? { isRecheck: true }
-              : {}),
-            fixMarkedFindingIdentityKeys:
-              landing?.fixMarkedFindingIdentityKeys ?? [],
-          } satisfies VerifyResult,
-        };
-      }
-      return {
-        kind: "completed",
-        output: {
-          kind: "verify",
-          converged: true,
-          isRecheck: true,
-          fixMarkedFindingIdentityKeys:
-            landing?.fixMarkedFindingIdentityKeys ?? [],
-          threadsToResolve: ["100"],
-        } satisfies VerifyResult,
-      };
-    }
-    return super.dispatchWorker(spec, ctx, landing);
   }
 }
 

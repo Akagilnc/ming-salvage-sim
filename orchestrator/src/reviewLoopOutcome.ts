@@ -1,13 +1,8 @@
 /**
- * Review-loop worker outcome seam (#596 skeleton).
+ * Family review-loop worker outcome seam (#596).
  *
- * The single-slice runner gains four new runner-visible steps after S7 ship:
- *   S9 verify → S10 fixer → S11 cleanup → S12 docRelease → S8 success
- *
- * This slice is a SKELETON: the real bot-polling / online-review logic lives in
- * later issues. Here we only define the typed payload shapes, deterministic stub
- * verdicts for the legacy/no-op path, and fail-closed validators so route() can
- * reject an off-contract output instead of silently advancing.
+ * Defines the typed payload shapes and compatibility results consumed by the
+ * family S9 verify → S10 fixer → S11 cleanup → S12 docRelease endgame.
  */
 
 import { isValidGithubIssueUrl } from "./onlineReviewSideEffects.js";
@@ -291,7 +286,7 @@ export function stubCleanupResult(): CleanupResult {
 }
 
 /**
- * Deterministic offline/test skeleton for S12 文档发布.
+ * Deterministic family offline/test skeleton for S12 文档发布.
  * Live paths must not use this unconditionally (#735) — only the offline hatch.
  */
 export function stubDocReleaseResult(): DocReleaseResult {
@@ -301,12 +296,9 @@ export function stubDocReleaseResult(): DocReleaseResult {
 /**
  * The deterministic `completed` WorkerResult the #596 skeleton returns for a
  * review-loop kind (verify/fixer/cleanup/docRelease) when no real worker is
- * wired. Returns `undefined` for any other kind, so callers (the legacy
- * dispatchers + test/family spy backends that implement the unified seam) can
- * fall through to their own handling. The single-slice and family paths share
- * the SAME stub verdicts (#596: "single-slice and family paths share one kind
- * set"); real bot-polling logic lands in later slices and will override these
- * by handling the kind before calling this helper.
+ * wired. Returns `undefined` for any other kind, so family test backends can
+ * fall through to their own handling. Live family logic handles these kinds
+ * before this compatibility helper.
  */
 export function skeletonReviewLoopWorkerResult(
   kind: WorkerKind,

@@ -1,8 +1,5 @@
-// @ming/orchestrator — public surface (#244).
-// The runner-driven step machine (ADR 0018), its Backend seam, route()
-// decision function, and domain types. Slice #247 wires the happy path;
-// later slices (#248–#256) layer on these seams.
-export { runOrchestrator } from "./runner.js";
+// @ming/orchestrator — public surface. Production execution enters through
+// runFamilyDriver; runOrchestrator remains an internal child-slice machine.
 export { route } from "./route.js";
 export type { RouteContext, RouteDecision } from "./route.js";
 export {
@@ -32,7 +29,6 @@ export {
   legacyDispatchWorker,
   workerResultToStep,
   stepSpecToWorkerSpec,
-  shipWorkerSpec,
 } from "./dispatchWorker.js";
 export type {
   DispatchWorkerWithMonitorOptions,

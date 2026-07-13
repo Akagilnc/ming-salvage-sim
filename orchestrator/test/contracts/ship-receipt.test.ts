@@ -1,6 +1,5 @@
 /**
- * #336 — the ship step is a WORKER that invokes `gstack-ship`, replacing the
- * inline `RealBackend.push` (single slice) + `openFamilyPr` (family).
+ * #336 — the family ship step is a WORKER that invokes `gstack-ship`.
  *
  * `gstack-ship` does more than push+PR (base merge / tests / diff review / VERSION
  * / CHANGELOG + STOP/HITL). The worker classifies its `<ship>` tag into a
@@ -145,7 +144,7 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
 
   // ── Finding 2 (cmr S336 r2): a garbage escalate/failed must NOT be coerced into
   // a structured result — both `reason` AND `diagnosis` MUST be non-empty strings
-  // (prompts/ship.md + family_ship.md require both). Mirrors the既有 escalate
+  // (family_ship.md requires both). Mirrors the既有 escalate
   // invariant (validate.ts isValidEscalation / integ-cmr-base-r1-seams F1): an
   // off-contract escalate/failed → malformed, never a fabricated stop signal.
   describe("Finding 2: a malformed escalate is never coerced into an escalate", () => {

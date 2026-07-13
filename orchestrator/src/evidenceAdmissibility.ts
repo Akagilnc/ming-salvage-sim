@@ -123,11 +123,10 @@ export function buildRoundTrigger(
 }
 
 /**
- * Head key for convergence markers, resume-skip, and abort/escalation head fields
- * (#600 r2 single-slice + r7 family). When any in-loop fix round occurred
+ * Head key for family convergence markers and abort/escalation head fields.
+ * When any in-loop fix round occurred
  * (`postFixHead` set), key to the post-fix / recheck head; otherwise prefer the
- * ship head. `snapshotHead` / `branchHeadAfter` apply only in the no-fix
- * single-slice poll context (landing + marker fallbacks).
+ * ship head. `snapshotHead` / `branchHeadAfter` are family landing fallbacks.
  */
 export function convergenceHeadToRecord(input: {
   readonly shipHead?: string;
@@ -202,43 +201,6 @@ export function liveArtifactEvidenceRecord(input: {
     timestamp: input.timestamp,
     terminalState: freshness,
   };
-}
-
-function isCompletedReviewLoopOutput(
-  spec: WorkerSpec,
-  output: StepOutput | undefined,
-): boolean {
-  if (output === undefined) return false;
-  switch (spec.kind) {
-    case "verify":
-      return isValidVerifyResult(output);
-    case "fixer":
-      return isValidFixerResult(output);
-    case "cleanup":
-      return isValidCleanupResult(output);
-    case "docRelease":
-      return isValidDocReleaseResult(output);
-    default:
-      return false;
-  }
-}
-
-/**
- * Worker outcomes count toward convergence only when the dispatch completed with a
- * valid payload. Failed / malformed / escalated / skeleton-fallback paths are
- * inadmissible terminal states.
- */
-export function workerOutcomeAdmissible(
-  result: WorkerResult,
-  spec?: WorkerSpec,
-): boolean {
-  if (result.kind !== "completed" || result.output === undefined) {
-    return false;
-  }
-  if (spec !== undefined && REVIEW_LOOP_KINDS.has(spec.kind)) {
-    return isCompletedReviewLoopOutput(spec, result.output);
-  }
-  return true;
 }
 
 export function inadmissibleWorkerOutcomeReason(

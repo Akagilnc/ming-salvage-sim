@@ -41,10 +41,6 @@ import {
   ensureExcluded,
   extractAgentBrief,
   extractCoderTag,
-  extractVerifyTag,
-  extractFixerTag,
-  extractCleanupTag,
-  extractDocReleaseTag,
   isLikelySha,
   isReadyForAgent,
   issueNumberFromBranch,
@@ -994,18 +990,14 @@ describe("realBackend attributeFailure (codex#3)", () => {
     const e = attributeFailure("S1", "prepareWorktree", new Error("git boom"));
     expect(e.message).toBe("S1:prepareWorktree — git boom");
   });
-  it("stringifies a non-Error cause", () => {
-    const e = attributeFailure("S7", "push", "denied");
-    expect(e.message).toBe("S7:push — denied");
-  });
   it("appends execFileSync stderr so the S8 package shows the real cause (gemini R2)", () => {
     // execFileSync throws an Error whose `.message` is just "Command failed: gh …"
     // but the actionable detail (gh GraphQL error, git reject) lives on `.stderr`.
     const err = Object.assign(new Error("Command failed: gh api …"), {
       stderr: Buffer.from("GraphQL: Could not resolve to a node (issue #999)\n"),
     });
-    const e = attributeFailure("S7", "push", err);
-    expect(e.message).toContain("S7:push — Command failed: gh api …");
+    const e = attributeFailure("S1", "fetchIssueSnapshot", err);
+    expect(e.message).toContain("S1:fetchIssueSnapshot — Command failed: gh api …");
     expect(e.message).toContain(
       "GraphQL: Could not resolve to a node (issue #999)",
     );
@@ -1042,25 +1034,18 @@ describe("realBackend promptsDirError (F4)", () => {
     expect(promptsDirError(abs, true, true, [])).toBeUndefined();
   });
 
-  it("REFERENCED_PROMPT_FILES covers every dispatched worker prompt incl. ship.md + review-loop (integ-cmr int-r1 C-3 / #739)", () => {
+  it("REFERENCED_PROMPT_FILES covers every child S0–S8 worker prompt", () => {
     const files = [...REFERENCED_PROMPT_FILES];
     expect(new Set(files)).toEqual(
       new Set([
         "coder_implement.md",
         "coder_fix.md",
         "reviewer_review.md",
-        "ship.md",
-        "verify.md",
-        "fixer.md",
-        "docRelease.md",
-        "integrated_cmr_completeness.md",
-        "integrated_cmr_correctness.md",
       ]),
     );
     // No duplicates.
     expect(new Set(files).size).toBe(files.length);
-    // #739: S12 real worker must fail-fast at construction if prompt missing.
-    expect(REFERENCED_PROMPT_FILES).toContain("docRelease.md");
+    expect(REFERENCED_PROMPT_FILES).not.toContain("ship.md");
   });
 
   it("prompt inventory is route-independent and does not call shipWorkerSpec during module setup", () => {
@@ -1071,13 +1056,6 @@ describe("realBackend promptsDirError (F4)", () => {
     expect(src).not.toContain("shipWorkerSpec().promptFile");
   });
 
-  it("promptsDirError reports a dir missing ship.md as invalid (integ-cmr int-r1 C-3)", () => {
-    // A promptsDir that has the four agent prompts but no ship.md must FAIL
-    // construction validation — not pass and crash at S7 run time.
-    const err = promptsDirError(abs, true, true, ["ship.md"]);
-    expect(err).toMatch(/missing required promptFile/);
-    expect(err).toMatch(/ship\.md/);
-  });
 });
 
 describe("realBackend soulsDirError (#372)", () => {
@@ -1479,238 +1457,6 @@ describe("RealBackend reviewer output contract", () => {
     ).not.toThrow();
   });
 });
-
-// ─── #596 F2: real decode seam for verify/fixer/cleanup/docRelease (raw, not fake) ───
-
-describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds via raw tag-extract + decodeOutput (verify/fixer/cleanup/docRelease; valid shapes pass to typed; extra-key/malformed fail-closed; also covers outputFor for verify)", () => {
-  class DecodeOnlyBackend extends RealBackend {
-    protected override cloneDirExists(): boolean {
-      return true;
-    }
-    protected override sh(file: string, args: string[]): string {
-      if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
-        return ".git";
-      }
-      throw new Error(`unexpected shell call: ${file} ${args.join(" ")}`);
-    }
-  }
-
-  const here = dirname(fileURLToPath(import.meta.url));
-  function makeBackend() {
-    return new DecodeOnlyBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/owner/name.git",
-      runKey: 596,
-      repo: "owner/name",
-      imageName: "img",
-      promptsDir: join(here, "..", "..", "prompts"),
-      soulsDir: join(here, "..", "..", "image", "souls"),
-      home: tempHome("rb-home-596-"),
-    });
-  }
-
-  const verifySpec: StepSpec = {
-    id: "S9",
-    role: "verify",
-    promptFile: "dummy.md",
-    model: "gpt-5.6-sol",
-    completionSignal: "VERIFY_COMPLETE",
-    maxIter: 1,
-    soul: "READ-ONLY",
-    toolchain: ["node"],
-  };
-  const fixerSpec: StepSpec = {
-    id: "S10",
-    role: "fixer",
-    promptFile: "dummy.md",
-    model: "gpt-5.6-sol",
-    completionSignal: "FIXER_COMPLETE",
-    maxIter: 1,
-    soul: "coder",
-    toolchain: ["node"],
-  };
-  const cleanupSpec: StepSpec = {
-    id: "S11",
-    role: "cleanup",
-    promptFile: "dummy.md",
-    model: "gpt-5.6-sol",
-    completionSignal: "CLEANUP_COMPLETE",
-    maxIter: 1,
-    soul: "READ-ONLY",
-    toolchain: ["node"],
-  };
-  const docReleaseSpec: StepSpec = {
-    id: "S12",
-    role: "docRelease",
-    promptFile: "dummy.md",
-    model: "gpt-5.6-sol",
-    completionSignal: "DOCRELEASE_COMPLETE",
-    maxIter: 1,
-    soul: "READ-ONLY",
-    toolchain: ["node"],
-  };
-  const coderSpec: StepSpec = {
-    id: "S2",
-    role: "coder",
-    promptFile: "dummy.md",
-    model: "gpt-5.6-sol",
-    completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 1,
-    soul: "coder",
-    toolchain: ["node"],
-  };
-
-  it("decodeOutput on RAW valid verify produces correct VerifyResult (not fake construction)", () => {
-    const backend = makeBackend();
-    // touch outputFor as part of the seam (AC2)
-    const outDef = (backend as any).outputFor?.(verifySpec);
-    if (outDef && typeof outDef === "object" && "tag" in outDef) {
-      expect(outDef.tag).toBe("verify");
-    }
-    const raw = extractVerifyTag('<verify>{"converged": true}</verify>');
-    const decoded = (
-      backend as unknown as {
-        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-      }
-    ).decodeOutput(verifySpec, raw, undefined);
-    expect(decoded).toEqual({ kind: "verify", converged: true });
-  });
-
-  it("decodeOutput on RAW valid-but-false verify still succeeds (AC: shape-valid false passes)", () => {
-    const backend = makeBackend();
-    const raw = extractVerifyTag('<verify>{"converged": false}</verify>');
-    const decoded = (
-      backend as unknown as {
-        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-      }
-    ).decodeOutput(verifySpec, raw, undefined);
-    expect(decoded).toEqual({ kind: "verify", converged: false });
-  });
-
-  it("passes unusable verify cargo to the fixed fixer topology", () => {
-    const backend = makeBackend();
-    const decoded = (
-        backend as unknown as {
-          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-        }
-      ).decodeOutput(verifySpec, extractVerifyTag('<verify>{"converged": "notbool"}</verify>'), undefined);
-    expect(decoded).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
-  });
-
-  it("keeps absent receipt bytes as cargo without inventing a decision bell", () => {
-    const backend = makeBackend();
-    const decodeOutput = (backend as unknown as {
-      decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-    }).decodeOutput.bind(backend);
-
-    for (const [spec, gitCommitCount] of [
-      [coderSpec, 1],
-      [verifySpec, undefined],
-      [fixerSpec, undefined],
-      [cleanupSpec, undefined],
-      [docReleaseSpec, undefined],
-    ] as const) {
-      expect(decodeOutput(spec, undefined, gitCommitCount)).toEqual({
-        kind: "coder", committed: false, commitsAdded: 0,
-      });
-    }
-  });
-
-  it("decodeOutput on RAW valid fixer produces FixerResult via real seam", () => {
-    const backend = makeBackend();
-    const raw = extractFixerTag('<fixer>{"committed": false}</fixer>');
-    const decoded = (
-      backend as unknown as {
-        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-      }
-    ).decodeOutput(fixerSpec, raw, undefined);
-    expect(decoded).toEqual({ kind: "fixer", committed: false });
-  });
-
-  it("pin r39: decodeOutput on RAW committed:true fixer requires fixCommitSha", () => {
-    const backend = makeBackend();
-    const sha = "b".repeat(40);
-    const raw = extractFixerTag(
-      `<fixer>{"committed": true, "fixCommitSha": "${sha}"}</fixer>`,
-    );
-    const decoded = (
-      backend as unknown as {
-        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-      }
-    ).decodeOutput(fixerSpec, raw, undefined);
-    expect(decoded).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
-  });
-
-  it("does not let missing fixer cargo stop the fresh re-review topology", () => {
-    const backend = makeBackend();
-    const decoded = (
-        backend as unknown as {
-          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-        }
-      ).decodeOutput(
-        fixerSpec,
-        extractFixerTag('<fixer>{"committed": true}</fixer>'),
-        undefined,
-      );
-    expect(decoded).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
-  });
-
-  it("decodeOutput on RAW valid cleanup produces CleanupResult via real seam", () => {
-    const backend = makeBackend();
-    const raw = extractCleanupTag('<cleanup>{"terminal": true, "ok": true}</cleanup>');
-    const decoded = (
-      backend as unknown as {
-        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-      }
-    ).decodeOutput(cleanupSpec, raw, undefined);
-    expect(decoded).toEqual({ kind: "cleanup", terminal: true, ok: true });
-  });
-
-  it("decodeOutput on RAW valid docRelease produces DocReleaseResult via real seam", () => {
-    const backend = makeBackend();
-    const raw = extractDocReleaseTag('<docRelease>{"released": false}</docRelease>');
-    const decoded = (
-      backend as unknown as {
-        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-      }
-    ).decodeOutput(docReleaseSpec, raw, undefined);
-    expect(decoded).toEqual({ kind: "docRelease", released: false });
-  });
-
-  it("tolerates unknown cleanup cargo keys", () => {
-    const backend = makeBackend();
-    const decoded = (
-        backend as unknown as {
-          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-        }
-      ).decodeOutput(cleanupSpec, extractCleanupTag('<cleanup>{"terminal": true, "ok": true, "extra": 1}</cleanup>'), undefined);
-    expect(decoded).toMatchObject({ kind: "cleanup", terminal: true, ok: true });
-  });
-
-  it("does not let unusable doc-release cargo change the next edge", () => {
-    const backend = makeBackend();
-    const decoded = (
-        backend as unknown as {
-          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-        }
-      ).decodeOutput(docReleaseSpec, extractDocReleaseTag('<docRelease>{"released": "no"}</docRelease>'), undefined);
-    expect(decoded).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
-  });
-
-  it("decodeOutput on unknown role for review-loop raw fails closed", () => {
-    const backend = makeBackend();
-    const badSpec = { ...verifySpec, role: "unknown" as any };
-    expect(() =>
-      (
-        backend as unknown as {
-          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-        }
-      ).decodeOutput(badSpec, { converged: true }, undefined),
-    ).toThrow(/cannot decode output for unknown role/);
-  });
-});
-
-// ─── #286 toolchain preflight before agent dispatch ─────────────────────────
 
 describe("RealBackend runStep toolchain preflight (#286)", () => {
   const here = dirname(fileURLToPath(import.meta.url));

@@ -143,7 +143,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.pushed).toBe(true);
+    expect(backend.pushed).toBe(false);
   });
 
   it("committed:false with commitsAdded:2 advances to reviewer", async () => {
@@ -216,16 +216,16 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     expect(result.status).toBe("success");
   });
 
-  it("regression: committed:true with commitsAdded:1 (consistent) proceeds to S7 ship", async () => {
+  it("regression: committed:true with commitsAdded:1 proceeds to S7 local handoff", async () => {
     const backend = new SpyBackend(); // default: true/1
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("success");
-    expect(backend.pushed).toBe(true);
+    expect(backend.pushed).toBe(false);
   });
 
   it("regression: committed:false with commitsAdded:0 advances to S3", async () => {
     // A consistent 0-commit coder envelope still advances to the independent S3
-    // reviewer; its clean review then permits the normal S7 push path.
+    // reviewer; its clean review then permits the normal S7 local handoff.
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
@@ -236,7 +236,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("success");
     expect(backend.runStepIds).toContain("S3");
-    expect(backend.pushed).toBe(true);
+    expect(backend.pushed).toBe(false);
   });
 });
 
@@ -377,15 +377,15 @@ describe("E: S8 ledger-write failure attributes the real failing step", () => {
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("error");
-    // The white run advances through review and ship; the failing operation is
+    // The white run advances through review and local handoff; the failing operation is
     // still the S8 ledger write, not a fabricated S2 court.
     expect(result.errorPackage?.failedStep).not.toBe("S7");
-    expect(backend.pushed).toBe(true);
+    expect(backend.pushed).toBe(false);
   });
 
-  it("approve handoff (S7 push success) whose S8 write throws → failedStep attributes to the S8 write step", async () => {
-    // Happy path reaches S7 push (success), then the S8 handoff ledger write
-    // throws. Here push DID run; the failing operation is the S8 write. The
+  it("approve handoff whose S8 write throws → failedStep attributes to the S8 write step", async () => {
+    // Happy path reaches S7 local handoff, then the S8 handoff ledger write
+    // throws. The failing operation is the S8 write. The
     // attribution must reflect the real failing step (S8), not a stale value.
     const backend = new SpyBackend();
     backend.writeLedger = async (entry, stateDir) => {

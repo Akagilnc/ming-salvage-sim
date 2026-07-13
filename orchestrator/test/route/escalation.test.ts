@@ -155,7 +155,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
       expect(result.status).toBe("escalate");
     });
 
-    it("does NOT proceed to S7 ship (runner stops immediately)", async () => {
+    it("does NOT proceed to S7 local handoff (runner stops immediately)", async () => {
       const backend = new ConfigurableBackend(
         new Map([["S2", coderWithEscalate(STUCK)]]),
       );
@@ -227,7 +227,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
   // ── no-escalate = no change to happy path ──────────────────────
 
   describe("no escalate signal = happy path unchanged", () => {
-    it("normal coder output (no escalate) reaches S7 ship", async () => {
+    it("normal coder output (no escalate) reaches S7 local handoff", async () => {
       // Default backend: no overrides → coder committed:true.
       const backend = new ConfigurableBackend();
 
@@ -237,7 +237,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
       // ADR 0030: a committed build reaches S7 only after S3/S4 find no blocking
       // review findings.
       expect(result.stepLedger.map((e) => e.step)).toContain("S7");
-      expect(backend.pushCount).toBe(1);
+      expect(backend.pushCount).toBe(0);
     });
 
     it("undefined escalate field on coder output is not treated as escalate", async () => {
@@ -271,7 +271,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
 
       // null escalate must not divert to handoff(status=escalate).
       expect(result.status).toBe("success");
-      // The normal next step (S7 ship) must still have been reached.
+      // The normal S7 local handoff must still have been reached.
       expect(result.stepLedger.map((e) => e.step)).toContain("S7");
     });
   });

@@ -33,7 +33,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  OnlineReviewLandingSnapshot,
   IssueSnapshot,
   StepOutput,
   WorkerResult,
@@ -135,29 +134,6 @@ class SeamOnlyBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async writeLedger(): Promise<void> {}
-  async pollOnlineReviewState(input: {
-    repo: string;
-    prUrl: string;
-    pollCount: number;
-  }): Promise<OnlineReviewLandingSnapshot> {
-    void input;
-    return {
-      prUrl: "pr://slice/offline-337",
-      headOid: "deadbeef",
-      totalFindingCount: 0,
-      quiescent: true,
-      bots: {
-        coderabbit: { state: "complete", findingCount: 0 },
-        sourcery: { state: "complete", findingCount: 0 },
-        codex: { state: "complete", findingCount: 0 },
-        gemini: { state: "complete", findingCount: 0 },
-      },
-      droppedBots: [],
-      threads: [],
-      checkRuns: [],
-    };
-  }
-
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}:${spec.skill ?? "—"}`);
     this.specs.push(spec);
@@ -222,10 +198,6 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
       "S3:reviewer:/code-review",
       "S5:coder:/tdd",
       "S6:reviewer:/code-review",
-      "S7:ship:gstack-ship",
-      "S9:verify:/verify",
-      "S12:docRelease:/gstack-document-release",
-      "S11:cleanup:/cleanup",
     ]);
   });
 });

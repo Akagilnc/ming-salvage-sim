@@ -148,21 +148,6 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
     expect(persistedSteps).toContain("S7");
   });
 
-  it("S7 push throw exhaustion → persisted infra park contains S7 and S8", async () => {
-    const backend = new SpyBackend();
-    backend.push = async () => {
-      throw new Error("remote rejected: non-fast-forward");
-    };
-
-    const result = await runOrchestrator({ issueNumber: 244, backend });
-
-    expect(result.status).toBe("escalate");
-    expect(result.stopSummary.reason).toBe("infra_failure");
-    const persistedSteps = backend.ledgerCalls.map((c) => c.entry.step);
-    expect(persistedSteps).toContain("S7");
-    expect(persistedSteps).toContain("S8");
-  });
-
   it("S1 writeSnapshot throw (after worktree prepared) → persisted ledger contains S1 and S8", async () => {
     // The worktree IS prepared (stateDir resolvable), so even though S1's
     // writeSnapshot fails, the error termination must persist.
@@ -234,7 +219,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     expect(result.status).toBe("success");
     expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(1);
     expect(result.stepLedger.some((entry) => entry.step === "S3")).toBe(true);
-    expect(pushed).toBe(true);
+    expect(pushed).toBe(false);
   });
 
   it("S3 wrong-kind output dispatches S5 then accepts a fresh S6", async () => {
@@ -258,7 +243,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     expect(result.stepLedger.at(-1)?.step).toBe("S8");
     expect(backend.runStepIds).toContain("S5");
     expect(backend.runStepIds).toContain("S6");
-    expect(pushed).toBe(true);
+    expect(pushed).toBe(false);
   });
 
   it("S2 garbage commitsAdded remains advisory; later invalid worker output still stops before push", async () => {
@@ -277,12 +262,12 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("success");
-    expect(pushed).toBe(true);
+    expect(pushed).toBe(false);
   });
 
-  it("a well-formed committed S2 plus clean S3/S4 review routes to S7 ship (regression)", async () => {
-    // Sanity: the malformed-output guard must not break the real ship path. A
-    // committed S2 coder output plus a clean S3 reviewer output routes to S7.
+  it("a well-formed committed S2 plus clean S3/S4 review routes to S7 local handoff", async () => {
+    // A committed S2 coder output plus a clean S3 reviewer output reaches S7,
+    // but the child runner leaves remote delivery to the family endgame.
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -298,6 +283,6 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("success");
-    expect(pushed).toBe(true);
+    expect(pushed).toBe(false);
   });
 });

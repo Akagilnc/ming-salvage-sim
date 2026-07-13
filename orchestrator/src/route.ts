@@ -9,7 +9,7 @@
  * worker boundaries:
  *
  *   S0→S1→S2(implement)→S3(review)→S4(classify)
- *     clean/deferred only → S7(ship)→S9(verify)→S10(fixer)→S12(docRelease)→S11(cleanup)→S8(success)
+ *     clean/deferred only → S7(local handoff) → S8(success)
  *     blocking → S5(fix)→S6(fresh full-diff review)→S4
  *
  * A valid decision escalation stays the global stop edge (checked FIRST).
@@ -17,24 +17,21 @@
  * an unusable envelope follows the same fixed topology to the next worker.
  */
 
-import type { OnlineReviewTerminalState, StepId, StepOutput } from "./types.js";
+import type { SliceStepId, StepOutput } from "./types.js";
 import { escalateOf } from "./validate.js";
-import { MAX_ONLINE_REVIEW_ROUNDS } from "./onlineReviewLoop.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
 export type RouteDecision =
-  | { kind: "next"; step: StepId }
+  | { kind: "next"; step: SliceStepId }
   | {
       kind: "handoff";
       status: "success" | "escalate" | "error";
-      /** Documented online-review terminal when the loop ends (#600 AC1/AC5). */
-      onlineReviewTerminal?: OnlineReviewTerminalState;
     };
 
 /** Inputs route() needs to decide the edge out of `from`. */
 export interface RouteContext {
   /** The step we are routing OUT of. */
-  readonly from: StepId;
+  readonly from: SliceStepId;
   /**
    * The agent output the edge should act on — i.e. the most recent agent-worker
    * output in flight. ADR 0030 has multiple agent steps (S2/S3/S5/S6); this is
@@ -42,10 +39,6 @@ export interface RouteContext {
    * run yet.
    */
   readonly output?: StepOutput;
-  /** Family child topology stops before the standalone online-review loop. */
-  readonly skipOnlineReview?: boolean;
-  /** 1-based online review round for S9/S10 routing (#600 / ADR 0061). */
-  readonly onlineReviewRound?: number;
 }
 
 /**
@@ -105,73 +98,15 @@ export function route(ctx: RouteContext): RouteDecision {
       return { kind: "next", step: "S6" };
     }
 
-    case "S7": {
-      if (ctx.skipOnlineReview === true) {
-        return { kind: "handoff", status: "success" };
-      }
-      return { kind: "next", step: "S9" };
-    }
-
-    case "S9": {
-      if (ctx.output?.kind === "verify") {
-        if (ctx.output.converged) {
-          return {
-            kind: "next",
-            step: "S12",
-          };
-        }
-        if (ctx.output.terminalState === "decision_gate_raised") {
-          return {
-            kind: "handoff",
-            status: "escalate",
-            onlineReviewTerminal: "decision_gate_raised",
-          };
-        }
-        const round = ctx.onlineReviewRound ?? 1;
-        // AC5: round 3 remaining P2/nits are attempted by default — only exhaust
-        // after the final (round > cap) verify still has findings.
-        if (round > MAX_ONLINE_REVIEW_ROUNDS) {
-          return {
-            kind: "handoff",
-            status: "escalate",
-            onlineReviewTerminal: "round_budget_exhausted",
-          };
-        }
-      }
-      return { kind: "next", step: "S10" };
-    }
-
-    case "S10": {
-      // Every completed fixer run advances to a fresh S9 verification; findings
-      // there own any decision gate, including when cargo shape is unusable.
-      return { kind: "next", step: "S9" };
-    }
-
-    case "S11": {
-      if (ctx.output?.kind === "cleanup") {
-        if (!ctx.output.terminal) {
-          return { kind: "handoff", status: "error" };
-        }
-        if (!ctx.output.ok) {
-          return { kind: "handoff", status: "error" };
-        }
-      }
+    case "S7":
       return { kind: "handoff", status: "success" };
-    }
-
-    case "S12": {
-      if (ctx.output?.kind === "docRelease" && !ctx.output.released) {
-        return { kind: "handoff", status: "error" };
-      }
-      return { kind: "next", step: "S11" };
-    }
 
     case "S8":
       // S8 is terminal — route() is never called to leave it.
       throw new Error("route: S8 is terminal; nothing routes out of it");
 
     default: {
-      // Exhaustiveness guard: a new StepId must be handled above.
+      // Exhaustiveness guard: a new slice step must be handled above.
       const never: never = ctx.from;
       throw new Error(`route: unhandled step ${String(never)}`);
     }
