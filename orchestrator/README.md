@@ -20,11 +20,16 @@ reads worker prose**:
    completion signal) gets a step-level mechanical retry; normal exit
    continues.
 2. **self-declared open-count 0 / non-0** → zero passes the gate; non-zero
-   routes back to the coder/fixer loop. The count is the reviewer's own
-   declaration (sentinel value; absent a sentinel form, the rows it wrote).
-   The runner never derives it, never reconciles count-vs-rows, never
-   re-classifies severity/action. Whether the declaration matches the papers
-   is the fixer's judgment when it reads the submission — never the runner's.
+   keeps the loop going on the fixed topology (after a fix leg a fresh review
+   leg always follows — ADR 0129 keeps fixer-flipped rows open until a fresh
+   reviewer closes them; whose turn it is comes from the topology, never from
+   a runner judgment). The count is the reviewer's own declaration (sentinel
+   value; absent a sentinel form, the rows it wrote **are** the declaration —
+   counting them is reading channel 2 itself, not reconciling it against
+   anything, because no second claim exists). The runner never derives a
+   check, never re-classifies severity/action. Whether the declaration
+   matches the papers is the fixer's judgment when it reads the submission —
+   never the runner's.
 3. **decision-gate signal** → durable park; the answer resumes the SAME worker
    session in place (`resumeSessionId`).
 
