@@ -100,12 +100,12 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
       return "transient";
     }
     const status =
-      typeof e.status === "number"
-        ? e.status
-        : typeof e.statusCode === "number"
-          ? e.statusCode
+      Number.isInteger(e.status)
+        ? (e.status as number)
+        : Number.isInteger(e.statusCode)
+          ? (e.statusCode as number)
           : undefined;
-    if (status !== undefined && Number.isInteger(status)) {
+    if (status !== undefined) {
       if (status === 429) return "quota";
       if (status >= 500 && status <= 599) return "transient";
       if (status >= 100 && status <= 599) return "durable";
