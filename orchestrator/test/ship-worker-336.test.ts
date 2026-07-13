@@ -154,7 +154,7 @@ describe("#336 RealBackend.dispatchWorker — the single-slice ship worker", () 
 
   it("an escalate outcome ⇒ WorkerResult.escalated (a genuine block, not a rerun)", async () => {
     const be = fixtured();
-    be.outcome = { kind: "escalate", reason: "merge conflict", diagnosis: "human must resolve", escalationKind: "decision" };
+    be.outcome = { kind: "escalate", reason: "merge conflict", diagnosis: "human must resolve" };
     const res = await be.dispatchWorker!(shipWorkerSpec(), { worktree });
     expect(res.kind).toBe("escalated");
     if (res.kind === "escalated") expect(res.escalation.reason).toContain("merge conflict");

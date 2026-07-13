@@ -157,7 +157,7 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
 
   it("an escalate outcome ⇒ WorkerResult.escalated (a genuine block)", async () => {
     const be = fixtured();
-    be.outcome = { kind: "escalate", reason: "review ASK", diagnosis: "human must decide scope", escalationKind: "decision" };
+    be.outcome = { kind: "escalate", reason: "review ASK", diagnosis: "human must decide scope" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res.kind).toBe("escalated");
     if (res.kind === "escalated") expect(res.escalation.reason).toContain("review ASK");

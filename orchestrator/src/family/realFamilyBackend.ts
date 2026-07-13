@@ -2691,7 +2691,6 @@ export class RealFamilyBackend implements FamilyBackend {
       if (missingProvider !== undefined) {
         return {
           kind: "escalate",
-          escalationKind: "decision",
           reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
           diagnosis:
             "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; typed provider availability preflight rejected the ship launch before sc.run",
@@ -2700,7 +2699,6 @@ export class RealFamilyBackend implements FamilyBackend {
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalate",
-          escalationKind: "decision",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
           diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
         };
@@ -2716,7 +2714,6 @@ export class RealFamilyBackend implements FamilyBackend {
       if (auth.ghToken === undefined) {
         return {
           kind: "escalate",
-          escalationKind: "decision",
           reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
           diagnosis:
             "the family ship worker invokes gstack-ship, whose family delivery is a PR " +
