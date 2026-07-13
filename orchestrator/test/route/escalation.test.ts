@@ -50,7 +50,6 @@ class ConfigurableBackend implements Backend {
   readonly calls: string[] = [];
   readonly runStepIds: string[] = [];
   readonly ledger: PersistentLedgerEntry[] = [];
-  pushCount = 0;
 
   constructor(
     private readonly runStepOutputs: Map<string, StepOutput> = new Map(),
@@ -59,9 +58,6 @@ class ConfigurableBackend implements Backend {
   // #255: fresh-run defaults (this suite tests escalate routing, not resume).
   async findResumeState(): Promise<undefined> {
     return undefined;
-  }
-  async cleanResidue(): Promise<void> {
-    // no-op
   }
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
@@ -104,11 +100,6 @@ class ConfigurableBackend implements Backend {
     }
     // Default output: the coder worker committed.
     return { kind: "coder", committed: true, commitsAdded: 1 };
-  }
-
-  async push(_worktree: WorktreeHandle): Promise<void> {
-    this.calls.push("push");
-    this.pushCount += 1;
   }
 
   // #249 integration: writeLedger is part of the Backend seam. This suite
@@ -165,7 +156,6 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
       // The escalate stop happens at S2 → S8; S7 is never reached.
       expect(result.stepLedger.map((e) => e.step)).not.toContain("S7");
       // Consequently no push either.
-      expect(backend.pushCount).toBe(0);
     });
 
     it("records S2 escalate output in ledger", async () => {
@@ -255,7 +245,6 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
       // ADR 0030: a committed build reaches S7 only after S3/S4 find no blocking
       // review findings.
       expect(result.stepLedger.map((e) => e.step)).toContain("S7");
-      expect(backend.pushCount).toBe(0);
     });
 
     it("undefined escalate field on coder output is not treated as escalate", async () => {

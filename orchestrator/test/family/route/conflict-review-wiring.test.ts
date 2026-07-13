@@ -60,7 +60,6 @@ class ChildBackend implements Backend {
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
   }
@@ -84,7 +83,6 @@ class ChildBackend implements Backend {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
   }
-  async push(): Promise<void> {}
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
 

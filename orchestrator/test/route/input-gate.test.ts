@@ -44,9 +44,6 @@ class GateTestBackend implements Backend {
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {
-    // no-op
-  }
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`resumeSession(${spec.id})`);
     return { kind: "coder", committed: false, commitsAdded: 0 };
@@ -87,10 +84,6 @@ class GateTestBackend implements Backend {
       return { kind: "reviewer", findings: [] };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
-  }
-
-  async push(worktree: WorktreeHandle): Promise<void> {
-    this.calls.push(`push(${worktree.branch})`);
   }
 
   // #249 integration: writeLedger is part of the Backend seam. This suite
@@ -143,7 +136,6 @@ async function expectS0GateError(
 
   return { reason: result.errorPackage?.reason ?? "", backend };
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Reject cases — three distinct non-compliant IssueMeta shapes

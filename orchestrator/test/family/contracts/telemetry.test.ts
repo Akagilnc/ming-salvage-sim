@@ -157,7 +157,6 @@ class FamilyTelemetryBackend implements FamilyBackend {
     return { ok: true };
   }
 
-
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.ctxs.push(ctx);
     if (spec.kind === "cmr") {
@@ -210,8 +209,6 @@ class SmokeOnlySingleSliceBackend implements Backend {
     return undefined;
   }
 
-  async cleanResidue(): Promise<void> {}
-
   async resumeSession(): Promise<StepOutput> {
     throw new Error("smoke-only single-slice backend: resumeSession unused");
   }
@@ -243,8 +240,6 @@ class SmokeOnlySingleSliceBackend implements Backend {
   async runStep(): Promise<StepOutput> {
     throw new Error("smoke-only single-slice backend: runStep unused");
   }
-
-  async push(): Promise<void> {}
 
   async writeLedger(): Promise<void> {}
 }

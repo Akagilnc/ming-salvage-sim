@@ -67,7 +67,6 @@ class ScriptedReviewBackend implements Backend {
   async findResumeState(): Promise<ResumeState | undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
   }
@@ -104,7 +103,6 @@ class ScriptedReviewBackend implements Backend {
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
-  async push(): Promise<void> {}
   async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
     this.ledgerWrites.push(entry);
   }

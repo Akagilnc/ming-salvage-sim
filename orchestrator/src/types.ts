@@ -1489,7 +1489,7 @@ export interface ResumeState {
 
 /**
  * THE seam (PRD #244): the runner reaches the outside world only through this
- * injected interface — read issue, prepare worktree, run an agent step, push.
+ * injected interface — read issue, prepare worktree, run an agent step.
  * #247 injects a fake; the real Backend (Sandcastle + gh + git) is verified
  * separately. Keep this minimal and stable — 9 slices layer on it.
  */
@@ -1519,17 +1519,6 @@ export interface Backend {
    * on its first pass, so it must not re-gate/re-cut.
    */
   findResumeState(issueNumber: number): Promise<ResumeState | undefined>;
-  /**
-   * #661 compatibility seam for a former residue-clean operation.
-   *
-   * Real implementation is a no-op: a resident scene is work product, including
-   * uncommitted files and relay focus. Resume preserves it AS-IS; callers must
-   * never reintroduce reset/clean behavior here.
-   *
-   * The only removal authority is explicit terminal-success GC; it may reap the
-   * resident worktree after the run can no longer need resume.
-   */
-  cleanResidue(worktree: WorktreeHandle): Promise<void>;
   /**
    * #255: resume the prior agent session for a step (Sandcastle-native).
    *
@@ -1593,7 +1582,7 @@ export interface Backend {
    * (what to invoke, host, fresh|resume, soul, skill) + a {@link DispatchContext}
    * (worktree, stateDir, resumeSessionId, audit snapshot when present) and gets
    * back a discriminated {@link WorkerResult}, then routes by case. This replaces
-   * the per-method seam (`runStep` / `resumeSession` / `push`) as the runner's
+   * the per-method seam (`runStep` / `resumeSession`) as the runner's
    * dispatch entry point.
    *
    * #331 PREFACTOR: this is a thin LEGACY WRAPPER. The runner ALWAYS dispatches

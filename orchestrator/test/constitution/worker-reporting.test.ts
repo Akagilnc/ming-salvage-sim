@@ -71,7 +71,6 @@ class ScriptedRunnerBackend implements Backend {
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
   async findResumeState(): Promise<ResumeState | undefined> { return undefined; }
-  async cleanResidue() {}
   async fetchIssueMeta(number: number): Promise<IssueMeta> {
     return { number, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
   }
@@ -86,7 +85,6 @@ class ScriptedRunnerBackend implements Backend {
   async resumeSession(_spec: StepSpec, _worktree: WorktreeHandle, _sessionId: string): Promise<StepOutput> {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
-  async push() {}
   async writeLedger(entry: PersistentLedgerEntry) { this.ledger.push(entry); }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext, landing?: WorkerLandingPayload) {
     const attempt = (this.attempts.get(spec.id) ?? 0) + 1;

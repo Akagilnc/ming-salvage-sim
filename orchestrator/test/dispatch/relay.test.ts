@@ -574,7 +574,6 @@ describe("#787 capacity relay", () => {
           return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
         }
         async findResumeState(): Promise<undefined> { return undefined; }
-        async cleanResidue(): Promise<void> {}
         async resumeSession(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -592,7 +591,6 @@ describe("#787 capacity relay", () => {
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
-        async push(): Promise<void> {}
         async writeLedger(): Promise<void> {}
         async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
           if (spec.kind === "coder" && spec.id === "S2") {
@@ -671,7 +669,6 @@ describe("#787 capacity relay", () => {
           return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
         }
         async findResumeState(): Promise<undefined> { return undefined; }
-        async cleanResidue(): Promise<void> {}
         async resumeSession(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -698,7 +695,6 @@ describe("#787 capacity relay", () => {
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
-        async push(): Promise<void> {}
         async writeLedger(): Promise<void> {}
         async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
           if (spec.kind === "reviewer") {
@@ -1243,7 +1239,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       async findResumeState(): Promise<undefined> {
         return undefined;
       }
-      async cleanResidue(): Promise<void> {}
       async resumeSession(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1272,7 +1267,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      async push(): Promise<void> {}
       async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
         this.ledgerWrites.push(entry);
       }
@@ -1380,7 +1374,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       async findResumeState(): Promise<undefined> {
         return undefined;
       }
-      async cleanResidue(): Promise<void> {}
       async resumeSession(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1409,7 +1402,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      async push(): Promise<void> {}
       async writeLedger(): Promise<void> {}
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
         if (spec.kind === "coder" && spec.id === "S2") {
@@ -1513,7 +1505,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       async findResumeState(): Promise<undefined> {
         return undefined;
       }
-      async cleanResidue(): Promise<void> {}
       async resumeSession(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1542,7 +1533,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      async push(): Promise<void> {}
       async writeLedger(): Promise<void> {}
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
         if (spec.kind === "coder" && spec.id === "S2") {
@@ -1635,7 +1625,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       async findResumeState(): Promise<undefined> {
         return undefined;
       }
-      async cleanResidue(): Promise<void> {}
       async resumeSession(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1664,7 +1653,6 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      async push(): Promise<void> {}
       async writeLedger(): Promise<void> {}
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
         if (spec.kind === "coder" && spec.id === "S2") {
@@ -1811,7 +1799,7 @@ describe("#686 reviewer relay candidate conflict set", () => {
 describe("#686 R2 production seams", () => {
   const NOW = new Date("2026-07-10T12:00:00.000Z");
 
-  it("P0: resume with pending relay_baton_handoff skips cleanResidue", async () => {
+  it("P0: resume with pending relay_baton_handoff preserves the scene", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "relay-686-r2-p0-"));
     try {
       const worktree: WorktreeHandle = {
@@ -1819,7 +1807,7 @@ describe("#686 R2 production seams", () => {
         base: "main",
         path: tmp,
       };
-      // Seed a focus file that cleanResidue would destroy.
+      // Seed a focus file that destructive cleanup would destroy.
       writeFileSync(
         join(tmp, RELAY_FOCUS_FILENAME),
         "# Relay baton handoff\n\n## state_summary\n\npreserve me\n",
@@ -1827,7 +1815,6 @@ describe("#686 R2 production seams", () => {
       );
       writeFileSync(join(tmp, "uncommitted-baton.txt"), "drift payload\n", "utf8");
 
-      let cleanCount = 0;
       const handoffTs = "2026-07-10T11:00:00.000Z";
       const prior: PersistentLedgerEntry[] = [
         {
@@ -1872,16 +1859,6 @@ describe("#686 R2 production seams", () => {
             ledger: prior,
           };
         }
-        async cleanResidue(): Promise<void> {
-          cleanCount += 1;
-          // Simulate destructive clean — if called, focus file dies.
-          try {
-            rmSync(join(tmp, RELAY_FOCUS_FILENAME), { force: true });
-            rmSync(join(tmp, "uncommitted-baton.txt"), { force: true });
-          } catch {
-            /* ignore */
-          }
-        }
         async resumeSession(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -1910,7 +1887,6 @@ describe("#686 R2 production seams", () => {
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
-        async push(): Promise<void> {}
         async writeLedger(): Promise<void> {}
         async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
           if (spec.kind === "coder") {
@@ -1962,7 +1938,6 @@ describe("#686 R2 production seams", () => {
         if (prev === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
         else process.env.ORCHESTRATOR_CODER_MODEL = prev;
       }
-      expect(cleanCount).toBe(0);
       expect(existsSync(join(tmp, RELAY_FOCUS_FILENAME))).toBe(true);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -2141,7 +2116,6 @@ describe("#686 R2 production seams", () => {
         if (persisted.length === 0) return undefined;
         return { worktree, stateDir: tmp, ledger: persisted };
       },
-      async cleanResidue(): Promise<void> {},
       async resumeSession(spec: StepSpec, _worktree: WorktreeHandle, sessionId: string): Promise<StepOutput> {
         resumed.push({ step: spec.id, sessionId });
         return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -2167,7 +2141,6 @@ describe("#686 R2 production seams", () => {
         if (spec.role === "reviewer") return { kind: "reviewer", findings: [] };
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
-      async push(): Promise<void> {},
       async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
         persisted.push(entry);
       },
@@ -2288,7 +2261,6 @@ describe("#686 R2 production seams", () => {
         async findResumeState(): Promise<undefined> {
           return undefined;
         }
-        async cleanResidue(): Promise<void> {}
         async resumeSession(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -2317,7 +2289,6 @@ describe("#686 R2 production seams", () => {
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
-        async push(): Promise<void> {}
         async writeLedger(): Promise<void> {}
         async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
           if (spec.kind === "coder" && spec.id === "S2") {

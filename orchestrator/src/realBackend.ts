@@ -2096,7 +2096,7 @@ export class RealBackend implements Backend {
    * Fail-closed guard (ADR 0024 decision 1/3): after the clone exists, assert it
    * owns its `.git` — i.e. `git rev-parse --git-common-dir` resolves to the
    * clone's OWN `.git`, not a shared parent repo's `.git` (a linked worktree).
-   * If the working repo is a linked worktree, a Sandcastle/`cleanResidue` prune
+   * If the working repo is a linked worktree, a Sandcastle worktree prune
    * could reach across the shared `.git` into other sessions' admin namespace
    * (the #292 bug). So we refuse to start: throw at construction (不启动).
    */
@@ -3314,11 +3314,6 @@ export class RealBackend implements Backend {
       throw new QuotaWaitForResetError(result);
     }
     return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
-  }
-
-  // #661: retained only as a compatibility seam. Scenes are never destroyed.
-  async cleanResidue(worktree: WorktreeHandle): Promise<void> {
-    void worktree;
   }
 
   // ── #255: detect resume residue ────────────────────────────────────────────

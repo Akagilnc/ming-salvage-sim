@@ -81,7 +81,6 @@ class EscalatingChildBackend implements Backend {
   readonly resumeSessionCalls: Array<[number, string, string]> = [];
   /** Which child each prepareWorktree cut for (fan-out order witness). */
   readonly preparedIssues: number[] = [];
-  pushCount = 0;
   /** The issue whose coder escalates on its FIRST run. */
   constructor(
     private readonly escalateIssue: number,
@@ -100,7 +99,6 @@ class EscalatingChildBackend implements Backend {
       ledger,
     };
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(
     spec: StepSpec,
     worktree: WorktreeHandle,
@@ -151,9 +149,6 @@ class EscalatingChildBackend implements Backend {
     }
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
-  }
-  async push(): Promise<void> {
-    this.pushCount += 1;
   }
   async writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void> {
     // stateDir encodes the issue (the runner passes a per-issue state dir); fall

@@ -53,12 +53,9 @@ class RecordingChildBackend implements Backend {
     const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
-  pushCount = 0;
-
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
   }
@@ -81,9 +78,6 @@ class RecordingChildBackend implements Backend {
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
-  }
-  async push(): Promise<void> {
-    this.pushCount += 1;
   }
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }

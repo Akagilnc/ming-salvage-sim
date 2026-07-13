@@ -71,7 +71,6 @@ class EscalatingChildBackend implements Backend {
       ledger,
     };
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
@@ -102,7 +101,6 @@ class EscalatingChildBackend implements Backend {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
   }
-  async push(): Promise<void> {}
   async writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void> {
     const m = stateDir.match(/\.ledger-(\d+)/);
     const issue = m ? Number(m[1]) : -1;

@@ -71,7 +71,6 @@ class SessionSurfacingChildBackend implements Backend {
       ledger,
     };
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(): Promise<StepOutput> {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
@@ -109,7 +108,6 @@ class SessionSurfacingChildBackend implements Backend {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "reviewer", findings: [] };
   }
-  async push(): Promise<void> {}
   async writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void> {
     const issue = issueOfStateDir(stateDir);
     const ledger = this.childLedgers.get(issue) ?? [];

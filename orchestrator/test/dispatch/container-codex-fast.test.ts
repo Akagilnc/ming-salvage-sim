@@ -58,7 +58,6 @@ function fakeBackend(sourceRepo: string): Backend {
   return {
     workingRepoPath: () => sourceRepo,
     findResumeState: async () => undefined,
-    cleanResidue: async () => {},
     resumeSession: async () => ({ kind: "reviewer", findings: [] }),
     fetchIssueMeta: async (issueNumber: number) => ({
       number: issueNumber,
@@ -83,7 +82,6 @@ function fakeBackend(sourceRepo: string): Backend {
       spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
         : { kind: "reviewer", findings: [] },
-    push: async () => {},
     writeLedger: async () => {},
   } as unknown as Backend;
 }

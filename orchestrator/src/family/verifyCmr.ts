@@ -1252,8 +1252,7 @@ export async function runFamilyOnlineReviewLoop(input: {
       }
       return result.output.kind === "fixer" ? result.output : undefined;
     },
-    // #740: family S12 crash-retry continues as-is (no scoped cleanResidue /
-    // resetBeforeRetry).
+    // #740: family S12 crash-retry continues as-is (no scoped cleanup hook).
     dispatchDocRelease: async (landing: WorkerLandingPayload) => {
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,

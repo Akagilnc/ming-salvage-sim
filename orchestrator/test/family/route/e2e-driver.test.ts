@@ -142,7 +142,6 @@ class RealGitChildBackend implements Backend {
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {}
   async resumeSession(spec: StepSpec, worktree: WorktreeHandle): Promise<StepOutput> {
     return this.runStep(spec, worktree);
   }
@@ -184,7 +183,6 @@ class RealGitChildBackend implements Backend {
     }
     return { kind: "reviewer", findings: [] };
   }
-  async push(): Promise<void> {}
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
 

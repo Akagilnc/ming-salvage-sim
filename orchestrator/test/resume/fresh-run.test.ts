@@ -54,9 +54,8 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
-    // Fresh cut: prepareWorktree called once; cleanResidue never called.
+    // Fresh cut: prepareWorktree called once.
     expect(backend.prepareWorktreeCount).toBe(1);
-    expect(backend.cleanResidueCount).toBe(0);
     // No resumeSession on a fresh run.
     expect(backend.resumeSessionCalls).toHaveLength(0);
   });

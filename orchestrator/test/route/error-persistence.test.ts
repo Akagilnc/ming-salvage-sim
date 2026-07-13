@@ -72,9 +72,6 @@ class SpyBackend implements Backend {
   async findResumeState(): Promise<undefined> {
     return undefined;
   }
-  async cleanResidue(): Promise<void> {
-    // no-op
-  }
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     return this.runStep(spec);
   }
@@ -96,7 +93,6 @@ class SpyBackend implements Backend {
     }
     return { kind: "reviewer", findings: [] };
   }
-  async push(_w: WorktreeHandle): Promise<void> {}
   async writeLedger(
     entry: PersistentLedgerEntry,
     stateDir: string,
@@ -166,9 +162,6 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 
   it("persisted error ledger entries land in the same sibling stateDir as normal entries", async () => {
     const backend = new SpyBackend();
-    backend.push = async () => {
-      throw new Error("push failed");
-    };
 
     await runOrchestrator({ issueNumber: 244, backend });
 
@@ -204,10 +197,6 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 describe("#5 malformed S2 build output → S8(error), never silent bypass", () => {
   it("S2 completed wrong-kind cargo advances to the reviewer without git adjudication", async () => {
     const backend = new SpyBackend();
-    let pushed = false;
-    backend.push = async () => {
-      pushed = true;
-    };
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       // Contract violation: the S2 build worker must return a coder output.
@@ -219,15 +208,10 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     expect(result.status).toBe("success");
     expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(1);
     expect(result.stepLedger.some((entry) => entry.step === "S3")).toBe(true);
-    expect(pushed).toBe(false);
   });
 
   it("S3 wrong-kind output dispatches S5 then accepts a fresh S6", async () => {
     const backend = new SpyBackend();
-    let pushed = false;
-    backend.push = async () => {
-      pushed = true;
-    };
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       if (spec.id === "S3") return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -243,15 +227,10 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     expect(result.stepLedger.at(-1)?.step).toBe("S8");
     expect(backend.runStepIds).toContain("S5");
     expect(backend.runStepIds).toContain("S6");
-    expect(pushed).toBe(false);
   });
 
-  it("S2 garbage commitsAdded remains advisory; later invalid worker output still stops before push", async () => {
+  it("S2 garbage commitsAdded remains advisory", async () => {
     const backend = new SpyBackend();
-    let pushed = false;
-    backend.push = async () => {
-      pushed = true;
-    };
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       return spec.role === "coder"
@@ -262,17 +241,12 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("success");
-    expect(pushed).toBe(false);
   });
 
   it("a well-formed committed S2 plus clean S3/S4 review routes to S7 local handoff", async () => {
     // A committed S2 coder output plus a clean S3 reviewer output reaches S7,
     // but the child runner leaves remote delivery to the family endgame.
     const backend = new SpyBackend();
-    let pushed = false;
-    backend.push = async () => {
-      pushed = true;
-    };
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       if (spec.role === "reviewer") {
@@ -283,6 +257,5 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("success");
-    expect(pushed).toBe(false);
   });
 });

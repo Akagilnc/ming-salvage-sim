@@ -29,7 +29,7 @@
  * #331 (ADR 0026 / PRD #330), extended by ADR 0030: the runner dispatches every
  *   WORKER step (S2/S3/S5/S6 agent workers) through the single unified
  *   seam `dispatchWorker(backend, spec, ctx)` (dispatchWorker.ts) instead of
- *   reaching for `runStep` / `resumeSession` / `push` directly.
+ *   reaching for `runStep` / `resumeSession` directly.
  */
 
 import { mintRunId } from "./runId.js";
@@ -43,7 +43,7 @@ import { route } from "./route.js";
 import { findingIdentityKey } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY child worker step (S2/S3/S5/S6) through ONE free function
-// instead of reaching for runStep/resumeSession/push directly.
+// instead of reaching for runStep/resumeSession directly.
 import {
   dispatchWorkerWithMonitor,
   stepSpecToWorkerSpec,
@@ -2818,8 +2818,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
       // re-opened. Re-feeding is a pure status report — no worktree mutation,
-      // so cleanResidue is intentionally NOT run here (a residue-clean failure
-      // must not flip an already-finished run's reported status). Report the
+      // so no destructive cleanup is run here (a cleanup failure must not flip
+      // an already-finished run's reported status). Report the
       // TRUE terminal status (success / error / escalate), never a hardcoded
       // success (#255: a prior error/escalate must not masquerade as success).
       if (plan.terminalStatus === "error") {
@@ -2861,7 +2861,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
 
     // #661 / #686 P0: NEVER destroy the worker scene on resume. Reading/comparing
-    // HEADs is legal; reset/cleanResidue is not — uncommitted work + partial
+    // HEADs is legal; destructive reset/cleanup is not — uncommitted work + partial
     // commits + `.relay-focus.md` are the payload. Relay state is read from the
     // FULL resume ledger preserves every relay marker.
     // ADR 0030: resume continues from the recorded runner-visible boundary. If
@@ -3268,7 +3268,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //    only a non-structured process crash enters this retry layer.
               //
               // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
-              // current scene — do NOT pass cleanResidue into withMechanicalRetry.
+              // current scene — do NOT pass a cleanup hook into withMechanicalRetry.
               // Uncommitted work + partial commits are the payload; reading/comparing
               // HEADs is legal, destroying scenes is not. (resetBeforeRetry remains an
               // optional hook for non-runner callers; this site intentionally omits it.)
