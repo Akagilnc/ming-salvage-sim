@@ -466,14 +466,12 @@ describe("#601 AC#2 carve-out — JUDGED ship verdicts are NOT retried (decided 
   });
 });
 
-// ───────────────────── AC #6: the reviewer's own 2-retry budget still holds (one shared mechanism) ─────────────────────
+// ───────────────────── AC #6: reviewer unusable output → decision once (no schema court) ─────────────────────
 
 /**
- * A backend whose S3 reviewer ALWAYS returns a `malformed` result — a semantic
- * invalid-output failure the reviewer's OWN `MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS`
- * (= 2) loop owns. The generic layer defers it (callerOwns) so the reviewer budget
- * is NOT double-counted. #601 re-asserts this: all roles share ONE underlying
- * mechanism, not separate implementations.
+ * S3 reviewer ALWAYS returns malformed. Owner 2026-07-13: rise to human decision
+ * once — generic mechanical layer must not redispatch ×3, and there is no
+ * MAX_INVALID_REVIEWER shape-retry loop.
  */
 class ReviewerAlwaysMalformedBackend extends RoleRetryBackend {
   reviewerDispatches = 0;
@@ -486,15 +484,12 @@ class ReviewerAlwaysMalformedBackend extends RoleRetryBackend {
   }
 }
 
-describe("#601 AC#6 — the existing 'reviewer gets 2 retries' regression still holds (one shared mechanism)", () => {
-  it("a persistently malformed reviewer is dispatched EXACTLY its own bounded budget (not multiplied by the generic retry)", async () => {
+describe("#601 AC#6 — reviewer unusable output rises once (not schema-retry kill)", () => {
+  it("a persistently malformed reviewer is dispatched exactly once then decision-escalate", async () => {
     const backend = new ReviewerAlwaysMalformedBackend();
-    await runOrchestrator({ issueNumber: 601, backend });
-    // The reviewer's malformed RESULT is caller-owned → deferred to its own
-    // MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS loop; the generic layer never retries it.
-    // So the reviewer is dispatched exactly its own budget (2), NOT 2 × the generic
-    // MAX_DISPATCH_ATTEMPTS — confirming all roles share one underlying mechanism.
-    expect(backend.reviewerDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+    const result = await runOrchestrator({ issueNumber: 601, backend });
+    expect(result.status).toBe("escalate");
+    expect(backend.reviewerDispatches).toBe(1);
   });
 });
 

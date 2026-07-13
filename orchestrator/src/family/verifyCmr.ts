@@ -2495,29 +2495,27 @@ async function runIntegratedCmrPass(input: {
           });
         }
         if (!fixRound.result.ok) return fixRound;
-        // Budget exhausted and head still unmoved: durable operational stop —
-        // do NOT restartFinalBarrier (that would reset the local budget and thrash).
+        // Budget exhausted and head still unmoved: RISE to human decision gate
+        // (owner 2026-07-13: not durable abort — channel (c), not kill the run).
         if (
           fixFamilyHeadBefore !== undefined &&
           fixRound.familyHeadAfter !== undefined &&
           fixFamilyHeadBefore === fixRound.familyHeadAfter
         ) {
           const reason =
-            `integrated cmr ${pass} coder-fix exhausted head-stuck redispatch ` +
-            `budget (${MAX_HEAD_STUCK_REDISPATCHES}) without advancing family head`;
-          const stopSummary = coderFixFailureStopSummary({
-            pass,
-            reason,
-            familyHeadBefore: fixFamilyHeadBefore,
-            familyHeadAfter: fixRound.familyHeadAfter,
+            `integrated cmr ${pass} coder-fix head still unmoved after ` +
+            `${MAX_HEAD_STUCK_REDISPATCHES} redispatch (initial + retry); needs human decision`;
+          const stopSummary = decisionGateParkStopSummary({
+            summary: reason,
+            repairHint:
+              "coder-fix returned ok but family HEAD did not advance twice — answer the decision gate (continue fix / other), then re-feed; do not treat as infra abort",
           });
-          await recordDurableAbort(familyBackend, {
-            phase: "final",
-            cmrPass: pass,
+          await familyBackend.escalateFamily?.({
             reason,
             familyHeadAfter: fixRound.familyHeadAfter,
-            blockingFindingIdentityKeys,
             stopSummary,
+            escalationKind: "decision",
+            phase: "final",
           });
           return {
             result: { ok: false, ran: true },

@@ -63,7 +63,9 @@ const SEVERITY_RANK: Readonly<Record<Finding["severity"], number>> = {
   critical: 4,
 };
 
-const MAX_REOPEN_ATTEMPTS = 4;
+// No MAX_REOPEN_ATTEMPTS (owner 2026-07-13): reopen is not a capped court.
+// Disagreement / severity upgrade re-enters blocking so the human decision gate
+// can settle — never "budget exhausted → silently keep suppressed".
 
 function isDispositionAction(
   action: Finding["action"],
@@ -176,10 +178,7 @@ function reopenedDisposition(
   return {
     ...disposition,
     severity: finding.severity,
-    reopenAttempts: Math.min(
-      MAX_REOPEN_ATTEMPTS,
-      disposition.reopenAttempts + 1,
-    ),
+    reopenAttempts: disposition.reopenAttempts + 1,
   };
 }
 
@@ -254,17 +253,12 @@ export function classifyFindings(
       // silently dropped.
       if (priorSuppression !== undefined) {
         if (upgradedSeverity(finding, priorSuppression)) {
-          // UPGRADE (severity升级): record the reopen (capped) AND BLOCK. The
-          // higher severity is not covered by the waiver. Both the
-          // budget-available and budget-exhausted subcases block — the old code
-          // recorded a reopen then `continue`d, silently dropping the upgraded
-          // finding (and dropping it entirely once the budget was exhausted).
-          if (priorSuppression.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
-            dispositionByKey.set(
-              key,
-              reopenedDisposition(finding, priorSuppression),
-            );
-          }
+          // UPGRADE: always reopen + block (no reopen attempt cap). Human settles
+          // via findings-count / decision gate — not a budget court.
+          dispositionByKey.set(
+            key,
+            reopenedDisposition(finding, priorSuppression),
+          );
           blocking.push(finding);
           continue;
         }
@@ -283,15 +277,16 @@ export function classifyFindings(
     }
     if (priorSuppression !== undefined) {
       if (upgradedSeverity(finding, priorSuppression)) {
-        if (priorSuppression.reopenAttempts < MAX_REOPEN_ATTEMPTS) {
-          dispositionByKey.set(key, reopenedDisposition(finding, priorSuppression));
-        }
+        dispositionByKey.set(key, reopenedDisposition(finding, priorSuppression));
       } else if (
         sameSeverity(finding, priorSuppression) &&
         (priorSuppression.disputeAttempts ?? 0) < 1
       ) {
         dispositionByKey.set(key, disputedDisposition(priorSuppression));
       } else {
+        // Dispute already spent / cannot reconcile in-code → block for human
+        // decision gate (owner: 意见统一不了上升裁决, not silent suppress).
+        blocking.push(finding);
         continue;
       }
     }

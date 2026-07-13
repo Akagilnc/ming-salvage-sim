@@ -186,7 +186,7 @@ class RetryReviewBackend implements Backend {
 }
 
 describe("#369 per-slice runner-visible review/fix loop", () => {
-  it("reruns an invalid reviewer output once, then succeeds on a clean full-diff review", async () => {
+  it("rises to decision on first unusable reviewer output (no schema redispatch)", async () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "missing <review> tag" },
       { kind: "completed", output: { kind: "reviewer", findings: [] } },
@@ -194,15 +194,13 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual([
-      "S2:coder",
-      "S3:reviewer",
-      "S3:reviewer",
-      "S7:ship",
-
-    ]);
-    expect(backend.specs.filter((s) => s.id === "S3").every((s) => s.session === "fresh")).toBe(true);
+    expect(result.status).toBe("escalate");
+    expect(backend.dispatched).toEqual(["S2:coder", "S3:reviewer"]);
+    const s3 = result.stepLedger.find((e) => e.step === "S3");
+    expect(s3?.output).toMatchObject({
+      kind: "reviewer",
+      escalate: { reason: expect.stringMatching(/needs human decision/i) },
+    });
   });
 
   it("passes structured blocking findings and identity keys to the S5 fix worker", async () => {
@@ -293,7 +291,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     expect(result.deferredFindings).toEqual([]);
   });
 
-  it("escalates after the bounded reviewer-output retry budget is exhausted", async () => {
+  it("rises to decision gate on first unusable reviewer output (no schema-retry kill)", async () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "truncated JSON" },
       { kind: "malformed", reason: "truncated JSON again" },
@@ -303,47 +301,40 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     expect(result.status).toBe("escalate");
-    expect(backend.dispatched).toEqual([
-      "S2:coder",
-      "S3:reviewer",
-      "S3:reviewer",
-      "S3:reviewer",
-    ]);
+    // One reviewer attempt only — no MAX_INVALID shape court redispatch.
+    expect(backend.dispatched).toEqual(["S2:coder", "S3:reviewer"]);
     const s3 = result.stepLedger.find((entry) => entry.step === "S3");
     expect(s3?.output?.kind).toBe("reviewer");
     expect(s3?.output).toMatchObject({
       kind: "reviewer",
-      escalate: { reason: expect.stringMatching(/redispatch exhausted/i) },
+      escalate: { reason: expect.stringMatching(/needs human decision/i) },
     });
+    expect(
+      (s3?.output as { escalate?: { synthesizedFailure?: boolean } } | undefined)
+        ?.escalate?.synthesizedFailure,
+    ).not.toBe(true);
   });
 
-  // #604 correctness r1 (P1-a ①): a RUNNER-synthesized escalate from exhausted
-  // malformed reviewer reruns is a PROTOCOL FAILURE, not a worker-proactive
-  // decision. Its persisted S8 handoff must be escalationKind:"failure"
-  // (A-class), never "decision" (B-class park) — even though its
-  // reason/diagnosis are well-formed strings.
-  it("maps an exhausted-malformed synthesized escalate to escalationKind:failure, not decision", async () => {
+  // Owner 2026-07-13: unusable reviewer output is decision-gate park (channel c),
+  // not A-class protocol failure kill after schema retries.
+  it("maps unusable reviewer output escalate to escalationKind:decision, not failure", async () => {
     const backend = new RetryReviewBackend([
       { kind: "malformed", reason: "truncated JSON" },
-      { kind: "malformed", reason: "truncated JSON again" },
-      { kind: "malformed", reason: "permanently truncated JSON" },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     expect(result.status).toBe("escalate");
-    // The synthesized escalate carries the protocol-failure marker.
     const s3 = result.stepLedger.find((entry) => entry.step === "S3");
     expect(s3?.output).toMatchObject({
       kind: "reviewer",
-      escalate: { synthesizedFailure: true },
+      escalate: { reason: expect.stringMatching(/needs human decision/i) },
     });
-    // The persisted S8 handoff entry is tagged FAILURE, not decision.
     const s8Escalate = backend.ledgerWrites.find(
       (entry) => entry.step === "S8" && entry.handoffStatus === "escalate",
     );
     expect(s8Escalate).toBeDefined();
-    expect(s8Escalate?.escalationKind).toBe("failure");
+    expect(s8Escalate?.escalationKind).toBe("decision");
   });
 });
 
@@ -2373,7 +2364,7 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(backend.dispatched).toEqual([]);
   });
 
-  it("bounded-retries legacy reviewer parse exceptions before succeeding", async () => {
+  it("rises to decision on first structured-output parse failure (no schema redispatch)", async () => {
     class LegacyThrowingReviewBackend implements Backend {
   async smokeModelRoute(route: any) {
     const { smokeRouteModels } = await import("../src/modelRoutes.js");
@@ -2407,10 +2398,7 @@ describe("#369 runner resume/retry review fixes", () => {
         this.calls.push(`runStep(${spec.id})`);
         if (spec.role === "reviewer") {
           this.reviewerAttempts += 1;
-          if (this.reviewerAttempts === 1) {
-            throw new Error("StructuredOutputError: missing <review> tag");
-          }
-          return { kind: "reviewer", findings: [] };
+          throw new Error("StructuredOutputError: missing <review> tag");
         }
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -2421,9 +2409,9 @@ describe("#369 runner resume/retry review fixes", () => {
 
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
-    expect(result.status).toBe("success");
-    expect(backend.calls).toEqual(["runStep(S2)", "runStep(S3)", "runStep(S3)"]);
-    expect(backend.reviewerAttempts).toBe(2);
+    expect(result.status).toBe("escalate");
+    expect(backend.calls).toEqual(["runStep(S2)", "runStep(S3)"]);
+    expect(backend.reviewerAttempts).toBe(1);
   });
 
   it("retries a reviewer non-structured crash, then surfaces a persistent one as an S8 error (#598)", async () => {
@@ -2934,7 +2922,7 @@ describe("#369 finding identity and classification", () => {
     expect(classification.deferred).toEqual([]);
   });
 
-  it("reopens a suppressed finding on severity upgrade but caps reopen attempts at four", () => {
+  it("reopens a suppressed finding on severity upgrade without reopen-attempt cap", () => {
     const acceptedSuppressionSources = [
       {
         source: "issue #448 acceptance criteria",
@@ -3001,10 +2989,11 @@ describe("#369 finding identity and classification", () => {
       },
     ]);
     expect(capped.deferred).toEqual([]);
-    expect(capped.dispositions[0]?.reopenAttempts).toBe(4);
+    // no reopen cap: 3 → 4 on high, then 4 → 5 on critical
+    expect(capped.dispositions[0]?.reopenAttempts).toBe(5);
   });
 
-  it("allows one same-severity dispute of a suppressed finding, then suppresses repeats", () => {
+  it("allows one same-severity dispute then keeps blocking for human (no silent re-suppress)", () => {
     const acceptedSuppressionSources = [
       {
         source: "issue #448 acceptance criteria",
@@ -3070,8 +3059,13 @@ describe("#369 finding identity and classification", () => {
       { acceptedSuppressionSources },
     );
 
-    expect(repeated.blocking).toEqual([]);
-    expect(repeated.deferred).toEqual([]);
+    expect(repeated.blocking).toEqual([
+      {
+        ...finding,
+        severity: "medium",
+        action: "fix_now",
+      },
+    ]);
     expect(repeated.dispositions).toEqual(disputed.dispositions);
   });
 });

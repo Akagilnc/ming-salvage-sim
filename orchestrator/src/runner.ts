@@ -2229,7 +2229,9 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
   "typescript",
 ] as const;
 
-const MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS = 2;
+// Removed MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS (owner 2026-07-13 / #873 spirit):
+// invalid/malformed reviewer output is NOT a "legal schema court" that retries
+// then kills. Rise once to the human decision gate (channel c).
 
 /**
  * The fixed StepSpecs for single-slice worker steps. Versioned promptFiles,
@@ -4495,10 +4497,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const retryOpts: MechanicalRetryOptions =
                 expectedKind === "reviewer"
                   ? {
-                      callerOwns: (o) =>
-                        "result" in o
-                          ? false
-                          : isReviewerStructuredOutputError(o.error),
+                      // Reviewer unusable output is decision-gate material, not
+                      // process-crash redispatch fodder (owner 2026-07-13).
+                      callerOwns: (o) => {
+                        if ("result" in o) {
+                          return (
+                            o.result.kind === "malformed" ||
+                            o.result.kind === "outcome_protocol_failure"
+                          );
+                        }
+                        return isReviewerStructuredOutputError(o.error);
+                      },
                       rethrowOnExhaustion: true,
                     }
                   : {};
@@ -4585,29 +4594,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             } catch (err) {
               if (
                 expectedKind === "reviewer" &&
-                isReviewerStructuredOutputError(err) &&
-                attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS
-              ) {
-                resumeSessionId = undefined;
-                continue;
-              }
-              if (
-                expectedKind === "reviewer" &&
                 isReviewerStructuredOutputError(err)
               ) {
+                // Rise to human decision gate — do not schema-retry-then-kill.
                 output = {
                   kind: "reviewer",
                   findings: [],
                   escalate: {
-                    reason: "reviewer output remained invalid after bounded reruns",
+                    reason: "reviewer output invalid — needs human decision",
                     diagnosis:
-                      `step ${step} failed to produce valid reviewer output ` +
-                      `${attempts} times; last error: ${errorMessage(err)}`,
-                    // #604 correctness r1 (P1-a): a RUNNER-synthesized escalate from
-                    // exhausted malformed reruns is a PROTOCOL FAILURE, not a
-                    // worker-proactive decision — mark it so the handoff maps to
-                    // escalationKind:"failure" (A-class), never the decision gate.
-                    synthesizedFailure: true,
+                      `step ${step}: ${errorMessage(err)} ` +
+                      "(not a content court; human settles resume vs redispatch)",
                   },
                 };
                 stepSessionId = undefined;
@@ -4628,13 +4625,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
             if (retryableReviewerFailure) {
               if (isRelayCandidateExhaustion(reason)) {
+                // Pool/dispatch wall — still a human/relay problem, not a schema kill.
                 output = {
                   kind: "reviewer",
                   findings: [],
                   escalate: {
-                    reason: "reviewer mechanical redispatch exhausted",
-                    diagnosis: reason ?? "reviewer output remained malformed",
-                    synthesizedFailure: true,
+                    reason: "reviewer dispatch exhausted — needs human decision",
+                    diagnosis: reason ?? "reviewer output remained unusable",
                   },
                 };
                 stepSessionId =
@@ -4643,21 +4640,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     : undefined;
                 break;
               }
-              if (attempts < MAX_INVALID_REVIEWER_OUTPUT_ATTEMPTS) {
-                resumeSessionId = undefined;
-                continue;
-              }
+              // No multi-attempt "legal schema" court: rise to decision gate once.
               output = {
                 kind: "reviewer",
                 findings: [],
                 escalate: {
-                  reason: "reviewer output remained invalid after bounded reruns",
+                  reason: "reviewer output invalid — needs human decision",
                   diagnosis:
-                    `step ${step} produced invalid reviewer output ${attempts} times; ` +
-                    "runner stopped instead of retrying indefinitely",
-                  // #604 correctness r1 (P1-a): protocol failure, not a decision —
-                  // synthesized by the runner after exhausted reruns.
-                  synthesizedFailure: true,
+                    reason ??
+                    `step ${step} produced unusable reviewer output ` +
+                      "(human settles; runner does not retry-kill on shape)",
                 },
               };
               stepSessionId =

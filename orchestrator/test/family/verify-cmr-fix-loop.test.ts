@@ -358,6 +358,7 @@ class ReviewFixRereviewBackend implements FamilyBackend {
   readonly ledger: FamilyLedgerEntry[] = [];
   readonly dispatches: DispatchRecord[] = [];
   readonly verifyRequests: FamilyVerifyRequest[] = [];
+  readonly escalations: FamilyEscalation[] = [];
   currentFamilyHead = "head-before-cmr-review";
   private completenessReviewRound = 0;
 
@@ -379,6 +380,9 @@ class ReviewFixRereviewBackend implements FamilyBackend {
   async runFamilyVerify(req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
     this.verifyRequests.push(req);
     return { ok: true };
+  }
+  async escalateFamily(esc: FamilyEscalation): Promise<void> {
+    this.escalations.push(esc);
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     this.dispatches.push({
@@ -2332,31 +2336,36 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches.filter((d) => d.kind === "coder")).toHaveLength(1);
   });
 
-  it("#878 forever head-stuck coder → mechanical budget then durable stop (no barrier thrash)", async () => {
+  it("#878 forever head-stuck coder → one redispatch then decision-gate rise (not abort)", async () => {
     const backend = new AlwaysHeadStuckCoderBackend();
     const result = await runVerifyCmr({
       phase: "final",
       familyBase: "family/878-head-stuck-budget",
       familyBackend: backend,
     });
-    // Budget exhaust without head move → operational fail, not infinite restart.
+    // Head unmoved after initial + 1 redispatch → park for human, not kill-abort.
     expect(result).toEqual({ ok: false, ran: true });
     const coders = backend.dispatches.filter((d) => d.kind === "coder");
-    // 1 initial + MAX_HEAD_STUCK_REDISPATCHES(1) = 2, then durable raise.
     expect(coders).toHaveLength(2);
-    // Must not re-enter cmr after budget exhaust (would reset the local counter).
     const cmrAfterFirstCoder = backend.dispatches
       .slice(backend.dispatches.findIndex((d) => d.kind === "coder") + 1)
       .filter((d) => d.kind === "cmr");
     expect(cmrAfterFirstCoder).toHaveLength(0);
+    // Decision channel (c): escalateFamily, not durable aborted ledger.
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]?.escalationKind).toBe("decision");
+    expect(backend.escalations[0]?.stopSummary?.reason).toBe(
+      "decision_gate_park",
+    );
+    expect(backend.escalations[0]?.reason).toMatch(/human decision|head still unmoved/i);
     expect(
       backend.ledger.some(
         (e) =>
           e.status === "aborted" &&
           typeof e.reason === "string" &&
-          /head-stuck redispatch budget/i.test(e.reason),
+          /head-stuck/i.test(e.reason),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("preserves coder-fix outcome protocol failure details in the durable abort after mechanical retries (#855 review)", async () => {
