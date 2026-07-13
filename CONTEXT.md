@@ -19,7 +19,7 @@ _Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamil
 _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue 建多个并行现场
 
 **家族子工作树（Family Child Worktree）**:
-家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 重入时继续使用原工作树、编排账与 agent session，不另建第二个现场。直接输入子 issue 号则走单片模式的独立 worktree 和 PR，不使用本术语。
+家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，但 successor agent/session/checkpoint 按选棒结果决定，可变化，不另建替代现场。直接输入子 issue 号则走单片模式的独立 worktree 和 PR，不使用本术语。
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
 **家族开工过滤（Family Admission Filter）**:
@@ -33,6 +33,10 @@ _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代�
 **编排账（Orchestration Ledger）**:
 用于续跑与定位 agent session 的持久化编排状态与记录，记载已完成步骤、结果、下一步与 session identity。它不是 agent 的对话记忆；真正的模型上下文留在 agent session，由编排账中的 session identity 定位。
 _Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
+
+**Worker Invocation 生命周期**:
+Worker Invocation Action 与 Lineage 共同拥有 worker crash/re-entry、retry budget 消耗、是否重派 worker 以及 scene/session recovery。Runner 只依据 exit-code 通道，在同一 fixed flow position 机械重调尚未完成的 Action；ordinary retry/resume 恢复当前角色原 session，relay 则保留 scene、worktree、baton 与旧 session/checkpoint records，successor session 按选棒结果决定。
+_Avoid_: 让 Runner 自己消费 retry budget 或重派 worker、把 relay 写成 same-session、把 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
 
 ### Runtime And LLM
 
