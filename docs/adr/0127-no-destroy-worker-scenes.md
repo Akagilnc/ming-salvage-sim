@@ -8,7 +8,7 @@ Accepted（Owner 终审，见 issue #661 评论 2026-07-10；部分收窄 ADR 00
 
 ## Decision
 
-编排器任何路径（mechanical retry / 崩溃复用 prepareWorktree / resume / relay）**不得销毁 worker 现场**——未提交产出与 partial commit 是劳动成果，一律接续；`reset --hard` / `clean -fd` 类清场仅允许出现在 terminal-success 后的显式 GC。ADR 0024 决定 2 中「保留 reset --hard HEAD + clean -fd 的片内残留清理」一句被本 ADR 收窄废除（0024 的独立 clone 与 prune 边界不变）。读取/比对 HEAD 合法且必要（resume 检测、fix 追踪）；差异处置 = 报告并交下一步判断，永不销毁。
+编排器任何 `retry` / 崩溃复用 / `resume` / `relay` 路径**不得因流程重入而销毁 worker 现场**——未提交产出与 partial commit 是劳动成果，一律接续；`reset --hard` / `clean -fd` 类清场仅允许出现在 terminal-success 后的显式 GC。ADR 0024 决定 2 中「保留 `reset --hard HEAD` + `clean -fd` 的片内残留清理」一句被本 ADR 收窄废除（0024 的独立 clone 与 prune 边界不变）。GitHub `closed` 只让该子 issue 退出当前调度，不授权立即删除已有 worktree；父流程 terminal-success + 显式 GC 前若 reopen + ready，复用原现场。唯一新增例外：owner 从父 issue 的 GitHub native sub-issues 中移除某个未合子 issue，等于明确取消**该家族子现场**，下次重入允许删除其 worktree；只删 worktree，不顺带删 branch、ledger、日志或 telemetry/统计，也不自动撤销已经合进父工作树的代码。该例外来自明确成员移除，不得扩张成 `close`、`retry`、`resume` 或 `relay` 清场。
 
 ## Consequences
 
