@@ -134,7 +134,6 @@ async function runAssemblyWithEnv(fast: boolean): Promise<{
     soulsDir: "/tmp/souls",
     ledgerDir: mkdtempSync(join(tmpdir(), "codex-fast-760-ledger-")),
     imageName: "test-image",
-    skillsMount: "/tmp/skills",
     sh: makeEpicSh(),
     realBackendFactory: (options) => {
       backendOptions = options;

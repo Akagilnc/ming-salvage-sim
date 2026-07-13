@@ -75,7 +75,6 @@ function newBackend(override?: Partial<RealBackendOptions>): StubCloneBackend {
     runKey: ISSUE,
     repo: "owner/name",
     imageName: "img",
-    skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
     soulsDir: realSoulsDir,
     home: HOME,

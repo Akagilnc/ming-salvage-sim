@@ -112,7 +112,7 @@ export function shipOutcomeFromResult(result: {
   completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
-}): ShipWorkerOutcome {
+}): Exclude<ShipWorkerOutcome, { readonly kind: "failed" | "malformed" }> {
   try {
     if (result.outcomePath !== undefined) {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
@@ -134,8 +134,8 @@ export function shipOutcomeFromResult(result: {
 
 /**
  * Legacy telemetry parser for a ship worker's `<ship>{…}</ship>` stdout (#336).
- * Production routing no longer calls this function: prose cannot decide control
- * flow under ADR 0062 / #820. Kept pure for historical telemetry decoding. The
+ * Production calls this only to probe the independent decision bell; non-bell
+ * shapes are telemetry cargo and cannot decide control flow. The
  * shape mirrors family_ship.md:
  *   - `{"status": "pushed",    "branch": string}`              → shipped (no pr);
  *   - `{"status": "pr_opened", "branch": string, "pr": string}`→ shipped (pr REQUIRED);

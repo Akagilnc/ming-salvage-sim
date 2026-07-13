@@ -7,7 +7,7 @@
  * This slice makes the seam REAL in two ways the #331 prefactor only declared:
  *
  *   1. RealBackend's sandbox stops bind-mounting host skills at runtime
- *      (`skillsMount`) — the baked image's skills win (cross-slice note from
+ *      (host skill mounts) — the baked image's skills win (cross-slice note from
  *      #332/#333: the runtime mount SHADOWS the baked skills). The behaviour
  *      change is assertable on the pure `boxConfig()` seam (no container needed),
  *      mirroring the family `mergerSandboxConfig()` testability pattern.
@@ -80,9 +80,9 @@ function cleanupTempHomes(): void {
 afterEach(cleanupTempHomes);
 afterAll(cleanupTempHomes);
 
-// ─── (1) RealBackend.boxConfig drops the runtime skillsMount (#334) ───────────
+// ─── (1) RealBackend.boxConfig uses baked skills (#334) ──────────────────────
 
-describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills win)", () => {
+describe("#334 RealBackend.boxConfig uses baked skills", () => {
   /** Stub the clone seams so construction never shells out to git. */
   class StubBackend extends RealBackend {
     protected override cloneDirExists(): boolean {
@@ -212,8 +212,8 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
   });
 
-  it("skillsMount is no longer a required RealBackendOptions field (#334)", () => {
-    // Construction WITHOUT skillsMount must succeed — the baked image provides
+  it("constructs without a host skills option (#334)", () => {
+    // The baked image provides
     // skills, so the host mount path is gone from the options contract.
     expect(() => makeBackend()).not.toThrow();
   });

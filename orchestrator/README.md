@@ -135,7 +135,6 @@ const result = await runFamilyDriver({
   soulsDir: `${ORCH}/image/souls`,
   ledgerDir: `/Users/akagilnc/.sc-orchestrator/family-${EPIC}-ledger`,
   imageName: "ming-orchestrator-coder:latest",
-  skillsMount: "/Users/akagilnc/sc-pipeline/skills-mount",
 });
 console.log(JSON.stringify(result, null, 2));
 ```

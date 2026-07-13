@@ -582,8 +582,6 @@ export interface FamilyDriverOptions {
   readonly ledgerDir: string;
   /** The profile image (toolchain + skills + model CLIs baked in; souls mounted #372). */
   readonly imageName: string;
-  /** Host dir holding the baked dev skills to bind-mount. */
-  readonly skillsMount: string;
   /** Override $HOME (tests / non-default auth root). */
   readonly home?: string;
   /** The `gh` subprocess seam (default `execFileSync gh …`; injected in tests). */
@@ -673,7 +671,6 @@ export async function runFamilyDriver(
     runKey: options.epicIssue,
     repo: options.repo,
     imageName: options.imageName,
-    skillsMount: options.skillsMount,
     promptsDir: options.promptsDir,
     soulsDir: options.soulsDir,
     home: options.home,

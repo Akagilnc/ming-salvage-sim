@@ -78,7 +78,6 @@ function build(cfg: ShCfg, override?: Partial<RealBackendOptions>): RecordingBac
     runKey: 291,
     repo: "Akagilnc/ming-salvage-sim",
     imageName: "img",
-    skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
     soulsDir: realSoulsDir,
     home: HOME,

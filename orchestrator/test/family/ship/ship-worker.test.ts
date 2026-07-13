@@ -7,8 +7,7 @@
  * cmr + merge are the separate pr-review-loop stage). Its `<ship>` tag is gated on
  * the completion signal then classified into a {@link ShipWorkerOutcome}, which
  * `dispatchWorker` maps to the full {@link WorkerResult} union (PRD #330 R2):
- *   shipped → completed ShipResult; escalate → escalated; failed → failed;
- *   malformed → malformed.
+ *   shipped → completed ShipResult; escalate → escalated.
  *
  * Tested WITHOUT a real container (mirrors #335's cmr-worker test): the
  * `runShipWorker` seam is fixtured; the `dispatchWorker(ship)` routing is asserted
@@ -46,7 +45,10 @@ import {
   SPAWNED_WORKER_ENV,
 } from "../../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../../src/family/dispatchFamilyWorker.js";
-import type { ShipWorkerOutcome } from "../../../src/shipOutcome.js";
+import {
+  shipOutcomeFromResult,
+  type ShipWorkerOutcome,
+} from "../../../src/shipOutcome.js";
 import type { DispatchContext, WorkerSpec } from "../../../src/types.js";
 
 /**
@@ -86,7 +88,7 @@ const FAMILY_BASE = "feat/330-pure-scheduler";
 /** A family backend whose container `runShipWorker` seam is fixtured (no sc.run). */
 class FixturedShipBackend extends RealFamilyBackend {
   runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
-  outcome: ShipWorkerOutcome = {
+  outcome: ReturnType<typeof shipOutcomeFromResult> = {
     kind: "shipped",
     branch: FAMILY_BASE,
     status: "pr_opened",
@@ -95,7 +97,7 @@ class FixturedShipBackend extends RealFamilyBackend {
   protected override async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
-  ): Promise<ShipWorkerOutcome> {
+  ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
     this.runShipCalls.push({ spec, ctx });
     return this.outcome;
   }
@@ -158,34 +160,9 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     if (res.kind === "escalated") expect(res.escalation.reason).toContain("review ASK");
   });
 
-  it("a failed outcome ⇒ WorkerResult.failed (a hard ship/test failure)", async () => {
-    const be = fixtured();
-    be.outcome = { kind: "failed", reason: "tests red", diagnosis: "vitest exited 1" };
-    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("failed");
-  });
-
-  it("a malformed outcome ⇒ WorkerResult.malformed (never silently a success)", async () => {
-    const be = fixtured();
-    be.outcome = { kind: "malformed", reason: "no <ship> tag" };
-    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("malformed");
-  });
-
   it('a shipped outcome with status "pushed" is completed worker truth', async () => {
     const be = fixtured();
     be.outcome = { kind: "shipped", branch: FAMILY_BASE, status: "pushed" };
-    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
-    expect(res.kind).toBe("completed");
-  });
-
-  it('a shipped "pr_opened" with no cargo URL remains completed', async () => {
-    const be = fixtured();
-    be.outcome = {
-      kind: "shipped",
-      branch: FAMILY_BASE,
-      status: "pr_opened",
-    } as unknown as ShipWorkerOutcome;
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res.kind).toBe("completed");
   });

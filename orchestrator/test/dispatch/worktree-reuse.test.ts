@@ -94,7 +94,6 @@ function newBackend(): RecordingBackend {
     runKey: ISSUE,
     repo: "owner/name",
     imageName: "img",
-    skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
     soulsDir: realSoulsDir,
     home: HOME,

@@ -1138,7 +1138,6 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
     repo: "owner/name",
     imageName: "img",
     soulsDir: realSoulsDir,
-    skillsMount: "/tmp/skills",
     // #748: construction still resolves clone paths under home. Create it on
     // access because each test's cleanup removes the previous temp home.
     get home() {
@@ -2160,7 +2159,6 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       runKey: 999,
       repo: "owner/name",
       imageName: "img",
-      skillsMount: "/tmp/skills",
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       home: tempHome("rb-home-329-"),
@@ -2327,14 +2325,14 @@ describe("realBackend extractCoderTag", () => {
 
   it("#551 accepts coder-fix repair evidence with same-class and regression checks through the real parser", () => {
     const stdout =
-      '<coder>{"committed": true, "commitsAdded": 1, "repairEvidence": {"findingScope": {"identityKeys": ["correctness|orchestrator/src/realBackend.ts:1700|schema drift"], "locations": ["orchestrator/src/realBackend.ts"]}, "changedFiles": ["orchestrator/src/realBackend.ts"], "tests": ["npm test -- --run test/realBackend.logic.test.ts -t #551"], "sameClassBugScan": "rg \\"repairEvidenceSchema|isCompleteRepairEvidence\\" orchestrator/src orchestrator/test", "introducedRegressionCheck": "npm test -- --run test/family/verify-cmr-fix-loop.test.ts", "patchSummary": "thread #551 repair evidence through the real worker parser"}}</coder>';
+      '<coder>{"committed": true, "commitsAdded": 1, "repairEvidence": {"findingScope": {"identityKeys": ["correctness|orchestrator/src/realBackend.ts:1700|schema drift"], "locations": ["orchestrator/src/realBackend.ts"]}, "changedFiles": ["orchestrator/src/realBackend.ts"], "tests": ["npm test -- --run test/realBackend.logic.test.ts -t #551"], "sameClassBugScan": "rg \\"repairEvidenceSchema|isValidRepairEvidence\\" orchestrator/src orchestrator/test", "introducedRegressionCheck": "npm test -- --run test/family/verify-cmr-fix-loop.test.ts", "patchSummary": "thread #551 repair evidence through the real worker parser"}}</coder>';
 
     expect(parseCoderSelfReport(extractCoderTag(stdout))).toMatchObject({
       committed: true,
       commitsAdded: 1,
       repairEvidence: {
         sameClassBugScan:
-          'rg "repairEvidenceSchema|isCompleteRepairEvidence" orchestrator/src orchestrator/test',
+          'rg "repairEvidenceSchema|isValidRepairEvidence" orchestrator/src orchestrator/test',
         introducedRegressionCheck:
           "npm test -- --run test/family/verify-cmr-fix-loop.test.ts",
       },

@@ -2119,14 +2119,15 @@ describe("#686 R2 production seams", () => {
     expect(tryParseActionableRelayTag("no tag")).toBeUndefined();
   });
 
-  it("P1: a worker-log decision_gate tag durably parks, then an appended answer re-enters the original step", async () => {
+  it("P1: a sparse worker-log decision_gate durably parks, then an appended answer re-enters the original step", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "relay-826-decision-gate-"));
     const worktree: WorktreeHandle = {
       branch: "fix/826-decision-gate",
       base: "main",
       path: tmp,
     };
-    const workerLog = `<relay>{"decision_gate":true,"state_summary":"need product ruling","remaining":"choose policy"}</relay>`;
+    const rawDecisionGate = '{"decision_gate":{},"unexpected_cargo":[1,2,3]}';
+    const workerLog = `<relay>${rawDecisionGate}</relay>`;
     const WORKER_SESSION_ID = "relay-826-worker-session";
     const persisted: PersistentLedgerEntry[] = [];
     const resumed: Array<{ step: string; sessionId: string }> = [];
@@ -2214,7 +2215,7 @@ describe("#686 R2 production seams", () => {
         }),
       ).rejects.toMatchObject({
         name: "SelfReportedRelayError",
-        tag: { kind: "decision_gate", state_summary: "need product ruling" },
+        tag: { kind: "decision_gate", state_summary: rawDecisionGate },
         sessionId: WORKER_SESSION_ID,
       });
 
@@ -2228,7 +2229,7 @@ describe("#686 R2 production seams", () => {
       expect(first.status).toBe("escalate");
       expect(first.stopSummary).toMatchObject({
         reason: "decision_gate_park",
-        summary: expect.stringContaining("need product ruling"),
+        summary: expect.stringContaining(rawDecisionGate),
       });
       expect(
         first.stepLedger.find(

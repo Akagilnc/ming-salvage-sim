@@ -55,7 +55,6 @@ function newBackend(home: string): FileWriteBackend {
     runKey: 256,
     repo: "owner/name",
     imageName: "img",
-    skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
     soulsDir: realSoulsDir,
     home,

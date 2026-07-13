@@ -129,10 +129,7 @@ import {
   readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
 import { probeWorkerDecisionBell } from "../workerReceipt.js";
-import {
-  modelForSlot,
-  type CmrLegAccountingRoute,
-} from "../modelRoutes.js";
+import { modelForSlot } from "../modelRoutes.js";
 import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
@@ -148,7 +145,7 @@ import {
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
 import type { Sh } from "../familyDriver.js";
 import { recordFamilyEscalated } from "./ledger.js";
-import { shipOutcomeFromResult, type ShipWorkerOutcome } from "../shipOutcome.js";
+import { shipOutcomeFromResult } from "../shipOutcome.js";
 import {
   configureTelemetryFromWorkerImage,
   createTelemetryLegStamper,
@@ -313,14 +310,6 @@ export interface RealFamilyBackendOptions {
   readonly soulsDir: string;
   /** The profile image (skills + CLIs baked in; souls mounted live #372) for the merger agent sandbox. */
   readonly imageName: string;
-  /**
-   * DEPRECATED (#334): host dir of dev skills to bind-mount for the merger. The
-   * 2b image bakes `resolving-merge-conflicts`; `mergerSandboxConfig()` no longer
-   * mounts host skills (a runtime mount would SHADOW the baked skill). Kept
-   * OPTIONAL for back-compat; no longer read. Remove once callers drop it.
-   * (Souls are mounted live per #372, not baked.)
-   */
-  readonly skillsMount?: string;
   /**
    * The family base HEAD at run setup — the baseline {@link ReconcileGit.familyBaseStartHead}
    * returns (the spine provides it; the only baseline available when the ledger is
@@ -1409,14 +1398,6 @@ export class RealFamilyBackend implements FamilyBackend {
       return {
         kind: "escalated",
         escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
-        ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
-      };
-    }
-    if (outcome.kind === "malformed") {
-      // No parseable verdict ⇒ malformed (the gate must never read it as a pass).
-      return {
-        kind: "malformed",
-        reason: outcome.reason,
         ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
       };
     }
@@ -2594,10 +2575,10 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Dispatch the FAMILY ship WORKER (#336): a CONTAINER ship worker invoking
    * `gstack-ship` over the family base, 止于 PR (the online bot cmr + merge are the
-   * separate pr-review-loop stage). Maps the {@link ShipWorkerOutcome} to the full
+   * separate pr-review-loop stage). Maps the ship receipt to the full
    * {@link WorkerResult} union (PRD #330 R2): shipped → `completed` ShipResult; a
-   * genuine block → `escalated`; a hard ship/test failure → `failed`; unparseable →
-   * `malformed`. A rerun-able flake is NOT escalated — the worker reruns it itself.
+   * genuine block → `escalated`. A rerun-able flake is handled inside the worker;
+   * other clean-exit cargo returns a completed placeholder.
    */
   protected async dispatchShipWorker(
     spec: WorkerSpec,
@@ -2617,14 +2598,6 @@ export class RealFamilyBackend implements FamilyBackend {
         kind: "escalated",
         escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
       };
-    }
-    if (outcome.kind === "failed") {
-      // A hard ship/test failure no rerun cleared → the family PR could not open
-      // (verifyCmr fail-safes a non-ship/non-completed result to INCOMPLETE_GATE).
-      return { kind: "failed", reason: `${outcome.reason} — ${outcome.diagnosis}` };
-    }
-    if (outcome.kind === "malformed") {
-      return { kind: "malformed", reason: outcome.reason };
     }
     if (outcome.kind === "completed") {
       return {
@@ -2658,7 +2631,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
-  ): Promise<ShipWorkerOutcome> {
+  ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
     // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the cmr worker's
     // preflight ~645-666): when the ship slot resolves to a Claude-family model,
     // the Claude OAuth token is NOT a degradable codex/gh LEG — it is THIS worker's
@@ -3131,10 +3104,8 @@ export class RealFamilyBackend implements FamilyBackend {
  *     has already checked required-leg availability before worker dispatch);
  *   - `escalate`  — the worker is model-stuck (skill missing / no leg ran / it
  *     could not produce a verdict) ⇒ the runner's escalate续跑 fork, NOT a pass;
- *   - `malformed` — compatibility-only injected result; production receipt
- *     decoding instead returns sparse verdict cargo with no declared count.
  * Deliberately NOT the bare {@link IntegratedCmrResult}: a cmr worker also has the
- * escalate / malformed WorkerResult-level cases the bare verdict cannot carry.
+ * escalate WorkerResult-level case the bare verdict cannot carry.
  */
 export type CmrWorkerOutcome =
   | {
@@ -3155,11 +3126,6 @@ export type CmrWorkerOutcome =
       readonly kind: "escalate";
       readonly reason: string;
       readonly diagnosis: string;
-      readonly sessionId?: string;
-    }
-  | {
-      readonly kind: "malformed";
-      readonly reason: string;
       readonly sessionId?: string;
     };
 
@@ -3274,7 +3240,7 @@ export function cmrOutcomeFromResult(result: {
           "cmr worker outcome sidecar",
         );
         if (classified.kind === "escalate") return classified;
-        const stdoutBell = parseCmrOutcome(stdout, result.cmrReviewLegs);
+        const stdoutBell = parseCmrOutcome(stdout);
         if (stdoutBell.kind === "escalate") return stdoutBell;
         const findingsCount = parseFindingsSentinel(stdout);
         if (classified.kind !== "verdict") {
@@ -3293,7 +3259,7 @@ export function cmrOutcomeFromResult(result: {
         };
       }
     } catch {
-      const stdoutBell = parseCmrOutcome(stdout, result.cmrReviewLegs);
+      const stdoutBell = parseCmrOutcome(stdout);
       if (stdoutBell.kind === "escalate") return stdoutBell;
       const findingsCount = parseFindingsSentinel(stdout);
       return {
@@ -3306,7 +3272,7 @@ export function cmrOutcomeFromResult(result: {
   }
 
   // Stdout-only / blank-sidecar fallback preserves the same declaration channel.
-  const fromStdout = parseCmrOutcome(stdout, result.cmrReviewLegs);
+  const fromStdout = parseCmrOutcome(stdout);
   const declared = parseFindingsSentinel(stdout);
   if (fromStdout.kind !== "verdict") {
     return declared === undefined
@@ -3472,8 +3438,7 @@ export const cmrReviewerFindingSchema = z
     }
     // #604 correctness r1 (P2-a): an `accepted_suppressed` governance disposition
     // is ONLY valid on a wont_fix/rejected finding. On a fix_now finding it would
-    // otherwise validate, and classifyFindings (fix_now ⇒ blocking) would silently
-    // turn the governance suppression into a blocker. Reject it here.
+    // otherwise validate despite contradicting the suppression contract.
     if (
       finding.action !== "wont_fix" &&
       finding.action !== "rejected" &&
@@ -3551,10 +3516,7 @@ function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<strin
  * defects cannot suppress escalation. Verdict parsing is tolerant cargo support;
  * reviewer fate comes from its declared count. Only the LAST `<cmr>` tag is read.
  */
-export function parseCmrOutcome(
-  stdout: string,
-  _routeOrEnv: CmrLegAccountingRoute = process.env,
-): CmrWorkerOutcome {
+export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   const re = /<cmr>([\s\S]*?)<\/cmr>/g;
   let last: string | undefined;
   for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
@@ -3567,8 +3529,6 @@ export function parseCmrOutcome(
   } catch {
     return sparseCmrCargo();
   }
-  // #875: routeOrEnv retained on the signature for call-site compatibility; parse
-  // no longer converts leg-accounting mismatches into malformed death payloads.
   return classifyCmrOutcomePayload(parsed, "cmr worker <cmr> tag");
 }
 
@@ -3656,28 +3616,9 @@ export function mergerOutcomeFromResult(result: {
   return parseMergerOutcome(result.stdout);
 }
 
-/**
- * The two — and ONLY two — `<merger>` shapes (integ-cmr int-r1, Finding A; mirrors
- * shipOutcome.ts `.strict()` union). Each is `.strict()` so a resolved:true carrying
- * an EXTRA / mixed key (e.g. an `escalate` verdict, an off-contract field) is
- * rejected → NOT a clean resolve (fail-CLOSED). The contract is
- * prompts/merger_resolve_conflict.md "must match the shape above exactly":
- *   1. `{resolved:true, tradeoffs?}`               — resolved (tradeoffs OPTIONAL note);
- *   2. `{resolved:false, escalate:{reason, diagnosis}}` — escalate (could not resolve).
- * `tradeoffs` is optional (the prompt allows an empty/absent note); the escalate
- * `diagnosis` is optional at the schema layer to keep surfacing a reason-only legacy
- * escalate, but a blank `reason` no longer coerces into a resolve.
- */
+/** Resolved cargo stays strict; the decision bell is probed independently first. */
 const mergerResolvedSchema = z
   .object({ resolved: z.literal(true), tradeoffs: z.string().optional() })
-  .strict();
-const mergerEscalateSchema = z
-  .object({
-    resolved: z.literal(false),
-    escalate: z
-      .object({ reason: nonEmpty, diagnosis: nonEmpty.optional() })
-      .strict(),
-  })
   .strict();
 
 /**
@@ -3685,11 +3626,9 @@ const mergerEscalateSchema = z
  * shape in prompts/merger_resolve_conflict.md). Pure so it is unit-tested without
  * a container. Returns whether it resolved + an optional escalate reason.
  *
- * integ-cmr int-r1 (Finding A): classification is centralized into two `.strict()`
- * zod schemas (mirroring shipOutcome.ts). A resolved:true carrying any extra/mixed
- * key (the dangerous false-clean: a success payload smuggling an escalate) no
- * longer counts as resolved → fail-CLOSED to unresolved. Only the LAST `<merger>`
- * tag is read (the agent may iterate).
+ * The decision bell is an independent existence probe, so malformed sibling cargo
+ * cannot turn a worker-pressed gate into a mechanical conflict retry. Resolved cargo
+ * remains strict. Only the LAST `<merger>` tag is read (the agent may iterate).
  */
 export function parseMergerOutcome(stdout: string): {
   resolved: boolean;
@@ -3715,34 +3654,27 @@ function classifyMergerOutcomePayload(
   source: string,
 ): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
   // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"`; the
-  // strict schemas reject every non-object, but guard explicitly so the message
+  // strict resolved schema rejects every non-object, but guard explicitly so the message
   // stays specific (agy R1: a non-object must never crash or coerce to resolved).
   if (parsed === null || typeof parsed !== "object") {
     return { resolved: false, reason: `${source} was not a JSON object` };
   }
-  if (mergerResolvedSchema.safeParse(parsed).success) {
-    return { resolved: true };
-  }
-  const escalate = mergerEscalateSchema.safeParse(parsed);
-  if (escalate.success) {
+  const decisionBell = probeWorkerDecisionBell(parsed);
+  if (decisionBell !== undefined) {
     return {
-      // `reason` is a required `nonEmpty` field in mergerEscalateSchema, so it is
-      // always a non-empty string here — the old `?? diagnosis` fallback was dead
-      // code (online review r3, gemini). `diagnosis` stays an optional schema field.
       resolved: false,
-      reason: escalate.data.escalate.reason,
+      reason: decisionBell.reason,
       escalation: {
-        reason: escalate.data.escalate.reason,
-        ...(escalate.data.escalate.diagnosis !== undefined
-          ? { diagnosis: escalate.data.escalate.diagnosis }
-          : {}),
+        ...decisionBell,
         escalationKind: "decision",
         phase: "wave",
       },
     };
   }
-  // No strict schema matched → off-contract (mixed payload, extra key, blank
-  // reason, unknown shape). Fail-CLOSED: never read as a clean resolve.
+  if (mergerResolvedSchema.safeParse(parsed).success) {
+    return { resolved: true };
+  }
+  // No resolved schema matched → off-contract cargo. Never read it as a clean resolve.
   return { resolved: false, reason: "merger did not resolve" };
 }
 

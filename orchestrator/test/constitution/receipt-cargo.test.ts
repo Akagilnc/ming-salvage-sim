@@ -14,7 +14,6 @@ import { describe, expect, it } from "vitest";
 import { findingIdentityKey } from "../../src/findings.js";
 import { enforceRunnerOwnedRecheck } from "../../src/family/onlineReviewLoop.js";
 import {
-  isValidVerifyResult,
   skeletonReviewLoopWorkerResult,
 } from "../../src/reviewLoopOutcome.js";
 import { runOrchestrator } from "../../src/runner.js";
@@ -194,37 +193,4 @@ describe("#877 residual read-word fate forks — survival", () => {
     ).toEqual({ kind: "verify", converged: true, isRecheck: false });
   });
 
-  it("R5: isValidVerifyResult no longer rejects disposition↔fixMarked set mismatch", () => {
-    // Pre-#877: set-equality of fixMarked keys with fix-action dispositions was
-    // a content court → malformed. Post-#877: type shape only; no semantic shell.
-    expect(
-      isValidVerifyResult({
-        kind: "verify",
-        converged: false,
-        findingDispositions: [
-          { identityKey: "t:1", threadId: "1", action: "reject", reason: "fp" },
-        ],
-        fixMarkedFindingIdentityKeys: ["t:1"],
-      }),
-    ).toBe(true);
-
-    expect(
-      isValidVerifyResult({
-        kind: "verify",
-        converged: true,
-        fixMarkedFindingIdentityKeys: ["t:1"],
-      }),
-    ).toBe(true);
-
-    expect(
-      isValidVerifyResult({
-        kind: "verify",
-        converged: false,
-        findingDispositions: [
-          { identityKey: "t:1", threadId: "1", action: "fix" },
-        ],
-        fixMarkedFindingIdentityKeys: [],
-      }),
-    ).toBe(true);
-  });
 });

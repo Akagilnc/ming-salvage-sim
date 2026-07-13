@@ -360,12 +360,6 @@ export interface AutoMergeStageInput {
   readonly mergeConfirmRetryDelayMs?: number;
   /** Offline/test: skip live gh pr view/merge and synthesize MERGED from poll readiness. */
   readonly offlineSynthetic?: boolean;
-  /**
-   * Deprecated no-op under ADR 0123 (path allowlist removed). Retained so callers
-   * that still pass the field keep type-compatible; merge ignores it.
-   * @deprecated Deprecated no-op retained only for caller type compatibility. Do not introduce new usages.
-   */
-  readonly allowUnverifiedDocReleasePaths?: boolean;
 }
 
 function offlineSyntheticLiveState(
@@ -418,24 +412,6 @@ function externallyMergedNeverConvergedSummary(): StopSummary {
     repairHint:
       "confirm whether the PR was merged outside the orchestrator review loop; answer the decision gate before cleanup",
   };
-}
-
-/**
- * Compat helper retained for callers that still compute the pre-ADR-0123
- * "unverified doc paths" hatch. Under ADR 0123 the hatch is not a merge veto;
- * the function remains pure/testable for offline `pr://` admission shape.
- */
-export function offlineAutoMergeAllowUnverifiedDocPaths(
-  prUrl: string,
-  repo: string,
-  offlineSynthetic: boolean,
-  docReleasePaths: readonly string[] | undefined,
-): boolean {
-  return (
-    offlineSynthetic &&
-    (docReleasePaths === undefined || docReleasePaths.length === 0) &&
-    offlineSyntheticPollAdmissible(prUrl, repo)
-  );
 }
 
 function mergeNotConfirmedSummary(): StopSummary {
