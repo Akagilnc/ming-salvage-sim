@@ -2,6 +2,8 @@
 
 Status: Accepted（2026-06-19 提出 / 2026-06-20 Accepted；spike 实证「底座可行 + 并行编排可行 + 缺质量层」三面。**评审闭环完成**：本地 cmr 6 轮收敛（r1=14→r6=0）+ 线上 bot（PR #246：真 finding 仅 1 处 markdown 已修；G2 安全阀 / G4 reviewer 守护按用户 defer 决定记录在案）。parallel-planner 并行编排证据已补（见 Spike 证据 4）。在此之前 #217 PRD 的「整套自建」描述不作数、以本 ADR 方向为准。）
 
+Current authority: 本 ADR 只保留“Sandcastle 是执行底座、编排器只叠项目质量层”的方向决定。现行交付拓扑只读 #869，Runner 边界只读 ADR 0131，Action / 角色所有权只读 #868；下文 #244、S0–S8 与 v1 模型/镜像细节仅为历史。
+
 ## 背景
 
 #217 把「喂父 epic → AFK 跑到待 PR」的编排器**整套自建**（PRD + wiki [[epic-orchestration]] + 切片 #218–225 + prototype），收敛后才发现 `mattpocock/sandcastle`（6.1k⭐，MIT，TS）很可能就是被重新发明的东西（见 memory `prior-art-search-before-building-tool`）。本 ADR 记录「自建 vs 引入」分叉的 spike 实证与方向决定。
@@ -13,7 +15,7 @@ Status: Accepted（2026-06-19 提出 / 2026-06-20 Accepted；spike 实证「底�
 **不二选一。Sandcastle 当底座，#217 收缩为叠在它 `run()` 上的薄「质量层」。**
 
 - **底座（直接用 Sandcastle）**：容器/podman/vercel 沙箱隔离、codex/claude 订阅 auth、worktree、分支策略（merge-to-head）、Ralph 循环（`simple-loop`）、并行（`parallel-planner`）、issue 输入（`github-issues` tracker）。这些是 #217 想自建、而 Sandcastle 已有且经 6.1k⭐ 验证的硬基建。
-- **质量层（#217 的真增值，Sandcastle 没有，须自叠）**：① 多模型评审承重闸（per-slice codex+agy、5a/5b codex+Claude+agy）② findings 分流 + 选择类回主 session 升级 ③ 家族集成 verify + 整体闸（gstack-ship）④ 决定经主 session 段间传递的拓扑。
+- **质量层（#217 的真增值，Sandcastle 没有，须自叠）**：独立专业评审、findings 在专业 worker 间流转、家族集成验证与 shared-tail 质量闸；准确接力只读 #869，不在本 ADR 保存第二份拓扑。
 
 ## Spike 证据（2026-06-19，本机 colima Docker + codex ChatGPT 订阅，端到端真跑）
 
@@ -50,7 +52,7 @@ Status: Accepted（2026-06-19 提出 / 2026-06-20 Accepted；spike 实证「底�
 
 衡量标尺仍是北极星。v1 = wiki [[tdd-autonomous-dev]] 流程的**一小段**（单切片 implement + per-slice review/fix → push）；**流程编排由 ADR 0018 的 runner-driven step 序列控**（取代「coder 一个 run 跑完整流程、自判完成」）。ship / 家族 / 线上评审全 deferred；家族 base 当前置见 ADR 0017。
 
-本 ADR 只记 v1 几个 hard-to-reverse 决定；**完整 spec（scope / 输入闸 / 角色 roster / 步骤表 S0–S8 / 角色流程 / profile 镜像内容 / defer / 产出 / Backend seam）= 实现 spec，见 PRD #244 Implementation Decisions**。
+以下 v1 spec（包括 #244 的 S0–S8 步骤表）只保留为历史；现行流程与角色接力只读 #869/#868。
 
 - **v1 模型 = Sonnet 写 / Opus 4.8 评**，暂搁置 wiki per-slice「不用 Claude 省额度」规矩（claude -p credit 紧；v1 走订阅 auth 容器、Opus 担得起，代价是烧 Claude 额度）；以后换 codex 回省额度、per-slice 升多模型时再用 `ak-cross-m-review`。
 - **v1 = 一个镜像、双角色**：coder/reviewer 同一常驻 sandbox（共享 worktree），靠 `run()` 级 fresh context 保上下文隔离（reviewer 看不到 coder「我刚写的」推理）。**可逆**：reviewer 真需独立再拆两镜像。
