@@ -6,47 +6,9 @@
 
 import type {
   Escalation,
-  Finding,
-  FindingDispositionEvidence,
-  PriorFindingDisposition,
   RepairEvidence,
   StepOutput,
 } from "./types.js";
-import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
-
-/** Exact severity enum (no whitespace / case drift tolerated). */
-const SEVERITIES: ReadonlySet<string> = new Set([
-  "critical",
-  "high",
-  "medium",
-  "low",
-  "clarity",
-]);
-
-/** Exact action enum. */
-const ACTIONS: ReadonlySet<string> = new Set([
-  "fix_now",
-  "wont_fix",
-  "rejected",
-]);
-const PRIOR_FINDING_DISPOSITIONS: ReadonlySet<string> = new Set([
-  "still-active",
-  "verified-closed",
-  "unable-to-assess",
-  "accepted_suppressed",
-]);
-
-/** Required string fields on a Finding (PRD #244 contract). */
-const FINDING_STRING_FIELDS = [
-  "category",
-  "claim_quote",
-  "location",
-  "suggested_fix",
-] as const;
-
-// #604 slice 4 (ADR 0062): only the accepted-suppression governance kind
-// survives — the routing kinds were removed from the reviewer contract.
-const DISPOSITION_KINDS: ReadonlySet<string> = new Set(["accepted_suppressed"]);
 
 /**
  * Type-only string guard (intentionally does NOT reject `""`): a Finding's
@@ -62,22 +24,6 @@ function isString(v: unknown): v is string {
 /** A genuinely non-empty string (rejects "" and whitespace-only). */
 function isFilledString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
-}
-
-function optionalString(v: unknown): boolean {
-  return v === undefined || isString(v);
-}
-
-function acceptedSuppressionAuthorityFromRecord(
-  obj: Record<string, unknown>,
-): boolean {
-  return hasAcceptedSuppressionAuthority({
-    source: typeof obj.source === "string" ? obj.source : undefined,
-    scope: typeof obj.scope === "string" ? obj.scope : undefined,
-    reason: typeof obj.reason === "string" ? obj.reason : undefined,
-    boundedReopen:
-      typeof obj.boundedReopen === "string" ? obj.boundedReopen : undefined,
-  });
 }
 
 function isStringArray(v: unknown): v is ReadonlyArray<string> {
@@ -137,73 +83,6 @@ export function isValidRepairEvidence(v: unknown): v is RepairEvidence {
   );
 }
 
-function hasConcreteRepairScope(scope: RepairEvidence["findingScope"]): boolean {
-  return (
-    (scope.identityKeys?.length ?? 0) > 0 ||
-    (scope.locations?.length ?? 0) > 0 ||
-    (scope.categories?.length ?? 0) > 0 ||
-    (scope.findingGroup?.trim().length ?? 0) > 0 ||
-    (scope.reviewContext?.trim().length ?? 0) > 0 ||
-    (scope.featureArea?.trim().length ?? 0) > 0
-  );
-}
-
-export function isCompleteRepairEvidence(
-  evidence: RepairEvidence | undefined,
-): evidence is RepairEvidence {
-  return (
-    evidence !== undefined &&
-    isValidRepairEvidence(evidence) &&
-    hasConcreteRepairScope(evidence.findingScope) &&
-    (evidence.tests?.length ?? 0) > 0 &&
-    isFilledString(evidence.sameClassBugScan) &&
-    isFilledString(evidence.introducedRegressionCheck)
-  );
-}
-
-// #604 correctness r5 (E1): the ONLY keys a disposition-evidence carrier may hold.
-// This hand-written validator is STRICT (parity with the family `.strict()` zod
-// `cmrDispositionEvidenceSchema` and the standalone `findingDispositionSchema`):
-// any extra key — e.g. a deleted routing field like `targetModule` — makes it
-// invalid, rather than being silently tolerated by an allow-list that only
-// type-checked known fields.
-const DISPOSITION_EVIDENCE_KEYS: ReadonlySet<string> = new Set([
-  "kind",
-  "reason",
-  "source",
-  "scope",
-  "findingIdentity",
-  "boundedReopen",
-]);
-
-function isValidDispositionEvidence(
-  d: unknown,
-): d is FindingDispositionEvidence {
-  if (d == null || typeof d !== "object") return false;
-  const obj = d as Record<string, unknown>;
-  for (const key of Object.keys(obj)) {
-    if (!DISPOSITION_EVIDENCE_KEYS.has(key)) return false;
-  }
-  if (typeof obj.kind !== "string" || !DISPOSITION_KINDS.has(obj.kind)) {
-    return false;
-  }
-  if (!isFilledString(obj.reason)) return false;
-  if (
-    !optionalString(obj.source) ||
-    !optionalString(obj.scope) ||
-    !optionalString(obj.findingIdentity) ||
-    !optionalString(obj.boundedReopen)
-  ) {
-    return false;
-  }
-  // #604 slice 4 (ADR 0062): the only disposition kind is accepted_suppressed.
-  switch (obj.kind) {
-    case "accepted_suppressed":
-      return acceptedSuppressionAuthorityFromRecord(obj);
-  }
-  return false;
-}
-
 /**
  * Validate the `escalate` field on an agent-step output.
  *
@@ -235,134 +114,4 @@ export function escalateOf(
     return output.escalate;
   }
   return undefined;
-}
-
-/**
- * A single reviewer finding is valid iff:
- *   - `severity` is EXACTLY one of the five enum values (no trailing space, no
- *     case drift — the route() severity comparison is exact-string),
- *   - `action` is EXACTLY one of the three enum values (`fix_now`, `wont_fix`,
- *     `rejected`),
- *   - every required string field is present and a string.
- *
- * Anything else is a contract violation: the route() severity/action test would
- * silently miss it and could push a real P0 past the fix gate.
- */
-export function isValidFinding(f: unknown): f is Finding {
-  if (f == null || typeof f !== "object") return false;
-  const obj = f as Record<string, unknown>;
-  if (typeof obj.severity !== "string" || !SEVERITIES.has(obj.severity)) {
-    return false;
-  }
-  if (typeof obj.action !== "string" || !ACTIONS.has(obj.action)) {
-    return false;
-  }
-  if (
-    (obj.action === "wont_fix" || obj.action === "rejected") &&
-    !(
-      isFilledString(obj.disposition_reason) ||
-      (isValidDispositionEvidence(obj.disposition) &&
-        obj.disposition.kind === "accepted_suppressed" &&
-        isFilledString(obj.disposition.reason))
-    )
-  ) {
-    return false;
-  }
-  if (
-    obj.disposition_reason !== undefined &&
-    !isString(obj.disposition_reason)
-  ) {
-    return false;
-  }
-  if (
-    obj.disposition !== undefined &&
-    !isValidDispositionEvidence(obj.disposition)
-  ) {
-    return false;
-  }
-  if (
-    (obj.severity === "critical" || obj.severity === "high") &&
-    obj.action !== "fix_now"
-  ) {
-    return false;
-  }
-  if (obj.action === "wont_fix" || obj.action === "rejected") {
-    if (!isValidDispositionEvidence(obj.disposition)) return false;
-    if (obj.disposition.kind !== "accepted_suppressed") return false;
-  }
-  // #604 correctness r1 (P2-a): an accepted_suppressed governance disposition is
-  // ONLY valid on wont_fix/rejected. On any other action (esp. fix_now) it would
-  // slip through and classifyFindings (fix_now ⇒ blocking) would silently turn the
-  // governance suppression into a blocker. Reject it here — parity with the zod
-  // schemas and the Python outcome-guard.
-  if (
-    obj.action !== "wont_fix" &&
-    obj.action !== "rejected" &&
-    obj.disposition !== undefined &&
-    isValidDispositionEvidence(obj.disposition) &&
-    obj.disposition.kind === "accepted_suppressed"
-  ) {
-    return false;
-  }
-  for (const field of FINDING_STRING_FIELDS) {
-    if (!isString(obj[field])) return false;
-  }
-  return true;
-}
-
-// #604 correctness r5 (E1): the ONLY keys a prior-finding disposition may hold.
-// STRICT (parity with the family `.strict()` `cmrFindingDispositionSchema` and the
-// now-`.strict()` standalone `priorFindingDispositionSchema`): an extra key — e.g.
-// a deleted routing field — makes it invalid rather than being silently tolerated.
-const PRIOR_FINDING_DISPOSITION_KEYS: ReadonlySet<string> = new Set([
-  "identityKey",
-  "status",
-  "reason",
-  "source",
-  "scope",
-  "boundedReopen",
-]);
-
-export function isValidPriorFindingDisposition(
-  d: unknown,
-): d is PriorFindingDisposition {
-  if (d == null || typeof d !== "object") return false;
-  const obj = d as Record<string, unknown>;
-  for (const key of Object.keys(obj)) {
-    if (!PRIOR_FINDING_DISPOSITION_KEYS.has(key)) return false;
-  }
-  if (!isFilledString(obj.identityKey)) return false;
-  if (
-    typeof obj.status !== "string" ||
-    !PRIOR_FINDING_DISPOSITIONS.has(obj.status)
-  ) {
-    return false;
-  }
-  if (obj.reason !== undefined && !isString(obj.reason)) return false;
-  if (obj.status === "accepted_suppressed") {
-    return acceptedSuppressionAuthorityFromRecord(obj);
-  }
-  return true;
-}
-
-/**
- * The SINGLE blocking-finding predicate — the one source of truth for "this
- * finding forces an S5 coder_fix". Both route()'s S4 routing decision (does the
- * review send code to S5 or push?) AND the S5 delivery seam (which findings does
- * selectFixNowFindings hand the coder?) MUST consult THIS, so the routing side
- * and the delivery side can never drift.
- *
- * integ-cmr 256 confirm r1 (high, #244 铁律): a finding is blocking iff it is a
- * P0/P1 (`severity` critical or high) OR a reviewer-judged `fix_now`. Severity
- * trumps action — a reviewer CANNOT downgrade a P0/P1 to a non-fix action
- * ("P0/P1 必修不许私自降级", route-s4.test.ts). The earlier delivery seam
- * filtered on `action === 'fix_now'` ALONE, so a `{severity:'critical'|'high',
- * action:'wont_fix'}` finding routed to S5 (severity branch) yet reached the
- * coder as an EMPTY set — silently waiving a P0/P1 on the coder side. Sharing
- * this predicate closes that gap.
- */
-export function isBlockingFinding(f: Finding): boolean {
-  return (
-    f.severity === "critical" || f.severity === "high" || f.action === "fix_now"
-  );
 }

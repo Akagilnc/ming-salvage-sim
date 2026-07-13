@@ -41,7 +41,7 @@ import {
   RealFamilyBackend,
   type CmrWorkerOutcome,
 } from "../../../src/family/realFamilyBackend.js";
-import type { ShipWorkerOutcome } from "../../../src/shipOutcome.js";
+import { shipOutcomeFromResult } from "../../../src/shipOutcome.js";
 import type {
   FamilyVerifyRequest,
   IntegratedCmrRequest,
@@ -228,7 +228,7 @@ class E2EFamilyBackend extends RealFamilyBackend {
   protected override async runShipWorker(
     _spec: WorkerSpec,
     ctx: DispatchContext,
-  ): Promise<ShipWorkerOutcome> {
+  ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
     this.shipCalls.push(ctx.familyBase!);
     return {
       kind: "shipped",
@@ -290,7 +290,6 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
       soulsDir: familySoulsDir,
       ledgerDir,
       imageName: "img",
-      skillsMount: join(home, "skills"),
       home,
       sh,
       singleSliceBackendFactory: (clone) => new RealGitChildBackend(clone),
@@ -304,7 +303,6 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
           promptsDir: familyPromptsDir,
           soulsDir: familySoulsDir,
           imageName: "img",
-          skillsMount: join(home, "skills"),
           familyBaseStartHead: startHead,
         });
         captured = { backend: b, clone };

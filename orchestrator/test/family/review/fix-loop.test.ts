@@ -16,7 +16,6 @@ import { describe, expect, it } from "vitest";
 import { findingIdentityKey } from "../../../src/findings.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import { readTelemetryRecords } from "../../../src/telemetry.js";
-import { isValidFinding } from "../../../src/validate.js";
 import {
   runVerifyCmr,
 } from "../../../src/family/verifyCmr.js";
@@ -284,8 +283,7 @@ const SECOND_BLOCKING_FAMILY_CMR_KEY = findingIdentityKey(
 
 /**
  * #604 correctness r4 (D5): the "runner counts, does not read the reviewer's
- * self-judgment" invariant, expressed with a payload the real reviewer contract
- * CAN produce (`isValidFinding === true`). A valid blocking finding
+ * self-judgment" invariant, expressed with a normal blocking finding
  * (`action:"fix_now"`, medium) whose CONTENT self-labels the blocker as
  * owning-issue-still-red (in claim_quote/suggested_fix) must STILL route through
  * coder-fix — the runner never reads that content to spare it.
@@ -3068,12 +3066,9 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
 
   it("routes a VALIDATOR-PASSING content-self-labeled blocker through coder-fix (D5: runner counts, does not read reviewer self-judgment)", async () => {
     // #604 correctness r4 (D5): the same "runner counts, does not read the
-    // reviewer's self-judgment" invariant, driven by a finding the real reviewer
-    // contract CAN emit (`isValidFinding === true`: medium + fix_now, self-label
-    // in content only). It must ROUTE THROUGH coder-fix, never terminate the
+    // reviewer's self-judgment" invariant, driven by a medium + fix_now finding
+    // with the self-label in content only. It must ROUTE THROUGH coder-fix, never terminate the
     // family on the owning-issue claim.
-    expect(isValidFinding(OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER)).toBe(true);
-
     const backend = new OwningIssueStillRedThenGoodBackend(
       OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER,
       OWNING_ISSUE_STILL_RED_THROUGH_REAL_PARSER_KEY,

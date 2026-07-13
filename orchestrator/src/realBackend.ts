@@ -1668,15 +1668,6 @@ export interface RealBackendOptions {
   /** The profile image (#253): toolchain + skills + model CLIs baked in. Souls mounted live (#372). */
   readonly imageName: string;
   /**
-   * DEPRECATED (#334): host dir of dev skills to bind-mount. The 2b worker image
-   * (#333) BAKES the dev-skill closure, so `box()` no longer mounts host skills at
-   * runtime (a runtime mount would SHADOW the baked skills — the ADR 0026
-   * reproducibility regression). Kept OPTIONAL only for back-compat with callers
-   * still passing it; it is no longer read. Remove the field entirely once all
-   * callers drop it (#336/#337 cleanup).
-   */
-  readonly skillsMount?: string;
-  /**
    * Dir holding the versioned child promptFiles (`coder_implement.md` for S2,
    * `reviewer_review.md` for S3/S6 and `coder_fix.md` for S5).
    * ADR 0030 keeps the child review/fix loop runner-visible: S3/S6
@@ -1770,9 +1761,8 @@ export const findingSchema = z.object({
       message: "critical/high findings must be fix_now",
     });
   }
-  // #604 correctness r1 (P2-a): an accepted_suppressed governance disposition is
-  // only valid on a wont_fix/rejected finding — never on fix_now (classifyFindings
-  // would turn the governance suppression into a silent blocker).
+  // An accepted_suppressed governance disposition is only valid on a
+  // wont_fix/rejected finding — never on fix_now.
   if (
     finding.action !== "wont_fix" &&
     finding.action !== "rejected" &&
@@ -2884,11 +2874,11 @@ export class RealBackend implements Backend {
    * The docker options the agent sandbox runs under — the pure SANDBOX-CONFIG
    * seam (mirrors the family `mergerSandboxConfig()` testability pattern). No
    * container, no I/O: a unit test asserts the mounts + soul env without spinning
-   * a real sandbox (#334 — so the dropped-skillsMount behaviour is regression-
+   * a real sandbox (#334 — so the baked-skills behaviour is regression-
    * guarded the same way the family merger's mount is).
    *
    * #334 (ADR 0026 / cross-slice note from #332/#333): the runtime host
-   * `skillsMount` bind-mount onto {@link SANDBOX_SKILLS_DIR} is DROPPED. The 2b
+   * host-skills bind-mount onto {@link SANDBOX_SKILLS_DIR} is DROPPED. The 2b
    * worker image (#333) BAKES the full dev-skill closure at that exact path, so
    * mounting host skills there at runtime would SHADOW the baked skills — pulling
    * the worker back to host state (the ADR 0026 reproducibility regression). The
@@ -3051,10 +3041,7 @@ export class RealBackend implements Backend {
       }
       return compatibility;
     }
-    // Git truth reconciles a coder's committed-ness only AFTER a typed outcome
-    // exists. It cannot turn the absence of every outcome channel into a
-    // success-shaped coder result: that is a structural protocol failure, owned
-    // by the runner's bounded redispatch and exhaustion escalation path.
+    // No receipt channel means no cargo. Do not synthesize worker output from Git.
     return undefined;
   }
 

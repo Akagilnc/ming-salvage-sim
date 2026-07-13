@@ -187,7 +187,6 @@ function opts(workingRepo: string, over: Partial<RealFamilyBackendOptions> = {})
     promptsDir: realPromptsDir,
     soulsDir: realSoulsDir,
     imageName: "img",
-    skillsMount: "/tmp/skills",
     ...over,
   };
 }
@@ -746,7 +745,7 @@ describe("family CMR prompt output contract", () => {
 
 /** A subclass that fakes the external seams (merger agent / verify / cmr / sh). */
 class FakeSeamsBackend extends RealFamilyBackend {
-  mergerOutcome: { resolved: boolean; reason?: string } = { resolved: true };
+  mergerOutcome: ReturnType<typeof mergerOutcomeFromResult> = { resolved: true };
   mergerCalls: ConflictResolveRequest[] = [];
   verifyOutcome: "green" | "red" = "green";
   verifyCalls: FamilyVerifyRequest[] = [];
@@ -940,6 +939,25 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     ).resolves.toMatchObject({ conflicted: true });
   });
 
+  it("a sparse merger decision bell parks instead of becoming a conflicted retry", async () => {
+    const b = new FakeSeamsBackend(opts(trackRepo()));
+    b.mergerOutcome = mergerOutcomeFromResult({
+      stdout: '<merger>{"resolved":false,"escalate":{}}</merger>',
+    });
+
+    await expect(
+      b.resolveMergeConflict({ childIssue: 111, childBranch: "feat/child-111" }),
+    ).resolves.toMatchObject({
+      escalation: {
+        reason: "",
+        diagnosis: "",
+        escalationKind: "decision",
+        phase: "wave",
+      },
+    });
+    expect(b.mergerCalls).toHaveLength(1);
+  });
+
   it("agent CLAIMED resolved but left the merge in-progress → still-conflicted result (never looks clean)", async () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
     b.mergerOutcome = { resolved: true };
@@ -1122,7 +1140,7 @@ describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)",
     // (+ its closure), so a runtime mount there would SHADOW the baked skill,
     // pulling the merger back to host state (the reproducibility regression). The
     // merger soul finds the skill in the IMAGE, not a host mount.
-    const o = opts(trackRepo(), { imageName: "profile-img", skillsMount: "/host/skills" });
+    const o = opts(trackRepo(), { imageName: "profile-img" });
     const b = new FakeSeamsBackend(o);
     const cfg = b.sandboxConfig();
     expect(cfg.imageName).toBe("profile-img");

@@ -611,7 +611,6 @@ describe("#335 runIntegratedCmr legacy per-method seam (the real cmr is the cont
       promptsDir: realPromptsDir,
       soulsDir: realSoulsDir,
       imageName: "img",
-      skillsMount: "/tmp/skills",
     });
     await expect(b.runIntegratedCmr({ familyBase: "family/291-base" })).rejects.toThrow(
       /ak-cross-m-review|driver|manual-smoke/i,

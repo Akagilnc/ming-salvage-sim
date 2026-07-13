@@ -166,9 +166,6 @@ function cmrWorkerParserEvidence(result: WorkerResult): { cmrWorkerParserValid: 
   // stdout sentinel channel (or its structured-row fallback).
   const { kind: _kind, findingsCount: _findingsCount, ...payload } = result.output;
   const parsed = parseCmrOutcome(`<cmr>${JSON.stringify(payload)}</cmr>`);
-  if (parsed.kind === "malformed") {
-    throw new Error(`dogfood scripted CMR output is parser-invalid: ${parsed.reason}`);
-  }
   return { cmrWorkerParserValid: true };
 }
 

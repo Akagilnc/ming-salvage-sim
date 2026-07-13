@@ -94,7 +94,6 @@ function build(over: Partial<RealBackendOptions> = {}): RecordingBackend {
     runKey: 291,
     repo: "Akagilnc/ming-salvage-sim",
     imageName: "img",
-    skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
     soulsDir: realSoulsDir,
     home: "/tmp/home",

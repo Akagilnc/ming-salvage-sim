@@ -82,12 +82,6 @@ export type ModelRouteLegCollectionOverrides = Readonly<
   Partial<Record<ModelRouteLegCollection, ReadonlyArray<string>>>
 >;
 export type ModelRouteEnv = Readonly<Record<string, string | undefined>>;
-export type CmrLegAccountingRoute =
-  | ResolvedModelRoute
-  | ModelRouteEnv
-  | ReadonlyArray<{ readonly slug: string }>
-  | null
-  | undefined;
 
 export interface TightFamilyViolation {
   readonly slot: ModelRouteSlot | ModelRouteLegCollection;

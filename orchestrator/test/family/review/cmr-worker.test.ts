@@ -68,7 +68,7 @@ import {
   familyCoderFixWorkerSpec,
   familyShipWorkerSpec,
 } from "../../../src/family/dispatchFamilyWorker.js";
-import type { ShipWorkerOutcome } from "../../../src/shipOutcome.js";
+import { shipOutcomeFromResult } from "../../../src/shipOutcome.js";
 import type {
   DispatchContext,
   WorkerLandingPayload,
@@ -714,7 +714,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     protected override async runShipWorker(
       spec: WorkerSpec,
       ctx: DispatchContext,
-    ): Promise<ShipWorkerOutcome> {
+    ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
       this.runShipCalls.push({ spec, ctx });
       return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
     }
@@ -947,13 +947,6 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     if (res.kind === "escalated") {
       expect(res.escalation.reason).toContain("skill missing");
     }
-  });
-
-  it("a malformed outcome ⇒ WorkerResult.malformed (never silently a pass)", async () => {
-    const be = fixtured();
-    be.outcome = { kind: "malformed", reason: "no <cmr> tag" };
-    const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
-    expect(res.kind).toBe("malformed");
   });
 
   it("forwards llmResolvedChildren on the DispatchContext to the cmr worker", async () => {

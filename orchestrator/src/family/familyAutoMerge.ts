@@ -8,7 +8,6 @@
 import {
   docReleasePathsFromCommit,
   fetchPrMergeLiveState,
-  offlineAutoMergeAllowUnverifiedDocPaths,
   runAutoMergeStage,
   type AutoMergeStageResult,
 } from "../autoMerge.js";
@@ -100,12 +99,6 @@ export async function runFamilyAutoMergeStage(
     repoDetails.headOid ?? input.convergedHeadOid;
   const ghSh = familyGhSh();
   const offlineSynthetic = !isLiveGithubReviewPollEnabled(shipPr, familyRepo);
-  const allowUnverifiedDocPaths = offlineAutoMergeAllowUnverifiedDocPaths(
-    shipPr,
-    familyRepo,
-    offlineSynthetic,
-    docReleasePaths,
-  );
   const autoMerge = await runAutoMergeStage({
     sh: ghSh,
     repo: familyRepo,
@@ -117,7 +110,6 @@ export async function runFamilyAutoMergeStage(
     prMergedMarkerPresent: priorPrMerged !== undefined,
     offlineSynthetic,
     ...(docReleasePaths !== undefined ? { docReleasePaths } : {}),
-    ...(allowUnverifiedDocPaths ? { allowUnverifiedDocReleasePaths: true } : {}),
     poll: async (round) => {
       if (isLiveGithubReviewPollEnabled(shipPr, familyRepo)) {
         return pollPrReviewState(ghSh, {

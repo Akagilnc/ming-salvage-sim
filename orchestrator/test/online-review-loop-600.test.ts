@@ -114,7 +114,6 @@ import {
   replyToReviewThread,
   resolveReviewThread,
 } from "../src/onlineReviewSideEffects.js";
-import { isValidVerifyResult } from "../src/reviewLoopOutcome.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Sh } from "../src/familyDriver.js";
@@ -5516,7 +5515,6 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         promptsDir: realPromptsDir,
         soulsDir: realSoulsDir,
         imageName: "img",
-        skillsMount: "/tmp/skills",
       });
       const result = await runFamilyOnlineReviewLoop({
         familyBackend: backend,

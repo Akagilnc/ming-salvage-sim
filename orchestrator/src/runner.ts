@@ -1472,25 +1472,18 @@ function planResume(
   }
 
   // Case 2: legacy/untagged agent decision-escalate residue — the last agent
-  // output carries a WELL-FORMED escalation. Only a later escalation_answered row
-  // re-opens THAT step in its original agent session; otherwise the prior
-  // S8(escalate) remains a pause.
+  // output carries an escalation object (the bell; its fields are cargo). Only a
+  // later escalation_answered row re-opens THAT step in its original agent
+  // session; otherwise the prior S8(escalate) remains a pause.
   //
-  // integ-cmr m2 r1 (Finding 2): the guard is isValidEscalation, NOT a bare
-  // non-null check. route.ts:81 / validate.ts treat a MALFORMED escalate (e.g.
-  // `{}`, blank reason/diagnosis) as a contract violation → S8(status=error),
-  // and the runner tags that S8 handoffStatus:'error'. With a bare `!= null`
-  // check, Case 2 would fire on the garbage escalate BEFORE Case 3a's
-  // terminal-status report, silently re-running the step via resumeSession
-  // instead of reporting the true tagged error. Gating on isValidEscalation lets
-  // a malformed escalate fall through to Case 3a — only a well-shaped escalate
-  // plus a later answer event (a real "human answered an escalation" signal)
-  // triggers escalate-resume.
+  // Persisted legacy ledgers may predate the receipt bell normalizer. Keep the
+  // compatibility presence guard here; current receipt cargo quality never
+  // changes whether the worker pressed the decision bell.
   //
   // integ-cmr m2 r2 (#252 ⋈ #255): a tagged terminal S8(error) ALSO supersedes
-  // escalate-resume, even when the escalate is WELL-FORMED. An escalate handoff
+  // escalate-resume, even when the decision bell is present. An escalate handoff
   // whose S8 write faulted returns status:error in-run and best-effort persists
-  // a tagged 'error' S8 — the disk then holds a valid-escalate agent entry AND a
+  // a tagged 'error' S8 — the disk then holds a decision-bell agent entry AND a
   // trailing S8(error). The run errored; re-feeding must report that ERROR (Case
   // 3a), NOT re-run the escalating step via resumeSession. So Case 2 yields when
   // the last entry is a tagged terminal-error S8. (A legitimate human-answered

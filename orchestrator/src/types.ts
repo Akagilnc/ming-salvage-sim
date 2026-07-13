@@ -208,8 +208,7 @@ export interface Finding {
  * The only disposition kind a reviewer/CMR soul may emit (#604 slice 4, ADR
  * 0062). The purely-routing kinds (`same_module` / `cross_module` /
  * `spec_conflict` / `infra_failure` / `owning_issue_still_red`) were removed:
- * the runner no longer reads a route field to decide a finding's fate — every
- * non-accepted-suppressed finding is blocking (see {@link classifyFindings}).
+ * the runner no longer reads a route field to decide a finding's fate.
  * `accepted_suppressed` remains as the governance carrier for accepted
  * suppression (source/scope/bounded reopen).
  */
@@ -478,9 +477,7 @@ export type LedgerBookkeepingEvent =
  * output can flow through the ledger ({@link LedgerEntry.output}) without a tsc
  * error. `StepOutput` is kept as the historical name (consumed by route/validate)
  * and is now an ALIAS of `WorkerOutput` — ONE union, no drift. Every consumer
- * discriminates on `.kind` behind `isValidStepOutput`, so the widening is safe:
- * route() acts only on the validated `coder`/`reviewer` cases, and an unknown
- * kind is rejected by the guard, never silently routed.
+ * narrows on `.kind`; route() acts only on coder/reviewer cases.
  */
 export type StepOutput = WorkerOutput;
 

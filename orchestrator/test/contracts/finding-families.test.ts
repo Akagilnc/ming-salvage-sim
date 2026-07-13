@@ -19,7 +19,6 @@ import {
   parseVerifyOutcome,
 } from "../../src/family/realFamilyBackend.js";
 import { runOnlineReviewLoopStage } from "../../src/family/onlineReviewLoop.js";
-import { isValidVerifyResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
   FindingFamily,
@@ -146,7 +145,6 @@ describe("#711 findingFamilies contract", () => {
         },
       ],
     });
-    expect(isValidVerifyResult(parsed as VerifyResult)).toBe(true);
   });
 
   it("parseVerifyOutcome preserves sanitized camelCase findingFamilies", () => {
@@ -184,7 +182,6 @@ describe("#711 findingFamilies contract", () => {
         },
       ],
     });
-    expect(isValidVerifyResult(parsed as VerifyResult)).toBe(true);
   });
 
   it("duplicate camelCase and snake_case family keys degrade to no briefing", () => {
@@ -214,7 +211,6 @@ describe("#711 findingFamilies contract", () => {
     const parsed = parseVerifyOutcome(`<verify>${JSON.stringify(raw)}</verify>`);
     expect(parsed).toMatchObject({ kind: "verify", converged: false });
     expect((parsed as VerifyResult).findingFamilies).toBeUndefined();
-    expect(isValidVerifyResult(parsed as VerifyResult)).toBe(true);
   });
 
   it("verify prompt contains only the data and output contract", () => {
@@ -239,24 +235,6 @@ describe("#711 findingFamilies contract", () => {
     const parsed = parseVerifyOutcome(`<verify>${JSON.stringify(raw)}</verify>`);
     expect(parsed).toMatchObject({ kind: "verify", converged: false });
     expect((parsed as VerifyResult).findingFamilies).toBeUndefined();
-    expect(isValidVerifyResult(parsed as VerifyResult)).toBe(true);
-
-    // Even if garbage remains on an object before sanitize, isValid must not fail closed.
-    expect(
-      isValidVerifyResult({
-        kind: "verify",
-        converged: false,
-        findingDispositions: [
-          {
-            identityKey: "t:1",
-            threadId: "thread-1",
-            action: "fix",
-          },
-        ],
-        fixMarkedFindingIdentityKeys: ["t:1"],
-        findingFamilies: "garbage" as unknown as FindingFamily[],
-      }),
-    ).toBe(true);
   });
 
   it("CMR parse accepts finding_families snake_case without rejecting the verdict", () => {
@@ -288,9 +266,7 @@ describe("#711 findingFamilies contract", () => {
       ],
       evidencePaths: ["cmr/review.json"],
     };
-    const parsed = parseCmrOutcome(`<cmr>${JSON.stringify(raw)}</cmr>`, [
-      { slug: "gpt-5.6-sol" },
-    ]);
+    const parsed = parseCmrOutcome(`<cmr>${JSON.stringify(raw)}</cmr>`);
     expect(parsed).toMatchObject({
       kind: "verdict",
       converged: false,

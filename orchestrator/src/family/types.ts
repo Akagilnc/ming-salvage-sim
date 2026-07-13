@@ -627,9 +627,7 @@ export interface FamilyBackend {
    * Absolute git working directory for the family base clone. Optional — used to
    * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
    * working-repo does not block merge: path allowlist is not a merge gate.
-   * `allowUnverifiedDocReleasePaths` is a deprecated no-op retained for caller
-   * type-compat (see autoMerge.ts); merge still requires readiness + doc-release
-   * completed, independent of this field.
+   * Merge still requires readiness + doc-release completed; paths are diagnostics.
    */
   resolveFamilyWorkingRepo?(): string | undefined;
   /**

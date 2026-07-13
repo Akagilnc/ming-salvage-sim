@@ -104,7 +104,6 @@ function newBackend(porcelain = porcelainForBranch(NEW_BRANCH)): RecordingBacken
     runKey: ISSUE,
     repo: "Akagilnc/ming-salvage-sim",
     imageName: "img",
-    skillsMount: "/tmp/skills",
     promptsDir: realPromptsDir,
     soulsDir: realSoulsDir,
     home: HOME,

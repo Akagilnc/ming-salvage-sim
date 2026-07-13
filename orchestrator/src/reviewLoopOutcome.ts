@@ -15,15 +15,6 @@ import type {
   WorkerResult,
 } from "./types.js";
 
-/** Only the worker's own verify button is a routing field; siblings are cargo. */
-export function isValidVerifyResult(
-  o: StepOutput | undefined,
-): o is VerifyResult {
-  if (o == null || typeof o !== "object") return false;
-  const obj = o as unknown as Record<string, unknown>;
-  return obj.kind === "verify" && typeof obj.converged === "boolean";
-}
-
 /** Every well-shaped fixer envelope returns to fresh S9 verification. */
 export function fixerProceedsToVerify(_output: FixerResult): boolean {
   return true;
