@@ -29,5 +29,5 @@ ADR 0022 decision 4 定「自治边界 = 分阶段到 PR：family 编排器跑�
 ## Consequences
 
 - 反转 ADR 0022 decision 4"线上 loop 是独立自治阶段"的表述；线上 pr-review-loop 的 wiki 流程本身不变（wiki/concepts/pr-review-loop.md 仍是权威），只是执行者从人/subagent 变成编排器 worker。
-- 新增 worker 角色边界要求：verify（判断，只读）与 fixer（改代码+自查二连）必须是两个**分离的 worker 派发**——runner 只负责调度派发，「修/拒/延」判断全部发生在 verify worker 内（runner 不做判断，见 ADR 0062 / 0129 三态宪法）；不可合一，verify-worker 复核同样要求 fresh（不带上一轮 session）。此处的 verify worker 与 ADR 0026「merge 非均匀 worker」段的 verify-fail-fast（family merge 队列的构建/测试校验，属 runner 调度职责）是两个不同概念，勿混。
+- 新增 worker 角色边界要求：verify（判断，只读）与 fixer（改代码+自查二连）必须是两个**分离的 worker 派发**——runner 只负责调度派发，「修/拒/延」判断全部发生在 verify worker 内（runner 不做判断，见 ADR 0062 / 0129 三态宪法）；不可合一，verify-worker 复核同样要求 fresh（不带上一轮 session）。Family merge 后的构建/测试同样由 Verification / Objective Gate Action 执行并交卷；Runner 只按 #869 调用该 Action、读取其自报 open-count，不执行或解释测试。
 - 编码细节（worker contract 形状、promptFile 内容、轮询间隔/give-up 策略、跟 #440/#590/#592 的关系）留给 to-issues 切片定，本 ADR 只定边界与角色分工要求。
