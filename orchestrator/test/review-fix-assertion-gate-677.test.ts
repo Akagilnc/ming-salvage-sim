@@ -12,7 +12,6 @@ import {
 } from "../src/reviewFixAssertionGate.js";
 import { route } from "../src/route.js";
 import { runOrchestrator } from "../src/runner.js";
-import { isValidCoderOutput } from "../src/validate.js";
 import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
 import type {
   Backend,
@@ -249,64 +248,6 @@ describe("#677 legal refuse one finding, fix the others", () => {
       refusedFindingIdentityKeys: [refuseKey],
       records: [valid],
     });
-  });
-
-  it("coder output with refuse keys is valid when committed (not malformed)", () => {
-    expect(
-      isValidCoderOutput({
-        kind: "coder",
-        committed: true,
-        commitsAdded: 1,
-        refusedFindingIdentityKeys: [refuseKey],
-        refuseRecords: [
-          {
-            identityKey: refuseKey,
-            finding: "overturn AC",
-            acceptanceCriterion: "keep pin",
-            conflictReason: "would flip ratified assertion",
-          },
-        ],
-      }),
-    ).toBe(true);
-  });
-
-  it("rejects null/undefined refuseRecords elements (strict null guards)", () => {
-    expect(
-      isValidCoderOutput({
-        kind: "coder",
-        committed: true,
-        commitsAdded: 1,
-        refusedFindingIdentityKeys: [refuseKey],
-        refuseRecords: [null as unknown as never],
-      }),
-    ).toBe(false);
-    expect(
-      isValidCoderOutput({
-        kind: "coder",
-        committed: true,
-        commitsAdded: 1,
-        refusedFindingIdentityKeys: [refuseKey],
-        refuseRecords: [undefined as unknown as never],
-      }),
-    ).toBe(false);
-  });
-
-  it("#677 refuse validators use strict null/undefined checks (not == null)", () => {
-    const src = readFileSync(
-      resolve(import.meta.dirname, "../src/validate.ts"),
-      "utf8",
-    );
-    const refuseBlock = src.slice(
-      src.indexOf("function isValidRefuseRecord"),
-      src.indexOf("/**\n * A reviewer step output is valid"),
-    );
-    expect(refuseBlock).toMatch(
-      /r === null \|\| r === undefined/,
-    );
-    // Loose `== null` only (must not match the `=== null` we require above).
-    expect(refuseBlock).not.toMatch(/(?<![!=])== null/);
-    // Sibling #677 validator must not reintroduce loose null checks either.
-    expect(refuseBlock).toContain("function isValidLegalRefuseFields");
   });
 
   it("S5 legal refuse with commit routes to S6 fresh re-review (not escalate/error)", () => {

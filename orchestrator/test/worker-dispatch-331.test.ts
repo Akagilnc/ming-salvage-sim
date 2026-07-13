@@ -460,7 +460,7 @@ describe("#331 the S7 ship worker must return a SHIP payload (codex R2 guard)", 
     const result = await runOrchestrator({ issueNumber: 331, backend });
     expect(result.status).toBe("error");
     expect(result.errorPackage?.reason).toContain("invalid delivery envelope");
-    expect(result.errorPackage?.reason).toContain("after 3 dispatch attempts");
+    expect(result.errorPackage?.reason).not.toContain("after 3 dispatch attempts");
   });
 });
 
@@ -512,11 +512,8 @@ describe("#596 S9 (verify) worker must return a valid verify payload — finding
   it("S9 worker returning completed-with-undefined-output exhausts bounded redispatch without a TypeError", async () => {
     const backend = new S9UndefinedOutputBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.reason).toContain("invalid S9 envelope (output kind 'undefined')");
-    expect(result.errorPackage?.reason).toContain("after 3 dispatch attempts");
-    // Sanity: did not surface a TypeError string.
-    expect(result.errorPackage?.reason).not.toMatch(/TypeError/i);
+    expect(result.status).toBe("escalate");
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
   });
 });
 

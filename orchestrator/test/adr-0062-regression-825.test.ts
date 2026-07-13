@@ -172,18 +172,20 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
       return validWorkerResult(spec);
     });
     const result = await runOrchestrator({ issueNumber: 825, backend });
-    // Process/protocol redispatch only — runner does not judge findings schema.
-    expect(result.status).toBe("success");
-    expect(backend.dispatches.filter((row) => row.startsWith(`${target}:`))).toHaveLength(2);
-    expect(result.stepLedger.at(-1)?.step).toBe("S8");
-    expect(result.stepLedger.at(-1)?.stopSummary?.reason).toBe("success");
-    expect(backend.ledger.find((row) => row.step === target && row.output !== undefined)).toMatchObject({
-      step: target,
-      prompt_hash: expect.any(String),
-      branchHEAD: expect.any(String),
-      ts: expect.any(String),
-      output: expect.any(Object),
-    });
+    if (target === "S3" || target === "S2") {
+      expect(result.status).toBe("escalate");
+      expect(backend.dispatches.filter((row) => row.startsWith(`${target}:`))).toHaveLength(1);
+      expect(result.stepLedger.filter((row) => row.step === "S8")).toHaveLength(1);
+      expect(result.stepLedger.at(-1)?.step).toBe("S8");
+      expect(backend.ledger.at(-1)).toMatchObject({
+        step: "S8", handoffStatus: "escalate", escalationKind: "decision",
+      });
+      expect(JSON.stringify(result.stepLedger)).not.toContain('"synthesizedFailure"');
+      expect(result.stepLedger.at(-1)?.stopSummary?.reason).not.toBe("failure");
+      return;
+    }
+    expect(result.status).toBe("error");
+    expect(backend.dispatches.filter((row) => row.startsWith(`${target}:`))).toHaveLength(1);
   });
 
   it("Group A coder wrong self-count: git-backed discrepancy is telemetry, not a run-abort", async () => {

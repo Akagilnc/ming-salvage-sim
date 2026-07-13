@@ -216,7 +216,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("#5 malformed S2 build output → S8(error), never silent bypass", () => {
-  it("S2 permanently returns a wrong-kind output → bounded redispatch then failure escalation", async () => {
+  it("S2 wrong-kind output → one decision escalation", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -231,18 +231,13 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
     expect(result.status).toBe("escalate");
-    expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(
-      MAX_DISPATCH_ATTEMPTS,
-    );
-    expect(result.stopSummary?.reason).toBe("infra_failure");
-    expect(result.stopSummary?.summary).toContain(
-      `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
-    );
+    expect(backend.runStepIds.filter((id) => id === "S2")).toHaveLength(1);
+    expect(result.stopSummary?.reason).toBe("spec_conflict");
     // A malformed S2 output must NEVER be coerced into a committed success.
     expect(pushed).toBe(false);
   });
 
-  it("S2 first returns undefined, then succeeds on a fresh mechanical redispatch", async () => {
+  it("S2 undefined output escalates once without mechanical redispatch", async () => {
     const backend = new SpyBackend();
     let pushed = false;
     backend.push = async () => {
@@ -261,9 +256,9 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(result.status).toBe("success");
-    expect(coderAttempts).toBe(2);
-    expect(pushed).toBe(true);
+    expect(result.status).toBe("escalate");
+    expect(coderAttempts).toBe(1);
+    expect(pushed).toBe(false);
   });
 
   it("S2 permanently returns garbage → bounded failure escalation, NOT pushed", async () => {

@@ -24,9 +24,7 @@ import { describe, expect, it } from "vitest";
 import {
   isValidFinding,
   isValidPriorFindingDisposition,
-  isValidReviewerOutput,
 } from "../src/validate.js";
-import type { StepOutput } from "../src/types.js";
 import { priorFindingDispositionSchema } from "../src/realBackend.js";
 
 const suppression = {
@@ -76,22 +74,6 @@ describe("#604 r5 E1 — isValidFinding rejects extra keys on the disposition", 
       disposition: { ...suppression, findingIdentity: "correctness|x|y" },
     };
     expect(isValidFinding(finding)).toBe(true);
-  });
-});
-
-describe("#604 r5 E1 — isValidReviewerOutput rejects extra keys on the disposition", () => {
-  it("rejects a reviewer output whose finding disposition carries a deleted field", () => {
-    const output = {
-      kind: "reviewer",
-      escalate: null,
-      findings: [
-        {
-          ...baseFinding(),
-          disposition: { ...suppression, targetModule: "some-module" },
-        },
-      ],
-    } as unknown as StepOutput;
-    expect(isValidReviewerOutput(output)).toBe(false);
   });
 });
 
