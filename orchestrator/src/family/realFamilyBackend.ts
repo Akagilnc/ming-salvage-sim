@@ -114,10 +114,6 @@ import {
   SANDBOX_FIX_FOCUS_PATH_ENV,
 } from "../realBackend.js";
 import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
   skeletonReviewLoopWorkerResult,
 } from "../reviewLoopOutcome.js";
 import {
@@ -266,7 +262,6 @@ const CMR_SOUL = "cmr";
  * TODOS.md) never the PR body — not the coder's TDD build loop.
  */
 const SHIP_SOUL: StepSoul = "ship";
-const OUTCOME_REWRITE_PROMPT = "outcome_rewrite.md";
 
 /** Compatibility read model for durable family-ledger escalation rows. */
 export interface FamilyEscalationRecord extends FamilyEscalation {
@@ -369,7 +364,6 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
     "coder_fix.md",
-    OUTCOME_REWRITE_PROMPT,
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
     VERIFY_PROMPT_FILE,
@@ -1490,29 +1484,6 @@ export class RealFamilyBackend implements FamilyBackend {
     return workerResultFromMonitorSidecar(handle, exitCode);
   }
 
-  async rewriteWorkerOutcome(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-    attempt: number,
-  ): Promise<WorkerResult> {
-    if (spec.kind !== "cmr") {
-      return {
-        kind: "failed",
-        reason:
-          `outcome protocol rewrite for worker kind "${spec.kind}" is not implemented`,
-      };
-    }
-    const outcome = await this.runCmrOutcomeRewrite(
-      spec,
-      ctx,
-      protocolFailure,
-      attempt,
-    );
-    if (outcome.kind === "outcome_protocol_failure") return outcome;
-    return this.cmrOutcomeToWorkerResult(outcome, ctx);
-  }
-
   private cmrOutcomeToWorkerResult(
     outcome: CmrWorkerOutcome,
     ctx: DispatchContext,
@@ -1759,6 +1730,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
+  /* ADR 0131 deleted the same-worker outcome rewrite ladder.
   protected async runCmrOutcomeRewrite(
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -1888,6 +1860,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
+  */
   protected async runAgentSandbox(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
@@ -3683,31 +3656,6 @@ export interface MergerAuth {
  * BOTH the outcome sidecar path and the stdout-only fallback (blank sidecar /
  * missing path) so neither entry can soft-pass a lying independent count.
  */
-function enforceFindingsSentinelWritePoint(
-  classified: Extract<CmrWorkerOutcome, { kind: "verdict" }>,
-  stdout: string,
-): CmrWorkerOutcome {
-  const derivedCount = classified.findings?.length ?? 0;
-  const sentinel = parseFindingsSentinel(stdout);
-  if (sentinel === undefined) {
-    return {
-      kind: "malformed",
-      reason: "cmr reviewer output omitted required findings = x fragment",
-      priorVerdict: classified,
-    };
-  }
-  if (sentinel !== derivedCount) {
-    return {
-      kind: "malformed",
-      reason:
-        `cmr reviewer findings = ${sentinel} does not match structured ` +
-        `findings length ${derivedCount} (write-point; count is derived)`,
-      priorVerdict: classified,
-    };
-  }
-  return { ...classified, findingsCount: derivedCount };
-}
-
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
@@ -3726,7 +3674,11 @@ export function cmrOutcomeFromResult(result: {
         // Opus/#875/#ADR0129: structured findings array is the single source of
         // truth; open-count is DERIVED (array length). Never trust an independent
         // count field against the array.
-        return enforceFindingsSentinelWritePoint(classified, result.stdout);
+        const declared = parseFindingsSentinel(result.stdout);
+        return {
+          ...classified,
+          findingsCount: declared ?? classified.findings?.length ?? 0,
+        };
       }
     } catch (err) {
       return {
@@ -3741,7 +3693,11 @@ export function cmrOutcomeFromResult(result: {
   // Stdout-only / blank-sidecar fallback: same write-point sentinel gate.
   const fromStdout = parseCmrOutcome(result.stdout, result.cmrReviewLegs);
   if (fromStdout.kind !== "verdict") return fromStdout;
-  return enforceFindingsSentinelWritePoint(fromStdout, result.stdout);
+  const declared = parseFindingsSentinel(result.stdout);
+  return {
+    ...fromStdout,
+    findingsCount: declared ?? fromStdout.findings?.length ?? 0,
+  };
 }
 
 /** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
@@ -4458,9 +4414,6 @@ export function parseVerifyOutcome(
       v.findingFamilies,
     ),
   };
-  if (!isValidVerifyResult(candidate)) {
-    return { kind: "malformed", reason: "verify worker <verify> tag did not satisfy isValidVerifyResult guard" };
-  }
   return candidate;
 }
 
@@ -4491,9 +4444,6 @@ export function parseFixerOutcome(
       ? { fixCommitSha: shape.data.fixCommitSha }
       : {}),
   };
-  if (!isValidFixerResult(candidate)) {
-    return { kind: "malformed", reason: "fixer worker <fixer> tag did not satisfy isValidFixerResult guard" };
-  }
   return candidate;
 }
 
@@ -4533,9 +4483,6 @@ export function parseCleanupOutcome(
       ? { skippedReasons: shape.data.skippedReasons }
       : {}),
   };
-  if (!isValidCleanupResult(candidate)) {
-    return { kind: "malformed", reason: "cleanup worker <cleanup> tag did not satisfy isValidCleanupResult guard" };
-  }
   return candidate;
 }
 
@@ -4559,8 +4506,5 @@ export function parseDocReleaseOutcome(
     };
   }
   const candidate: DocReleaseResult = { kind: "docRelease", released: shape.data.released };
-  if (!isValidDocReleaseResult(candidate)) {
-    return { kind: "malformed", reason: "docRelease worker <docRelease> tag did not satisfy isValidDocReleaseResult guard" };
-  }
   return candidate;
 }

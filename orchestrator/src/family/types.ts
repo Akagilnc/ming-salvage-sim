@@ -635,13 +635,6 @@ export interface FamilyBackend {
    * work, move git truth, leave tracked changes, or infer a route from prose. The
    * runner owns the bounded retry cap.
    */
-  rewriteWorkerOutcome?(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-    attempt: number,
-  ): Promise<WorkerResult>;
-
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
   // ALL OPTIONAL: a #293-era backend (the no-op default, the existing fakes)
   // does NOT implement them, so the verify-cmr hook degrades to the no-op
