@@ -11,7 +11,7 @@
 _Avoid_: 把每个 host 子进程、监控器或桥接层都叫执行面
 
 **开工入口（Ignition Entry）**:
-使用者启动编排任务的唯一公开入口。使用者只提供 issue 号；入口负责更新并构建最新版编排器、重烤 worker image、挂载输入、定位或创建该 issue 的唯一工作现场，再把任务交给内部流程。
+使用者启动编排任务的唯一公开入口。使用者只提供 issue 号；入口负责更新并构建最新版编排器、重烤 worker image、挂载输入，再请求 Scene Provisioning / Recovery 定位、建立或复用该 issue 的唯一工作现场并把任务交给内部流程。
 _Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamilyDriver`、让使用者拼内部路径和参数
 
 **父工作树（Family Base Worktree）**:
