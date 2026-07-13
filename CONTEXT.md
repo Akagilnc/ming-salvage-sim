@@ -35,7 +35,7 @@ _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代�
 _Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
 
 **Worker Invocation 生命周期**:
-Worker Invocation Action 与 Lineage 共同拥有 worker crash/re-entry、retry budget 消耗、是否重派 worker 以及 scene/session recovery。Runner 只依据 exit-code 通道，在同一 fixed flow position 机械重调尚未完成的 Action；ordinary retry/resume 恢复当前角色原 session，relay 则保留 scene、worktree、baton 与旧 session/checkpoint records，successor session 按选棒结果决定。
+Worker Invocation Action 单一拥有 worker crash/re-entry、retry budget 消耗、是否重派 worker 以及 scene/session recovery 的专业语义；Lineage 只保存该 owner 的未完成义务、locator 与恢复记录，不解释内容。Runner 只依据 exit-code 通道，在同一 fixed flow position 机械重调尚未完成的 Action；ordinary retry/resume 恢复当前角色原 session，relay 则保留 scene、worktree、baton 与旧 session/checkpoint records，successor session 按选棒结果决定。
 _Avoid_: 让 Runner 自己消费 retry budget 或重派 worker、把 relay 写成 same-session、把 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
 
 ### Runtime And LLM
@@ -598,7 +598,7 @@ _Avoid_: 把空跑当失败、为凑 commit 造空提交、把「没改文件」
 
 **修复证据**:
 coder-fix worker 留给下一轮专业 reviewer 的可追踪材料，例如对应 diff、finding scope 对应关系、focused test log、same-class bug scan 与 introduced-regression check。它帮助 reviewer 复核，不是 runner 的输入。
-_Avoid_: 口头说已修、只贴总结不落 commit/test、自查二连缺席、把修复证据当 reviewer concurrence。
+_Avoid_: 口头说已修、有代码变化却不落 commit/test、自查二连缺席、把修复证据当 reviewer concurrence。
 
 **smart zoom**(步的粒度):
 选一个 worker/step 该多大的权衡(Matt)。大步省调度、但一个上下文塞太多会到上限;小步上下文清爽、但调度多。判据 = 步内无需调度 + 上下文预算。大步不一定好。

@@ -44,8 +44,8 @@ methods live in versioned souls/skills/actions; delivery topology lives in
 
 - The **parent epic** issue number is the run key. Its children must be
   attached as **native sub-issues** (not just task-list mentions).
-- Children the run may build carry the `ready-for-agent` label — the S0 gate
-  (rfa) refuses anything else. Pull the label to hold a child out.
+- Children the run may build carry the `ready-for-agent` label; family
+  admission skips anything else. Pull the label to hold a child out.
 - Native `blocked_by` dependencies between children drive wave order
   (`commander.selectWave`; the graph must be acyclic). Independent children
   land in the same wave and run **concurrently**
@@ -235,17 +235,18 @@ reality, then fine-tune single slots:
 | cmrCompleteness | `ORCHESTRATOR_CMR_COMPLETENESS_MODEL` |
 | cmrCorrectness | `ORCHESTRATOR_CMR_CORRECTNESS_MODEL` |
 | verify | `ORCHESTRATOR_VERIFY_MODEL` |
-| fixer (S10) | `ORCHESTRATOR_FIXER_MODEL` |
+| delivery fixer | `ORCHESTRATOR_FIXER_MODEL` |
 | cleanup | `ORCHESTRATOR_CLEANUP_MODEL` |
 | docRelease | `ORCHESTRATOR_DOCRELEASE_MODEL` |
 | cmrReview legs | `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` (comma list) |
 
 Role vocabulary worth keeping straight:
 
-- **coderFix** = in-loop fix worker during the build (responds to S3 reviewer
-  findings until the review is clean).
-- **fixer** = S10, the post-ship repair worker (eats verify/CI/online-review
-  failures after S7). Different seat, independently staffed.
+- **coderFix** = repair worker used by per-slice and family-integration review
+  scopes.
+- **fixer** = repair worker used by delivery/shared-tail review scopes. It is a
+  different seat and is independently staffed. Exact dispatch positions live
+  only in #869.
 
 Roster conventions (from the exam/marathon evidence, 2026-07):
 
@@ -291,32 +292,29 @@ only credential oracle. Expiry, rate limits, and server failures after startup
 flow through the ordinary leg degrade/park paths. `GLM_KEY` is never baked into
 the image or written to orchestrator state.
 
-## Review loops
+## Review roles
 
-1. **Per-slice loop** (runner-visible, ADR 0030): coder → fresh read-only
-   reviewer over the current full diff → coder-fix (new commit, never amend) →
-   fresh reviewer again, until findings reach zero. Review fixes are always
-   NEW commits: round-by-round history is part of the record.
-2. **Integrated CMR** (family close): completeness gate, correctness gate, and
-   cross-model review legs (`cmrReview`, e.g. codex sol + claude opus) over the
-   assembled family base — it exists to catch cross-slice seams that
-   per-slice green cannot see.
-3. **Online bot rounds** (after a PR opens): sourcery / codex-connector /
-   gemini / coderabbit threads are worked finding-by-finding — fix as a new
-   commit, reply with the commit hash, resolve the thread; refutations are
-   replied with verifiable evidence instead of code. Merge requires
-   mergeState CLEAN **and** zero unresolved threads.
+Exact gate order and repair re-entry live only in #869. This README records the
+role boundaries:
 
-Ticket discipline for fix rounds: every ticket carries a sweep clause ("fix the
-finding, then sweep for the same class and print a self-audit checklist").
-When reviews deepen the same invariant chain two rounds in a row, the next
-ticket states the FULL target invariant (not the single hole) and goes to a
-structural-judgment coder. Any slice reaching round 5 triggers a mandatory
-stop-and-rethink before the next dispatch.
+- Per-slice coder, reviewer and fixer are independent workers. The reviewer
+  reports its own unresolved open-count; the runner never reads the findings or
+  checks the repair.
+- Integrated completeness and correctness remain distinct professional review
+  actions over the assembled family base. Their methods live in the versioned
+  review skills, not in the runner or this README.
+- Online review, repair, document release and merge use the same shared tail for
+  single and family delivery. GitHub evidence is owned by the corresponding
+  Action, never by the runner.
+
+Each real repair is a new non-amend commit; a valid refutation or no-change
+finalization may be a legal no-op. Every fixer performs the same-class scan and
+introduced-regression check before a fresh reviewer reads the current full
+diff. There is no README-defined round cap or alternate convergence rule.
 
 Testing discipline (hard-won): fixtures must consume only real rendered
-artifacts (the rendered prompt text, the actual envelope) — a fixture that
-peeks at internal parameters is a psychic model and will greenlight broken
+artifacts (the rendered prompt text and production worker artifacts) — a
+fixture that peeks at internal parameters is a psychic model and will greenlight broken
 value-chains. Every positive e2e pairs with a negative case that would have
 caught the original bug. Assert on the run's OUTPUT (result/ledger/files),
 never on input the test itself seeded.
