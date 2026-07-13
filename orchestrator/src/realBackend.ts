@@ -4511,6 +4511,13 @@ export class RealBackend implements Backend {
       worktree.path,
     ).trim();
     if (remoteRef.length === 0) return { shipped: false };
+    const remoteHead = remoteRef.split(/\s+/, 1)[0];
+    const expectedHead = this.sh(
+      "git",
+      ["rev-parse", "HEAD"],
+      worktree.path,
+    ).trim();
+    if (remoteHead !== expectedHead) return { shipped: false };
 
     const pr = observeOpenPrForBranch(
       (file, args) => this.sh(file, args, this.workingRepo),

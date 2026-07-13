@@ -3852,9 +3852,6 @@ function classifyCmrOutcomePayload(
       ...(converged.findings !== undefined
         ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
         : {}),
-      // This payload-only parser cannot see the stdout sentinel; rows are its fallback.
-      findingsCount:
-        converged.findings !== undefined ? converged.findings.length : 0,
       ...attachSanitizedFindingFamilies({}, converged.findingFamilies),
       evidencePaths: converged.evidencePaths,
     };
@@ -3887,7 +3884,6 @@ function classifyCmrOutcomePayload(
         ? { priorFindingDispositions }
         : {}),
       ...(redFindings !== undefined ? { findings: redFindings } : {}),
-      findingsCount: redFindings !== undefined ? redFindings.length : 0,
       ...attachSanitizedFindingFamilies({}, red.data.findingFamilies),
       evidencePaths: red.data.evidencePaths,
     };
