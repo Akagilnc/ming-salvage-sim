@@ -89,7 +89,6 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
-  SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   soulForStep,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
@@ -120,7 +119,10 @@ import {
   formatFixFocusMarkdown,
   normalizeFindingFamiliesWireAliases,
 } from "../findingFamilies.js";
-import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
+import {
+  ONLINE_REVIEW_LANDING_FILE,
+  SANDBOX_ONLINE_REVIEW_PATH_ENV,
+} from "./onlineReviewLoop.js";
 import {
   PROVISION_SUBPROCESS_TIMEOUT_MS,
   provisionNodeModules,
@@ -1594,8 +1596,8 @@ export class RealFamilyBackend implements FamilyBackend {
           cwd: this.opts.workingRepo,
           sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
           // Derive the model from the spec via the shared validated seam (cmr S336 r7
-          // symmetry): resolve the worker's slug through the same registry as the
-          // single-slice + family ship paths — no constant that could silently drift
+          // symmetry): resolve the worker's slug through the shared family registry —
+          // no constant that could silently drift
           // from the spec the runner declares.
           agent: this.agentForSpec(spec, ctx),
           // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
@@ -2764,8 +2766,7 @@ export class RealFamilyBackend implements FamilyBackend {
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
       sandbox: this.shipSandbox(auth, outcomeLanding),
-      // Derive the model from the spec via the SAME validated mapping the
-      // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
+      // Derive the model from the spec via the validated registry — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
       // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
       // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
@@ -2931,8 +2932,7 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10) — the same
-   * extraction the single-slice ship uses (`RealBackend.readGhToken`). The token
+   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10). The token
    * lives in the host's OS keyring (not a portable hosts.yml), so we extract it with
    * gh itself and inject it as {@link SANDBOX_GH_TOKEN_ENV}. Returns undefined when gh
    * is unauthenticated / absent (the `runShipWorker` preflight then escalates — gh is
@@ -2950,7 +2950,7 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /**
    * The docker options the family ship sandbox runs under — the pure SANDBOX-CONFIG
-   * seam (mirrors `cmrSandboxConfig` / `RealBackend.shipSandboxConfig`). No
+   * seam (mirrors `cmrSandboxConfig`). No
    * container, no I/O: a unit test asserts the mounts + soul env. The ship worker
    * runs under the WRITE (`coder`) soul (it commits the bump + pushes), with codex
    * auth + the claude token + the gh token (GH_TOKEN, cmr S336 r10), NO skills mount
@@ -2967,7 +2967,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
     // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the family ship sandbox must
     // export it or that tracker write fails on an unset var (codex #384 — symmetric
-    // with the single-slice ship sandbox).
+    // with the other family worker sandboxes).
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: SHIP_SOUL,
@@ -2976,7 +2976,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
-    // gate is the runShipWorker preflight — symmetric with the single-slice path).
+    // gate is the runShipWorker preflight).
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;

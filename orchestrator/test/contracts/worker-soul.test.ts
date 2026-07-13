@@ -35,12 +35,10 @@ vi.mock("node:child_process", () => ({
 
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
-import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
-  SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
@@ -188,36 +186,6 @@ describe("#334 RealBackend.boxConfig drops the runtime skillsMount (baked skills
     expect(cfg.env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV]).toBe("334");
     expect(cfg.env[SANDBOX_REPO_ENV]).toBe("owner/name");
     expect(cfg.env[SANDBOX_GH_TOKEN_ENV]).toBe("gho_test");
-  });
-
-  it("mounts S9 online-review landing at the documented worktree-root path read-only", () => {
-    const cfg = makeBackend().config(
-      {
-        id: "S9",
-        role: "verify",
-        promptFile: "verify.md",
-        completionSignal: "VERIFY_STEP_COMPLETE",
-        maxIter: 1,
-        model: "opus",
-        soul: "verify",
-        toolchain: [],
-      },
-      {
-        onlineReviewLanding: {
-          path: "/host/.ledger-600/online-review.json",
-          sandboxPath: ".orchestrator-online-review.json",
-        },
-      },
-    );
-
-    expect(cfg.env[SANDBOX_ONLINE_REVIEW_PATH_ENV]).toBe(
-      ".orchestrator-online-review.json",
-    );
-    expect(cfg.mounts).toContainEqual({
-      hostPath: "/host/.ledger-600/online-review.json",
-      sandboxPath: ".orchestrator-online-review.json",
-      readonly: true,
-    });
   });
 
   it("mounts S5 fix findings at the documented worktree-root path read-only", () => {
@@ -380,7 +348,6 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
       ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/],
       ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/],
       ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/],
-      ["ship.md", /<ship>/, /SHIP_STEP_COMPLETE/],
       ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/],
       ["integrated_cmr.md", /<cmr>/, /CMR_STEP_COMPLETE/],
       ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
@@ -516,32 +483,7 @@ class ReviewWorkerBackend implements Backend {
   async runStep(): Promise<StepOutput> {
     throw new Error("runStep should not be called directly (#334)");
   }
-  async push(): Promise<void> {
-    throw new Error("push should not be called directly (#334)");
-  }
   async writeLedger(): Promise<void> {}
-  async pollOnlineReviewState(input: {
-    repo: string;
-    prUrl: string;
-    pollCount: number;
-  }): Promise<import("../../src/types.js").OnlineReviewLandingSnapshot> {
-    void input;
-    return {
-      prUrl: "pr://slice/offline-334",
-      headOid: "deadbeef",
-      totalFindingCount: 0,
-      quiescent: true,
-      bots: {
-        coderabbit: { state: "complete", findingCount: 0 },
-        sourcery: { state: "complete", findingCount: 0 },
-        codex: { state: "complete", findingCount: 0 },
-        gemini: { state: "complete", findingCount: 0 },
-      },
-      droppedBots: [],
-      threads: [],
-      checkRuns: [],
-    };
-  }
 
   async dispatchWorker(
     spec: WorkerSpec,
@@ -591,14 +533,7 @@ class ReviewWorkerBackend implements Backend {
         },
       };
     }
-    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-    if (skeleton !== undefined) {
-      return skeleton;
-    }
-    return {
-      kind: "completed",
-      output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
-    };
+    throw new Error(`unexpected child worker kind: ${spec.kind}`);
   }
 }
 
@@ -611,7 +546,7 @@ describe("#334 ADR 0030 worker routing", () => {
     expect(s2?.skill).toBe("/tdd");
   });
 
-  it("blocking review dispatches S5 fix, then S6 fresh review before S7 ship", async () => {
+  it("blocking review dispatches S5 fix, then S6 fresh review before handoff", async () => {
     const backend = new ReviewWorkerBackend();
     const result = await runOrchestrator({ issueNumber: 334, backend });
     expect(result.status).toBe("success");
@@ -620,109 +555,10 @@ describe("#334 ADR 0030 worker routing", () => {
       "S3:reviewer:/code-review",
       "S5:coder:/tdd",
       "S6:reviewer:/code-review",
-      "S7:ship:gstack-ship",
-      "S9:verify:/verify",
-      "S12:docRelease:/gstack-document-release",
-      "S11:cleanup:/cleanup",
     ]);
   });
 
 });
-
-describe("single-slice S7 routes from the worker result", () => {
-  class ShipPayloadBackend extends ReviewWorkerBackend {
-    shipOutput: WorkerResult;
-    constructor(shipOutput: WorkerResult) {
-      super();
-      this.shipOutput = shipOutput;
-    }
-    override async dispatchWorker(
-      spec: WorkerSpec,
-      ctx: DispatchContext,
-    ): Promise<WorkerResult> {
-      this.dispatched.push(`${spec.id}:${spec.kind}:${spec.skill ?? "—"}`);
-      this.specs.push(spec);
-      this.ctxs.push(ctx);
-      if (spec.kind === "coder") {
-        return {
-          kind: "completed",
-          output: { kind: "coder", committed: true, commitsAdded: 1 },
-        };
-      }
-      if (spec.kind === "reviewer") {
-        return { kind: "completed", output: { kind: "reviewer", findings: [] } };
-      }
-      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-      if (skeleton !== undefined) {
-        return skeleton;
-      }
-      return this.shipOutput;
-    }
-  }
-
-  async function run(shipOutput: WorkerResult): Promise<string> {
-    const backend = new ShipPayloadBackend(shipOutput);
-    const result = await runOrchestrator({ issueNumber: 334, backend });
-    return result.status;
-  }
-
-  const wtBranch = "pr://slice/offline-334";
-
-  it("completed remains successful without runner branch judgment", async () => {
-    const status = await run({
-      kind: "completed",
-      output: { kind: "ship", branch: "main", status: "pushed", pr: "pr://slice/offline-334" },
-    });
-    expect(status).toBe("success");
-  });
-
-  it("completed remains successful without runner status judgment", async () => {
-    const status = await run({
-      kind: "completed",
-      output: { kind: "ship", branch: wtBranch, status: "merged", pr: "pr://slice/offline-334" },
-    });
-    expect(status).toBe("success");
-  });
-
-  it("missing PR cargo falls back to the branch locator", async () => {
-    const status = await run({
-      kind: "completed",
-      output: { kind: "ship", branch: wtBranch, status: "pr_opened" },
-    });
-    expect(status).toBe("success");
-  });
-
-  it("blank PR cargo falls back to the branch locator", async () => {
-    const status = await run({
-      kind: "completed",
-      output: { kind: "ship", branch: wtBranch, status: "pr_opened", pr: "  " },
-    });
-    expect(status).toBe("success");
-  });
-
-  it("a legitimate pushed ship on the worktree branch ⇒ success (the contract holds)", async () => {
-    const status = await run({
-      kind: "completed",
-      output: { kind: "ship", branch: wtBranch, status: "pushed" },
-    });
-    expect(status).toBe("success");
-  });
-
-  it("a legitimate pr_opened ship with a real pr URL ⇒ success", async () => {
-    const status = await run({
-      kind: "completed",
-      output: {
-        kind: "ship",
-        branch: wtBranch,
-        status: "pr_opened",
-        pr: "pr://slice/offline-334",
-      },
-    });
-    expect(status).toBe("success");
-  });
-});
-
-// ─── launcher bootstrap smoke (item 3) ─────────────────────────────────────
 
 describe("launch-362.mjs bootstrap smoke (#372 unconditional)", () => {
   it("mocks execFileSync and asserts side-build tsc + swap + build.sh are invoked (tsc before driver import)", async () => {

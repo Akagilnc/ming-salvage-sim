@@ -3,8 +3,6 @@ import {
   parseModuleDeclaration,
   type FamilyModuleContext,
 } from "./family/moduleDeclaration.js";
-import { deriveCmrEnvelope } from "./family/cmrClassification.js";
-import type { FamilyCmrFindingClassification } from "./family/cmrClassification.js";
 import { runFamily } from "./family/runner.js";
 import { parseCmrOutcome } from "./family/realFamilyBackend.js";
 import {
@@ -62,7 +60,8 @@ import type {
  * directly, decoupled from the collapsed classifier enum.
  */
 export type DogfoodReplayClassification =
-  | FamilyCmrFindingClassification
+  | "blocking"
+  | "accepted_suppressed"
   | "success"
   | "same_module_still_red"
   | "spec_conflict"
@@ -246,19 +245,8 @@ async function familyClassificationScenario(input: {
     backend.ledger.find(
       (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
     );
-  // #604 slice 3 / ADR 0062: the runner-visible ledger no longer carries the fat
-  // `cmrFindingClassification.results` blob — the runner sees only the thin
-  // `blockingFindingIdentityKeys` envelope. This replay is a presentation fixture,
-  // so it recomputes the classification report in-process from the SAME inputs the
-  // gate classified (the finding + module context); this mirrors "what the
-  // classifier decided" without reaching into content the runner never reads.
-  const result = deriveCmrEnvelope({
-    familyIssue: input.familyIssue,
-    findings: [input.finding],
-    moduleContext: input.moduleContext,
-  }).results[0];
-  if (ledgerEntry === undefined || result === undefined) {
-    throw new Error(`dogfood replay ${input.id} produced no classification`);
+  if (ledgerEntry === undefined) {
+    throw new Error(`dogfood replay ${input.id} produced no ledger result`);
   }
   const stopSummary = ledgerEntry?.stopSummary;
   if (stopSummary == null) {
@@ -274,7 +262,7 @@ async function familyClassificationScenario(input: {
     id: input.id,
     issue: input.issue,
     title: input.title,
-    classification: result.classification,
+    classification: isSuppressionOnly ? "accepted_suppressed" : "blocking",
     stopSummary,
     source: "family",
     sourceStopSummary: stopSummary,
@@ -510,17 +498,6 @@ class DogfoodSingleSliceBackend implements Backend {
   ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.dispatchedModels.push(`${spec.id}:${spec.model}`);
-    if (spec.kind === "ship") {
-      return {
-        kind: "completed",
-        output: {
-          kind: "ship",
-          branch: ctx.worktree?.branch ?? REPLAY_WORKTREE.branch,
-          status: "pushed",
-          pr: "pr://slice/offline-dogfood",
-        },
-      };
-    }
     if (spec.kind === "reviewer") {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
@@ -528,14 +505,6 @@ class DogfoodSingleSliceBackend implements Backend {
         kind: "completed",
         output: scripted ?? { kind: "reviewer", findings: [] },
       };
-    }
-    // #596 review-loop skeleton support for dogfood replays (and any path that
-    // reaches S7 ship + S9+): return the shared deterministic stubs so S9–S12
-    // succeed without fake 'coder' output (which route/runner rejects).
-    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-    // #709 exemption: strict !== undefined (not loose != null) — skeleton sentinel is exactly `undefined` (never null); null-vs-undefined distinction load-bearing on dispatch fallback to avoid treating null result as skeleton.
-    if (skeleton !== undefined) {
-      return skeleton;
     }
     const scripted =
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
@@ -549,8 +518,6 @@ class DogfoodSingleSliceBackend implements Backend {
           : output,
     };
   }
-
-  async push(): Promise<void> {}
 
   async writeLedger(): Promise<void> {}
 }
@@ -1253,18 +1220,6 @@ async function familyAttributionReplay(
   const passed = backend.ledger.find(
     (entry) => entry.status === "cmr_passed" && entry.cmrPass === "completeness",
   );
-  // #604 slice 3 / ADR 0062: the ledger no longer carries the fat
-  // `cmrFindingClassification.results` attribution audit (the runner reads only the
-  // thin key envelope). Recompute the attribution report in-process from the same
-  // finding + module context the gate classified, for this presentation fixture.
-  const result = deriveCmrEnvelope({
-    familyIssue: 287,
-    findings: [attributedFinding],
-    moduleContext,
-  }).results[0];
-  if (result?.attribution.method !== "child_module_scope") {
-    throw new Error("dogfood family attribution replay did not hit child scope");
-  }
   if (!run.ok || reviewed?.stopSummary == null || fixed === undefined || passed === undefined) {
     throw new Error(
       `dogfood family attribution replay did not hit family review/fix/re-review gate: ` +
@@ -1275,8 +1230,6 @@ async function familyAttributionReplay(
     stopSummary: reviewed.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr",
-      attribution: result.attribution,
-      classification: result.classification,
       dispatches: backend.dispatches,
       reviewFixRereviewVisible: true,
       ...cmrWorkerParserEvidence({

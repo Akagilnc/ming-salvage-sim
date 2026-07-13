@@ -380,7 +380,6 @@ async function runChild(
     family: {
       parentIssue,
       familyBase,
-      noPush: true,
       mergedBlockers: child.blockedBy.filter((b) => familyChildIssues.has(b)),
     },
   });

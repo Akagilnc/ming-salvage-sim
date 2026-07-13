@@ -138,63 +138,6 @@ describe("S2 coder completed 0-commit report", () => {
   });
 });
 
-// ─── push failure (S7 push throws) ─────────────────────────────────────────
-
-describe("infra edge: persistent S7 process failure → S8 infra park", () => {
-  it("parks after the bounded process retry when push throws", async () => {
-    const backend = new ErrorEdgeBackend();
-    backend.push = async () => {
-      throw new Error("remote rejected: non-fast-forward");
-    };
-
-    const result = await runOrchestrator({ issueNumber: 252, backend });
-
-    expect(result.status).toBe("escalate");
-    expect(result.stopSummary.reason).toBe("infra_failure");
-  });
-
-  it("error package includes failedStep=S7 and the original error reason", async () => {
-    const backend = new ErrorEdgeBackend();
-    backend.push = async () => {
-      throw new Error("push failed: authentication required");
-    };
-
-    const result = await runOrchestrator({ issueNumber: 252, backend });
-
-    expect(result.errorPackage).toBeDefined();
-    expect(result.errorPackage?.failedStep).toBe("S7");
-    expect(result.errorPackage?.reason).toContain("push failed");
-  });
-
-  it("error package includes the branch HEAD so the dev can diagnose without re-running", async () => {
-    const backend = new ErrorEdgeBackend();
-    backend.push = async () => {
-      throw new Error("remote rejected");
-    };
-
-    const result = await runOrchestrator({ issueNumber: 252, backend });
-
-    // branchHead must be set to the resident branch name so the dev knows
-    // where the commits landed even though push failed.
-    expect(result.errorPackage?.branchHead).toBe(WORKTREE.branch);
-  });
-
-  it("records S8 in the ledger on push-failure path", async () => {
-    const backend = new ErrorEdgeBackend();
-    backend.push = async () => {
-      throw new Error("push failed");
-    };
-
-    const result = await runOrchestrator({ issueNumber: 252, backend });
-
-    const steps = result.stepLedger.map((e) => e.step);
-    expect(steps).toContain("S7");
-    expect(steps).toContain("S8");
-  });
-});
-
-// ─── backend throws mid-pipeline (sandbox.run / gh / git) ──────────────────
-
 describe("error edge: any backend call throws → S8(error), not silently swallowed", () => {
   it("sandbox.run (S2 runStep) permanently throws → bounded failure escalation", async () => {
     const backend = new ErrorEdgeBackend();

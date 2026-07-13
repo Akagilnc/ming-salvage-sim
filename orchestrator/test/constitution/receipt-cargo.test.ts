@@ -18,7 +18,7 @@ import {
   adjudicatePriorClaimedFixedFindings,
   findingIdentityKey,
 } from "../../src/findings.js";
-import { enforceRunnerOwnedRecheck } from "../../src/onlineReviewLoop.js";
+import { enforceRunnerOwnedRecheck } from "../../src/family/onlineReviewLoop.js";
 import {
   isValidVerifyResult,
   skeletonReviewLoopWorkerResult,
@@ -160,7 +160,7 @@ describe("#877 residual read-word fate forks — survival", () => {
     expect(result.status).toBe("success");
     expect(result.stopSummary?.reason).not.toBe("contract_drift");
     expect(backend.dispatched).toEqual(
-      expect.arrayContaining(["S3:reviewer", "S5:coder", "S6:reviewer", "S7:ship"]),
+      expect.arrayContaining(["S3:reviewer", "S5:coder", "S6:reviewer"]),
     );
   });
 
@@ -226,7 +226,7 @@ describe("#877 residual read-word fate forks — survival", () => {
     // Pre-#877: bare post-fixer converge without echoing fix-marked keys →
     // contract_drift. Post-#877 / ship-pre: helper + court branch DELETED.
     const onlineReview = readFileSync(
-      join(srcDir, "onlineReviewLoop.ts"),
+      join(srcDir, "family", "onlineReviewLoop.ts"),
       "utf8",
     );
     const runner = readFileSync(join(srcDir, "runner.ts"), "utf8");

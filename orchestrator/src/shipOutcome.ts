@@ -2,7 +2,7 @@
  * shipOutcome.ts — classify the ship WORKER's `<ship>` tag (#336).
  *
  * The ship step is a WORKER invoking `gstack-ship` (ADR 0026 / PRD #330 R2),
- * replacing the inline `RealBackend.push` (single slice) + family `openFamilyPr`.
+ * replacing the family backend's former inline PR delivery.
  * `gstack-ship` does more than push+PR (base merge / tests / diff review / VERSION
  * / CHANGELOG + STOP/HITL), so the worker's outcome is a discriminated union the
  * full {@link WorkerResult} mapping needs — NOT just success/error.
@@ -13,8 +13,7 @@
  * defect needing a human decision) is `escalate`. A hard, non-rerun ship/test
  * failure is `failed`. Mirrors #335's `parseCmrOutcome` / `cmrOutcomeFromResult`.
  *
- * Both the single-slice ship worker (RealBackend) and the family ship worker
- * (RealFamilyBackend) emit the SAME `<ship>` tag and reuse this parser.
+ * The family ship worker (RealFamilyBackend) emits this `<ship>` tag.
  */
 
 import { z } from "zod";
@@ -80,7 +79,7 @@ const nonEmpty = z.string().trim().min(1);
  * probe runs first and tolerates every sibling key; these schemas only enrich
  * transported cargo and never decide whether a clean worker process may continue.
  *
- * Mirrors prompts/ship.md + family_ship.md (the union of the two contracts):
+ * Mirrors family_ship.md:
  *   1. `{status:"pushed",    branch}`            — shipped, no pr (pr MUST be absent);
  *   2. `{status:"pr_opened", branch, pr}`        — shipped, pr REQUIRED;
  *   3. `{escalate:{reason, diagnosis}}` — a genuine block;
@@ -137,8 +136,7 @@ export function shipOutcomeFromResult(result: {
  * Legacy telemetry parser for a ship worker's `<ship>{…}</ship>` stdout (#336).
  * Production routing no longer calls this function: prose cannot decide control
  * flow under ADR 0062 / #820. Kept pure for historical telemetry decoding. The
- * shape mirrors prompts/ship.md +
- * family_ship.md (the union of the two contracts):
+ * shape mirrors family_ship.md:
  *   - `{"status": "pushed",    "branch": string}`              → shipped (no pr);
  *   - `{"status": "pr_opened", "branch": string, "pr": string}`→ shipped (pr REQUIRED);
  *   - `{"escalate": {"reason": string, "diagnosis": string}}`  → escalate;

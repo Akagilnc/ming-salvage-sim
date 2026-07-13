@@ -15,7 +15,7 @@ import {
 import { shWithClock } from "../externalCall.js";
 import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
 import { buildRoundTrigger } from "../evidenceAdmissibility.js";
-import { offlinePrReviewSnapshot } from "../onlineReviewLoop.js";
+import { offlinePrReviewSnapshot } from "./onlineReviewLoop.js";
 import { familyPrMergedForHead, recordPrMerged } from "./ledger.js";
 import type { FamilyBackend } from "./types.js";
 

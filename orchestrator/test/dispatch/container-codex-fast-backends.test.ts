@@ -79,9 +79,6 @@ class ExposedRealBackend extends RealBackend {
     return this.mountAuth(issueNumber);
   }
 
-  mountShipAuthForTest(issueNumber: number) {
-    return this.mountShipAuth(issueNumber);
-  }
 }
 
 class ExposedRealFamilyBackend extends RealFamilyBackend {
@@ -113,16 +110,6 @@ describe("#760 real backend Codex fast write-site consumption", () => {
     expect(config.includes('service_tier = "fast"')).toBe(codexFast);
   });
 
-  it.each([true, false])("RealBackend mountShipAuth writes service_tier for codexFast=%s", (codexFast) => {
-    const home = makeHome();
-    const backend = new ExposedRealBackend(realBackendOptions(makeSourceRepo(), home, codexFast));
-
-    const auth = backend.mountShipAuthForTest(760);
-
-    expect(auth.codexAuthDir).toBeDefined();
-    expect(configToml(auth.codexAuthDir!)).toContain(codexFast ? 'service_tier = "fast"' : 'approval_policy = "never"');
-  });
-
   it.each([true, false])("RealFamilyBackend writes service_tier at all three family sites for codexFast=%s", (codexFast) => {
     const home = makeHome();
     const backend = new ExposedRealFamilyBackend(
@@ -141,7 +128,7 @@ describe("#760 real backend Codex fast write-site consumption", () => {
     }
   });
 
-  it("keeps all five production write sites consuming opts.codexFast", () => {
+  it("keeps all four production write sites consuming opts.codexFast", () => {
     const sources = [
       readFileSync(join(here, "..", "..", "src", "realBackend.ts"), "utf8"),
       readFileSync(join(here, "..", "..", "src", "family", "realFamilyBackend.ts"), "utf8"),
@@ -168,7 +155,7 @@ describe("#760 real backend Codex fast write-site consumption", () => {
     const realResult = countMatches(sources[0]);
     const familyResult = countMatches(sources[1]);
 
-    expect(realResult).toEqual({ total: 2, valid: 2 });
+    expect(realResult).toEqual({ total: 1, valid: 1 });
     expect(familyResult).toEqual({ total: 3, valid: 3 });
   });
 });

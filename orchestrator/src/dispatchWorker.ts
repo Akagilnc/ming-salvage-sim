@@ -12,11 +12,11 @@
  *     `backend.dispatchWorker` when a backend implements the unified seam, else
  *     falls back to {@link legacyDispatchWorker}.
  *   - {@link legacyDispatchWorker} — the #331 PREFACTOR thin wrapper: forwards a
- *     worker to the EXISTING backend methods (`runStep`/`resumeSession` for agent
- *     workers, `push` for the S7 ship worker) and wraps their returns into the
+ *     worker to the EXISTING backend methods (`runStep`/`resumeSession`) and wraps
+ *     their returns into the
  *     discriminated {@link WorkerResult}. External behaviour is unchanged
  *     (regression green); the real worker dispatch (invoke `/tdd` / `/code-review` /
- *     `gstack-ship`) lands in #334/#336.
+ *     family delivery worker) lands in the family backend.
  *   - {@link workerResultToStep} — unwrap a `completed` {@link WorkerResult} back
  *     into the `{@link StepOutput} | {@link StepResult}` shape the existing runner
  *     control flow consumes, so the prefactor does not touch route()/validate().
@@ -34,13 +34,10 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   formatFixFocusMarkdown,
 } from "./findingFamilies.js";
-import { dispatchPostMergeCleanup } from "./postMergeCleanup.js";
-import type { Sh } from "./familyDriver.js";
 import {
   modelForSlot,
   routeSmokeFailure,
@@ -53,7 +50,6 @@ import {
   SelfReportedRelayError,
   tryParseActionableRelayTag,
 } from "./relayDispatch.js";
-import { skeletonReviewLoopWorkerResult } from "./reviewLoopOutcome.js";
 import {
   createTelemetryLegStamper,
   readDispatchLogSlice,
@@ -102,7 +98,6 @@ export function workerHostForModel(
 }
 
 const FIX_FINDINGS_LEDGER_FILE = "fix-findings.json";
-const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
 
 /**
  * The wiki skill each worker kind invokes (ADR 0026):
@@ -175,79 +170,6 @@ function ensureGitExcluded(worktreePath: string, pattern: string): void {
     // Best effort only: the file is still useful to the worker even if this is
     // a non-git fixture path. Real git worktrees get the exclude entry.
   }
-}
-
-function writeOnlineReviewLandingFile(
-  spec: WorkerSpec,
-  ctx: DispatchContext,
-  landing?: WorkerLandingPayload,
-): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
-  const needsLanding =
-    (spec.kind === "verify" || spec.kind === "fixer") &&
-    landing?.onlineReviewSnapshot !== undefined;
-  if (!needsLanding) {
-    return undefined;
-  }
-  if (ctx.worktree === undefined) {
-    throw new Error(
-      `${spec.kind} worker requires a worktree to mount the online review landing file`,
-    );
-  }
-  if (!existsSync(ctx.worktree.path)) {
-    throw new Error(
-      `${spec.kind} worker online review landing worktree missing: ${ctx.worktree.path}`,
-    );
-  }
-
-  const landingPath =
-    ctx.stateDir !== undefined
-      ? join(ctx.stateDir, "online-review-landing.json")
-      : join(ctx.worktree.path, ONLINE_REVIEW_LANDING_FILE);
-  try {
-    if (ctx.stateDir !== undefined) {
-      mkdirSync(ctx.stateDir, { recursive: true });
-    } else {
-      ensureGitExcluded(ctx.worktree.path, ONLINE_REVIEW_LANDING_FILE);
-    }
-  } catch (err) {
-    throw new Error(
-      `${spec.kind} worker failed to prepare online review landing directory: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-  try {
-    writeFileSync(
-      landingPath,
-      `${JSON.stringify(
-        {
-          onlineReviewSnapshot: landing.onlineReviewSnapshot,
-          shipDelivery: landing.shipDelivery,
-          onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
-          fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
-          fixMarkedFindingThreads: landing.fixMarkedFindingThreads ?? [],
-          ...(landing.priorRoundFindings !== undefined &&
-          landing.priorRoundFindings.length > 0
-            ? { priorRoundFindings: landing.priorRoundFindings }
-            : {}),
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-  } catch (err) {
-    throw new Error(
-      `${spec.kind} worker failed to write online review landing file: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-  return {
-    path: landingPath,
-    sandboxPath: ONLINE_REVIEW_LANDING_FILE,
-    cleanup: ctx.stateDir === undefined,
-  };
 }
 
 function writeFixFocusLandingFile(
@@ -399,39 +321,6 @@ export function stepSpecToWorkerSpec(
   };
 }
 
-/**
- * Build the S7 SHIP {@link WorkerSpec} (ADR 0026: S7 is a ship worker invoking
- * `gstack-ship`, no longer an inline `git push`). #331 prefactor: the legacy
- * wrapper forwards it to `backend.push`; #336 makes it invoke `gstack-ship`.
- */
-export const SHIP_PROMPT_FILE = "ship.md";
-
-export function shipWorkerSpec(
-  route?: ResolvedModelRoute,
-  billingPool?: BillingPoolId,
-): WorkerSpec {
-  const model = route?.slots.ship ?? modelForSlot("ship");
-  return {
-    id: "S7",
-    kind: "ship",
-    role: "coder",
-    host: workerHostForModel(model, billingPool),
-    session: "fresh",
-    contextRetention: "clean",
-    skill: SKILL_FOR_KIND.ship,
-    promptFile: SHIP_PROMPT_FILE,
-    completionSignal: "SHIP_STEP_COMPLETE",
-    // A WRITE/coder ship worker must self-rerun gstack-ship's rerun-able failures
-    // (ship.md: "rerun it yourself") → an iterative budget like coder/fix (runner
-    // runner worker specs use 5), NOT a single-pass reviewer's 1 (#336 cmr r6). The completion
-    // signal stops the loop early on a clean ship; the <ship> parser reads the LAST tag.
-    maxIter: 5,
-    model,
-    soul: "coder",
-    toolchain: [],
-  };
-}
-
 // Prompt status: verify.md / fixer.md real paths shipped in #600;
 // docRelease.md real path shipped in #735; cleanup real host path remains #603.
 export const VERIFY_PROMPT_FILE = "verify.md";
@@ -439,7 +328,7 @@ export const FIXER_PROMPT_FILE = "fixer.md";
 export const CLEANUP_PROMPT_FILE = "cleanup.md";
 export const DOCRELEASE_PROMPT_FILE = "docRelease.md";
 
-/** S9 online-review / PR-check worker spec (#600 real prompt). */
+/** Family S9 online-review / PR-check worker spec (#600 real prompt). */
 export function verifyWorkerSpec(
   route?: ResolvedModelRoute,
   billingPool?: BillingPoolId,
@@ -462,7 +351,7 @@ export function verifyWorkerSpec(
   };
 }
 
-/** S10 post-review fixer worker spec (#600 real prompt). */
+/** Family S10 post-review fixer worker spec (#600 real prompt). */
 export function fixerWorkerSpec(
   route?: ResolvedModelRoute,
   billingPool?: BillingPoolId,
@@ -485,7 +374,7 @@ export function fixerWorkerSpec(
   };
 }
 
-/** S11 cleanup worker spec (#596 skeleton; real host path is #603). */
+/** Family S11 cleanup worker spec (#596 skeleton; real host path is #603). */
 // TODO(#603): cleanup skill/prompt wiring is still skeleton here.
 export function cleanupWorkerSpec(
   route?: ResolvedModelRoute,
@@ -510,7 +399,7 @@ export function cleanupWorkerSpec(
 }
 
 /**
- * S12 文档发布 worker (#735): invoke `/gstack-document-release` in a spawned /
+ * Family S12 文档发布 worker (#735): invoke `/gstack-document-release` in a spawned /
  * non-interactive session. Success (including 文档发布空跑) → `released:true`;
  * skill crash / hang / explicit fail / required push fail → not released.
  * Offline/test may still synthesize via the offline hatch only.
@@ -545,8 +434,6 @@ export function docReleaseWorkerSpec(
  *     dispatched via `backend.resumeSession` (the escalate/crash-resume path), else
  *     via `backend.runStep`. The returned `StepOutput | StepResult` is wrapped as
  *     `completed` (carrying the real per-step `sessionId` when surfaced).
- *   - ship (S7): forward to `backend.push` and wrap as a `completed` ShipResult.
- *
  * #331 always yields `completed` — the `failed`/`malformed`/`escalated` cases are
  * wired into the union now but produced by the real workers in later slices.
  */
@@ -556,73 +443,12 @@ export async function legacyDispatchWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
-  if (spec.kind === "ship") {
-    if (ctx.worktree === undefined) {
-      throw new Error("legacyDispatchWorker: ship worker requires a worktree");
-    }
-    await backend.push(ctx.worktree);
-    return {
-      kind: "completed",
-      output: { kind: "ship", branch: ctx.worktree.branch, status: "pushed" },
-    };
-  }
-
-  // S11 post-merge cleanup (#603): deterministic verify+act when landing carries
-  // pr_merged; offline/test without landing keeps the skeleton stub.
-  if (spec.kind === "cleanup") {
-    if (landing?.cleanupDispatch !== undefined) {
-      const ghSh: Sh = (file, args) =>
-        shWithClock(file, args, { stage: `dispatch:${file}` });
-      try {
-        const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
-        return { kind: "completed", output };
-      } catch (err) {
-        return {
-          kind: "failed",
-          reason: err instanceof Error ? err.message : String(err),
-        };
-      }
-    }
-    const stub = skeletonReviewLoopWorkerResult(spec.kind);
-    if (stub !== undefined) {
-      return stub;
-    }
-  }
-
-  // #596 skeleton: explicit offline/test contexts only when the backend has no
-  // `dispatchWorker` seam (#600 r5 — mirror family legacy gate; live paths must
-  // fail closed instead of synthesizing convergence).
-  // #735: docRelease joins verify/fixer here — no unconditional forever-stub.
-  const skeletonResult = skeletonReviewLoopWorkerResult(spec.kind);
-  if (skeletonResult !== undefined && backend.dispatchWorker === undefined) {
-    if (offlineReviewLoopDispatchAdmissible(ctx)) {
-      return skeletonResult;
-    }
-    return {
-      kind: "failed",
-      reason:
-        `${spec.kind} worker unavailable: no dispatchWorker seam and ` +
-        `offline skeleton synthesis inadmissible for PR ${ctx.prUrl ?? "(missing)"}`,
-    };
-  }
-
-  // FAIL-CLOSED on the worker kind (online review r1, 3 bots): only agent +
-  // review-loop workers belong on the `runStep`/`resumeSession` path below.
-  // #735: docRelease is a real agent worker (invoke /gstack-document-release).
-  // cleanup stays deterministic (landing) or offline-stub above — not runStep.
-  const runStepKinds = new Set<WorkerKind>([
-    "coder",
-    "reviewer",
-    "verify",
-    "fixer",
-    "docRelease",
-  ]);
+  const runStepKinds = new Set<WorkerKind>(["coder", "reviewer"]);
   if (!runStepKinds.has(spec.kind)) {
     throw new Error(
       `legacyDispatchWorker: worker kind '${spec.kind}' (${spec.id}) has no legacy ` +
-        `dispatch path — only coder/reviewer/verify/fixer/docRelease (agent), ship, ` +
-        `and the #603 cleanup path are forwarded. A cmr/merge worker must go ` +
-        `through a backend implementing the unified dispatchWorker seam.`,
+        `dispatch path — only child coder/reviewer workers are forwarded. ` +
+        `Family endgame workers must use the family dispatch seam.`,
     );
   }
   // coder / reviewer agent worker → runStep | resumeSession (legacy seam).
@@ -635,21 +461,6 @@ export async function legacyDispatchWorker(
   let ret: StepOutput | StepResult;
   const fixFindingsLanding = writeFixFindingsLandingFile(spec, ctx, landing);
   const fixFocusLanding = writeFixFocusLandingFile(spec, ctx, landing);
-  let onlineReviewLanding;
-  try {
-    onlineReviewLanding = writeOnlineReviewLandingFile(spec, ctx, landing);
-  } catch (err) {
-    if (fixFindingsLanding?.cleanup) {
-      rmSync(fixFindingsLanding.path, { force: true });
-    }
-    if (fixFocusLanding?.cleanup) {
-      rmSync(fixFocusLanding.path, { force: true });
-    }
-    return {
-      kind: "failed",
-      reason: err instanceof Error ? err.message : String(err),
-    };
-  }
   const fixFindingsOptions =
     fixFindingsLanding !== undefined
       ? {
@@ -668,27 +479,16 @@ export async function legacyDispatchWorker(
           },
         }
       : undefined;
-  const onlineReviewOptions =
-    onlineReviewLanding !== undefined
-      ? {
-          onlineReviewLanding: {
-            path: onlineReviewLanding.path,
-            sandboxPath: onlineReviewLanding.sandboxPath,
-          },
-        }
-      : undefined;
   const outcomeLanding = writeWorkerOutcomeLandingFile(spec, ctx);
   const runOptions =
     fixFindingsOptions !== undefined ||
     fixFocusOptions !== undefined ||
-    onlineReviewOptions !== undefined ||
     outcomeLanding !== undefined ||
     ctx.billingPool !== undefined ||
     ctx.relayFocusPath !== undefined
       ? {
           ...(fixFindingsOptions ?? {}),
           ...(fixFocusOptions ?? {}),
-          ...(onlineReviewOptions ?? {}),
           ...(outcomeLanding !== undefined ? { outcomeLanding } : {}),
           ...(ctx.billingPool !== undefined
             ? { billingPool: ctx.billingPool }
@@ -723,9 +523,6 @@ export async function legacyDispatchWorker(
     }
     if (fixFocusLanding?.cleanup) {
       rmSync(fixFocusLanding.path, { force: true });
-    }
-    if (onlineReviewLanding?.cleanup) {
-      rmSync(onlineReviewLanding.path, { force: true });
     }
   }
   const { output, sessionId } = normalizeStepReturn(ret);
@@ -874,7 +671,7 @@ function waitForChildExit(child: ChildProcess): Promise<ChildExit> {
  * The runner always calls this (not bare {@link dispatchWorker}) so CLI workers
  * land a ledger-rebuildable handle and hang/kill judgment never needs global
  * process-name matching. RealBackend / RealFamilyBackend implement the hooks so
- * S2/S3/S5/S6/S7/S9–S12 take this monitored branch in production.
+ * Child S2/S3/S5/S6 and family S9–S12 take this monitored branch in production.
  */
 export async function dispatchWorkerWithMonitor(
   backend: Backend,

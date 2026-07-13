@@ -29,7 +29,7 @@ import type {
  *   - S2 build worker → { committed: true, commitsAdded: 1 }.
  *   - S3 reviewer returns no blocking findings; S4 classifies the clean review
  *     and routes to S7. Blocking findings would instead enter S5/S6.
- *   - S7 ship succeeds → S8 handoff(status=success)
+ *   - S7 locally hands the reviewed child branch off → S8(success)
  */
 class HappyPathBackend implements Backend {
   async smokeModelRoute(route: any) {
@@ -180,25 +180,23 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     );
   });
 
-  it("completed ship enters the fixed online-review topology and reaches S8(success)", async () => {
+  it("completed child hands off locally at S8(success)", async () => {
     const backend = new HappyPathBackend();
 
     const result = await runOrchestrator({ issueNumber: 247, backend });
 
-    // Final state: success handoff pointing at the pushed resident branch.
+    // Final state: success handoff pointing at the resident child branch.
     expect(result.status).toBe("success");
     expect(result.branch).toBe("feat/orchestrator/issue-247");
     expect(result.stopSummary.reason).toBe("success");
     expect(result.stepLedger.at(-1)?.stopSummary?.reason).toBe("success");
     expect(backend.ledgerWrites.at(-1)?.stopSummary?.reason).toBe("success");
 
-    // Exactly one push, no PR / no merge (the fake exposes neither — proving
-    // the runner never reaches for those actions).
-    expect(backend.pushCount).toBe(1);
+    // The child runner never pushes; family merge/ship owns remote delivery.
+    expect(backend.pushCount).toBe(0);
 
     // The step ledger records the runner's decisions in canonical order —
     // S3 is the fresh full-diff reviewer and S4 records the runner classification.
-    // Completed ship enters the fixed online-review topology.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
       "S1",
@@ -206,14 +204,8 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       "S3",
       "S4",
       "S7",
-      "S9",
-      "S9",
-      "S12",
-      "S12",
-      "S11",
       "S8",
     ]);
-    expect(result.stepLedger.some((e) => e.step === "S9")).toBe(true);
   });
 
   it("dispatches implementation and review steps to the sandbox", async () => {
@@ -237,12 +229,11 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       "writeSnapshot(feat/orchestrator/issue-247, #247)", // S1 clean-room snapshot
       "runStep(S2:coder:coder_implement.md)", // S2 implementation
       "runStep(S3:reviewer:reviewer_review.md)", // S3 fresh full-diff review
-      // S4 classify, S7 ship, S8 handoff below — S4/S8 are pure TS.
-      "push(feat/orchestrator/issue-247)", // S7 ship
+      // S4 classify, S7 local handoff, S8 success are pure TS.
     ]);
   });
 
-  it("the build output is {committed,commitsAdded} and a committed build routes to ship", async () => {
+  it("the build output is {committed,commitsAdded} and a committed build routes to local handoff", async () => {
     const backend = new HappyPathBackend();
 
     const result = await runOrchestrator({ issueNumber: 247, backend });
@@ -251,9 +242,9 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     const s2 = result.stepLedger.find((e) => e.step === "S2");
     expect(s2?.output).toEqual({ kind: "coder", committed: true, commitsAdded: 1 });
 
-    // A committed build plus clean independent review → ship reached, success.
+    // A committed build plus clean independent review → local handoff succeeds.
     expect(result.status).toBe("success");
-    expect(backend.pushCount).toBe(1);
+    expect(backend.pushCount).toBe(0);
   });
 
   it("only takes an issue number as input and uses versioned promptFiles (no ad-hoc prompts)", async () => {

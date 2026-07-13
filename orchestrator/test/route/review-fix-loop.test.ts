@@ -200,10 +200,6 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       "S3:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
     ]);
   });
 
@@ -362,10 +358,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S3:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
     ]);
   });
 
@@ -423,10 +415,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S3:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
 
     ]);
   });
@@ -533,10 +521,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
 
     ]);
     const firstS4Write = backend.ledgerWrites.find((entry) => entry.step === "S4");
@@ -584,10 +568,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
     ]);
   });
 
@@ -683,10 +663,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
 
     ]);
   });
@@ -779,10 +755,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
 
     ]);
   });
@@ -875,10 +847,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
 
     ]);
   });
@@ -945,7 +913,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const result = await runOrchestrator({ issueNumber: 427, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual(["S6:reviewer", "S7:ship", "S9:verify", "S12:docRelease", "S11:cleanup"]);
+    expect(backend.dispatched).toEqual(["S6:reviewer"]);
   });
 
   it.each([
@@ -1006,10 +974,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
 
     ]);
   });
@@ -1069,10 +1033,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
     ]);
   });
 
@@ -1144,10 +1104,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
     ]);
   });
 
@@ -1236,10 +1192,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
 
     ]);
   });
@@ -1313,10 +1265,6 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     expect(backend.dispatched).toEqual([
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
 
     ]);
   });
@@ -1635,7 +1583,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       const result = await runOrchestrator({ issueNumber: 446, backend });
 
       expect(result.status).toBe("success");
-      expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship", "S9:verify", "S12:docRelease", "S11:cleanup"]);
+      expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer"]);
     }
   });
 
@@ -1852,7 +1800,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship", "S9:verify", "S12:docRelease", "S11:cleanup"]);
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer"]);
   });
 
   it("uses broad file scope when it maps to one active finding lineage", async () => {
@@ -1938,7 +1886,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship", "S9:verify", "S12:docRelease", "S11:cleanup"]);
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer"]);
   });
 
   it("matches nested directory scope segments to active finding locations", async () => {
@@ -2024,7 +1972,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer", "S7:ship", "S9:verify", "S12:docRelease", "S11:cleanup"]);
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer"]);
   });
 });
 
@@ -2184,7 +2132,7 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(result.errorPackage?.reason ?? "").not.toMatch(
       /omitted required disposition/i,
     );
-    expect(backend.dispatched).toEqual(["S7:ship", "S9:verify", "S12:docRelease", "S11:cleanup"]);
+    expect(backend.dispatched).toEqual([]);
   });
 
   it("#877: persisted S4 after empty still-active S6 ships (no disposition reopen)", async () => {
@@ -2225,7 +2173,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatched).toEqual(["S7:ship", "S9:verify", "S12:docRelease", "S11:cleanup"]);
+    expect(backend.dispatched).toEqual([]);
   });
 
   it("replays persisted S4 finding dispositions on resume", async () => {
@@ -2333,10 +2281,6 @@ describe("#369 runner resume/retry review fixes", () => {
       "S6:reviewer",
       "S5:coder",
       "S6:reviewer",
-      "S7:ship",
-      "S9:verify",
-      "S12:docRelease",
-      "S11:cleanup",
 
     ]);
   });
@@ -3124,7 +3068,6 @@ describe("#369 legacy S5 landing file", () => {
         );
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
-      async push() {},
       async writeLedger() {},
     };
     const spec: WorkerSpec = {
@@ -3219,7 +3162,6 @@ describe("#369 legacy S5 landing file", () => {
         observedLanding = options?.fixFindingsLanding;
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
-      async push() {},
       async writeLedger() {},
     };
     const spec: WorkerSpec = {
@@ -3308,7 +3250,6 @@ describe("#369 legacy S5 landing file", () => {
           ],
         };
       },
-      async push() {},
       async writeLedger() {},
     };
     const spec: WorkerSpec = {

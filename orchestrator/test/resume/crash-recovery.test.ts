@@ -9,15 +9,6 @@ import { runOrchestrator } from "../../src/runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { route } from "../../src/route.js";
 import { parseLedgerJsonl } from "../../src/realBackend.js";
-import { buildRoundTrigger } from "../../src/evidenceAdmissibility.js";
-import {
-  ONLINE_REVIEW_SNAPSHOT_FILE,
-  onlineReviewRoundFromLedger,
-  lastOnlineReviewFixCommitShaFromLedger,
-} from "../../src/onlineReviewLoop.js";
-import * as onlineReviewLoop from "../../src/onlineReviewLoop.js";
-import * as autoMerge from "../../src/autoMerge.js";
-import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
   Finding,
@@ -27,33 +18,26 @@ import type {
   ResumeState,
   DispatchContext,
   OnlineReviewLandingSnapshot,
-  PrMergedEvent,
   StepId,
   StepOutput,
   StepSpec,
-  VerifyResult,
-  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
 
 import {
-  PrMergedLedgerFixture,
   WORKTREE,
   STATE_DIR,
   CLAIMED_FIXED_FINDING,
   CLAIMED_FIXED_KEY,
-  stubAutoMergeMergedForLiveReviewTests,
   entry,
-  writeResumeOnlineReviewSnapshot,
   s8,
   coderProtocolFailureS8,
   malformedCoderPayloadFailureS8,
   escalationAnswer,
   ResumeBackend,
   DispatchRecordingResumeBackend,
-  ReviewLoopResumeBackend,
   MissingCoderTagBackend,
 } from "../helpers/resume-fixtures.js";
 
@@ -99,7 +83,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // The committed S2 routes to a fresh reviewer; S2 itself is not re-dispatched.
     expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
-    expect(backend.pushCount).toBe(1);
+    expect(backend.pushCount).toBe(0);
     // S0 gate / S1 load are NOT re-executed (no re-cut, no re-snapshot write).
     // #767 may re-fetch issue meta/body for Coder-Rec on the resume path.
     expect(backend.calls).not.toContain("prepareWorktree(255, main)");
@@ -122,7 +106,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     const steps = result.stepLedger.map((e) => e.step);
     // Prior S0/S1/S2 + resumed fixed topology.
     expect(steps).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S9", "S12", "S12", "S11", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
@@ -529,8 +513,8 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
     expect(result.errorPackage?.reason ?? "").not.toContain(
       "review/fix loop made no progress",
     );
-    // Resume replays empty S6 still-active as findings=0 → ships.
-    expect(backend.pushCount).toBe(1);
+    // Resume replays empty S6 still-active as findings=0 → local handoff.
+    expect(backend.pushCount).toBe(0);
   });
 });
 
@@ -555,11 +539,11 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     // S2 is not re-dispatched; the next fresh agent step is S3 reviewer.
     expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
-    // Pushed and succeeded — resumed purely from ledger truth.
-    expect(backend.pushCount).toBe(1);
+    // Resumed to local handoff purely from ledger truth.
+    expect(backend.pushCount).toBe(0);
     expect(result.status).toBe("success");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S9", "S9", "S12", "S12", "S11", "S8",
+      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
     ]);
   });
 
@@ -589,29 +573,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     expect(result.branch).toBe(WORKTREE.branch);
   });
 
-  it("a legacy untagged S8 after ship re-dispatches the idempotent ship worker", async () => {
-    const resumeState: ResumeState = {
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: [
-        entry("S0"),
-        entry("S1"),
-        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S7"),
-        entry("S8"), // untagged legacy terminal entry
-      ],
-    };
-    const backend = new DispatchRecordingResumeBackend(resumeState);
-
-    const result = await runOrchestrator({ issueNumber: 255, backend });
-
-    expect(result.status).toBe("success");
-    expect(result.branch).toBe(WORKTREE.branch);
-    expect(backend.dispatchSpecs.filter((spec) => spec.id === "S7")).toHaveLength(1);
-  });
 });
-
-// ─── #255 review fix: a prior ERROR/ESCALATE must not masquerade as success ───
 
 describe("re-feeding a terminated run reports its TRUE status (#255 review fix)", () => {
   it("prior ERROR handoff (tagged S8) re-fed → status error, NOT success", async () => {

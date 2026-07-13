@@ -10,13 +10,12 @@ import {
   docReleaseWorkerSpec,
   fixerWorkerSpec,
   legacyDispatchWorker,
-  shipWorkerSpec,
   stepSpecToWorkerSpec,
   verifyWorkerSpec,
 } from "../../src/dispatchWorker.js";
+import { familyShipWorkerSpec } from "../../src/family/dispatchFamilyWorker.js";
 import { CODER_ROSTER } from "../../src/coderRoster.js";
 import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
-import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import { resolveRouteModels, routeSmokeEntries } from "../../src/modelRoutes.js";
 import {
   readTelemetryRecords,
@@ -29,7 +28,6 @@ import type {
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
-  OnlineReviewLandingSnapshot,
   StepOutput,
   StepSpec,
   WorkerOutcomeLandingFile,
@@ -39,9 +37,6 @@ import type {
   WorktreeHandle,
 } from "../../src/types.js";
 
-const CMR_EVIDENCE = {
-  evidencePaths: ["cmr/review-summary.json"],
-} as const;
 const SMOKED_ROUTE = resolveRouteModels(
   "normal",
   {},
@@ -77,7 +72,6 @@ class DispatchBackend implements Backend {
   readonly persistedLedger: PersistentLedgerEntry[] = [];
   /** Asserts the runner NEVER reaches for the legacy methods directly. */
   legacyRunStepCount = 0;
-  pushCount = 0;
 
   readonly worktree: WorktreeHandle = {
     branch: "feat/orchestrator/issue-331",
@@ -119,32 +113,6 @@ class DispatchBackend implements Backend {
     this.legacyRunStepCount += 1;
     throw new Error("runStep should not be called directly (#331)");
   }
-  async push(): Promise<void> {
-    this.pushCount += 1;
-    throw new Error("push should not be called directly (#331)");
-  }
-  async pollOnlineReviewState(input: {
-    repo: string;
-    prUrl: string;
-    pollCount: number;
-  }): Promise<OnlineReviewLandingSnapshot> {
-    void input;
-    return {
-      prUrl: "pr://slice/offline-331",
-      headOid: "deadbeef",
-      totalFindingCount: 0,
-      quiescent: true,
-      bots: {
-        coderabbit: { state: "complete", findingCount: 0 },
-        sourcery: { state: "complete", findingCount: 0 },
-        codex: { state: "complete", findingCount: 0 },
-        gemini: { state: "complete", findingCount: 0 },
-      },
-      droppedBots: [],
-      threads: [],
-      checkRuns: [],
-    };
-  }
 
   async writeLedger(
     entry: PersistentLedgerEntry,
@@ -171,23 +139,7 @@ class DispatchBackend implements Backend {
     if (spec.kind === "reviewer") {
       return { kind: "completed", output: { kind: "reviewer", findings: [] } };
     }
-    // #596 review-loop skeleton (S9–S12): this spy backend has no real verify/
-    // fixer/cleanup/docRelease worker, so delegate to the shared skeleton stubs
-    // (same verdicts the legacy dispatcher returns).
-    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-    if (skeleton !== undefined) {
-      return skeleton;
-    }
-    // ship (S7) — pr_opened engages the online review loop (#600)
-    return {
-      kind: "completed",
-      output: {
-        kind: "ship",
-        branch: this.worktree.branch,
-        status: "pr_opened",
-        pr: "pr://slice/offline-331",
-      },
-    };
+    throw new Error(`unexpected child worker kind: ${spec.kind}`);
   }
 }
 
@@ -227,33 +179,26 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     ]);
   });
 
-  it("routes S2/S3 (and S7 ship) through dispatchWorker, never the legacy methods", async () => {
+  it("routes S2/S3 through dispatchWorker, never the legacy methods", async () => {
     const backend = new DispatchBackend();
     const result = await runOrchestrator({ issueNumber: 331, backend });
 
     expect(result.status).toBe("success");
     expect(result.branch).toBe("feat/orchestrator/issue-331");
 
-    // Every worker step went through the unified seam — not runStep / push.
+    // Every productive child worker went through the unified seam.
     expect(backend.legacyRunStepCount).toBe(0);
-    expect(backend.pushCount).toBe(0);
   });
 
-  it("dispatches the worker SEQUENCE S2→S3→S4→S7 with the right kind/role/session/retention/skill", async () => {
+  it("dispatches S2→S3 before the local S7 handoff", async () => {
     const backend = new DispatchBackend();
     await runOrchestrator({ issueNumber: 331, backend });
 
     // ADR 0030: implementation and review are separate runner-visible workers.
-    // The reviewer is fresh/clean; a clean review is classified by S4 before S7.
-    // #596: S7 ship is now INTERMEDIATE — the runner-visible review-loop skeleton
-    // (S9 verify → S10 fixer → S12 docRelease → S11 cleanup) runs before S8.
+    // S7 is not a worker: the family merger consumes the local child commit.
     expect(backend.dispatched).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
       "S3:reviewer:reviewer:fresh:clean:/code-review",
-      "S7:ship:coder:fresh:clean:gstack-ship",
-      "S9:verify:verify:fresh:clean:/verify",
-      "S12:docRelease:docRelease:fresh:clean:/gstack-document-release",
-      "S11:cleanup:cleanup:fresh:clean:/cleanup",
     ]);
   });
 
@@ -264,7 +209,6 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     const byId = Object.fromEntries(backend.specs.map((s) => [s.id, s]));
     expect(byId.S2.promptFile).toBe("coder_implement.md");
     expect(byId.S3.promptFile).toBe("reviewer_review.md");
-    expect(byId.S7.promptFile).toBe("ship.md");
   });
 
   it("hands the resident worktree to every single-slice worker via DispatchContext", async () => {
@@ -342,17 +286,10 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
           err.name = "StructuredOutputError";
           throw err;
         }
-        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-        if (skeleton !== undefined) return skeleton;
-        return spec.kind === "ship"
-          ? {
-              kind: "completed",
-              output: { kind: "ship", branch: this.worktree.branch, status: "pushed" },
-            }
-          : {
-              kind: "completed",
-              output: { kind: "reviewer", findings: [] },
-            };
+        return {
+          kind: "completed",
+          output: { kind: "reviewer", findings: [] },
+        };
       }
     }
 
@@ -424,47 +361,6 @@ describe("#331 a non-completed WorkerResult routes via workerResultToStep", () =
     const result = await runOrchestrator({ issueNumber: 331, backend });
     expect(result.status).toBe("escalate");
     expect(result.errorPackage?.reason).toContain("container crashed");
-  });
-});
-
-describe("#891 S7 routes completed exit-zero receipts as ship success", () => {
-  /** A backend whose S7 ship worker returns a completed NON-ship payload. */
-  class WrongShipPayloadBackend extends DispatchBackend {
-    override async dispatchWorker(
-      spec: WorkerSpec,
-      ctx: DispatchContext,
-    ): Promise<WorkerResult> {
-      this.specs.push(spec);
-      this.ctxs.push(ctx);
-      if (spec.kind === "coder") {
-        return {
-          kind: "completed",
-          output: { kind: "coder", committed: true, commitsAdded: 1 },
-        };
-      }
-      if (spec.kind === "reviewer") {
-        return { kind: "completed", output: { kind: "reviewer", findings: [] } };
-      }
-      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-      if (skeleton !== undefined) return skeleton;
-      // ship: a mis-wired backend returns a non-ship completed payload.
-      return {
-        kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: true,
-          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-          ...CMR_EVIDENCE,
-        },
-      };
-    }
-  }
-
-  it("a completed non-ship receipt is still exit-zero ship success", async () => {
-    const backend = new WrongShipPayloadBackend();
-    const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("success");
-    expect(backend.specs.filter((spec) => spec.id === "S7")).toHaveLength(1);
   });
 });
 
@@ -542,102 +438,6 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(result.status).toBe("success");
     expect(backend.specs.some((spec) => spec.id === "S5")).toBe(true);
     expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
-  });
-});
-
-describe("#596 S9 (verify) worker must return a valid verify payload — finding 6 defensive (runner r7b)", () => {
-  /**
-   * A backend that returns a *completed* result for S9 but with *undefined* output.
-   * This exercises the !outputValid branch in the S9–S12 case (result.output may be
-   * nullish even on "completed"). The guard must produce a clean errorTermination
-   * (with message) and not throw TypeError on `result.output.kind`.
-   */
-  class S9UndefinedOutputBackend extends DispatchBackend {
-    override async dispatchWorker(
-      spec: WorkerSpec,
-      ctx: DispatchContext,
-    ): Promise<WorkerResult> {
-      this.specs.push(spec);
-      this.ctxs.push(ctx);
-      if (spec.kind === "coder") {
-        return {
-          kind: "completed",
-          output: { kind: "coder", committed: true, commitsAdded: 1 },
-        };
-      }
-      if (spec.kind === "reviewer") {
-        return { kind: "completed", output: { kind: "reviewer", findings: [] } };
-      }
-      if (spec.id === "S9") {
-        // Simulate a misbehaving / malformed S9 worker that "completed" but
-        // yielded no output (or undefined). The runner's isValidVerifyResult
-        // will reject; the error message construction must be null-safe.
-        return { kind: "completed", output: undefined as unknown as StepOutput };
-      }
-      // For S10+ in this test path we can fall to skeleton or minimal; the run
-      // will hit the S9 bad case first and terminate.
-      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-      if (skeleton != null) return skeleton;
-      return {
-        kind: "completed",
-        output: {
-          kind: "ship",
-          branch: this.worktree.branch,
-          status: "pr_opened",
-          pr: "pr://slice/offline-331",
-        },
-      };
-    }
-  }
-
-  it("S9 worker returning completed-with-undefined-output exhausts bounded redispatch without a TypeError", async () => {
-    const backend = new S9UndefinedOutputBackend();
-    const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("error");
-    expect(result.errorPackage?.reason).toContain("output kind 'undefined'");
-  });
-});
-
-describe("#331 an escalated SHIP worker → S8(escalate), not S8(error) (codex R4)", () => {
-  class ShipEscalatesBackend extends DispatchBackend {
-    override async dispatchWorker(
-      spec: WorkerSpec,
-      ctx: DispatchContext,
-    ): Promise<WorkerResult> {
-      this.specs.push(spec);
-      this.ctxs.push(ctx);
-      if (spec.kind === "coder") {
-        return {
-          kind: "completed",
-          output: { kind: "coder", committed: true, commitsAdded: 1 },
-        };
-      }
-      if (spec.kind === "reviewer") {
-        return { kind: "completed", output: { kind: "reviewer", findings: [] } };
-      }
-      // ship escalates (gstack-ship STOP/HITL), surfacing its session id.
-      return {
-        kind: "escalated",
-        escalation: { reason: "needs human approval", diagnosis: "HITL gate" },
-        sessionId: "sess-ship-7",
-      };
-    }
-  }
-
-  it("routes a STOP/HITL ship escalate to status=escalate and persists its sessionId", async () => {
-    const backend = new ShipEscalatesBackend();
-    const persisted: { step: string; sessionId: string }[] = [];
-    const spy = backend.writeLedger.bind(backend);
-    backend.writeLedger = async (entry, dir): Promise<void> => {
-      persisted.push({ step: entry.step, sessionId: entry.sessionId });
-      return spy(entry, dir);
-    };
-    const result = await runOrchestrator({ issueNumber: 331, backend });
-    expect(result.status).toBe("escalate");
-    // The S7 escalate persists the worker session id (resume truth) — NOT lost
-    // in the promptFile slot (codex cmr R6 finding).
-    const s7 = persisted.find((e) => e.step === "S7");
-    expect(s7?.sessionId).toBe("sess-ship-7");
   });
 });
 
@@ -811,7 +611,7 @@ describe("#796 Coder-Rec host dispatch", () => {
       },
     };
 
-    expect(shipWorkerSpec(route).host).toBe("opencode");
+    expect(familyShipWorkerSpec(route).host).toBe("opencode");
     expect(verifyWorkerSpec(route).host).toBe("codex");
     expect(fixerWorkerSpec(route).host).toBe("claude");
     expect(cleanupWorkerSpec(route).host).toBe("cursor");
@@ -908,7 +708,6 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     resumeCalls: string[] = [];
     runStepOutcomeLandings: Array<WorkerOutcomeLandingFile | undefined> = [];
     resumeOutcomeLandings: Array<WorkerOutcomeLandingFile | undefined> = [];
-    pushCalls = 0;
     worktree: WorktreeHandle = {
       branch: "b",
       base: "main",
@@ -934,9 +733,6 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       this.resumeCalls.push(sid);
       this.resumeOutcomeLandings.push(options?.outcomeLanding);
       return { kind: "coder", committed: true, commitsAdded: 1 };
-    }
-    async push(): Promise<void> {
-      this.pushCalls += 1;
     }
   }
 
@@ -1052,27 +848,6 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     });
     expect(be.resumeCalls).toEqual(["sess-abc"]);
     expect(be.runStepCalls).toHaveLength(0);
-  });
-
-  it("forwards a ship worker to push and wraps as completed ShipResult", async () => {
-    const be = new LegacyBackend();
-    const res = await legacyDispatchWorker(
-      be as unknown as Backend,
-      {
-        ...coderWorker,
-        id: "S7",
-        kind: "ship",
-        skill: "gstack-ship",
-        session: "fresh",
-        promptFile: "ship.md",
-      },
-      { worktree: be.worktree },
-    );
-    expect(be.pushCalls).toBe(1);
-    expect(res.kind).toBe("completed");
-    if (res.kind === "completed") {
-      expect(res.output.kind).toBe("ship");
-    }
   });
 
   it("FAIL-CLOSED: a cmr/merge worker has no legacy path — it throws, never mis-dispatched as coder/reviewer (online review r1)", async () => {

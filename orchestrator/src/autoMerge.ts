@@ -342,40 +342,6 @@ export function isPrMergedMarker(
   );
 }
 
-export interface PrMergedLedgerEntryLike extends PrMergedMarkerLike {
-  readonly prUrl?: string;
-  readonly prNumber?: number;
-  readonly remoteBranchName?: string;
-}
-
-/** Recover the durable pr_merged record written by the host auto-merge stage. */
-export function slicePrMergedRecordFromLedger(
-  ledger: ReadonlyArray<PrMergedLedgerEntryLike>,
-  convergedHeadOid: string,
-): PrMergedTerminalRecord | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (
-      entry.event !== "pr_merged" ||
-      !isPrMergedMarker(entry, convergedHeadOid) ||
-      typeof entry.prUrl !== "string" ||
-      typeof entry.prNumber !== "number" ||
-      typeof entry.remoteBranchName !== "string" ||
-      typeof entry.mergedHeadOid !== "string"
-    ) {
-      continue;
-    }
-    return {
-      prUrl: entry.prUrl,
-      prNumber: entry.prNumber,
-      remoteBranchName: entry.remoteBranchName,
-      mergedHeadOid: entry.mergedHeadOid,
-      convergedHeadOid,
-    };
-  }
-  return undefined;
-}
-
 export interface AutoMergeStageInput {
   readonly sh: Sh;
   readonly repo: string;
@@ -548,7 +514,7 @@ export async function runAutoMergeStage(
       stopSummary: {
         reason: "decision_gate_park",
         summary: "auto-merge blocked: doc-release has not completed",
-        repairHint: "complete S12 doc-release before merge",
+        repairHint: "complete family doc-release before merge",
       },
     };
   }

@@ -92,7 +92,7 @@ import {
   shipLedgerTriggeredAtFromFamilyLedger,
   waitForBotQuiescence,
   type OnlineReviewLoopStageResult,
-} from "../onlineReviewLoop.js";
+} from "./onlineReviewLoop.js";
 import {
   mergePriorRoundFindings,
   priorCmrFindingsFromFamilyLedger,
@@ -1024,8 +1024,7 @@ async function familyConvergenceMarkerHead(
 /**
  * Dispatch a family worker, converting ANY thrown STARTUP error into a documented
  * gate result instead of letting it escape verifyCmr (cmr S336 r8 — startup/error
- * path audit). The single-slice runner wraps its S7 ship dispatch in
- * try/catch → S8(error); the family verifyCmr did NOT, so a worker that threw on
+ * path audit). A family worker that throws on
  * startup — a missing-auth `sc.run` start failure (now preflighted to a structured
  * escalate, but the worker ALSO `git checkout`s the family base + writes the focus
  * file + spins docker, any of which can still throw) — would propagate out of
@@ -1367,9 +1366,8 @@ export async function runFamilyOnlineReviewLoop(input: {
       }
       return result.output;
     },
-    // #740: family + single-slice S12 crash-retry both continue-as-is (no
-    // scoped cleanResidue / resetBeforeRetry). Do not reintroduce a one-sided
-    // reset on either path — same user override as #600 / 21906adf.
+    // #740: family S12 crash-retry continues as-is (no scoped cleanResidue /
+    // resetBeforeRetry).
     dispatchDocRelease: async (landing: WorkerLandingPayload) => {
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
@@ -1521,7 +1519,7 @@ async function dispatchOrAbort(
                     monitorHandle: handle,
                   });
                 } catch {
-                  // Best-effort, matching the single-slice path. The spawned
+                  // Best-effort only. The spawned
                   // worker remains governed by its verified monitor handle.
                 }
               },
@@ -1532,7 +1530,7 @@ async function dispatchOrAbort(
         } catch (err) {
           dispatchError = err;
         }
-        // Always assert (online R10 Codex P1 / parity with single-slice S9):
+        // Always assert (online R10 Codex P1):
         // mutate-then-throw → contract_drift, not retry on dirty worktree.
         await opts?.afterEachAttempt?.();
         if (dispatchError !== undefined) throw dispatchError;

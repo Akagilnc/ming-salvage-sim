@@ -9,15 +9,6 @@ import { runOrchestrator } from "../../src/runner.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { route } from "../../src/route.js";
 import { parseLedgerJsonl } from "../../src/realBackend.js";
-import { buildRoundTrigger } from "../../src/evidenceAdmissibility.js";
-import {
-  ONLINE_REVIEW_SNAPSHOT_FILE,
-  onlineReviewRoundFromLedger,
-  lastOnlineReviewFixCommitShaFromLedger,
-} from "../../src/onlineReviewLoop.js";
-import * as onlineReviewLoop from "../../src/onlineReviewLoop.js";
-import * as autoMerge from "../../src/autoMerge.js";
-import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
   Finding,
@@ -27,33 +18,26 @@ import type {
   ResumeState,
   DispatchContext,
   OnlineReviewLandingSnapshot,
-  PrMergedEvent,
   StepId,
   StepOutput,
   StepSpec,
-  VerifyResult,
-  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
 
 import {
-  PrMergedLedgerFixture,
   WORKTREE,
   STATE_DIR,
   CLAIMED_FIXED_FINDING,
   CLAIMED_FIXED_KEY,
-  stubAutoMergeMergedForLiveReviewTests,
   entry,
-  writeResumeOnlineReviewSnapshot,
   s8,
   coderProtocolFailureS8,
   malformedCoderPayloadFailureS8,
   escalationAnswer,
   ResumeBackend,
   DispatchRecordingResumeBackend,
-  ReviewLoopResumeBackend,
   MissingCoderTagBackend,
 } from "../helpers/resume-fixtures.js";
 
@@ -460,8 +444,8 @@ describe("#439 decision-escalate answer channel", () => {
 
     const result = await runOrchestrator({ issueNumber: 439, backend });
 
-    // #877: still-active disposition prose does not reopen; findings=[] → S7.
+    // #877: still-active disposition prose does not reopen; findings=[] → S7 local handoff.
     expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs[0]?.id).toBe("S7");
+    expect(backend.dispatchSpecs).toHaveLength(0);
   });
 });

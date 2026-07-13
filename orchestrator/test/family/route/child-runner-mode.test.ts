@@ -7,7 +7,7 @@
  *
  *   1. base = the FAMILY base (not "main") → prepareWorktree gets the family base
  *      (ADR 0022 decision 7: children cut from the local family base).
- *   2. S7 push = a LOCAL NO-OP → backend.push is NOT called (ADR 0022 decision 2:
+ *   2. S7 = a LOCAL handoff → backend.push is NOT called (ADR 0022 decision 2:
  *      shared-clone concurrent push would clash on .git/refs/remotes; only the
  *      family base PRs once at the end). The run still reaches S8 success.
  *   3. (dec.6③, ledger口径) — NOT yet wired in #293. ADR 0022 decision 6③ says a
@@ -91,18 +91,18 @@ describe("runner family-mode adaptations (#293)", () => {
     await runOrchestrator({
       issueNumber: 294,
       backend,
-      family: { parentIssue: 293, familyBase: "family/293-base", noPush: true },
+      family: { parentIssue: 293, familyBase: "family/293-base" },
     });
     expect(backend.prepareBase).toBe("family/293-base");
     expect(backend.calls).toContain("prepareWorktree(294, family/293-base)");
   });
 
-  it("S7 push is a LOCAL NO-OP in family mode (push never called), still reaches success", async () => {
+  it("S7 is a local handoff (push never called), still reaches success", async () => {
     const backend = new FamilyModeBackend();
     const result = await runOrchestrator({
       issueNumber: 294,
       backend,
-      family: { parentIssue: 293, familyBase: "family/293-base", noPush: true },
+      family: { parentIssue: 293, familyBase: "family/293-base" },
     });
     expect(result.status).toBe("success");
     expect(result.branch).toBe("feat/child-294");
@@ -116,11 +116,4 @@ describe("runner family-mode adaptations (#293)", () => {
     ]);
   });
 
-  it("REGRESSION: a run with no family context still pushes from base=main", async () => {
-    const backend = new FamilyModeBackend();
-    const result = await runOrchestrator({ issueNumber: 294, backend });
-    expect(result.status).toBe("success");
-    expect(backend.prepareBase).toBe("main");
-    expect(backend.pushCount).toBe(1);
-  });
 });

@@ -1,5 +1,5 @@
 /**
- * Online PR review-loop orchestration helpers (#600).
+ * Family PR review-loop orchestration helpers (#600).
  *
  * Host-side deterministic glue between bot polling, verify/fixer worker dispatch,
  * and ledger markers. Worker judgment (fix / reject / defer) stays inside the
@@ -7,21 +7,18 @@
  * (ADR 0061 / ADR 0062).
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
-
 import {
   droppedBotIds,
   ONLINE_REVIEW_BOT_IDS,
   type PrReviewSnapshot,
-} from "./botPolling.js";
+} from "../botPolling.js";
 import {
   assertOfflineSyntheticPollAdmissible,
   buildRoundTrigger,
   convergenceHeadToRecord,
   type RoundTrigger,
-} from "./evidenceAdmissibility.js";
-import type { Sh } from "./familyDriver.js";
+} from "../evidenceAdmissibility.js";
+import type { Sh } from "../familyDriver.js";
 import {
   BOT_OVERDUE_POLL_COUNT,
   BOT_POLL_INTERVAL_MS,
@@ -32,52 +29,41 @@ import {
   parsePrRef,
   pollPrReviewState,
   postBotRetriggerComment,
-} from "./botPolling.js";
+} from "../botPolling.js";
 import type {
   FixerResult,
   OnlineReviewLandingSnapshot,
   OnlineReviewTerminalState,
-  PersistentLedgerEntry,
   PriorRoundFindingSnapshot,
   ShipResult,
-  StepOutput,
   VerifyResult,
   WorkerLandingPayload,
-} from "./types.js";
+} from "../types.js";
 import {
   fixerEnvelopeFixCommitSha,
   fixerHasFixCommit,
-  fixerLedgerFixCommitSha,
-  fixerLedgerOutputProceeds,
   fixerProceedsToVerify,
   isValidFixerResult,
-} from "./reviewLoopOutcome.js";
+} from "../reviewLoopOutcome.js";
 import {
   applyVerifySideEffects,
   fixMarkedFindingThreadsFromVerify,
   fixMarkedKeysFromVerify,
-} from "./onlineReviewSideEffects.js";
-import type { StopSummary } from "./stopSummary.js";
+} from "../onlineReviewSideEffects.js";
+import type { StopSummary } from "../stopSummary.js";
 import {
   contractDriftStopSummary,
   decisionGateParkStopSummary,
   infraFailureStopSummary,
-} from "./stopSummary.js";
+} from "../stopSummary.js";
 
 /** Hard cap on online review rounds — runner-enforced (ADR 0061). */
 export const MAX_ONLINE_REVIEW_ROUNDS = 3;
 
-export const ONLINE_REVIEW_SNAPSHOT_FILE = "online-review-snapshot.json";
 export const ONLINE_REVIEW_LANDING_FILE = ".orchestrator-online-review.json";
+export const SANDBOX_ONLINE_REVIEW_PATH_ENV = "ORCHESTRATOR_ONLINE_REVIEW_PATH";
 
-export type { OnlineReviewTerminalState } from "./types.js";
-
-export interface OnlineReviewConvergedMarker {
-  readonly prUrl: string;
-  readonly prHead: string;
-  readonly round: number;
-  readonly terminalState: OnlineReviewTerminalState;
-}
+export type { OnlineReviewTerminalState } from "../types.js";
 
 /**
  * Build the rich landing payload for verify/fixer workers (信封宪法 ADR 0062:
@@ -169,70 +155,8 @@ function latestOnlineReviewRetriggerRecovery(
   return undefined;
 }
 
-/** 1-based online review round from the full executable ledger (#600 r7 resume). */
-export function onlineReviewRoundFromLedger(
-  ledger: ReadonlyArray<{
-    readonly step: string;
-    readonly event?: string;
-    readonly onlineReviewRound?: number;
-    readonly output?: {
-      readonly kind?: string;
-      readonly committed?: boolean;
-      readonly alreadySatisfied?: boolean;
-    };
-  }>,
-): number {
-  const fixCommittedMarkers = ledger.filter(
-    (e) => e.event === "online_review_fix_committed",
-  ).length;
-  const retriggerRecovery = latestOnlineReviewRetriggerRecovery(ledger);
-  if (fixCommittedMarkers > 0) {
-    return Math.max(fixCommittedMarkers + 1, retriggerRecovery?.round ?? 0);
-  }
-  if (retriggerRecovery?.round !== undefined) {
-    return retriggerRecovery.round;
-  }
-  const completedFixerRounds = ledger.filter(
-    (e) => e.step === "S10" && fixerLedgerOutputProceeds(e.output),
-  ).length;
-  return completedFixerRounds + 1;
-}
-
-/** Last committed S10 branchHEAD — fixing commit for recheck side effects (#600 r7). */
-export function lastOnlineReviewFixCommitShaFromLedger(
-  ledger: ReadonlyArray<{
-    readonly step: string;
-    readonly event?: string;
-    readonly fixCommitSha?: string;
-    readonly output?: {
-      readonly kind?: string;
-      readonly committed?: boolean;
-      readonly alreadySatisfied?: boolean;
-      readonly fixCommitSha?: string;
-    };
-  }>,
-): string | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (
-      entry.event === "online_review_fix_committed" &&
-      typeof entry.fixCommitSha === "string" &&
-      entry.fixCommitSha.length > 0
-    ) {
-      return entry.fixCommitSha;
-    }
-    if (entry.step === "S10") {
-      const fromS10 = fixerLedgerFixCommitSha(entry);
-      if (fromS10 !== undefined) {
-        return fromS10;
-      }
-    }
-  }
-  return undefined;
-}
-
-/** Latest persisted round ≥2 freshness anchor from ledger (#600 r25 resume). */
-export function onlineReviewRoundTriggerFromLedger(
+/** Latest persisted family round freshness anchor. */
+function roundTriggerFromEntries(
   ledger: ReadonlyArray<{
     readonly event?: string;
     readonly roundTriggerHeadOid?: string;
@@ -349,213 +273,6 @@ export function familyPendingRoundTriggerFromFixGap(
   return buildRoundTrigger(latestUnpaired.sha, latestUnpaired.ts);
 }
 
-/**
- * True when audit markers prove the fixer finished but the executable S10 row is
- * still missing for that fix (#600 r28). Resume must enter post-fix verify (S9),
- * not re-dispatch the fixer.
- *
- * Pair by fix SHA / retrigger head — not ledger index order (online R1 Codex P2).
- * Index order stays true forever once a recovery path writes markers *after* an
- * S10 row for the same fix; a later recheck S9 `converged:false` would then be
- * stolen back to S9 (duplicate verify side effects) instead of the pending fixer.
- */
-export function slicePostFixVerifyPendingFromMarkerGap(
-  ledger: ReadonlyArray<{
-    readonly step?: string;
-    readonly event?: string;
-    readonly fixCommitSha?: string;
-    readonly roundTriggerHeadOid?: string;
-    readonly branchHEAD?: string;
-    readonly output?: {
-      readonly kind?: string;
-      readonly committed?: boolean;
-      readonly alreadySatisfied?: boolean;
-      readonly fixCommitSha?: string;
-    };
-  }>,
-): boolean {
-  const s10FixShas = new Set<string>();
-  let hasProceedingS10 = false;
-  for (const entry of ledger) {
-    if (
-      entry.step !== "S10" ||
-      entry.event !== undefined ||
-      !fixerLedgerOutputProceeds(entry.output)
-    ) {
-      continue;
-    }
-    hasProceedingS10 = true;
-    const sha = fixerLedgerFixCommitSha(entry);
-    if (sha !== undefined) {
-      s10FixShas.add(sha);
-    }
-  }
-
-  let sawUncoveredFixCommitted = false;
-  let sawFixCommitted = false;
-  for (const entry of ledger) {
-    if (entry.event !== "online_review_fix_committed") {
-      continue;
-    }
-    sawFixCommitted = true;
-    const sha =
-      typeof entry.fixCommitSha === "string" && entry.fixCommitSha.length > 0
-        ? entry.fixCommitSha
-        : undefined;
-    if (sha === undefined) {
-      // Marker without SHA: only a gap if no proceeding S10 exists at all.
-      if (!hasProceedingS10) {
-        sawUncoveredFixCommitted = true;
-      }
-      continue;
-    }
-    if (!s10FixShas.has(sha)) {
-      sawUncoveredFixCommitted = true;
-    }
-  }
-  if (sawUncoveredFixCommitted) {
-    return true;
-  }
-
-  // Retrigger-only (or retrigger whose head is not covered by any S10 fix SHA).
-  // When fix_committed already covered every SHA, a same-head retrigger after S10
-  // (fix-gap recovery order) is not a missing-S10 gap.
-  for (const entry of ledger) {
-    if (entry.event !== "online_review_round_retrigger") {
-      continue;
-    }
-    const head =
-      typeof entry.roundTriggerHeadOid === "string" &&
-      entry.roundTriggerHeadOid.length > 0
-        ? entry.roundTriggerHeadOid
-        : typeof entry.branchHEAD === "string" && entry.branchHEAD.length > 0
-          ? entry.branchHEAD
-          : undefined;
-    if (head !== undefined && s10FixShas.has(head)) {
-      continue;
-    }
-    if (!hasProceedingS10) {
-      return true;
-    }
-    // Proceeding S10 exists but this retrigger head does not match any fix SHA —
-    // only treat as gap when there was no fix_committed coverage path either
-    // (legacy retrigger-only / mismatched head after a sha-less S10).
-    if (!sawFixCommitted && head !== undefined && !s10FixShas.has(head)) {
-      return true;
-    }
-    if (!sawFixCommitted && head === undefined) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
- * True when the latest durable online-review marker is a CI park
- * (`online_review_ci_failed` or `online_review_ci_pending`). Resume re-enters S9
- * to re-poll CI — not S10 empty fixer / not terminal S8(error) (R18–R20 Codex).
- */
-export function sliceOnlineReviewCiFailedPending(
-  ledger: ReadonlyArray<{
-    readonly step?: string;
-    readonly event?: string;
-    readonly output?: {
-      readonly kind?: string;
-      readonly converged?: boolean;
-      readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-      readonly dispositions?: ReadonlyArray<{ readonly action?: string }>;
-    };
-  }>,
-): boolean {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (
-      entry.event === "online_review_ci_failed" ||
-      entry.event === "online_review_ci_pending"
-    ) {
-      return true;
-    }
-    if (entry.event === "online_review_converged") return false;
-    if (entry.event === "online_review_fix_committed") return false;
-    if (entry.event === "online_review_round_retrigger") return false;
-    // Executable progress past the CI park clears the pending flag.
-    if (entry.event === undefined && entry.step === "S10") return false;
-    if (entry.event === undefined && entry.step === "S11") return false;
-    // R19 Codex P2: any newer executable S9 verify supersedes the CI park
-    // (including converged:false + fix marks → must route to S10, not stick on S9).
-    if (
-      entry.event === undefined &&
-      entry.step === "S9" &&
-      entry.output?.kind === "verify"
-    ) {
-      return false;
-    }
-  }
-  return false;
-}
-
-/** Single-slice ledger: S10 fix landed but retrigger persistence crashed mid-gap (#600 r27). */
-export function slicePendingRoundTriggerFromFixGap(
-  ledger: ReadonlyArray<{
-    readonly step?: string;
-    readonly event?: string;
-    readonly fixCommitSha?: string;
-    readonly branchHEAD?: string;
-    readonly roundTriggerHeadOid?: string;
-    readonly ts?: string;
-    readonly output?: {
-      readonly kind?: string;
-      readonly committed?: boolean;
-      readonly alreadySatisfied?: boolean;
-      readonly fixCommitSha?: string;
-    };
-  }>,
-): RoundTrigger | undefined {
-  const pairedFixShas = new Set<string>();
-  for (const entry of ledger) {
-    const head = retriggerPairedFixHead(entry);
-    if (head !== undefined) {
-      pairedFixShas.add(head);
-    }
-  }
-
-  const fixCommittedShas = new Set<string>();
-  const fixSignals: Array<{ readonly sha: string; readonly ts: string }> = [];
-  for (const entry of ledger) {
-    if (
-      entry.event === "online_review_fix_committed" &&
-      typeof entry.fixCommitSha === "string" &&
-      entry.fixCommitSha.length > 0 &&
-      typeof entry.ts === "string" &&
-      entry.ts.length > 0
-    ) {
-      fixCommittedShas.add(entry.fixCommitSha);
-      fixSignals.push({ sha: entry.fixCommitSha, ts: entry.ts });
-    }
-  }
-  for (const entry of ledger) {
-    const sha = fixerLedgerFixCommitSha(entry);
-    if (
-      entry.step === "S10" &&
-      entry.event === undefined &&
-      sha !== undefined &&
-      typeof entry.ts === "string" &&
-      entry.ts.length > 0 &&
-      !fixCommittedShas.has(sha)
-    ) {
-      fixSignals.push({ sha, ts: entry.ts });
-    }
-  }
-
-  const unpaired = fixSignals.filter((signal) => !pairedFixShas.has(signal.sha));
-  const latestUnpaired = latestFixSignalByTimestamp(unpaired);
-  if (latestUnpaired === undefined) {
-    return undefined;
-  }
-  return buildRoundTrigger(latestUnpaired.sha, latestUnpaired.ts);
-}
-
 function roundTriggerRecencyMs(trigger: RoundTrigger): number | undefined {
   const ms = Date.parse(trigger.triggeredAt);
   return Number.isFinite(ms) ? ms : undefined;
@@ -623,28 +340,6 @@ export function resolveOnlineReviewRoundTrigger(input: {
   );
 }
 
-/** S7 ship ledger `ts` — round-1 freshness anchor (#600 r9). */
-export function shipLedgerTriggeredAtFromSliceLedger(
-  ledger: ReadonlyArray<{
-    readonly step: string;
-    readonly output?: { readonly kind?: string };
-    readonly ts?: string;
-  }>,
-): string | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (
-      entry.step === "S7" &&
-      entry.output?.kind === "ship" &&
-      typeof entry.ts === "string" &&
-      entry.ts.length > 0
-    ) {
-      return entry.ts;
-    }
-  }
-  return undefined;
-}
-
 /** 1-based online review round from the family ledger (#600 r26 resume). */
 export function onlineReviewRoundFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -693,97 +388,8 @@ export function lastOnlineReviewFixCommitShaFromFamilyLedger(
 }
 
 /**
- * Rebuild the last fixer authorization from a single-slice ledger's
- * `online_review_fix_committed` marker (#743). Prefer this over last-S9 shape
- * when the marker carries keys — resume must not depend on a key-only recheck row.
- */
-export function lastFixMarkedFindingAuthorizationFromLedger(
-  entries: ReadonlyArray<{
-    readonly event?: string;
-    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-    readonly fixMarkedFindingThreads?: ReadonlyArray<{
-      readonly identityKey?: string;
-      readonly threadId?: string;
-    }>;
-  }>,
-): {
-  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
-  readonly fixMarkedFindingThreads: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
-} {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (entry.event !== "online_review_fix_committed") continue;
-    return {
-      fixMarkedFindingIdentityKeys: (entry.fixMarkedFindingIdentityKeys ?? []).filter(
-        (key) => typeof key === "string" && key.trim().length > 0,
-      ),
-      fixMarkedFindingThreads: (entry.fixMarkedFindingThreads ?? []).flatMap(
-        (binding) =>
-          typeof binding.identityKey === "string" &&
-          binding.identityKey.trim().length > 0 &&
-          typeof binding.threadId === "string" &&
-          binding.threadId.trim().length > 0
-            ? [{ identityKey: binding.identityKey, threadId: binding.threadId }]
-            : [],
-      ),
-    };
-  }
-  return {
-    fixMarkedFindingIdentityKeys: [],
-    fixMarkedFindingThreads: [],
-  };
-}
-
-/**
- * Durable fixer authorization for a resumed post-fixer recheck (#743).
- * Marker keys win when present; otherwise fall back to last S9 dispositions
- * (legacy markers / crash before fix_committed persistence).
- */
-export function fixMarkedFindingAuthorizationForResume(
-  fullLedger: ReadonlyArray<{
-    readonly step?: string;
-    readonly event?: string;
-    readonly output?: StepOutput;
-    readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
-    readonly fixMarkedFindingThreads?: ReadonlyArray<{
-      readonly identityKey?: string;
-      readonly threadId?: string;
-    }>;
-  }>,
-): {
-  readonly fixMarkedFindingIdentityKeys: ReadonlyArray<string>;
-  readonly fixMarkedFindingThreads: ReadonlyArray<{
-    readonly identityKey: string;
-    readonly threadId: string;
-  }>;
-} {
-  const fromMarker = lastFixMarkedFindingAuthorizationFromLedger(fullLedger);
-  if (fromMarker.fixMarkedFindingIdentityKeys.length > 0) {
-    return fromMarker;
-  }
-  const lastVerify = lastS9VerifyOutputFromLedger(
-    fullLedger as ReadonlyArray<{ readonly step: string; readonly output?: StepOutput }>,
-  );
-  if (lastVerify === undefined) {
-    return {
-      fixMarkedFindingIdentityKeys: [],
-      fixMarkedFindingThreads: [],
-    };
-  }
-  return {
-    fixMarkedFindingIdentityKeys: fixMarkedKeysFromVerify(lastVerify),
-    fixMarkedFindingThreads: fixMarkedFindingThreadsFromVerify(lastVerify),
-  };
-}
-
-/**
- * Rebuild the last fixer authorization from the durable family ledger. A
- * resumed recheck must retain both the identity contract and its original
- * thread binding; missing fields remain empty so the caller fails closed
- * (including an all-empty rebuild on post-fixer recheck).
+ * Rebuild the last fixer authorization from the family ledger's durable
+ * `online_review_fix_committed` marker.
  */
 export function lastFixMarkedFindingAuthorizationFromFamilyLedger(
   entries: ReadonlyArray<{
@@ -839,83 +445,10 @@ export function onlineReviewRoundTriggerFromFamilyLedger(
     readonly roundTriggerAt?: string;
   }>,
 ): RoundTrigger | undefined {
-  return onlineReviewRoundTriggerFromLedger(entries);
+  return roundTriggerFromEntries(entries);
 }
 
-/**
- * Resume-skip / convergence head key from persisted ledger truth (#600 r26, r36, r38).
- * Prefer the latest `online_review_converged` marker's `prHead` (writer always
- * records it; predicate keys on prHead only) so crash-after-marker resume
- * matches durable convergence without a trailing S9 verify output row. Otherwise
- * mirror the marker writer's {@link convergenceHeadToRecord} inputs without relying
- * on in-memory landing or optional ship.prHead.
- */
-export function onlineReviewResumeHeadKeyFromLedger(
-  ledger: ReadonlyArray<{
-    readonly step?: string;
-    readonly event?: string;
-    readonly prHead?: string;
-    readonly branchHEAD?: string;
-    readonly output?: {
-      readonly kind?: string;
-      readonly prHead?: string;
-      readonly committed?: boolean;
-    };
-  }>,
-): string | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (entry.event !== "online_review_converged") continue;
-    if (typeof entry.prHead === "string" && entry.prHead.length > 0) {
-      return entry.prHead;
-    }
-    break;
-  }
-  const postFixHead = lastOnlineReviewFixCommitShaFromLedger(
-    ledger.filter(
-      (e): e is {
-        readonly step: string;
-        readonly branchHEAD?: string;
-        readonly output?: { readonly kind?: string; readonly committed?: boolean };
-      } => typeof e.step === "string",
-    ),
-  );
-  let shipPrHead: string | undefined;
-  let branchHeadAfter: string | undefined;
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (entry.step === "S7" && entry.output?.kind === "ship") {
-      const out = entry.output as { prHead?: string };
-      if (typeof out.prHead === "string" && out.prHead.length > 0) {
-        shipPrHead = out.prHead;
-      }
-      break;
-    }
-  }
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (
-      entry.step === "S9" &&
-      entry.output?.kind === "verify" &&
-      typeof entry.branchHEAD === "string" &&
-      entry.branchHEAD.length > 0
-    ) {
-      branchHeadAfter = entry.branchHEAD;
-      break;
-    }
-  }
-  return convergenceHeadToRecord({
-    shipHead: shipPrHead,
-    postFixHead,
-    branchHeadAfter,
-  });
-}
-
-/**
- * Runner-owned recheck truth (#600 r26 / #877): round ≥2 verify is a post-fixer
- * re-check by construction. Worker `isRecheck` prose is forced to runner truth
- * (routing plumbing) and never a fate-fork / contradiction kill.
- */
+/** Family runner owns round ≥2 post-fixer recheck truth. */
 export function enforceRunnerOwnedRecheck(
   verify: VerifyResult,
   onlineReviewRound: number,
@@ -948,73 +481,6 @@ export function shipLedgerTriggeredAtFromFamilyLedger(
     }
   }
   return undefined;
-}
-
-function lastS9VerifyOutputFromLedger(
-  ledger: ReadonlyArray<{ readonly step: string; readonly output?: StepOutput }>,
-): VerifyResult | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (entry.step === "S9" && entry.output?.kind === "verify") {
-      return entry.output;
-    }
-  }
-  return undefined;
-}
-
-/** Read the persisted bot snapshot written before a crash mid review-loop (#600 r7). */
-export function readOnlineReviewSnapshotFile(
-  stateDir: string,
-): PrReviewSnapshot | undefined {
-  const path = join(stateDir, ONLINE_REVIEW_SNAPSHOT_FILE);
-  if (!existsSync(path)) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (parsed == null || typeof parsed !== "object") return undefined;
-    const candidate = parsed as Partial<PrReviewSnapshot>;
-    if (
-      typeof candidate.prUrl !== "string" ||
-      typeof candidate.headOid !== "string" ||
-      typeof candidate.totalFindingCount !== "number" ||
-      typeof candidate.quiescent !== "boolean" ||
-      !Array.isArray(candidate.threads) ||
-      !Array.isArray(candidate.checkRuns) ||
-      candidate.bots == null ||
-      typeof candidate.bots !== "object"
-    ) {
-      return undefined;
-    }
-    return candidate as PrReviewSnapshot;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Rebuild fixer landing from ledger + persisted snapshot — never from in-memory
- * survivors truncated away by priorLedgerThroughLastShip (#600 r7).
- */
-export function reconstructOnlineReviewLandingForResume(input: {
-  readonly fullLedger: ReadonlyArray<PersistentLedgerEntry>;
-  readonly ship: ShipResult;
-  readonly stateDir?: string;
-  readonly round: number;
-}): WorkerLandingPayload | undefined {
-  const snapshot =
-    input.stateDir !== undefined
-      ? readOnlineReviewSnapshotFile(input.stateDir)
-      : undefined;
-  if (snapshot === undefined) return undefined;
-  const auth = fixMarkedFindingAuthorizationForResume(input.fullLedger);
-  const lastVerify = lastS9VerifyOutputFromLedger(input.fullLedger);
-  return {
-    ...buildOnlineReviewLanding(snapshot, input.ship, input.round),
-    fixMarkedFindingIdentityKeys: auth.fixMarkedFindingIdentityKeys,
-    fixMarkedFindingThreads: auth.fixMarkedFindingThreads,
-    ...(lastVerify?.findingFamilies !== undefined
-      ? { findingFamilies: lastVerify.findingFamilies }
-      : {}),
-  };
 }
 
 /** Stop summary for the verifier's explicit decision-gate signal. */
@@ -1071,7 +537,7 @@ function decisionGateFromDispatchInfra(
   };
 }
 
-/** In-band terminal for family/slice review-loop dispatch failures (#600 r7 S2). */
+/** In-band terminal for family review-loop dispatch failures. */
 export class OnlineReviewLoopTerminal extends Error {
   constructor(readonly result: OnlineReviewLoopStageResult) {
     super(`online review loop terminal: ${result.terminalState}`);
@@ -1113,12 +579,10 @@ export function offlinePrReviewSnapshot(input: {
 }
 
 /**
- * Head key for converged marker, landing shipDelivery.prHead, and resume-skip.
- * Prefer recheck/snapshot/post-fix head over stale S7 ship.prHead once a fix
- * round occurred.
+ * Head key for the family review landing. Prefer snapshot/post-fix truth over
+ * the original shipped PR head once a fix round occurred.
  */
-/** @deprecated Prefer {@link convergenceHeadToRecord} — thin alias for call sites. */
-export function onlineReviewConvergenceHeadKey(input: {
+function convergenceHeadForLanding(input: {
   readonly postFixCommitSha?: string;
   readonly snapshotHeadOid?: string;
   readonly branchHeadAfter?: string;
@@ -1132,16 +596,6 @@ export function onlineReviewConvergenceHeadKey(input: {
   });
 }
 
-export function onlineReviewConvergedForHead(
-  ledger: ReadonlyArray<{ readonly event?: string; readonly prHead?: string }>,
-  reviewHead: string | undefined,
-): boolean {
-  if (reviewHead === undefined) return false;
-  return ledger.some((entry) =>
-    isReviewLoopConvergedMarker(entry, reviewHead),
-  );
-}
-
 export function buildOnlineReviewLanding(
   snapshot: PrReviewSnapshot,
   ship: ShipResult,
@@ -1149,7 +603,7 @@ export function buildOnlineReviewLanding(
 ): WorkerLandingPayload {
   // Fail-closed: never non-null-assert a missing convergence head (Cursor R11 low).
   // Prefer snapshot/post-fix head; omit prHead when neither side supplies one.
-  const prHead = onlineReviewConvergenceHeadKey({
+  const prHead = convergenceHeadForLanding({
     snapshotHeadOid: snapshot.headOid,
     shipPrHead: ship.prHead,
   });
@@ -1166,24 +620,6 @@ export function buildOnlineReviewLanding(
 }
 
 /** Write the bot snapshot JSON the verify worker reads (state dir, outside git). */
-export function writeOnlineReviewSnapshotFile(
-  stateDir: string,
-  snapshot: PrReviewSnapshot,
-): string | undefined {
-  const path = join(stateDir, ONLINE_REVIEW_SNAPSHOT_FILE);
-  try {
-    mkdirSync(stateDir, { recursive: true });
-    writeFileSync(path, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
-    return path;
-  } catch {
-    // Best-effort audit artifact — a fake worktree path in unit tests may not be
-    // mkdir-able; the landing file in stateDir (via dispatchWorker) is the worker
-    // truth when this write is skipped.
-    return undefined;
-  }
-}
-
-/** Injectable clock for host-side bot poll cadence (tests use immediate no-op sleep). */
 export interface BotPollClock {
   sleep(ms: number): void | Promise<void>;
 }
@@ -1199,7 +635,7 @@ export const immediateBotPollClock: BotPollClock = {
 };
 
 /**
- * Shared pending-CI re-poll delay (single-slice + family stage).
+ * Family pending-CI re-poll delay.
  * Under Vitest use the immediate clock so unit tests do not wall-clock sleep.
  * Production uses real 2-minute cadence so CI latency does not burn the overdue
  * budget in milliseconds (online R4/R5 Codex+Gemini chain).
@@ -1325,73 +761,6 @@ export function retriggerBotsAndPoll(
 }
 
 /** Thrown when a read-only verify worker dirties the tracked worktree (#600 r32). */
-export class VerifyWorkerWorktreeDirtyError extends Error {
-  readonly porcelainBefore: string;
-  readonly porcelainAfter: string;
-
-  constructor(porcelainBefore: string, porcelainAfter: string) {
-    super(
-      "online review verify worker left tracked worktree changes: " +
-        porcelainAfter,
-    );
-    this.name = "VerifyWorkerWorktreeDirtyError";
-    this.porcelainBefore = porcelainBefore;
-    this.porcelainAfter = porcelainAfter;
-  }
-}
-
-export function worktreePorcelainFingerprint(
-  lines: ReadonlyArray<string>,
-): string {
-  return lines.map((line) => line.trimEnd()).join("\n");
-}
-
-/**
- * Detect tracked-worktree residue after a read-only verify attempt.
- *
- * #876: HEAD movement is **not** a convictable drift class — head position is
- * routing plumbing (diff scope). Only tracked porcelain residue remains.
- */
-export type VerifyReadOnlyWorktreeDrift = "worktree" | undefined;
-
-/** Detect tracked-worktree residue after a read-only verify attempt (#876). */
-export function verifyReadOnlyWorktreeDrift(input: {
-  readonly headBefore: string;
-  readonly headAfter: string;
-  readonly porcelainBefore: string;
-  readonly porcelainAfter: string;
-}): VerifyReadOnlyWorktreeDrift {
-  // headBefore/headAfter retained on the input so call sites keep feeding the
-  // routing observation without a second API break; they do not convict.
-  void input.headBefore;
-  void input.headAfter;
-  if (input.porcelainAfter !== input.porcelainBefore) {
-    return "worktree";
-  }
-  return undefined;
-}
-
-/** Stop summary when a read-only verify worker left tracked worktree residue (#600 r32). */
-export function verifyReviewerWorktreeDirtyStopSummary(input: {
-  readonly trackedStatus: readonly string[];
-}): StopSummary {
-  return contractDriftStopSummary({
-    summary:
-      "online review verify worker left tracked worktree changes: " +
-      input.trackedStatus.join("; "),
-    repairHint:
-      "restore the verify/fixer role boundary so verify leaves the tracked worktree clean, then rerun the online review loop",
-    metadata: { trackedStatus: input.trackedStatus },
-  });
-}
-
-export function isReviewLoopConvergedMarker(
-  entry: { readonly event?: string; readonly prHead?: string },
-  prHead: string,
-): boolean {
-  return entry.event === "online_review_converged" && entry.prHead === prHead;
-}
-
 export interface OnlineReviewLoopDispatch {
   readonly poll: (round: number) => Promise<PrReviewSnapshot>;
   readonly dispatchVerify: (
@@ -1399,8 +768,6 @@ export interface OnlineReviewLoopDispatch {
     round: number,
   ) => Promise<VerifyResult>;
   readonly dispatchFixer: (landing: WorkerLandingPayload) => Promise<FixerResult>;
-  /** Post-merge cleanup (#603) — optional; not part of the review loop itself. */
-  readonly dispatchCleanup?: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly dispatchDocRelease: (landing: WorkerLandingPayload) => Promise<boolean>;
   readonly applySideEffects: (
     landing: WorkerLandingPayload,
@@ -1427,7 +794,7 @@ export interface OnlineReviewLoopStageResult {
 }
 
 /**
- * Shared online review-loop stage for single-slice and family PRs (#600 AC7).
+ * Family online review-loop stage.
  * Post-merge cleanup (#603) runs after host auto-merge, not inside this loop.
  */
 export async function runOnlineReviewLoopStage(
@@ -1462,7 +829,7 @@ export async function runOnlineReviewLoopStage(
     | undefined = opts?.initialFixMarkedFindingThreads;
   /**
    * In-loop prior-round findings (#711). Family ledgers only persist
-   * fix/retrigger markers — not S9 verify outputs — so the continuous multi-round
+   * fix/retrigger markers — not verify output rows — so the continuous multi-round
    * path accumulates snapshots here after each successful fix cycle.
    */
   const priorRoundFindingsAccum: PriorRoundFindingSnapshot[] = [];
@@ -1543,7 +910,7 @@ export async function runOnlineReviewLoopStage(
         };
       }
       // Bots may already be quiescent — poll returns immediately. Shared delay
-      // so single-slice and family cannot diverge (deep self-check of pending-CI).
+      // Keep pending-CI delay inside the family loop.
       await sleepPendingCiPollInterval();
       continue;
     }
@@ -1590,9 +957,9 @@ export async function runOnlineReviewLoopStage(
           stopSummary: {
             reason: "infra_failure",
             summary:
-              "文档发布 (S12) returned released:false — skill fail / hang / required push fail",
+              "family 文档发布 returned released:false — skill fail / hang / required push fail",
             repairHint:
-              "fix the docRelease skill or push failure and re-feed — resume re-enters S12 文档发布",
+              "fix the docRelease skill or push failure and re-feed the family run",
           },
         };
       }

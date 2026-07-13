@@ -17,12 +17,10 @@ import {
 import {
   cleanupResultReclaimEligible,
   shouldReclaimFamilyHost,
-  shouldReclaimSliceHost,
-  sliceCleanupTerminalForReclaim,
 } from "../src/hostReclaim.js";
 import type { FamilyLedgerEntry } from "../src/family/types.js";
 import { isValidCleanupResult } from "../src/reviewLoopOutcome.js";
-import type { CleanupResult, LedgerEntry } from "../src/types.js";
+import type { CleanupResult } from "../src/types.js";
 
 const REPO = "Akagilnc/ming-salvage-sim";
 const PR_URL = "https://github.com/Akagilnc/ming-salvage-sim/pull/603";
@@ -603,66 +601,6 @@ describe("#603 CleanupResult terminal vs non-terminal (AC6)", () => {
         ok: true,
       }),
     ).toBe(false);
-  });
-});
-
-describe("#603 host reclaim gate — ledger precondition only (AC5)", () => {
-  const terminalCleanup: CleanupResult = {
-    kind: "cleanup",
-    terminal: true,
-    ok: true,
-    branchOutcome: "deleted",
-  };
-
-  it("reclaims only on success handoff with terminal cleanup ledger row", () => {
-    const ledger: LedgerEntry[] = [
-      { step: "S11", output: terminalCleanup },
-      { step: "S8" },
-    ];
-    expect(sliceCleanupTerminalForReclaim(ledger)).toBe(true);
-    expect(shouldReclaimSliceHost(ledger, "success")).toBe(true);
-  });
-
-  it("does not reclaim on park / failed / malformed cleanup (negative)", () => {
-    const parked: LedgerEntry[] = [
-      {
-        step: "S11",
-        output: { kind: "cleanup", terminal: false, ok: false },
-      },
-    ];
-    expect(sliceCleanupTerminalForReclaim(parked)).toBe(false);
-    expect(shouldReclaimSliceHost(parked, "escalate")).toBe(false);
-
-    const failed: LedgerEntry[] = [
-      {
-        step: "S11",
-        output: { kind: "cleanup", terminal: true, ok: false },
-      },
-    ];
-    expect(sliceCleanupTerminalForReclaim(failed)).toBe(false);
-    expect(shouldReclaimSliceHost(failed, "error")).toBe(false);
-  });
-
-  it("never trusts a worker report without a persisted S11 ledger row", () => {
-    expect(
-      shouldReclaimSliceHost(
-        [{ step: "S8" }],
-        "success",
-      ),
-    ).toBe(false);
-  });
-
-  it("does not reclaim when last cleanup skipped branch delete with residue (tip drift)", () => {
-    const driftCleanup: CleanupResult = {
-      kind: "cleanup",
-      terminal: false,
-      ok: false,
-      branchOutcome: "skipped_tip_drift",
-    };
-    const ledger: LedgerEntry[] = [{ step: "S11", output: driftCleanup }];
-    expect(sliceCleanupTerminalForReclaim(ledger)).toBe(false);
-    expect(shouldReclaimSliceHost(ledger, "success")).toBe(false);
-    expect(cleanupResultReclaimEligible(driftCleanup)).toBe(false);
   });
 });
 

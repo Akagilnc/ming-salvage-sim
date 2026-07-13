@@ -83,7 +83,6 @@ import {
   type Sh as ProvisionSh,
 } from "./provisionNodeModules.js";
 import {
-  attachSanitizedFindingFamilies,
   normalizeFindingFamiliesWireAliases,
 } from "./findingFamilies.js";
 import {
@@ -232,13 +231,7 @@ import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
-import {
-  DOCRELEASE_PROMPT_FILE,
-  FIXER_PROMPT_FILE,
-  legacyDispatchWorker,
-  SHIP_PROMPT_FILE,
-  VERIFY_PROMPT_FILE,
-} from "./dispatchWorker.js";
+import { legacyDispatchWorker } from "./dispatchWorker.js";
 import {
   handleIdleThreshold,
   isAgentIdleTimeoutError,
@@ -250,10 +243,6 @@ import {
   type QuotaWaitForResetLedgerEvent,
 } from "./quotaProbe.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
-import {
-  shipOutcomeFromResult,
-  type ShipWorkerOutcome,
-} from "./shipOutcome.js";
 import {
   WORKER_OUTCOME_REPO_FILE,
   WORKER_OUTCOME_SANDBOX_FILE,
@@ -287,22 +276,9 @@ import type {
   WorktreeHandle,
 } from "./types.js";
 import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-} from "./reviewLoopOutcome.js";
-import {
   configureTelemetryFromWorkerImage,
   durableTelemetryDirForSingleSlice,
 } from "./telemetry.js";
-import type {
-  CleanupResult,
-  DocReleaseResult,
-  FixerResult,
-  VerifyResult,
-} from "./types.js";
-
 // ════════════════════════════════════════════════════════════════════════════
 // PURE host-side logic (unit-tested in realBackend.logic.test.ts; no container)
 // ════════════════════════════════════════════════════════════════════════════
@@ -824,13 +800,9 @@ export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 export const SANDBOX_FIX_FOCUS_PATH_ENV = "ORCHESTRATOR_FIX_FOCUS_PATH";
-/** S9/S10 online-review landing file path (bot snapshot + ship metadata). */
-export const SANDBOX_ONLINE_REVIEW_PATH_ENV = "ORCHESTRATOR_ONLINE_REVIEW_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
 export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
-export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
-
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
  * The 2b image BAKES the gh CLI but NO gh auth (a live OAuth secret). gstack-ship
@@ -948,34 +920,6 @@ export interface AuthPaths {
   readonly srcGrokAuth: string;
   /** Host file holding the durable claude OAuth token. */
   readonly claudeTokenFile: string;
-}
-
-/**
- * The single-slice ship worker's BEST-EFFORT auth (mirrors the family
- * {@link import("./family/realFamilyBackend.js").ShipAuth}). The ship worker pushes
- * + `gh pr create` (needs codex/gh creds) and may run on a Claude-family model
- * (needs its own claude token then) — but each source is OPTIONAL here: a missing
- * source degrades that leg, it never crashes the ship (#336 cmr S336 r1: the inline
- * `mountAuth` threw on any missing credential, blocking ship in degraded auth envs).
- */
-export interface ShipAuth {
-  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
-  readonly codexAuthDir?: string;
-  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
-  readonly grokAuthDir?: string;
-  /** Host OpenCode auth.json mounted read-only; runtime DB remains container-local. */
-  readonly opencodeAuthFile?: string;
-  /** The claude OAuth token (env var), or undefined if absent. */
-  readonly claudeToken?: string;
-  /**
-   * The gh OAuth token (`gh auth token` on the host → {@link SANDBOX_GH_TOKEN_ENV}
-   * env), or undefined if absent. Unlike the codex leg this is NOT best-effort: the
-   * ship worker's happy path pushes + `gh pr create`, both of which need it — so
-   * `runShipWorker` preflights it and escalates when absent (cmr S336 r10).
-   */
-  readonly ghToken?: string;
-  /** Typed launch preflight; mounts alone are not an availability contract. */
-  readonly providerAuth?: ProviderAuthAvailability;
 }
 
 export function buildAuthPaths(
@@ -1305,35 +1249,13 @@ function extractReviewerTag(stdout: string): unknown | undefined {
   return extractTaggedJson(stdout, "review");
 }
 
-// #596 F2: tag extractors for the 4 review-loop kinds (untyped compatibility path).
-export function extractVerifyTag(stdout: string): unknown | undefined {
-  return extractTaggedJson(stdout, "verify");
-}
-export function extractFixerTag(stdout: string): unknown | undefined {
-  return extractTaggedJson(stdout, "fixer");
-}
-export function extractCleanupTag(stdout: string): unknown | undefined {
-  return extractTaggedJson(stdout, "cleanup");
-}
-export function extractDocReleaseTag(stdout: string): unknown | undefined {
-  return extractTaggedJson(stdout, "docRelease");
-}
-
 function extractRoleReceipt(stdout: string, role: StepSpec["role"]): unknown | undefined {
   try {
     return role === "coder"
       ? extractCoderTag(stdout)
       : role === "reviewer"
         ? extractReviewerTag(stdout)
-        : role === "verify"
-          ? extractVerifyTag(stdout)
-          : role === "fixer"
-            ? extractFixerTag(stdout)
-            : role === "cleanup"
-              ? extractCleanupTag(stdout)
-              : role === "docRelease"
-                ? extractDocReleaseTag(stdout)
-                : undefined;
+        : undefined;
   } catch {
     return undefined;
   }
@@ -1400,7 +1322,7 @@ export function isLikelySha(s: string): boolean {
  * filesystem.
  */
 /**
- * Valid step ids (S0–S12). A persisted ledger record must carry one of these in
+ * Valid child step ids (S0–S8). A persisted ledger record must carry one of these in
  * `step`: {@link planResume} dereferences canonical steps to route the resume;
  * a retry marker has its own validated shape and is retained as durable retry
  * accounting rather than treated as a route target.
@@ -1415,10 +1337,6 @@ const STEP_IDS: ReadonlySet<string> = new Set([
   "S6",
   "S7",
   "S8",
-  "S9",
-  "S10",
-  "S11",
-  "S12",
 ]);
 
 const MECHANICAL_REDISPATCH_ATTEMPT = "mechanical_redispatch_attempt";
@@ -1441,7 +1359,7 @@ const MECHANICAL_REDISPATCH_ATTEMPT = "mechanical_redispatch_attempt";
  * enforces it (intent-verified is not boundary-enforced until now; symmetric
  * to the sessionId fix).
  *
- * Online codex P2: a line such as `null`, `{}`, `42`, or `{"step":"S9"}`
+ * A line such as `null`, `{}`, `42`, or `{"step":"S99"}`
  * `JSON.parse`s fine yet is NOT a ledger entry. Without this guard such a record
  * flows into `findResumeState` → `planResume`, where `lastEntry.step` is read
  * OUTSIDE any catch — a `null`/`{}` last entry crashes raw (TypeError /
@@ -1511,7 +1429,7 @@ export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
     if (!isLedgerEntryShape(parsed)) {
       throw new Error(
         "corrupt ledger: a steps.jsonl line parsed but is not a valid ledger " +
-          "entry (must be an object with a valid step S0–S12) — refusing to " +
+          "entry (must be an object with a valid child step S0–S8) — refusing to " +
           "resume on a malformed ledger (fail closed). Accepting it could crash " +
           "the resume route or re-report the wrong terminal state; bailing to " +
           "S8(error) instead.",
@@ -1587,27 +1505,18 @@ export function attributeFailure(
 // ── promptsDir validation (integ-cmr 256 r2, F4) ─────────────────────────────
 
 /**
- * Every versioned promptFile a single-slice WORKER the runner dispatches resolves
+ * Every versioned promptFile a child WORKER dispatches resolves
  * at run time. The real Backend resolves each as `join(promptsDir, promptFile)`,
  * so all must exist under `promptsDir` or the real path cannot run end-to-end
  * (#256 AC "对一个真叶子 issue 端到端跑通").
  *
  * Route-independent prompt inventory: prompt validation must not import a
  * route-bearing StepSpec snapshot, because model routes are resolved per run.
- * Keep this derived from the worker prompt-file constants plus the S7 ship
- * spec and real review-loop agent prompts (verify/fixer/docRelease — #739).
- * cleanup stays out: it is not a runStep agent path and has no checked-in prompt.
+ * Keep this derived from the S2/S3/S5/S6 prompt table. Family endgame prompts
+ * are validated by RealFamilyBackend.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set([
-    ...Object.values(WORKER_PROMPT_FILES),
-    SHIP_PROMPT_FILE,
-    VERIFY_PROMPT_FILE,
-    FIXER_PROMPT_FILE,
-    DOCRELEASE_PROMPT_FILE,
-    "integrated_cmr_completeness.md",
-    "integrated_cmr_correctness.md",
-  ]),
+  ...new Set(Object.values(WORKER_PROMPT_FILES)),
 ];
 
 /**
@@ -1644,7 +1553,7 @@ export function promptsDirError(
     return (
       `RealBackend: promptsDir "${promptsDir}" is missing required promptFile(s): ` +
       `${missingFiles.join(", ")}. All of [${REFERENCED_PROMPT_FILES.join(", ")}] ` +
-      `must be present (S2 coder, S3/S6 reviewer, S5 coder-fix, and S7 ship reference them).`
+      `must be present (S2 coder, S3/S6 reviewer, and S5 coder-fix reference them).`
     );
   }
   return undefined;
@@ -1655,7 +1564,8 @@ export function promptsDirError(
  * Source of truth = every file under orchestrator/image/souls (no longer baked
  * into the image post #372; the ctor must verify presence so an incomplete/wrong
  * dir (e.g. pointing at image/ or a partial checkout) fails fast with names,
- * mirroring promptsDir validation. Includes S12 docRelease + verify/fixer (#739).
+ * mirroring promptsDir validation. Family workers share this image inventory,
+ * so docRelease/verify/fixer/ship souls remain required here.
  * cleanup has no soul file (deterministic path, not a runStep agent).
  */
 export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
@@ -1770,9 +1680,9 @@ export interface RealBackendOptions {
    */
   readonly skillsMount?: string;
   /**
-   * Dir holding the versioned promptFiles (`coder_implement.md` for S2,
-   * `reviewer_review.md` for S3/S6, `coder_fix.md` for S5, and `ship.md` for
-   * S7). ADR 0030 keeps the single-slice review/fix loop runner-visible: S3/S6
+   * Dir holding the versioned child promptFiles (`coder_implement.md` for S2,
+   * `reviewer_review.md` for S3/S6 and `coder_fix.md` for S5).
+   * ADR 0030 keeps the child review/fix loop runner-visible: S3/S6
    * are reviewer workers, and S5 is the coder-fix worker.
    *
    * MUST be an ABSOLUTE path (validated at construction, F4): Sandcastle
@@ -2539,6 +2449,16 @@ export class RealBackend implements Backend {
     });
   }
 
+  /** Best-effort host GitHub token for worker sandboxes that call `gh`. */
+  protected readGhToken(): string | undefined {
+    try {
+      const token = this.sh("gh", ["auth", "token"]).trim();
+      return token === "" ? undefined : token;
+    } catch {
+      return undefined;
+    }
+  }
+
   // ── S0: lightweight metadata (host gh) ─────────────────────────────────────
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     // Multi-phase step: the first failing sub-op names the failure for the US#30
@@ -3134,10 +3054,6 @@ export class RealBackend implements Backend {
     if (options?.fixFocusLanding !== undefined) {
       env[SANDBOX_FIX_FOCUS_PATH_ENV] = options.fixFocusLanding.sandboxPath;
     }
-    if (options?.onlineReviewLanding !== undefined) {
-      env[SANDBOX_ONLINE_REVIEW_PATH_ENV] =
-        options.onlineReviewLanding.sandboxPath;
-    }
     if (options?.outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
     }
@@ -3170,13 +3086,6 @@ export class RealBackend implements Backend {
       mounts.push({
         hostPath: options.fixFocusLanding.path,
         sandboxPath: options.fixFocusLanding.sandboxPath,
-        readonly: true,
-      });
-    }
-    if (options?.onlineReviewLanding !== undefined) {
-      mounts.push({
-        hostPath: options.onlineReviewLanding.path,
-        sandboxPath: options.onlineReviewLanding.sandboxPath,
         readonly: true,
       });
     }
@@ -3313,88 +3222,7 @@ export class RealBackend implements Backend {
       };
     }
 
-    // #596 F2 AC2: wire the 4 new kinds into real decodeOutput using isValid*Result
-    // guards from reviewLoopOutcome.ts as the decode validation. Malformed raw fails closed
-    // (zod parse throws; or explicit guard fail) mirroring reviewer/coder style+wording.
-    // Shape-valid but false flags (converged:false etc) pass this layer (no semantic).
-    if (spec.role === "verify") {
-      const parsed = verifyOutputSchema.safeParse(raw);
-      if (!parsed.success) {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
-      }
-      const v = parsed.data;
-      const candidate: VerifyResult = {
-        kind: "verify",
-        ...attachSanitizedFindingFamilies(
-          {
-            converged: v.converged,
-            ...(v.findingDispositions !== undefined
-              ? { findingDispositions: v.findingDispositions }
-              : {}),
-            ...(v.fixMarkedFindingIdentityKeys !== undefined
-              ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
-              : {}),
-            ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
-            ...(v.threadsToResolve !== undefined
-              ? { threadsToResolve: v.threadsToResolve }
-              : {}),
-            ...(v.deferredIssueUrls !== undefined
-              ? { deferredIssueUrls: v.deferredIssueUrls }
-              : {}),
-            ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
-            ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
-          },
-          v.findingFamilies,
-        ),
-      };
-      return candidate;
-    }
-    if (spec.role === "fixer") {
-      const parsed = fixerOutputSchema.safeParse(raw);
-      if (!parsed.success) {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
-      }
-      const f = parsed.data;
-      const candidate: FixerResult = {
-        kind: "fixer",
-        committed: f.committed,
-        ...(f.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
-        ...(f.fixCommitSha !== undefined ? { fixCommitSha: f.fixCommitSha } : {}),
-      };
-      return candidate;
-    }
-    if (spec.role === "cleanup") {
-      const parsed = cleanupOutputSchema.safeParse(raw);
-      if (!parsed.success) {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
-      }
-      const c = parsed.data;
-      const candidate: CleanupResult = {
-        kind: "cleanup",
-        terminal: c.terminal,
-        ok: c.ok,
-        ...(c.issuesClosed !== undefined ? { issuesClosed: c.issuesClosed } : {}),
-        ...(c.parentIssueClosed === true ? { parentIssueClosed: true } : {}),
-        ...(c.branchOutcome !== undefined
-          ? { branchOutcome: c.branchOutcome }
-          : {}),
-        ...(c.skippedReasons !== undefined
-          ? { skippedReasons: c.skippedReasons }
-          : {}),
-      };
-      return candidate;
-    }
-    if (spec.role === "docRelease") {
-      const parsed = docReleaseOutputSchema.safeParse(raw);
-      if (!parsed.success) {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
-      }
-      const d = parsed.data;
-      const candidate: DocReleaseResult = { kind: "docRelease", released: d.released };
-      return candidate;
-    }
-
-    // Unknown role after the ifs: fail closed (should not reach if outputFor is consistent).
+    // Family endgame roles are dispatched by RealFamilyBackend, never here.
     throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
   }
 
@@ -3691,80 +3519,13 @@ export class RealBackend implements Backend {
     await this.writeLedger(persistent, stateDir);
   }
 
-  // ── S7: ship WORKER (invoke gstack-ship) ────────────────────────────────────
-
-  /**
-   * THE single-slice worker-dispatch seam (ADR 0026 / #331 / #336). The S7 ship
-   * step is dispatched here as a CONTAINER ship WORKER that invokes `gstack-ship`
-   * (#336) — replacing the inline `push` (a bare `git push`). Every OTHER worker
-   * kind (coder / reviewer agent steps) is forwarded to {@link legacyDispatchWorker}
-   * (runStep / resumeSession), which #334 already routes to the real `/tdd` /
-   * `/code-review` workers — so THIS method takes over ONLY the ship leg.
-   *
-   * The ship worker (`shipWorkerSpec`) = the 2b container's TOP-LEVEL claude; it
-   * `Skill`-invokes gstack-ship (base merge / tests / diff review / VERSION /
-   * CHANGELOG / commit / push / `gh pr create`). It returns the full
-   * {@link WorkerResult} mapping (PRD #330 R2): shipped → `completed` ShipResult;
-   * a genuine block (merge conflict / review ASK / hard defect) → `escalated`; a
-   * hard ship/test failure → `failed`; an unparseable run → `malformed`. A
-   * rerun-able flake is NOT escalated — the worker reruns it itself (用户 note).
-   */
+  /** Child worker dispatch. S7 is a local family handoff and has no worker. */
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
-    if (spec.kind !== "ship") {
-      // #336 owns the ship leg; coder/reviewer agent workers stay on the existing
-      // runStep/resumeSession seam (#334 routes them to /tdd / /code-review). The
-      // rich landing payload (blocking findings) travels straight to the landing
-      // file (信封宪法, ADR 0062).
-      return legacyDispatchWorker(this, spec, ctx, landing);
-    }
-    if (ctx.worktree === undefined) {
-      throw new Error(
-        "dispatchWorker(ship): a ship worker requires ctx.worktree (the resident " +
-          "slice branch gstack-ship delivers).",
-      );
-    }
-    const outcome = await this.runShipWorker(spec, ctx);
-    if (outcome.kind === "escalate") {
-      // A GENUINE block (merge conflict the skill can't resolve / a review ASK / a
-      // hard defect needing a human decision) — the WorkerResult-level escalate
-      // (续跑 path; runner.ts S7 takes the S8(escalate) handoff). NOT a rerun-able
-      // flake (the worker reruns those itself) and NOT a fabricated PR.
-      return {
-        kind: "escalated",
-        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
-      };
-    }
-    if (outcome.kind === "failed") {
-      // A hard ship command / test failure no rerun cleared → the delivery could
-      // not complete (runner.ts S7 maps non-completed to S8(error)).
-      return { kind: "failed", reason: `${outcome.reason} — ${outcome.diagnosis}` };
-    }
-    if (outcome.kind === "malformed") {
-      // No parseable verdict / no completion signal ⇒ a STRUCTURAL process-level
-      // failure (the worker emitted no valid `<ship>` output). #601: this retries via
-      // the shared `withMechanicalRetry` path (the dogfood-362 / family-405 incident
-      // class), so it maps to the retryable `malformed` kind — NOT a judged verdict.
-      return { kind: "malformed", reason: outcome.reason };
-    }
-    if (outcome.kind === "completed") {
-      return {
-        kind: "completed",
-        output: { kind: "coder", committed: false, commitsAdded: 0 },
-      };
-    }
-    return {
-      kind: "completed",
-      output: {
-        kind: "ship",
-        branch: outcome.branch ?? ctx.worktree.branch,
-        status: outcome.status,
-        ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
-      },
-    };
+    return legacyDispatchWorker(this, spec, ctx, landing);
   }
 
   /**
@@ -3837,417 +3598,9 @@ export class RealBackend implements Backend {
     return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
   }
 
-  /**
-   * Run the ship WORKER: ONE `sc.run` of the 2b container's route-selected agent
-   * invoking `gstack-ship` over the resident slice worktree (#336). `protected` so
-   * a unit test fixtures the outcome without a real container (the real container
-   * only runs on the driver / manual-smoke / e2e path).
-   *
-   * The worker is the container's TOP-LEVEL agent (so gstack-ship's own pipeline +
-   * any rerun loops run inside it — ADR 0026), under the WRITE (`coder`) soul (it
-   * commits the VERSION/CHANGELOG bump + pushes). `branchStrategy:{type:"head"}`
-   * keeps it on the resident branch (the ADR 0017 commit真源). Its `<ship>` tag is
-   * gated on the completion signal then classified by {@link shipOutcomeFromResult}.
-   */
-  protected async runShipWorker(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<ShipWorkerOutcome> {
-    const worktree = ctx.worktree!;
-    // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the family ship
-    // preflight + the cmr worker's claude-token guard): the ship worker is the
-    // container's TOP-LEVEL claude (`agent: sc.claudeCode` below), so the Claude
-    // OAuth token is NOT a degradable codex LEG — it is THIS worker's auth.
-    // Absent, the worker cannot start and never emits a `<ship>` verdict; that would
-    // throw out of `sc.run` (NOT a structured escalate). runner S7 DOES wrap this
-    // dispatch in a try/catch → errorTermination (so a thrown start would not
-    // crash the host outright), but an UNCAUGHT start-error is read as S8(error), not
-    // the cleaner escalate续跑 the missing-auth case deserves (a human must supply the
-    // token, not "the ship command failed"). So preflight and return a structured
-    // escalate BEFORE the container — symmetric with the family path. The gh token is
-    // ALSO preflighted below (cmr S336 r10): it is load-bearing for the push +
-    // `gh pr create`, NOT a degradable leg — the 2b image bakes the gh CLI but no gh
-    // auth, so a no-gh host must escalate, not fail late in-container. Only codex auth
-    // stays best-effort (it merely degrades the in-container diff review). Mount once
-    // and reuse for the sandbox (no double-mount).
-    // `mountShipAuth` creates a per-call temp codex auth dir (mkdtempSync — a unique
-    // name each call) BEFORE the early escalate gates below; the finally reclaims it
-    // on success, exception, AND those early returns (online review r1 — 3 bots:
-    // leaked temp dirs accumulating under the codex-auth root).
-    const auth = this.mountShipAuth(this.issueOf(worktree));
-    try {
-      const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
-      const missingProvider = unavailableProviderAuth(
-        resolveModelSlugForPool(spec.model, pool).provider,
-        auth.providerAuth ?? { claude: auth.claudeToken !== undefined, grok: auth.grokAuthDir !== undefined },
-      );
-      if (missingProvider !== undefined) {
-        return {
-          kind: "escalate",
-          reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
-          diagnosis:
-            "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; provider availability preflight rejected the ship launch before sc.run",
-        };
-      }
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
-        return {
-          kind: "escalate",
-          reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
-          diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
-        };
-      }
-    // FAIL-CLOSED on gh auth (cmr S336 r10): UNLIKE the codex leg (best-effort — it
-    // only degrades the in-container diff review), gh auth is LOAD-BEARING for the
-    // ship itself — gstack-ship Step 17 pushes over https (gh credential helper) and
-    // Step 19 runs `gh pr create`. The 2b image bakes the gh CLI but no gh auth, so a
-    // no-gh host would run the whole pipeline only to fail at push / `gh pr create` —
-    // an opaque late failure, not the cleaner escalate续跑 (a human must supply gh
-    // creds). So preflight it like the claude token (r8) and escalate BEFORE the
-    // container. The host token is read via `gh auth token` (it lives in the OS
-    // keyring, not a portable file) and injected as GH_TOKEN by shipSandboxConfig.
-      if (auth.ghToken === undefined) {
-        return {
-          kind: "escalate",
-          reason: "no gh auth (GH_TOKEN) — the ship worker cannot push / `gh pr create`",
-          diagnosis:
-            "the ship worker invokes gstack-ship, which pushes over https + runs " +
-            "`gh pr create`; the 2b image bakes the gh CLI but no gh auth. Provide a " +
-            "host gh login (`gh auth login`) so `gh auth token` yields a token to inject " +
-            "as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a late " +
-            "in-container `gh pr create` failure would surface as an opaque S8 error).",
-        };
-      }
-      this.syncShipFocusFile(ctx);
-      const outcomeLanding = this.prepareShipOutcomeLanding(ctx);
-      try {
-        const result = await this.runAgentSandbox({
-          name: `${spec.id}-ship`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: worktree.path,
-          sandbox: this.shipSandbox(auth, outcomeLanding),
-          agent: agentForSlug(
-            spec.model,
-            effortForLiveOfficer(spec.model, spec),
-            isBillingPoolDispatchId(ctx.billingPool)
-              ? ctx.billingPool
-              : undefined,
-          ),
-          // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
-          // container (用户 note); maxIter is the within-worker budget. A genuine block
-          // is the worker's `<ship>` escalate verdict, not the iteration limit.
-          maxIterations: spec.maxIter,
-          completionSignal: spec.completionSignal,
-          // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
-          branchStrategy: { type: "head" },
-          promptFile: join(this.opts.promptsDir, spec.promptFile),
-          // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
-          quotaProbe: {
-            modelRef: spec.model,
-            step: spec.id,
-            worktreePath: worktree.path,
-            issueNumber: this.issueOf(worktree),
-          },
-        });
-        return shipOutcomeFromResult({
-          ...result,
-          ...(outcomeLanding !== undefined ? { outcomePath: outcomeLanding.path } : {}),
-        });
-      } finally {
-        if (outcomeLanding !== undefined) {
-          try {
-            rmSync(join(outcomeLanding.path, ".."), { recursive: true, force: true });
-          } catch {
-            // best-effort: the run already returned/threw.
-          }
-        }
-      }
-    } finally {
-      // Reclaim every per-call auth copy. Best-effort cleanup must never mask the
-      // worker's outcome.
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
-    }
-  }
-
-  /**
-   * Keep the single-slice ship focus file in sync with the current dispatch. S7
-   * normally ships with no focus file, but an answered decision escalation must be
-   * visible to the clean ship worker session that is retrying the blocked delivery.
-   */
-  protected syncShipFocusFile(ctx: DispatchContext): void {
-    const worktree = ctx.worktree;
-    if (worktree === undefined) return;
-    const target = join(worktree.path, SHIP_FOCUS_FILENAME);
-    const answer = ctx.escalationAnswer;
-    if (answer === undefined) {
-      rmSync(target, { force: true });
-      return;
-    }
-    this.excludeShipFocusFromGit(worktree.path);
-    const body =
-      `# Single-slice ship focus (machine-generated; #439)\n\n` +
-      `A human answered a prior S7 decision escalation. Retry the ship worker with\n` +
-      `this answer in force; do not repeat the same HITL stop unless a new blocker\n` +
-      `remains.\n\n` +
-      `\`\`\`json\n${JSON.stringify(answer, null, 2)}\n\`\`\`\n`;
-    writeFileSync(target, body, "utf8");
-  }
-
-  protected prepareShipOutcomeLanding(
-    ctx: DispatchContext,
-  ): { path: string; sandboxPath: string } | undefined {
-    if (ctx.stateDir === undefined || ctx.worktree === undefined) return undefined;
-    mkdirSync(ctx.stateDir, { recursive: true });
-    const dir = mkdtempSync(join(ctx.stateDir, "worker-outcome-ship-"));
-    const path = join(dir, "outcome.json");
-    writeFileSync(path, "", "utf8");
-    this.excludeRuntimeFileFromGit(ctx.worktree.path, WORKER_OUTCOME_REPO_FILE);
-    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
-  }
-
-  /** Add the generated ship focus file to local git excludes so it is never committed. */
-  protected excludeShipFocusFromGit(worktreePath: string): void {
-    this.excludeRuntimeFileFromGit(worktreePath, SHIP_FOCUS_FILENAME);
-  }
-
-  protected excludeRuntimeFileFromGit(worktreePath: string, filename: string): void {
-    try {
-      const excludePath = this.sh(
-        "git",
-        ["rev-parse", "--git-path", "info/exclude"],
-        worktreePath,
-      );
-      const abs = isAbsolute(excludePath)
-        ? excludePath
-        : resolve(worktreePath, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // no exclude file yet
-      }
-      if (!existing.split(/\r?\n/).includes(filename)) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(
-          abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
-            filename +
-            "\n",
-          "utf8",
-        );
-      }
-    } catch {
-      // Non-git fixtures still get the focus file; real worktrees get the exclude.
-    }
-  }
-
-  /**
-   * The ship worker's sandbox: the 2b image (gstack-ship + gh + bun baked in,
-   * #333) under the WRITE (`coder`) soul, with the codex auth mounted + the claude
-   * and gh tokens injected as env (the ship worker pushes + `gh pr create`, so it
-   * needs the live credentials). Takes the ALREADY-gathered {@link ShipAuth} (mirrors
-   * the family `shipSandbox`) so `runShipWorker` gathers once: preflight the claude +
-   * gh tokens THEN build the sandbox from the same auth (no double-gather).
-   * `protected` so a unit test asserts the mounts + soul without a real container.
-   */
-  protected shipSandbox(
-    auth: ShipAuth,
-    outcomeLanding?: { path: string; sandboxPath: string },
-  ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding));
-  }
-
-  /**
-   * Gather the ship worker's host credentials (#336 cmr S336 r1): the codex auth dir
-   * (mounted), the claude OAuth token (env), and the gh OAuth token (`gh auth token`
-   * → GH_TOKEN env, cmr S336 r10). Gathering is fail-soft per source (each in its OWN
-   * try/catch ⇒ a missing source is undefined, never a crash here).
-   *
-   * Unlike the agent-step `mountAuth` (which THROWS on any missing credential), the
-   * GATHER is tolerant; the REQUIRE gates (claude + gh — both load-bearing for the
-   * ship) live in `runShipWorker`'s preflight, the codex leg degrades silently. NOT
-   * keyed by issue here for the codex dir — a fresh temp dir per call keeps it
-   * self-contained; the claude token is read straight off the host, the gh token via
-   * the gh CLI (it lives in the OS keyring, not a portable file).
-   */
-  protected mountShipAuth(issueNumber: number): ShipAuth {
-    // #748: same injectable-home seam as mountAuth (opts.home ?? os.homedir()).
-    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
-    const root = join(paths.hostCodexAuthDir, "..");
-    let codexAuthDir: string | undefined;
-    let tempCodexDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempCodexDir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
-      copyFileSync(paths.srcCodexAuth, join(tempCodexDir, "auth.json"));
-      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
-      // bwrap is impossible). The host config.toml is host-personal and irrelevant
-      // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
-      codexAuthDir = tempCodexDir;
-    } catch {
-      // codex auth absent ⇒ the codex leg degrades (no mount), no crash. gh is NOT
-      // here — it is the separate, preflighted ghToken (cmr S336 r10). Reclaim the
-      // mkdtemp dir if it was created before copy/chmod threw (online review r2,
-      // gemini): on the degrade path codexAuthDir stays undefined, so the per-
-      // invocation dir would otherwise leak past the caller's finally cleanup.
-      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-        rmSync(tempCodexDir, { recursive: true, force: true });
-      }
-    }
-    let grokAuthDir: string | undefined;
-    let tempGrokDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempGrokDir = mkdtempSync(join(root, `ship-grok-auth-${issueNumber}-`));
-      copyFileSync(paths.srcGrokAuth, join(tempGrokDir, "auth.json"));
-      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
-      grokAuthDir = tempGrokDir;
-    } catch {
-      // grok auth is an optional dispatch leg; omit its mount when absent and
-      // reclaim a partially-created per-invocation dir.
-      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
-        rmSync(tempGrokDir, { recursive: true, force: true });
-      }
-    }
-    let claudeToken: string | undefined;
-    try {
-      const tok = readFileSync(paths.claudeTokenFile, "utf8").trim();
-      // A present-but-empty/blank token file ⇒ undefined (the ship preflight
-      // escalates), NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats
-      // the gate (cmr int-r3 A; matches readGhToken's empty-string normalization).
-      claudeToken = tok === "" ? undefined : tok;
-    } catch {
-      // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
-      // route slots simply run without this env var.
-    }
-    return {
-      codexAuthDir,
-      grokAuthDir,
-      opencodeAuthFile: hostOpenCodeAuthFile(this.opts.home ?? homedir()),
-      claudeToken,
-      ghToken: this.readGhToken(),
-      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
-    };
-  }
-
-  /**
-   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10). The token
-   * lives in the host's OS keyring (not a portable hosts.yml), so we extract it with
-   * gh itself and inject it as {@link SANDBOX_GH_TOKEN_ENV} into the container.
-   * Returns undefined when gh is unauthenticated / not installed (the `runShipWorker`
-   * preflight then escalates — gh is a hard ship requirement). `protected` so a unit
-   * test stubs it without spawning gh.
-   */
-  protected readGhToken(): string | undefined {
-    try {
-      const tok = this.sh("gh", ["auth", "token"]).trim();
-      return tok === "" ? undefined : tok;
-    } catch {
-      // gh unauthenticated / absent ⇒ no token; runShipWorker escalates.
-      return undefined;
-    }
-  }
-
-  /**
-   * The docker options the ship worker sandbox runs under — the pure
-   * SANDBOX-CONFIG seam (mirrors `boxConfig` / the family `shipSandboxConfig`
-   * testability). No container, no I/O: a unit test asserts the mounts + soul env
-   * without a real sandbox. The ship worker runs under the `coder` (WRITE) soul
-   * (it commits the bump + pushes) with codex auth + the claude token + the gh token
-   * (GH_TOKEN — push over https + `gh pr create`, cmr S336 r10), each set only when
-   * present (#336 cmr S336 r1), NO skills mount (the 2b image BAKES gstack-ship — a
-   * runtime mount would SHADOW it, #334).
-   */
-  protected shipSandboxConfig(
-    auth: ShipAuth,
-    outcomeLanding?: { path: string; sandboxPath: string },
-  ): {
-    imageName: string;
-    env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
-  } {
-    // The ship worker runs under the dedicated "ship" soul (delivery discipline:
-    // gstack-ship, stop-at-PR, defer→tracker not PR body) — souls/ship.md covers
-    // both single-slice and family deliveries, so the single-slice ship is unified
-    // with the family ship rather than left on the coder soul (gemini #384 R3).
-    // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
-    // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the sandbox must export it
-    // or that tracker write fails on an unset var (codex #384). Mirrors boxConfig.
-    const env: Record<string, string> = {
-      ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: "ship",
-      [SANDBOX_REPO_ENV]: this.opts.repo,
-    };
-    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
-    // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
-    // authenticates from GH_TOKEN. Set only when present (the pure seam stays
-    // tolerant; the REQUIRE-gh gate is the runShipWorker preflight).
-    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
-    if (outcomeLanding !== undefined) {
-      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
-    }
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-    // #334: codex auth ONLY — baked skills win (no host skills mount).
-    if (auth.codexAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
-    }
-    if (auth.grokAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
-    }
-    applyUniformCredentialProvisioning({
-      env,
-      mounts,
-      opencodeAuthFile: auth.opencodeAuthFile,
-    });
-    // #372: souls mount for ship worker too (live source, shadows baked if any).
-    // Shared helper forces readonly:true at all sites.
-    mounts.push(soulsMount(this.opts.soulsDir));
-    if (outcomeLanding !== undefined) {
-      mounts.push({
-        hostPath: outcomeLanding.path,
-        sandboxPath: outcomeLanding.sandboxPath,
-      });
-    }
-    return { imageName: this.opts.imageName, env, mounts };
-  }
-
-  /**
-   * The legacy inline push (#252 escalate-residue path). RETAINED as a `protected`
-   * fallback the seam no longer reaches on the production path: ADR 0026 / #336
-   * makes S7 a ship WORKER (gstack-ship via {@link dispatchWorker}). A direct
-   * caller (a test / a legacy back-compat path that bypasses the unified seam) may
-   * still reach it; the runner never does (it always goes through dispatchWorker).
-   */
-  async push(worktree: WorktreeHandle): Promise<void> {
-    this.sh(
-      "git",
-      ["push", "-u", "origin", worktree.branch],
-      worktree.path,
-    );
-  }
-
   // #661: retained only as a compatibility seam. Scenes are never destroyed.
   async cleanResidue(worktree: WorktreeHandle): Promise<void> {
     void worktree;
-  }
-
-  /**
-   * Terminal-success GC (#603 / ADR 0024): remove the resident slice worktree.
-   * Scoped to the worktree path only — no repo-level prune.
-   */
-  async reapResidentWorktree(worktree: WorktreeHandle): Promise<void> {
-    return runExclusive(this.workingRepo, () => {
-      try {
-        this.sh(
-          "git",
-          ["worktree", "remove", "--force", worktree.path],
-          this.workingRepo,
-        );
-      } catch {
-        // Best-effort: a missing worktree is already reclaimed.
-      }
-    });
   }
 
   // ── #255: detect resume residue ────────────────────────────────────────────
