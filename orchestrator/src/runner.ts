@@ -1334,11 +1334,6 @@ function escalationKindForHandoff(
   if (status !== "escalate") return undefined;
   const escalation = escalateOf(output);
   if (escalation == null || !isValidEscalation(escalation)) return "failure";
-  const workerSelected = (escalation as { readonly escalationKind?: unknown })
-    .escalationKind;
-  if (workerSelected === "decision" || workerSelected === "failure") {
-    return workerSelected;
-  }
   return escalation.synthesizedFailure === true ? "failure" : "decision";
 }
 

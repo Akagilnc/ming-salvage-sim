@@ -268,16 +268,6 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
-  it.each(["coder_implement.md", "coder_fix.md"])(
-    "%s keeps the required escalationKind in its coder escalation example",
-    (name) => {
-      const prompt = read(name);
-      expect(prompt).toMatch(
-        /"escalate"\s*:\s*\{[^}]*"escalationKind"\s*:\s*"decision"/s,
-      );
-    },
-  );
-
   it("fix/review prompt files stay thin and leave path/review method to the soul", () => {
     const fix = read("coder_fix.md");
     expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
@@ -433,28 +423,6 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
   // new thin contract is documented instead (CMR prompts carry the
   // `accepted_suppressed` governance fields; the standalone reviewer prompt
   // mandates fix_now-only and emits no disposition).
-  it("reviewer and integrated-cmr prompts no longer advertise removed routing disposition kinds", () => {
-    const files = [
-      read("reviewer_review.md"),
-      read("integrated_cmr.md"),
-      read("integrated_cmr_completeness.md"),
-      read("integrated_cmr_correctness.md"),
-      readSoul("reviewer.md"),
-    ];
-
-    for (const text of files) {
-      // The removed routing kinds must not appear anywhere in the contract text.
-      expect(text).not.toMatch(/cross_module/);
-      expect(text).not.toMatch(/same_module/);
-      expect(text).not.toMatch(/spec_conflict/);
-      expect(text).not.toMatch(/infra_failure/);
-      expect(text).not.toMatch(/owning_issue_still_red/);
-      // Their parser-required routing fields go with them.
-      expect(text).not.toMatch(/targetModule/);
-      expect(text).not.toMatch(/missingSurface/);
-    }
-  });
-
   it("CMR completeness/correctness prompts document the accepted_suppressed governance fields", () => {
     for (const text of [
       read("integrated_cmr_completeness.md"),

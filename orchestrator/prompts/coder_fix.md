@@ -49,5 +49,5 @@ identity keys and locations from the fix-findings JSON when available:
 Escalation:
 
 ```text
-<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<what blocks the fix>", "escalationKind": "decision"}}</coder>
+<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<what blocks the fix>"}}</coder>
 ```

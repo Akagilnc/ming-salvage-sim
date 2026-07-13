@@ -30,8 +30,7 @@ immediately. Reuse that delivery; do not push again, open another PR, or bump th
 version again.
 
 When push or PR creation cannot complete, exit with failure (non-zero). When a real
-human decision is required, emit the decision-gate outcome below with every required
-field, including `escalationKind`.
+human decision is required, emit the decision-gate outcome below.
 
 ## Required output
 
@@ -50,7 +49,7 @@ PR opened:
 Escalation:
 
 ```text
-<ship>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>", "escalationKind": "decision"}}</ship>
+<ship>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>"}}</ship>
 ```
 
 Failure:

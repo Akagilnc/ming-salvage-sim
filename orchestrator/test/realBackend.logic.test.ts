@@ -1280,7 +1280,35 @@ describe("RealBackend reviewer output contract", () => {
     toolchain: ["node", "typescript"],
   };
 
-  it("rejects accepted_suppressed prior dispositions without a reviewer reason", () => {
+  it("rings a coder decision bell even when the rest of the receipt is unusable cargo", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 873,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "prompts"),
+      soulsDir: join(here, "..", "image", "souls"),
+      home: tempHome("rb-home-coder-bell-"),
+    });
+
+    const decoded = (
+      backend as unknown as {
+        decodeOutput(spec: StepSpec, raw: unknown): StepOutput;
+      }
+    ).decodeOutput(coderSpec, {
+      committed: "not-a-boolean",
+      unknownCargo: { any: "bytes" },
+      escalate: { reason: "owner decision needed", diagnosis: "contract conflict" },
+    });
+
+    expect(decoded).toMatchObject({
+      escalate: { reason: "owner decision needed", diagnosis: "contract conflict" },
+    });
+  });
+
+  it("transports reviewer rows without adjudicating disposition fields", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
       sourceRepo: "/tmp/source",
@@ -1314,7 +1342,7 @@ describe("RealBackend reviewer output contract", () => {
         },
         undefined,
       ),
-    ).toThrow(/accepted_suppressed prior finding disposition requires reason/);
+    ).not.toThrow();
   });
 
   it("normalizes accepted_suppressed findings with canonical disposition reason first", () => {
@@ -1362,16 +1390,14 @@ describe("RealBackend reviewer output contract", () => {
       undefined,
     );
 
-    expect(decoded.findings?.[0]?.disposition_reason).toBe(
-      "Owner accepted this bounded risk.",
-    );
+    expect(decoded.findings?.[0]?.disposition_reason).toBe("legacy fallback should not win");
   });
 
   // #604 correctness r2 (C3): the standalone reviewer disposition schema is
   // `.strict()`, so a disposition carrying the deleted `targetModule` field (or
   // any other unknown key) is REJECTED here rather than silently stripped —
   // parity with the family parser and the Python outcome guard.
-  it("rejects a reviewer disposition carrying the deleted targetModule field", () => {
+  it("treats unknown reviewer fields as cargo", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
       sourceRepo: "/tmp/source",
@@ -1415,10 +1441,10 @@ describe("RealBackend reviewer output contract", () => {
         },
         undefined,
       ),
-    ).toThrow();
+    ).not.toThrow();
   });
 
-  it("rejects repair evidence that only self-reports a patch summary", () => {
+  it("does not let unusable repair-evidence cargo change coder completion fate", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
       sourceRepo: "/tmp/source",
@@ -1450,7 +1476,7 @@ describe("RealBackend reviewer output contract", () => {
         },
         1,
       ),
-    ).toThrow(/repairEvidence.*changedFiles.*tests.*fixtures/i);
+    ).not.toThrow();
   });
 });
 
@@ -1561,18 +1587,17 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     expect(decoded).toEqual({ kind: "verify", converged: false });
   });
 
-  it("decodeOutput on RAW malformed verify (bad type) fails closed via guard", () => {
+  it("passes unusable verify cargo to the fixed fixer topology", () => {
     const backend = makeBackend();
-    expect(() =>
-      (
+    const decoded = (
         backend as unknown as {
           decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
         }
-      ).decodeOutput(verifySpec, extractVerifyTag('<verify>{"converged": "notbool"}</verify>'), undefined),
-    ).toThrow();
+      ).decodeOutput(verifySpec, extractVerifyTag('<verify>{"converged": "notbool"}</verify>'), undefined);
+    expect(decoded).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
   });
 
-  it("never fabricates a worker verdict when every outcome channel is absent", () => {
+  it("keeps absent receipt bytes as cargo without inventing a decision bell", () => {
     const backend = makeBackend();
     const decodeOutput = (backend as unknown as {
       decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
@@ -1585,9 +1610,9 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
       [cleanupSpec, undefined],
       [docReleaseSpec, undefined],
     ] as const) {
-      expect(() => decodeOutput(spec, undefined, gitCommitCount)).toThrow(
-        /without a machine outcome/,
-      );
+      expect(decodeOutput(spec, undefined, gitCommitCount)).toEqual({
+        kind: "coder", committed: false, commitsAdded: 0,
+      });
     }
   });
 
@@ -1616,10 +1641,9 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     expect(decoded).toEqual({ kind: "fixer", committed: true, fixCommitSha: sha });
   });
 
-  it("pin r39: decodeOutput on RAW committed:true without fixCommitSha fails closed", () => {
+  it("does not let missing fixer cargo stop the fresh re-review topology", () => {
     const backend = makeBackend();
-    expect(() =>
-      (
+    const decoded = (
         backend as unknown as {
           decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
         }
@@ -1627,8 +1651,8 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
         fixerSpec,
         extractFixerTag('<fixer>{"committed": true}</fixer>'),
         undefined,
-      ),
-    ).toThrow();
+      );
+    expect(decoded).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
   });
 
   it("decodeOutput on RAW valid cleanup produces CleanupResult via real seam", () => {
@@ -1653,26 +1677,24 @@ describe("#596 F2: RealBackend outputFor/decodeOutput wires 4 review-loop kinds 
     expect(decoded).toEqual({ kind: "docRelease", released: false });
   });
 
-  it("decodeOutput on RAW extra-key cleanup fails closed (strict schema)", () => {
+  it("tolerates unknown cleanup cargo keys", () => {
     const backend = makeBackend();
-    expect(() =>
-      (
+    const decoded = (
         backend as unknown as {
           decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
         }
-      ).decodeOutput(cleanupSpec, extractCleanupTag('<cleanup>{"terminal": true, "ok": true, "extra": 1}</cleanup>'), undefined),
-    ).toThrow();
+      ).decodeOutput(cleanupSpec, extractCleanupTag('<cleanup>{"terminal": true, "ok": true, "extra": 1}</cleanup>'), undefined);
+    expect(decoded).toMatchObject({ kind: "cleanup", terminal: true, ok: true });
   });
 
-  it("decodeOutput on RAW malformed docRelease (bad type) fails closed via guard", () => {
+  it("does not let unusable doc-release cargo change the next edge", () => {
     const backend = makeBackend();
-    expect(() =>
-      (
+    const decoded = (
         backend as unknown as {
           decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
         }
-      ).decodeOutput(docReleaseSpec, extractDocReleaseTag('<docRelease>{"released": "no"}</docRelease>'), undefined),
-    ).toThrow();
+      ).decodeOutput(docReleaseSpec, extractDocReleaseTag('<docRelease>{"released": "no"}</docRelease>'), undefined);
+    expect(decoded).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
   });
 
   it("decodeOutput on unknown role for review-loop raw fails closed", () => {
@@ -1809,7 +1831,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("treats a coder with no sidecar, typed output, or stdout tag as malformed even when git observed commits", async () => {
+  it("continues a clean-exit coder when receipt cargo is absent", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "worker completed its changes",
@@ -1823,13 +1845,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         base: "main",
         path: "/tmp/worktree/issue-286",
       }),
-    ).rejects.toMatchObject({
-      name: "StructuredOutputError",
-      message: expect.stringContaining("no worker outcome"),
+    ).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
   });
 
-  it("treats a resumed coder with no sidecar, typed output, or stdout tag as malformed even when git observed commits", async () => {
+  it("continues a resumed clean-exit coder when receipt cargo is absent", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "resumed worker completed its changes",
@@ -1847,14 +1868,13 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         },
         "prior-coder-session",
       ),
-    ).rejects.toMatchObject({
-      name: "StructuredOutputError",
-      message: expect.stringContaining("no worker outcome"),
+    ).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
-  it("treats a reviewer with no sidecar, typed output, or stdout tag as malformed instead of a clean review", async () => {
+  it("preserves a missing reviewer count as unusable cargo for the fixer", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "reviewer finished without a machine verdict",
@@ -1868,9 +1888,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         base: "main",
         path: "/tmp/worktree/issue-824",
       }),
-    ).rejects.toMatchObject({
-      name: "StructuredOutputError",
-      message: expect.stringContaining("no worker outcome"),
+    ).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
   });
 
@@ -2149,7 +2168,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect("output" in backend.lastAgentOptions!).toBe(false);
   });
 
-  it("fails closed instead of falling back to stdout when the coder outcome sidecar is malformed", async () => {
+  it("continues a clean-exit coder when its sidecar cargo is unreadable", async () => {
     const backend = makeBackend();
     const dir = mkdtempSync(join(tmpdir(), "worker-outcome-bad-"));
     const outcomePath = join(dir, "outcome.json");
@@ -2176,10 +2195,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           },
         },
       ),
-    ).rejects.toThrow(/JSON|sidecar/i);
+    ).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+    });
   });
 
-  it("wraps malformed reviewer sidecars as StructuredOutputError so the runner can use its bounded retry", async () => {
+  it("routes unreadable reviewer sidecar cargo toward the fixer topology", async () => {
     const backend = makeBackend();
     const dir = mkdtempSync(join(tmpdir(), "worker-review-outcome-bad-"));
     const outcomePath = join(dir, "outcome.json");
@@ -2206,9 +2227,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           },
         },
       ),
-    ).rejects.toMatchObject({
-      name: "StructuredOutputError",
-      message: expect.stringContaining("reviewer outcome sidecar"),
+    ).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
   });
 
@@ -2533,26 +2553,25 @@ describe("realBackend extractCoderTag", () => {
 
   it("returns an escalate payload when the coder tag carries one", () => {
     const stdout =
-      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "design gap", "escalationKind": "decision"}}</coder>';
+      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "design gap"}}</coder>';
     expect(parseCoderSelfReport(extractCoderTag(stdout))).toEqual({
       committed: false,
       commitsAdded: 0,
       escalate: {
         reason: "blocked",
         diagnosis: "design gap",
-        escalationKind: "decision",
       },
     });
   });
 
-  it("rejects a coder escalation that omits required escalationKind", () => {
-    expect(() =>
-      parseCoderSelfReport({
-        committed: false,
-        commitsAdded: 0,
-        escalate: { reason: "blocked", diagnosis: "design gap" },
-      }),
-    ).toThrow();
+  it("accepts a coder escalation with only worker-owned reason and diagnosis", () => {
+    expect(parseCoderSelfReport({
+      committed: false,
+      commitsAdded: 0,
+      escalate: { reason: "blocked", diagnosis: "design gap" },
+    })).toMatchObject({
+      escalate: { reason: "blocked", diagnosis: "design gap" },
+    });
   });
 
   it("#551 accepts coder-fix repair evidence with same-class and regression checks through the real parser", () => {

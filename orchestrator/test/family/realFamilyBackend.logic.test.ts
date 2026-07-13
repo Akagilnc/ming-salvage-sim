@@ -1201,6 +1201,25 @@ describe("parseMergerOutcome (#291 pure)", () => {
 
 // #596 F2: family-side decode seam test (raw through parse*Outcome, using isValid* guards)
 describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-loop kinds (raw, not fake)", () => {
+  it.each([
+    ["verify", "parseVerifyOutcome"],
+    ["fixer", "parseFixerOutcome"],
+    ["cleanup", "parseCleanupOutcome"],
+    ["docRelease", "parseDocReleaseOutcome"],
+  ] as const)("%s receipt rings its decision bell before unrelated cargo is decoded", async (tag, parser) => {
+    const mod = await import("../../src/family/realFamilyBackend.js");
+    const out = mod[parser](
+      `<${tag}>${JSON.stringify({
+        unrelatedCargo: { wrong: [1, 2, 3] },
+        escalate: { reason: "owner choice", diagnosis: "family contract fork" },
+      })}</${tag}>`,
+    );
+    expect(out).toMatchObject({
+      kind: "escalate",
+      escalation: { reason: "owner choice", diagnosis: "family contract fork" },
+    });
+  });
+
   // import here via the file's re-export or direct (the test file imports some parses)
   // we will require the module symbols via the existing pattern; use dynamic to avoid top-edit
   it("feeds RAW valid verify tag through real parseVerifyOutcome (family seam)", async () => {
@@ -1263,16 +1282,16 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out.kind).toBe("malformed");
   });
 
-  it("RAW extra keys on verify is malformed (strict, matches single-slice .strict())", async () => {
+  it("RAW extra keys on verify remain cargo", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
     const out = mod.parseVerifyOutcome(`<verify>{"converged": true, "extra": "nope"}</verify>`);
-    expect(out.kind).toBe("malformed");
+    expect(out.kind).toBe("verify");
   });
 
-  it("RAW extra keys on fixer is malformed (strict)", async () => {
+  it("RAW extra keys on fixer remain cargo", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
     const out = mod.parseFixerOutcome(`<fixer>{"committed": false, "foo": 1, "bar": {}}</fixer>`);
-    expect(out.kind).toBe("malformed");
+    expect(out.kind).toBe("fixer");
   });
 
   it("RAW extra keys on cleanup is malformed (strict)", async () => {
@@ -1281,10 +1300,10 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     expect(out.kind).toBe("malformed");
   });
 
-  it("RAW extra keys on docRelease is malformed (strict)", async () => {
+  it("RAW extra keys on docRelease remain cargo", async () => {
     const mod = await import("../../src/family/realFamilyBackend.js");
     const out = mod.parseDocReleaseOutcome(`<docRelease>{"released": true, "x": 9}</docRelease>`);
-    expect(out.kind).toBe("malformed");
+    expect(out.kind).toBe("docRelease");
   });
 
   // === pinning the canonical last-complete-block semantics (now mirrored from single-slice) ===

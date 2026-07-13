@@ -19,6 +19,7 @@
 
 import { z } from "zod";
 import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
+import { probeWorkerDecisionBell } from "./workerReceipt.js";
 
 /**
  * The classified outcome of a ship WORKER's run (#336). One of:
@@ -33,6 +34,7 @@ import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
  *     never read it as a success (fail-closed).
  */
 export type ShipWorkerOutcome =
+  | { readonly kind: "completed" }
   | {
       readonly kind: "shipped";
       readonly branch?: string;
@@ -49,7 +51,8 @@ export type ShipWorkerOutcome =
       readonly kind: "escalate";
       readonly reason: string;
       readonly diagnosis: string;
-      readonly escalationKind: "decision";
+      /** Runner-authored preflight stamp; worker receipts never declare this. */
+      readonly escalationKind?: "decision" | "failure";
     }
   | { readonly kind: "failed"; readonly reason: string; readonly diagnosis: string }
   | { readonly kind: "malformed"; readonly reason: string };
@@ -85,7 +88,7 @@ const nonEmpty = z.string().trim().min(1);
  * Mirrors prompts/ship.md + family_ship.md (the union of the two contracts):
  *   1. `{status:"pushed",    branch}`            — shipped, no pr (pr MUST be absent);
  *   2. `{status:"pr_opened", branch, pr}`        — shipped, pr REQUIRED;
- *   3. `{escalate:{reason, diagnosis, escalationKind:"decision"}}` — a genuine block;
+ *   3. `{escalate:{reason, diagnosis}}` — a genuine block;
  *   4. `{failed:{reason, diagnosis}}`            — a hard ship/test failure.
  * All string fields are non-empty (trimmed). `.strict()` is the F3 belt: a
  * `{status:"pr_opened", branch, pr, failed:"…"}` (a success carrying a verdict key)
@@ -94,25 +97,14 @@ const nonEmpty = z.string().trim().min(1);
  */
 const pushedSchema = z
   .object({ status: z.literal("pushed"), branch: nonEmpty.optional() })
-  .strict();
+  .passthrough();
 const prOpenedSchema = z
   .object({
     status: z.literal("pr_opened"),
     branch: nonEmpty.optional(),
     pr: nonEmpty,
   })
-  .strict();
-const escalateSchema = z
-  .object({
-    escalate: z
-      .object({
-        reason: nonEmpty,
-        diagnosis: nonEmpty,
-        escalationKind: z.literal("decision"),
-      })
-      .strict(),
-  })
-  .strict();
+  .passthrough();
 const failedSchema = z
   .object({ failed: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
   .strict();
@@ -132,21 +124,16 @@ export function shipOutcomeFromResult(result: {
     if (result.outcomePath !== undefined) {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
-        return classifyShipOutcomePayload(sidecar, "ship worker outcome sidecar");
+        const classified = classifyShipOutcomePayload(sidecar, "ship worker outcome sidecar");
+        return classified.kind === "escalate" || classified.kind === "shipped"
+          ? classified
+          : { kind: "completed" };
       }
     }
   } catch (err) {
-    return {
-      kind: "malformed",
-      reason:
-        `ship worker outcome sidecar was not valid JSON: ` +
-        `${err instanceof Error ? err.message : String(err)}`,
-    };
+    return { kind: "completed" };
   }
-  return {
-    kind: "malformed",
-    reason: "ship worker outcome sidecar path was not provided",
-  };
+  return { kind: "completed" };
 }
 
 /**
@@ -197,21 +184,19 @@ function classifyShipOutcomePayload(
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: `${source} was not a JSON object` };
   }
+  const decisionBell = probeWorkerDecisionBell(parsed);
+  if (decisionBell !== undefined) {
+    return {
+      kind: "escalate",
+      ...decisionBell,
+    };
+  }
   // Centralized classification (cmr S336 r3): try each of the four — and only four —
   // strict schemas. A `.strict()` match rejects any extra key (a mixed
   // success+verdict payload, the r3 F3 fail-open) and any blank string field (the
   // r3 F2 fail-open); a non-object escalate/failed (a string) simply fails to match
   // and falls through to malformed (never leaking the success branch). Escalate /
   // failed are tried FIRST — a stuck/failed ship never carries a usable status.
-  const escalate = escalateSchema.safeParse(parsed);
-  if (escalate.success) {
-    return {
-      kind: "escalate",
-      reason: escalate.data.escalate.reason,
-      diagnosis: escalate.data.escalate.diagnosis,
-      escalationKind: escalate.data.escalate.escalationKind,
-    };
-  }
   const failed = failedSchema.safeParse(parsed);
   if (failed.success) {
     return { kind: "failed", reason: failed.data.failed.reason, diagnosis: failed.data.failed.diagnosis };
@@ -240,7 +225,7 @@ function classifyShipOutcomePayload(
     kind: "malformed",
     reason:
       `${source} matched no valid shape (expected one of: {status:"pushed",branch}, ` +
-      '{status:"pr_opened",branch,pr}, {escalate:{reason,diagnosis,escalationKind:"decision"}}, {failed:{reason,diagnosis}} — ' +
+      '{status:"pr_opened",branch,pr}, {escalate:{reason,diagnosis}}, {failed:{reason,diagnosis}} — ' +
       "non-empty strings, no extra keys)",
   };
 }

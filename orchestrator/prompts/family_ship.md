@@ -27,7 +27,7 @@ PR opened:
 Escalation:
 
 ```text
-<ship>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>", "escalationKind": "decision"}}</ship>
+<ship>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>"}}</ship>
 ```
 
 Failure:
