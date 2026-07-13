@@ -105,9 +105,11 @@ export function classifyExternalCallFailure(err: unknown): ExternalFailureClass 
         : typeof e.statusCode === "number"
           ? e.statusCode
           : undefined;
-    if (status === 429) return "quota";
-    if (status !== undefined && status >= 500 && status <= 599) return "transient";
-    if (status !== undefined && status >= 100 && status <= 599) return "durable";
+    if (status !== undefined && Number.isInteger(status)) {
+      if (status === 429) return "quota";
+      if (status >= 500 && status <= 599) return "transient";
+      if (status >= 100 && status <= 599) return "durable";
+    }
   }
 
   return "durable";
