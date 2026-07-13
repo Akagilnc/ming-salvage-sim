@@ -2,15 +2,17 @@ Status: Accepted（2026-07-06：grill 收敛 #366 → 16-issue 重切 → 本地
 
 Current authority: 线上评审仍属于编排器 shared tail；准确顺序只读 #869，Runner 边界只读 ADR 0131。PR / checks / threads 的读取与外部效果核验分别属于 Online Review、Ship / PR Publication 与 Merge / Delivery 等具名 Action，不属于 Runner。
 
-# 0061: 编排器纳入线上 PR 评审 loop（反转 ADR 0022 decision 4）
+# 0061: 编排器纳入线上 PR 评审 loop（反转 ADR 0022 旧版“自治止于 PR”条款）
+
+历史文件名中的 `d4` 只记录 ADR 0022 旧版条款编号，不指现行 ADR 0022 的决定 4。
 
 ## 背景
 
-ADR 0022 decision 4 定「自治边界 = 分阶段到 PR：family 编排器跑到『家族 base + 本地 cmr 绿 + 开好 PR』即止；线上 bot cmr + merge 复用现有 pr-review-loop 的独立自治阶段」。该"独立自治阶段"至今靠人或不稳定的 subagent 手动驱动——dogfood 曾出现无 cap 强制下滚到 7 轮、把干净小修啃成自伤大改写的事故；本项目一次真实 PR（#589）的线上评审 loop 也是全程人工手动执行（轮询 4 bot、判 finding、修、resolve 线程、3 轮上限、查 ruleset 合并）。这段本身是确定性流程，恰是编排器（runner=纯调度器）的本职，不该继续外包给人/漂移的 subagent。
+ADR 0022 旧版“自治止于 PR”条款规定：family 编排器跑到“家族 base + 本地 CMR 绿 + 开好 PR”即止，线上 bot CMR + merge 复用现有 pr-review-loop 的独立自治阶段。该“独立自治阶段”至今靠人或不稳定的 subagent 手动驱动——dogfood 曾出现无 cap 强制下滚到 7 轮、把干净小修啃成自伤大改写的事故；本项目一次真实 PR（#589）的线上评审 loop 也是全程人工手动执行（轮询 4 bot、判 finding、修、resolve 线程、3 轮上限、查 ruleset 合并）。这段本身是确定性流程，恰是编排器（Runner = 纯调度器）的本职，不该继续外包给人/漂移的 subagent。
 
 ## 决定
 
-反转 ADR 0022 decision 4：**线上评审 loop 纳入编排器自身**，成为 ship 开出 PR 后由单切片与 family 共用的 shared-tail segment；该 segment 由相互独立的具名 Action / worker 接力，不按来源分叉。编排器的自治边界从「止于 PR」推进到「止于 merge」。
+反转 ADR 0022 旧版“自治止于 PR”条款：**线上评审 loop 纳入编排器自身**，成为 ship 开出 PR 后由单切片与 family 共用的 shared-tail segment；该 segment 由相互独立的具名 Action / worker 接力，不按来源分叉。编排器的自治边界从“止于 PR”推进到“止于 merge”。
 
 **决策要点**（详见 #366 PRD，编码细节归 to-issues 切片）：
 
@@ -28,6 +30,6 @@ ADR 0022 decision 4 定「自治边界 = 分阶段到 PR：family 编排器跑�
 
 ## Consequences
 
-- 反转 ADR 0022 decision 4"线上 loop 是独立自治阶段"的表述；`wiki/concepts/pr-review-loop.md` 只保留 bot 操作方法与人工流程参考，编排器的调用顺序、修复重入、fresh review 与收敛条件只读 #869。
+- 反转 ADR 0022 旧版“线上 loop 是独立自治阶段”的表述；`wiki/concepts/pr-review-loop.md` 只保留 bot 操作方法与人工流程参考，编排器的调用顺序、修复重入、fresh review 与收敛条件只读 #869。
 - 新增 worker 角色边界要求：verify（判断，只读）与 fixer（改代码+自查二连）必须是两个**分离的 worker 派发**——runner 只负责调度派发，「修/拒/延」判断全部发生在 verify worker 内（runner 不做判断，见 ADR 0062 / 0129 三态宪法）；不可合一，verify-worker 复核同样要求 fresh（不带上一轮 session）。Family merge 后的构建/测试同样由 Verification / Objective Gate Action 执行并交卷；Runner 只按 #869 调用该 Action、读取其自报 open-count，不执行或解释测试。
 - 编码细节（worker contract 形状、promptFile 内容、轮询间隔/give-up 策略、跟 #440/#590/#592 的关系）留给 to-issues 切片定，本 ADR 只定边界与角色分工要求。
