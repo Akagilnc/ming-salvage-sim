@@ -8,16 +8,14 @@ runner 只准做三件事，三件之外零判断权：
 
 (a) **数 exit code**——进程死活。真进程级失败只来自非零 exit、抛异常或执行通道本身失败；其有界机械重试挂在这条通道上（#598 崩溃半边、#853/#855 park-retry），不读任何完成标记或报告文字。
 
-(b) **读 reviewer 明确自报的 open-count**——只有 reviewer 明确报出的 0 或 >0 才是信号：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。缺少该信号时，runner 不补出 count、不从卷面推导 count，按现有角色真源把卷面原料递给 fixer；runner 不派生、不复核、不读 severity/action 做二次分类。申报与卷面不符由 fixer 读卷时发现。
+(b) **读 reviewer 明确自报的 open-count**——只有 reviewer 明确报出的 0 或 >0 才是信号：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。runner 不派生、不复核、不读 severity/action 做二次分类。申报与卷面不符由 fixer 读卷时发现。
 
 (c) **转决策门**——worker 自己按的 decision/raise 原样递给人，转运不裁决。
 
 **从不读字。** 卷面对不对是下一个智慧体（fixer）的判断：读不懂 → raise（走决策门）或打回 reviewer。
 
-**卷面不可用（信封提取不出）按角色真源分治——决策门准入原则（owner 2026-07-13）：人环只接真决策；凡人唯一合理回答是「重试」的，不许上人环，机器按既有机械线自理。且「认定不可用」本身就是判断，runner 无权下；runner 更无权自己按决策门（通道 (c) 只转运 worker 按的门，runner 替按 = 伪造门铃，与 synthesizedFailure 同罪）。**
-- **评审类 worker（reviewer / verify 等）**：产出=卷面本身——信号提取不出时 runner 零判断零 park，按固定拓扑把卷面**原料**（stdout / sidecar artifact 指针，0129 递指针本职）递给下一个智慧体 **fixer**：fixer 读原料，读得懂多少判多少，读不懂打回 reviewer 或自己 raise。零机械重派、零重写梯、零 runner 发起的 park。
-- **明确要求产出代码的 coder / fixer 类动作**：产出=代码提交，交卷条只是回执——回执不可读**不上人环**：git 图**有新 commit**（二值存在判断：headBefore..HEAD 非空即有，不数个数、不看 head 位置、不评内容）→ 照常进评审（回执作废不碍事，评审审的是活不是条）；无 commit → 走既有白跑机械重派预算（#592）；**预算耗尽 runner 也不下结论——照常推进到评审步，由 reviewer（智慧体）判**：空 diff 写 findings 打回或 raise 给人。不怕死循环：reviewer 与 coder/fixer 都有 raise 到人的能力，环必被某个智慧体掐断。仅**进程反复崩溃**的耗尽（#598，连活都不存在、无物可判）仍走 infra park。
-- **ship / PR / merge 等 Delivery 外部效果**：只由 Delivery Action 自己执行和核验；Runner 不查外部效果，也不把这些动作混入 commit 有/无二值权限。
+**明确要求产出代码的 coder / fixer 类动作**：允许记录代码 commit 有/无这一机械事实；有 commit 照常进评审，无 commit 照既有白跑机械线处理，Runner 不知道 HEAD、不数 commit、不评内容。
+**Delivery Action**：ship / PR / merge 等外部效果只由 Delivery Action 自己执行和核验；Runner 不查外部效果，也不把这些动作混入 commit 有/无二值权限。
 
 synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (a) 进程事实或上述外部真源事实派生，永不得由卷面判断合成。kill-axis（承 #873）：任何拆除不得以「换一个更温和的校验」收尾。卷面质量归交卷契约（ADR 0130，worker 侧 soul/skill）；发现搬运走 artifact pointer / findings 状态库（ADR 0129）。
 
