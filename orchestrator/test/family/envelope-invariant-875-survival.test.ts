@@ -54,6 +54,15 @@ describe("ADR 0131 S1b reviewer self-declared count", () => {
     expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 2 });
   });
 
+  it("never fabricates zero when both the sentinel and structured rows are absent", () => {
+    const outcome = cmrOutcomeFromResult({
+      stdout: "review complete\n",
+      outcomePath: sidecar(base),
+    });
+    expect(outcome).toMatchObject({ kind: "verdict", converged: false });
+    expect(outcome).not.toHaveProperty("findingsCount");
+  });
+
   it("keeps count courts and rewrite ladders absent from executable family source", () => {
     const source = ["verifyCmr.ts", "realFamilyBackend.ts"]
       .map((file) => stripComments(readFileSync(join(here, `../../src/family/${file}`), "utf8")))

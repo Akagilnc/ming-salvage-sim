@@ -1256,7 +1256,14 @@ export function workerResultToStep(
             kind: "coder",
             committed: false,
             commitsAdded: 0,
-            escalate: result.escalation,
+            escalate: {
+              ...result.escalation,
+              escalationKind:
+                result.escalation.escalationKind ??
+                (result.escalation.synthesizedFailure === true
+                  ? "failure"
+                  : "decision"),
+            },
           }
         : { kind: "reviewer", findings: [], escalate: result.escalation };
     // PRESERVE the worker's sessionId on the escalate path (codex cmr R4 finding):

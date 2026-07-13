@@ -1943,6 +1943,7 @@ module_scope:
         output: {
           kind: "cmr",
           converged: true,
+          findingsCount: 0,
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
@@ -1954,6 +1955,7 @@ module_scope:
         output: {
           kind: "cmr",
           converged: true,
+          findingsCount: 0,
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],

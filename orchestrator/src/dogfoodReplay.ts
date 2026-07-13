@@ -657,6 +657,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
         output: {
           kind: "cmr",
           converged: true,
+          findingsCount: 0,
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: priorKeys,
           priorFindingDispositions: priorKeys.map((identityKey) => ({
@@ -1411,6 +1412,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
       output: {
         kind: "cmr",
         converged: outcome.converged,
+        findingsCount: 0,
         successfulLegs: outcome.successfulLegs,
         skippedLegs: outcome.skippedLegs,
         claimedFixedFindingIdentityKeys: outcome.claimedFixedFindingIdentityKeys,
@@ -1423,6 +1425,7 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
       output: {
         kind: "cmr",
         converged: true,
+        findingsCount: 0,
         successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [identityKey],
         priorFindingDispositions: [
@@ -1494,6 +1497,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
       output: {
         kind: "cmr",
         converged: true,
+        findingsCount: 0,
         successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [identityKey],
         priorFindingDispositions: [
@@ -1507,6 +1511,7 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
       output: {
         kind: "cmr",
         converged: parsedFinal.converged,
+        findingsCount: 0,
         successfulLegs: parsedFinal.successfulLegs,
         skippedLegs: parsedFinal.skippedLegs,
         claimedFixedFindingIdentityKeys:
@@ -1731,6 +1736,7 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
       output: {
         kind: "cmr",
         converged: true,
+        findingsCount: 0,
         successfulLegs: [...declaredLegs, rejectedDefaultLeg],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -1742,6 +1748,7 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
       output: {
         kind: "cmr",
         converged: true,
+        findingsCount: 0,
         successfulLegs: [...declaredLegs, rejectedDefaultLeg],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -1880,6 +1887,7 @@ function cmrClosureWorkerResult(input: {
     output: {
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: input.priorFindingDispositions,
@@ -2264,6 +2272,7 @@ async function providerStrongLegPassReplay(input: {
       output: {
         kind: "cmr",
         converged: true,
+        findingsCount: 0,
         successfulLegs: ["gpt-5.6-sol"],
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
@@ -2276,6 +2285,7 @@ async function providerStrongLegPassReplay(input: {
       output: {
         kind: "cmr",
         converged: true,
+        findingsCount: 0,
         successfulLegs: ["gpt-5.6-sol"],
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
@@ -2334,6 +2344,7 @@ async function familyShipFailedAfterCmrReplay(): Promise<SeamReplay> {
     output: {
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -2410,6 +2421,7 @@ async function familyShipReviewDegradedReplay(): Promise<SeamReplay> {
     output: {
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],

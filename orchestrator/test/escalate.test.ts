@@ -122,7 +122,9 @@ class ConfigurableBackend implements Backend {
 
 // ─────────────────────── helper factories ───────────────────────
 
-function coderWithEscalate(escalation: Escalation): CoderOutput {
+function coderWithEscalate(
+  escalation: Escalation & { readonly escalationKind: "decision" | "failure" },
+): CoderOutput {
   return {
     kind: "coder",
     committed: false,
@@ -131,10 +133,11 @@ function coderWithEscalate(escalation: Escalation): CoderOutput {
   };
 }
 
-const STUCK: Escalation = {
+const STUCK = {
   reason: "Design-level ambiguity: unclear whether field X should be optional",
   diagnosis: "The spec says 'optional' in one place but 'required' in another; this requires product decision before implementation can proceed.",
-};
+  escalationKind: "decision",
+} satisfies Escalation;
 
 // ─────────────────────── tests ───────────────────────
 
@@ -206,7 +209,7 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
         kind: "coder",
         committed: true,
         commitsAdded: 1,
-        escalate: STUCK,
+        escalate: { ...STUCK, escalationKind: "decision" },
       };
 
       const backend = new ConfigurableBackend(
@@ -277,13 +280,14 @@ describe("escalate stop edge (#251, ADR 0026)", () => {
 
   describe("diagnosis field from model reaches ledger (US#20 / US#22)", () => {
     it("full escalation object (reason + diagnosis) is preserved in ledger entry", async () => {
-      const detailedEscalation: Escalation = {
+      const detailedEscalation = {
         reason: "Implementation blocker: missing seam for auth token injection",
         diagnosis:
           "This is a design-level gap (not an implementation path choice): " +
           "the Backend interface has no provision for passing auth; " +
           "requires product/arch decision on whether to add a method or use env.",
-      };
+        escalationKind: "decision",
+      } satisfies Escalation;
 
       const backend = new ConfigurableBackend(
         new Map([["S2", coderWithEscalate(detailedEscalation)]]),

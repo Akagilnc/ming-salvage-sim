@@ -40,11 +40,12 @@ import type {
   MergeRequest,
 } from "../../src/family/types.js";
 
-const STUCK: Escalation = {
+const STUCK = {
   reason: "Design-level ambiguity: unclear whether child field X should be optional",
   diagnosis:
     "The child issue body says 'optional' in one place but 'required' in another; a product decision is required.",
-};
+  escalationKind: "decision",
+} satisfies Escalation;
 
 /** The real per-step sandbox session id the provider surfaces on the escalated step. */
 const SURFACED_SESSION_ID = "child-11-S2-session-abc123";
@@ -101,7 +102,7 @@ class SessionSurfacingChildBackend implements Backend {
         kind: "coder",
         committed: false,
         commitsAdded: 0,
-        escalate: STUCK,
+        escalate: { ...STUCK, escalationKind: "decision" },
       };
       // Surface the real per-step session id via the StepResult shape.
       return { output, sessionId: SURFACED_SESSION_ID };

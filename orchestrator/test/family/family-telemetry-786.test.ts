@@ -168,6 +168,7 @@ class FamilyTelemetryBackend implements FamilyBackend {
           kind: "cmr",
           cmrPass,
           converged: true,
+          findingsCount: 0,
           successfulLegs: [...COMPLETE_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],

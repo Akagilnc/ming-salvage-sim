@@ -475,6 +475,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const cmrOutput = {
       kind: "cmr",
       converged: true,
+      findingsCount: 0,
       successfulLegs: declared.length > 0 ? declared : ["opus"],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],

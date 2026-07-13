@@ -2108,6 +2108,7 @@ describe("#369 runner resume/retry review fixes", () => {
             escalate: {
               reason: "needs answer",
               diagnosis: "human answered; resume or fresh fallback may run",
+              escalationKind: "decision",
             },
           },
         },

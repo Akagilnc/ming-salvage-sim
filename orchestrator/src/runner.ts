@@ -1333,14 +1333,12 @@ function escalationKindForHandoff(
 ): EscalationKind | undefined {
   if (status !== "escalate") return undefined;
   const escalation = escalateOf(output);
-  // #604 correctness r1 (P1-a) / ADR 0062: the DECISION gate (B-class park) fires
-  // ONLY for a worker-PROACTIVE "需人类拍板" escalate. A well-shaped escalate that
-  // the RUNNER SYNTHESIZED from a protocol failure (malformed reviewer output
-  // exhausted its reruns — marked `synthesizedFailure`) is an infra/protocol
-  // FAILURE (A-class), not a decision, even though its reason/diagnosis are
-  // well-formed strings. So a valid escalate maps to "decision" ONLY when it is
-  // NOT a synthesized failure.
   if (escalation == null || !isValidEscalation(escalation)) return "failure";
+  const workerSelected = (escalation as { readonly escalationKind?: unknown })
+    .escalationKind;
+  if (workerSelected === "decision" || workerSelected === "failure") {
+    return workerSelected;
+  }
   return escalation.synthesizedFailure === true ? "failure" : "decision";
 }
 
@@ -4545,7 +4543,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             };
             const decisionOutput: StepOutput =
               expectedKind === "coder"
-                ? { kind: "coder", committed: false, commitsAdded: 0, escalate: escalation }
+                ? {
+                    kind: "coder",
+                    committed: false,
+                    commitsAdded: 0,
+                    escalate: { ...escalation, escalationKind: "decision" },
+                  }
                 : { kind: "reviewer", findings: [], escalate: escalation };
             return await escalateTermination(
               step,
