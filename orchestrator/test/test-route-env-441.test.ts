@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { activeModelRoute, cmrLegAccountingFailure } from "../src/modelRoutes.js";
+import { activeModelRoute } from "../src/modelRoutes.js";
 
 describe("#441 test route isolation", () => {
   it("defaults tests to the normal route unless a test opts into another route", () => {
@@ -24,18 +24,12 @@ describe("#441 test route isolation", () => {
     });
   });
 
-  it("still lets fake CMR accounting opt into the active tight route", () => {
+  it("lets a CMR harness opt into the active tight route", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
 
     expect(activeModelRoute().legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "gpt-5.6-sol",
       "agy",
     ]);
-    expect(
-      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.6-sol", "agy"] }),
-    ).toBeUndefined();
-    expect(
-      cmrLegAccountingFailure({ successfulLegs: ["gpt-5.6-sol", "agy", "opus"] }),
-    ).toMatch(/not declared.*opus/i);
   });
 });

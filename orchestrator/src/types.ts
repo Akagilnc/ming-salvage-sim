@@ -1135,9 +1135,8 @@ export interface VerifyResult {
   /** Per-finding dispositions judged by the verify worker. */
   readonly findingDispositions?: ReadonlyArray<OnlineReviewFindingDisposition>;
   /**
-   * Identity keys the fixer may act on (fix-marked only). On a post-fixer
-   * recheck, this is the verifier's explicit confirmation set and must echo the
-   * keys supplied by the runner before convergence is accepted (#743).
+   * Identity keys carried through as data for the verify worker to use when
+   * reporting which fix-marked findings it evaluated.
    */
   readonly fixMarkedFindingIdentityKeys?: ReadonlyArray<string>;
   /** Evidence-bearing replies for reject/defer/fixed outcomes (#600 AC6). */

@@ -4,7 +4,6 @@ import {
   applyRuntimeTightRoutePolicy,
   applyTightRoutePolicy,
   MODEL_ROUTE_SLOTS,
-  cmrLegAccountingFailure,
   modelRouteFingerprint,
   modelForSlot,
   printableRouteLineup,
@@ -117,18 +116,6 @@ describe("#422 model route presets", () => {
       "cmrReview:agy": { state: "failed", at: "2026-07-11T00:00:00.000Z", error: "opencode unavailable" },
     });
     expect(degradeOptionalRouteSmokeFailures(overridden).dropped).toEqual([]);
-  });
-
-  it("keeps optional and anchor CMR leg reports as envelope accounting data", () => {
-    const route = resolveRouteModels("normal", {});
-    expect(cmrLegAccountingFailure({
-      successfulLegs: ["gpt-5.6-sol", "opus"],
-      skippedLegs: [{ slug: "agy", reason: "quota exhausted" }],
-    }, route)).toBeUndefined();
-    expect(cmrLegAccountingFailure({
-      successfulLegs: ["gpt-5.6-sol", "agy"],
-      skippedLegs: [{ slug: "opus", reason: "quota exhausted" }],
-    }, route)).toBeUndefined();
   });
 
   it("single-slot overrides win over the selected base route", () => {
@@ -319,89 +306,6 @@ describe("#422 model route presets", () => {
       { family: "codex", slug: "gpt-5.6-sol" },
       { family: "agy", slug: "agy" },
     ]);
-  });
-
-  it("does not rewrite a historical 5.5 result as the live Sol leg", () => {
-    const liveRoute = resolveRouteModels("normal", {});
-
-    expect(
-      cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.5", "opus", "agy"] },
-        liveRoute,
-      ),
-    ).toMatch(/successful legs that were not declared.*gpt-5\.5/i);
-  });
-
-  it("rejects duplicate CMR leg accounting entries before set-based reconciliation", () => {
-    expect(
-      cmrLegAccountingFailure({
-        successfulLegs: ["gpt-5.6-sol", "gpt-5.6-sol", "opus"],
-        skippedLegs: [{ slug: "agy", reason: "quota" }],
-      }),
-    ).toMatch(/duplicate successful legs.*gpt-5\.6-sol/i);
-
-    expect(
-      cmrLegAccountingFailure({
-        successfulLegs: ["gpt-5.6-sol", "opus"],
-        skippedLegs: [
-          { slug: "agy", reason: "quota" },
-          { slug: "agy", reason: "quota again" },
-        ],
-      }),
-    ).toMatch(/duplicate skipped legs.*agy/i);
-  });
-
-  it("does not treat shallow route-shaped objects as resolved routes", () => {
-    const malformedRoute = {
-      slots: {},
-      legCollections: { cmrReview: "gpt-5.6-sol,opus,agy" },
-      tightFamilyViolations: "none",
-    };
-
-    expect(
-      cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
-        malformedRoute as never,
-      ),
-    ).toBeUndefined();
-  });
-
-  it("does not throw on null nested route-shaped properties", () => {
-    const malformedRoute = {
-      slots: null,
-      legCollections: null,
-      tightFamilyViolations: [],
-    };
-
-    expect(() =>
-      cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
-        malformedRoute as never,
-      ),
-    ).not.toThrow();
-    expect(
-      cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
-        malformedRoute as never,
-      ),
-    ).toBeUndefined();
-  });
-
-  it("falls back to the active environment when CMR leg accounting receives null route input", () => {
-    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
-
-    expect(() =>
-      cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
-        null as never,
-      ),
-    ).not.toThrow();
-    expect(
-      cmrLegAccountingFailure(
-        { successfulLegs: ["gpt-5.6-sol", "opus", "agy"] },
-        null as never,
-      ),
-    ).toBeUndefined();
   });
 
   it("feeds the resolved route into every worker spec model slot", async () => {

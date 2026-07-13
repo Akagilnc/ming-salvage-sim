@@ -223,7 +223,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
   });
 
   it("converged envelope with undeclared successful legs still ships (no leg-accounting death)", async () => {
-    // Pre-#875: cmrLegAccountingFailure → infra_failure kill with routeAccounting.
+    // Pre-#875: leg-accounting court → infra_failure kill with routeAccounting.
     // Post-#875: leg lists are prose; floor/required-leg degradation stays, court dies.
     // claude-tight declares gpt-5.6-sol + agy; listing an EXTRA undeclared "opus"
     // was pure accounting death (not required-leg skip / floor).
