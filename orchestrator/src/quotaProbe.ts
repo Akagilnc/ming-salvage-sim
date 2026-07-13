@@ -18,7 +18,6 @@
 import type { StepId } from "./types.js";
 import {
   ExternalCallTimeoutError,
-  classifyExternalCallFailure,
   execFileAsyncWithTimeout,
   withProviderTimeout,
 } from "./externalCall.js";
@@ -500,14 +499,9 @@ async function runOpencodePongProbe(
         { timeoutMs },
       );
       const combined = `${result.stdout}\n${result.stderr}`;
-      // Exit code only for fate: non-zero → error (or transient retry); zero + PONG → ok.
+      // Exit code only for fate: non-zero → error; zero + PONG → ok.
       // No body/stdout keyword → quota_limited (owner: 只看返回码，无视 body).
       if (result.code !== 0) {
-        if (classifyExternalCallFailure(combined) === "transient") {
-          throw new Error(
-            `opencode PONG transient exit ${result.code}: ${combined.slice(0, 200)}`,
-          );
-        }
         return {
           kind: "error" as const,
           cause: `opencode PONG exit ${result.code}: ${combined.slice(0, 200)}`,

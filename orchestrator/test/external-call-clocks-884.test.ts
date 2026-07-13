@@ -77,13 +77,26 @@ describe("#884 external-call clocks", () => {
     expect(attempts).toBe(1);
   });
 
+  it("treats unstructured connection text as durable and does not retry", async () => {
+    const failure = new Error("socket hang up");
+    expect(classifyExternalCallFailure(failure)).toBe("durable");
+    let attempts = 0;
+    await expect(
+      withLegTransientRetry(async () => {
+        attempts += 1;
+        throw failure;
+      }),
+    ).rejects.toBe(failure);
+    expect(attempts).toBe(1);
+  });
+
   it("has no free-text failure classification court", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const source = readFileSync(join(here, "../src/externalCall.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/(^|[^:])\/\/.*$/gm, "$1");
     expect(source).not.toMatch(
-      /(?:includes|match|test)\s*\([^\n]*(?:rate.?limit|quota|额度|配额|too many requests|timed?\s?out)/i,
+      /(?:includes|match|test)\s*\([^\n]*(?:rate.?limit|quota|额度|配额|too many requests|timed?\s?out|econnreset|socket hang up|connection (?:refused|reset|closed|aborted)|broken pipe|network)/i,
     );
   });
 
