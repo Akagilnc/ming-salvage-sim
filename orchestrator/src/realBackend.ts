@@ -918,10 +918,15 @@ export function provisionAgyAuthDir(
   try {
     mkdirSync(root, { recursive: true, mode: 0o700 });
     tempAgyDir = mkdtempSync(join(root, prefix));
-    copyFileSync(
-      join(home, ".sc-agy-oauth-token"),
-      join(tempAgyDir, AGY_TOKEN_FILENAME),
-    );
+    const src = join(home, ".sc-agy-oauth-token");
+    // C8: blank/whitespace-only token must NOT yield a defined agyDir that
+    // skips fail-closed preflight — copy then reject empty bodies.
+    const body = readFileSync(src, "utf8");
+    if (body.trim().length === 0) {
+      rmSync(tempAgyDir, { recursive: true, force: true });
+      return undefined;
+    }
+    copyFileSync(src, join(tempAgyDir, AGY_TOKEN_FILENAME));
     chmodSync(join(tempAgyDir, AGY_TOKEN_FILENAME), 0o600);
     return tempAgyDir;
   } catch {

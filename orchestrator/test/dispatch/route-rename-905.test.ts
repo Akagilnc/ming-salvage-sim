@@ -115,13 +115,11 @@ describe("#905 agy AgentProvider + bare-ping", () => {
   it("bare-ping with an explicit model still uses empty --print + stdin", () => {
     const prompt = "nonce-model";
     const built = barePingArgv("agy", "Gemini 3.5 Flash", prompt);
-    expect(built.args).toEqual([
-      "--sandbox",
-      "--model",
-      "Gemini 3.5 Flash",
-      "--print",
-      "",
-    ]);
+    const shared = agyPrintInvocation("Gemini 3.5 Flash", prompt);
+    expect(built.args).toEqual([...shared.args]);
+    expect(built.args).toContain("--print-timeout");
+    expect(built.args).toContain("--print");
+    expect(built.args[built.args.indexOf("--print") + 1]).toBe("");
     expect(built.input).toBe(prompt);
   });
 
