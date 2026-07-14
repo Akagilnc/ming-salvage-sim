@@ -790,3 +790,33 @@ export async function withIdleQuotaProbeDisposition<T>(input: {
     throw err;
   }
 }
+
+/**
+ * #683/#909 shared idle → probe composition for Sandcastle fallback (and any
+ * backend that already owns pid resolution). Both RealBackend and
+ * RealFamilyBackend call this so the handleIdleThreshold wiring is not a
+ * near-clone on each track. Durable park ledger stays runner-owned.
+ */
+export async function resolveSandboxIdleAfterQuotaProbe(input: {
+  readonly modelRef: string;
+  readonly step?: StepId;
+  readonly workerPid: number;
+  readonly runQuotaProbe: (pool: QuotaPoolId) => Promise<QuotaProbeResult>;
+  readonly now?: () => Date;
+}): Promise<HandleIdleThresholdResult> {
+  return handleIdleThreshold({
+    modelRef: input.modelRef,
+    worker: {
+      pid: input.workerPid,
+      ...(input.step !== undefined ? { step: input.step } : {}),
+    },
+    actions: {
+      // Live monitor owns verified pid-tree kill; Sandcastle fallback is post-release.
+      killPidTree: () => undefined,
+      // Runner parkQuotaWaitForReset writes the single durable marker.
+      recordLedger: async () => undefined,
+      ...(input.now !== undefined ? { now: input.now } : {}),
+    },
+    probe: (pool) => input.runQuotaProbe(pool),
+  });
+}

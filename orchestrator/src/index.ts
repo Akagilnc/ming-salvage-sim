@@ -189,6 +189,7 @@ export {
   tryParseQuotaWaitForResetBridge,
   isQuotaWaitForResetError,
   withIdleQuotaProbeDisposition,
+  resolveSandboxIdleAfterQuotaProbe,
 } from "./quotaProbe.js";
 export type {
   ApplyIdleDispositionResult,
