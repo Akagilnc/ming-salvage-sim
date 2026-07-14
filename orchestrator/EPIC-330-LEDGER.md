@@ -1,5 +1,7 @@
 # Epic #330 — runner=纯调度器 / 每步是 worker — integration ledger
 
+> **Historical snapshot:** 本文记录 #330 当时的集成过程，不是现行运行契约。下文关于 standalone push/openFamilyPr fallback、ship `failed`/`malformed` 判庭与严格 cargo schema 的描述均已退役；现行法以 ADR 0129–0131 及当前类型/测试为准。
+
 Slices merge to this base (`feat/330-pure-scheduler`) as per-slice cmr converges;
 one family PR to main at the END (per family-slices-merge-to-base). Dependency
 unblocking keys off THIS ledger (merged), NOT GitHub-closed.

@@ -19,7 +19,7 @@ Version: **2026-07-11.1**（#795 补入 sol 难片收敛型 coder）
 
 ## 设计时标注
 
-在切片 issue body 加一行（推荐 + 补位顺序）。设计者在 `to-issues` / 写切片时人肉贴上；编排器只读、不推断。
+在切片 issue body 加一行（推荐 + 补位顺序）。设计者在 `to-tickets` / 写切片时人肉贴上；编排器只读、不推断。
 
 ### 复制模板
 
@@ -43,7 +43,7 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
 - 当前 legacy 只保留花名册内合法项并丢弃非法 token；canonical cutover 后，显式候选只要含未知席位就在纯配置预检中失败，不再丢弃错误项。
 - 缺省（无此行）→ **不改** 当前 route 预设的 coder 槽（运维 `ORCHESTRATOR_ROUTE` / slot override 仍生效）。
 - 当前 legacy 在 `Coder-Rec:` 中的 token 全非法时回退花名册默认序；canonical cutover 删除该 fallback，只有未提供显式候选顺序时才使用 route 默认序。
-- 设计切片时请显式写 Coder-Rec 行（`to-issues` / 花名册默认序作推荐模板）。host skill（`~/.claude/skills/to-issues`）接线另票授权，当前靠本页 + [DEV_WORKFLOW.md](DEV_WORKFLOW.md) 切片节。
+- 设计切片时请显式写 Coder-Rec 行（`to-tickets` / 花名册默认序作推荐模板）。host skill（`~/.claude/skills/to-tickets`）接线另票授权，当前靠本页 + [DEV_WORKFLOW.md](DEV_WORKFLOW.md) 切片节。
 
 ## 编排器只读行为
 

@@ -1,6 +1,6 @@
 Status: Accepted（2026-07-06：源于 #497/#498 实证与 #604；本地 kill-axis cmr + 线上 4-bot 收敛，PR #605 合入）
 
-Current authority: ADR 0131 完整定义 Runner 三通道，#869 定义现行接力拓扑。本 ADR 只保留“删除 finding 内容分类”与“进程失败和 worker 主动决策门分家”两项决定。
+Current authority: ADR 0131 完整定义 Runner 三通道，ADR 0129 定义 findings 状态，#869 定义现行接力拓扑。本 ADR 只保留“删除 finding 内容分类”与“进程失败和 worker 主动决策门分家”两项决定。
 
 # 0062: 删除 runner 侧 finding 分类，失败 escalate 与人类决策门分家（回归 0026/0050，supersede #448/#449 路线）
 

@@ -80,16 +80,6 @@ export const BOT_REACTION_ACK_ONLY_CONTENT = new Set(["eyes"]);
  */
 export const BOT_REACTION_VERDICT_CONTENT = new Set(["+1"]);
 
-/**
- * @deprecated Prefer {@link BOT_REACTION_ACK_ONLY_CONTENT} /
- * {@link BOT_REACTION_VERDICT_CONTENT}. Kept as the union of non-finding
- * reaction contents for callers that only need "not a finding".
- */
-export const BOT_REACTION_ACK_CONTENT = new Set([
-  ...BOT_REACTION_ACK_ONLY_CONTENT,
-  ...BOT_REACTION_VERDICT_CONTENT,
-]);
-
 export type BotLegStatus =
   | { readonly state: "pending" }
   | { readonly state: "complete"; readonly findingCount: number }

@@ -1,10 +1,17 @@
 # Ming Orchestrator — operator's manual
 
-Multi-agent build pipeline for `Akagilnc/ming-salvage-sim`. The current
-implementation still contains legacy single and family control paths; #863
-tracks their replacement by one Canonical Delivery Flow. Exact delivery order
-has one design source (#869) and executable flow tests; this README does not
-define a second copy.
+Multi-agent build pipeline for `Akagilnc/ming-salvage-sim`. Production has one
+entry shape: `runFamilyDriver`. A leaf issue is normalized to a
+**family-of-one**; an epic becomes a multi-child family. Both build on a shared
+family base and close through merger, integrated CMR (completeness,
+correctness, and cross-model review legs), verify/fix, family ship, and cleanup.
+The S0–S8 slice runner remains internal child machinery, not a second public
+entry or terminal-delivery topology.
+
+This is the current legacy runtime. #863 tracks its replacement by one
+Canonical Delivery Flow; #896 replaces family-of-one normalization with a true
+standalone scene. Exact target delivery order has one design source (#869) and
+executable flow tests; this README does not define a second copy.
 
 ## Constitution (ADR 0131 — three channels, zero judgment; lineage ADR 0062)
 
@@ -43,10 +50,12 @@ methods live in versioned souls/skills/actions; delivery topology lives in
 
 ### 1. Issue prerequisites (what the run reads from GitHub)
 
-- The **parent epic** issue number is the run key. Its children must be
-  attached as **native sub-issues** (not just task-list mentions).
-- Children the run may build carry the `ready-for-agent` label; family
-  admission skips anything else. Pull the label to hold a child out.
+- A **parent epic** or **leaf issue** number is the run key. Parent epic
+  children must be attached as **native sub-issues** (not just task-list
+  mentions). In the current runtime, a leaf issue is normalized automatically
+  to a family-of-one; #896 replaces this with one standalone scene.
+- Issues the run may build carry the `ready-for-agent` label — the current S0 gate
+  (rfa) refuses anything else. Pull the label to hold a child out.
 - Native `blocked_by` dependencies between children drive wave order
   (`commander.selectWave`; the graph must be acyclic). Independent children
   land in the same wave and run **concurrently**
@@ -92,7 +101,6 @@ const result = await runFamilyDriver({
   soulsDir: `${ORCH}/image/souls`,
   ledgerDir: `/Users/akagilnc/.sc-orchestrator/family-${EPIC}-ledger`,
   imageName: "ming-orchestrator-coder:latest",
-  skillsMount: "/Users/akagilnc/sc-pipeline/skills-mount",
 });
 console.log(JSON.stringify(result, null, 2));
 ```
@@ -271,19 +279,17 @@ Roster conventions (from the exam/marathon evidence, 2026-07):
 ## Route smoke (startup gate)
 
 Before any real work each selected model×pipe must prove it can act inside the
-container: the smoke prompt carries a random `{{NONCE}}` and a
-`{{NONCE_FILE}}` path (sandcastle substitutes `{{KEY}}` placeholders from
-`promptArgs` — placeholders in `prompts/route-smoke.md` are load-bearing; a
-regression test drives the REAL rendering and a text-only-obedient agent, plus
-a negative case proving a value-less prompt fails). The worker must create the
-evidence file with exactly the nonce. Any slot failing smoke = fail-closed
-startup escalation; nothing mutates.
+container: the smoke prompt carries a random `{{NONCE}}` (sandcastle substitutes
+`{{KEY}}` placeholders from `promptArgs` — placeholders in
+`prompts/route-smoke.md` are load-bearing). The worker must print exactly that
+nonce to stdout; no shell command or evidence file is part of the contract. A
+regression test drives the real rendering and a text-only-obedient agent, plus a
+negative case proving a value-less prompt fails. Any slot failing smoke =
+fail-closed startup escalation; nothing mutates.
 
 Providers with unavailable auth (e.g. grok without a mounted `auth.json`) are
 rejected **before** dispatch — fail-closed preflight, never an unauthenticated
-launch. Same pattern for capabilities: a backend without a required
-verification seam (`verifyFamilyShippedPr`) is refused before the mutating
-ship, not after.
+launch.
 
 OpenCode is baked into the worker image and the route-selectable `glm-5.2`
 slug resolves to `opencode-go/glm-5.2`. Its Go-subscription credential remains
@@ -346,11 +352,10 @@ never on input the test itself seeded.
 ## Telemetry sidecar (#786)
 
 Append-only JSONL at the durable ledger location
-`<ledgerDir>/telemetry.jsonl`, parallel to the step ledger (`steps.jsonl`). For
-single-slice runs this is `<dedicated-clone>/.ledger-<issue>/`; it is outside
-Sandcastle's `.sandcastle/worktrees/` prune scope. Family runs use their
-existing durable family `ledgerDir`. Raw per-leg stamps only — aggregation /
-stats are out of scope for #786.
+`<ledgerDir>/telemetry.jsonl`, parallel to the step ledger (`steps.jsonl`). Both
+family-of-one and multi-child runs use the durable family `ledgerDir`, outside
+Sandcastle's `.sandcastle/worktrees/` prune scope. Raw per-leg stamps only —
+aggregation / stats are out of scope for #786.
 
 The durable telemetry directory is never automatically deleted. The former
 `.sandcastle/worktrees/.ledger-<issue>/telemetry.jsonl` path is retained as a
@@ -440,7 +445,7 @@ replacement Actions and Sandcastle controls land.
 
 | symptom | likely cause | fix |
 | --- | --- | --- |
-| startup `route smoke failed … did not complete an observable bash smoke` (every launch) | smoke prompt lost its `{{NONCE}}`/`{{NONCE_FILE}}` placeholders, or model at capacity | check `prompts/route-smoke.md` placeholders; switch checkpoint |
+| startup `route smoke failed … did not echo the expected nonce` (every launch) | smoke prompt lost its `{{NONCE}}` placeholder, or model at capacity | check `prompts/route-smoke.md` placeholder; switch checkpoint |
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
 | resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |

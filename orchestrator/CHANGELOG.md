@@ -5,16 +5,16 @@
 ## [Unreleased]
 
 ### 新增
-- **#686 接力派工（relay dispatch）**：`<relay>` tag 契约 fail-closed；route 池表（ADR 0124，与 #767 Coder-Rec 正交）+ 三段式 park/relay（ADR 0125，在 #683 额度处置点分叉）；下一棒走同一张 Coder-Rec 表 + 池正交查表（ADR 0126：同模型换马甲 → 顺位换模型）；三种换棒触发（429 保留现场 / hang-with-live-pool 杀 pid 树换棒 / 自报 blocked）；resource failure 永不 reset（守 #661）；`state_summary` 进 ledger 并落 `.relay-focus.md`；收口棒完成进常规评审闸。模块：`quotaPoolTable.ts` / `relayDispatch.ts`。
+- **#686 接力派工（relay dispatch）**：`<relay>` 的 `decision_gate` 按键存在即 park，字段细节只作 cargo；resource/blocked 常规 relay 形状保持校验。route 池表（ADR 0124，与 #767 Coder-Rec 正交）+ 三段式 park/relay（ADR 0125，在 #683 额度处置点分叉）；下一棒走同一张 Coder-Rec 表 + 池正交查表（ADR 0126：同模型换马甲 → 顺位换模型）；resource failure 永不 reset（守 #661）；`state_summary` 进 ledger 并落 `.relay-focus.md`；收口棒完成进常规评审闸。
 - **#683 额度探针状态机**：idle 超阈先探 pool 额度再判 hang；429 → `quota_wait_for_reset` ledger（含 resetAt）+ runner 既有 park 家族（status escalate，非 S8 error abort；re-feed 重回 parked step）；探针通过/网络错误 → fail-safe hang（只杀该实例 pid 树，pid 来自 live sandbox handle via `noteActiveSandboxWorkerPid`，非手填）。per-pool 配置（zai chat / opencode PONG / grok TBD）随 model ref 映射。生产路径：`RealBackend.runAgentSandbox` + runner park 消费 `QuotaWaitForResetError`（S2/S3/S5/S6/S7）。#686 在此处置点分叉 park vs relay。
 - **family escalation answer resume**：family decision escalation 可通过 append-only `escalation_answered` ledger row 续跑；答案会传回重新派发的 coder-fix / reviewer / CMR / ship worker，failure escalation 仍 fail closed。
-- **family ship PR/head 复核**：`shipped` marker 绑定当前 family HEAD；resume skip 前会重新验证 PR 仍 OPEN、base/head branch 正确且 PR head OID 等于当前 family HEAD。
+- **三通道零判断**：runner 只数进程 exit code、读取 reviewer 自报 open-count、转运 worker decision bell；ship PR/head 与 check-runs 属 merge 手闸，不回流成 runner 判庭。
 - **RealBackend toolchain preflight**：worker 启动前先验证该 StepSpec 声明的工具链，缺工具时给出可诊断失败，不再进入半启动状态。
 
 ### 变更
 - **Claude-paused 本地流水线**：per-slice 第二评审从强制 Opus 改为单个非 Claude reviewer leg（Codex 默认，agy 可替），避免本地 Claude weekly limit 让已实现/已验证 slice 全部误判失败。
 - **worker issue trust boundary 收紧**：coder / reviewer / ship entrypoints 要读取 issue title/body/comments 的 author metadata，只信 repo owner authored `Agent Brief` 与正文；非 owner 文本只作 data-only context。
-- **resume / reconcile truth 收紧**：dead resume fallback、tagged S7 resume、headless ledger row、zero/stale child head、malformed answer 与 legacy shipped marker 都按实际 git / ledger / PR metadata 判定，无法证明安全时 fail closed。
+- **判庭拆除与 family-of-one**：删除 finding disposition/classification 等 runner 内容判庭；单子 family-of-one 与家族路径共用薄调度契约，receipt cargo、Git/PR prose 均不改写 worker 自报命运。
 
 ## [0.2.0] - 2026-06-26
 
