@@ -2080,7 +2080,7 @@ describe("#686 R2 production seams", () => {
     }
   });
 
-  it("P1-3: same-model pool switch changes execution provider channel", async () => {
+  it("P1-3: #905 pins grok-4.5 to SuperGrok CLI regardless of pool 换马甲", async () => {
     const {
       resolveModelSlugForPool,
       POOL_DISPATCH_BINDINGS,
@@ -2090,11 +2090,11 @@ describe("#686 R2 production seams", () => {
     expect(resolveModelSlugForPool("grok-4.5", "grok-build").provider).toBe(
       "grok",
     );
+    // cursor pool no longer rewrites grok-4.5 onto the cursor channel.
     expect(resolveModelSlugForPool("grok-4.5", "cursor").provider).toBe(
-      "cursor",
+      "grok",
     );
-    // Default registry alone is cursor — pool override is what makes 换马甲 real.
-    expect(resolveModelSlugForPool("grok-4.5").provider).toBe("cursor");
+    expect(resolveModelSlugForPool("grok-4.5").provider).toBe("grok");
   });
 
   it("P1: monitor attribution follows the active billing pool after a relay", () => {

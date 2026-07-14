@@ -55,15 +55,9 @@ function tempHome(prefix = "bare-ping-884-"): string {
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
   writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
-  const opencodeDir = join(home, ".local", "share", "opencode");
-  mkdirSync(opencodeDir, { recursive: true });
-  writeFileSync(
-    join(opencodeDir, "auth.json"),
-    JSON.stringify({
-      "opencode-go": { type: "api", key: "test-key" },
-      "grok-4.5": { type: "api", key: "test-key" },
-    }),
-  );
+  // #807/#905: grok auth for SuperGrok bare-ping / workers.
+  mkdirSync(join(home, ".grok"), { recursive: true });
+  writeFileSync(join(home, ".grok", "auth.json"), "{}\n");
   return home;
 }
 
@@ -107,9 +101,10 @@ class BarePingBackend extends RealBackend {
     if (
       file === "codex" ||
       file === "claude" ||
-      file === "opencode" ||
+      file === "agy" ||
       file === "grok" ||
-      file === "cursor"
+      file === "cursor" ||
+      file === "agent"
     ) {
       return "cli-test-version";
     }
@@ -190,21 +185,22 @@ describe("#884 bare-ping pure helpers", () => {
     expect(barePingArgv("claudeCode", "claude-opus-4-8", prompt)).toMatchObject({
       file: "claude",
     });
-    expect(barePingArgv("opencode", "opencode-go/glm-5.2", prompt)).toMatchObject({
-      file: "opencode",
+    expect(barePingArgv("agy", "", prompt)).toMatchObject({
+      file: "agy",
     });
     expect(barePingArgv("grok", "grok-4.5", prompt)).toMatchObject({
       file: "grok",
     });
     // Sandcastle uses standalone `agent` binary for the cursor provider.
-    expect(barePingArgv("cursor", "grok-4.5", prompt)).toMatchObject({
+    expect(barePingArgv("cursor", "composer", prompt)).toMatchObject({
       file: "agent",
       args: expect.arrayContaining(["-p", prompt]),
     });
     // Never references docker / sandcastle / worktree plumbing.
-    for (const p of ["codex", "claudeCode", "opencode", "grok", "cursor"] as const) {
+    // (agy bare-ping intentionally uses --sandbox — that is the CLI flag, not docker.)
+    for (const p of ["codex", "claudeCode", "grok", "cursor"] as const) {
       const built = barePingArgv(p, "m", prompt);
-      expect(JSON.stringify(built)).not.toMatch(/docker|sandbox|worktree/i);
+      expect(JSON.stringify(built)).not.toMatch(/docker|worktree/i);
     }
   });
 });
@@ -340,9 +336,11 @@ describe("#884 bare-ping production smoke", () => {
     await backend.smokeModelRoute(route, {}, "grok-build", "coder:grok-4.5");
 
     // Unique default-pipe legs + exactly one dedicated pool relay ping.
+    // #905: grok-4.5's default pipe IS already the SuperGrok CLI, so the
+    // unique-slug ping and the dedicated pool ping both use file=grok.
     expect(backend.pingCalls.length).toBe(unique + 1);
-    expect(pools.filter((p) => p === "grok-build")).toHaveLength(1);
-    expect(pools.filter((p) => p === undefined).length).toBe(unique);
+    expect(pools.filter((p) => p === "grok-build")).toHaveLength(2);
+    expect(pools.filter((p) => p === undefined).length).toBe(unique - 1);
     expect(peak).toBeGreaterThan(1);
     const skew = Math.max(...starts) - Math.min(...starts);
     expect(skew).toBeLessThan(60);

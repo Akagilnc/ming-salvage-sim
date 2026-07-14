@@ -118,9 +118,10 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
 export const DEFAULT_POOL_MODELS: Readonly<
   Record<BillingPoolId, ReadonlyArray<string>>
 > = {
+  // #905: grok-4.5 only on SuperGrok / grok-build — no cursor/zai transit.
   "grok-build": ["grok-4.5"],
-  cursor: ["grok-4.5"],
-  zai: ["grok-4.5"],
+  cursor: [],
+  zai: [],
   "codex-5h": [
     "terra@med",
     "luna@med",

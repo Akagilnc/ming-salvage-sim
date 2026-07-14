@@ -39,7 +39,6 @@ import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
-  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
@@ -99,14 +98,13 @@ describe("#334 RealBackend.boxConfig uses baked skills", () => {
     public config(
       spec: StepSpec,
       options?: Parameters<RealBackend["runStep"]>[2],
-      opencodeAuthFile?: string,
     ): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.boxConfig(
-        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test", opencodeAuthFile },
+        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test" },
         spec,
         334,
         options,
@@ -157,20 +155,13 @@ describe("#334 RealBackend.boxConfig uses baked skills", () => {
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("coder");
   });
 
-  it("provisions OpenCode credentials uniformly without metadata inspection", () => {
+  it("#905: boxConfig does not mount opencode auth or inject GLM_KEY", () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
-    const dir = mkdtempSync(join(tmpdir(), "pool-auth-"));
-    const authFile = join(dir, "auth.json");
-    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
-
-    expect(makeBackend().config(coderSpec, { billingPool: "zai" }, authFile).env.GLM_KEY).toBe("glm-secret");
-    const codex = makeBackend().config(coderSpec, { billingPool: "codex-5h" }, authFile);
-    expect(codex.env.GLM_KEY).toBe("glm-secret");
-    expect(codex.mounts).toContainEqual({
-      hostPath: authFile,
-      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
-      readonly: true,
-    });
+    const cfg = makeBackend().config(coderSpec, { billingPool: "zai" });
+    expect(cfg.env.GLM_KEY).toBeUndefined();
+    expect(
+      cfg.mounts.some((m) => m.sandboxPath.includes("opencode")),
+    ).toBe(false);
   });
 
   it("boxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) at this site (#372)", () => {
