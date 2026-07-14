@@ -83,8 +83,8 @@ describe("#807 modelRegistry grok-build wiring", () => {
       provider: "grok",
       model: "grok-4.5",
     });
-    // Default registry alone stays on the cursor channel.
-    expect(resolveModelSlug("grok-4.5").provider).toBe("cursor");
+    // #905: default registry is SuperGrok CLI; no cursor transit.
+    expect(resolveModelSlug("grok-4.5").provider).toBe("grok");
   });
 
   it("agentForSlug(pool=grok-build) yields the grok CLI provider", () => {

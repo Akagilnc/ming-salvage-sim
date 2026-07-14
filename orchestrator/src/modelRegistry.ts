@@ -1,4 +1,5 @@
 import * as sc from "@ai-hero/sandcastle";
+import { agyAgent, type AgyAgentOptions } from "./agyAgent.js";
 import { grokAgent, type GrokAgentOptions } from "./grokAgent.js";
 import type { BillingPoolId } from "./quotaPoolTable.js";
 
@@ -35,12 +36,13 @@ export function effortForLiveOfficer(
   return undefined;
 }
 
-export type ModelFamily = "claude" | "codex" | "agy" | "opencode" | "other";
+export type ModelFamily = "claude" | "codex" | "agy" | "other";
 
 export type ModelProviderFactory =
   | "claudeCode"
   | "codex"
-  | "opencode"
+  /** #905: real agy (Antigravity / Gemini) CLI via custom AgentProvider. */
+  | "agy"
   | "copilot"
   | "cursor"
   | "pi"
@@ -69,7 +71,7 @@ export function unavailableProviderAuth(
 export const SUPPORTED_MODEL_PROVIDER_FACTORIES = [
   "claudeCode",
   "codex",
-  "opencode",
+  "agy",
   "copilot",
   "cursor",
   "pi",
@@ -79,16 +81,16 @@ export const SUPPORTED_MODEL_PROVIDER_FACTORIES = [
 type ModelProviderOptions =
   | sc.ClaudeCodeOptions
   | sc.CodexOptions
-  | sc.OpenCodeOptions
   | sc.CopilotOptions
   | sc.CursorOptions
   | sc.PiOptions
+  | AgyAgentOptions
   | GrokAgentOptions;
 
 export type ModelSlugRegistryEntry =
   | { readonly provider: "claudeCode"; readonly model: string; readonly options?: sc.ClaudeCodeOptions }
   | { readonly provider: "codex"; readonly model: string; readonly options?: sc.CodexOptions }
-  | { readonly provider: "opencode"; readonly model: string; readonly options?: sc.OpenCodeOptions }
+  | { readonly provider: "agy"; readonly model: string; readonly options?: AgyAgentOptions }
   | { readonly provider: "copilot"; readonly model: string; readonly options?: sc.CopilotOptions }
   | { readonly provider: "cursor"; readonly model: string; readonly options?: sc.CursorOptions }
   | { readonly provider: "pi"; readonly model: string; readonly options?: sc.PiOptions }
@@ -111,7 +113,9 @@ const MODEL_PROVIDER_FACTORIES: Readonly<Record<ModelProviderFactory, ProviderFa
   // keep capture (theirs works and feeds resume/usage parsing).
   codex: (model, options) =>
     sc.codex(model, { ...(options as sc.CodexOptions | undefined), captureSessions: false }),
-  opencode: (model, options) => sc.opencode(model, options as sc.OpenCodeOptions | undefined),
+  // #905: real Antigravity/Gemini CLI — optional-leg degrade when dead; never
+  // substitute opencode/grok under the agy name.
+  agy: (model, options) => agyAgent(model, options as AgyAgentOptions | undefined),
   copilot: (model, options) => sc.copilot(model, options as sc.CopilotOptions | undefined),
   cursor: (model, options) => sc.cursor(model, options as sc.CursorOptions | undefined),
   // Kept for sandcastle-native `pi` CLI (distinct product). grok-build pool does
@@ -151,11 +155,10 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "codex",
     strongLeg: true,
   },
-  // #767 Coder-Rec roster: SuperGrok model id on the Cursor channel by default.
-  // Pool override (`grok-build` → provider `grok`) rewrites the factory via
-  // resolveModelSlugForPool / POOL_DISPATCH_BINDINGS (#807 / ADR 0124).
+  // #905: grok-4.5 always runs the real SuperGrok CLI (provider `grok`).
+  // Never cursor / opencode transit — pool rewrite cannot re-route it.
   "grok-4.5": {
-    provider: "cursor",
+    provider: "grok",
     model: "grok-4.5",
     family: "other",
     strongLeg: true,
@@ -182,24 +185,11 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "claude",
     strongLeg: true,
   },
-  "opencode-grok": {
-    provider: "opencode",
-    model: "grok-4.5",
-    family: "opencode",
-    strongLeg: true,
-  },
-  "glm-5.2": {
-    provider: "opencode",
-    model: "opencode-go/glm-5.2",
-    family: "opencode",
-    strongLeg: true,
-  },
-  // `agy` is retained as the route-facing family/slug for compatibility, but
-  // it is now backed by the real OpenCode executor instead of a non-runnable
-  // CMR-only label.
+  // #905: real agy CLI. Empty model → agy default (Gemini 3.5 Flash). When the
+  // Gemini consumer leg is dead, optional-leg degrade only — never substitute.
   agy: {
-    provider: "opencode",
-    model: "grok-4.5",
+    provider: "agy",
+    model: "",
     family: "agy",
   },
 };
@@ -237,7 +227,7 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
     case "codex":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
-    case "opencode":
+    case "agy":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
     case "copilot":
       return { provider: entry.provider, model: entry.model, options: { ...entry.options } };
@@ -260,7 +250,9 @@ export const POOL_DISPATCH_BINDINGS: Readonly<
   // sandcastle's `sc.pi()` (different product / flag contract / auth home).
   "grok-build": "grok",
   cursor: "cursor",
-  zai: "opencode",
+  // #905: opencode transport evicted; zai has no live registry slug after
+  // glm-5.2 removal. Binding stays for pool-table completeness only.
+  zai: "cursor",
   "codex-5h": "codex",
   claude: "claudeCode",
 };
@@ -283,6 +275,10 @@ export function resolveModelSlugForPool(
   pool?: BillingPoolDispatchId,
 ): ModelSlugRegistryEntry {
   const base = resolveModelSlug(slug);
+  // #905: grok-4.5 always stays on the SuperGrok CLI — never cursor/opencode transit.
+  if (slug === "grok-4.5") {
+    return { provider: "grok", model: base.model } as ModelSlugRegistryEntry;
+  }
   if (pool === undefined || POOL_DISPATCH_BINDINGS[pool] === base.provider) return base;
   return { provider: POOL_DISPATCH_BINDINGS[pool], model: base.model } as ModelSlugRegistryEntry;
 }
