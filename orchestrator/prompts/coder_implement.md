@@ -53,8 +53,9 @@ When you are done (or are escalating), the real completion evidence is the
 single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
 set, together with the typed `<coder>` outcome and the worker's actual git
 state. For compatibility with older runners, emit EXACTLY ONE `<coder>` tag on
-its own containing the same single JSON object. The completion signal is
-optional telemetry and may be printed as an extra line.
+its own containing the same single JSON object. The multi-iter completion
+signal is a required sandcastle terminator on the final step (not optional
+telemetry).
 
 Success:
 
@@ -80,5 +81,6 @@ Rules:
   NOT `committed:false, commitsAdded:0`. `escalate` is orthogonal to the count.
 - `escalate`, when present, contains `reason` and `diagnosis`.
 - Emit the `<coder>` tag as the last typed tag; if you iterate, the last typed
-  `<coder>` tag is the one that counts. The optional telemetry line below may follow it.
-- For optional telemetry, you may print CODER_STEP_COMPLETE on its own final line.
+  `<coder>` tag is the one that counts. On the final multi-iter step you MUST
+  print CODER_STEP_COMPLETE on its own final line (sandcastle iteration
+  terminator — not optional telemetry).

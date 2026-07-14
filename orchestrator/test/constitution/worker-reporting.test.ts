@@ -42,7 +42,10 @@ describe("#825 ADR 0062 worker reporting", () => {
     "prompts/fixer.md",
   ])("routes fixer self-audit evidence outside the strict outcome envelope in %s", (file) => {
     const body = readFileSync(resolve(process.cwd(), file), "utf8");
-    expect(body).toContain("Record the self-audit checklist in the fixing commit message body");
+    // #911 soul is Chinese character edition; prompt keeps the English checklist line.
+    expect(body).toMatch(
+      /Record the self-audit checklist in the fixing commit message body|写进 commit body 给下轮复核|修了哪些、哪些本已正确/,
+    );
   });
 });
 

@@ -45,4 +45,5 @@ Rules:
 
 - `kind` is implied by the tag; JSON body is `{ "released": boolean }` only.
 - No path-allowlist self-check is a success criterion (ADR 0123).
-- For optional telemetry, you may print DOCRELEASE_STEP_COMPLETE on its own final line.
+- On the final multi-iter step you MUST print DOCRELEASE_STEP_COMPLETE on its
+  own final line (sandcastle iteration terminator — not optional telemetry).

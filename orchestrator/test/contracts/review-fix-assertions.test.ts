@@ -902,18 +902,18 @@ describe("#677 CMR ratified-assertion hard-net fixture", () => {
 
 // ── soul soft guardrails ────────────────────────────────────────────────────
 
-describe("#677 soul wording", () => {
-  it("coder-fix soul routes AC/assertion conflict to legal refuse + re-review, not global escalate", () => {
+describe("#677/#911 soul wording (Chinese character editions)", () => {
+  it("coder-fix soul routes AC/assertion conflict to refuse + fresh re-review, not silent flip", () => {
     const soul = (name: string): string =>
       readFileSync(resolve(process.cwd(), "image", "souls", name), "utf8");
     const coder = soul("coder.md");
-    expect(coder).toMatch(/Ratified-acceptance gate[\s\S]*legal refuse/i);
-    expect(coder).toMatch(/fresh re-review/i);
-    expect(soul("fixer.md")).toMatch(/legal\s+refuse|refuse that finding/i);
-    expect(soul("cmr_correctness.md")).toMatch(/Ratified-assertion hunt[\s\S]*P1/);
-    expect(soul("reviewer.md")).toMatch(
-      /preexistingAssertionTouched[\s\S]*blocking/,
-    );
+    expect(coder).toMatch(/refusedFindingIdentityKeys|refuseRecords/);
+    expect(coder).toMatch(/绝不用改既有断言、改 AC/);
+    expect(coder).toMatch(/fresh 复审|复审裁决/);
+    expect(soul("fixer.md")).toMatch(/绝不用改断言、改 AC|违宪/);
+    // verify (cmr_correctness symlink) owns ratified-assertion law as 宪法优先.
+    expect(soul("cmr_correctness.md")).toMatch(/已批断言不容翻|宪法优先/);
+    expect(soul("reviewer.md")).toMatch(/测试是圣域|只评审不修复/);
   });
 });
 

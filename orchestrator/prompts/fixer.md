@@ -22,7 +22,8 @@ The `<fixer>` outcome remains only the JSON envelope defined below.
 
 Emit `<fixer>` JSON:
 
-For optional telemetry, you may print FIXER_STEP_COMPLETE on its own final line.
+On the final multi-iter step you MUST print FIXER_STEP_COMPLETE on its own
+final line (sandcastle iteration terminator — not optional telemetry).
 
 ```json
 {"committed": true, "fixCommitSha": "<the-commit-sha-you-just-made>"}

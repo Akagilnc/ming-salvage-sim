@@ -1199,12 +1199,13 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("cmr");
 
-    // ALL auth absent ⇒ souls mount is still present (souls always mounted #372),
-    // no other mounts, only the soul env — still no throw (the skill runs and will
-    // degrade/escalate in-container, never a host crash).
+    // ALL auth absent ⇒ souls + home env mounts still present (#372 / #911),
+    // no credential mounts, only the soul env — still no throw (the skill runs and
+    // will degrade/escalate in-container, never a host crash).
     const none = cfgBackend().config({});
-    expect(none.mounts.length).toBe(1);
+    expect(none.mounts.length).toBe(2);
     expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.orchestrator/souls")).toBe(true);
+    expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.claude/CLAUDE.md")).toBe(true);
     expect(none.env[SANDBOX_SOUL_ENV]).toBe("cmr");
   });
 
