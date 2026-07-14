@@ -304,9 +304,11 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
 
   it("the CLAUDE.md ## Skill routing keeps runner-visible per-slice review/fix and integrated cmr separate", () => {
     expect(skillRouting).toMatch(/\/code-review/);
-    expect(skillRouting).toMatch(/origin\/main/);
-    expect(skillRouting).toMatch(/runner/i);
+    expect(skillRouting).toMatch(/fixed-point/i);
     expect(skillRouting).toMatch(/reviewer/i);
+    expect(skillRouting).toMatch(/coder-fix/i);
     expect(skillRouting).toMatch(/ak-cross-m-review/);
+    expect(skillRouting).toMatch(/Integrated Completeness/i);
+    expect(skillRouting).toMatch(/Integrated Correctness/i);
   });
 });
