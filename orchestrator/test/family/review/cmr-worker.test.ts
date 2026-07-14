@@ -208,11 +208,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
 
   it("no <cmr> tag ⇒ sparse cargo with no self-declared count", () => {
     const o = parseCmrOutcome("I reviewed everything, looks fine.");
-    expect(o).toMatchObject({
-      kind: "verdict",
-      successfulLegs: [],
-      evidencePaths: [],
-    });
+    expect(o).toMatchObject({ kind: "verdict", successfulLegs: [], evidencePaths: [] });
     expect(o).not.toHaveProperty("converged");
   });
 
@@ -247,7 +243,9 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
             junk: 1,
           })}</cmr>`,
         ).kind,
-      ).toBe("verdict");
+      ).toBe(
+        "verdict",
+      );
     });
 
     it("converged:true may carry explicit prior-finding closure dispositions", () => {
@@ -389,9 +387,7 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
     });
 
     it("converged:false without a reason remains readable cargo", () => {
-      expect(parseCmrOutcome('<cmr>{"converged": false}</cmr>').kind).toBe(
-        "verdict",
-      );
+      expect(parseCmrOutcome('<cmr>{"converged": false}</cmr>').kind).toBe("verdict");
     });
 
     it("a blank optional reason is dropped without rejecting the receipt", () => {
@@ -404,30 +400,24 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
             ...VALID_CMR_VERDICT_FIELDS,
           })}</cmr>`,
         ).kind,
-      ).toBe("verdict");
+      ).toBe(
+        "verdict",
+      );
     });
 
     it("an incomplete escalate block rings the bell; empty fields remain cargo", () => {
       expect(
-        parseCmrOutcome(
-          '<cmr>{"escalate": {"reason": "", "diagnosis": ""}}</cmr>',
-        ).kind,
+        parseCmrOutcome('<cmr>{"escalate": {"reason": "", "diagnosis": ""}}</cmr>').kind,
       ).toBe("escalate");
-      expect(parseCmrOutcome('<cmr>{"escalate": {}}</cmr>').kind).toBe(
-        "escalate",
-      );
+      expect(parseCmrOutcome('<cmr>{"escalate": {}}</cmr>').kind).toBe("escalate");
     });
 
     it("a non-boolean converged cargo field is dropped", () => {
-      expect(parseCmrOutcome('<cmr>{"converged": "true"}</cmr>').kind).toBe(
-        "verdict",
-      );
+      expect(parseCmrOutcome('<cmr>{"converged": "true"}</cmr>').kind).toBe("verdict");
     });
 
     it("bare converged:true does not require sibling cargo", () => {
-      expect(parseCmrOutcome('<cmr>{"converged": true}</cmr>').kind).toBe(
-        "verdict",
-      );
+      expect(parseCmrOutcome('<cmr>{"converged": true}</cmr>').kind).toBe("verdict");
     });
 
     it("leg lists stay optional cargo", () => {
@@ -440,11 +430,9 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
           })}</cmr>`,
         ).kind,
       ).toBe("verdict");
-      expect(
-        parseCmrOutcome(
-          '<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>',
-        ).kind,
-      ).toBe("verdict");
+      expect(parseCmrOutcome('<cmr>{"converged": true, "successfulLegs": ["opus"]}</cmr>').kind).toBe(
+        "verdict",
+      );
     });
 
     it("accounts against the active route's declared cmr legs, not the default route", () => {
@@ -591,6 +579,7 @@ describe("integrated CMR pass prompt closure contract", () => {
       expect(prompt).toContain("priorFindingDispositions");
       expect(prompt).toMatch(/empty arrays/i);
     });
+
   }
 
   for (const promptName of [
@@ -599,9 +588,7 @@ describe("integrated CMR pass prompt closure contract", () => {
   ]) {
     it(`${promptName} routes same-module still-red examples into the runner coder-fix path`, () => {
       const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
-      const examples = [
-        ...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g),
-      ];
+      const examples = [...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g)];
 
       expect(examples.length).toBeGreaterThan(0);
       for (const [, rawJson] of examples) {
@@ -705,10 +692,7 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
 describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   /** A backend whose container `runCmrWorker` seam is fixtured (no real sc.run). */
   class FixturedCmrBackend extends RealFamilyBackend {
-    runCmrCalls: {
-      spec: ReturnType<typeof cmrWorkerSpec>;
-      ctx: DispatchContext;
-    }[] = [];
+    runCmrCalls: { spec: ReturnType<typeof cmrWorkerSpec>; ctx: DispatchContext }[] = [];
     runCoderFixCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     outcome: CmrWorkerOutcome = {
@@ -733,12 +717,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ctx: DispatchContext,
     ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
       this.runShipCalls.push({ spec, ctx });
-      return {
-        kind: "shipped",
-        branch: ctx.familyBase!,
-        status: "pr_opened",
-        pr: "https://gh/pr/9",
-      };
+      return { kind: "shipped", branch: ctx.familyBase!, status: "pr_opened", pr: "https://gh/pr/9" };
     }
     protected override async runFamilyCoderFixWorker(
       spec: WorkerSpec,
@@ -767,9 +746,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
   it("dispatches the cmr pass worker spec to runCmrWorker — ak-cross-m-review + FRESH clean reviewer cmr soul", async () => {
     const be = fixtured();
-    await be.dispatchWorker(cmrWorkerSpec(), {
-      familyBase: "feat/330-pure-scheduler",
-    });
+    await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "feat/330-pure-scheduler" });
     expect(be.runCmrCalls.length).toBe(1);
     const spec = be.runCmrCalls[0]!.spec;
     expect(spec.kind).toBe("cmr");
@@ -784,129 +761,24 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(spec.soul).toBe("cmr");
   });
 
-  it("asks Sandcastle to re-ask a malformed CMR receipt at most twice", async () => {
+  it("gives CMR receipts Sandcastle's native two-retry policy", async () => {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
-    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], {
-      cwd: repo,
-    });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
     const runs: Parameters<typeof sc.run>[0][] = [];
-    class ReceiptRetryBackend extends RealFamilyBackend {
-      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
-        return this.runCmrWorker(spec, ctx);
-      }
-      protected override mountCmrAuth(): CmrAuth {
-        return { claudeToken: "tok" };
-      }
-      protected override async runAgentSandbox(
-        options: Parameters<typeof sc.run>[0],
-      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    class Backend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(options: Parameters<typeof sc.run>[0]): Promise<Awaited<ReturnType<typeof sc.run>>> {
         runs.push(options);
-        return {
-          completionSignal: "CMR_STEP_COMPLETE",
-          stdout: `<cmr>${JSON.stringify({
-            converged: true,
-            successfulLegs: DEFAULT_CMR_LEGS,
-            ...VALID_CMR_VERDICT_FIELDS,
-          })}</cmr>`,
-        } as Awaited<ReturnType<typeof sc.run>>;
+        return { completionSignal: "CMR_STEP_COMPLETE", stdout: `<cmr>${JSON.stringify({ converged: true, successfulLegs: DEFAULT_CMR_LEGS, ...VALID_CMR_VERDICT_FIELDS })}</cmr>` } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
-    const be = new ReceiptRetryBackend({
-      workingRepo: repo,
-      familyBase: "fb",
-      ledgerDir: mkDir("cmr-receipt-retry-ledger-"),
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir: realPromptsDir,
-      soulsDir: realSoulsDir,
-      imageName: "img",
-      familyBaseStartHead: "abc123",
-    });
-
-    await be.run(cmrWorkerSpec(), {
-      familyBase: "fb",
-      cmrPass: "completeness",
-    });
-
-    expect(runs).toHaveLength(1);
+    const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
+    await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
     expect(runs[0]!.output).toMatchObject({ tag: "cmr", maxRetries: 2 });
-  });
-
-  it.each([
-    [
-      "resumes the author when a coder receipt is unreadable",
-      "coder-session",
-      2,
-    ],
-    [
-      "keeps the existing fallback when no coder session is available",
-      undefined,
-      1,
-    ],
-  ] as const)("%s", async (_label, sessionId, expectedRuns) => {
-    const repo = realRepo335();
-    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
-    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
-    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], {
-      cwd: repo,
-    });
-    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
-    const runs: Parameters<typeof sc.run>[0][] = [];
-    class CoderReceiptBackend extends RealFamilyBackend {
-      protected override mountShipAuth(): ShipAuth {
-        return { claudeToken: "tok" };
-      }
-      protected override async runAgentSandbox(
-        options: Parameters<typeof sc.run>[0],
-      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-        runs.push(options);
-        if (runs.length === 1)
-          return {
-            stdout: "missing receipt",
-            iterations: sessionId === undefined ? [] : [{ sessionId }],
-          } as Awaited<ReturnType<typeof sc.run>>;
-        return {
-          stdout: "",
-          output: { committed: true, commitsAdded: 1 },
-          iterations: [{ sessionId }],
-        } as unknown as Awaited<ReturnType<typeof sc.run>>;
-      }
-    }
-    const be = new CoderReceiptBackend({
-      workingRepo: repo,
-      familyBase: "fb",
-      ledgerDir: mkDir("coder-receipt-retry-ledger-"),
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir: realPromptsDir,
-      soulsDir: realSoulsDir,
-      imageName: "img",
-    });
-
-    const result = await be.dispatchWorker(familyCoderFixWorkerSpec(), {
-      familyBase: "fb",
-    });
-
-    expect(runs).toHaveLength(expectedRuns);
-    if (sessionId !== undefined) {
-      expect(runs[1]).toMatchObject({
-        resumeSession: sessionId,
-        maxIterations: 1,
-        output: { tag: "coder", maxRetries: 2 },
-      });
-      expect(result).toMatchObject({
-        kind: "completed",
-        output: { committed: true, commitsAdded: 1 },
-      });
-    } else {
-      expect(result).toMatchObject({
-        kind: "completed",
-        output: { committed: false, commitsAdded: 0 },
-      });
-    }
   });
 
   it("dispatches the family coder-fix spec to runFamilyCoderFixWorker — /tdd + retained coder context", async () => {
@@ -942,11 +814,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         throw new Error("outcome landing failed");
       }
 
-      protected override sh(
-        file: string,
-        args: string[],
-        cwd?: string,
-      ): string {
+      protected override sh(file: string, args: string[], cwd?: string): string {
         if (file === "git" && args[0] === "checkout") return "";
         if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") {
           return "family-head-before-coder-fix";
@@ -972,9 +840,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         blockingFindingIdentityKeys: ["cmr-key-1"],
       }),
     ).rejects.toThrow("outcome landing failed");
-    expect(existsSync(join(repo, ".orchestrator-fix-findings.json"))).toBe(
-      false,
-    );
+    expect(existsSync(join(repo, ".orchestrator-fix-findings.json"))).toBe(false);
   });
 
   it.each([
@@ -1096,11 +962,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
   it("an escalate outcome ⇒ WorkerResult.escalated (model-stuck, not a verdict)", async () => {
     const be = fixtured();
-    be.outcome = {
-      kind: "escalate",
-      reason: "skill missing",
-      diagnosis: "not on PATH",
-    };
+    be.outcome = { kind: "escalate", reason: "skill missing", diagnosis: "not on PATH" };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("escalated");
     if (res.kind === "escalated") {
@@ -1119,9 +981,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
   it("a family worker without familyBase throws (the worker reviews the base diff)", async () => {
     const be = fixtured();
-    await expect(be.dispatchWorker(cmrWorkerSpec(), {})).rejects.toThrow(
-      /familyBase/,
-    );
+    await expect(be.dispatchWorker(cmrWorkerSpec(), {})).rejects.toThrow(/familyBase/);
   });
 
   it("the ship worker is NOT handled by the cmr path — routed to the ship worker seam (#336)", async () => {
@@ -1136,9 +996,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
-    const res = await be.dispatchWorker(familyShipWorkerSpec(), {
-      familyBase: "fb",
-    });
+    const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed"); // the fixtured ship outcome, not the cmr path
     expect(be.runShipCalls.length).toBe(1); // reached the ship worker seam
     expect(be.runCmrCalls.length).toBe(0); // the cmr worker seam was NOT touched
@@ -1149,18 +1007,11 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
   class AuthDispatchBackend extends RealFamilyBackend {
     config?: {
       env: Record<string, string>;
-      mounts: ReadonlyArray<{
-        hostPath: string;
-        sandboxPath: string;
-        readonly?: boolean;
-      }>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     };
     outcomePath?: string;
 
-    constructor(
-      private readonly auth: CmrAuth,
-      workingRepo: string,
-    ) {
+    constructor(private readonly auth: CmrAuth, workingRepo: string) {
       super({
         workingRepo,
         familyBase: "fb",
@@ -1184,19 +1035,13 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
       outcomeLanding?: { path: string; sandboxPath: string },
       ctx?: Pick<DispatchContext, "billingPool">,
     ): sc.SandboxProvider {
-      this.config = this.cmrSandboxConfig(
-        auth,
-        reviewLegs,
-        outcomeLanding,
-        ctx,
-      );
+      this.config = this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding, ctx);
       return docker(this.config);
     }
 
-    protected override prepareCmrOutcomeLanding(ctx: DispatchContext): {
-      path: string;
-      sandboxPath: string;
-    } {
+    protected override prepareCmrOutcomeLanding(
+      ctx: DispatchContext,
+    ): { path: string; sandboxPath: string } {
       const landing = super.prepareCmrOutcomeLanding(ctx);
       this.outcomePath = landing.path;
       return landing;
@@ -1205,19 +1050,13 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     protected override async runAgentSandbox(
       _options: Parameters<typeof sc.run>[0],
     ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-      if (this.outcomePath === undefined)
-        throw new Error("missing outcome path");
-      writeFileSync(
-        this.outcomePath,
-        JSON.stringify({
-          converged: true,
-          successfulLegs: DEFAULT_CMR_LEGS,
-          ...CMR_EVIDENCE,
-        }),
-      );
-      return { stdout: "", commits: [], iterations: [] } as unknown as Awaited<
-        ReturnType<typeof sc.run>
-      >;
+      if (this.outcomePath === undefined) throw new Error("missing outcome path");
+      writeFileSync(this.outcomePath, JSON.stringify({
+        converged: true,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...CMR_EVIDENCE,
+      }));
+      return { stdout: "", commits: [], iterations: [] } as unknown as Awaited<ReturnType<typeof sc.run>>;
     }
   }
 
@@ -1228,23 +1067,15 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     return path;
   }
 
-  async function dispatch(
-    pool: DispatchContext["billingPool"],
-    contents: Record<string, unknown>,
-  ) {
+  async function dispatch(pool: DispatchContext["billingPool"], contents: Record<string, unknown>) {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
-    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], {
-      cwd: repo,
-    });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
     const path = authFile(contents);
     const backend = new AuthDispatchBackend({ opencodeAuthFile: path }, repo);
-    await backend.dispatchWorker(cmrWorkerSpec(), {
-      familyBase: "fb",
-      billingPool: pool,
-    });
+    await backend.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb", billingPool: pool });
     return { backend, path };
   }
 
@@ -1281,10 +1112,7 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     });
     expect(backend.config?.env.GLM_KEY).toBe("glm-secret");
     expect(backend.config?.mounts).toContainEqual(
-      expect.objectContaining({
-        sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
-        readonly: true,
-      }),
+      expect.objectContaining({ sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true }),
     );
   });
 });
@@ -1300,11 +1128,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     ): {
       imageName: string;
       env: Record<string, string>;
-      mounts: ReadonlyArray<{
-        hostPath: string;
-        sandboxPath: string;
-        readonly?: boolean;
-      }>;
+      mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.cmrSandboxConfig(auth, spec.cmrReviewLegs!);
     }
@@ -1340,9 +1164,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
 
   it("still mounts codex auth + injects the claude token + cmr soul (all three legs)", () => {
     const cfg = cfgBackend().config(auth);
-    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(
-      true,
-    );
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("cmr");
     // ORCHESTRATOR_REPO so the cmr worker's `gh issue view` / `gh issue create
@@ -1352,10 +1174,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
   });
 
   it("mounts isolated grok auth when the CMR route can dispatch grok", () => {
-    const cfg = cfgBackend().config({
-      ...auth,
-      grokAuthDir: "/tmp/cmr-grok-auth",
-    });
+    const cfg = cfgBackend().config({ ...auth, grokAuthDir: "/tmp/cmr-grok-auth" });
     expect(cfg.mounts).toContainEqual({
       hostPath: "/tmp/cmr-grok-auth",
       sandboxPath: SANDBOX_GROK_DIR,
@@ -1391,19 +1210,12 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
       codexAuthDir: "/tmp/cmr-codex-auth",
       claudeToken: "tok",
     });
-    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(
-      false,
-    );
-    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(
-      true,
-    );
+    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(false);
+    expect(noAgy.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(noAgy.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok");
 
     // claude token absent ⇒ no env var (the Claude Agent leg degrades).
-    const noClaude = cfgBackend().config({
-      codexAuthDir: "/tmp/c",
-      agyDir: "/tmp/a",
-    });
+    const noClaude = cfgBackend().config({ codexAuthDir: "/tmp/c", agyDir: "/tmp/a" });
     expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("cmr");
 
@@ -1412,11 +1224,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     // degrade/escalate in-container, never a host crash).
     const none = cfgBackend().config({});
     expect(none.mounts.length).toBe(1);
-    expect(
-      none.mounts.some(
-        (m) => m.sandboxPath === "/home/agent/.orchestrator/souls",
-      ),
-    ).toBe(true);
+    expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.orchestrator/souls")).toBe(true);
     expect(none.env[SANDBOX_SOUL_ENV]).toBe("cmr");
   });
 
@@ -1429,9 +1237,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
   it("exports the route-selected CMR leg collection to the worker", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const cfg = cfgBackend().config(auth);
-    const legs = JSON.parse(
-      cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null",
-    ) as unknown;
+    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
 
     expect(legs).toEqual([
       { family: "codex", slug: "gpt-5.6-sol" },
@@ -1445,9 +1251,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const spec = cmrWorkerSpec("fresh", "correctness");
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
     const cfg = cfgBackend().config(auth, spec);
-    const legs = JSON.parse(
-      cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null",
-    ) as unknown;
+    const legs = JSON.parse(cfg.env.ORCHESTRATOR_CMR_REVIEW_LEGS ?? "null") as unknown;
 
     expect(legs).toEqual([
       { family: "codex", slug: "gpt-5.6-sol" },
@@ -1652,9 +1456,7 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
     const root = join(emptyHome, ".sc-orchestrator");
     const residue = existsSync(root) ? readdirSync(root) : [];
     expect(
-      residue.filter(
-        (n) => n.startsWith("cmr-codex-auth-") || n.startsWith("cmr-agy-"),
-      ),
+      residue.filter((n) => n.startsWith("cmr-codex-auth-") || n.startsWith("cmr-agy-")),
     ).toEqual([]);
   });
 });
@@ -1755,9 +1557,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     }
     public onlineLanding(
       ctx: DispatchContext,
-      landing: NonNullable<
-        Parameters<FocusBackend["writeFamilyOnlineReviewLandingFile"]>[1]
-      >,
+      landing: NonNullable<Parameters<FocusBackend["writeFamilyOnlineReviewLandingFile"]>[1]>,
     ): string {
       return this.writeFamilyOnlineReviewLandingFile(ctx, landing).path;
     }
@@ -1782,10 +1582,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
-    be.focus({
-      familyBase: "feat/330-pure-scheduler",
-      llmResolvedChildren: [42, 43],
-    });
+    be.focus({ familyBase: "feat/330-pure-scheduler", llmResolvedChildren: [42, 43] });
     const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
     // F3: the exact scope diff is on the recorded cut SHA, NOT main...HEAD.
     expect(body).toContain("git diff abc123...feat/330-pure-scheduler");
@@ -1823,10 +1620,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
         onlineReviewSnapshot: { kind: "offline", findings: [] } as never,
       },
     );
-    const payload = JSON.parse(readFileSync(path, "utf8")) as Record<
-      string,
-      unknown
-    >;
+    const payload = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
     expect(payload.escalationAnswer).toEqual({
       event: "escalation_answered",
       answer: "defer this finding",
@@ -1848,9 +1642,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       familyBaseStartHead: "abc123",
     });
     be.routeFile("correctness");
-    const body = JSON.parse(
-      readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8"),
-    ) as {
+    const body = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
       pass: string;
     };
     expect(body.pass).toBe("correctness");
@@ -1876,13 +1668,9 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       imageName: "img",
       // no familyBaseStartHead
     });
-    expect(() => be.focus({ familyBase: "fb" })).toThrow(
-      /familyBaseStartHead|cut SHA/i,
-    );
+    expect(() => be.focus({ familyBase: "fb" })).toThrow(/familyBaseStartHead|cut SHA/i);
     // And it did NOT write a stale-base fallback file.
-    expect(() =>
-      readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8"),
-    ).toThrow();
+    expect(() => readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8")).toThrow();
   });
 
   it("keeps prior finding state out of the transient focus file", () => {
@@ -1902,10 +1690,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
-    be.focus({
-      familyBase: "feat/330-pure-scheduler",
-      llmResolvedChildren: [42],
-    });
+    be.focus({ familyBase: "feat/330-pure-scheduler", llmResolvedChildren: [42] });
     const body = readFileSync(join(repo, CMR_FOCUS_FILENAME), "utf8");
     // The full review-scope diff + the machine-resolved focus are present...
     expect(body).toContain("git diff abc123...feat/330-pure-scheduler");
@@ -1932,9 +1717,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
 
     be.routeFile("correctness");
 
-    const route = JSON.parse(
-      readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8"),
-    ) as unknown;
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as unknown;
     expect(route).toEqual({
       pass: "correctness",
       reviewLegs: [
@@ -1966,9 +1749,7 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
 
     be.routeFileFromSpec("correctness", spec);
 
-    const route = JSON.parse(
-      readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8"),
-    ) as {
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
       reviewLegs: unknown;
     };
     expect(route.reviewLegs).toEqual([
@@ -1993,16 +1774,12 @@ describe("#335 writeCmrFocusFile — threads the exact diff scope + machine-reso
     });
 
     expect(() => be.routeFileFromNull()).not.toThrow();
-    const route = JSON.parse(
-      readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8"),
-    ) as {
+    const route = JSON.parse(readFileSync(join(repo, CMR_ROUTE_FILENAME), "utf8")) as {
       pass: string;
       reviewLegs: unknown;
     };
     expect(route.pass).toBe("legacy");
-    expect(route.reviewLegs).toEqual(
-      cmrWorkerSpec("fresh", "correctness").cmrReviewLegs,
-    );
+    expect(route.reviewLegs).toEqual(cmrWorkerSpec("fresh", "correctness").cmrReviewLegs);
   });
 
   it("threads a human escalation answer into the CMR focus file", () => {
@@ -2118,9 +1895,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
     }
     protected override writeCmrFocusFile(): void {
       this.scRunReached = true;
-      throw new Error(
-        "writeCmrFocusFile should not run when the worker has no auth",
-      );
+      throw new Error("writeCmrFocusFile should not run when the worker has no auth");
     }
   }
 
@@ -2160,9 +1935,7 @@ describe("#335 runCmrWorker — fail-closed when the top-level Claude worker has
       imageName: "img",
       familyBaseStartHead: "abc123",
     });
-    const res = await be.dispatchWorker(legacyClaudeCmrSpec(), {
-      familyBase: "fb",
-    });
+    const res = await be.dispatchWorker(legacyClaudeCmrSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("escalated");
     if (res.kind === "escalated") {
       expect(isRunnerSynthesizedFailureEscalation(res.escalation)).toBe(true);
@@ -2192,10 +1965,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
    * flagged the leak; the try/finally in runCmrWorker is the fix.
    */
   class ReclaimBackend extends RealFamilyBackend {
-    constructor(
-      opts: ConstructorParameters<typeof RealFamilyBackend>[0],
-      private readonly dirs: CmrAuth,
-    ) {
+    constructor(opts: ConstructorParameters<typeof RealFamilyBackend>[0], private readonly dirs: CmrAuth) {
       super(opts);
     }
     public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
@@ -2245,9 +2015,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
-    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], {
-      cwd: repo,
-    });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
     let outcomePathAtRun: string | undefined;
     class OutcomeCleanupBackend extends RealFamilyBackend {
@@ -2257,10 +2025,9 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       protected override mountCmrAuth(): CmrAuth {
         return { claudeToken: "tok" };
       }
-      protected override prepareCmrOutcomeLanding(ctx: DispatchContext): {
-        path: string;
-        sandboxPath: string;
-      } {
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
         const landing = super.prepareCmrOutcomeLanding(ctx);
         outcomePathAtRun = landing.path;
         return landing;
@@ -2268,8 +2035,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       protected override async runAgentSandbox(
         _options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-        if (outcomePathAtRun === undefined)
-          throw new Error("missing outcome sidecar path");
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(
           outcomePathAtRun,
           JSON.stringify({
@@ -2299,10 +2065,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       familyBaseStartHead: "abc123",
     });
 
-    const outcome = await be.run(cmrWorkerSpec(), {
-      familyBase: "fb",
-      cmrPass: "completeness",
-    });
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
 
     expect(outcome.kind).toBe("escalate");
     expect(outcomePathAtRun).toBeDefined();
@@ -2314,9 +2077,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
-    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], {
-      cwd: repo,
-    });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
     let outcomePathAtRun: string | undefined;
 
@@ -2327,10 +2088,9 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       protected override mountCmrAuth(): CmrAuth {
         return { claudeToken: "tok" };
       }
-      protected override prepareCmrOutcomeLanding(ctx: DispatchContext): {
-        path: string;
-        sandboxPath: string;
-      } {
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
         const landing = super.prepareCmrOutcomeLanding(ctx);
         outcomePathAtRun = landing.path;
         return landing;
@@ -2338,8 +2098,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       protected override async runAgentSandbox(
         _options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-        if (outcomePathAtRun === undefined)
-          throw new Error("missing outcome sidecar path");
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         expect(readFileSync(outcomePathAtRun, "utf8")).toBe("");
         return {
           completionSignal: "CMR_STEP_COMPLETE",
@@ -2364,10 +2123,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       familyBaseStartHead: "abc123",
     });
 
-    const outcome = await be.run(cmrWorkerSpec(), {
-      familyBase: "fb",
-      cmrPass: "completeness",
-    });
+    const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
 
     expect(outcome).toMatchObject({
       kind: "verdict",
