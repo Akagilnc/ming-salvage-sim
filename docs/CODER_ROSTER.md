@@ -40,9 +40,9 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
 规则：
 
 - 箭头（`→` / `->`）或逗号分隔均可。
-- 只保留花名册内合法项；非法 token 丢弃。
-- 缺省（无此行）→ **不改** 当前 route 预设的 coder 槽（运维 `ORCHESTRATOR_ROUTE` / slot override 仍生效）。
-- 有此行但 token 全非法 → 回退花名册默认序：`grok-4.5 → terra@med → luna@med`。
+- markdown 粗体 / 行内代码 / 链接装饰可（编排器先用 remark 剥净再匹配；#906）。
+- 缺省（无此行、body 也无 `Coder-Rec` 字样）→ **不改** 当前 route 预设的 coder 槽（运维 `ORCHESTRATOR_ROUTE` / slot override 仍生效）。
+- 有 `Coder-Rec` 字样但行格式坏 / 含未注册模型名 → **admission fail-closed 报错退出、零派单**（禁止静默丢弃非法 token、禁止回落默认序）。
 - 设计切片时请显式写 Coder-Rec 行（`to-tickets` / 花名册默认序作推荐模板）。host skill（`~/.claude/skills/to-tickets`）接线另票授权，当前靠本页 + [DEV_WORKFLOW.md](DEV_WORKFLOW.md) 切片节。
 
 ## 编排器只读行为

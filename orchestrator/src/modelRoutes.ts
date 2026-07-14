@@ -743,7 +743,8 @@ async function askContinue(message: string): Promise<boolean> {
  * Otherwise,
  * only an explicit `Coder-Rec:` marking in the issue body overrides the active
  * route's coder slot — unmarked issues keep the route preset. A present but
- * all-invalid marking falls through to {@link DEFAULT_CODER_REC_ORDER}.
+ * broken / unregistered marking throws (fail-closed; #906) — never silent
+ * fallthrough to the default order.
  * Entries are checked against every complete-route peer other than the coder
  * slot they replace. Sol's resulting per-slice reviewer pairing is still
  * modeled by {@link withCoderSlot}; it does not exempt any CMR checkpoint.
