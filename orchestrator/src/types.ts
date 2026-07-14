@@ -77,6 +77,21 @@ export function isStepId(step: unknown): step is SliceStepId {
   );
 }
 
+/**
+ * Full child + family-endgame worker step id (S0–S12).
+ * Family barrier walls must use this — {@link isStepId} alone coerces S9/S10/S12
+ * off the wall map and onto a wrong default (correctness C1).
+ */
+export function isAnyStepId(step: unknown): step is StepId {
+  return (
+    isStepId(step) ||
+    step === "S9" ||
+    step === "S10" ||
+    step === "S11" ||
+    step === "S12"
+  );
+}
+
 /** Worker roles shared by child and family dispatch. */
 export type StepRole =
   | "coder"
