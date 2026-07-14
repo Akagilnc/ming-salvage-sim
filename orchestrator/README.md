@@ -173,10 +173,12 @@ Startup is fail-closed: if the route smoke fails, the run records an
 | `.../family-<EPIC>-ledger/telemetry.jsonl` | per-leg raw stats (#786) |
 | `docker ps` | live sandcastle worker containers |
 
-The driver process itself is quiet between phase boundaries — a silent
-half-hour with a running container is normal work, not a hang. Judge a hang by
-worker-log idleness (> 15 min without growth), and kill only that worker's own
-pid tree; the relay successor continues on its uncommitted drift.
+**Current legacy runtime only:** the driver process itself is quiet between
+phase boundaries, so a silent half-hour with a running container can be normal
+work. The current monitor uses worker-log idleness (> 15 min without growth)
+and a worker-local PID kill before relaying onto the surviving drift. This is
+not the canonical contract: Sandcastle owns idle/completion timeout and cancel,
+Policy owns relay/wait/decision, and #898 removes the PID-based path.
 
 ### 6. Decision gates (parks) and answers
 
@@ -189,13 +191,17 @@ answer, append ONE JSON line to `family-ledger.jsonl`:
 {"status":"escalation_answered","event":"escalation_answered","phase":"final","childIssue":494,"answer":"<your adjudication, plain text>"}
 ```
 
-…then re-run the same ignition command. The runner routes the answer into the
-parked child's own ledger and resumes the SAME worker session
-(`resumeSessionId`) — the worker continues its conversation where it stopped.
+…then re-run the same ignition command. In the current legacy runtime the
+runner routes the answer into the parked child's own ledger and supplies a
+captured `resumeSessionId` when one exists. The same conversation resumes only
+when Sandcastle captured the session and the provider supports resume. Codex
+and Grok currently disable session capture, so this runtime cannot promise
+same-session continuation for those providers. The canonical target preserves
+the scene/worktree and starts a new invocation/relay when resume is unavailable.
 
 ### 7. Resume semantics
 
-The driver is idempotent: state lives in the durable ledgers, so re-running
+The current legacy driver is idempotent: state lives in its durable ledgers, so re-running
 the identical command after a crash, kill, or park continues from the last
 durable row. Children already merged re-admit as `already_done`; retry budgets
 carry over (no fresh windfall); completed mutating steps (ship) short-circuit
