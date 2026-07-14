@@ -537,12 +537,16 @@ _Avoid_: 第二案头/独立急务界面；把六动作做成通用下旨的语�
 _Avoid_: CI、流水线(太泛)、hermes(那是一个具体后端不是编排器)
 
 **交付主流程**:
-编排器当前唯一的一条 issue→merge 路线。single 与 family 使用同一条主流程和共同尾段；准确动作顺序、接力与重入只读 #869，术语表不复制拓扑。
-_Avoid_: 三套 workflow、Role Workflow Definition、可执行 DSL、把 wiki 逐字翻译成运行时流程、在 glossary 保存第二份步骤表
+编排器当前唯一的一条 issue→merge 路线。single 与 family 使用同一条主流程和共同尾段；Flow 消费 Issue Admission、Scene Provisioning / Recovery 等动作产出的业务与交通事实，把它们归结为下一固定流程位置，Runner 只执行该位置并处理 ADR 0131 三通道，不直接接收或解释这些事实。准确动作顺序、接力与重入只读 #869，术语表不复制拓扑。
+_Avoid_: 三套 workflow、Role Workflow Definition、可执行 DSL、把业务/交通事实变成 Runner 第四通道、把 wiki 逐字翻译成运行时流程、在 glossary 保存第二份步骤表
 
 **编排动作**:
 交付主流程里一个目的明确的专业步骤，拥有该步必要 skill/capability 的绑定与实际调用，以及模型腿、外部副作用核验与合法空跑。skill 的方法与内容仍以版本化 skill 自身为真源，不复制进流程、runner 或 prompt。动作可以向 runner 提交需要人类决定，但不得跨角色私自推进后续流程；是否以及何时调用下一动作由流程层决定。
 _Avoid_: runner 分支、万能 executeAction、把动作内部方法复制进流程或 prompt
+
+**仓库变更能力（Repository Mutation）**:
+Scene Provisioning / Recovery、Family Integration Merge 与 Closure and Reclamation 修改同一 owning clone 的 worktree / branch 图时共用的窄 capability。三个动作仍各自拥有建立、合并、回收的业务语义；capability 只按真实执行拓扑提供必要的串行化，不是新 Action，也不归 Runner。
+_Avoid_: 每个动作各建一把锁、预造分布式锁、让 Runner 持锁或读 Git 结果、把三个动作合成仓库巨无霸
 
 **独立子 issue**:
 本身就是一个自足交付物的 issue,没有父 epic 罩着,自身底下也不挂子 issue(leaf)。
