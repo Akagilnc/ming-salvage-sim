@@ -59,7 +59,7 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import {
   reaskReceiptOrFallback,
-  resumeTypedReceiptOrFallback,
+  resumeTypedReceiptRun,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "../receiptRecovery.js";
@@ -1712,13 +1712,13 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
           });
-          const receiptResult = await resumeTypedReceiptOrFallback({
+          const receiptResult = await resumeTypedReceiptRun({
+            result,
             receiptWasUnreadable: this.familyCoderReceiptWasUnreadable(
               result as { readonly output?: unknown }, outcomeLanding.path,
             ),
             sessionId: lastSessionId(result),
             resume: () => this.reaskFamilyCoderReceipt(spec, ctx, auth, outcomeLanding, result),
-            fallback: () => result,
             worker: "family coder",
           });
           return this.familyCoderResultFromRun(receiptResult, spec, outcomeLanding.path);

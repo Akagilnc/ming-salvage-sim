@@ -66,7 +66,7 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
   reaskReceiptOrFallback,
-  resumeTypedReceiptOrFallback,
+  resumeTypedReceiptRun,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
@@ -3024,7 +3024,11 @@ export class RealBackend implements Backend {
     if (coderReceiptWasUnreadable) {
       const sessionId = lastSessionId(result);
       if (sessionId !== undefined) {
-        return await resumeTypedReceiptOrFallback({
+        return await resumeTypedReceiptRun({
+          result: {
+            output: this.decodeOutput(spec, undefined),
+            sessionId,
+          },
           receiptWasUnreadable: true,
           sessionId,
           resume: async (resumeSession) => {
@@ -3039,7 +3043,6 @@ export class RealBackend implements Backend {
               sessionId: lastSessionId(reasked) ?? sessionId,
             };
           },
-          fallback: () => ({ output: this.decodeOutput(spec, undefined), sessionId }),
           worker: `${spec.id}-${spec.role}`,
         });
       }
