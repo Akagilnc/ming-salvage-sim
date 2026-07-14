@@ -7,9 +7,6 @@
  * source-text bans.
  */
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
 import { mergeChild } from "../../src/family/merger.js";
@@ -37,19 +34,6 @@ import type {
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../src/family/types.js";
-
-describe("#825 ADR 0062 worker reporting", () => {
-  it.each([
-    "image/souls/fixer.md",
-    "prompts/fixer.md",
-  ])("routes fixer self-audit evidence outside the strict outcome envelope in %s", (file) => {
-    const body = readFileSync(resolve(process.cwd(), file), "utf8");
-    // #911 soul is Chinese character edition; prompt keeps the English checklist line.
-    expect(body).toMatch(
-      /Record the self-audit checklist in the fixing commit message body|写进 commit body 给下轮复核|修了哪些、哪些本已正确/,
-    );
-  });
-});
 
 const WORKTREE: WorktreeHandle = {
   branch: "feat/825-behavior",

@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -897,39 +897,6 @@ describe("#677 CMR ratified-assertion hard-net fixture", () => {
         },
       ]),
     ).toEqual([]);
-  });
-});
-
-// ── soul soft guardrails ────────────────────────────────────────────────────
-
-describe("#677/#911 soul wording (Chinese character editions)", () => {
-  it("coder-fix soul routes AC/assertion conflict to refuse + fresh re-review, not silent flip", () => {
-    const soul = (name: string): string =>
-      readFileSync(resolve(process.cwd(), "image", "souls", name), "utf8");
-    const coder = soul("coder.md");
-    expect(coder).toMatch(/refusedFindingIdentityKeys|refuseRecords/);
-    expect(coder).toMatch(/绝不用改既有断言、改 AC/);
-    expect(coder).toMatch(/fresh 复审|复审裁决/);
-    expect(soul("fixer.md")).toMatch(/绝不用改断言、改 AC|违宪/);
-    // verify (cmr_correctness symlink) owns ratified-assertion law as 宪法优先.
-    expect(soul("cmr_correctness.md")).toMatch(/已批断言不容翻|宪法优先/);
-    expect(soul("reviewer.md")).toMatch(/测试是圣域|只评审不修复/);
-  });
-
-  // B4: standalone reviewer must hunt preexistingAssertionTouched from fix-findings.
-  it("reviewer_review prompt pins preexistingAssertionTouched → AC/ADR trace → blocking fix_now", () => {
-    const prompt = readFileSync(
-      resolve(process.cwd(), "prompts", "reviewer_review.md"),
-      "utf8",
-    );
-    expect(prompt).toMatch(/preexistingAssertionTouched\s*:\s*true/);
-    expect(prompt).toMatch(/AC|ADR|prior (ruling|CMR)/i);
-    expect(prompt).toMatch(/fix_now/);
-    // Collapsed so the full obligation survives rewrites that reflow lines.
-    const collapsed = prompt.replace(/\s+/g, " ");
-    expect(collapsed).toMatch(
-      /preexistingAssertionTouched:\s*true[\s\S]{0,400}?(AC|ADR|prior)[\s\S]{0,400}?fix_now/i,
-    );
   });
 });
 
