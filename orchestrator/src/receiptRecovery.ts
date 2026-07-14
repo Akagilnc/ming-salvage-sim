@@ -18,48 +18,30 @@ const decisionBellSchema = z.object({
   escalate: decisionEscalateSchema,
 }).passthrough();
 
+/**
+ * Standalone reviewer open-count (#899 / ADR 0131). Typed boundary only checks
+ * the explicit self-reported count + decision gate; findings rows, dispositions,
+ * and other prose stay tolerant cargo (passthrough).
+ */
 const reviewerReceiptSchema = z.object({
-  findings: z.array(z.unknown()),
+  findingsCount: z.number().int().nonnegative(),
 }).passthrough();
 
-const cmrLegSchema = z.string().trim().min(1);
-const cmrSkippedLegSchema = z.object({
-  slug: cmrLegSchema,
-  reason: z.string().trim().min(1),
-}).strict();
-const cmrVerdictFields = {
-  // ADR 0131: the reviewer, not the runner, declares the open finding count.
-  // Keep that declaration in the typed receipt so Sandcastle re-asks the same
-  // reviewer when an otherwise valid verdict omits it.
+/**
+ * CMR open-count only at the typed boundary. Legs, evidence, dispositions,
+ * findings rows, and converged prose are cargo for the next fixer — not SOE
+ * re-ask material (#899).
+ */
+const cmrReceiptSchema = z.object({
   findingsCount: z.number().int().nonnegative(),
-  successfulLegs: z.array(cmrLegSchema),
-  skippedLegs: z.array(cmrSkippedLegSchema).optional(),
-  claimedFixedFindingIdentityKeys: z.array(z.string()),
-  priorFindingDispositions: z.array(z.unknown()),
-  evidencePaths: z.array(z.string()),
-  // Finding families are reviewer cargo consumed by the next fixer; their
-  // tolerant parser owns their shape, not Sandcastle's receipt boundary.
-  findingFamilies: z.unknown().optional(),
-};
-const cmrReceiptSchema = z.union([
-  z.object({
-    converged: z.literal(true),
-    ...cmrVerdictFields,
-  }).passthrough(),
-  z.object({
-    converged: z.literal(false),
-    reason: z.string().trim().min(1),
-    findings: z.array(z.unknown()).optional(),
-    ...cmrVerdictFields,
-  }).passthrough(),
-]);
+}).passthrough();
 
 /**
  * Signal-level schema for seats that may press a decision gate while ordinary
  * cargo stays opaque: any object without `escalate` passes; present `escalate`
- * must be a well-formed bell. Missing tags still cannot use Output.object
- * (Sandcastle treats absence as SOE) — multi-iter coder/ship therefore keep
- * Output.object undefined per #899 opaque-cargo AC.
+ * must be a well-formed bell. Single-iteration seats (#899) attach this via
+ * Output.object so malformed bells get same-session native re-ask without
+ * schema-validating committed/commitsAdded/PR cargo.
  */
 export const decisionGateSignalSchema: z.ZodType = z.union([
   decisionBellSchema,
@@ -74,7 +56,7 @@ export const decisionGateSignalSchema: z.ZodType = z.union([
   ),
 ]);
 
-/** Typed traffic-signal seats only (#899): reviewer open-count + CMR open-count. */
+/** Typed traffic-signal seats only (#899): reviewer/CMR open-count + decision. */
 type WorkerReceiptRole = "reviewer" | "cmr";
 
 /** The role contract Sandcastle validates before deciding whether to re-ask. */

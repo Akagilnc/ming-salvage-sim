@@ -88,33 +88,35 @@ const prOpenedSchema = z
   })
   .passthrough();
 /**
- * Read the runner-owned machine sidecar for a process that already exited cleanly.
- * `completionSignal` and `stdout` remain in the input shape as worker telemetry,
- * but neither can decide the route (ADR 0062 / #820). The bell is probed across
- * sidecar and stdout independently; everything else is best-effort cargo.
+ * Prefer Sandcastle typed receipt for decision gates (#899). Machine sidecar is
+ * the cargo delivery channel when typed output is absent (#820). Stdout is
+ * telemetry only — never promotes delivery reports or unvalidated bells into
+ * fate (#820 / #899).
  */
 export function shipOutcomeFromResult(result: {
   completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
+  output?: unknown;
 }): ShipWorkerOutcome {
+  if (result.output !== undefined) {
+    return classifyShipOutcomePayload(result.output);
+  }
   try {
     if (result.outcomePath !== undefined) {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
         const classified = classifyShipOutcomePayload(sidecar);
         if (classified.kind === "escalate") return classified;
-        const stdoutBell = parseShipOutcome(result.stdout);
-        if (stdoutBell.kind === "escalate") return stdoutBell;
         return classified.kind === "shipped" ? classified : { kind: "completed" };
       }
     }
-  } catch (err) {
-    const stdoutBell = parseShipOutcome(result.stdout);
-    return stdoutBell.kind === "escalate" ? stdoutBell : { kind: "completed" };
+  } catch {
+    // Unreadable sidecar: do not promote stdout delivery or bells into fate.
+    return { kind: "completed" };
   }
-  const stdoutBell = parseShipOutcome(result.stdout);
-  return stdoutBell.kind === "escalate" ? stdoutBell : { kind: "completed" };
+  // No typed receipt and no readable sidecar → clean exit is enough (ADR 0131).
+  return { kind: "completed" };
 }
 
 /**
@@ -149,7 +151,11 @@ function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
     return { kind: "completed" };
   }
   const decisionBell = probeWorkerDecisionBell(parsed);
-  if (decisionBell !== undefined) {
+  if (
+    decisionBell !== undefined &&
+    decisionBell.reason.trim().length > 0 &&
+    decisionBell.diagnosis.trim().length > 0
+  ) {
     return {
       kind: "escalate",
       ...decisionBell,

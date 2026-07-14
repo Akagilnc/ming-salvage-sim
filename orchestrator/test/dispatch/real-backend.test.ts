@@ -1581,50 +1581,62 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("does not re-ask multi-iter coder cargo when the tail receipt is absent (opaque cargo)", async () => {
-    // #899 Out of Scope: coder ordinary cargo is never a typed Sandcastle repair loop.
+  it("attaches signal-only Output.object for single-iter coder without re-asking opaque cargo", async () => {
+    // #899: decision-gate Output.object is attached; ordinary cargo fields stay
+    // opaque (missing committed/commitsAdded does not force a second invocation).
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: "coder completed implementation but omitted its receipt",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-opaque",
+      output: {},
     });
 
     await expect(
-      backend.runStep(coderSpec, {
-        branch: "feat/issue-899",
-        base: "main",
-        path: "/tmp/worktree/issue-899",
-      }),
+      backend.runStep(
+        { ...coderSpec, maxIter: 1 },
+        {
+          branch: "feat/issue-899",
+          base: "main",
+          path: "/tmp/worktree/issue-899",
+        },
+      ),
     ).resolves.toMatchObject({
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "sess-coder-opaque",
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toBeUndefined();
+    expect(backend.agentOptions[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
     expect(backend.agentOptions[0]!.resumeSession).toBeUndefined();
   });
 
-  it("does not re-ask multi-iter coder cargo when the tail receipt omits a cargo field", async () => {
+  it("does not re-ask coder cargo when the typed receipt omits a cargo field", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: '<coder>{"committed": true}</coder>',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-partial-cargo",
+      output: { committed: true },
     });
 
-    await expect(backend.runStep(coderSpec, {
+    await expect(backend.runStep({ ...coderSpec, maxIter: 1 }, {
       branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
     })).resolves.toMatchObject({
       // Opaque cargo path: decode tolerates missing commitsAdded as 0 without
-      // a second Sandcastle invocation / typed Output.object repair.
+      // a second Sandcastle invocation / cargo-shape repair.
       output: { kind: "coder", committed: true, commitsAdded: 0 },
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toBeUndefined();
+    expect(backend.agentOptions[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
   });
 
   it("keeps a single Sandcastle invocation when a missing coder receipt has no session", async () => {
@@ -1686,25 +1698,29 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
-  it("does not attach typed cargo output when resuming a multi-iter coder", async () => {
-    // Resume is maxIterations:1, but #899 keeps coder cargo opaque — only
-    // reviewer/open-count + decision-gate traffic use Output.object maxRetries.
+  it("attaches signal-only decision Output.object when resuming a coder seat", async () => {
+    // Resume is maxIterations:1; #899 attaches decision-gate Output.object while
+    // ordinary cargo fields stay opaque inside decisionGateSignalSchema.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "resumed worker completed without a cargo tag",
       commits: [{ sha: "abc123" }],
       sessionId: "prior-coder-session",
+      output: {},
     });
 
     await expect(backend.resumeSession(
-      coderSpec,
+      { ...coderSpec, maxIter: 1 },
       { branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899" },
       "prior-coder-session",
     )).resolves.toMatchObject({
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "prior-coder-session",
     });
-    expect(backend.lastAgentOptions?.output).toBeUndefined();
+    expect(backend.lastAgentOptions?.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
@@ -1731,10 +1747,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       completionSignal: "REVIEWER_STEP_COMPLETE",
-      stdout: '<review>{"findings": []}</review>',
+      stdout: '<review>{"findingsCount":0,"findings":[]}</review>',
       commits: [],
       sessionId: "sess-review-reask",
-      output: { findings: [] },
+      output: { findingsCount: 0, findings: [] },
     });
 
     await expect(
@@ -1743,7 +1759,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         base: "main",
         path: "/tmp/worktree/issue-899",
       }),
-    ).resolves.toMatchObject({ output: { kind: "reviewer", findings: [] } });
+    ).resolves.toMatchObject({
+      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+    });
 
     expect(backend.lastAgentOptions?.output).toMatchObject({
       tag: "review",
@@ -1752,8 +1770,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   });
 
   it("rejects malformed reviewer receipts so Sandcastle re-asks the author", () => {
-    expect(workerReceiptSchema("reviewer").safeParse({ findings: [] }).success).toBe(true);
-    expect(workerReceiptSchema("reviewer").safeParse({ findings: "missing array" }).success).toBe(false);
+    // #899: typed boundary requires explicit findingsCount; findings rows are cargo.
+    expect(workerReceiptSchema("reviewer").safeParse({ findingsCount: 0 }).success).toBe(true);
+    expect(workerReceiptSchema("reviewer").safeParse({ findingsCount: 0, findings: [] }).success).toBe(true);
+    expect(workerReceiptSchema("reviewer").safeParse({ findings: [] }).success).toBe(false);
     expect(workerReceiptSchema("reviewer").safeParse({}).success).toBe(false);
     expect(workerReceiptSchema("reviewer").safeParse({
       escalate: { reason: "owner decision", diagnosis: "design fork" },
@@ -1771,7 +1791,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     }).success).toBe(false);
   });
 
-  it("accepts a reviewer verdict from any one supported outcome channel", () => {
+  it("prefers typed Output.object over sidecar/stdout for reviewer receipts", () => {
     const backend = makeBackend();
     const rawOutputFor = (backend as unknown as {
       rawOutputFor(
@@ -1781,16 +1801,31 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         options?: { outcomeLanding?: { path: string; sandboxPath: string } },
       ): unknown;
     }).rawOutputFor.bind(backend);
-    const payload = { findings: [] };
+    const payload = { findingsCount: 0, findings: [] };
+    const override = {
+      findingsCount: 9,
+      findings: [],
+      escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+    };
 
     expect(rawOutputFor({ output: payload, stdout: "" }, reviewerSpec, true)).toEqual(payload);
     expect(
-      rawOutputFor({ stdout: '<review>{"findings": []}</review>' }, reviewerSpec, false),
+      rawOutputFor({ stdout: '<review>{"findingsCount":0,"findings":[]}</review>' }, reviewerSpec, false),
     ).toEqual(payload);
 
     const dir = mkdtempSync(join(tmpdir(), "worker-review-sidecar-channel-"));
     const outcomePath = join(dir, "outcome.json");
-    writeFileSync(outcomePath, JSON.stringify(payload), "utf8");
+    writeFileSync(outcomePath, JSON.stringify(override), "utf8");
+    // Typed receipt wins even when sidecar carries a competing bell.
+    expect(
+      rawOutputFor(
+        { output: payload, stdout: "" },
+        reviewerSpec,
+        true,
+        { outcomeLanding: { path: outcomePath, sandboxPath: ".orchestrator-outcome.json" } },
+      ),
+    ).toEqual(payload);
+    // Cargo-only path still reads sidecar when typed output was not used.
     expect(
       rawOutputFor(
         { stdout: "" },
@@ -1798,8 +1833,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         false,
         { outcomeLanding: { path: outcomePath, sandboxPath: ".orchestrator-outcome.json" } },
       ),
-    ).toEqual(payload);
+    ).toEqual(override);
 
+    // Sidecar cargo is preferred over stdout tags when typed output is off.
     expect(
       rawOutputFor(
         {
@@ -1810,9 +1846,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         false,
         { outcomeLanding: { path: outcomePath, sandboxPath: ".orchestrator-outcome.json" } },
       ),
-    ).toMatchObject({
-      escalate: { reason: "owner choice", diagnosis: "review fork" },
-    });
+    ).toEqual(override);
   });
 
   it("does not label a multi-iteration coder stdout tag as a legacy fallback", () => {
@@ -2012,7 +2046,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     );
 
     expect(result).toEqual({
-      output: { kind: "reviewer", findings: [] },
+      output: { kind: "reviewer", findings: [], findingsCount: 0 },
       sessionId: "sess-review-sidecar",
     });
     expect(backend.lastAgentOptions).toBeDefined();
@@ -2052,7 +2086,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     );
 
     expect(result).toEqual({
-      output: { kind: "reviewer", findings: [] },
+      output: { kind: "reviewer", findings: [], findingsCount: 0 },
       sessionId: "sess-review-resume-sidecar",
     });
     expect(backend.lastAgentOptions).toBeDefined();
@@ -2092,7 +2126,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("routes unreadable reviewer sidecar cargo toward the fixer topology", async () => {
+  it("falls back to stdout review cargo when the outcome sidecar is unreadable", async () => {
+    // #899: unreadable sidecar is cargo failure, not fate. Stdout compatibility
+    // tags still supply the review declaration for the fixer/topology.
     const backend = makeBackend();
     const dir = mkdtempSync(join(tmpdir(), "worker-review-outcome-bad-"));
     const outcomePath = join(dir, "outcome.json");
@@ -2120,7 +2156,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         },
       ),
     ).resolves.toMatchObject({
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      output: { kind: "reviewer", findings: [], findingsCount: 0 },
     });
   });
 

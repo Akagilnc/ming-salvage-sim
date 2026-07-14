@@ -1569,7 +1569,9 @@ export function stepSpecsForRoute(
       // alone — no image rebuild, no StepSpec shape change.
       model: route.slots.coder,
       completionSignal: "CODER_STEP_COMPLETE",
-      maxIter: 5,
+      // #899 / ADR 0128: one single-iteration Sandcastle run per seat; the skill
+      // finishes inside that invocation (no outer Ralph multi-iter).
+      maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
     },
@@ -1589,7 +1591,8 @@ export function stepSpecsForRoute(
       promptFile: "coder_fix.md",
       model: route.slots.coderFix,
       completionSignal: "CODER_STEP_COMPLETE",
-      maxIter: 5,
+      // #899 / ADR 0128: single-iteration seat (same as S2).
+      maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
     },

@@ -65,6 +65,7 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
+  decisionGateSignalSchema,
   reaskReceiptOrThrow,
   workerReceiptOutput,
   workerReceiptSchema,
@@ -2786,26 +2787,28 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Typed Sandcastle output is only for ADR 0131 traffic signals on single-iter
-   * seats (#899): reviewer open-count / findings envelope (+ decision bell).
-   * Coder/ship ordinary cargo stays opaque — no Output.object (missing tag would
-   * force SOE re-ask; multi-iter seats also cannot use Output.object).
+   * Typed Sandcastle output for ADR 0131 traffic signals on single-iter seats
+   * (#899): reviewer self-reported open-count, and signal-only decision gates
+   * for seats that may escalate. Ordinary coder cargo fields stay opaque inside
+   * decisionGateSignalSchema (no committed/commitsAdded shape re-ask).
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
-    if (spec.role !== "reviewer") return undefined;
-    return workerReceiptOutput("review", workerReceiptSchema("reviewer"));
+    if (spec.role === "reviewer") {
+      return workerReceiptOutput("review", workerReceiptSchema("reviewer"));
+    }
+    if (spec.role === "coder") {
+      return workerReceiptOutput("coder", decisionGateSignalSchema);
+    }
+    return undefined;
   }
 
   /**
    * Resolve the raw structured payload to decode for a step.
    *
-   * - `typedOutputUsed` (reviewer single-pass, OR any resume — both run
-   *   maxIterations:1): Sandcastle parsed the tag into `result.output`, so read
-   *   it directly.
-   * - otherwise (a coder step with maxIter>1, where Sandcastle's typed `output`
-   *   is forbidden): extract the `<coder>` tag from `result.stdout` ourselves
-   *   (integ-cmr 256 r1, F2 — the coder path produced no `result.output`, so the
-   *   old `coderOutputSchema.parse(undefined)` threw on EVERY coder step).
+   * - `typedOutputUsed`: Sandcastle validated the tag into `result.output` —
+   *   that is the only fate channel for decision gates and open-count (#899).
+   * - otherwise: extract the role tag from stdout / sidecar as opaque cargo
+   *   (no fate-signal derivation from unvalidated transports).
    */
   private rawOutputFor(
     result: { output?: unknown; stdout: string },
@@ -2813,31 +2816,24 @@ export class RealBackend implements Backend {
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown | undefined {
+    // Typed receipt owns fate signals. Do not let sidecar/stdout bells override
+    // a schema-validated Output.object (#899 findings 4–5).
+    if (typedOutputUsed && result.output !== undefined) {
+      return result.output;
+    }
     const compatibility = extractRoleReceipt(result.stdout, spec.role);
-    const compatibilityBell = probeWorkerDecisionBell(compatibility);
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
-        if (sidecar !== undefined) {
-          if (probeWorkerDecisionBell(sidecar) !== undefined) return sidecar;
-          if (compatibilityBell !== undefined) return compatibility;
-          return sidecar;
-        }
+        if (sidecar !== undefined) return sidecar;
       }
     } catch (err) {
       console.warn(
         `[orchestrator] telemetry: ${spec.id}-${spec.role} outcome sidecar is unreadable cargo: ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
-      return compatibilityBell !== undefined ? compatibility : undefined;
+      return compatibility;
     }
-    if (typedOutputUsed && result.output !== undefined) {
-      if (probeWorkerDecisionBell(result.output) !== undefined) return result.output;
-      if (compatibilityBell !== undefined) return compatibility;
-      return result.output;
-    }
-    // Stdout tags are the primary machine channel for multi-iteration coders;
-    // elsewhere they are compatibility for a missing typed result.
     if (compatibility !== undefined) {
       if (typedOutputUsed) {
         console.warn(
@@ -2854,8 +2850,15 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     raw: unknown,
   ): StepOutput {
+    // Only well-formed decision bells (non-empty reason+diagnosis) become fate.
+    // Malformed escalate keys are rejected at Output.object schema time for typed
+    // seats; cargo paths that still surface them must not enter the human loop.
     const decisionBell = probeWorkerDecisionBell(raw);
-    if (decisionBell !== undefined) {
+    if (
+      decisionBell !== undefined &&
+      decisionBell.reason.trim().length > 0 &&
+      decisionBell.diagnosis.trim().length > 0
+    ) {
       return spec.role === "coder"
         ? {
             kind: "coder",
@@ -2863,29 +2866,43 @@ export class RealBackend implements Backend {
             commitsAdded: 0,
             escalate: decisionBell,
           }
-        : { kind: "reviewer", findings: [], escalate: decisionBell };
+        : { kind: "reviewer", findings: [], findingsCount: 0, escalate: decisionBell };
     }
     if (spec.role === "reviewer") {
-      if (
-        raw === null ||
-        typeof raw !== "object" ||
-        !Array.isArray((raw as { findings?: unknown }).findings)
-      ) {
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+        // Unusable review cargo — not a zero open-count (ADR 0131).
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
       const receipt = raw as {
-        findings: ReadonlyArray<Finding>;
+        findingsCount?: unknown;
+        findings?: unknown;
         priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
       };
+      const findingsCount =
+        typeof receipt.findingsCount === "number" &&
+        Number.isSafeInteger(receipt.findingsCount) &&
+        receipt.findingsCount >= 0
+          ? receipt.findingsCount
+          : undefined;
+      // Prefer explicit self-report; fall back to findings-array declaration for
+      // process-internal seams that still emit only the array (ADR 0131).
+      const findings = Array.isArray(receipt.findings)
+        ? (receipt.findings as ReadonlyArray<Finding>)
+        : [];
+      const declaredCount = findingsCount ?? (Array.isArray(receipt.findings) ? findings.length : undefined);
+      if (declaredCount === undefined) {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
       return {
         kind: "reviewer",
-        findings: receipt.findings,
+        findings,
+        findingsCount: declaredCount,
         ...(Array.isArray(receipt.priorFindingDispositions)
           ? { priorFindingDispositions: receipt.priorFindingDispositions }
           : {}),
       };
     }
-    // Coder completion is worker-authored. The next reviewer judges the diff.
+    // Coder completion is worker-authored opaque cargo. The next reviewer judges.
     if (spec.role === "coder") {
       if (raw === null || typeof raw !== "object") {
         return { kind: "coder", committed: false, commitsAdded: 0 };
@@ -2951,9 +2968,10 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: only reviewer traffic signals attach Output.object(+maxRetries).
-      // Coder cargo stays opaque; sidecar-mounted runs skip typed output so the
-      // machine protocol can land before Sandcastle validates a tag.
+      // #899: traffic signals attach Output.object(+maxRetries). Coder seats use
+      // signal-only decisionGateSignalSchema so ordinary cargo stays opaque.
+      // Sidecar-mounted runs skip typed output so the machine protocol can land
+      // before Sandcastle validates a tag.
       ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.
@@ -3024,7 +3042,7 @@ export class RealBackend implements Backend {
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
-        // Resume is single-iter; only reviewer traffic signals take typed output.
+        // Resume is single-iter; attach the same traffic-signal Output.object policy.
         ...(typedOutputUsed ? { output: typedOutput } : {}),
         // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
         quotaProbe: {

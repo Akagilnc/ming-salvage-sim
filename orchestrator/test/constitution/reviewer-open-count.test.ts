@@ -19,66 +19,92 @@ function sidecar(payload: unknown): string {
   return path;
 }
 
-describe("ADR 0131 S1b reviewer self-declared count", () => {
-  it("passes sentinel declaration through even when structured rows differ", () => {
+describe("ADR 0131 / #899 reviewer self-declared count", () => {
+  it("uses typed receipt findingsCount even when structured rows differ", () => {
     const outcome = cmrOutcomeFromResult({
-      stdout: "findings = 3\n",
-      outcomePath: sidecar({ ...base, findings: [finding, { ...finding, claim_quote: "gap 2" }] }),
+      output: {
+        ...base,
+        findingsCount: 3,
+        findings: [finding, { ...finding, claim_quote: "gap 2" }],
+      },
+      // Stdout sentinel must not override the schema-validated count (#899).
+      stdout: "findings = 99\n",
     });
     expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 3 });
   });
 
   it("trusts declaration zero even when the structured array is non-empty", () => {
     const outcome = cmrOutcomeFromResult({
-      stdout: "findings = 0\n",
-      outcomePath: sidecar({
+      output: {
         ...base,
-        converged: false,
+        findingsCount: 0,
         findings: [finding],
-      }),
+      },
     });
     expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 0 });
   });
 
-  it("keeps the count unknown when the sentinel is absent", () => {
+  it("keeps the count unknown when findingsCount is absent from cargo", () => {
     const outcome = cmrOutcomeFromResult({
-      stdout: "review complete\n",
       outcomePath: sidecar({ ...base, findings: [finding, { ...finding, claim_quote: "gap 2" }] }),
     });
     expect(outcome).toMatchObject({ kind: "verdict" });
     expect(outcome).not.toHaveProperty("findingsCount");
   });
 
-  it("never fabricates zero when both the sentinel and structured rows are absent", () => {
+  it("never fabricates zero when findingsCount and structured rows are absent", () => {
     const outcome = cmrOutcomeFromResult({
-      stdout: "review complete\n",
       outcomePath: sidecar(base),
     });
     expect(outcome).toMatchObject({ kind: "verdict", converged: false });
     expect(outcome).not.toHaveProperty("findingsCount");
   });
 
-  it("does not synthesize converged from a declared count when cargo parsing fails", () => {
+  it("does not synthesize count from stdout sentinel when cargo has no findingsCount", () => {
     const outcome = cmrOutcomeFromResult({
       stdout: "findings = 2\n",
       outcomePath: sidecar({ chatty: "cargo without verdict fields" }),
     });
-    expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 2 });
+    expect(outcome).toMatchObject({ kind: "verdict" });
+    expect(outcome).not.toHaveProperty("findingsCount");
     expect(outcome).not.toHaveProperty("converged");
   });
 
-  it("rings a CMR stdout decision bell before parseable sidecar cargo", () => {
-    const outcomePath = join(mkdtempSync(join(tmpdir(), "s1b-bell-")), "outcome.json");
-    writeFileSync(outcomePath, JSON.stringify({ unrelatedCargo: true }));
+  it("prefers typed receipt over stdout decision bells", () => {
     const outcome = cmrOutcomeFromResult({
+      output: {
+        ...base,
+        findingsCount: 0,
+        converged: true,
+      },
       stdout: '<cmr>{"junk": 1, "escalate": {"reason": "owner choice", "diagnosis": "CMR fork"}}</cmr>',
-      outcomePath,
+    });
+    expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 0, converged: true });
+  });
+
+  it("rings a well-formed decision bell from typed receipt", () => {
+    const outcome = cmrOutcomeFromResult({
+      output: {
+        escalate: { reason: "owner choice", diagnosis: "CMR fork" },
+      },
     });
     expect(outcome).toMatchObject({
       kind: "escalate",
       reason: "owner choice",
       diagnosis: "CMR fork",
     });
+  });
+
+  it("does not admit a malformed decision bell into the human loop", () => {
+    const outcome = cmrOutcomeFromResult({
+      output: {
+        ...base,
+        findingsCount: 0,
+        escalate: {},
+      },
+    });
+    // Malformed escalate is ignored as fate; payload remains a verdict cargo path.
+    expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 0 });
   });
 
 });

@@ -58,6 +58,7 @@ import { isAbsolute, join } from "node:path";
 
 import { z } from "zod";
 import {
+  decisionGateSignalSchema,
   reaskReceiptOrThrow,
   workerReceiptOutput,
   workerReceiptSchema,
@@ -1685,8 +1686,8 @@ export class RealFamilyBackend implements FamilyBackend {
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
-          // #899: family coder cargo is opaque — one Sandcastle invocation, no
-          // typed Output.object re-ask for committed/commitsAdded cargo.
+          // #899: signal-only decision gate Output.object; ordinary cargo stays
+          // opaque (decisionGateSignalSchema does not re-ask committed fields).
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1703,6 +1704,7 @@ export class RealFamilyBackend implements FamilyBackend {
             completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
+            output: workerReceiptOutput("coder", decisionGateSignalSchema),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -1882,9 +1884,17 @@ export class RealFamilyBackend implements FamilyBackend {
     outcomePath: string,
   ): WorkerResult {
     try {
-      const raw = result.output ?? readRequiredWorkerOutcomeSidecar(outcomePath);
+      // Prefer typed Output.object for decision gates; sidecar is cargo only (#899).
+      const raw =
+        result.output !== undefined
+          ? result.output
+          : readRequiredWorkerOutcomeSidecar(outcomePath);
       const decisionBell = probeWorkerDecisionBell(raw);
-      if (decisionBell !== undefined) {
+      if (
+        decisionBell !== undefined &&
+        decisionBell.reason.trim().length > 0 &&
+        decisionBell.diagnosis.trim().length > 0
+      ) {
         return {
           kind: "escalated",
           escalation: decisionBell,
@@ -2742,9 +2752,11 @@ export class RealFamilyBackend implements FamilyBackend {
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
       try {
         const result = await this.shipContainerRun(spec, auth, outcomeLanding, ctx);
+        const typedOutput = (result as { readonly output?: unknown }).output;
         return shipOutcomeFromResult({
           ...result,
           outcomePath: outcomeLanding.path,
+          ...(typedOutput !== undefined ? { output: typedOutput } : {}),
         });
       } finally {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
@@ -2780,6 +2792,8 @@ export class RealFamilyBackend implements FamilyBackend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
+      // #899: signal-only decision gate; PR/URL cargo stays opaque.
+      output: workerReceiptOutput("ship", decisionGateSignalSchema),
     });
   }
 
@@ -3269,7 +3283,11 @@ export interface MergerAuth {
  * completion proof and verdict source. Legacy/no-sidecar workers still require the
  * Sandcastle completion signal before stdout fallback is trusted.
  */
-/** Preserve only the reviewer-declared sentinel count; structured rows stay cargo. */
+/**
+ * Prefer Sandcastle typed receipt for fate signals (decision gate + findingsCount).
+ * Sidecar/stdout are cargo only — never override a schema-validated count or
+ * admit an unvalidated decision bell into the human loop (#899).
+ */
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
@@ -3278,88 +3296,26 @@ export function cmrOutcomeFromResult(result: {
   stdout?: string;
 }): CmrWorkerOutcome {
   const stdout = (result.stdout ?? "").trim();
-  // A doorbell is the one runner-visible receipt signal. Probe every transport
-  // channel before accepting typed cargo so a recovered verdict cannot mask a
-  // concurrent sidecar escalation.
-  if (result.outcomePath !== undefined) {
-    try {
-      const sidecarBell = probeWorkerDecisionBell(
-        readWorkerOutcomeSidecar(result.outcomePath),
-      );
-      if (sidecarBell !== undefined) return { kind: "escalate", ...sidecarBell };
-    } catch {
-      // An unreadable sidecar is cargo failure, not a new fate branch.
-    }
-  }
-  const stdoutBell = parseCmrOutcome(stdout);
-  if (stdoutBell.kind === "escalate") return stdoutBell;
+  // Typed Output.object is the sole fate channel when present.
   if (result.output !== undefined) {
-    const classified = classifyCmrOutcomePayload(result.output, "CMR typed receipt");
-    if (classified.kind === "escalate") return classified;
-    const findingsCount = parseFindingsSentinel(stdout);
-    return {
-      ...classified,
-      ...(classified.kind === "verdict" && findingsCount !== undefined ? { findingsCount } : {}),
-    };
+    return classifyCmrOutcomePayload(result.output, "CMR typed receipt");
   }
+  // Cargo-only fallbacks: sidecar then stdout tags. Decision bells and open-count
+  // still come only from the payload's own fields (no stdout sentinel overlay).
   if (result.outcomePath !== undefined) {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
-        const classified = classifyCmrOutcomePayload(
+        return classifyCmrOutcomePayload(
           sidecar,
           "cmr worker outcome sidecar",
         );
-        if (classified.kind === "escalate") return classified;
-        const stdoutBell = parseCmrOutcome(stdout);
-        if (stdoutBell.kind === "escalate") return stdoutBell;
-        const findingsCount = parseFindingsSentinel(stdout);
-        if (classified.kind !== "verdict") {
-          return findingsCount === undefined
-            ? classified
-            : {
-                kind: "verdict",
-                successfulLegs: [],
-                evidencePaths: [],
-                findingsCount,
-              };
-        }
-        return {
-          ...classified,
-          ...(findingsCount !== undefined ? { findingsCount } : {}),
-        };
       }
     } catch {
-      const stdoutBell = parseCmrOutcome(stdout);
-      if (stdoutBell.kind === "escalate") return stdoutBell;
-      const findingsCount = parseFindingsSentinel(stdout);
-      return {
-        ...stdoutBell,
-        ...(stdoutBell.kind === "verdict" && findingsCount !== undefined
-          ? { findingsCount }
-          : {}),
-      };
+      // Unreadable sidecar → try stdout cargo below.
     }
   }
-
-  // Stdout-only / blank-sidecar fallback preserves the same declaration channel.
-  const fromStdout = parseCmrOutcome(stdout);
-  const declared = parseFindingsSentinel(stdout);
-  if (fromStdout.kind !== "verdict") {
-    return declared === undefined
-      ? fromStdout
-      : {
-          kind: "verdict",
-          successfulLegs: [],
-          evidencePaths: [],
-          findingsCount: declared,
-        };
-  }
-  const findingsCount = declared;
-  return {
-    ...fromStdout,
-    ...(findingsCount !== undefined ? { findingsCount } : {}),
-  };
+  return parseCmrOutcome(stdout);
 }
 
 /** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
@@ -3610,7 +3566,14 @@ function classifyCmrOutcomePayload(
   if (!isJsonRecord(parsed)) return sparseCmrCargo();
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
   const decisionBell = probeWorkerDecisionBell(normalizedParsed);
-  if (decisionBell !== undefined) {
+  // #899: only well-formed bells (non-empty reason+diagnosis) are fate signals.
+  // Malformed escalate is rejected at Output.object for typed seats; cargo paths
+  // must not admit empty bells into the human loop.
+  if (
+    decisionBell !== undefined &&
+    decisionBell.reason.trim().length > 0 &&
+    decisionBell.diagnosis.trim().length > 0
+  ) {
     return { kind: "escalate", ...decisionBell };
   }
   const findings = Array.isArray(normalizedParsed.findings)

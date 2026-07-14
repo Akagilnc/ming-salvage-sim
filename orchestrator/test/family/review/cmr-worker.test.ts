@@ -472,11 +472,12 @@ describe("#335 parseCmrOutcome — the <cmr> verdict tag", () => {
       );
     });
 
-    it("an incomplete escalate block rings the bell; empty fields remain cargo", () => {
+    it("an incomplete escalate block does not enter the human loop", () => {
+      // #899: only well-formed bells (non-empty reason+diagnosis) are fate signals.
       expect(
         parseCmrOutcome('<cmr>{"escalate": {"reason": "", "diagnosis": ""}}</cmr>').kind,
-      ).toBe("escalate");
-      expect(parseCmrOutcome('<cmr>{"escalate": {}}</cmr>').kind).toBe("escalate");
+      ).toBe("verdict");
+      expect(parseCmrOutcome('<cmr>{"escalate": {}}</cmr>').kind).toBe("verdict");
     });
 
     it("a non-boolean converged cargo field is dropped", () => {
@@ -734,11 +735,13 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
     const result = {
       completionSignal: SIGNAL,
       cmrReviewLegs: FROZEN_NORMAL_CMR_REVIEW_LEGS,
+      // #899: findingsCount lives on the receipt payload, not a stdout sentinel.
       stdout: `<cmr>${JSON.stringify({
         converged: true,
+        findingsCount: 0,
         successfulLegs: DEFAULT_CMR_LEGS,
         ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>\nfindings = 0\n`,
+      })}</cmr>\n`,
     };
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
 
@@ -747,9 +750,9 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
     expect(o).toEqual({
       kind: "verdict",
       converged: true,
+      findingsCount: 0,
       successfulLegs: DEFAULT_CMR_LEGS,
       ...VALID_CMR_VERDICT_FIELDS,
-      ...DERIVED_EMPTY_FINDINGS_COUNT,
     });
   });
 });
@@ -988,21 +991,28 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   });
 
   it("keeps approved finding-family cargo on an otherwise typed CMR verdict", () => {
+    // #899: only findingsCount is typed; legs/evidence/families are cargo passthrough.
     expect(workerReceiptSchema("cmr").safeParse({
-      converged: true,
       findingsCount: 0,
-      successfulLegs: [...DEFAULT_CMR_LEGS],
-      claimedFixedFindingIdentityKeys: [],
-      priorFindingDispositions: [],
-      evidencePaths: ["cmr/review-summary.json"],
       findingFamilies: [{ identityKeys: ["correctness|x|y"] }],
     }).success).toBe(true);
+    expect(workerReceiptSchema("cmr").safeParse({
+      findingsCount: 0,
+    }).success).toBe(true);
+    expect(workerReceiptSchema("cmr").safeParse({
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+    }).success).toBe(false);
   });
 
-  it("parks on an outcome-sidecar bell even when the recovered typed verdict is otherwise valid", () => {
+  it("does not let sidecar bells override a schema-validated typed verdict", () => {
+    // #899: decision gates and open-count come only from Output.object; sidecar
+    // cargo (including malformed escalate) must not enter the human loop.
     const dir = mkdtempSync(join(tmpdir(), "cmr-recovered-bell-"));
     const outcomePath = join(dir, ".orchestrator-outcome.json");
-    writeFileSync(outcomePath, JSON.stringify({ escalate: {} }));
+    writeFileSync(outcomePath, JSON.stringify({
+      escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+    }));
 
     expect(cmrOutcomeFromResult({
       output: {
@@ -1014,7 +1024,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         evidencePaths: ["cmr/review-summary.json"],
       },
       outcomePath,
-    })).toMatchObject({ kind: "escalate", reason: "", diagnosis: "" });
+    })).toMatchObject({ kind: "verdict", findingsCount: 0, converged: true });
   });
 
   it("dispatches the family coder-fix spec to runFamilyCoderFixWorker — /tdd + retained coder context", async () => {
@@ -2315,8 +2325,9 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 
-  it("treats family coder malformed sidecar as opaque cargo without a typed re-ask", async () => {
-    // #899 Out of Scope: coder ordinary cargo is never a Sandcastle repair loop.
+  it("treats family coder malformed cargo as opaque without a cargo-shape re-ask", async () => {
+    // #899: signal-only decision Output.object is attached; ordinary cargo fields
+    // stay opaque (malformed committed does not force a second invocation).
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -2341,10 +2352,14 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         this.calls.push(options);
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(outcomePathAtRun, JSON.stringify({ committed: "not-a-boolean" }), "utf8");
-        return sandboxRunResult({
-          completionSignal: "CODER_STEP_COMPLETE",
-          sessionId: "family-coder-malformed",
-        });
+        return typedSandboxRunResult(
+          // Signal-only typed receipt: no escalate → opaque cargo decode defaults.
+          { committed: "not-a-boolean" },
+          {
+            completionSignal: "CODER_STEP_COMPLETE",
+            sessionId: "family-coder-malformed",
+          },
+        );
       }
     }
 
@@ -2365,7 +2380,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
     expect(be.calls).toHaveLength(1);
-    expect(be.calls[0]!.output).toBeUndefined();
+    expect(be.calls[0]!.output).toMatchObject({ tag: "coder", maxRetries: 2 });
     expect(be.calls[0]!.resumeSession).toBeUndefined();
   });
 

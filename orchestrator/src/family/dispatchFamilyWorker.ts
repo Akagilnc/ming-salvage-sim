@@ -120,7 +120,8 @@ export function familyCoderFixWorkerSpec(route?: ResolvedModelRoute): WorkerSpec
     skill: "/tdd",
     promptFile: "coder_fix.md",
     completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
+    // #899 / ADR 0128: one single-iteration Sandcastle run per selected seat.
+    maxIter: 1,
     model,
     soul: "coder",
     toolchain: IMAGE_TOOLCHAIN,
@@ -140,10 +141,9 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     skill: "gstack-ship",
     promptFile: "family_ship.md",
     completionSignal: "SHIP_STEP_COMPLETE",
-    // A WRITE/coder ship worker must self-rerun gstack-ship's rerun-able failures
-    // (family_ship.md: "rerun it yourself") → an iterative budget like coder/fix
-    // (runner worker specs use 5), NOT the cmr reviewer's single-pass 1 (#336 cmr r6).
-    maxIter: 5,
+    // #899 / ADR 0128: single-iteration seat; gstack-ship reruns live inside the
+    // skill invocation, not as an outer Sandcastle multi-iter budget.
+    maxIter: 1,
     model,
     // The family ship worker runs under the dedicated "ship" soul (delivery
     // discipline: gstack-ship, stop-at-PR, defer→tracker not PR body), matching
