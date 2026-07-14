@@ -19,7 +19,7 @@ _Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamil
 _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue 建多个并行现场
 
 **家族子工作树（Family Child Worktree）**:
-家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，successor 席位由 Policy 按 ADR 0134 的固定顺序选择，再由 Worker Invocation 为该席位启动新的 agent/session/checkpoint，不另建替代现场。直接输入子 issue 号时，只有无既有 scene 且 Issue Admission 确认为 open + ready 叶子才走单片模式的独立 worktree 和 PR；closed/open-unready 无 scene 叶子 quiet skip；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
+家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 重入时始终继续使用原 worktree 与 Lineage records；当前席位确有已捕获、可恢复 session 时才走 ordinary resume，否则保留同一 scene/worktree 并走明确的新 invocation/relay，不能伪称恢复旧 session。relay 保留现场、baton 与旧 session/checkpoint 记录，successor 席位由 Policy 按 ADR 0134 的固定顺序选择，再由 Worker Invocation 为该席位启动新的 agent/session/checkpoint，不另建替代现场。直接输入子 issue 号时，只有无既有 scene 且 Issue Admission 确认为 open + ready 叶子才走单片模式的独立 worktree 和 PR；closed/open-unready 无 scene 叶子 quiet skip；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
 **议题准入（Issue Admission）**:
@@ -30,12 +30,20 @@ _Avoid_: 先创建现场再做无现场准入、用缓存或本地推断代替 l
 只在子分支机械合并回父工作树发生真实 Git 冲突时出场、负责解决该次冲突的 worker。无冲突时由确定性合并直接完成，不调用模型。
 _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代替干净的 Git 合并
 
-**编排账（Orchestration Ledger）**:
-用于续跑与定位 agent session 的持久化编排状态与记录，记载已完成步骤、结果、下一步与 session identity。它不是 agent 的对话记忆；真正的模型上下文留在 agent session，由编排账中的 session identity 定位。
-_Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
+**编排记录（Orchestration Records）**:
+各专业 owner 为续跑写下的持久记录总称，例如流程位置、家族合入状态、待回答问题与当前席位。记录的字段和含义仍归写入它的 Flow / Action / Policy；Lineage 统一保存与按 owner 取回，但不解释。它不是独立于 Lineage 的另一套账本，也不是 agent 的对话记忆。
+_Avoid_: 独立 Orchestration Ledger 服务、四处并列的恢复真源、模型记忆、聊天记录、让容器自行猜恢复点
+
+**Execution Capsule**:
+当前进程内对一个既有 scene 的 live 表示，持有本次可用的 Sandcastle worktree/sandbox handle、baton 与当前活动 session handle。它不落盘；进程重入时不会“复活旧 handle”，而是由 Scene Provisioning / Recovery 根据 Lineage locator 为同一 scene 重新取得 live handle，并构造新的 Capsule。
+_Avoid_: durable record、container/PID locator、把旧内存对象当恢复真源、让 Capsule 决定流程或选座
+
+**Lineage**:
+编排器唯一的 durable 恢复底座。它保存 run/scene locator、当前 flow position，以及 Flow / Action / Policy 各自定义的 owner-scoped records；Scene Provisioning / Recovery 只通过它定位同一 scene。Lineage 只保存、索引和取回，不解释 retry、finding、decision、policy 或外部副作用语义。
+_Avoid_: 第二套 step/family 数据库、live runtime handle、万能业务状态机、从记录内容替 Runner 判卷
 
 **Worker Invocation 生命周期**:
-Execution Capsule 只持有 live scene identity / handle，Lineage 只保存 locator 与恢复记录，Scene Provisioning / Recovery 单一查询 Lineage 并找回或重连同一 scene。Worker Invocation Action 消费已恢复的 Capsule handle，只拥有该 scene 内的 worker crash/re-entry、内部 worker retry budget、是否重派 worker，以及 worker 进程与当前角色 session 的恢复。Runner 只依据 exit-code 通道，在同一 fixed flow position 执行 #598 的有界进程重试；耗尽即终止 run，不进入下一 Action。ordinary retry/resume 恢复当前角色原 session；relay 保留 scene、worktree、baton 与旧 session/checkpoint records，successor 席位由 Policy 按 ADR 0134 的固定顺序选择，再由 Worker Invocation 启动新 session。
+Worker Invocation Action 消费 Scene Provisioning / Recovery 为同一 scene 新建或恢复的 Capsule，只拥有该 scene 内的 worker invocation、当前角色 session、quota/capacity park/wake 与 relay。agent run、session resume、structured-output repair、idle/completion timeout 与 cancel 直接复用 Sandcastle；本仓不再用 PID、stdout parser、sidecar 或第二套通用 retry executor 复制这些能力。Runner 只依据 exit-code 通道，在同一 fixed flow position 执行 #598 的有界 Action 进程重试；耗尽即终止 run，不进入下一 Action。当前席位确有可恢复 session 时，ordinary retry/resume 才恢复原 session；不具备该能力时保留同一 scene/worktree，按 Policy 进入新的 invocation/relay，不伪造 session resume。relay 保留 scene、worktree、baton 与旧 session/checkpoint records，由 Policy 选择 successor 席位，再由 Worker Invocation 启动新 session。
 _Avoid_: 让 Runner 消费 Worker Invocation 内部的 worker retry budget 或选择重派 worker、把有界进程重试变成第四通道、让 Worker Invocation 重建 scene/locator/live handle、把 relay 写成 same-session、把 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
 
 ### Runtime And LLM
@@ -608,16 +616,16 @@ reviewer 完成专业判断后留给 runner 的最小交通灯：自报 open-cou
 _Avoid_: outcome JSON、finding 分类器、commit hash 一致性闸、让 runner 管理或评价 worker。
 
 **step ledger**:
-记录交付主流程已走到哪一步、哪些动作完成、哪些任务 parked，以及恢复原 worker session 所需定位信息的持久账本。它服务续跑与统计，不保存 commit before/after 对账材料，也不成为 runner 判卷的依据。
-_Avoid_: 日志、log(太泛)、history
+Canonical Delivery Flow 定义、通过 Lineage 持久化的单片进度记录视图，记录当前 flow position、已完成动作与局部 park。它不是独立 persistence module；session/scene locator 只由 Lineage 保存，字段含义由 Flow 拥有，runner 不拿它判卷。
+_Avoid_: 第二套 durable store、恢复 locator 真源、commit before/after 对账材料、日志
 
 **波次 / wave**:
 某一时刻同时满足依赖、可以并发启动的一组子片。波次只是启动快照，不提供批次级完成 barrier；后续交通语义只读 #869。
 _Avoid_: 批次、轮(混淆评审轮)
 
 **family ledger**:
-家族集成层用于续跑与统计的持久账本，记录子片的完成、合入、park、关闭或取消状态，以及父流程当前应继续的位置；不以 commit hash、HEAD 或提交数量作为 runner 的裁决材料。
-_Avoid_: step ledger(那是单片的)、状态文件(太泛)
+Family flow 定义、通过 Lineage 持久化的家族进度记录视图，记录子片合入、park、关闭/取消及父流程位置。它不是独立 persistence module，也不保存 scene locator；字段含义由 Family flow 拥有，Lineage 只存取，runner 不以 commit、HEAD 或提交数量裁决。
+_Avoid_: 第二套 durable store、scene locator 真源、step ledger(那是单片视图)、状态文件(太泛)
 
 **family escalation answer**:
 家族层 worker 主动提交的 decision gate 被人类回答后的续跑信号。Human Decision action 负责把答案关联回原请求，Lineage 单一持久化 pending request、answer 与关联关系；runner 只 opaque 转运并按固定流程恢复对应 worker，不读取或解释答案。进程失败不会因存在 answer 自动恢复。
