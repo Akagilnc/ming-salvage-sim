@@ -76,6 +76,7 @@ import {
   degradeOptionalRouteSmokeFailures,
   routeConflictSlugsExcluding,
   resolveActiveModelRoute,
+  knownLiveBillingPoolsFromRoute,
   withCoderSlot,
   type ModelRouteEnv,
   type ResolvedModelRoute,
@@ -1771,8 +1772,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const resolveRelayPools = (
     limitedPool: BillingPoolId,
     resetAt: Date | undefined,
+    /**
+     * Quota-wall path only: promote route-smoke-passed pools to live so a 429
+     * beyond T can apply a real baton without test-only `relayPools` injection.
+     * Resource / mechanical-retry paths leave this false — their live evidence
+     * is first-leg proof / hang probe, not smoke of unrelated route slots.
+     */
+    forQuotaWall = false,
   ): ReadonlyArray<BillingPoolEntry> =>
-    resolveRelayPoolsFromTable(limitedPool, resetAt, input.relayPools);
+    resolveRelayPoolsFromTable(
+      limitedPool,
+      resetAt,
+      input.relayPools,
+      forQuotaWall
+        ? knownLiveBillingPoolsFromRoute(modelRoute)
+        : undefined,
+    );
 
   const hasExplicitRelayPools = input.relayPools !== undefined;
 
@@ -3205,7 +3220,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentModelId: modelIdForWallStep(step),
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              pools: resolveRelayPools(currentPool, err.disposition.resetAt),
+              // #909 production live path: route-smoke knownLive for quota walls.
+              pools: resolveRelayPools(
+                currentPool,
+                err.disposition.resetAt,
+                true,
+              ),
               reviewerSlugsForCandidate: (candidate) =>
                 reviewerSlugsForRelayCandidate(candidate, step),
               now: relayNow(),

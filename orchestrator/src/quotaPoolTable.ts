@@ -208,12 +208,16 @@ export type RelayPoolOverride = {
 /**
  * Shared single-slice + family seam: use an explicit probed/override table when
  * present; otherwise {@link buildDefaultBillingPools} (wall-hit limited, rest
- * dead). Never invents live batons from unprobed state.
+ * dead) then promote any {@link knownLivePools} (route-smoke / probe evidence)
+ * to `live`. Explicit override is authoritative — tests and production probes
+ * that pass a full table are not rewritten. Never invents live batons from
+ * empty/unprobed state when no known-live evidence is supplied.
  */
 export function resolveRelayPools(
   limitedPool: BillingPoolId,
   resetAt: Date | undefined,
   override?: ReadonlyArray<RelayPoolOverride>,
+  knownLivePools?: ReadonlyArray<BillingPoolId> | ReadonlySet<BillingPoolId>,
 ): ReadonlyArray<BillingPoolEntry> {
   if (override !== undefined) {
     return override.map((p) => ({
@@ -224,7 +228,19 @@ export function resolveRelayPools(
       models: p.models,
     }));
   }
-  return buildDefaultBillingPools({ limitedPool, resetAt });
+  const base = buildDefaultBillingPools({ limitedPool, resetAt });
+  if (knownLivePools === undefined) return base;
+  const live =
+    knownLivePools instanceof Set
+      ? knownLivePools
+      : new Set<BillingPoolId>(knownLivePools);
+  if (live.size === 0) return base;
+  return base.map((pool) => {
+    // Wall-hit pool stays limited (reset clock); do not promote it to live.
+    if (pool.id === limitedPool) return pool;
+    if (!live.has(pool.id)) return pool;
+    return { ...pool, status: "live" as const };
+  });
 }
 
 export interface NextRelayBaton {

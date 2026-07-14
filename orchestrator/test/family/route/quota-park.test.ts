@@ -1,9 +1,12 @@
 /**
- * #909 B1 / F1–F2 — family runner boundary must *consume* QuotaWaitForResetError
- * (park / relay), not let it crash the family run or collapse into a generic
- * failed leg. Sandbox wrap + verifyCmr rethrow already landed; this covers
- * runFamily / verifyCmr call sites and hard-nails relay when a live baton is
- * injected (shared resolveRelayPools + epic Coder-Rec seams).
+ * #909 B1 full invariant — family barrier 429 wait/换棒.
+ *
+ * Authoritative:
+ *   换棒路径存在至少一个可达的活棒，且超 T 时系统真的换到该棒接续
+ *   （下一棒 dispatch 用新 model/pool），不是只写 `.relay-focus.md` 后 escalate。
+ *
+ * Nails: apply + re-dispatch / park-masquerade red / #906 fail-closed /
+ * dead pools park / production live via route smoke (no test-only injection).
  */
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
@@ -14,6 +17,7 @@ import { runFamily } from "../../../src/family/runner.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import { DEFAULT_PARK_THRESHOLD_MS } from "../../../src/quotaPoolTable.js";
 import { RELAY_FOCUS_FILENAME } from "../../../src/relayDispatch.js";
+import { CoderRecError } from "../../../src/coderRoster.js";
 import type {
   Backend,
   IssueMeta,
@@ -29,8 +33,10 @@ import type {
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../../src/family/types.js";
+import type { ResolvedModelRoute } from "../../../src/modelRoutes.js";
 
 const CODER_REC_BODY = "Coder-Rec: grok-4.5 → terra@med → luna@med";
+const BROKEN_CODER_REC_BODY = "Coder-Rec: totally-bogus → also-fake";
 
 function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "family-quota-park-"));
@@ -47,6 +53,16 @@ function makeRepo(): string {
 
 class ChildBackend implements Backend {
   readonly metaFetches: number[] = [];
+  readonly bodyByIssue = new Map<number, string>();
+
+  constructor(opts?: { readonly epicBody?: string }) {
+    if (opts?.epicBody !== undefined) {
+      this.bodyByIssue.set(909, opts.epicBody);
+    } else {
+      this.bodyByIssue.set(909, CODER_REC_BODY);
+    }
+  }
+
   async smokeModelRoute(route: any) {
     const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
@@ -65,13 +81,13 @@ class ChildBackend implements Backend {
       hasSubIssues: false,
       isClosed: false,
       openBlockedBy: [],
-      body: CODER_REC_BODY,
+      body: this.bodyByIssue.get(issueNumber) ?? CODER_REC_BODY,
     };
   }
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
     return {
       number: issueNumber,
-      body: CODER_REC_BODY,
+      body: this.bodyByIssue.get(issueNumber) ?? CODER_REC_BODY,
       comments: [],
       agentBrief: "## Agent Brief",
     };
@@ -155,7 +171,7 @@ function quotaWaitError(opts: {
   });
 }
 
-/** Live alternate pool table — mirrors single-slice relayPools injection. */
+/** Explicit live alternate pool table — mirrors single-slice RunInput.relayPools. */
 function liveBatonRelayPools(resetAt: Date) {
   return [
     {
@@ -199,10 +215,18 @@ function liveBatonRelayPools(resetAt: Date) {
   ];
 }
 
+/** Explicit dead table — park_fallback even beyond T (no fabricated batons). */
+function allDeadRelayPools(resetAt: Date) {
+  return liveBatonRelayPools(resetAt).map((p) =>
+    p.id === "grok-build"
+      ? p
+      : { ...p, status: "dead" as const },
+  );
+}
+
 describe("#909 family runner consumes QuotaWait park/relay at verify boundary", () => {
-  it("wave verify 429 → park (escalated + provider_degraded), not uncaught crash", async () => {
+  it("wave verify 429 within T → park (escalated + provider_degraded), not uncaught crash", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
-    // Within T → pure park (wait original baton).
     const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
     const familyBackend = new FakeFamilyBackend();
     let waveCalls = 0;
@@ -223,18 +247,14 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     expect(waveCalls).toBe(1);
-    // Must not throw / crash — structured park outcome.
     expect(result.status).toBe("escalated");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
-    // Not a generic failed / incomplete / verify_failed leg-kill.
     expect(result.status).not.toBe("incomplete");
     expect(result.status).not.toBe("verify_failed");
-    // Child already merged before the wave barrier; park preserves that truth.
     expect(result.children.some((c) => c.issue === 10 && c.status === "merged")).toBe(
       true,
     );
-    // Must NOT write a blocking failure escalated row that freezes re-feed.
     const blockingFailure = familyBackend.ledger.filter(
       (e) =>
         e.status === "escalated" &&
@@ -244,11 +264,10 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(blockingFailure).toHaveLength(0);
   });
 
-  it("final verify 429 → park outcome (not generic failed ship/cmr leg)", async () => {
+  it("final verify 429 within T → park outcome (not generic failed ship/cmr leg)", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
     const familyBackend = new FakeFamilyBackend();
-    // Pre-merge so we reach final barrier quickly.
     familyBackend.ledger.push({
       childIssue: 10,
       status: "merged",
@@ -275,9 +294,8 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(result.failedPhase).toBeUndefined();
   });
 
-  it("beyond T + live baton at final barrier → hard relay (focus staged, not soft park OK)", async () => {
+  it("POSITIVE: beyond T + live baton → apply + re-dispatch next barrier on toModel/toPool", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
-    // Beyond T (reset more than 30m away) → relay when live baton exists.
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
     const familyBackend = new FakeFamilyBackend(worktree);
@@ -288,37 +306,47 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       familyHeadAfter: "family-base-0",
     });
 
+    const finalRoutes: ResolvedModelRoute[] = [];
+    let finalCalls = 0;
+
     const result = await runFamily({
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend: childBackend,
       familyBase: "family/909-base",
       now: () => now,
-      // Explicit probed table — same seam as single-slice RunInput.relayPools.
       relayPools: liveBatonRelayPools(resetAt),
       verifyCmr: async (input) => {
-        if (input.phase === "final") {
+        if (input.phase !== "final") return { ok: true, ran: true };
+        finalCalls += 1;
+        if (input.modelRoute !== undefined) {
+          finalRoutes.push(input.modelRoute);
+        }
+        // First dispatch still on wall-hit scene → 429; second must be the baton.
+        if (finalCalls === 1) {
           throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
         }
         return { ok: true, ran: true };
       },
     });
 
-    // Hard assert: beyond T + live baton MUST relay, not park_fallback.
-    expect(result.status).toBe("escalated");
-    expect(result.stopSummary.reason).toBe("provider_degraded");
-    expect(result.stopSummary.summary).toMatch(
-      /quota wall relay staged.*grok-build.*codex-5h|relay staged/i,
-    );
-    expect(result.stopSummary.repairHint).toMatch(/relay baton|re-feed/i);
-    // Focus file staged on the family working repo (shared tryStageRelayFocusFile).
+    // Full invariant: system CONTINUES on the baton — not escalate-after-stage.
+    expect(finalCalls).toBe(2);
+    expect(result.status).not.toBe("escalated");
+    expect(result.stopSummary?.reason).not.toBe("provider_degraded");
+
+    // Second dispatch uses baton model (terra / gpt-5.6-terra) — applyRelayBaton mutation.
+    expect(finalRoutes).toHaveLength(2);
+    const second = finalRoutes[1]!;
+    expect(second.slots.coder).toMatch(/gpt-5\.6-terra|terra/i);
+
+    // Focus still staged for worker brief continuity.
     const focusPath = join(worktree, RELAY_FOCUS_FILENAME);
     expect(existsSync(focusPath)).toBe(true);
     const focus = readFileSync(focusPath, "utf8");
-    // Coder-Rec order from epic body → next baton is terra@med on codex-5h.
     expect(focus).toMatch(/terra@med|gpt-5\.6-terra/i);
     expect(focus).toMatch(/codex-5h/i);
-    // Family audit row names the relay outcome (non-blocking).
+
     const relayAudit = familyBackend.ledger.filter(
       (e) =>
         e.status === "worker_dispatched" &&
@@ -326,11 +354,52 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
         e.workerStep.startsWith("quota_relay:"),
     );
     expect(relayAudit.length).toBeGreaterThanOrEqual(1);
-    // Epic Coder-Rec body was actually read (not resolveCoderRecOrder(undefined)).
     expect(childBackend.metaFetches).toContain(909);
+
+    // NEGATIVE: park-masquerade must fail — soft "relay staged" escalate is not success.
+    expect(result.stopSummary?.summary ?? "").not.toMatch(/relay staged/i);
   });
 
-  it("beyond T + no live baton → park_fallback (park still OK)", async () => {
+  it("POSITIVE production path: route smoke yields live baton without relayPools injection", async () => {
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    // Beyond T on grok-build; normal route smokes codex models → codex-5h known-live.
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+
+    const finalRoutes: ResolvedModelRoute[] = [];
+    let finalCalls = 0;
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/909-base",
+      now: () => now,
+      // NO relayPools — production must reach live baton via route-smoke knownLive.
+      verifyCmr: async (input) => {
+        if (input.phase !== "final") return { ok: true, ran: true };
+        finalCalls += 1;
+        if (input.modelRoute !== undefined) finalRoutes.push(input.modelRoute);
+        if (finalCalls === 1) {
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(finalCalls).toBe(2);
+    expect(result.status).not.toBe("escalated");
+    expect(finalRoutes[1]?.slots.coder).toMatch(/gpt-5\.6-terra|terra/i);
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(true);
+  });
+
+  it("NEGATIVE: beyond T + explicit dead/unprobed pools → park, never fake relay", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
@@ -341,24 +410,29 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       familyHeadAfter: "family-base-0",
     });
 
-    // No relayPools → buildDefaultBillingPools marks unprobed pools dead → park.
+    let finalCalls = 0;
     const result = await runFamily({
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/909-base",
       now: () => now,
+      // Explicit dead table wins over smoke-derived knownLive (no fabricated batons).
+      relayPools: allDeadRelayPools(resetAt),
       verifyCmr: async (input) => {
         if (input.phase === "final") {
+          finalCalls += 1;
           throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
         }
         return { ok: true, ran: true };
       },
     });
 
+    expect(finalCalls).toBe(1);
     expect(result.status).toBe("escalated");
     expect(result.stopSummary.reason).toBe("provider_degraded");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
+    // Soft "relay staged" escalate must NOT pass as park_fallback green.
     expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
     const parkAudit = familyBackend.ledger.filter(
@@ -381,6 +455,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       familyHeadAfter: "family-base-0",
     });
 
+    let finalCalls = 0;
     const result = await runFamily({
       epic: epicWith(10),
       familyBackend,
@@ -390,15 +465,61 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       relayPools: liveBatonRelayPools(resetAt),
       verifyCmr: async (input) => {
         if (input.phase === "final") {
+          finalCalls += 1;
           throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
         }
         return { ok: true, ran: true };
       },
     });
 
+    expect(finalCalls).toBe(1);
     expect(result.status).toBe("escalated");
     expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
     expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+  });
+
+  it("NEGATIVE #906: broken Coder-Rec on family path must not silent-default", async () => {
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+    const childBackend = new ChildBackend({ epicBody: BROKEN_CODER_REC_BODY });
+
+    let finalCalls = 0;
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/909-base",
+      now: () => now,
+      relayPools: liveBatonRelayPools(resetAt),
+      verifyCmr: async (input) => {
+        if (input.phase === "final") {
+          finalCalls += 1;
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    // Fail-closed: no second dispatch on a silently defaulted roster.
+    expect(finalCalls).toBe(1);
+    expect(result.status).toBe("escalated");
+    // Must surface Coder-Rec failure — not park masquerade / not silent relay.
+    expect(
+      `${result.stopSummary.summary} ${result.stopSummary.repairHint ?? ""} ${result.escalation?.diagnosis ?? ""}`,
+    ).toMatch(/Coder-Rec|CoderRec|unknown model|broken/i);
+    expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
+    // Must not have applied a default-order baton as if Coder-Rec was fine.
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+    expect(childBackend.metaFetches).toContain(909);
+    // Type-level: CoderRecError remains the fail-closed signal class.
+    expect(CoderRecError).toBeDefined();
   });
 });

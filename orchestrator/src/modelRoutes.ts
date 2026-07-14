@@ -16,6 +16,12 @@ import {
   resolveModelSlug,
   type ModelFamily,
 } from "./modelRegistry.js";
+import {
+  billingPoolForModelRef,
+  type BillingPoolId,
+  type NextRelayBaton,
+} from "./quotaPoolTable.js";
+import type { StepId } from "./types.js";
 
 export type RouteSmokeStatus =
   | { readonly state: "unverified" }
@@ -491,6 +497,53 @@ export function withCoderSlot(
     ),
     smoke,
   };
+}
+
+/**
+ * #686 / #909 — pure apply of a relay baton onto a resolved route (shared by
+ * single-slice and family). Role-aware slot mutation matches the single-slice
+ * runner wall-step map: S3/S6 → reviewer, S5 → coderFix, else coder (+coderFix
+ * via {@link withCoderSlot}). Does not carry sticky state — callers own that.
+ */
+export function applyRelayBatonToRoute(
+  route: ResolvedModelRoute,
+  baton: Pick<NextRelayBaton, "slug">,
+  wallStep: StepId = "S2",
+): ResolvedModelRoute {
+  const trimmed = baton.slug.trim();
+  assertKnownWorkerSlug(trimmed);
+  if (wallStep === "S3" || wallStep === "S6") {
+    return {
+      ...route,
+      slots: { ...route.slots, reviewer: trimmed },
+    };
+  }
+  if (wallStep === "S5") {
+    return {
+      ...route,
+      slots: { ...route.slots, coderFix: trimmed },
+    };
+  }
+  return withCoderSlot(route, trimmed);
+}
+
+/**
+ * Production live-baton evidence: billing pools of smoke-`passed` route models.
+ * Shared by single-slice + family so default runs can obtain a live pool table
+ * without test-only `relayPools` injection. Unverified/failed smokes contribute
+ * nothing — unknown state stays not-live.
+ */
+export function knownLiveBillingPoolsFromRoute(
+  route: Pick<ResolvedModelRoute, "slots" | "legCollections" | "smoke">,
+): ReadonlyArray<BillingPoolId> {
+  const live = new Set<BillingPoolId>();
+  for (const entry of routeSmokeEntries(route)) {
+    const status = route.smoke[entry.key];
+    if (status?.state !== "passed") continue;
+    const pool = billingPoolForModelRef(entry.slug);
+    if (pool !== undefined) live.add(pool);
+  }
+  return [...live];
 }
 
 /**

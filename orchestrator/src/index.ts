@@ -266,7 +266,12 @@ export {
   selectCoderRecEntry,
 } from "./coderRoster.js";
 export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./coderRoster.js";
-export { applyCoderRecToRoute, withCoderSlot } from "./modelRoutes.js";
+export {
+  applyCoderRecToRoute,
+  applyRelayBatonToRoute,
+  knownLiveBillingPoolsFromRoute,
+  withCoderSlot,
+} from "./modelRoutes.js";
 
 // ── relay dispatch (#686 / ADR 0124–0126) ───────────────────────────────────
 export {
