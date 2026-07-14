@@ -82,12 +82,6 @@ export type ModelRouteLegCollectionOverrides = Readonly<
   Partial<Record<ModelRouteLegCollection, ReadonlyArray<string>>>
 >;
 export type ModelRouteEnv = Readonly<Record<string, string | undefined>>;
-export type CmrLegAccountingRoute =
-  | ResolvedModelRoute
-  | ModelRouteEnv
-  | ReadonlyArray<{ readonly slug: string }>
-  | null
-  | undefined;
 
 export interface TightFamilyViolation {
   readonly slot: ModelRouteSlot | ModelRouteLegCollection;
@@ -402,13 +396,6 @@ export function routeSmokeEntries(route: Pick<ResolvedModelRoute, "slots" | "leg
   return entries;
 }
 
-export function withRouteSmoke(
-  route: ResolvedModelRoute,
-  smoke: Readonly<Record<string, RouteSmokeStatus>>,
-): ResolvedModelRoute {
-  return { ...route, smoke: { ...route.smoke, ...smoke } };
-}
-
 export interface DroppedOptionalRouteLeg {
   readonly slug: string;
   readonly reason: string;
@@ -543,7 +530,9 @@ export function routeSmokeFailure(
     if (!Number.isFinite(at) || now - at > maxAgeMs) {
       return `route smoke expired for ${entry.key}; last passed at ${status.at}`;
     }
-    const currentCliVersion = currentCliVersions[entry.slug];
+    // Prefer entry.key (model×pipe / role); fall back to bare slug for older maps.
+    const currentCliVersion =
+      currentCliVersions[entry.key] ?? currentCliVersions[entry.slug];
     if (currentCliVersion !== undefined && currentCliVersion !== status.cliVersion) {
       return `route smoke expired for ${entry.key}; CLI version changed from ${status.cliVersion} to ${currentCliVersion}`;
     }
@@ -558,7 +547,12 @@ export async function smokeRouteModels(
 ): Promise<ResolvedModelRoute> {
   const smoke: Record<string, RouteSmokeStatus> = { ...route.smoke };
   const entries = routeSmokeEntries(route);
-  const uniqueEntries = [...new Map(entries.map((entry) => [entry.slug, entry])).values()];
+  // #884: unique by model slug (owner "六路" = unique models). Status fans out
+  // to every route entry sharing that slug. Pool-specific pings are forced by
+  // RealBackend.smokeModelRoute after this when relaySmokeEntryKey is set.
+  const uniqueEntries = [
+    ...new Map(entries.map((entry) => [entry.slug, entry])).values(),
+  ];
   const results = await Promise.all(
     uniqueEntries.map(async (entry) => {
       try {
@@ -584,7 +578,7 @@ export async function smokeRouteModels(
     }),
   );
   for (const { entry, status } of results) {
-    for (const target of entries.filter((candidate) => candidate.slug === entry.slug)) {
+    for (const target of entries.filter((c) => c.slug === entry.slug)) {
       smoke[target.key] = status;
     }
   }
@@ -829,109 +823,4 @@ export function cmrReviewLegs(
   env: ModelRouteEnv = process.env,
 ): ReadonlyArray<ModelRouteLeg> {
   return resolveActiveModelRoute(env).legCollections.cmrReview;
-}
-
-function isResolvedModelRoute(value: unknown): value is ResolvedModelRoute {
-  if (value === null || typeof value !== "object") return false;
-  const candidate = value as Partial<ResolvedModelRoute>;
-  return (
-    candidate.slots !== undefined &&
-    candidate.slots !== null &&
-    typeof candidate.slots === "object" &&
-    candidate.legCollections !== undefined &&
-    candidate.legCollections !== null &&
-    typeof candidate.legCollections === "object" &&
-    Array.isArray(candidate.legCollections.cmrReview) &&
-    Array.isArray(candidate.tightFamilyViolations)
-  );
-}
-
-function isCmrLegArray(
-  value: CmrLegAccountingRoute,
-): value is ReadonlyArray<{ readonly slug: string }> {
-  return Array.isArray(value);
-}
-
-export function cmrLegAccountingFailure(
-  input: {
-    readonly successfulLegs: readonly string[];
-    readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-  },
-  routeOrEnv: CmrLegAccountingRoute = process.env,
-): string | undefined {
-  const declaredLegs = isCmrLegArray(routeOrEnv)
-    ? routeOrEnv.map((leg) => leg.slug)
-    : isResolvedModelRoute(routeOrEnv)
-      ? routeOrEnv.legCollections.cmrReview.map((leg) => leg.slug)
-      : cmrReviewLegs(routeOrEnv ?? process.env).map((leg) => leg.slug);
-  // This is live route accounting. A recorded historical 5.5 leg is evidence
-  // of that past run, never a synonym for the current Sol officer.
-  const successfulLegs = input.successfulLegs;
-  const skippedLegs = input.skippedLegs ?? [];
-  const declared = new Set(declaredLegs);
-  const undeclaredSuccessful = successfulLegs.filter((slug) => !declared.has(slug));
-  if (undeclaredSuccessful.length > 0) {
-    return (
-      "cmr worker reported successful legs that were not declared by the active route: " +
-      undeclaredSuccessful.join(", ")
-    );
-  }
-  const undeclaredSkipped = skippedLegs
-    .map((leg) => leg.slug)
-    .filter((slug) => !declared.has(slug));
-  if (undeclaredSkipped.length > 0) {
-    return (
-      "cmr worker reported skipped legs that were not declared by the active route: " +
-      undeclaredSkipped.join(", ")
-    );
-  }
-  const duplicateSuccessful = successfulLegs.filter(
-    (slug, index, legs) => legs.indexOf(slug) !== index,
-  );
-  if (duplicateSuccessful.length > 0) {
-    return (
-      "cmr worker reported duplicate successful legs: " +
-      [...new Set(duplicateSuccessful)].join(", ")
-    );
-  }
-  const skippedSlugs = skippedLegs.map((leg) => leg.slug);
-  const duplicateSkipped = skippedSlugs.filter(
-    (slug, index, legs) => legs.indexOf(slug) !== index,
-  );
-  if (duplicateSkipped.length > 0) {
-    return (
-      "cmr worker reported duplicate skipped legs: " +
-      [...new Set(duplicateSkipped)].join(", ")
-    );
-  }
-  const successful = new Set(successfulLegs);
-  const skipped = new Set(skippedSlugs);
-  const missing = declaredLegs.filter((slug) => !successful.has(slug) && !skipped.has(slug));
-  if (missing.length > 0) {
-    return (
-      "cmr worker omitted declared leg accounting for: " +
-      `${missing.join(", ")} (each active-route cmr leg must be successful or skipped)`
-    );
-  }
-  const doubleReported = declaredLegs.filter((slug) => successful.has(slug) && skipped.has(slug));
-  if (doubleReported.length > 0) {
-    return (
-      "cmr worker reported declared leg as both successful and skipped: " +
-      doubleReported.join(", ")
-    );
-  }
-  return undefined;
-}
-
-export function requiredCmrLegSkipFailure(
-  skippedLegs: readonly { readonly slug: string; readonly reason: string }[] | undefined,
-  route: ResolvedModelRoute,
-): string | undefined {
-  const skipped = new Set((skippedLegs ?? []).map((leg) => leg.slug));
-  const required = route.legCollections.cmrReview
-    .filter((leg) => leg.optional !== true && skipped.has(leg.slug))
-    .map((leg) => leg.slug);
-  return required.length > 0
-    ? `required CMR anchor leg(s) unavailable: ${required.join(", ")}`
-    : undefined;
 }

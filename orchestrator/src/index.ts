@@ -1,22 +1,15 @@
-// @ming/orchestrator — public surface (#244).
-// The runner-driven step machine (ADR 0018), its Backend seam, route()
-// decision function, and domain types. Slice #247 wires the happy path;
-// later slices (#248–#256) layer on these seams.
-export { runOrchestrator } from "./runner.js";
+// @ming/orchestrator — public surface. Production execution enters through
+// runFamilyDriver; runOrchestrator remains an internal child-slice machine.
 export { route } from "./route.js";
 export type { RouteContext, RouteDecision } from "./route.js";
 export {
   contractDriftStopSummary,
-  findingDescriptor,
   infraFailureStopSummary,
   providerDegradedStopSummary,
-  stopReasonForFindingDisposition,
-  stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
 } from "./stopSummary.js";
 export type {
   AcceptedSuppressionSummary,
-  FindingDescriptor,
   HeadFreshnessSummary,
   ProviderDegradationSummary,
   ShipFailureSummary,
@@ -32,7 +25,6 @@ export {
   legacyDispatchWorker,
   workerResultToStep,
   stepSpecToWorkerSpec,
-  shipWorkerSpec,
 } from "./dispatchWorker.js";
 export type {
   DispatchWorkerWithMonitorOptions,
@@ -62,7 +54,6 @@ export {
   extractClaudeTokens,
   extractCodexTokens,
   extractTokensFromLog,
-  getTelemetryRunEnvironment,
   hashDirectoryContents,
   newLegId,
   readDispatchLogSlice,
@@ -138,7 +129,6 @@ export {
   readFamilyEpic,
   buildFamilyEpic,
   parseSubIssueAdmission,
-  parseSubIssueNumbers,
   cutFamilyBase,
   resolveCodexFast,
 } from "./familyDriver.js";
@@ -180,8 +170,6 @@ export type {
   FamilyVerifyErrorPackage,
   IntegratedCmrRequest,
   IntegratedCmrResult,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
   FamilyAbortedEvent,
   FamilyEscalation,
 } from "./family/types.js";
@@ -305,7 +293,6 @@ export {
   buildRelayHandoffLedgerEntry,
   canRelayHandoff,
   capacityRelayErrorFrom,
-  classifyFailureForRetryOrRelay,
   countRelayHandoffsInLedger,
   decideRelayAfterIdle,
   forkQuotaWallAt683Point,
@@ -325,12 +312,10 @@ export {
 export type {
   ApplyResourceFailureHandoffInput,
   DecideRelayAfterIdleInput,
-  FailureClassKind,
   RelayDispositionResult,
   RelayHandoffLedgerEvent,
   RelayHandoffTrigger,
   RelayTagOutcome,
-  RetryOrRelayClass,
 } from "./relayDispatch.js";
 export {
   POOL_DISPATCH_BINDINGS,

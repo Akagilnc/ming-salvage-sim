@@ -1,12 +1,11 @@
 /**
  * #602 — host-side auto-merge after online review + doc-release converges.
  */
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Sh } from "../src/familyDriver.js";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   assessMergeReadiness,
@@ -16,59 +15,21 @@ import {
   isDocOnlyFileList,
   isPrMergedMarker,
   mergeReadinessStopSummary,
-  observeOpenPrForBranch,
-  resolveHostTruthPr,
   runAutoMergeStage,
   tryResumePrMergedBackfill,
   prMergedRecordFromLive,
   docReleasePathsFromCommit,
 } from "../src/autoMerge.js";
 import type { PrReviewSnapshot } from "../src/botPolling.js";
-import { docReleaseWorkerSpec } from "../src/dispatchWorker.js";
-import { RealBackend, SPAWNED_WORKER_ENV } from "../src/realBackend.js";
-import { stepSpecToWorkerSpec } from "../src/dispatchWorker.js";
-import { docReleasePathsFromHead, sliceDocReleaseCommitOid } from "../src/runner.js";
 import {
   familyAutoMergeIncomplete,
   runFamilyAutoMergeStage,
 } from "../src/family/familyAutoMerge.js";
 import { familyPrMergedForHead } from "../src/family/ledger.js";
 import type { FamilyBackend, FamilyLedgerEntry } from "../src/family/types.js";
-import { runOrchestrator } from "../src/runner.js";
-import { skeletonReviewLoopWorkerResult } from "../src/reviewLoopOutcome.js";
-import type {
-  Backend,
-  PersistentLedgerEntry,
-  PrMergedEvent,
-  ResumeState,
-  StepOutput,
-  StepSpec,
-  WorkerResult,
-  WorkerSpec,
-} from "../src/types.js";
-
-type PrMergedLedgerFixture = PersistentLedgerEntry & PrMergedEvent;
-
-function isPrMergedLedgerFixture(
-  entry: PersistentLedgerEntry,
-): entry is PrMergedLedgerFixture {
-  return entry.event === "pr_merged";
-}
 
 const REPO = "Akagilnc/ming-salvage-sim";
 const PR_URL = "https://github.com/Akagilnc/ming-salvage-sim/pull/602";
-
-const tempHomes: string[] = [];
-
-function cleanupTempHomes(): void {
-  while (tempHomes.length > 0) {
-    const home = tempHomes.pop();
-    if (home !== undefined) rmSync(home, { recursive: true, force: true });
-  }
-}
-
-afterEach(cleanupTempHomes);
-afterAll(cleanupTempHomes);
 
 function readySnapshot(overrides?: Partial<PrReviewSnapshot>): PrReviewSnapshot {
   return {
@@ -133,155 +94,6 @@ describe("#602 isDocOnlyFileList", () => {
     expect(isDocOnlyFileList(["CHANGELOG.md.evil"])).toBe(false);
     expect(isDocOnlyFileList(["docs/../orchestrator/src/runner.ts"])).toBe(false);
     expect(isDocOnlyFileList(["docs/"])).toBe(false);
-  });
-});
-
-describe("#824 reported PR identity", () => {
-  it("discards a foreign-fork hint and resolves the legitimate coexisting PR", () => {
-    const resolved = resolveHostTruthPr(
-      fakeSh({
-        "gh pr view": () => JSON.stringify({
-          number: 824,
-          url: `${REPO}/pull/824`,
-          state: "OPEN",
-          headRefName: "fix/824-radius",
-          headRefOid: "foreign-head",
-          headRepositoryOwner: { login: "foreign" },
-          mergeStateStatus: "CLEAN",
-        }),
-        "gh pr list": () => JSON.stringify([
-          { number: 825, url: `${REPO}/pull/825`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "own-head", headRepositoryOwner: { login: "Akagilnc" }, mergeStateStatus: "CLEAN" },
-        ]),
-      }),
-      REPO,
-      "fix/824-radius",
-      `${REPO}/pull/824`,
-    );
-
-    expect(resolved.prUrl).toBe(`${REPO}/pull/825`);
-  });
-
-  it("discards a hint whose gh lookup throws and falls back to host branch truth", () => {
-    const resolved = resolveHostTruthPr(
-      fakeSh({
-        "gh pr view": () => { throw new Error("not found"); },
-        "gh pr list": () => JSON.stringify([
-          { number: 825, url: `${REPO}/pull/825`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "own-head", headRepositoryOwner: { login: "Akagilnc" }, mergeStateStatus: "CLEAN" },
-        ]),
-      }),
-      REPO,
-      "fix/824-radius",
-      `${REPO}/pull/404`,
-    );
-
-    expect(resolved.prNumber).toBe(825);
-  });
-
-  it("filters same-name fork PRs by owner before choosing a result", () => {
-    let listArgs: string[] = [];
-    const resolved = resolveHostTruthPr(
-      fakeSh({
-        "gh pr list": (args) => {
-          listArgs = args;
-          return JSON.stringify([
-            { number: 1, url: `${REPO}/pull/1`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "fork", headRepositoryOwner: { login: "foreign" }, mergeStateStatus: "CLEAN" },
-            { number: 2, url: `${REPO}/pull/2`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "own", headRepositoryOwner: { login: "Akagilnc" }, mergeStateStatus: "CLEAN" },
-          ]);
-        },
-      }),
-      REPO,
-      "fix/824-radius",
-    );
-
-    expect(listArgs).not.toContain("--limit");
-    expect(resolved.prNumber).toBe(2);
-  });
-
-  it("treats GitHub state and owner login casing as host-formatting, not identity", () => {
-    const resolved = resolveHostTruthPr(
-      fakeSh({
-        "gh pr list": () => JSON.stringify([
-          {
-            number: 2,
-            url: `${REPO}/pull/2`,
-            state: "open",
-            headRefName: "fix/824-radius",
-            headRefOid: "own",
-            headRepositoryOwner: { login: "akagilnc" },
-            mergeStateStatus: "clean",
-          },
-        ]),
-      }),
-      REPO,
-      "fix/824-radius",
-    );
-
-    expect(resolved.prNumber).toBe(2);
-    expect(assessMergeReadiness(resolved, readySnapshot()).ready).toBe(true);
-  });
-
-  it("fails only after host truth contains no own-repository PR", () => {
-    expect(() => resolveHostTruthPr(
-      fakeSh({ "gh pr list": () => JSON.stringify([
-        { number: 1, url: `${REPO}/pull/1`, state: "OPEN", headRefName: "fix/824-radius", headRefOid: "fork", headRepositoryOwner: { login: "foreign" }, mergeStateStatus: "CLEAN" },
-      ]) }),
-      REPO,
-      "fix/824-radius",
-    )).toThrow(/no open PR.*fix\/824-radius/i);
-  });
-
-  it("rejects a same-named open branch from another fork", () => {
-    const observation = observeOpenPrForBranch(
-      fakeSh({
-        "gh pr view": () => JSON.stringify({
-          number: 824,
-          url: "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
-          state: "OPEN",
-          headRefName: "fix/824-radius",
-          headRefOid: "fork-head",
-          headRepositoryOwner: { login: "other-fork" },
-          mergeStateStatus: "CLEAN",
-        }),
-        "gh pr list": () => "[]",
-      }),
-      REPO,
-      "fix/824-radius",
-      "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
-    );
-
-    expect(observation).toEqual({ present: false });
-  });
-
-  it("rejects a same-named fallback PR from another fork after discarding the reported PR", () => {
-    let listArgs: string[] | undefined;
-    const observation = observeOpenPrForBranch(
-      fakeSh({
-        "gh pr view": () => JSON.stringify({
-          number: 824,
-          url: "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
-          state: "OPEN",
-          headRefName: "fix/824-radius",
-          headRefOid: "reported-fork-head",
-          headRepositoryOwner: { login: "reported-fork" },
-          mergeStateStatus: "CLEAN",
-        }),
-        "gh pr list": (args) => {
-          listArgs = args;
-          return JSON.stringify([
-            {
-              url: "https://github.com/Akagilnc/ming-salvage-sim/pull/825",
-              headRepositoryOwner: { login: "another-fork" },
-            },
-          ]);
-        },
-      }),
-      REPO,
-      "fix/824-radius",
-      "https://github.com/Akagilnc/ming-salvage-sim/pull/824",
-    );
-
-    expect(listArgs?.join(" ")).toContain("headRepositoryOwner");
-    expect(observation).toEqual({ present: false });
   });
 });
 
@@ -431,39 +243,6 @@ describe("#602 runFamilyAutoMergeStage", () => {
     expect(result.ok).toBe(true);
     expect(familyAutoMergeIncomplete(result)).toBe(false);
     expect(backend.ledger.filter((e) => e.status === "pr_merged")).toHaveLength(1);
-  });
-});
-
-describe("#602 docReleasePathsFromHead", () => {
-  it("reads paths from the HEAD commit for the non-doc fail-closed gate", () => {
-    const dir = mkdtempSync(join(tmpdir(), "doc-release-paths-"));
-    const git = (args: string[]) =>
-      execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
-    git(["init"]);
-    git(["config", "user.email", "t@example.com"]);
-    git(["config", "user.name", "t"]);
-    writeFileSync(join(dir, "VERSION"), "1.0.0\n");
-    mkdirSync(join(dir, "docs"), { recursive: true });
-    writeFileSync(join(dir, "docs", "note.md"), "n\n");
-    git(["add", "."]);
-    git(["commit", "-m", "doc-release"]);
-    const docReleaseOid = git(["rev-parse", "HEAD"]).trim();
-    writeFileSync(join(dir, "orchestrator-src.ts"), "x\n");
-    git(["add", "."]);
-    git(["commit", "-m", "non-doc sneak"]);
-
-    const worktree = {
-      branch: "feat/x",
-      base: "main",
-      path: dir,
-    };
-    const paths = docReleasePathsFromHead(worktree);
-    expect(paths).toEqual(["orchestrator-src.ts"]);
-    expect(isDocOnlyFileList(paths!)).toBe(false);
-
-    const docPaths = docReleasePathsFromHead(worktree, docReleaseOid);
-    expect(docPaths).toEqual(["VERSION", "docs/note.md"]);
-    expect(isDocOnlyFileList(docPaths!)).toBe(true);
   });
 });
 
@@ -1248,83 +1027,6 @@ describe("#602 runAutoMergeStage", () => {
     expect(merge).toHaveBeenCalled();
   });
 
-  it("offlineAutoMergeAllowUnverifiedDocPaths admits pr:// test handles only (compat helper)", async () => {
-    const { offlineAutoMergeAllowUnverifiedDocPaths } = await import(
-      "../src/autoMerge.js"
-    );
-    expect(
-      offlineAutoMergeAllowUnverifiedDocPaths(
-        "pr://slice/offline-602",
-        REPO,
-        true,
-        undefined,
-      ),
-    ).toBe(true);
-    expect(
-      offlineAutoMergeAllowUnverifiedDocPaths(PR_URL, REPO, true, undefined),
-    ).toBe(false);
-    expect(
-      offlineAutoMergeAllowUnverifiedDocPaths(
-        "pr://slice/offline-602",
-        REPO,
-        false,
-        undefined,
-      ),
-    ).toBe(false);
-  });
-
-  it("allowUnverifiedDocReleasePaths is a no-op under ADR 0123 (green readiness still merges)", async () => {
-    const merge = vi.fn();
-    const result = await runAutoMergeStage({
-      sh: fakeSh({}),
-      repo: REPO,
-      prUrl: PR_URL,
-      convergedHeadOid: "head-1",
-      docReleaseCompleted: true,
-      priorConvergenceRecorded: true,
-      prMergedMarkerPresent: false,
-      offlineSynthetic: true,
-      allowUnverifiedDocReleasePaths: true,
-      poll: async () => readySnapshot(),
-      executeMerge: merge,
-    });
-    expect(result.ok).toBe(true);
-    expect(merge).toHaveBeenCalled();
-  });
-
-  it("allowUnverifiedDocReleasePaths does not bypass red readiness (unresolved threads)", async () => {
-    // Counter-proof: if the no-op field were wrongly rewired as a readiness
-    // bypass, this case (field=true + unresolved threads) would merge.
-    const merge = vi.fn();
-    const result = await runAutoMergeStage({
-      sh: fakeSh({}),
-      repo: REPO,
-      prUrl: PR_URL,
-      convergedHeadOid: "head-1",
-      docReleaseCompleted: true,
-      priorConvergenceRecorded: true,
-      prMergedMarkerPresent: false,
-      offlineSynthetic: true,
-      allowUnverifiedDocReleasePaths: true,
-      poll: async () =>
-        readySnapshot({
-          quiescent: false,
-          threads: [
-            {
-              id: "1",
-              threadNodeId: "T1",
-              body: "nit",
-              authorLogin: "bot",
-              isResolved: false,
-            },
-          ],
-        }),
-      executeMerge: merge,
-    });
-    expect(result.ok).toBe(false);
-    expect(merge).not.toHaveBeenCalled();
-  });
-
   it("ADR 0123 / #735: offline synthetic without paths merges when readiness green", async () => {
     const merge = vi.fn();
     const result = await runAutoMergeStage({
@@ -1336,7 +1038,6 @@ describe("#602 runAutoMergeStage", () => {
       priorConvergenceRecorded: true,
       prMergedMarkerPresent: false,
       offlineSynthetic: true,
-      allowUnverifiedDocReleasePaths: false,
       poll: async () => readySnapshot(),
       executeMerge: merge,
     });
@@ -1427,33 +1128,6 @@ describe("#602 prMergedRecordFromLive", () => {
   });
 });
 
-describe("#602 sliceDocReleaseCommitOid", () => {
-  it("reads branchHEAD from the last successful S12 ledger row, not worktree HEAD", () => {
-    expect(
-      sliceDocReleaseCommitOid([
-        {
-          step: "S11",
-          branchHEAD: "abc1111",
-          output: { kind: "cleanup", ok: true, terminal: true },
-        },
-        {
-          step: "S12",
-          branchHEAD: "abc1234567890def1234567890abcd1234567890ab",
-          output: { kind: "docRelease", released: true },
-        },
-      ]),
-    ).toBe("abc1234567890def1234567890abcd1234567890ab");
-  });
-
-  it("returns undefined when in-memory S12 row lacks branchHEAD (R5-M1 gap)", () => {
-    expect(
-      sliceDocReleaseCommitOid([
-        { step: "S12", output: { kind: "docRelease", released: true } },
-      ]),
-    ).toBeUndefined();
-  });
-});
-
 describe("#602 isPrMergedMarker", () => {
   it("matches durable pr_merged marker for #603 cleanup precondition", () => {
     const entry = {
@@ -1516,357 +1190,11 @@ describe("#602 familyPrMergedForHead", () => {
   });
 });
 
-describe("#602 docRelease non-interactive dispatch env", () => {
-  it("docRelease worker inherits spawned-session env (no human prompt)", () => {
-    // Use this worktree's prompts/souls — not a hard-coded sibling path that
-    // goes stale when REQUIRED_SOUL_FILES / REFERENCED_PROMPT_FILES grow (#739).
-    const here = dirname(fileURLToPath(import.meta.url));
-    const realPromptsDir = join(here, "..", "prompts");
-    const realSoulsDir = join(here, "..", "image", "souls");
-    class StubBackend extends RealBackend {
-      protected override cloneDirExists(): boolean {
-        return true;
-      }
-      protected override sh(file: string, args: string[]): string {
-        if (file === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
-          return ".git";
-        }
-        return "";
-      }
-      public workerEnv(): Record<string, string> {
-        const spec = stepSpecToWorkerSpec(docReleaseWorkerSpec());
-        return this.boxConfig({ authDir: "/tmp/auth-602" }, spec, 602).env;
-      }
-    }
-    const home = mkdtempSync(join(tmpdir(), "rb-home-602-"));
-    tempHomes.push(home);
-    const env = new StubBackend({
-      sourceRepo: "/tmp/source",
-      remote: "https://github.com/Akagilnc/ming-salvage-sim.git",
-      runKey: 602,
-      repo: REPO,
-      imageName: "test-image-602",
-      promptsDir: realPromptsDir,
-      soulsDir: realSoulsDir,
-      // #748: construction resolves paths under home; keep off real $HOME.
-      home,
-    }).workerEnv();
-    expect(env.OPENCLAW_SESSION).toBe(SPAWNED_WORKER_ENV.OPENCLAW_SESSION);
-  });
-});
-
 describe("#602 mergeReadinessStopSummary", () => {
   it("surfaces blocker reasons for human decision gate", () => {
     const summary = mergeReadinessStopSummary(["ci_pending", "threads_unresolved"]);
     expect(summary.reason).toBe("decision_gate_park");
     expect(summary.summary).toMatch(/ci_pending/);
     expect(summary.summary).toMatch(/threads_unresolved/);
-  });
-});
-
-describe("#602 runOrchestrator slice path — AC8 pr_merged ledger", () => {
-  const OFFLINE_PR = "pr://slice/offline-602-ac8";
-  const worktreeDir = mkdtempSync(join(tmpdir(), "slice-ac8-wt-"));
-  const git = (args: string[]) =>
-    execFileSync("git", ["-C", worktreeDir, ...args], { encoding: "utf8" });
-  git(["init"]);
-  git(["config", "user.email", "t@example.com"]);
-  git(["config", "user.name", "t"]);
-  writeFileSync(join(worktreeDir, "VERSION"), "1.0.0\n");
-  git(["add", "."]);
-  git(["commit", "-m", "doc-release"]);
-  const CONVERGED_HEAD = git(["rev-parse", "HEAD"]).trim();
-  const WORKTREE = {
-    branch: "feat/issue-602-ac8",
-    base: "main",
-    path: worktreeDir,
-  };
-  const STATE_DIR = "/resident/worktrees/.ledger-602-ac8";
-
-  function priorEntry(step: StepSpec["id"], output?: StepOutput): PersistentLedgerEntry {
-    return {
-      step,
-      sessionId: "session-prior",
-      prompt_hash: `hash-${step}`,
-      branchHEAD: CONVERGED_HEAD,
-      ts: "2026-07-09T00:00:00.000Z",
-      ...(output !== undefined ? { output } : {}),
-    };
-  }
-
-  class SliceAutoMergeResumeBackend implements Backend {
-  async smokeModelRoute(route: any) {
-    const { smokeRouteModels } = await import("../src/modelRoutes.js");
-    return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
-  }
-    readonly ledgerWrites: PersistentLedgerEntry[] = [];
-    readonly dispatchSpecs: WorkerSpec[] = [];
-
-    constructor(private readonly resumeState: ResumeState) {}
-
-    async findResumeState(): Promise<ResumeState | undefined> {
-      return this.resumeState;
-    }
-
-    async cleanResidue(): Promise<void> {}
-
-    async fetchIssueMeta(issueNumber: number) {
-      return {
-        number: issueNumber,
-        isReadyForAgent: true,
-        hasSubIssues: false,
-        isClosed: false,
-        openBlockedBy: [],
-      };
-    }
-
-    async fetchIssueSnapshot(issueNumber: number) {
-      return {
-        number: issueNumber,
-        body: "b",
-        comments: [],
-        agentBrief: "",
-      };
-    }
-
-    async prepareWorktree() {
-      return WORKTREE;
-    }
-
-    async writeSnapshot(): Promise<void> {}
-
-    async runStep(): Promise<StepOutput> {
-      throw new Error("runStep should not run on converged-marker resume");
-    }
-
-    async resumeSession(): Promise<StepOutput> {
-      throw new Error("resumeSession should not run on converged-marker resume");
-    }
-
-    async push(): Promise<void> {}
-
-    async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
-      this.ledgerWrites.push(entry);
-    }
-
-    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-      this.dispatchSpecs.push(spec);
-      if (spec.kind === "ship") {
-        return {
-          kind: "completed",
-          output: {
-            kind: "ship",
-            branch: WORKTREE.branch,
-            status: "pr_opened",
-            pr: OFFLINE_PR,
-            prHead: CONVERGED_HEAD,
-          },
-        };
-      }
-      const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
-      if (skeleton !== undefined) return skeleton;
-      return { kind: "failed", reason: `unexpected ${spec.kind}` };
-    }
-  }
-
-  it("records pr_merged with prNumber, remoteBranchName, mergedHeadOid after S12 host auto-merge (offline)", async () => {
-    const prior = [
-      priorEntry("S0"),
-      priorEntry("S1"),
-      priorEntry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-      priorEntry("S3", { kind: "reviewer", findings: [] }),
-      priorEntry("S4"),
-      priorEntry("S7", {
-        kind: "ship",
-        branch: WORKTREE.branch,
-        status: "pr_opened",
-        pr: OFFLINE_PR,
-        prHead: CONVERGED_HEAD,
-      }),
-      {
-        ...priorEntry("S9", { kind: "verify", converged: true }),
-        event: "online_review_converged" as const,
-        prUrl: OFFLINE_PR,
-        prHead: CONVERGED_HEAD,
-        onlineReviewRound: 1,
-      },
-    ];
-    const backend = new SliceAutoMergeResumeBackend({
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: prior,
-    });
-
-    const result = await runOrchestrator({ issueNumber: 602, backend });
-
-    expect(result.status).toBe("success");
-    expect(backend.dispatchSpecs.map((s) => s.id)).toEqual(["S12", "S11"]);
-    const marker = result.stepLedger.find((e) => e.event === "pr_merged");
-    expect(marker).toMatchObject({
-      step: "S12",
-      event: "pr_merged",
-      prUrl: OFFLINE_PR,
-      prNumber: 1,
-      remoteBranchName: "offline-branch",
-      mergedHeadOid: CONVERGED_HEAD,
-      prHead: CONVERGED_HEAD,
-    });
-    expect(
-      backend.ledgerWrites.some(
-        (e) =>
-          isPrMergedLedgerFixture(e) &&
-          e.prNumber === 1 &&
-          e.remoteBranchName === "offline-branch" &&
-          e.mergedHeadOid === CONVERGED_HEAD,
-      ),
-    ).toBe(true);
-  });
-
-  it("in-memory S12 row mirrors branchHEAD from emitLedger without JSONL reload (R5-M1)", async () => {
-    const prior = [
-      priorEntry("S0"),
-      priorEntry("S1"),
-      priorEntry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-      priorEntry("S3", { kind: "reviewer", findings: [] }),
-      priorEntry("S4"),
-      priorEntry("S7", {
-        kind: "ship",
-        branch: WORKTREE.branch,
-        status: "pr_opened",
-        pr: OFFLINE_PR,
-        prHead: CONVERGED_HEAD,
-      }),
-      {
-        ...priorEntry("S9", { kind: "verify", converged: true }),
-        event: "online_review_converged" as const,
-        prUrl: OFFLINE_PR,
-        prHead: CONVERGED_HEAD,
-        onlineReviewRound: 1,
-      },
-    ];
-    const backend = new SliceAutoMergeResumeBackend({
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: prior,
-    });
-
-    const result = await runOrchestrator({ issueNumber: 602, backend });
-
-    expect(result.status).toBe("success");
-    const s12Memory = result.stepLedger.find(
-      (e) => e.step === "S12" && e.output?.kind === "docRelease",
-    );
-    const s12Persisted = backend.ledgerWrites.find(
-      (e) => e.step === "S12" && e.output?.kind === "docRelease",
-    );
-    expect(s12Memory).toMatchObject({ branchHEAD: expect.any(String) });
-    expect(s12Memory).toMatchObject({ branchHEAD: s12Persisted?.branchHEAD });
-  });
-
-  it("writeLedger failure on pr_merged marker returns structured escalate (R1-C2)", async () => {
-    class PrMergedWriteFailsBackend extends SliceAutoMergeResumeBackend {
-      override async writeLedger(entry: PersistentLedgerEntry): Promise<void> {
-        if (entry.event === "pr_merged") {
-          throw new Error("disk full: cannot persist pr_merged marker");
-        }
-        await super.writeLedger(entry);
-      }
-    }
-    const prior = [
-      priorEntry("S0"),
-      priorEntry("S1"),
-      priorEntry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-      priorEntry("S3", { kind: "reviewer", findings: [] }),
-      priorEntry("S4"),
-      priorEntry("S7", {
-        kind: "ship",
-        branch: WORKTREE.branch,
-        status: "pr_opened",
-        pr: OFFLINE_PR,
-        prHead: CONVERGED_HEAD,
-      }),
-      {
-        ...priorEntry("S9", { kind: "verify", converged: true }),
-        event: "online_review_converged" as const,
-        prUrl: OFFLINE_PR,
-        prHead: CONVERGED_HEAD,
-        onlineReviewRound: 1,
-      },
-    ];
-    const backend = new PrMergedWriteFailsBackend({
-      worktree: WORKTREE,
-      stateDir: STATE_DIR,
-      ledger: prior,
-    });
-
-    const result = await runOrchestrator({ issueNumber: 602, backend });
-
-    expect(result.status).toBe("escalate");
-    expect(result.stopSummary).toMatchObject({
-      reason: "infra_failure",
-      summary: expect.stringContaining(
-        "writeLedger failed while persisting pr_merged marker",
-      ),
-    });
-    expect(
-      backend.ledgerWrites.some((e) => e.event === "pr_merged"),
-    ).toBe(false);
-  });
-});
-
-describe("#602 slice auto-merge live poll (R3-C2)", () => {
-  it("merge readiness poll uses pollPrReviewState not waitForBotQuiescence", async () => {
-    const botPolling = await import("../src/botPolling.js");
-    const onlineReviewLoop = await import("../src/onlineReviewLoop.js");
-    const { buildRoundTrigger } = await import("../src/evidenceAdmissibility.js");
-    const pollSpy = vi.spyOn(botPolling, "pollPrReviewState").mockReturnValue(
-      readySnapshot({ headOid: "post-doc-head" }),
-    );
-    const quiescenceSpy = vi.spyOn(onlineReviewLoop, "waitForBotQuiescence");
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "0");
-    const mergeHeadOid = "post-doc-head";
-    let merged = false;
-    const sh = fakeSh({
-      "gh pr view": () =>
-        JSON.stringify({
-          number: 602,
-          url: PR_URL,
-          state: merged ? "MERGED" : "OPEN",
-          headRefName: "feat/x",
-          headRefOid: mergeHeadOid,
-          mergeStateStatus: merged ? "UNKNOWN" : "CLEAN",
-        }),
-      "gh pr merge": () => {
-        merged = true;
-        return "";
-      },
-    });
-
-    await runAutoMergeStage({
-      sh,
-      repo: REPO,
-      prUrl: PR_URL,
-      convergedHeadOid: "s9-head",
-      expectedMergeHeadOid: mergeHeadOid,
-      docReleaseCompleted: true,
-      priorConvergenceRecorded: true,
-      prMergedMarkerPresent: false,
-      offlineSynthetic: false,
-      docReleasePaths: ["VERSION"],
-      mergeConfirmRetryDelayMs: 0,
-      poll: async (round) =>
-        botPolling.pollPrReviewState(sh, {
-          repo: REPO,
-          prUrl: PR_URL,
-          pollCount: round,
-          roundTrigger: buildRoundTrigger(mergeHeadOid),
-        }),
-    });
-
-    expect(pollSpy).toHaveBeenCalled();
-    expect(quiescenceSpy).not.toHaveBeenCalled();
-    pollSpy.mockRestore();
-    quiescenceSpy.mockRestore();
-    vi.stubEnv("ORCHESTRATOR_OFFLINE_REVIEW_POLL", "1");
   });
 });

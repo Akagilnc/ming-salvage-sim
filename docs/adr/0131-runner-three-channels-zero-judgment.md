@@ -8,7 +8,7 @@ runner 只准做三件事，三件之外零判断权：
 
 (a) **数 exit code**——进程死活。真进程级失败（非零 exit / 抛异常 / 无完成信号）的有界机械重试挂在这条通道上（#598 崩溃半边、#853/#855 park-retry），不读任何字。
 
-(b) **读 reviewer 自报的 open-count**——说几条就是几条：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。count 是 worker 的申报（自报哨兵值；无哨兵形态的路径以其**写下的行数**为申报——写行即开口，数行=读通道 (b) 本身，不存在「对账」，因为没有第二个申报可对），runner 不派生、不复核、不读 severity/action 做二次分类。申报与卷面不符由 fixer 读卷时发现。
+(b) **读 reviewer 自报的 open-count**——说几条就是几条：0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒（修复腿之后必派 fresh 复审；fixer 自翻的行在 fresh 终翻前仍计未决，ADR 0129），轮到谁由拓扑写死、非 runner 判断。count 只来自 worker 的显式申报；进程内 review seam 的 `findings` 数组本身就是该 worker 的申报。声明式 count 缺失不等于 0，也不得从 cargo rows 派生。runner 不复核、不读 severity/action 做二次分类；申报与卷面不符由 fixer 读卷时发现。
 
 (c) **转决策门**——worker 自己按的 decision/raise 原样递给人，转运不裁决。
 
@@ -16,9 +16,14 @@ runner 只准做三件事，三件之外零判断权：
 
 **卷面不可用（信封提取不出）按角色真源分治——决策门准入原则（owner 2026-07-13）：人环只接真决策；凡人唯一合理回答是「重试」的，不许上人环，机器按既有机械线自理。且「认定不可用」本身就是判断，runner 无权下；runner 更无权自己按决策门（通道 (c) 只转运 worker 按的门，runner 替按 = 伪造门铃，与 synthesizedFailure 同罪）。**
 - **评审类 worker（reviewer / verify 等）**：产出=卷面本身——信号提取不出时 runner 零判断零 park，按固定拓扑把卷面**原料**（stdout / sidecar artifact 指针，0129 递指针本职）递给下一个智慧体 **fixer**：fixer 读原料，读得懂多少判多少，读不懂打回 reviewer 或自己 raise。零机械重派、零重写梯、零 runner 发起的 park。
-- **coder / ship 类 worker**：产出=git commit / PR 等**外部可查事实**，交卷条只是回执——回执不可读**不上人环**：git 图**有新 commit**（二值存在判断：headBefore..HEAD 非空即有，不数个数、不看 head 位置、不评内容）→ 照常进评审（回执作废不碍事，评审审的是活不是条）；无 commit → 走既有白跑机械重派预算（#592）；**预算耗尽 runner 也不下结论——照常推进到评审步，由 reviewer（智慧体）判**：空 diff 写 findings 打回或 raise 给人。不怕死循环：reviewer 与 coder/fixer 都有 raise 到人的能力，环必被某个智慧体掐断。仅**进程反复崩溃**的耗尽（#598，连活都不存在、无物可判）仍走 infra park。
+- **coder / ship 类 worker（2026-07-13 晚 owner 修订：「严格三件事，没有例外」——本条原「git/host 外部事实真源」例外废止）**：completed（exit 0）= OK，照常进下一棒；交卷条内容只作 cargo 透传（cargo 缺失不改命运，下一棒 worker 自己可查）。交付/提交自证归 worker soul：报成功前自验（真实 commit / PR 已在）+ 幂等条款（已交付直接报成功）。白跑由下一棒智慧体接住：reviewer 判空 diff，写 findings 打回或 raise。runner 永不用 git/host 查询（rev-list / ls-remote / gh pr view）裁 worker 成败；runner 自己的操作性 git（worktree、合并队列、resume 幂等记账）不在此列。不怕死循环：reviewer 与 coder/fixer 都有 raise 到人的能力，环必被某个智慧体掐断。仅**进程反复崩溃**的耗尽（#598）仍走 infra park。
 
-synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (a) 进程事实或上述外部真源事实派生，永不得由卷面判断合成。kill-axis（承 #873）：任何拆除不得以「换一个更温和的校验」收尾。卷面质量归交卷契约（ADR 0130，worker 侧 soul/skill）；发现搬运走 artifact pointer / findings 状态库（ADR 0129）。
+synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (a) 进程事实派生（2026-07-13 晚 owner 修订：git/host 外部事实来源随真源例外一并废止），永不得由卷面判断合成。kill-axis（承 #873）：任何拆除不得以「换一个更温和的校验」收尾。卷面质量归交卷契约（ADR 0130，worker 侧 soul/skill）；发现搬运走 artifact pointer / findings 状态库（ADR 0129）。
+
+## 修订（2026-07-13 晚，owner 亲裁，随 #891 落地）
+
+- **「严格三件事，没有例外」**：本 ADR 原「coder/ship 真源 = git/host 外部事实二值存在」例外废止（见上修订后条文）。ship 侧观测管道（S7 host-truth 探针/OID 比对/观测重试/park-resume 重观测）与 coder 侧 commit 判庭（rev-list 检查、白跑预算 #592 lane）整体拆除；自证与幂等归 worker soul。
+- **建闸双门槛（与三通道同位阶）**：新增任何 runner/评审环防御机制前必过两问——①合宪（不建庭、不读卷、不替按门）②值得（场景发生概率×后果 vs 投入；下游智慧体环兜底为默认答案）。立法实证：S7 观测管道防 <0.1% 场景、六轮生五 bug、终局净 −4589 行拆除。
 
 ## 取代（旧 ADR 已就地标过时并指针到本 ADR）
 
@@ -28,7 +33,7 @@ synthesizedFailure（runner 替 worker 合成的 escalate）仅允许由通道 (
 - **ADR 0129** 写入点校验条款**限缩**：不含 count-vs-array 对账（count=自报）；「拒收→同 worker 重写」梯废止——不可用卷面按角色真源分治（评审类递 fixer 原料、runner 永不自己按决策门）。findings 状态库、交通警察定理、fresh 终翻规则不变。
 - **#598 验收第 1/5 条** malformed-shape lane（「过不了 runner 下游 schema 再校验 → 当 process-level malformed 机械重派」）——**废止**；进程崩 lane 保留。
 - **#875 信封票 §1/§2**（count 由数组派生、写入点 count-vs-array 拒收 + 重写反馈）——**废止（S1b，2026-07-13）**；§3「下游禁一切 shape 处置」保留并加强（连数组长度都不数）。
-- **orchestrator/README.md Constitution 节**「defective report = shape failure → 有界机械重派」corollary——按本 ADR 重写（同 PR）；其防拆测试钉 `test/adr-0062-regression-825.test.ts` 随实现翻转（#873 战役工单）。
+- **orchestrator/README.md Constitution 节**「defective report = shape failure → 有界机械重派」corollary——按本 ADR 重写（同 PR）；现由 `test/constitution/reviewer-open-count.test.ts`、`review-closure-behavior.test.ts`、`worker-reporting.test.ts` 的正向路由行为锁定，不再使用源码禁字机械钉。
 
 ## 后果
 

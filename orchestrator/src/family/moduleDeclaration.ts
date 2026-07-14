@@ -5,8 +5,7 @@
  * runner-side finding classification apparatus (#604 / ADR 0062). The runner no
  * longer routes by finding content, but it still needs to parse a family/child
  * issue's `## Module Declaration` and assemble the module context that other
- * layers consume. Kept in their own module so `cmrClassification.ts` (the
- * classification apparatus) can be deleted without breaking these consumers.
+ * layers consume without restoring a runner-side finding court.
  */
 
 export interface ModuleDeclaration {

@@ -5,8 +5,14 @@
  * {@link WorkerMonitorHandle}. No global process-name matching APIs are provided.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { execFileSync } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import {
+  ExternalCallTimeoutError,
+  effectiveSubprocessTimeoutMs,
+  shWithClock,
+  spawnDetached,
+  DEFAULT_SUBPROCESS_TIMEOUT_MS,
+} from "./externalCall.js";
 import {
   appendFileSync,
   closeSync,
@@ -21,6 +27,9 @@ import { join } from "node:path";
 import type { LedgerEntry, WorkerMonitorHandle, WorkerSpec } from "./types.js";
 
 export type { WorkerMonitorHandle } from "./types.js";
+
+/** Spawn-ack wall budget (#884 cmr r8 — every external wait carries a clock). */
+export const SPAWN_ACK_TIMEOUT_MS = DEFAULT_SUBPROCESS_TIMEOUT_MS;
 
 export interface LogActivitySnapshot {
   readonly sizeBytes: number;
@@ -91,10 +100,11 @@ const defaultDeps: Required<WorkerMonitorDeps> = {
   listChildPids: (pid) => {
     if (!Number.isInteger(pid) || pid <= 0) return [];
     try {
-      const out = execFileSync("ps", ["-o", "pid=", "-ppid", String(pid)], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      const out = shWithClock(
+        "ps",
+        ["-o", "pid=", "-ppid", String(pid)],
+        { stage: "dispatch:ps-children" },
+      );
       return out
         .split(/\r?\n/)
         .map((line) => Number.parseInt(line.trim(), 10))
@@ -106,10 +116,11 @@ const defaultDeps: Required<WorkerMonitorDeps> = {
   readParentPid: (pid) => {
     if (!Number.isInteger(pid) || pid <= 0) return undefined;
     try {
-      const out = execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
+      const out = shWithClock(
+        "ps",
+        ["-o", "ppid=", "-p", String(pid)],
+        { stage: "dispatch:ps-parent" },
+      );
       const ppid = Number.parseInt(out, 10);
       return Number.isInteger(ppid) && ppid > 0 ? ppid : undefined;
     } catch {
@@ -132,10 +143,11 @@ const defaultDeps: Required<WorkerMonitorDeps> = {
 export function readProcessInstanceId(pid: number): string | undefined {
   if (!Number.isInteger(pid) || pid <= 0) return undefined;
   try {
-    const out = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    const out = shWithClock(
+      "ps",
+      ["-p", String(pid), "-o", "lstart="],
+      { stage: "dispatch:ps-lstart" },
+    );
     return out.length > 0 ? out : undefined;
   } catch {
     return undefined;
@@ -214,9 +226,12 @@ export async function dispatchMonitoredCliWorker(
   const logFd = openSync(logPath, "a");
   const dispatchedAt = new Date().toISOString();
 
-  // detached:true gives the worker its own process-group boundary; termination
-  // still goes through individually verified killPid calls, #684 R2.
-  const child = spawn(input.command, [...input.args], {
+  // #884: spawn only via externalCall chokepoint. detached:true gives the
+  // worker its own process-group boundary; termination still goes through
+  // individually verified killPid calls, #684 R2. Spawn-ack wait below carries
+  // the wall clock (ExternalCallTimeoutError).
+  const child = spawnDetached(input.command, input.args, {
+    stage: `dispatch:${input.stepId}:spawn-launch`,
     cwd: input.cwd,
     env: input.env,
     detached: true,
@@ -234,14 +249,52 @@ export async function dispatchMonitoredCliWorker(
   // `child.pid` is assigned before the OS process is necessarily visible to
   // `ps`. Wait for Node's spawn notification before capturing the identity so
   // a freshly spawned worker does not get an artificial fallback identity
-  // that can never match a later liveness check.
+  // that can never match a later liveness check. Clocked (#884 cmr r8).
+  const spawnStage = `dispatch:${input.stepId}:spawn`;
+  const spawnTimeoutMs = effectiveSubprocessTimeoutMs(SPAWN_ACK_TIMEOUT_MS);
   await new Promise<void>((resolve, reject) => {
     if (child.exitCode !== null) {
       resolve();
       return;
     }
-    child.once("spawn", resolve);
-    child.once("error", reject);
+    const timer = setTimeout(async () => {
+      child.removeListener("spawn", onSpawn);
+      child.removeListener("error", onError);
+      // This child object is the exact instance launched above. Reap it before
+      // rejecting so a dispatch retry cannot leave two workers in one worktree.
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // It may have exited between the timeout and the signal.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // It may have exited during the TERM grace window.
+        }
+      }
+      reject(
+        new ExternalCallTimeoutError({
+          stage: spawnStage,
+          timeoutMs: spawnTimeoutMs,
+          seam: "subprocess",
+        }),
+      );
+    }, spawnTimeoutMs);
+    const onSpawn = (): void => {
+      clearTimeout(timer);
+      child.removeListener("error", onError);
+      resolve();
+    };
+    const onError = (err: Error): void => {
+      clearTimeout(timer);
+      child.removeListener("spawn", onSpawn);
+      reject(err);
+    };
+    child.once("spawn", onSpawn);
+    child.once("error", onError);
   });
 
   // Capture OS start identity immediately so resume/kill can refuse PID reuse.

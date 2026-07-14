@@ -1,15 +1,12 @@
 # Ming Orchestrator — operator's manual
 
-Multi-agent build pipeline for `Akagilnc/ming-salvage-sim`. A **runner** walks a
-ledger-backed step machine (S0–S12) and dispatches sandboxed CLI **workers**
-(coder, reviewer, merger, ship, …) into containers. Two entry shapes:
-
-- **single-slice** — one issue through S0(rfa gate) → S2(code) → S3(review) →
-  S5(fix loop) → S7(ship) → S9(verify) → S10(fixer) → S12(docRelease) →
-  S11(cleanup) → S8(terminal).
-- **family** — an epic's children built in waves on a shared `family/<epic>`
-  base, merged by a merger worker, closed by an integrated CMR
-  (completeness + correctness + cross-model review legs) and a family ship.
+Multi-agent build pipeline for `Akagilnc/ming-salvage-sim`. Production has one
+entry shape: `runFamilyDriver`. A leaf issue is normalized to a
+**family-of-one**; an epic becomes a multi-child family. Both build on a shared
+family base and close through merger, integrated CMR (completeness,
+correctness, and cross-model review legs), verify/fix, family ship, and cleanup.
+The S0–S8 slice runner remains internal child machinery, not a second public
+entry or terminal-delivery topology.
 
 ## Constitution (ADR 0131 — three channels, zero judgment; lineage ADR 0062)
 
@@ -23,18 +20,20 @@ reads worker prose**:
    keeps the loop going on the fixed topology (after a fix leg a fresh review
    leg always follows — ADR 0129 keeps fixer-flipped rows open until a fresh
    reviewer closes them; whose turn it is comes from the topology, never from
-   a runner judgment). The count is the reviewer's own declaration (sentinel
-   value; absent a sentinel form, the rows it wrote **are** the declaration —
-   counting them is reading channel 2 itself, not reconciling it against
-   anything, because no second claim exists). The runner never derives a
-   check, never re-classifies severity/action. Whether the declaration
+   a runner judgment). The count is the reviewer's own declaration: either an
+   explicit count in the receipt, or an in-process review seam's own `findings`
+   array. Missing declarative count is not zero and is never derived from cargo
+   rows. The runner never derives a check or re-classifies severity/action.
+   Whether the declaration
    matches the papers is the fixer's judgment when it reads the submission —
    never the runner's.
 3. **decision-gate signal** → durable park; the answer resumes the SAME worker
    session in place (`resumeSessionId`).
 
-Corollaries, all mechanically enforced by
-`test/adr-0062-regression-825.test.ts`:
+Corollaries are locked by positive routing tests under `test/constitution/`,
+not by forbidden-source-text sweeps. In particular see
+`reviewer-open-count.test.ts`, `review-closure-behavior.test.ts`, and
+`worker-reporting.test.ts`:
 
 - A worker whose **envelope cannot be extracted** (no kind, no count,
   undecodable output) is never judged, never mechanically redispatched, and
@@ -46,38 +45,30 @@ Corollaries, all mechanically enforced by
   (their output IS the paper): the runner makes zero judgment and zero park and
   hands the raw artifact pointers down the fixed topology to the fixer, who
   reads what it can, bounces the rest back to the reviewer, or raises.
-  **Coder/ship** (their output is a git commit / PR — an external fact; the
-  slip is only a receipt): an unreadable receipt never goes to the human — a
-  **new commit on the graph** (`git rev-list <headBefore>..HEAD` non-empty; not
-  counted, head not inspected, content not judged) proceeds to review anyway;
-  no commit runs the existing empty-run mechanical budget (#592), and even when
-  that budget is exhausted the runner draws no conclusion — it advances to the
-  review step and lets the reviewer judge the empty diff (bounce or raise).
+  **Coder/ship**: exit-zero completion proceeds to the next worker; the runner
+  neither reads the receipt nor queries git/host to adjudicate it. The next
+  reviewer judges an empty or incorrect delivery (bounce or raise).
   Only repeated process crashes (#598 — no work, no paper to judge) still take
   the infra park. A readable-but-wrong submission is likewise the next wisdom's
   problem (the fixer bounces it back to the reviewer or raises).
-  `synthesizedFailure` may only ever be derived from channel-1 process facts or
-  git/host external truth, and a missing result is never synthesized into
+  `synthesizedFailure` may only ever be derived from channel-1 process facts
+  (the git/host external-truth source was revoked 2026-07-13: three channels,
+  no exceptions), and a missing reviewer result is never synthesized into
   success (`findings: []` / `converged: true`) — nor into failure.
-- **Git/host truth over worker words.** Commit evidence comes from
-  `git rev-list <headBefore>..HEAD` (final-graph reachability); a
-  worker-reported PR URL is an advisory hint that is verified
-  (open + head branch + head repository owner) or discarded — a rejected hint
-  never reaches downstream steps. Self-reported numbers are telemetry only.
-- **`*_STEP_COMPLETE` sentinels are optional telemetry.** In every prompt/soul
-  they may appear only inside the canonical optional-telemetry sentence; the
-  sweep test fails any other mention, so no prompt edit can silently restore a
-  lie-detector gate.
-- **Mutating dispatches are exactly-once.** Family ship writes a durable
-  two-phase attempt marker (reserve before launch, confirm on spawn), a durable
-  `ship_completed` record before host observation, and re-dispatches only when
-  host truth confirms `pr_missing`. A mismatch (e.g. a deliberately closed PR)
-  escalates durably instead of re-shipping. Retry budgets live in the ledger
-  (`mechanical_redispatch_attempt` rows) and survive crash/re-feed;
-  legitimate repeated rounds (slow-CI S9 re-polls) never consume them.
-- **Observation failure ≠ confirmed absence.** A failed `gh`/git lookup is a
-  retryable observation problem (its own bounded lane), never proof that the
-  mutation didn't land and never a reason to abort a resume.
+- **The worker's OK is OK — no git verdicts.** A coder or ship worker's
+  exit-zero completion routes forward as-is; self-verification (real commit /
+  PR exists) and idempotency live in the worker soul, an empty diff is judged
+  by the next reviewer, and any reported PR URL is cargo for downstream
+  workers, not a runner verdict input. The runner never runs
+  `git rev-list` / `ls-remote` / `gh pr view` to adjudicate a worker.
+- **`*_STEP_COMPLETE` sentinels are optional telemetry.** Process and receipt
+  routing tests prove that their prose placement cannot become a runner fate
+  channel; no source-text ban is used as the lock.
+- **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the
+  runner dispatches ship again. The worker verifies whether the branch's exact
+  delivery already exists and returns success without duplicate push, PR, or
+  version bump. Process failures use durable `mechanical_redispatch_attempt`
+  rows; decision gates are transported unchanged.
 
 ## Igniting a family run (cold start — everything a fresh session needs)
 
@@ -95,8 +86,9 @@ Corollaries, all mechanically enforced by
 
 ### 1. Issue prerequisites (what the run reads from GitHub)
 
-- The **parent epic** issue number is the run key. Its children must be
-  attached as **native sub-issues** (not just task-list mentions).
+- A **parent epic** or **leaf issue** number is the run key. Parent epic
+  children must be attached as **native sub-issues** (not just task-list
+  mentions); a leaf issue is normalized automatically to a family-of-one.
 - Children the run may build carry the `ready-for-agent` label — the S0 gate
   (rfa) refuses anything else. Pull the label to hold a child out.
 - Native `blocked_by` dependencies between children drive wave order
@@ -144,7 +136,6 @@ const result = await runFamilyDriver({
   soulsDir: `${ORCH}/image/souls`,
   ledgerDir: `/Users/akagilnc/.sc-orchestrator/family-${EPIC}-ledger`,
   imageName: "ming-orchestrator-coder:latest",
-  skillsMount: "/Users/akagilnc/sc-pipeline/skills-mount",
 });
 console.log(JSON.stringify(result, null, 2));
 ```
@@ -288,7 +279,7 @@ reality, then fine-tune single slots:
 | cmrCompleteness | `ORCHESTRATOR_CMR_COMPLETENESS_MODEL` |
 | cmrCorrectness | `ORCHESTRATOR_CMR_CORRECTNESS_MODEL` |
 | verify | `ORCHESTRATOR_VERIFY_MODEL` |
-| fixer (S10) | `ORCHESTRATOR_FIXER_MODEL` |
+| fixer | `ORCHESTRATOR_FIXER_MODEL` |
 | cleanup | `ORCHESTRATOR_CLEANUP_MODEL` |
 | docRelease | `ORCHESTRATOR_DOCRELEASE_MODEL` |
 | cmrReview legs | `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` (comma list) |
@@ -297,8 +288,8 @@ Role vocabulary worth keeping straight:
 
 - **coderFix** = in-loop fix worker during the build (responds to S3 reviewer
   findings until the review is clean).
-- **fixer** = S10, the post-ship repair worker (eats verify/CI/online-review
-  failures after S7). Different seat, independently staffed.
+- **fixer** = family-endgame repair worker for verify/CI/online-review findings.
+  Different seat, independently staffed.
 
 Roster conventions (from the exam/marathon evidence, 2026-07):
 
@@ -316,19 +307,17 @@ Roster conventions (from the exam/marathon evidence, 2026-07):
 ## Route smoke (startup gate)
 
 Before any real work each selected model×pipe must prove it can act inside the
-container: the smoke prompt carries a random `{{NONCE}}` and a
-`{{NONCE_FILE}}` path (sandcastle substitutes `{{KEY}}` placeholders from
-`promptArgs` — placeholders in `prompts/route-smoke.md` are load-bearing; a
-regression test drives the REAL rendering and a text-only-obedient agent, plus
-a negative case proving a value-less prompt fails). The worker must create the
-evidence file with exactly the nonce. Any slot failing smoke = fail-closed
-startup escalation; nothing mutates.
+container: the smoke prompt carries a random `{{NONCE}}` (sandcastle substitutes
+`{{KEY}}` placeholders from `promptArgs` — placeholders in
+`prompts/route-smoke.md` are load-bearing). The worker must print exactly that
+nonce to stdout; no shell command or evidence file is part of the contract. A
+regression test drives the real rendering and a text-only-obedient agent, plus a
+negative case proving a value-less prompt fails. Any slot failing smoke =
+fail-closed startup escalation; nothing mutates.
 
 Providers with unavailable auth (e.g. grok without a mounted `auth.json`) are
 rejected **before** dispatch — fail-closed preflight, never an unauthenticated
-launch. Same pattern for capabilities: a backend without a required
-verification seam (`verifyFamilyShippedPr`) is refused before the mutating
-ship, not after.
+launch.
 
 OpenCode is baked into the worker image and the route-selectable `glm-5.2`
 slug resolves to `opencode-go/glm-5.2`. Its Go-subscription credential remains
@@ -357,8 +346,10 @@ the image or written to orchestrator state.
 3. **Online bot rounds** (after a PR opens): sourcery / codex-connector /
    gemini / coderabbit threads are worked finding-by-finding — fix as a new
    commit, reply with the commit hash, resolve the thread; refutations are
-   replied with verifiable evidence instead of code. Merge requires
-   mergeState CLEAN **and** zero unresolved threads.
+   replied with verifiable evidence instead of code. Before the runner performs
+   its own merge, host state may require mergeState CLEAN and zero unresolved
+   threads. This gates only the runner's merge action; it never judges or
+   reclassifies a worker receipt.
 
 Ticket discipline for fix rounds: every ticket carries a sweep clause ("fix the
 finding, then sweep for the same class and print a self-audit checklist").
@@ -389,11 +380,10 @@ never on input the test itself seeded.
 ## Telemetry sidecar (#786)
 
 Append-only JSONL at the durable ledger location
-`<ledgerDir>/telemetry.jsonl`, parallel to the step ledger (`steps.jsonl`). For
-single-slice runs this is `<dedicated-clone>/.ledger-<issue>/`; it is outside
-Sandcastle's `.sandcastle/worktrees/` prune scope. Family runs use their
-existing durable family `ledgerDir`. Raw per-leg stamps only — aggregation /
-stats are out of scope for #786.
+`<ledgerDir>/telemetry.jsonl`, parallel to the step ledger (`steps.jsonl`). Both
+family-of-one and multi-child runs use the durable family `ledgerDir`, outside
+Sandcastle's `.sandcastle/worktrees/` prune scope. Raw per-leg stamps only —
+aggregation / stats are out of scope for #786.
 
 The durable telemetry directory is never automatically deleted. The former
 `.sandcastle/worktrees/.ledger-<issue>/telemetry.jsonl` path is retained as a
@@ -472,8 +462,7 @@ main across cross-slice seams; the integrated gates exist precisely for that.
 
 | symptom | likely cause | fix |
 | --- | --- | --- |
-| startup `route smoke failed … did not complete an observable bash smoke` (every launch) | smoke prompt lost its `{{NONCE}}`/`{{NONCE_FILE}}` placeholders, or model at capacity | check `prompts/route-smoke.md` placeholders; switch checkpoint |
+| startup `route smoke failed … did not echo the expected nonce` (every launch) | smoke prompt lost its `{{NONCE}}` placeholder, or model at capacity | check `prompts/route-smoke.md` placeholder; switch checkpoint |
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
-| resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
 | worker looks hung | judge by idle threshold (>15 min with no new output), then kill only that worker's own pid tree; capacity/quota errors are not hangs | relay a successor onto the surviving drift |

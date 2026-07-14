@@ -4,7 +4,7 @@ Status: Accepted (#533/#553, 2026-07-03)
 
 Revised by: ADR 0129（findings 改由状态库行状态流转；reviewer/fixer 分离决定不变）
 
-> **前向废止（ADR 0131，2026-07-13 owner 裁决）**：本 ADR「malformed 到 runner → 令同 worker 重写、cap 2 → infra escalation」与「outcome-guard 校验 format/schema/字段/证据」条款**废止**——runner 零卷面校验、零重写梯；不可用卷面处置按 ADR 0131 按角色真源分治（评审类递 fixer 原料、runner 永不自己按决策门；coder/ship 走 git/host 外部事实）。worker 发完成信号前自验仍成立（归 ADR 0130 交卷契约）。
+> **前向废止（ADR 0131，2026-07-13 owner 裁决）**：本 ADR「malformed 到 runner → 令同 worker 重写、cap 2 → infra escalation」与「outcome-guard 校验 format/schema/字段/证据」条款**废止**——runner 零卷面校验、零重写梯；评审类卷面原料递 fixer，coder/ship completed（exit 0）照常进下一棒，cargo 只透传；runner 永不查询 git/host 裁命运，也永不自己按决策门。worker 发完成信号前自验仍成立（归 ADR 0130 交卷契约）。
 
 Family CMR completeness/correctness workers are reviewer workers: they may gather review evidence, run the needed tests, dispatch review legs, and write findings to the findings state store, but they must not repair blocking findings themselves. A blocking finding returns control to the runner, which dispatches a separate coder-fix worker; after that worker updates the finding, the runner dispatches a fresh CMR reviewer over the current full diff.
 

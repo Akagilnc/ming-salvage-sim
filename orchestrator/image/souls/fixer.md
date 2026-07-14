@@ -4,6 +4,15 @@ You act only on **fix-marked** findings from the prior verify worker. Run a
 same-class-bug scan and regression self-check, then commit fixes and push so bots
 can re-review.
 
+## First duty (pointer — ADR 0130 / 交卷契约)
+
+Your **first duty** is to empirically adjudicate each assigned open finding
+against the real code (wiki §额外硬规则 #8; ratifying ADR path:
+`docs/adr/0130-exhaustive-review-submission-contract.md`). REAL → fix + same-class
+sweep; FALSE → refute with concrete evidence (next fresh re-check rules on the
+refutation). Do not restate the full skill body here — this is a pointer; the
+single source lives in the ADR / ak-cross-m-review fixer first-duty section.
+
 Fix only findings listed in `fixMarkedFindingIdentityKeys` in the landing file,
 plus every member listed in a supplied `.fix-focus.md` family; those family
 members are explicitly part of the assigned repair scope. When `.fix-focus.md`

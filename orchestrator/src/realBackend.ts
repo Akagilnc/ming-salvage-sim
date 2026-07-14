@@ -45,7 +45,6 @@
  *     proving the cut derives from the just-fetched remote ref (cutRefFor).
  */
 
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -59,29 +58,25 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 
-import {
-  hasBoundedReopenCondition,
-  hasExplicitAcceptedSuppressionSource,
-} from "./acceptedSuppression.js";
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
+import {
+  execFileAsyncWithTimeout,
+  shWithClock,
+} from "./externalCall.js";
+import { withLegTransientRetry } from "./legTransientRetry.js";
 import { runExclusive } from "./gitMutex.js";
-import { findingIdentityKey } from "./findings.js";
 import {
   provisionRepoNodeModules,
   runProvisionCommand,
   type Sh as ProvisionSh,
 } from "./provisionNodeModules.js";
-import {
-  attachSanitizedFindingFamilies,
-  normalizeFindingFamiliesWireAliases,
-} from "./findingFamilies.js";
 import {
   sourceAuthFailureStopSummary,
   type StopSummary,
@@ -109,44 +104,108 @@ import {
   smokeRouteModels,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
-import type { CoderSelfReportDiscrepancy } from "./types.js";
 
-export function routeSmokeToolCallIsEchoOk(event: {
-  readonly type?: unknown;
-  readonly name?: unknown;
-  readonly formattedArgs?: unknown;
-}): boolean {
-  return (
-    event.type === "toolCall" &&
-    typeof event.name === "string" &&
-    /^(bash|shell)$/i.test(event.name) &&
-    typeof event.formattedArgs === "string" &&
-    /echo\s+(?:"OK"|'OK'|OK)/i.test(event.formattedArgs)
-  );
-}
+// ── #884 bare-ping smoke only (credential oracle; no docker/tool loop) ───────
 
-/**
- * A nonce must be read back from the worktree after the agent returns. Text in
- * the agent stream is never execution evidence: a model can merely repeat it.
- */
-export function routeSmokeNonceFileEvidence(
-  fileContents: string | undefined,
+/** Fill `prompts/route-smoke.md` `{{NONCE}}` (or a one-line default). */
+export function buildBarePingPrompt(
   nonce: string,
-): boolean {
-  return fileContents?.trim() === nonce;
+  template: string = "Reply with exactly: {{NONCE}}",
+): string {
+  if (!template.includes("{{NONCE}}")) {
+    throw new Error(
+      "bare-ping prompt template must contain {{NONCE}} placeholder",
+    );
+  }
+  return template.split("{{NONCE}}").join(nonce);
+}
+
+export function loadBarePingPromptTemplate(promptsDir: string): string {
+  return readFileSync(join(promptsDir, "route-smoke.md"), "utf8");
 }
 
 /**
- * Whether a smoke run produced observable bash evidence. The checked nonce file
- * is a filesystem side effect, so this is provider-independent and does not
- * trust model text or provider-specific stream formatting.
+ * Credential oracle: stdout is exactly the nonce, or any full line is.
+ * Substring embedding (nonce mid-token) does not count.
  */
-export function routeSmokeBashEvidenceSatisfied(input: {
-  readonly provider: string;
-  readonly sawToolCallEchoOk: boolean;
-  readonly sawNonceFile: boolean;
-}): boolean {
-  return input.sawNonceFile;
+export function barePingNonceSatisfied(stdout: string, nonce: string): boolean {
+  if (nonce.length === 0) return false;
+  const trimmed = stdout.trim();
+  if (trimmed === nonce) return true;
+  return stdout.split(/\r?\n/).some((line) => line.trim() === nonce);
+}
+
+export interface BarePingArgv {
+  readonly file: string;
+  readonly args: readonly string[];
+  /** When set, fed on stdin (codex `exec … -` pattern). */
+  readonly input?: string;
+}
+
+/**
+ * One-shot host CLI argv per provider. Empty-cwd / no docker / no tool loop —
+ * ignition only answers "is this credential alive?".
+ */
+export function barePingArgv(
+  provider: ModelProviderFactory,
+  model: string,
+  prompt: string,
+): BarePingArgv {
+  switch (provider) {
+    case "codex":
+      // README auth probe: `echo "…" | codex exec --skip-git-repo-check -m <model> -`
+      return {
+        file: "codex",
+        args: ["exec", "--skip-git-repo-check", "--ephemeral", "-m", model, "-"],
+        input: prompt,
+      };
+    case "claudeCode":
+      return {
+        file: "claude",
+        args: [
+          "-p",
+          prompt,
+          "--model",
+          model,
+          "--permission-mode",
+          "bypassPermissions",
+        ],
+      };
+    case "opencode":
+      return {
+        file: "opencode",
+        args: ["run", "--dangerously-skip-permissions", "-m", model, prompt],
+      };
+    case "grok":
+      return {
+        file: "grok",
+        args: [
+          "-p",
+          prompt,
+          "-m",
+          model,
+          "--always-approve",
+          "--permission-mode",
+          "bypassPermissions",
+        ],
+      };
+    case "cursor":
+      // Sandcastle 0.10.0 invokes the standalone `agent` binary (not `cursor agent`).
+      return {
+        file: "agent",
+        args: ["-p", prompt, "--model", model, "--print"],
+      };
+    case "copilot":
+      return {
+        file: "copilot",
+        args: ["-p", prompt, "--model", model],
+      };
+    case "pi":
+      return {
+        file: "pi",
+        args: ["-p", prompt, "--mode", "json", "--model", model],
+      };
+  }
 }
 export {
   agentForSlug,
@@ -164,13 +223,7 @@ import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
-import {
-  DOCRELEASE_PROMPT_FILE,
-  FIXER_PROMPT_FILE,
-  legacyDispatchWorker,
-  SHIP_PROMPT_FILE,
-  VERIFY_PROMPT_FILE,
-} from "./dispatchWorker.js";
+import { legacyDispatchWorker } from "./dispatchWorker.js";
 import {
   handleIdleThreshold,
   isAgentIdleTimeoutError,
@@ -179,26 +232,21 @@ import {
   type HandleIdleThresholdResult,
   type QuotaPoolId,
   type QuotaProbeResult,
-  type QuotaWaitForResetLedgerEvent,
 } from "./quotaProbe.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
-  shipOutcomeFromResult,
-  type ShipWorkerOutcome,
-} from "./shipOutcome.js";
-import {
-  WORKER_OUTCOME_REPO_FILE,
-  WORKER_OUTCOME_SANDBOX_FILE,
   readRequiredWorkerOutcomeSidecar as readRequiredOutcomeSidecar,
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
+import { probeWorkerDecisionBell } from "./workerReceipt.js";
 import type {
   AgentStepRunOptions,
   Backend,
   CliMonitorSpawnSpec,
   DispatchContext,
   Finding,
+  PriorFindingDisposition,
   IssueMeta,
   IssueSnapshot,
   IssueSnapshotMeta,
@@ -209,7 +257,6 @@ import type {
   StepResult,
   StepSoul,
   StepSpec,
-  RepairEvidence,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -217,22 +264,9 @@ import type {
   WorktreeHandle,
 } from "./types.js";
 import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-} from "./reviewLoopOutcome.js";
-import {
   configureTelemetryFromWorkerImage,
   durableTelemetryDirForSingleSlice,
 } from "./telemetry.js";
-import type {
-  CleanupResult,
-  DocReleaseResult,
-  FixerResult,
-  VerifyResult,
-} from "./types.js";
-
 // ════════════════════════════════════════════════════════════════════════════
 // PURE host-side logic (unit-tested in realBackend.logic.test.ts; no container)
 // ════════════════════════════════════════════════════════════════════════════
@@ -754,13 +788,9 @@ export const SANDBOX_REPO_ENV = "ORCHESTRATOR_REPO";
 /** S5 coder-fix worker path to runner-owned blocking findings JSON. */
 export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 export const SANDBOX_FIX_FOCUS_PATH_ENV = "ORCHESTRATOR_FIX_FOCUS_PATH";
-/** S9/S10 online-review landing file path (bot snapshot + ship metadata). */
-export const SANDBOX_ONLINE_REVIEW_PATH_ENV = "ORCHESTRATOR_ONLINE_REVIEW_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
 export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
-export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
-
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
  * The 2b image BAKES the gh CLI but NO gh auth (a live OAuth secret). gstack-ship
@@ -878,34 +908,6 @@ export interface AuthPaths {
   readonly srcGrokAuth: string;
   /** Host file holding the durable claude OAuth token. */
   readonly claudeTokenFile: string;
-}
-
-/**
- * The single-slice ship worker's BEST-EFFORT auth (mirrors the family
- * {@link import("./family/realFamilyBackend.js").ShipAuth}). The ship worker pushes
- * + `gh pr create` (needs codex/gh creds) and may run on a Claude-family model
- * (needs its own claude token then) — but each source is OPTIONAL here: a missing
- * source degrades that leg, it never crashes the ship (#336 cmr S336 r1: the inline
- * `mountAuth` threw on any missing credential, blocking ship in degraded auth envs).
- */
-export interface ShipAuth {
-  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
-  readonly codexAuthDir?: string;
-  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
-  readonly grokAuthDir?: string;
-  /** Host OpenCode auth.json mounted read-only; runtime DB remains container-local. */
-  readonly opencodeAuthFile?: string;
-  /** The claude OAuth token (env var), or undefined if absent. */
-  readonly claudeToken?: string;
-  /**
-   * The gh OAuth token (`gh auth token` on the host → {@link SANDBOX_GH_TOKEN_ENV}
-   * env), or undefined if absent. Unlike the codex leg this is NOT best-effort: the
-   * ship worker's happy path pushes + `gh pr create`, both of which need it — so
-   * `runShipWorker` preflights it and escalates when absent (cmr S336 r10).
-   */
-  readonly ghToken?: string;
-  /** Typed launch preflight; mounts alone are not an availability contract. */
-  readonly providerAuth?: ProviderAuthAvailability;
 }
 
 export function buildAuthPaths(
@@ -1235,18 +1237,16 @@ function extractReviewerTag(stdout: string): unknown | undefined {
   return extractTaggedJson(stdout, "review");
 }
 
-// #596 F2: tag extractors for the 4 review-loop kinds (untyped compatibility path).
-export function extractVerifyTag(stdout: string): unknown | undefined {
-  return extractTaggedJson(stdout, "verify");
-}
-export function extractFixerTag(stdout: string): unknown | undefined {
-  return extractTaggedJson(stdout, "fixer");
-}
-export function extractCleanupTag(stdout: string): unknown | undefined {
-  return extractTaggedJson(stdout, "cleanup");
-}
-export function extractDocReleaseTag(stdout: string): unknown | undefined {
-  return extractTaggedJson(stdout, "docRelease");
+function extractRoleReceipt(stdout: string, role: StepSpec["role"]): unknown | undefined {
+  try {
+    return role === "coder"
+      ? extractCoderTag(stdout)
+      : role === "reviewer"
+        ? extractReviewerTag(stdout)
+        : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -1270,148 +1270,11 @@ export function stripJsonFence(s: string): string {
   return stripOutcomeJsonFence(s);
 }
 
-// ── coder commit truth from git (#256 truthification) ───────────────────────
-
 /** The self-reported coder JSON a step emits (already shape-validated). */
 export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
-  readonly selfReportDiscrepancy?: CoderSelfReportDiscrepancy;
   readonly escalate?: { readonly reason: string; readonly diagnosis: string };
-  readonly repairEvidence?: RepairEvidence;
-}
-
-/**
- * Reconcile a coder step's SELF-REPORTED `{committed, commitsAdded}` against the
- * REAL number of commits reachable from final HEAD but not the pinned
- * pre-worker baseline, and return a git-TRUTHED coder output.
- *
- * WHY (integ-cmr 256 r4, real-backend-wiring / commit-truth): the coder reports
- * `committed` / `commitsAdded` in its `<coder>` tag, but a model can claim a
- * commit it never made (`{committed:true, commitsAdded:1}` with ZERO real
- * commits). Trusting the self-report routes that step to S2/S5 SUCCESS, slipping
- * the #252 0-commit edge and defeating the very truthification this slice was
- * assigned (the in-tree `validate.ts` note: "deriving the real count from git is
- * #256"). The single source of truth is the final git graph —
- * `git rev-list <headBefore>..HEAD` — so:
- *
- *   - committed   ← finalGraphCommitCount > 0
- *   - commitsAdded ← finalGraphCommitCount
- *
- * The self-report is always advisory. Any disagreement is retained as durable
- * discrepancy telemetry, but never interrupts or routes the run. When no
- * trustworthy git baseline is available, the count is explicitly recorded as
- * unknown rather than inventing a failure signal.
- *
- * `escalate` is a MODEL signal (not derivable from git), so it is preserved from
- * the self-report verbatim.
- *
- * Pure (no I/O): the caller supplies the final-graph commit count, so the
- * reconciliation is unit-tested without a container.
- */
-export function reconcileCoderCommits(
-  selfReported: SelfReportedCoder,
-  gitCommitCount: number | undefined,
-): SelfReportedCoder {
-  if (gitCommitCount === undefined) {
-    return {
-      committed: selfReported.committed,
-      commitsAdded: selfReported.commitsAdded,
-      selfReportDiscrepancy: {
-        code: "coder_git_commit_count_unknown",
-        selfReportedCommitted: selfReported.committed,
-        selfReportedCommitsAdded: selfReported.commitsAdded,
-        gitCommitCount: null,
-      },
-      ...(selfReported.repairEvidence !== undefined
-        ? { repairEvidence: selfReported.repairEvidence }
-        : {}),
-      ...(selfReported.escalate !== undefined ? { escalate: selfReported.escalate } : {}),
-    };
-  }
-  const committed = gitCommitCount > 0;
-  const selfReportDiscrepancy =
-    selfReported.committed !== committed ||
-    selfReported.commitsAdded !== gitCommitCount
-      ? {
-          code: "coder_self_report_disagrees_with_git_commits" as const,
-          selfReportedCommitted: selfReported.committed,
-          selfReportedCommitsAdded: selfReported.commitsAdded,
-          gitCommitCount,
-        }
-      : undefined;
-  const base = {
-    committed,
-    commitsAdded: gitCommitCount,
-    ...(selfReportDiscrepancy !== undefined ? { selfReportDiscrepancy } : {}),
-    ...(selfReported.repairEvidence !== undefined
-      ? { repairEvidence: selfReported.repairEvidence }
-      : {}),
-  };
-  return selfReported.escalate !== undefined
-    ? { ...base, escalate: selfReported.escalate }
-    : base;
-}
-
-export interface ResumeCoderCommitBasis {
-  readonly baselineHead?: string;
-  readonly priorCommitsAdded?: number;
-}
-
-/**
- * Locate the git truth basis for a resumed coder step.
- *
- * On escalate-resume, the runner re-opens the agent entry that escalated and
- * truncates it from the in-memory ledger, but the persisted ledger still has the
- * superseded coder entry plus the branch HEADs around it. The cumulative commit
- * truth for the resumed output is therefore:
- *
- *   commits from the ledger entry immediately BEFORE the resumed coder step
- *   through the current resident HEAD.
- *
- * If an older ledger has no usable SHA, the previous coder output's truthified
- * `commitsAdded` is retained as a fallback basis; the caller adds any commits
- * created during the resume iteration via a before/after HEAD diff.
- */
-export function resumeCoderCommitBasis(
-  ledger: ReadonlyArray<{
-    readonly sessionId?: string;
-    readonly branchHEAD?: string;
-    readonly output?: StepOutput;
-  }>,
-  sessionId: string,
-): ResumeCoderCommitBasis {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (entry.sessionId !== sessionId || entry.output?.kind !== "coder") {
-      continue;
-    }
-    let baselineHead: string | undefined;
-    for (let j = i - 1; j >= 0; j--) {
-      const head = ledger[j]?.branchHEAD;
-      if (typeof head === "string" && isLikelySha(head)) {
-        baselineHead = head;
-        break;
-      }
-    }
-    return {
-      ...(baselineHead !== undefined ? { baselineHead } : {}),
-      priorCommitsAdded: entry.output.commitsAdded,
-    };
-  }
-  return {};
-}
-
-export function reconcileResumeCoderCommits(
-  selfReported: SelfReportedCoder,
-  cumulativeGitCommitCount: number,
-): SelfReportedCoder {
-  return reconcileCoderCommits(selfReported, cumulativeGitCommitCount);
-}
-
-/** A git SHA / abbreviation: only lower-case hex, length 7–40. */
-export function isLikelySha(s: string): boolean {
-  return /^[0-9a-f]{7,40}$/.test(s);
 }
 
 /**
@@ -1441,7 +1304,7 @@ export function isLikelySha(s: string): boolean {
  * filesystem.
  */
 /**
- * Valid step ids (S0–S12). A persisted ledger record must carry one of these in
+ * Valid child step ids (S0–S8). A persisted ledger record must carry one of these in
  * `step`: {@link planResume} dereferences canonical steps to route the resume;
  * a retry marker has its own validated shape and is retained as durable retry
  * accounting rather than treated as a route target.
@@ -1456,10 +1319,6 @@ const STEP_IDS: ReadonlySet<string> = new Set([
   "S6",
   "S7",
   "S8",
-  "S9",
-  "S10",
-  "S11",
-  "S12",
 ]);
 
 const MECHANICAL_REDISPATCH_ATTEMPT = "mechanical_redispatch_attempt";
@@ -1482,7 +1341,7 @@ const MECHANICAL_REDISPATCH_ATTEMPT = "mechanical_redispatch_attempt";
  * enforces it (intent-verified is not boundary-enforced until now; symmetric
  * to the sessionId fix).
  *
- * Online codex P2: a line such as `null`, `{}`, `42`, or `{"step":"S9"}`
+ * A line such as `null`, `{}`, `42`, or `{"step":"S99"}`
  * `JSON.parse`s fine yet is NOT a ledger entry. Without this guard such a record
  * flows into `findResumeState` → `planResume`, where `lastEntry.step` is read
  * OUTSIDE any catch — a `null`/`{}` last entry crashes raw (TypeError /
@@ -1552,7 +1411,7 @@ export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
     if (!isLedgerEntryShape(parsed)) {
       throw new Error(
         "corrupt ledger: a steps.jsonl line parsed but is not a valid ledger " +
-          "entry (must be an object with a valid step S0–S12) — refusing to " +
+          "entry (must be an object with a valid child step S0–S8) — refusing to " +
           "resume on a malformed ledger (fail closed). Accepting it could crash " +
           "the resume route or re-report the wrong terminal state; bailing to " +
           "S8(error) instead.",
@@ -1574,7 +1433,7 @@ export function parseLedgerJsonl(raw: string): ResumeState["ledger"] {
  *   gone → fall back to a FRESH `run()` (lose in-session memory, keep the
  *   committed worktree progress — the resident branch survives).
  * - Every other error (completion-signal mismatch, schema/structured-output
- *   parse failure, auth/model failure, commit-truth contradiction) propagates to
+ *   parse failure, auth/model failure) propagates to
  *   S8(error). It must not be masked by a fresh run.
  *
  * Pure: classifies the error only; the caller performs the chosen recovery.
@@ -1628,27 +1487,18 @@ export function attributeFailure(
 // ── promptsDir validation (integ-cmr 256 r2, F4) ─────────────────────────────
 
 /**
- * Every versioned promptFile a single-slice WORKER the runner dispatches resolves
+ * Every versioned promptFile a child WORKER dispatches resolves
  * at run time. The real Backend resolves each as `join(promptsDir, promptFile)`,
  * so all must exist under `promptsDir` or the real path cannot run end-to-end
  * (#256 AC "对一个真叶子 issue 端到端跑通").
  *
  * Route-independent prompt inventory: prompt validation must not import a
  * route-bearing StepSpec snapshot, because model routes are resolved per run.
- * Keep this derived from the worker prompt-file constants plus the S7 ship
- * spec and real review-loop agent prompts (verify/fixer/docRelease — #739).
- * cleanup stays out: it is not a runStep agent path and has no checked-in prompt.
+ * Keep this derived from the S2/S3/S5/S6 prompt table. Family endgame prompts
+ * are validated by RealFamilyBackend.
  */
 export const REFERENCED_PROMPT_FILES: ReadonlyArray<string> = [
-  ...new Set([
-    ...Object.values(WORKER_PROMPT_FILES),
-    SHIP_PROMPT_FILE,
-    VERIFY_PROMPT_FILE,
-    FIXER_PROMPT_FILE,
-    DOCRELEASE_PROMPT_FILE,
-    "integrated_cmr_completeness.md",
-    "integrated_cmr_correctness.md",
-  ]),
+  ...new Set(Object.values(WORKER_PROMPT_FILES)),
 ];
 
 /**
@@ -1685,7 +1535,7 @@ export function promptsDirError(
     return (
       `RealBackend: promptsDir "${promptsDir}" is missing required promptFile(s): ` +
       `${missingFiles.join(", ")}. All of [${REFERENCED_PROMPT_FILES.join(", ")}] ` +
-      `must be present (S2 coder, S3/S6 reviewer, S5 coder-fix, and S7 ship reference them).`
+      `must be present (S2 coder, S3/S6 reviewer, and S5 coder-fix reference them).`
     );
   }
   return undefined;
@@ -1696,7 +1546,8 @@ export function promptsDirError(
  * Source of truth = every file under orchestrator/image/souls (no longer baked
  * into the image post #372; the ctor must verify presence so an incomplete/wrong
  * dir (e.g. pointing at image/ or a partial checkout) fails fast with names,
- * mirroring promptsDir validation. Includes S12 docRelease + verify/fixer (#739).
+ * mirroring promptsDir validation. Family workers share this image inventory,
+ * so docRelease/verify/fixer/ship souls remain required here.
  * cleanup has no soul file (deterministic path, not a runStep agent).
  */
 export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
@@ -1802,18 +1653,9 @@ export interface RealBackendOptions {
   /** The profile image (#253): toolchain + skills + model CLIs baked in. Souls mounted live (#372). */
   readonly imageName: string;
   /**
-   * DEPRECATED (#334): host dir of dev skills to bind-mount. The 2b worker image
-   * (#333) BAKES the dev-skill closure, so `box()` no longer mounts host skills at
-   * runtime (a runtime mount would SHADOW the baked skills — the ADR 0026
-   * reproducibility regression). Kept OPTIONAL only for back-compat with callers
-   * still passing it; it is no longer read. Remove the field entirely once all
-   * callers drop it (#336/#337 cleanup).
-   */
-  readonly skillsMount?: string;
-  /**
-   * Dir holding the versioned promptFiles (`coder_implement.md` for S2,
-   * `reviewer_review.md` for S3/S6, `coder_fix.md` for S5, and `ship.md` for
-   * S7). ADR 0030 keeps the single-slice review/fix loop runner-visible: S3/S6
+   * Dir holding the versioned child promptFiles (`coder_implement.md` for S2,
+   * `reviewer_review.md` for S3/S6 and `coder_fix.md` for S5).
+   * ADR 0030 keeps the child review/fix loop runner-visible: S3/S6
    * are reviewer workers, and S5 is the coder-fix worker.
    *
    * MUST be an ABSOLUTE path (validated at construction, F4): Sandcastle
@@ -1840,8 +1682,9 @@ export interface RealBackendOptions {
    * base (no `git fetch origin`, no `origin/` prefix) — because the family base
    * is a local branch the merger accumulates onto, with no remote counterpart;
    * deriving it as `origin/<family-base>` would cut from a stale/absent remote ref
-   * missing the prior waves (agy R1). Absent ⇒ a standalone single-slice run: the
-   * cut base is "main", fetched + cut as `origin/main` exactly as before.
+   * missing the prior waves (agy R1). Absent is retained only for the child-machine
+   * harness and focused single-slice tests: the cut base is "main", fetched + cut
+   * as `origin/main`.
    */
   readonly familyBase?: string;
 }
@@ -1853,345 +1696,42 @@ export interface RealBackendOptions {
  * disposition kinds — the only disposition a reviewer may emit is the
  * accepted-suppression governance carrier.
  */
-const findingDispositionSchema = z
-  .object({
-    kind: z.literal("accepted_suppressed"),
-    source: z.string().min(1),
-    scope: z.string().min(1),
-    reason: z.string().min(1),
-    findingIdentity: z.string().min(1).optional(),
-    boundedReopen: z.string().min(1),
-  })
-  // #604 correctness r2 (C3): `.strict()` so a reviewer disposition carrying an
-  // unknown field (e.g. the deleted `targetModule`) is REJECTED here rather than
-  // silently stripped — parity with the family-side `cmrDispositionEvidenceSchema`
-  // which is already `.strict()`. Without this, this standalone reviewer entrance
-  // would quietly swallow a deleted field the other entrances now reject.
-  .strict()
-  .superRefine((disposition, ctx) => {
-    if (!hasExplicitAcceptedSuppressionSource(disposition.source)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["source"],
-        message: "accepted_suppressed requires explicit user/ADR/issue source",
-      });
-    }
-    if (!hasBoundedReopenCondition(disposition.boundedReopen)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["boundedReopen"],
-        message: "accepted_suppressed requires bounded reopen condition",
-      });
-    }
-  });
-export const findingSchema = z.object({
-  severity: z.enum(["critical", "high", "medium", "low", "clarity"]),
-  category: z.string(),
-  claim_quote: z.string(),
-  location: z.string(),
-  suggested_fix: z.string(),
-  action: z.enum(["fix_now", "wont_fix", "rejected"]),
-  disposition_reason: z.string().optional(),
-  disposition: findingDispositionSchema.optional(),
-}).superRefine((finding, ctx) => {
-  if (
-    (finding.severity === "critical" || finding.severity === "high") &&
-    finding.action !== "fix_now"
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["action"],
-      message: "critical/high findings must be fix_now",
-    });
-  }
-  // #604 correctness r1 (P2-a): an accepted_suppressed governance disposition is
-  // only valid on a wont_fix/rejected finding — never on fix_now (classifyFindings
-  // would turn the governance suppression into a silent blocker).
-  if (
-    finding.action !== "wont_fix" &&
-    finding.action !== "rejected" &&
-    finding.disposition?.kind === "accepted_suppressed"
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["disposition"],
-      message:
-        "accepted_suppressed disposition is only valid on wont_fix/rejected findings",
-    });
-  }
-  if (
-    (finding.action === "wont_fix" || finding.action === "rejected") &&
-    ((!finding.disposition_reason && !finding.disposition?.reason) ||
-      finding.disposition?.kind !== "accepted_suppressed")
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["disposition"],
-      message: "suppressed findings require accepted_suppressed disposition",
-    });
-  }
-});
-function normalizeReviewerFinding(finding: Finding): Finding {
-  if (
-    (finding.action !== "wont_fix" && finding.action !== "rejected") ||
-    finding.disposition?.kind !== "accepted_suppressed"
-  ) {
-    return finding;
-  }
-  return {
-    ...finding,
-    disposition_reason: finding.disposition.reason ?? finding.disposition_reason,
-    disposition: {
-      ...finding.disposition,
-      findingIdentity:
-        finding.disposition.findingIdentity ?? findingIdentityKey(finding),
-    },
-  };
-}
-// #604 correctness r5 (E1): `.strict()` so a prior-finding disposition carrying an
-// unknown field (e.g. a deleted routing field like `targetModule`) is REJECTED
-// here rather than silently STRIPPED by zod — parity with the family-side
-// `cmrFindingDispositionSchema` (already `.strict()`) and the standalone
-// `findingDispositionSchema` (r2/C3). Exported so the strict contract is directly
-// exercisable. `.strict()` must go on the `.object()` before `.superRefine()`,
-// since `.superRefine()` returns a `ZodEffects` with no `.strict()`.
-export const priorFindingDispositionSchema = z.object({
-  identityKey: z.string().min(1),
-  status: z.enum([
-    "still-active",
-    "verified-closed",
-    "unable-to-assess",
-    "accepted_suppressed",
-  ]),
-  reason: z.string().optional(),
-  source: z.string().optional(),
-  scope: z.string().optional(),
-  boundedReopen: z.string().optional(),
-}).strict().superRefine((disposition, ctx) => {
-  if (disposition.status !== "accepted_suppressed") return;
-  for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
-    if (disposition[field] === undefined || disposition[field].trim() === "") {
-      ctx.addIssue({
-        code: "custom",
-        path: [field],
-        message: `accepted_suppressed prior finding disposition requires ${field}`,
-      });
-    }
-  }
-  if (
-    disposition.source !== undefined &&
-    !hasExplicitAcceptedSuppressionSource(disposition.source)
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["source"],
-      message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
-    });
-  }
-  if (
-    disposition.boundedReopen !== undefined &&
-    !hasBoundedReopenCondition(disposition.boundedReopen)
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["boundedReopen"],
-      message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
-    });
-  }
-});
-const reviewerOutputSchema = z.object({
-  findings: z.array(findingSchema),
-  priorFindingDispositions: z.array(priorFindingDispositionSchema).optional(),
-  escalate: z
-    .object({ reason: z.string(), diagnosis: z.string() })
-    .optional(),
-});
-const findingRepairScopeSchema = z
-  .object({
-    identityKeys: z.array(z.string()).optional(),
-    locations: z.array(z.string()).optional(),
-    categories: z.array(z.string()).optional(),
-    findingGroup: z.string().optional(),
-    reviewContext: z.string().optional(),
-    featureArea: z.string().optional(),
-  })
-  .strict();
-const repairEvidenceSchema = z
-  .object({
-    findingScope: findingRepairScopeSchema,
-    changedFiles: z.array(z.string().min(1)).optional(),
-    tests: z.array(z.string().min(1)).optional(),
-    fixtures: z.array(z.string().min(1)).optional(),
-    sameClassBugScan: z.string().min(1).optional(),
-    introducedRegressionCheck: z.string().min(1).optional(),
-    patchSummary: z.string().optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (
-      (value.changedFiles?.length ?? 0) === 0 &&
-      (value.tests?.length ?? 0) === 0 &&
-      (value.fixtures?.length ?? 0) === 0
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message:
-          "repairEvidence requires changedFiles, tests, or fixtures; patchSummary alone is not concrete repair evidence",
-      });
-    }
-  })
-  .strict();
 const coderOutputSchema = z.object({
   committed: z.boolean(),
   commitsAdded: z.number().int().nonnegative(),
-  repairEvidence: repairEvidenceSchema.optional(),
   escalate: z
-    .object({ reason: z.string(), diagnosis: z.string() })
+    .object({
+      reason: z.string(),
+      diagnosis: z.string(),
+    })
     .optional(),
 });
 
-// #596 F2: minimal schemas for the 4 review-loop kinds. Used for outputFor (Sandcastle typed)
-// and initial parse in decodeOutput; final decode validation uses the isValid*Result guards
-// from reviewLoopOutcome.ts (per AC2). .strict() so off-shape (extra keys, wrong types) fails closed.
-const onlineReviewFindingDispositionSchema = z
-  .object({
-    identityKey: z.string().min(1),
-    threadId: z.string().min(1),
-    action: z.enum(["fix", "reject", "defer"]),
-    reason: z.string().optional(),
-  })
-  .strict();
-
-const onlineReviewThreadReplySchema = z
-  .object({
-    threadId: z.string().min(1),
-    body: z.string().min(1),
-  })
-  .strict();
-
-/** Verify wire schema — normalizes `finding_families` before strict key check. */
-export const verifyOutputSchema = z.preprocess(
-  normalizeFindingFamiliesWireAliases,
-  z
-    .object({
-      converged: z.boolean(),
-      findingDispositions: z
-        .array(onlineReviewFindingDispositionSchema)
-        .optional(),
-      fixMarkedFindingIdentityKeys: z.array(z.string()).optional(),
-      threadReplies: z.array(onlineReviewThreadReplySchema).optional(),
-      threadsToResolve: z.array(z.string()).optional(),
-      deferredIssueUrls: z.array(z.string()).optional(),
-      terminalState: z
-        .enum(["mergeable", "round_budget_exhausted", "decision_gate_raised"])
-        .optional(),
-      isRecheck: z.boolean().optional(),
-      // #711: malformed families degrade to no brief — never block the verify gate.
-      // Accepts camelCase + snake_case top-level via normalizeFindingFamiliesWireAliases.
-      findingFamilies: z.unknown().optional(),
-    })
-    .strict(),
-);
-export const fixerOutputSchema = z
-  .object({
-    committed: z.boolean(),
-    alreadySatisfied: z.boolean().optional(),
-    fixCommitSha: z.string().min(1).optional(),
-  })
-  .strict()
-  .superRefine((data, ctx) => {
-    if (data.committed && data.alreadySatisfied === true) {
-      ctx.addIssue({
-        code: "custom",
-        message: "alreadySatisfied is incompatible with committed:true",
-      });
-    }
-    if (
-      data.committed === true &&
-      (data.fixCommitSha === undefined || data.fixCommitSha.length === 0)
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "fixCommitSha is required when committed is true",
-      });
-    }
-    if (
-      data.committed === false &&
-      data.alreadySatisfied === true &&
-      data.fixCommitSha === undefined
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "fixCommitSha is required when alreadySatisfied is true",
-      });
-    }
-  });
-export const cleanupOutputSchema = z
-  .object({
-    terminal: z.boolean(),
-    ok: z.boolean(),
-    issuesClosed: z.array(z.number().int().positive()).optional(),
-    parentIssueClosed: z.boolean().optional(),
-    branchOutcome: z
-      .enum([
-        "deleted",
-        "already_gone",
-        "skipped_tip_drift",
-        "skipped_pr_not_merged",
-        "skipped_precondition",
-      ])
-      .optional(),
-    skippedReasons: z.array(z.string()).optional(),
-  })
-  .strict()
-  .superRefine((val, ctx) => {
-    if (val.terminal === false && val.ok === true) {
-      ctx.addIssue({
-        code: "custom",
-        message: "non-terminal cleanup must not report ok:true",
-      });
-    }
-  });
-export const docReleaseOutputSchema = z
-  .object({ released: z.boolean() })
-  .strict();
+// Typed extraction may locate a receipt, but it must not judge the receipt
+// before decodeOutput gets the independent decision-bell probe.
+const workerReceiptSchema = z.unknown();
 
 /** Parse a coder worker self-report with the same schema the single-slice path uses. */
 export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
   return coderOutputSchema.parse(raw);
 }
 
+/**
+ * #884 bare-ping wall budget (seconds). Owner target is ~5–10s total across
+ * parallel legs; per-leg ceiling defaults to 60s so a single hung provider
+ * still fails closed rather than sleeping the driver for minutes.
+ *
+ * Tunable via `ORCHESTRATOR_SMOKE_IDLE_SECONDS` (positive integer). Name kept
+ * for env-compat with the pre-#884 sandcastle idle knob.
+ */
 const DEFAULT_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS = 60;
 
-/**
- * Hard upper bound the resolver enforces. Sandcastle multiplies the idle
- * seconds by 1e3 before feeding a signed 32-bit timer (see the
- * WORKER_IDLE_TIMEOUT_SECONDS note above), so any override above 2_147_483
- * would overflow that timer; the resolver treats such values as illegal and
- * falls back to the default instead of relying on the operator to stay under
- * the bound.
- */
+/** Hard upper bound the resolver enforces (same 32-bit-safe ceiling as before). */
 const MAX_ROUTE_SMOKE_IDLE_TIMEOUT_SECONDS = 2_147_483;
 
 /**
- * #685 route-smoke idle budget — the per-model `sc.run` that proves a route can
- * invoke bash before a productive dispatch is spent on it.
- *
- * The smoke covers EVERY route leg (codex, claude, opencode, …), not just one:
- * each unique model×pipe entry gets its own smoke run, and the resolved budget
- * is applied as the `idleTimeoutSeconds` ceiling for all of them. The
- * first-token latency evidence was measured on container `codex exec` — the
- * worst case observed (8–11s to first token on a warm container, longer under
- * load) — which is the motivating example, not a special case. The old
- * hard-coded `idleTimeoutSeconds: 10` killed two consecutive W1-family runs
- * with a spurious "Agent idle for 10 seconds" before that model could emit
- * anything; the same ceiling guards the claude/opencode/… legs too.
- *
- * COST IS ONE-TIME: a passed smoke is cached by sandbox fingerprint and reused
- * for the whole run, so a generous one-time wait beats re-failing the run.
- *
- * Tunable via `ORCHESTRATOR_SMOKE_IDLE_SECONDS` (a positive integer within the
- * 32-bit-safe bound above); illegal, missing, blank, non-integer, or
- * out-of-range values all fall back to the default.
+ * Resolve the bare-ping per-leg wall budget (seconds). Illegal / missing values
+ * fall back to the default.
  */
 export function resolveRouteSmokeIdleTimeoutSeconds(
   envValue: string | undefined,
@@ -2257,9 +1797,8 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * #685: prove every selected model×pipe can actually invoke bash before the
-   * runner spends a productive dispatch on it. This deliberately uses the
-   * selected Sandcastle provider, not a generic shell or a silent fallback.
+   * #685/#884: report host CLI versions for smoke TTL invalidation. Cheap
+   * `--version` only — not a live model call.
    */
   async currentCliVersions(
     route: ResolvedModelRoute,
@@ -2269,8 +1808,10 @@ export class RealBackend implements Backend {
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
     const versions: Record<string, string | undefined> = {};
     for (const entry of routeSmokeEntries(route)) {
-      if (versions[entry.slug] === undefined) {
-        versions[entry.slug] = this.cliVersionForSlug(
+      // #884: key by entry.key so pool-rewritten pipes don't share a slug bucket
+      // with the default-provider entry (same class of aliasing as smoke uniqueness).
+      if (versions[entry.key] === undefined) {
+        versions[entry.key] = this.cliVersionForSlug(
           entry.slug,
           entry.key === relaySmokeEntryKey ? dispatchPool : undefined,
         );
@@ -2279,72 +1820,187 @@ export class RealBackend implements Backend {
     return versions;
   }
 
+  /**
+   * #884 bare-ping route smoke: one-shot host CLI per unique model×pipe, empty
+   * cwd, no docker/repo/tool loop. Nonce echo in stdout is the credential
+   * oracle. Unique legs run in parallel via {@link smokeRouteModels}.
+   * Tool-capability verification is intentionally out of the ignition path.
+   */
   async smokeModelRoute(
     route: ResolvedModelRoute,
     currentCliVersions: Readonly<Record<string, string | undefined>> = {},
     billingPool?: string,
     relaySmokeEntryKey?: string,
   ): Promise<ResolvedModelRoute> {
+    void currentCliVersions;
     const dispatchPool = isBillingPoolDispatchId(billingPool) ? billingPool : undefined;
-    const idleTimeoutSeconds = resolveRouteSmokeIdleTimeoutSeconds(
-      process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
-    );
-    const smoked = await smokeRouteModels(route, async (entry) => {
-      let sawToolCallEchoOk = false;
-      const entryPool = entry.key === relaySmokeEntryKey ? dispatchPool : undefined;
+    const timeoutMs =
+      resolveRouteSmokeIdleTimeoutSeconds(
+        process.env.ORCHESTRATOR_SMOKE_IDLE_SECONDS,
+      ) * 1000;
+    const providerAuth = this.hostProviderAuthAvailability();
+    // #879 / #861 D: each model×pipe smoke is the orchestrator-owned
+    // encapsulation of a CMR/route *leg*. Transient transport blips
+    // (reset/5xx) retry ×2 before the smoke is recorded failed (optional
+    // legs then degrade; required anchors can still abort the run); 429 /
+    // quota never retries — via withLegTransientRetry (production wire of
+    // legTransientRetry.ts). Worker-process crashes stay on #598; in-container
+    // ak-cross-m-review skill legs keep their own backend degrade chain.
+    const pingOne = async (
+      entry: { readonly key: string; readonly slug: string },
+      entryPool: BillingPoolDispatchId | undefined,
+    ): Promise<{ readonly cliVersion: string }> => {
       const resolved = resolveModelSlugForPool(entry.slug, entryPool);
-      const provider = resolved.provider;
-      const auth = this.mountAuth(this.opts.runKey);
+      this.assertProviderAuth(entry.slug, entryPool, providerAuth);
       const nonce = randomUUID();
-      const nonceFile = `.route-smoke-${nonce}.nonce`;
-      const noncePath = join(this.workingRepo, nonceFile);
-      const logDir = mkdtempSync(join(this.opts.home ?? homedir(), "route-smoke-"));
+      const prompt = buildBarePingPrompt(
+        nonce,
+        loadBarePingPromptTemplate(this.opts.promptsDir),
+      );
+      const built = barePingArgv(resolved.provider, resolved.model, prompt);
+      const emptyDir = mkdtempSync(join(tmpdir(), "route-smoke-ping-"));
       try {
-        this.assertProviderAuth(entry.slug, entryPool, auth.providerAuth);
-        rmSync(noncePath, { force: true });
-        const result = await sc.run({
-          agent: agentForSlug(entry.slug, effortForLiveOfficer(entry.slug, { smokeKey: entry.key }), entryPool),
-          sandbox: this.routeSmokeSandbox(auth),
-          cwd: this.workingRepo,
-          promptFile: join(this.opts.promptsDir, "route-smoke.md"),
-          promptArgs: { NONCE: nonce, NONCE_FILE: nonceFile },
-          maxIterations: 1,
-          idleTimeoutSeconds,
-          completionSignal: "ROUTE_SMOKE_COMPLETE",
-          logging: {
-            type: "file",
-            path: join(logDir, "run.log"),
-            onAgentStreamEvent: (event) => {
-              if (routeSmokeToolCallIsEchoOk(event)) {
-                sawToolCallEchoOk = true;
-              }
-            },
-          },
-        });
-        let nonceContents: string | undefined;
-        try {
-          nonceContents = readFileSync(noncePath, "utf8");
-        } catch {
-          nonceContents = undefined;
-        }
-        const bashOk = routeSmokeBashEvidenceSatisfied({
-          provider,
-          sawToolCallEchoOk,
-          sawNonceFile: routeSmokeNonceFileEvidence(nonceContents, nonce),
-        });
-        if (result.completionSignal !== "ROUTE_SMOKE_COMPLETE" || !bashOk) {
+        const stage = `smoke-k:${entry.slug}`;
+        const stdout = await withLegTransientRetry(async () =>
+          this.execBarePing({
+            slug: entry.slug,
+            cwd: emptyDir,
+            prompt,
+            nonce,
+            file: built.file,
+            args: built.args,
+            stdin: built.input,
+            timeoutMs,
+          }),
+        );
+        if (!barePingNonceSatisfied(stdout, nonce)) {
           throw new Error(
-            `model did not complete an observable bash smoke for ${entry.slug}`,
+            `bare ping nonce missing for ${entry.slug} at stage ${stage}`,
           );
         }
         return { cliVersion: this.cliVersionForSlug(entry.slug, entryPool) };
       } finally {
-        rmSync(noncePath, { force: true });
-        rmSync(logDir, { recursive: true, force: true });
-        this.cleanupTempAuthDirs([auth.grokAuthDir]);
+        rmSync(emptyDir, { recursive: true, force: true });
       }
+    };
+
+    // Pool-rewritten pipe: dedicated ping for the relay entry so a same-slug
+    // default-provider result is never alias-passed as pool-smoked. Launch IN
+    // PARALLEL with unique-slug legs (P5 / #884 cmr r7) — never serialize after
+    // the full smoke wave (adds a whole timeout/retry budget before dispatch).
+    const relayEntry =
+      relaySmokeEntryKey !== undefined && dispatchPool !== undefined
+        ? routeSmokeEntries(route).find((e) => e.key === relaySmokeEntryKey)
+        : undefined;
+    const relayPingPromise =
+      relayEntry !== undefined
+        ? pingOne(relayEntry, dispatchPool).then(
+            (result) =>
+              ({ ok: true as const, result, at: new Date().toISOString() }),
+            (error: unknown) =>
+              ({ ok: false as const, error, at: new Date().toISOString() }),
+          )
+        : undefined;
+
+    // Unique-by-slug parallel legs (owner "六路") — always default pipe.
+    // Pool credentials for relaySmokeEntryKey are covered ONLY by the dedicated
+    // parallel relayPingPromise below (cmr r8: never let unique-wave pool ping
+    // fan out as "default pipe passed").
+    let smoked = await smokeRouteModels(route, async (entry) => {
+      void entry;
+      return pingOne(entry, undefined);
     });
+
+    if (relayEntry !== undefined && relayPingPromise !== undefined) {
+      const relayOutcome = await relayPingPromise;
+      if (relayOutcome.ok) {
+        smoked = {
+          ...smoked,
+          smoke: {
+            ...smoked.smoke,
+            [relayEntry.key]: {
+              state: "passed",
+              at: relayOutcome.at,
+              cliVersion: relayOutcome.result.cliVersion,
+            },
+          },
+        };
+      } else {
+        const err = relayOutcome.error;
+        smoked = {
+          ...smoked,
+          smoke: {
+            ...smoked.smoke,
+            [relayEntry.key]: {
+              state: "failed",
+              at: relayOutcome.at,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          },
+        };
+      }
+    }
     return smoked;
+  }
+
+  /**
+   * Host-side bare-ping exec seam. `protected` so tests inject a scripted
+   * responder without launching real model CLIs. Production uses
+   * {@link execFileAsyncWithTimeout} so parallel smoke actually overlaps.
+   */
+  protected async execBarePing(input: {
+    readonly slug: string;
+    readonly cwd: string;
+    readonly prompt: string;
+    readonly nonce: string;
+    readonly file: string;
+    readonly args: readonly string[];
+    readonly stdin?: string;
+    readonly timeoutMs: number;
+  }): Promise<string> {
+    return execFileAsyncWithTimeout(input.file, input.args, {
+      stage: `smoke-k:${input.slug}`,
+      timeoutMs: input.timeoutMs,
+      cwd: input.cwd,
+      input: input.stdin,
+      env: this.barePingEnvironment(),
+    });
+  }
+
+  /** Host auth view used by bare-ping CLIs, aligned with worker auth sources. */
+  private barePingEnvironment(): NodeJS.ProcessEnv {
+    const home = this.opts.home ?? homedir();
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+    try {
+      const claudeToken = readFileSync(
+        join(home, ".sc-claude-token"),
+        "utf8",
+      ).trim();
+      if (claudeToken !== "") {
+        env.CLAUDE_CODE_OAUTH_TOKEN = claudeToken;
+      }
+    } catch {
+      // Missing Claude auth is rejected by assertProviderAuth before its ping.
+    }
+    return env;
+  }
+
+  /**
+   * Lightweight host credential presence for bare-ping auth gates — no
+   * per-issue temp copy (those are for container mounts only).
+   */
+  protected hostProviderAuthAvailability(): ProviderAuthAvailability {
+    const home = this.opts.home ?? homedir();
+    let claude = false;
+    try {
+      const token = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+      claude = token.length > 0;
+    } catch {
+      claude = false;
+    }
+    const grok = existsSync(join(home, ".grok", "auth.json"));
+    return { claude, grok };
   }
 
   private cliVersionForSlug(slug: string, billingPool?: string): string {
@@ -2352,26 +2008,18 @@ export class RealBackend implements Backend {
       slug,
       isBillingPoolDispatchId(billingPool) ? billingPool : undefined,
     ).provider;
-    const command = provider === "claudeCode" ? "claude" : provider;
+    // Keep CLI binary identity aligned with barePingArgv / Sandcastle.
+    const command =
+      provider === "claudeCode"
+        ? "claude"
+        : provider === "cursor"
+          ? "agent"
+          : provider;
     try {
       return this.sh(command, ["--version"]).trim() || "unknown";
     } catch {
       return "unknown";
     }
-  }
-
-  /** Route smoke must exercise the same image, auth, and soul mounts as workers. */
-  private routeSmokeSandbox(
-    auth: ReturnType<RealBackend["mountAuth"]>,
-  ): sc.SandboxProvider {
-    return docker(
-      this.boxConfig(
-        { ...auth, ghToken: this.readGhToken() },
-        { role: "reviewer", soul: "READ-ONLY" },
-        undefined,
-        undefined,
-      ),
-    );
   }
 
   /**
@@ -2409,7 +2057,7 @@ export class RealBackend implements Backend {
    * Fail-closed guard (ADR 0024 decision 1/3): after the clone exists, assert it
    * owns its `.git` — i.e. `git rev-parse --git-common-dir` resolves to the
    * clone's OWN `.git`, not a shared parent repo's `.git` (a linked worktree).
-   * If the working repo is a linked worktree, a Sandcastle/`cleanResidue` prune
+   * If the working repo is a linked worktree, a Sandcastle worktree prune
    * could reach across the shared `.git` into other sessions' admin namespace
    * (the #292 bug). So we refuse to start: throw at construction (不启动).
    */
@@ -2470,13 +2118,25 @@ export class RealBackend implements Backend {
    * Run a host `gh`/`git` command, returning trimmed stdout. `protected` so a
    * test subclass can intercept the git/gh seam without a real container or repo
    * (integ-cmr 256 r3 reuse-fail-closed test).
+   *
+   * #884: every subprocess wait carries a clock (default 120s).
+   * Host one-shot with clock only (no auto-retry — #884 clocks / #879 owns leg retry).
    */
   protected sh(file: string, args: string[], cwd?: string): string {
-    return execFileSync(file, args, {
+    return shWithClock(file, args, {
+      stage: `subprocess:${file}`,
       cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
+    });
+  }
+
+  /** Best-effort host GitHub token for worker sandboxes that call `gh`. */
+  protected readGhToken(): string | undefined {
+    try {
+      const token = this.sh("gh", ["auth", "token"]).trim();
+      return token === "" ? undefined : token;
+    } catch {
+      return undefined;
+    }
   }
 
   // ── S0: lightweight metadata (host gh) ─────────────────────────────────────
@@ -2680,9 +2340,9 @@ export class RealBackend implements Backend {
     // #291: a family-base cut is LOCAL-only (ADR 0022 decision 7) — the family
     // base is a local branch the merger accumulates onto, with no remote
     // counterpart. So skip `git fetch origin <family-base>` (it would fail or, worse,
-    // resolve a stale remote branch) and force the bare local ref. A standalone
-    // single-slice run (base="main", no `familyBase` option) keeps the fetch +
-    // `origin/main` derivation byte-identical.
+    // resolve a stale remote branch) and force the bare local ref. The child-machine
+    // harness path (base="main", no `familyBase` option) keeps the fetch +
+    // `origin/main` derivation used by focused single-slice tests.
     const localOnly = base === this.opts.familyBase;
     const fetchedOk = localOnly ? false : this.ensureBaseRef(base);
     const cutRef = cutRefFor(base, fetchedOk, localOnly);
@@ -3013,11 +2673,11 @@ export class RealBackend implements Backend {
    * The docker options the agent sandbox runs under — the pure SANDBOX-CONFIG
    * seam (mirrors the family `mergerSandboxConfig()` testability pattern). No
    * container, no I/O: a unit test asserts the mounts + soul env without spinning
-   * a real sandbox (#334 — so the dropped-skillsMount behaviour is regression-
+   * a real sandbox (#334 — so the baked-skills behaviour is regression-
    * guarded the same way the family merger's mount is).
    *
    * #334 (ADR 0026 / cross-slice note from #332/#333): the runtime host
-   * `skillsMount` bind-mount onto {@link SANDBOX_SKILLS_DIR} is DROPPED. The 2b
+   * host-skills bind-mount onto {@link SANDBOX_SKILLS_DIR} is DROPPED. The 2b
    * worker image (#333) BAKES the full dev-skill closure at that exact path, so
    * mounting host skills there at runtime would SHADOW the baked skills — pulling
    * the worker back to host state (the ADR 0026 reproducibility regression). The
@@ -3074,10 +2734,6 @@ export class RealBackend implements Backend {
     if (options?.fixFocusLanding !== undefined) {
       env[SANDBOX_FIX_FOCUS_PATH_ENV] = options.fixFocusLanding.sandboxPath;
     }
-    if (options?.onlineReviewLanding !== undefined) {
-      env[SANDBOX_ONLINE_REVIEW_PATH_ENV] =
-        options.onlineReviewLanding.sandboxPath;
-    }
     if (options?.outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
     }
@@ -3113,13 +2769,6 @@ export class RealBackend implements Backend {
         readonly: true,
       });
     }
-    if (options?.onlineReviewLanding !== undefined) {
-      mounts.push({
-        hostPath: options.onlineReviewLanding.path,
-        sandboxPath: options.onlineReviewLanding.sandboxPath,
-        readonly: true,
-      });
-    }
     if (options?.outcomeLanding !== undefined) {
       mounts.push({
         hostPath: options.outcomeLanding.path,
@@ -3137,23 +2786,8 @@ export class RealBackend implements Backend {
 
   /** Build the output definition for a step's role. */
   private outputFor(spec: StepSpec): sc.OutputDefinition {
-    if (spec.role === "reviewer") {
-      return sc.Output.object({ tag: "review", schema: reviewerOutputSchema });
-    }
-    if (spec.role === "verify") {
-      return sc.Output.object({ tag: "verify", schema: verifyOutputSchema });
-    }
-    if (spec.role === "fixer") {
-      return sc.Output.object({ tag: "fixer", schema: fixerOutputSchema });
-    }
-    if (spec.role === "cleanup") {
-      return sc.Output.object({ tag: "cleanup", schema: cleanupOutputSchema });
-    }
-    if (spec.role === "docRelease") {
-      return sc.Output.object({ tag: "docRelease", schema: docReleaseOutputSchema });
-    }
-    // default (and legacy coder path)
-    return sc.Output.object({ tag: "coder", schema: coderOutputSchema });
+    const tag = spec.role === "reviewer" ? "review" : spec.role;
+    return sc.Output.object({ tag, schema: workerReceiptSchema });
   }
 
   /**
@@ -3173,39 +2807,31 @@ export class RealBackend implements Backend {
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown | undefined {
+    const compatibility = extractRoleReceipt(result.stdout, spec.role);
+    const compatibilityBell = probeWorkerDecisionBell(compatibility);
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
-        if (sidecar !== undefined) return sidecar;
+        if (sidecar !== undefined) {
+          if (probeWorkerDecisionBell(sidecar) !== undefined) return sidecar;
+          if (compatibilityBell !== undefined) return compatibility;
+          return sidecar;
+        }
       }
     } catch (err) {
-      if (spec.role === "reviewer") {
-        const wrapped = new Error(
-          `StructuredOutputError: reviewer outcome sidecar was not valid JSON: ` +
-            `${err instanceof Error ? err.message : String(err)}`,
-        );
-        wrapped.name = "StructuredOutputError";
-        throw wrapped;
-      }
-      throw err;
+      console.warn(
+        `[orchestrator] telemetry: ${spec.id}-${spec.role} outcome sidecar is unreadable cargo: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return compatibilityBell !== undefined ? compatibility : undefined;
     }
-    if (typedOutputUsed && result.output !== undefined) return result.output;
+    if (typedOutputUsed && result.output !== undefined) {
+      if (probeWorkerDecisionBell(result.output) !== undefined) return result.output;
+      if (compatibilityBell !== undefined) return compatibility;
+      return result.output;
+    }
     // Stdout tags are the primary machine channel for multi-iteration coders;
     // elsewhere they are compatibility for a missing typed result.
-    const compatibility =
-      spec.role === "coder"
-        ? extractCoderTag(result.stdout)
-        : spec.role === "reviewer"
-          ? extractReviewerTag(result.stdout)
-          : spec.role === "verify"
-            ? extractVerifyTag(result.stdout)
-            : spec.role === "fixer"
-              ? extractFixerTag(result.stdout)
-              : spec.role === "cleanup"
-                ? extractCleanupTag(result.stdout)
-                : spec.role === "docRelease"
-                  ? extractDocReleaseTag(result.stdout)
-                  : undefined;
     if (compatibility !== undefined) {
       if (typedOutputUsed) {
         console.warn(
@@ -3214,266 +2840,65 @@ export class RealBackend implements Backend {
       }
       return compatibility;
     }
-    // Git truth reconciles a coder's committed-ness only AFTER a typed outcome
-    // exists. It cannot turn the absence of every outcome channel into a
-    // success-shaped coder result: that is a structural protocol failure, owned
-    // by the runner's bounded redispatch and exhaustion escalation path.
-    const err = new Error(
-      `StructuredOutputError: ${spec.id}-${spec.role} produced no worker outcome ` +
-        "sidecar, typed output, or legacy stdout tag",
-    );
-    err.name = "StructuredOutputError";
-    throw err;
-  }
-
-  /**
-   * Decode a Sandcastle structured output into a domain StepOutput.
-   *
-   * For a fresh coder step `gitCommitCount` is the final graph delta from its
-   * pinned pre-worker HEAD to final HEAD. It is the SINGLE SOURCE OF TRUTH for
-   * `committed` / `commitsAdded` (#818): self-reported `<coder>` values are
-   * advisory discrepancy telemetry only, never a reconcile failure.
-   *
-   * `gitCommitCount === undefined` is allowed only for roles where commit truth
-   * is irrelevant (reviewer). A resumed coder still gets git-truthed, but the
-   * count is cumulative from the persisted ledger baseline to the resident HEAD:
-   * resume may only re-emit corrected structured
-   * output while earlier commits already live on the branch.
-   *
-   * Ignored for the reviewer role (commits are not part of a review's contract).
-   */
-  private decodeOutput(
-    spec: StepSpec,
-    raw: unknown,
-    gitCommitCount: number | undefined,
-  ): StepOutput {
-    if (raw === undefined) {
-      throw new Error(
-        `realBackend: ${spec.id}-${spec.role} reached decodeOutput without a machine outcome`,
-      );
-    }
-    if (spec.role === "reviewer") {
-      const r = reviewerOutputSchema.parse(raw);
-      const findings: Finding[] = r.findings.map((f) =>
-        normalizeReviewerFinding({ ...f }),
-      );
-      return {
-        kind: "reviewer",
-        findings,
-        ...(r.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: r.priorFindingDispositions }
-          : {}),
-        ...(r.escalate ? { escalate: r.escalate } : {}),
-      };
-    }
-    // Coder: parse the self-report for shape, then attach final graph truth.
-    // Fresh runs use their final graph delta; resumed runs use a cumulative
-    // ledger-baseline count. Mismatch/unknown is advisory telemetry.
-    if (spec.role === "coder") {
-      const c = coderOutputSchema.parse(raw);
-      const out = reconcileCoderCommits(c, gitCommitCount);
-      const repairEvidence =
-        out.repairEvidence !== undefined
-          ? { repairEvidence: out.repairEvidence }
-          : {};
-      const selfReportDiscrepancy =
-        out.selfReportDiscrepancy !== undefined
-          ? { selfReportDiscrepancy: out.selfReportDiscrepancy }
-          : {};
-      return out.escalate
-        ? {
-            kind: "coder",
-            committed: out.committed,
-            commitsAdded: out.commitsAdded,
-            ...repairEvidence,
-            ...selfReportDiscrepancy,
-            escalate: out.escalate,
-          }
-        : {
-            kind: "coder",
-            committed: out.committed,
-            commitsAdded: out.commitsAdded,
-            ...repairEvidence,
-            ...selfReportDiscrepancy,
-          };
-    }
-
-    // #596 F2 AC2: wire the 4 new kinds into real decodeOutput using isValid*Result
-    // guards from reviewLoopOutcome.ts as the decode validation. Malformed raw fails closed
-    // (zod parse throws; or explicit guard fail) mirroring reviewer/coder style+wording.
-    // Shape-valid but false flags (converged:false etc) pass this layer (no semantic).
-    if (spec.role === "verify") {
-      const v = verifyOutputSchema.parse(raw);
-      const candidate: VerifyResult = {
-        kind: "verify",
-        ...attachSanitizedFindingFamilies(
-          {
-            converged: v.converged,
-            ...(v.findingDispositions !== undefined
-              ? { findingDispositions: v.findingDispositions }
-              : {}),
-            ...(v.fixMarkedFindingIdentityKeys !== undefined
-              ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
-              : {}),
-            ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
-            ...(v.threadsToResolve !== undefined
-              ? { threadsToResolve: v.threadsToResolve }
-              : {}),
-            ...(v.deferredIssueUrls !== undefined
-              ? { deferredIssueUrls: v.deferredIssueUrls }
-              : {}),
-            ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
-            ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
-          },
-          v.findingFamilies,
-        ),
-      };
-      if (!isValidVerifyResult(candidate)) {
-        const err = new Error(
-          "realBackend: verify output did not satisfy isValidVerifyResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
-      return candidate;
-    }
-    if (spec.role === "fixer") {
-      const f = fixerOutputSchema.parse(raw);
-      const candidate: FixerResult = {
-        kind: "fixer",
-        committed: f.committed,
-        ...(f.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
-        ...(f.fixCommitSha !== undefined ? { fixCommitSha: f.fixCommitSha } : {}),
-      };
-      if (!isValidFixerResult(candidate)) {
-        const err = new Error(
-          "realBackend: fixer output did not satisfy isValidFixerResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
-      return candidate;
-    }
-    if (spec.role === "cleanup") {
-      const c = cleanupOutputSchema.parse(raw);
-      const candidate: CleanupResult = {
-        kind: "cleanup",
-        terminal: c.terminal,
-        ok: c.ok,
-        ...(c.issuesClosed !== undefined ? { issuesClosed: c.issuesClosed } : {}),
-        ...(c.parentIssueClosed === true ? { parentIssueClosed: true } : {}),
-        ...(c.branchOutcome !== undefined
-          ? { branchOutcome: c.branchOutcome }
-          : {}),
-        ...(c.skippedReasons !== undefined
-          ? { skippedReasons: c.skippedReasons }
-          : {}),
-      };
-      if (!isValidCleanupResult(candidate)) {
-        const err = new Error(
-          "realBackend: cleanup output did not satisfy isValidCleanupResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
-      return candidate;
-    }
-    if (spec.role === "docRelease") {
-      const d = docReleaseOutputSchema.parse(raw);
-      const candidate: DocReleaseResult = { kind: "docRelease", released: d.released };
-      if (!isValidDocReleaseResult(candidate)) {
-        const err = new Error(
-          "realBackend: docRelease output did not satisfy isValidDocReleaseResult guard",
-        );
-        err.name = "StructuredOutputError";
-        throw err;
-      }
-      return candidate;
-    }
-
-    // Unknown role after the ifs: fail closed (should not reach if outputFor is consistent).
-    throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
-  }
-
-  private resumeCoderCommitCount(
-    worktree: WorktreeHandle,
-    sessionId: string,
-    beforeResumeHead: string | undefined,
-  ): number | undefined {
-    const stateDir = this.stateDirFor(worktree.path, this.issueOf(worktree));
-    const ledger = this.readLedger(stateDir);
-    const basis =
-      ledger === undefined ? {} : resumeCoderCommitBasis(ledger, sessionId);
-    if (basis.baselineHead !== undefined) {
-      try {
-        return this.countCommitsSince(worktree, basis.baselineHead);
-      } catch {
-        return undefined;
-      }
-    }
-    if (basis.priorCommitsAdded !== undefined) {
-      if (beforeResumeHead === undefined) {
-        return undefined;
-      }
-      try {
-        const resumeOnlyCommits =
-          this.countCommitsSince(worktree, beforeResumeHead);
-        return basis.priorCommitsAdded + resumeOnlyCommits;
-      } catch {
-        return undefined;
-      }
-    }
+    // No receipt channel means no cargo. Do not synthesize worker output from Git.
     return undefined;
   }
 
-  async countCommitsBetween(
-    worktree: WorktreeHandle,
-    fromHead: string,
-    toHead: string,
-  ): Promise<number> {
-    return this.countCommitsInRange(worktree, `${fromHead}..${toHead}`);
-  }
-
-  private countCommitsSince(worktree: WorktreeHandle, fromHead: string): number {
-    return this.countCommitsInRange(worktree, `${fromHead}..HEAD`);
-  }
-
-  /**
-   * Fresh-coder commit truth is the final graph delta, never Sandcastle's
-   * accumulated observation log. A worker can commit and later reset, rebase,
-   * squash, or drop that commit; only commits still reachable from final HEAD
-   * are allowed to set `committed:true`.
-   */
-  private freshCoderGitCommitCount(
-    worktree: WorktreeHandle,
-    headBefore: string | undefined,
-  ): number | undefined {
-    if (headBefore === undefined || headBefore.trim().length === 0) {
-      return undefined;
+  private decodeOutput(
+    spec: StepSpec,
+    raw: unknown,
+  ): StepOutput {
+    const decisionBell = probeWorkerDecisionBell(raw);
+    if (decisionBell !== undefined) {
+      return spec.role === "coder"
+        ? {
+            kind: "coder",
+            committed: false,
+            commitsAdded: 0,
+            escalate: decisionBell,
+          }
+        : { kind: "reviewer", findings: [], escalate: decisionBell };
     }
-    try {
-      return this.countCommitsSince(worktree, headBefore.trim());
-    } catch {
-      // The self-report remains advisory when the final graph cannot be
-      // observed. Do not invent a mismatch failure from an unavailable probe.
-      return undefined;
+    if (spec.role === "reviewer") {
+      if (
+        raw === null ||
+        typeof raw !== "object" ||
+        !Array.isArray((raw as { findings?: unknown }).findings)
+      ) {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
+      const receipt = raw as {
+        findings: ReadonlyArray<Finding>;
+        priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
+      };
+      return {
+        kind: "reviewer",
+        findings: receipt.findings,
+        ...(Array.isArray(receipt.priorFindingDispositions)
+          ? { priorFindingDispositions: receipt.priorFindingDispositions }
+          : {}),
+      };
     }
-  }
+    // Coder completion is worker-authored. The next reviewer judges the diff.
+    if (spec.role === "coder") {
+      if (raw === null || typeof raw !== "object") {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
+      const receipt = raw as Record<string, unknown>;
+      return {
+        kind: "coder",
+        committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
+        commitsAdded:
+          typeof receipt.commitsAdded === "number" &&
+          Number.isInteger(receipt.commitsAdded) &&
+          receipt.commitsAdded >= 0
+            ? receipt.commitsAdded
+            : 0,
+      };
+    }
 
-  private countCommitsInRange(worktree: WorktreeHandle, range: string): number {
-    const raw = this.sh(
-      "git",
-      ["rev-list", "--count", range],
-      worktree.path,
-    );
-    const count = Number.parseInt(raw, 10);
-    if (!Number.isInteger(count) || count < 0) {
-      throw new Error(
-        `realBackend: git rev-list returned invalid commit count "${raw}" ` +
-          `for ${range} in ${worktree.path}`,
-      );
-    }
-    return count;
+    // Family endgame roles are dispatched by RealFamilyBackend, never here.
+    throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
   }
 
   // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns
@@ -3484,15 +2909,9 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     worktree: WorktreeHandle,
     options?: AgentStepRunOptions,
-    coderCommitCount?: (result: Pick<RunResultLike, "commits">) => number | undefined,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
-    // Pin the graph before Sandcastle begins. `result.commits` is only an
-    // accumulated observation log, so it may include SHAs a worker later made
-    // unreachable; the final graph delta below is the sole verdict input.
-    const headBefore =
-      spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     const typedOutputUsed =
       spec.maxIter === 1 && options?.outcomeLanding === undefined;
     const box = this.box(issueNumber, spec, options);
@@ -3535,16 +2954,8 @@ export class RealBackend implements Backend {
         issueNumber,
       },
     });
-    // #818: derive coder verdict fields from final graph truth, not Sandcastle's
-    // cumulative commit observations or the worker self-report.
-    const gitCommitCount =
-      spec.role === "coder"
-        ? coderCommitCount !== undefined
-          ? coderCommitCount(result)
-          : this.freshCoderGitCommitCount(worktree, headBefore)
-        : undefined;
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-    const output = this.decodeOutput(spec, raw, gitCommitCount);
+    const output = this.decodeOutput(spec, raw);
     return { output, sessionId: lastSessionId(result) };
     } finally {
       box.cleanup();
@@ -3567,8 +2978,6 @@ export class RealBackend implements Backend {
     options?: AgentStepRunOptions,
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
-    const beforeResumeHead =
-      spec.role === "coder" ? await this.worktreeHead(worktree) : undefined;
     await this.preflightToolchain(spec);
     const box = this.box(issueNumber, spec, options);
     try {
@@ -3607,42 +3016,20 @@ export class RealBackend implements Backend {
           issueNumber,
         },
       });
-      // Resume path: git-truth against the cumulative resident-branch commit
-      // count, not this one-iteration result.commits.length. The resumed
-      // iteration may only re-emit the structured tag while prior commits already
-      // live on the branch.
-      const gitCommitCount =
-        spec.role === "coder"
-          ? this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
-          : undefined;
       const output = this.decodeOutput(
         spec,
         this.rawOutputFor(result, spec, typedOutputUsed, options),
-        gitCommitCount,
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
       // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
       // session falls back to a fresh run() (keep committed worktree progress,
       // lose in-session memory). Signal mismatches, schema parse failures, auth
-      // failures, model errors, and commit-truth contradictions propagate to the
+      // failures and model errors propagate to the
       // runner's S8(error) edge instead of being masked by a fresh run.
       const recovery = classifyResumeError(err);
       if (recovery.kind === "fresh-run") {
-        // Re-dispatch the build worker (a dead resume session ⇒ start a fresh
-        // sandbox.run for the same step). Coder commit truth still uses the
-        // resume ledger baseline, because prior committed work may already live
-        // on the resident branch even though the old session is gone.
-        const coderCommitCount =
-          spec.role === "coder"
-            ? () => this.resumeCoderCommitCount(worktree, sessionId, beforeResumeHead)
-            : undefined;
-        return await this.runFreshAgentStep(
-          spec,
-          worktree,
-          options,
-          coderCommitCount,
-        );
+        return await this.runFreshAgentStep(spec, worktree, options);
       }
       throw err;
     } finally {
@@ -3775,106 +3162,13 @@ export class RealBackend implements Backend {
     return runPoolProbe(pool);
   }
 
-  /**
-   * Persist a `quota_wait_for_reset` ledger row to the sibling state dir when
-   * known. Tests may override to capture without touching disk.
-   *
-   * Production monitor / Sandcastle-fallback paths no longer call this for the
-   * durable write (#683 R1): runner.parkQuotaWaitForReset owns the single
-   * append-only row with real audit fields. Kept for test overrides / tooling.
-   */
-  protected async recordQuotaWaitLedger(
-    entry: QuotaWaitForResetLedgerEvent,
-    ctx: QuotaProbeRunContext,
-  ): Promise<void> {
-    if (ctx.worktreePath === undefined || ctx.issueNumber === undefined) {
-      // No durable landing spot — still surface via QuotaWaitForResetError.applied
-      return;
-    }
-    const stateDir = this.stateDirFor(ctx.worktreePath, ctx.issueNumber);
-    const persistent: PersistentLedgerEntry = {
-      step: entry.step ?? ctx.step ?? "S2",
-      event: "quota_wait_for_reset",
-      pool: entry.pool,
-      ...(entry.resetAt !== undefined ? { resetAt: entry.resetAt } : {}),
-      reason: entry.reason,
-      ...(entry.workerPid !== undefined ? { workerPid: entry.workerPid } : {}),
-      ts: entry.ts,
-      sessionId: "quota-wait-for-reset",
-      prompt_hash: "quota-wait-for-reset",
-      branchHEAD: "quota-wait-for-reset",
-    };
-    await this.writeLedger(persistent, stateDir);
-  }
-
-  // ── S7: ship WORKER (invoke gstack-ship) ────────────────────────────────────
-
-  /**
-   * THE single-slice worker-dispatch seam (ADR 0026 / #331 / #336). The S7 ship
-   * step is dispatched here as a CONTAINER ship WORKER that invokes `gstack-ship`
-   * (#336) — replacing the inline `push` (a bare `git push`). Every OTHER worker
-   * kind (coder / reviewer agent steps) is forwarded to {@link legacyDispatchWorker}
-   * (runStep / resumeSession), which #334 already routes to the real `/tdd` /
-   * `/code-review` workers — so THIS method takes over ONLY the ship leg.
-   *
-   * The ship worker (`shipWorkerSpec`) = the 2b container's TOP-LEVEL claude; it
-   * `Skill`-invokes gstack-ship (base merge / tests / diff review / VERSION /
-   * CHANGELOG / commit / push / `gh pr create`). It returns the full
-   * {@link WorkerResult} mapping (PRD #330 R2): shipped → `completed` ShipResult;
-   * a genuine block (merge conflict / review ASK / hard defect) → `escalated`; a
-   * hard ship/test failure → `failed`; an unparseable run → `malformed`. A
-   * rerun-able flake is NOT escalated — the worker reruns it itself (用户 note).
-   */
+  /** Child worker dispatch. S7 is a local family handoff and has no worker. */
   async dispatchWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
-    if (spec.kind !== "ship") {
-      // #336 owns the ship leg; coder/reviewer agent workers stay on the existing
-      // runStep/resumeSession seam (#334 routes them to /tdd / /code-review). The
-      // rich landing payload (blocking findings) travels straight to the landing
-      // file (信封宪法, ADR 0062).
-      return legacyDispatchWorker(this, spec, ctx, landing);
-    }
-    if (ctx.worktree === undefined) {
-      throw new Error(
-        "dispatchWorker(ship): a ship worker requires ctx.worktree (the resident " +
-          "slice branch gstack-ship delivers).",
-      );
-    }
-    const outcome = await this.runShipWorker(spec, ctx);
-    if (outcome.kind === "escalate") {
-      // A GENUINE block (merge conflict the skill can't resolve / a review ASK / a
-      // hard defect needing a human decision) — the WorkerResult-level escalate
-      // (续跑 path; runner.ts S7 takes the S8(escalate) handoff). NOT a rerun-able
-      // flake (the worker reruns those itself) and NOT a fabricated PR.
-      return {
-        kind: "escalated",
-        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
-      };
-    }
-    if (outcome.kind === "failed") {
-      // A hard ship command / test failure no rerun cleared → the delivery could
-      // not complete (runner.ts S7 maps non-completed to S8(error)).
-      return { kind: "failed", reason: `${outcome.reason} — ${outcome.diagnosis}` };
-    }
-    if (outcome.kind === "malformed") {
-      // No parseable verdict / no completion signal ⇒ a STRUCTURAL process-level
-      // failure (the worker emitted no valid `<ship>` output). #601: this retries via
-      // the shared `withMechanicalRetry` path (the dogfood-362 / family-405 incident
-      // class), so it maps to the retryable `malformed` kind — NOT a judged verdict.
-      return { kind: "malformed", reason: outcome.reason };
-    }
-    return {
-      kind: "completed",
-      output: {
-        kind: "ship",
-        branch: outcome.branch,
-        status: outcome.status,
-        ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
-      },
-    };
+    return legacyDispatchWorker(this, spec, ctx, landing);
   }
 
   /**
@@ -3945,419 +3239,6 @@ export class RealBackend implements Backend {
       throw new QuotaWaitForResetError(result);
     }
     return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
-  }
-
-  /**
-   * Run the ship WORKER: ONE `sc.run` of the 2b container's route-selected agent
-   * invoking `gstack-ship` over the resident slice worktree (#336). `protected` so
-   * a unit test fixtures the outcome without a real container (the real container
-   * only runs on the driver / manual-smoke / e2e path).
-   *
-   * The worker is the container's TOP-LEVEL agent (so gstack-ship's own pipeline +
-   * any rerun loops run inside it — ADR 0026), under the WRITE (`coder`) soul (it
-   * commits the VERSION/CHANGELOG bump + pushes). `branchStrategy:{type:"head"}`
-   * keeps it on the resident branch (the ADR 0017 commit真源). Its `<ship>` tag is
-   * gated on the completion signal then classified by {@link shipOutcomeFromResult}.
-   */
-  protected async runShipWorker(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<ShipWorkerOutcome> {
-    const worktree = ctx.worktree!;
-    // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the family ship
-    // preflight + the cmr worker's claude-token guard): the ship worker is the
-    // container's TOP-LEVEL claude (`agent: sc.claudeCode` below), so the Claude
-    // OAuth token is NOT a degradable codex LEG — it is THIS worker's auth.
-    // Absent, the worker cannot start and never emits a `<ship>` verdict; that would
-    // throw out of `sc.run` (NOT a structured escalate). runner S7 DOES wrap this
-    // dispatch in a try/catch → errorTermination (so a thrown start would not
-    // crash the host outright), but an UNCAUGHT start-error is read as S8(error), not
-    // the cleaner escalate续跑 the missing-auth case deserves (a human must supply the
-    // token, not "the ship command failed"). So preflight and return a structured
-    // escalate BEFORE the container — symmetric with the family path. The gh token is
-    // ALSO preflighted below (cmr S336 r10): it is load-bearing for the push +
-    // `gh pr create`, NOT a degradable leg — the 2b image bakes the gh CLI but no gh
-    // auth, so a no-gh host must escalate, not fail late in-container. Only codex auth
-    // stays best-effort (it merely degrades the in-container diff review). Mount once
-    // and reuse for the sandbox (no double-mount).
-    // `mountShipAuth` creates a per-call temp codex auth dir (mkdtempSync — a unique
-    // name each call) BEFORE the early escalate gates below; the finally reclaims it
-    // on success, exception, AND those early returns (online review r1 — 3 bots:
-    // leaked temp dirs accumulating under the codex-auth root).
-    const auth = this.mountShipAuth(this.issueOf(worktree));
-    try {
-      const pool = isBillingPoolDispatchId(ctx.billingPool) ? ctx.billingPool : undefined;
-      const missingProvider = unavailableProviderAuth(
-        resolveModelSlugForPool(spec.model, pool).provider,
-        auth.providerAuth ?? { claude: auth.claudeToken !== undefined, grok: auth.grokAuthDir !== undefined },
-      );
-      if (missingProvider !== undefined) {
-        return {
-          kind: "escalate",
-          reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
-          diagnosis:
-            "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; provider availability preflight rejected the ship launch before sc.run",
-        };
-      }
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
-        return {
-          kind: "escalate",
-          reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
-          diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
-        };
-      }
-    // FAIL-CLOSED on gh auth (cmr S336 r10): UNLIKE the codex leg (best-effort — it
-    // only degrades the in-container diff review), gh auth is LOAD-BEARING for the
-    // ship itself — gstack-ship Step 17 pushes over https (gh credential helper) and
-    // Step 19 runs `gh pr create`. The 2b image bakes the gh CLI but no gh auth, so a
-    // no-gh host would run the whole pipeline only to fail at push / `gh pr create` —
-    // an opaque late failure, not the cleaner escalate续跑 (a human must supply gh
-    // creds). So preflight it like the claude token (r8) and escalate BEFORE the
-    // container. The host token is read via `gh auth token` (it lives in the OS
-    // keyring, not a portable file) and injected as GH_TOKEN by shipSandboxConfig.
-      if (auth.ghToken === undefined) {
-        return {
-          kind: "escalate",
-          reason: "no gh auth (GH_TOKEN) — the ship worker cannot push / `gh pr create`",
-          diagnosis:
-            "the ship worker invokes gstack-ship, which pushes over https + runs " +
-            "`gh pr create`; the 2b image bakes the gh CLI but no gh auth. Provide a " +
-            "host gh login (`gh auth login`) so `gh auth token` yields a token to inject " +
-            "as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a late " +
-            "in-container `gh pr create` failure would surface as an opaque S8 error).",
-        };
-      }
-      this.syncShipFocusFile(ctx);
-      const outcomeLanding = this.prepareShipOutcomeLanding(ctx);
-      try {
-        const result = await this.runAgentSandbox({
-          name: `${spec.id}-ship`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: worktree.path,
-          sandbox: this.shipSandbox(auth, outcomeLanding),
-          agent: agentForSlug(
-            spec.model,
-            effortForLiveOfficer(spec.model, spec),
-            isBillingPoolDispatchId(ctx.billingPool)
-              ? ctx.billingPool
-              : undefined,
-          ),
-          // The ship worker self-reruns gstack-ship's rerun-able steps INSIDE the
-          // container (用户 note); maxIter is the within-worker budget. A genuine block
-          // is the worker's `<ship>` escalate verdict, not the iteration limit.
-          maxIterations: spec.maxIter,
-          completionSignal: spec.completionSignal,
-          // Commit the VERSION/CHANGELOG bump + push on the resident branch in place.
-          branchStrategy: { type: "head" },
-          promptFile: join(this.opts.promptsDir, spec.promptFile),
-          // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
-          quotaProbe: {
-            modelRef: spec.model,
-            step: spec.id,
-            worktreePath: worktree.path,
-            issueNumber: this.issueOf(worktree),
-          },
-        });
-        return shipOutcomeFromResult({
-          ...result,
-          ...(outcomeLanding !== undefined ? { outcomePath: outcomeLanding.path } : {}),
-        });
-      } finally {
-        if (outcomeLanding !== undefined) {
-          try {
-            rmSync(join(outcomeLanding.path, ".."), { recursive: true, force: true });
-          } catch {
-            // best-effort: the run already returned/threw.
-          }
-        }
-      }
-    } finally {
-      // Reclaim every per-call auth copy. Best-effort cleanup must never mask the
-      // worker's outcome.
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
-    }
-  }
-
-  /**
-   * Keep the single-slice ship focus file in sync with the current dispatch. S7
-   * normally ships with no focus file, but an answered decision escalation must be
-   * visible to the clean ship worker session that is retrying the blocked delivery.
-   */
-  protected syncShipFocusFile(ctx: DispatchContext): void {
-    const worktree = ctx.worktree;
-    if (worktree === undefined) return;
-    const target = join(worktree.path, SHIP_FOCUS_FILENAME);
-    const answer = ctx.escalationAnswer;
-    if (answer === undefined) {
-      rmSync(target, { force: true });
-      return;
-    }
-    this.excludeShipFocusFromGit(worktree.path);
-    const body =
-      `# Single-slice ship focus (machine-generated; #439)\n\n` +
-      `A human answered a prior S7 decision escalation. Retry the ship worker with\n` +
-      `this answer in force; do not repeat the same HITL stop unless a new blocker\n` +
-      `remains.\n\n` +
-      `\`\`\`json\n${JSON.stringify(answer, null, 2)}\n\`\`\`\n`;
-    writeFileSync(target, body, "utf8");
-  }
-
-  protected prepareShipOutcomeLanding(
-    ctx: DispatchContext,
-  ): { path: string; sandboxPath: string } | undefined {
-    if (ctx.stateDir === undefined || ctx.worktree === undefined) return undefined;
-    mkdirSync(ctx.stateDir, { recursive: true });
-    const dir = mkdtempSync(join(ctx.stateDir, "worker-outcome-ship-"));
-    const path = join(dir, "outcome.json");
-    writeFileSync(path, "", "utf8");
-    this.excludeRuntimeFileFromGit(ctx.worktree.path, WORKER_OUTCOME_REPO_FILE);
-    return { path, sandboxPath: WORKER_OUTCOME_SANDBOX_FILE };
-  }
-
-  /** Add the generated ship focus file to local git excludes so it is never committed. */
-  protected excludeShipFocusFromGit(worktreePath: string): void {
-    this.excludeRuntimeFileFromGit(worktreePath, SHIP_FOCUS_FILENAME);
-  }
-
-  protected excludeRuntimeFileFromGit(worktreePath: string, filename: string): void {
-    try {
-      const excludePath = this.sh(
-        "git",
-        ["rev-parse", "--git-path", "info/exclude"],
-        worktreePath,
-      );
-      const abs = isAbsolute(excludePath)
-        ? excludePath
-        : resolve(worktreePath, excludePath);
-      let existing = "";
-      try {
-        existing = readFileSync(abs, "utf8");
-      } catch {
-        // no exclude file yet
-      }
-      if (!existing.split(/\r?\n/).includes(filename)) {
-        mkdirSync(join(abs, ".."), { recursive: true });
-        appendFileSync(
-          abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
-            filename +
-            "\n",
-          "utf8",
-        );
-      }
-    } catch {
-      // Non-git fixtures still get the focus file; real worktrees get the exclude.
-    }
-  }
-
-  /**
-   * The ship worker's sandbox: the 2b image (gstack-ship + gh + bun baked in,
-   * #333) under the WRITE (`coder`) soul, with the codex auth mounted + the claude
-   * and gh tokens injected as env (the ship worker pushes + `gh pr create`, so it
-   * needs the live credentials). Takes the ALREADY-gathered {@link ShipAuth} (mirrors
-   * the family `shipSandbox`) so `runShipWorker` gathers once: preflight the claude +
-   * gh tokens THEN build the sandbox from the same auth (no double-gather).
-   * `protected` so a unit test asserts the mounts + soul without a real container.
-   */
-  protected shipSandbox(
-    auth: ShipAuth,
-    outcomeLanding?: { path: string; sandboxPath: string },
-  ): sc.SandboxProvider {
-    return docker(this.shipSandboxConfig(auth, outcomeLanding));
-  }
-
-  /**
-   * Gather the ship worker's host credentials (#336 cmr S336 r1): the codex auth dir
-   * (mounted), the claude OAuth token (env), and the gh OAuth token (`gh auth token`
-   * → GH_TOKEN env, cmr S336 r10). Gathering is fail-soft per source (each in its OWN
-   * try/catch ⇒ a missing source is undefined, never a crash here).
-   *
-   * Unlike the agent-step `mountAuth` (which THROWS on any missing credential), the
-   * GATHER is tolerant; the REQUIRE gates (claude + gh — both load-bearing for the
-   * ship) live in `runShipWorker`'s preflight, the codex leg degrades silently. NOT
-   * keyed by issue here for the codex dir — a fresh temp dir per call keeps it
-   * self-contained; the claude token is read straight off the host, the gh token via
-   * the gh CLI (it lives in the OS keyring, not a portable file).
-   */
-  protected mountShipAuth(issueNumber: number): ShipAuth {
-    // #748: same injectable-home seam as mountAuth (opts.home ?? os.homedir()).
-    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
-    const root = join(paths.hostCodexAuthDir, "..");
-    let codexAuthDir: string | undefined;
-    let tempCodexDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempCodexDir = mkdtempSync(join(root, `ship-codex-auth-${issueNumber}-`));
-      copyFileSync(paths.srcCodexAuth, join(tempCodexDir, "auth.json"));
-      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
-      // bwrap is impossible). The host config.toml is host-personal and irrelevant
-      // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
-      codexAuthDir = tempCodexDir;
-    } catch {
-      // codex auth absent ⇒ the codex leg degrades (no mount), no crash. gh is NOT
-      // here — it is the separate, preflighted ghToken (cmr S336 r10). Reclaim the
-      // mkdtemp dir if it was created before copy/chmod threw (online review r2,
-      // gemini): on the degrade path codexAuthDir stays undefined, so the per-
-      // invocation dir would otherwise leak past the caller's finally cleanup.
-      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-        rmSync(tempCodexDir, { recursive: true, force: true });
-      }
-    }
-    let grokAuthDir: string | undefined;
-    let tempGrokDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempGrokDir = mkdtempSync(join(root, `ship-grok-auth-${issueNumber}-`));
-      copyFileSync(paths.srcGrokAuth, join(tempGrokDir, "auth.json"));
-      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
-      grokAuthDir = tempGrokDir;
-    } catch {
-      // grok auth is an optional dispatch leg; omit its mount when absent and
-      // reclaim a partially-created per-invocation dir.
-      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
-        rmSync(tempGrokDir, { recursive: true, force: true });
-      }
-    }
-    let claudeToken: string | undefined;
-    try {
-      const tok = readFileSync(paths.claudeTokenFile, "utf8").trim();
-      // A present-but-empty/blank token file ⇒ undefined (the ship preflight
-      // escalates), NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats
-      // the gate (cmr int-r3 A; matches readGhToken's empty-string normalization).
-      claudeToken = tok === "" ? undefined : tok;
-    } catch {
-      // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
-      // route slots simply run without this env var.
-    }
-    return {
-      codexAuthDir,
-      grokAuthDir,
-      opencodeAuthFile: hostOpenCodeAuthFile(this.opts.home ?? homedir()),
-      claudeToken,
-      ghToken: this.readGhToken(),
-      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
-    };
-  }
-
-  /**
-   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10). The token
-   * lives in the host's OS keyring (not a portable hosts.yml), so we extract it with
-   * gh itself and inject it as {@link SANDBOX_GH_TOKEN_ENV} into the container.
-   * Returns undefined when gh is unauthenticated / not installed (the `runShipWorker`
-   * preflight then escalates — gh is a hard ship requirement). `protected` so a unit
-   * test stubs it without spawning gh.
-   */
-  protected readGhToken(): string | undefined {
-    try {
-      const tok = this.sh("gh", ["auth", "token"]).trim();
-      return tok === "" ? undefined : tok;
-    } catch {
-      // gh unauthenticated / absent ⇒ no token; runShipWorker escalates.
-      return undefined;
-    }
-  }
-
-  /**
-   * The docker options the ship worker sandbox runs under — the pure
-   * SANDBOX-CONFIG seam (mirrors `boxConfig` / the family `shipSandboxConfig`
-   * testability). No container, no I/O: a unit test asserts the mounts + soul env
-   * without a real sandbox. The ship worker runs under the `coder` (WRITE) soul
-   * (it commits the bump + pushes) with codex auth + the claude token + the gh token
-   * (GH_TOKEN — push over https + `gh pr create`, cmr S336 r10), each set only when
-   * present (#336 cmr S336 r1), NO skills mount (the 2b image BAKES gstack-ship — a
-   * runtime mount would SHADOW it, #334).
-   */
-  protected shipSandboxConfig(
-    auth: ShipAuth,
-    outcomeLanding?: { path: string; sandboxPath: string },
-  ): {
-    imageName: string;
-    env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
-  } {
-    // The ship worker runs under the dedicated "ship" soul (delivery discipline:
-    // gstack-ship, stop-at-PR, defer→tracker not PR body) — souls/ship.md covers
-    // both single-slice and family deliveries, so the single-slice ship is unified
-    // with the family ship rather than left on the coder soul (gemini #384 R3).
-    // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
-    // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the sandbox must export it
-    // or that tracker write fails on an unset var (codex #384). Mirrors boxConfig.
-    const env: Record<string, string> = {
-      ...SPAWNED_WORKER_ENV,
-      [SANDBOX_SOUL_ENV]: "ship",
-      [SANDBOX_REPO_ENV]: this.opts.repo,
-    };
-    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
-    // cmr S336 r10: the in-container `gh` (push over https + `gh pr create`)
-    // authenticates from GH_TOKEN. Set only when present (the pure seam stays
-    // tolerant; the REQUIRE-gh gate is the runShipWorker preflight).
-    if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
-    if (outcomeLanding !== undefined) {
-      env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
-    }
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-    // #334: codex auth ONLY — baked skills win (no host skills mount).
-    if (auth.codexAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
-    }
-    if (auth.grokAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
-    }
-    applyUniformCredentialProvisioning({
-      env,
-      mounts,
-      opencodeAuthFile: auth.opencodeAuthFile,
-    });
-    // #372: souls mount for ship worker too (live source, shadows baked if any).
-    // Shared helper forces readonly:true at all sites.
-    mounts.push(soulsMount(this.opts.soulsDir));
-    if (outcomeLanding !== undefined) {
-      mounts.push({
-        hostPath: outcomeLanding.path,
-        sandboxPath: outcomeLanding.sandboxPath,
-      });
-    }
-    return { imageName: this.opts.imageName, env, mounts };
-  }
-
-  /**
-   * The legacy inline push (#252 escalate-residue path). RETAINED as a `protected`
-   * fallback the seam no longer reaches on the production path: ADR 0026 / #336
-   * makes S7 a ship WORKER (gstack-ship via {@link dispatchWorker}). A direct
-   * caller (a test / a legacy back-compat path that bypasses the unified seam) may
-   * still reach it; the runner never does (it always goes through dispatchWorker).
-   */
-  async push(worktree: WorktreeHandle): Promise<void> {
-    this.sh(
-      "git",
-      ["push", "-u", "origin", worktree.branch],
-      worktree.path,
-    );
-  }
-
-  // #661: retained only as a compatibility seam. Scenes are never destroyed.
-  async cleanResidue(worktree: WorktreeHandle): Promise<void> {
-    void worktree;
-  }
-
-  /**
-   * Terminal-success GC (#603 / ADR 0024): remove the resident slice worktree.
-   * Scoped to the worktree path only — no repo-level prune.
-   */
-  async reapResidentWorktree(worktree: WorktreeHandle): Promise<void> {
-    return runExclusive(this.workingRepo, () => {
-      try {
-        this.sh(
-          "git",
-          ["worktree", "remove", "--force", worktree.path],
-          this.workingRepo,
-        );
-      } catch {
-        // Best-effort: a missing worktree is already reclaimed.
-      }
-    });
   }
 
   // ── #255: detect resume residue ────────────────────────────────────────────
