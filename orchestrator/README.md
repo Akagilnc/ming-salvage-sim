@@ -61,7 +61,7 @@ not by forbidden-source-text sweeps. In particular see
   by the next reviewer, and any reported PR URL is cargo for downstream
   workers, not a runner verdict input. The runner never runs
   `git rev-list` / `ls-remote` / `gh pr view` to adjudicate a worker.
-- **`*_STEP_COMPLETE` sentinels are optional telemetry.** Process and receipt
+- **`*_STEP_COMPLETE` sentinels are multi-iter terminators** (required final line for sandcastle iteration end; not optional telemetry — #899/#911). Process and receipt
   routing tests prove that their prose placement cannot become a runner fate
   channel; no source-text ban is used as the lock.
 - **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the

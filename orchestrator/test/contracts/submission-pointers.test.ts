@@ -1,15 +1,9 @@
 /**
- * #880 (873·S6) — ADR 0130 submission-contract pointers in orchestrator role files.
+ * #880 (873·S6) / #911 — ADR 0130 submission-contract pointers in role files.
  *
- * Codex on PR #872: the contract claims to cover per-slice review, but per-slice
- * legs deliberately do NOT invoke ak-cross-m-review (CLAUDE.md Skill routing).
- * Without pointers in orchestrator souls, per-slice reviewers never see the
- * 交卷契约 / 钉子令牌 / 钉上刻字 obligations.
- *
- * Skill package owns the rule body (owner session; out of this slice). This
- * slice only pins POINTER phrases in role files — short citations, not a second
- * copy of the skill text. Phrase pins mirror the skill's test_submission_contract
- * / test_nail_token spirit: positive presence + "pointer not restatement" guard.
+ * #911 rewrote souls as Chinese character editions: the pointer lives as short
+ * citations (交卷契约 → ADR 0130 / 钉子令牌 / 钉上刻字), not English restatements.
+ * Thin prompts still defer method to the soul + skills.
  */
 
 import { readFileSync } from "node:fs";
@@ -35,101 +29,73 @@ function norm(text: string): string {
   return text.replace(/\s+/g, " ");
 }
 
-const ADR_PATH = "docs/adr/0130-exhaustive-review-submission-contract";
-
-describe("#880 ADR 0130 pointer — per-slice reviewer soul (PR #872 gap)", () => {
+describe("#880/#911 ADR 0130 pointer — per-slice reviewer soul", () => {
   const soul = norm(readSoul("reviewer.md"));
 
-  it("cites ADR 0130 / the exhaustive-review submission contract path", () => {
+  it("cites ADR 0130 / 交卷契约 and requires recording every finding", () => {
     expect(soul).toMatch(/ADR 0130/);
-    expect(soul).toContain(ADR_PATH);
-  });
-
-  it("names the 交卷契约 / Submission contract and requires reporting every finding", () => {
-    expect(soul).toMatch(/Submission contract|交卷契约/);
-    // Positive: delivery only after every seen finding is written down.
-    expect(soul).toMatch(/every finding|all findings|every defect you (saw|see)/i);
-    // Severity is a label, not an admission gate (wiki §额外硬规则 #8).
-    expect(soul).toMatch(/severity is a (label|property)|not an? (admission )?threshold/i);
-  });
-
-  it("is a pointer, not a restated skill body", () => {
-    // Must explicitly say the skill / ADR is the single source (pointer stance).
-    expect(soul).toMatch(/pointer|single source|do not (restate|duplicate|re-copy|rewrite)/i);
-    // Must not paste skill-only field names that belong to the cmr-fixer schema.
-    expect(soul).not.toMatch(/`adjudications` entry/);
-    expect(soul).not.toMatch(/`incidental_fixes`/);
+    expect(soul).toMatch(/交卷契约/);
+    expect(soul).toMatch(/每条 finding 都欠一个记录/);
+    expect(soul).toMatch(/只评审不修复/);
   });
 });
 
-describe("#880 ADR 0130 pointer — integrated CMR completeness soul (钉子令牌 + 钉上刻字)", () => {
-  const soul = norm(readSoul("cmr_completeness.md"));
+describe("#880/#911 ADR 0130 pointer — verify soul (cmr_* symlink target)", () => {
+  const soul = norm(readSoul("verify.md"));
+  const completeness = norm(readSoul("cmr_completeness.md"));
+  const correctness = norm(readSoul("cmr_correctness.md"));
 
-  it("cites ADR 0130 and the submission contract", () => {
+  it("verify soul carries 交卷契约 + 钉子令牌 + 钉上刻字", () => {
     expect(soul).toMatch(/ADR 0130/);
-    expect(soul).toContain(ADR_PATH);
-    expect(soul).toMatch(/Submission contract|交卷契约/);
-  });
-
-  it("points at 钉子令牌 and 钉上刻字 (wiki §额外硬规则 #9)", () => {
+    expect(soul).toMatch(/交卷契约/);
     expect(soul).toContain("钉子令牌");
     expect(soul).toContain("钉上刻字");
-    // Completeness owns nail hand-off; point at the skill section, do not rewrite.
-    expect(soul).toMatch(/ak-cmr-completeness|ak-cross-m-review/);
-    expect(soul).toMatch(/pointer|single source|do not (restate|duplicate|re-copy|rewrite)/i);
+    expect(soul).toMatch(/严重度是标签，不是入场券/);
+  });
+
+  it("cmr_completeness/cmr_correctness resolve to the same verify body", () => {
+    expect(completeness).toBe(soul);
+    expect(correctness).toBe(soul);
   });
 });
 
-describe("#880 ADR 0130 pointer — integrated CMR correctness soul", () => {
-  const soul = norm(readSoul("cmr_correctness.md"));
-
-  it("cites ADR 0130 / submission contract as a pointer into the skill", () => {
-    expect(soul).toMatch(/ADR 0130/);
-    expect(soul).toContain(ADR_PATH);
-    expect(soul).toMatch(/Submission contract|交卷契约/);
-    expect(soul).toMatch(/pointer|single source|do not (restate|duplicate|re-copy|rewrite)/i);
-  });
-});
-
-describe("#880 ADR 0130 pointer — fixer first-duty (online review fixer soul)", () => {
+describe("#880/#911 ADR 0130 pointer — fixer first-duty", () => {
   const soul = norm(readSoul("fixer.md"));
 
-  it("cites ADR 0130 and makes empirical adjudication the first duty", () => {
+  it("cites ADR 0130 and makes adjudication the first duty", () => {
     expect(soul).toMatch(/ADR 0130/);
-    expect(soul).toContain(ADR_PATH);
-    expect(soul).toMatch(/first duty|first task|first job/i);
-    expect(soul).toMatch(/empiric|against the (real|actual) (code|source)|verify.*(true|false|authenticity)/i);
-    expect(soul).toMatch(/refut/i);
+    expect(soul).toMatch(/交卷契约/);
+    expect(soul).toMatch(/裁决是你的第一义务|第一义务/);
+    expect(soul).toMatch(/真 → 修/);
+    expect(soul).toMatch(/违宪|过度防御|事实不成立|越权加戏/);
   });
 });
 
-describe("#880 ADR 0130 pointer — per-slice coder-fix (coder soul + coder_fix prompt)", () => {
+describe("#880/#911 ADR 0130 pointer — per-slice coder-fix", () => {
   const soul = norm(readSoul("coder.md"));
   const prompt = norm(readPrompt("coder_fix.md"));
 
-  it("coder soul cites ADR 0130 for the verify-then-fix / refute first duty", () => {
+  it("coder soul cites ADR 0130 for verify-then-fix / refuse first duty", () => {
     expect(soul).toMatch(/ADR 0130/);
-    expect(soul).toContain(ADR_PATH);
-    expect(soul).toMatch(/refute the false ones|refuted/i);
-    expect(soul).toMatch(/Check each supplied finding against the real code first/i);
+    expect(soul).toMatch(/裁决是第一义务/);
+    expect(soul).toMatch(/refusedFindingIdentityKeys/);
+    expect(soul).toMatch(/对真实代码验证/);
   });
 
-  it("coder_fix prompt stays thin while the soul carries the ADR 0130 method", () => {
-    expect(prompt).not.toMatch(/ADR 0130|refut/i);
+  it("coder_fix prompt stays thin while soul carries ADR 0130 adjudication taste", () => {
+    // Prompt may mention refuse mechanics as vacuum fill, but soul owns the duty.
     expect(soul).toMatch(/ADR 0130/);
-    expect(soul).toContain(ADR_PATH);
+    expect(prompt).toMatch(/coder\.md/);
   });
 });
 
-describe("#880 ADR 0130 pointer — thin reviewer prompt defers to soul that carries the contract", () => {
+describe("#880/#911 thin reviewer prompt defers to soul", () => {
   const prompt = readPrompt("reviewer_review.md");
 
-  it("still routes method to the live-mounted reviewer soul (pointer lives there)", () => {
+  it("still routes method to the live-mounted reviewer soul", () => {
     expect(prompt).toMatch(
       /\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/,
     );
-    // Thin entrypoint may restate a one-liner pointer, but must not invent a
-    // second full contract body. Prefer soul as the carrier.
     const n = norm(prompt);
     expect(n).not.toMatch(/`adjudications` entry/);
   });
