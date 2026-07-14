@@ -112,6 +112,7 @@ import {
   modelRouteFingerprint,
   resolveActiveModelRoute,
   smokeRouteModels,
+  type ModelRouteSlot,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
@@ -200,11 +201,17 @@ export interface VerifyCmrInput {
   /** The family-startup-smoked route carried into every family worker dispatch. */
   readonly modelRoute?: ResolvedModelRoute;
   /**
-   * #686 / #909 — sticky baton billing pool for re-dispatch after a family
-   * quota relay. When set, every family worker DispatchContext carries it so
-   * the real provider/CLI channel matches the baton (not only the model slug).
+   * #686 / #909 — baton billing pool for re-dispatch after a family quota
+   * relay. When set WITH {@link billingPoolSlots}, only wall-role workers on
+   * those slots receive the pool (no barrier-wide sticky pollution of ship/etc).
+   * When set alone (tests / explicit), applied unscoped.
    */
   readonly billingPool?: string;
+  /**
+   * Slot-scoped baton pool binding. When present with {@link billingPool},
+   * only workers whose route slot is listed get the pool rewrite.
+   */
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
   /**
    * The child issue numbers whose merge into the family base was LLM-resolved
    * (#295), derived by the spine from the durable family ledger (#291 缺口 1). The
@@ -274,6 +281,53 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
  * that real verify work DID happen (this is not the nothing-ran no-op).
  */
 const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
+
+/**
+ * Map a family worker kind (+ optional cmr pass) to the route slot it consumes.
+ * Used to scope baton billingPool to wall roles only (F2).
+ */
+export function familyWorkerSlotForDispatch(
+  kind: WorkerSpec["kind"],
+  cmrPass?: IntegratedCmrPass | string,
+): ModelRouteSlot | undefined {
+  switch (kind) {
+    case "cmr":
+      return cmrPass === "correctness" ? "cmrCorrectness" : "cmrCompleteness";
+    case "ship":
+      return "ship";
+    case "coder":
+      return "coderFix";
+    case "verify":
+      return "verify";
+    case "fixer":
+      return "fixer";
+    case "docRelease":
+      return "docRelease";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Resolve DispatchContext.billingPool for a family worker.
+ * - No pool → undefined
+ * - Pool without slots (explicit test / unscoped) → pool for every worker
+ * - Pool + slots → only wall-role workers on listed slots get the rewrite
+ */
+export function billingPoolForFamilyWorker(opts: {
+  readonly billingPool?: string;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
+  readonly kind: WorkerSpec["kind"];
+  readonly cmrPass?: IntegratedCmrPass | string;
+}): string | undefined {
+  if (opts.billingPool === undefined) return undefined;
+  if (opts.billingPoolSlots === undefined || opts.billingPoolSlots.length === 0) {
+    return opts.billingPool;
+  }
+  const slot = familyWorkerSlotForDispatch(opts.kind, opts.cmrPass);
+  if (slot === undefined) return undefined;
+  return opts.billingPoolSlots.includes(slot) ? opts.billingPool : undefined;
+}
 
 async function runFamilyVerifyOrAbort(input: {
   readonly phase: VerifyCmrPhase;
@@ -596,6 +650,7 @@ async function runCmrCoderFix(input: {
   readonly familyIssue?: number;
   readonly resolvedRoute: ResolvedModelRoute;
   readonly billingPool?: string;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -612,6 +667,7 @@ async function runCmrCoderFix(input: {
     familyIssue,
     resolvedRoute,
     billingPool,
+    billingPoolSlots,
   } = input;
   const reasonPrefix =
     `integrated cmr ${pass} coder-fix for ` +
@@ -620,6 +676,11 @@ async function runCmrCoderFix(input: {
   const currentFamilyHeadBefore = familyHeadBefore;
   let telemetryFamilyHeadBefore = familyHeadBefore;
   const coderFixSpec = familyCoderFixWorkerSpec(resolvedRoute);
+  const fixPool = billingPoolForFamilyWorker({
+    ...(billingPool !== undefined ? { billingPool } : {}),
+    ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
+    kind: "coder",
+  });
   const fixResult = await dispatchOrAbort(
     familyBackend,
     coderFixSpec,
@@ -627,7 +688,7 @@ async function runCmrCoderFix(input: {
       familyBase,
       ...(runId !== undefined ? { runId } : {}),
       modelRoute: resolvedRoute,
-      ...(billingPool !== undefined ? { billingPool } : {}),
+      ...(fixPool !== undefined ? { billingPool: fixPool } : {}),
       // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
       // rich finding content travels in the separate landing payload below.
       blockingFindingIdentityKeys,
@@ -1006,6 +1067,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   readonly ship: ShipResult;
   readonly resolvedRoute?: ResolvedModelRoute;
   readonly billingPool?: string;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
   readonly escalationAnswer?: EscalationAnswerPayload;
 }): Promise<OnlineReviewLoopStageResult> {
   const repo =
@@ -1036,11 +1098,11 @@ export async function runFamilyOnlineReviewLoop(input: {
       },
     };
   }
+  // F2: do not put sticky baton pool on baseCtx — each dispatch scopes by slot.
   const baseCtx: DispatchContext = {
     familyBase: input.familyBase,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
     modelRoute,
-    ...(input.billingPool !== undefined ? { billingPool: input.billingPool } : {}),
     repo,
     prUrl,
     prHead: input.ship.prHead,
@@ -1048,6 +1110,16 @@ export async function runFamilyOnlineReviewLoop(input: {
       ? { escalationAnswer: input.escalationAnswer }
       : {}),
   };
+  const poolForKind = (kind: WorkerSpec["kind"]): string | undefined =>
+    billingPoolForFamilyWorker({
+      ...(input.billingPool !== undefined
+        ? { billingPool: input.billingPool }
+        : {}),
+      ...(input.billingPoolSlots !== undefined
+        ? { billingPoolSlots: input.billingPoolSlots }
+        : {}),
+      kind,
+    });
 
   const livePoll = isLiveGithubReviewPollEnabled(prUrl, repo);
   const familyLedger = await input.familyBackend.readFamilyLedger();
@@ -1151,10 +1223,15 @@ export async function runFamilyOnlineReviewLoop(input: {
     },
     dispatchVerify: async (landing, round) => {
       let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
+      const verifyPool = poolForKind("verify");
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         verifyWorkerSpec(input.resolvedRoute),
-        { ...baseCtx, onlineReviewRound: round },
+        {
+          ...baseCtx,
+          onlineReviewRound: round,
+          ...(verifyPool !== undefined ? { billingPool: verifyPool } : {}),
+        },
         landing,
         {
           onMonitorHandle: (handle) => {
@@ -1221,10 +1298,14 @@ export async function runFamilyOnlineReviewLoop(input: {
         landing.fixMarkedFindingIdentityKeys ?? [];
       lastFixMarkedFindingThreads = landing.fixMarkedFindingThreads ?? [];
       lastFixerOnlineReviewRound = round;
+      const fixerPool = poolForKind("fixer");
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         fixerWorkerSpec(input.resolvedRoute),
-        baseCtx,
+        {
+          ...baseCtx,
+          ...(fixerPool !== undefined ? { billingPool: fixerPool } : {}),
+        },
         landing,
       );
       if (result.kind === "escalated") {
@@ -1266,10 +1347,14 @@ export async function runFamilyOnlineReviewLoop(input: {
     },
     // #740: family S12 crash-retry continues as-is (no scoped cleanup hook).
     dispatchDocRelease: async (landing: WorkerLandingPayload) => {
+      const docPool = poolForKind("docRelease");
       const result = await dispatchFamilyReviewWorker(
         input.familyBackend,
         docReleaseWorkerSpec(input.resolvedRoute),
-        baseCtx,
+        {
+          ...baseCtx,
+          ...(docPool !== undefined ? { billingPool: docPool } : {}),
+        },
         landing,
       );
       if (result.kind !== "completed") return false;
@@ -1596,6 +1681,7 @@ async function runIntegratedCmrPass(input: {
   readonly resolvedRoute: ResolvedModelRoute;
   readonly allowCoderFix: boolean;
   readonly billingPool?: string;
+  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -1609,6 +1695,7 @@ async function runIntegratedCmrPass(input: {
     moduleContext,
     resolvedRoute,
     billingPool,
+    billingPoolSlots,
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
     allowCoderFix,
@@ -1634,11 +1721,17 @@ async function runIntegratedCmrPass(input: {
   const spec = cmrWorkerSpec("fresh", pass, resolvedRoute);
   const familyLedger = await familyBackend.readFamilyLedger();
   const priorRoundFindings = priorCmrFindingsFromFamilyLedger(familyLedger, pass);
+  const cmrPool = billingPoolForFamilyWorker({
+    ...(billingPool !== undefined ? { billingPool } : {}),
+    ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
+    kind: "cmr",
+    cmrPass: pass,
+  });
   const dispatchCtx: DispatchContext = {
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
     modelRoute: resolvedRoute,
-    ...(billingPool !== undefined ? { billingPool } : {}),
+    ...(cmrPool !== undefined ? { billingPool: cmrPool } : {}),
     cmrPass: pass,
     ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
       ? { llmResolvedChildren }
@@ -1725,6 +1818,7 @@ async function runIntegratedCmrPass(input: {
       familyIssue,
       resolvedRoute,
       ...(billingPool !== undefined ? { billingPool } : {}),
+      ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
     });
     if (!fixRound.result.ok) return fixRound;
     return {
@@ -1865,6 +1959,7 @@ async function runIntegratedCmrPass(input: {
         familyIssue,
         resolvedRoute,
         ...(billingPool !== undefined ? { billingPool } : {}),
+        ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
       });
       if (!fixRound.result.ok) return fixRound;
       const updatedPriorKeys = [
@@ -1938,8 +2033,13 @@ export async function runVerifyCmr(
     priorCmrFindingIdentityKeysByPass,
     modelRoute,
     billingPool,
+    billingPoolSlots,
     runId,
   } = input;
+  const scopedPoolFields = {
+    ...(billingPool !== undefined ? { billingPool } : {}),
+    ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
+  };
 
   // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
   if (familyBackend.runFamilyVerify === undefined) return NOOP;
@@ -2047,7 +2147,7 @@ export async function runVerifyCmr(
     priorCmrFindingIdentityKeysByPass: activePriorKeysByPass,
     resolvedRoute,
     allowCoderFix: true,
-    ...(billingPool !== undefined ? { billingPool } : {}),
+    ...scopedPoolFields,
   });
   if (!completeness.result.ok) return completeness.result;
   if (completeness.restartFinalBarrier !== undefined) {
@@ -2057,7 +2157,7 @@ export async function runVerifyCmr(
       familyBase,
       runId,
       modelRoute,
-      ...(billingPool !== undefined ? { billingPool } : {}),
+      ...scopedPoolFields,
       llmResolvedChildren,
       escalationAnswer,
       familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
@@ -2085,7 +2185,7 @@ export async function runVerifyCmr(
       priorCmrFindingIdentityKeysByPass: correctnessPriorKeysByPass,
       resolvedRoute,
       allowCoderFix: true,
-      ...(billingPool !== undefined ? { billingPool } : {}),
+      ...scopedPoolFields,
     });
     if (!correctness.result.ok) return correctness.result;
     if (correctness.restartFinalBarrier === undefined) {
@@ -2160,11 +2260,15 @@ export async function runVerifyCmr(
     return INCOMPLETE_GATE;
   }
   const shipSpec = familyShipWorkerSpec(resolvedRoute);
+  const shipPool = billingPoolForFamilyWorker({
+    ...scopedPoolFields,
+    kind: "ship",
+  });
   const shipContext = {
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
     modelRoute: resolvedRoute,
-    ...(billingPool !== undefined ? { billingPool } : {}),
+    ...(shipPool !== undefined ? { billingPool: shipPool } : {}),
     ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
   };
   const shipResult = await dispatchOrAbort(
@@ -2342,7 +2446,7 @@ export async function runVerifyCmr(
       status: "pr_opened",
     },
     resolvedRoute,
-    ...(billingPool !== undefined ? { billingPool } : {}),
+    ...scopedPoolFields,
   });
   const familyLedgerForHead = await familyBackend.readFamilyLedger();
   const knownPostFixHead =
