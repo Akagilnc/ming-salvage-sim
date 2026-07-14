@@ -523,7 +523,7 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
           codexAuthDir: "/x/codex",
           grokAuthDir: "/x/grok",
           ghToken: "gho_ok",
-          providerAuth: { claude: true, grok: true },
+          providerAuth: { claude: true, grok: true, agy: true },
         };
       }
       protected override async shipContainerRun(): Promise<never> {
@@ -567,7 +567,7 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
           codexAuthDir: "/x/codex",
           grokAuthDir: "/x/grok",
           ghToken: "gho_ok",
-          providerAuth: { claude: true, grok: true },
+          providerAuth: { claude: true, grok: true, agy: true },
         };
       }
       protected override async shipContainerRun(

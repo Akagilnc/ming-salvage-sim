@@ -196,6 +196,8 @@ function productionSmokeBackend(
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
   writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
+  // #905: agy OAuth for real agy bare-ping (fail-closed without it).
+  writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-test-token\n");
   // Grok auth is optional fixture material — tests that need SuperGrok
   // bare-ping success write `~/.grok/auth.json` themselves (#905).
   return new ProductionSmokeBackend(home, pingImpl);
