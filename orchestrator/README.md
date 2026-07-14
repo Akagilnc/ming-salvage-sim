@@ -323,7 +323,11 @@ never on input the test itself seeded.
 
 ## Durability and resume
 
-- The step ledger (`steps.jsonl`) is the single source of resume truth;
+- **Current legacy runtime only:** the step ledger (`steps.jsonl`) is the
+  single source of resume truth. The canonical target makes Lineage the sole
+  durable source and keeps the step ledger as a Flow projection; #867 owns the
+  migration and #898 removes this legacy path.
+- In that current legacy runtime,
   bookkeeping rows (`mechanical_redispatch_attempt`, ship streak/attempt
   records) use dedicated kinds that step consumers ignore but the budget
   scanner rebuilds from.
@@ -422,10 +426,14 @@ main across cross-slice seams; the integrated gates exist precisely for that.
 
 ## Known failure signatures
 
+This table documents the current pre-cutover runtime. It is operational help,
+not the canonical target contract; #898 removes the retired paths after the
+replacement Actions and Sandcastle controls land.
+
 | symptom | likely cause | fix |
 | --- | --- | --- |
 | startup `route smoke failed … did not complete an observable bash smoke` (every launch) | smoke prompt lost its `{{NONCE}}`/`{{NONCE_FILE}}` placeholders, or model at capacity | check `prompts/route-smoke.md` placeholders; switch checkpoint |
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
 | resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
-| worker looks hung | judge by idle threshold (>15 min with no new output), then kill only that worker's own pid tree; capacity/quota errors are not hangs | relay a successor onto the surviving drift |
+| worker looks hung (legacy path) | the current monitor judges by idle threshold (>15 min with no new output), then kills only that worker's own pid tree; capacity/quota errors are not hangs | current-runtime recovery is to relay a successor onto the surviving drift; the canonical target delegates idle/completion timeout and cancellation to Sandcastle, with Policy owning relay/wait/decision |
