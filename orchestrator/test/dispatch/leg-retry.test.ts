@@ -185,9 +185,10 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
       if (
         file === "codex" ||
         file === "claude" ||
-        file === "opencode" ||
+        file === "agy" ||
         file === "grok" ||
-        file === "cursor"
+        file === "cursor" ||
+        file === "agent"
       ) {
         return "cli-test-version";
       }
@@ -214,15 +215,9 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
     mkdirSync(join(home, ".codex"), { recursive: true });
     writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
     writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
-    const opencodeDir = join(home, ".local", "share", "opencode");
-    mkdirSync(opencodeDir, { recursive: true });
-    writeFileSync(
-      join(opencodeDir, "auth.json"),
-      JSON.stringify({
-        "opencode-go": { type: "api", key: "test-key" },
-        "grok-4.5": { type: "api", key: "test-key" },
-      }),
-    );
+    writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-test-token\n");
+    mkdirSync(join(home, ".grok"), { recursive: true });
+    writeFileSync(join(home, ".grok", "auth.json"), "{}\n");
     return home;
   }
 

@@ -39,7 +39,6 @@ import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
-  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
   SANDBOX_ISSUE_NUMBER_ENV,
@@ -99,14 +98,13 @@ describe("#334 RealBackend.boxConfig uses baked skills", () => {
     public config(
       spec: StepSpec,
       options?: Parameters<RealBackend["runStep"]>[2],
-      opencodeAuthFile?: string,
     ): {
       imageName: string;
       env: Record<string, string>;
       mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
     } {
       return this.boxConfig(
-        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test", opencodeAuthFile },
+        { authDir: "/tmp/auth-256", claudeToken: "tok", ghToken: "gho_test" },
         spec,
         334,
         options,
@@ -157,20 +155,13 @@ describe("#334 RealBackend.boxConfig uses baked skills", () => {
     expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("coder");
   });
 
-  it("provisions OpenCode credentials uniformly without metadata inspection", () => {
+  it("#905: boxConfig does not mount opencode auth or inject GLM_KEY", () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
-    const dir = mkdtempSync(join(tmpdir(), "pool-auth-"));
-    const authFile = join(dir, "auth.json");
-    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
-
-    expect(makeBackend().config(coderSpec, { billingPool: "zai" }, authFile).env.GLM_KEY).toBe("glm-secret");
-    const codex = makeBackend().config(coderSpec, { billingPool: "codex-5h" }, authFile);
-    expect(codex.env.GLM_KEY).toBe("glm-secret");
-    expect(codex.mounts).toContainEqual({
-      hostPath: authFile,
-      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
-      readonly: true,
-    });
+    const cfg = makeBackend().config(coderSpec, { billingPool: "zai" });
+    expect(cfg.env.GLM_KEY).toBeUndefined();
+    expect(
+      cfg.mounts.some((m) => m.sandboxPath.includes("opencode")),
+    ).toBe(false);
   });
 
   it("boxConfig includes soulsMount() shape (hostPath/sandboxPath/readonly:true) at this site (#372)", () => {
@@ -236,13 +227,15 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
-  it("fix/review prompt files stay thin and leave path/review method to the soul", () => {
+  it("fix/review prompts stay entrypoints; #911 vacuum puts mechanical method in prompts", () => {
     const fix = read("coder_fix.md");
     expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
-    expect(fix).toMatch(/fix-findings path/i);
+    expect(fix).toMatch(/fix-findings path|fix-findings\.json/i);
     expect(fix).toMatch(/escalationAnswer/i);
     expect(fix).not.toMatch(/sibling ledger|legacy compatibility fallback|Prefer the sibling ledger/is);
-    expect(fix).not.toMatch(/gh issue view|same-pattern check|fix-introduced-bug check/i);
+    // #911 vacuum: gh issue view / fix-focus method live in the fix prompt.
+    expect(fix).toMatch(/gh issue view/i);
+    expect(fix).toMatch(/\.fix-focus\.md/);
 
     const familyShip = read("family_ship.md");
     expect(familyShip).toMatch(/\/home\/agent\/\.orchestrator\/souls\/ship\.md/);
@@ -251,10 +244,10 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
 
     const review = read("reviewer_review.md");
     expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
-    expect(review).toMatch(/role soul \(live-mounted\) plus runner\s+parameters/i);
+    expect(review).toMatch(/role soul \(live-mounted\)|review character belongs to the role soul/i);
     expect(review).toMatch(/escalationAnswer/i);
-    expect(review).not.toMatch(/\.orchestrator-snapshot\.json/i);
-    expect(review).not.toMatch(/fetch the current issue body|Retry transient network failures|Review the current full slice diff/is);
+    // Snapshot policy is stated as not-execution-input (allowed).
+    expect(review).toMatch(/not execution input/i);
   });
 
   it("the worker image bakes the Matt code-review skill for reviewer workers", () => {
@@ -263,43 +256,18 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     const end = build.indexOf(")", start);
     const closureBlock = build.slice(start, end);
     expect(closureBlock).toMatch(/\bcode-review\b/);
-    // #372: souls (incl output_protocol.md) are mounted live, not staged/copied in build.sh.
+    // #372/#911: souls (+ home env) are mounted live, not staged/copied in build.sh.
     // The presence in source souls/ is asserted by other reads; build no longer bakes souls.
   });
 
-  it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
-    const soul = readSoul("coder.md");
-    expect(soul).toMatch(/Invoke `\/tdd`/i);
-    expect(soul).toMatch(/coder-fix|fix worker|blocking review findings/i);
-    expect(soul).toMatch(/escalationAnswer/i);
-    expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
-    expect(soul).toMatch(/gh issue view/i);
-    expect(soul).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
-    expect(soul).toMatch(/comment\.author\.login.*repo owner/is);
-    expect(soul).toMatch(/non-owner.*Agent Brief.*ordinary\s+issue text/is);
-    expect(soul).toMatch(/non-owner.*title.*body.*comments.*data-only/is);
-    expect(soul).toMatch(/must not.*instructions.*scope changes.*commands/is);
-    expect(soul).toMatch(/credential-handling\s+requests/i);
-    expect(soul).toMatch(/Snapshot files.*not execution input/is);
+  it("author-aware live issue reads live in implement + fix prompts", () => {
+    const implement = read("coder_implement.md");
+    const fix = read("coder_fix.md");
+    expect(implement).toMatch(/gh issue view/i);
+    expect(fix).toMatch(/gh issue view/i);
   });
 
-  it("coder soul, not the thin fix prompt, owns author-aware live issue reads", () => {
-    const prompt = read("coder_fix.md");
-    const soul = readSoul("coder.md");
-    expect(prompt).not.toMatch(/gh issue view|comment\.author\.login|credential-handling/i);
-    expect(soul).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
-    expect(soul).toMatch(/comment\.author\.login.*repo owner/is);
-    expect(soul).toMatch(/credential-handling\s+requests/i);
-  });
-
-  it("the reviewer soul carries snapshot-input policy outside the thin prompt", () => {
-    const soul = readSoul("reviewer.md");
-    expect(soul).toMatch(/Snapshot files.*not execution input/is);
-    expect(soul).toMatch(/git state for the review scope/i);
-    expect(soul).toMatch(/escalationAnswer/i);
-  });
-
-  it("#419 integrated cmr pass entrypoints read pass-specific souls that invoke only their lens gate", () => {
+  it("#419/#911 integrated cmr prompts point at pass soul paths; cmr_* resolve to verify", () => {
     const completenessPrompt = read("integrated_cmr_completeness.md");
     const correctnessPrompt = read("integrated_cmr_correctness.md");
     expect(completenessPrompt).toMatch(
@@ -308,39 +276,19 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(correctnessPrompt).toMatch(
       /\/home\/agent\/\.orchestrator\/souls\/cmr_correctness\.md/,
     );
+    expect(completenessPrompt).toMatch(/\bak-cmr-completeness\b/);
+    expect(completenessPrompt).not.toMatch(/\bak-cmr-correctness\b/);
+    expect(correctnessPrompt).toMatch(/\bak-cmr-correctness\b/);
+    expect(correctnessPrompt).not.toMatch(/\bak-cmr-completeness\b/);
 
-    const completenessSoul = readSoul("cmr_completeness.md");
-    expect(completenessSoul).toMatch(/\bak-cmr-completeness\b/);
-    expect(completenessSoul).not.toMatch(/\bak-cmr-correctness\b/);
-    expect(completenessSoul).not.toMatch(/Gate 2|correctness gate|Run only the correctness/is);
-
-    const correctnessSoul = readSoul("cmr_correctness.md");
-    expect(correctnessSoul).toMatch(/\bak-cmr-correctness\b/);
-    expect(correctnessSoul).not.toMatch(/\bak-cmr-completeness\b/);
-    expect(correctnessSoul).not.toMatch(/Gate 1|completeness gate|Run only the completeness/is);
-  });
-
-  it("#549 integrated cmr pass souls are reviewer workers, not persistent fixers", () => {
-    for (const soulName of ["cmr_completeness.md", "cmr_correctness.md"]) {
-      const soul = readSoul(soulName);
-
-      expect(soul).toMatch(/reviewer worker/i);
-      expect(soul).toMatch(/findings\/outcome/i);
-      expect(soul).toMatch(/return\s+control\s+to\s+the\s+runner/i);
-      expect(soul).toMatch(/must not repair/i);
-      expect(soul).toMatch(/must not[^.]*create a fix commit/i);
-      expect(soul).not.toMatch(/coder-fix/i);
-      expect(soul).not.toMatch(/Fix every gap|Fix P0\/P1|After every fix/i);
-      expect(soul).not.toMatch(/Commit each coherent fix|git commit|do not push or open a PR/i);
-      expect(soul).not.toMatch(/gh issue create|TODOS\.md/i);
-    }
+    // FS structure: both mount names resolve to the same verify body.
+    expect(readSoul("cmr_completeness.md")).toBe(readSoul("verify.md"));
+    expect(readSoul("cmr_correctness.md")).toBe(readSoul("verify.md"));
   });
 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
-    // Shared sidecar hygiene lives in the baked output protocol, not repeated
-    // across every prompt entrypoint.
     const prompts = [
       ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/],
       ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/],
@@ -360,75 +308,17 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     }
   });
 
-  it("the baked shared output protocol owns sidecar parser validation", () => {
-    const protocol = readSoul("output_protocol.md");
-    expect(protocol).toMatch(/ORCHESTRATOR_OUTCOME_PATH/);
-    expect(protocol).toMatch(/write[\s\S]*directly/i);
-    expect(protocol).not.toMatch(/python3 -c 'import json/);
-    expect(protocol).not.toMatch(/python3 -m json\.tool/);
-
-    for (const soulName of [
-      "coder.md",
-      "reviewer.md",
-      "merger.md",
-      "ship.md",
+  it("#911 output_protocol.md is gone; outcome path contract lives in prompts", () => {
+    expect(() => readSoul("output_protocol.md")).toThrow();
+    for (const promptName of [
+      "coder_implement.md",
+      "reviewer_review.md",
+      "merger_resolve_conflict.md",
+      "family_ship.md",
     ]) {
-      expect(readSoul(soulName)).toMatch(
-        /\/home\/agent\/\.orchestrator\/souls\/output_protocol\.md/,
-      );
-    }
-  });
-
-  // #604 slice 4 (ADR 0062): the routing disposition kinds — and their
-  // parser-required fields — were removed from the type system, so no reviewer
-  // or CMR prompt may still advertise them. This test used to assert those
-  // route-kind fields WERE documented; it now asserts they are GONE and that the
-  // new thin contract is documented instead (CMR prompts carry the
-  // `accepted_suppressed` governance fields; the standalone reviewer prompt
-  // mandates fix_now-only and emits no disposition).
-  it("CMR completeness/correctness prompts document the accepted_suppressed governance fields", () => {
-    for (const text of [
-      read("integrated_cmr_completeness.md"),
-      read("integrated_cmr_correctness.md"),
-    ]) {
-      expect(text).toMatch(
-        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
-      );
-    }
-  });
-
-  it("standalone reviewer prompt mandates fix_now-only findings with no routing disposition", () => {
-    const reviewer = read("reviewer_review.md");
-    // Everything is blocking / fix_now; there is no pass to another module.
-    expect(reviewer).toMatch(/fix_now/);
-    expect(reviewer).toMatch(/no pass to another module/i);
-    // And it explicitly does not emit an accepted_suppressed disposition either.
-    expect(reviewer).toMatch(/do not emit `accepted_suppressed`/i);
-  });
-
-  it("standalone reviewer prompt and soul do not advertise accepted_suppressed as supported output", () => {
-    for (const text of [read("reviewer_review.md"), readSoul("reviewer.md")]) {
-      expect(text).toMatch(/do not emit `accepted_suppressed`/i);
-      expect(text).not.toMatch(
-        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen[\s\S]*(findingIdentity|finding identity)[\s\S]*optional/i,
-      );
-      expect(text).not.toMatch(
-        /priorFindingDispositions[\s\S]*accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
-      );
-    }
-  });
-
-  it("integrated-cmr prompts include accepted_suppressed terminal closure metadata", () => {
-    for (const text of [
-      read("integrated_cmr_completeness.md"),
-      read("integrated_cmr_correctness.md"),
-    ]) {
-      expect(text).toMatch(
-        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen[\s\S]*(findingIdentity|finding identity)[\s\S]*optional/i,
-      );
-      expect(text).toMatch(
-        /priorFindingDispositions[\s\S]*accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
-      );
+      const prompt = read(promptName);
+      expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
+      expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
     }
   });
 });

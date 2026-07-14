@@ -114,15 +114,15 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
       ...baseRoute,
       slots: {
         ...baseRoute.slots,
-        cmrCompleteness: "opencode-grok",
+        cmrCompleteness: "agy",
         cmrCorrectness: "grok-4.5",
         coderFix: "sonnet",
         ship: "gpt-5.6-terra",
       },
     };
 
-    expect(cmrWorkerSpec("fresh", "completeness", route).host).toBe("opencode");
-    expect(cmrWorkerSpec("fresh", "correctness", route).host).toBe("cursor");
+    expect(cmrWorkerSpec("fresh", "completeness", route).host).toBe("agy");
+    expect(cmrWorkerSpec("fresh", "correctness", route).host).toBe("grok");
     expect(familyCoderFixWorkerSpec(route).host).toBe("claude");
     expect(familyShipWorkerSpec(route).host).toBe("codex");
   });

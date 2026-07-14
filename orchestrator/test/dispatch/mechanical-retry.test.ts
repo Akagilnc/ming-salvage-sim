@@ -16,8 +16,13 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MAX_DISPATCH_ATTEMPTS, withMechanicalRetry } from "../../src/dispatchRetry.js";
+import {
+  MAX_DISPATCH_ATTEMPTS,
+  retryProcessCrash,
+  withMechanicalRetry,
+} from "../../src/dispatchRetry.js";
 import { MAX_LEG_TRANSIENT_ATTEMPTS } from "../../src/legTransientRetry.js";
+import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
 import { isCapacityRelayError } from "../../src/relayDispatch.js";
 import { runOrchestrator } from "../../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
@@ -33,6 +38,32 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
+
+function quotaWaitError(): QuotaWaitForResetError {
+  const resetAt = new Date("2026-07-08T16:10:00.000Z");
+  return new QuotaWaitForResetError({
+    disposition: {
+      kind: "wait_for_reset",
+      pool: "zai",
+      resetAt,
+      reason: "quota limited (429); wait for reset",
+    },
+    applied: {
+      killed: false,
+      ledgerEntry: {
+        event: "quota_wait_for_reset",
+        pool: "zai",
+        resetAt: resetAt.toISOString(),
+        reason: "quota limited (429); wait for reset",
+        step: "S1",
+        workerPid: 0,
+        ts: "2026-07-08T12:00:00.000Z",
+      },
+    },
+    pool: "zai",
+    probe: { kind: "quota_limited", resetAt, detail: "429" },
+  });
+}
 
 function coderSpec(session: WorkerSpec["session"] = "fresh"): WorkerSpec {
   return {
@@ -177,6 +208,51 @@ describe("#598 withMechanicalRetry", () => {
     expect(calls).toBe(1);
   });
 
+  it("#909: QuotaWaitForResetError is rethrown without burning mechanical attempts", async () => {
+    let calls = 0;
+    const dispatch = async (): Promise<WorkerResult> => {
+      calls += 1;
+      throw quotaWaitError();
+    };
+    await expect(withMechanicalRetry(coderSpec(), {}, dispatch)).rejects.toBeInstanceOf(
+      QuotaWaitForResetError,
+    );
+    expect(calls).toBe(1);
+  });
+});
+
+describe("#909 retryProcessCrash must not thrash on quota wait", () => {
+  it("QuotaWaitForResetError rethrows on first attempt (no mechanical retry)", async () => {
+    let calls = 0;
+    let resets = 0;
+    await expect(
+      retryProcessCrash(
+        async () => {
+          calls += 1;
+          throw quotaWaitError();
+        },
+        {
+          maxAttempts: MAX_DISPATCH_ATTEMPTS,
+          resetBeforeRetry: async () => {
+            resets += 1;
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(QuotaWaitForResetError);
+    expect(calls).toBe(1);
+    expect(resets).toBe(0);
+  });
+
+  it("ordinary process crash still retries up to the bound", async () => {
+    let calls = 0;
+    await expect(
+      retryProcessCrash(async () => {
+        calls += 1;
+        throw new Error("merger agent crashed mid-resolve");
+      }),
+    ).rejects.toThrow(/after 3 dispatch attempts/);
+    expect(calls).toBe(MAX_DISPATCH_ATTEMPTS);
+  });
 });
 
 // ── #598 integration: coder/ship inherit process-failure retry ──

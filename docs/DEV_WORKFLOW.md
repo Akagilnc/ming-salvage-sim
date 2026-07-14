@@ -76,6 +76,16 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 | `triage` | 入口匝道（非主线）| **外来** issue（你没创建的）走五态状态机、贴标签、发 agent brief |
 | `handoff` | 横切 | session 间交付（context 满 / 绕道 prototype 的桥）|
 
+### ship-pre DoD 全闭环点检（#911 自项目 CLAUDE.md 迁入）
+
+进 ship-pre / CMR 评审循环前必须确认 feature 全闭环完成，不是「核心写路径接通」就进。Definition of Done = 所有闭环面都齐——**写入端 + 读取端 + 恢复端 + 真实 extractor 输出 + UI/呈现端 + 文档契约**，缺一面都不算 ship-ready。
+
+把「核心写路径接通 + 单元测试绿 + 前几轮 CMR 收敛」误当成「全闭环完成」两头亏：(1) 在不完整目标上启动昂贵的 ship-pre 评审循环，(2) CMR 一轮轮真抓闭环缺口、滚到离谱轮数才被外人判出「功能不足」。
+
+**判据**：进 ship-pre 前对着 plan 逐面点检 DoD，任一面（尤其读取/恢复/呈现这些最容易被「写路径接了」盖过的隐性面）未落 = 早了，先补完再进。这是 **ship-gate / DoD 判断**，不是编码能力——写路径接了、测试绿都可能为真，错在把「核心接通」当「全闭环完成」。
+
+且即便 DoD 齐、进了 ship-pre，装起来跑的整体 cmr 仍是独立一道闸——别当走过场：per-slice cmr 各自全绿 ≠ feature 完成，整体闸基本仍会抓出 per-slice 照不到的**跨片接缝**（字段名/类型对不对、字段口径一不一致、组合后才出现的 e2e 行为），要预期它有料、按真闸认真跑。
+
 > [!note] 本项目在 Matt 之上加的闸（非 Matt canonical）
 > 本项目在 ③ 之后插一道**设计评审**（`ak-cross-m-review` 本地 cmr + 线上 bot，收敛 ADR），在 ⑥ baseline commit 之后插一道**代码评审**（Matt `/code-review` 单评 + per-slice cmr + ship-pre + 线上 bot）。其中 `/code-review` 是 Matt 原装，per-slice cmr / ship-pre / 线上 bot 是本项目质量装置；编排器中 coder/reviewer 角色必须分离，`/code-review` 属于 runner 派出的 reviewer worker，不属于 coder worker 自评。详见 [[cross-model-review]] / [[pr-review-loop]]。
 
