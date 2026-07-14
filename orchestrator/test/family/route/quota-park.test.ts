@@ -167,10 +167,12 @@ function quotaWaitError(opts: {
   readonly resetAt: Date;
   readonly pool?: "zai" | "grok";
   readonly step?: "S3" | "S7" | "S9";
+  /** N2: family S3 wall role — required for dual-slot refusal nail. */
+  readonly cmrPass?: "completeness" | "correctness";
 }): QuotaWaitForResetError {
   const pool = opts.pool ?? "zai";
   const step = opts.step ?? "S3";
-  return new QuotaWaitForResetError({
+  const err = new QuotaWaitForResetError({
     disposition: {
       kind: "wait_for_reset",
       pool,
@@ -192,6 +194,13 @@ function quotaWaitError(opts: {
     pool,
     probe: { kind: "quota_limited", resetAt: opts.resetAt, detail: "429" },
   });
+  // Default S3 walls to completeness so existing baton nails keep a single slot.
+  if (opts.cmrPass !== undefined) {
+    err.cmrPass = opts.cmrPass;
+  } else if (step === "S3") {
+    err.cmrPass = "completeness";
+  }
+  return err;
 }
 
 /** Explicit live alternate pool table — mirrors single-slice RunInput.relayPools. */
@@ -667,17 +676,20 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
   it("pure apply: family slots rewrite cmr/ship; single-slice S7 still only coder", () => {
     const route = resolveActiveModelRoute();
     const baton = { slug: "gpt-5.6-terra" };
+    // N2: S3 requires cmrPass — only the hit pass slot is rewritten.
     const wallSlots = familyRelaySlotsForWall({
       phase: "final",
       wallStep: "S3",
+      cmrPass: "completeness",
     });
-    expect(wallSlots).toEqual(["cmrCompleteness", "cmrCorrectness"]);
+    expect(wallSlots).toEqual(["cmrCompleteness"]);
 
     const familyApplied = applyRelayBatonToRoute(route, baton, "S3", {
       slots: wallSlots,
     });
     expect(familyApplied.slots.cmrCompleteness).toBe("gpt-5.6-terra");
-    expect(familyApplied.slots.cmrCorrectness).toBe("gpt-5.6-terra");
+    // correctness slot must stay on the route preset (not polluted by completeness wall).
+    expect(familyApplied.slots.cmrCorrectness).toBe(route.slots.cmrCorrectness);
     // coder may already be terra on normal — not the proof surface
     expect(familyApplied.slots.ship).toBe(route.slots.ship);
 
@@ -691,6 +703,20 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     const singleSlice = applyRelayBatonToRoute(route, baton, "S7");
     expect(singleSlice.slots.coder).toBe("gpt-5.6-terra");
     expect(singleSlice.slots.ship).toBe(route.slots.ship);
+  });
+
+  it("N2: S3 without cmrPass refuses dual CMR rewrite; correctness pass is single-slot", () => {
+    expect(() =>
+      familyRelaySlotsForWall({ phase: "final", wallStep: "S3" }),
+    ).toThrow(/cmrPass|refusing to rewrite both/i);
+
+    expect(
+      familyRelaySlotsForWall({
+        phase: "final",
+        wallStep: "S3",
+        cmrPass: "correctness",
+      }),
+    ).toEqual(["cmrCorrectness"]);
   });
 
   it("NEGATIVE: beyond T + explicit dead/unprobed pools → park, never fake relay", async () => {
