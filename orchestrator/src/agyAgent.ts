@@ -100,19 +100,37 @@ export function agyPrintInvocation(
 /**
  * Build a sandcastle AgentProvider that runs the real `agy` CLI headless
  * (`--sandbox --print ''` + stdin prompt).
+ *
+ * Correctness R5-1: Sandcastle reuses one AgentProvider across `maxIter`
+ * iterations and keeps the same `parseStreamLine` reference. Accumulator
+ * state MUST reset at each print/interactive invocation so iter N cannot
+ * prepend iter N−1's body (while still accumulating multi-line within one
+ * invocation — B1).
  */
 export function agyAgent(
   model: string,
   options?: AgyAgentOptions,
 ): sc.AgentProvider {
-  // One accumulator per agent instance — multi-line stdout must not collapse.
-  const parseStreamLine = createAgyStreamParser();
+  // Mutable body shared by parseStreamLine; reset in build* at iteration start.
+  let body = "";
+  const parseStreamLine = (line: string): Array<AgyParsedStreamEvent> => {
+    if (line.length === 0) return [];
+    body = body.length === 0 ? line : `${body}\n${line}`;
+    return [
+      { type: "text", text: line },
+      { type: "result", result: body },
+    ];
+  };
+  const resetAccumulator = (): void => {
+    body = "";
+  };
   return {
     name: "agy",
     env: options?.env ?? {},
     captureSessions: false,
     buildPrintCommand({ prompt }) {
       // Ignore dangerouslySkipPermissions: agy hard-forbids that flag.
+      resetAccumulator();
       const inv = agyPrintInvocation(model, prompt);
       return {
         command: `agy ${inv.args.map(shellEscape).join(" ")}`,
@@ -120,6 +138,7 @@ export function agyAgent(
       };
     },
     buildInteractiveArgs({ prompt }) {
+      resetAccumulator();
       // Interactive path still uses --print <value> (not the headless empty+stdin form).
       const args = ["agy", "--sandbox"];
       const trimmed = model.trim();

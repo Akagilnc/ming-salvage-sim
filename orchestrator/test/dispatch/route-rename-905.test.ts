@@ -156,6 +156,32 @@ describe("#905 agy AgentProvider + bare-ping", () => {
     }
     expect(agentResult).toBe(lines.join("\n"));
   });
+
+  it("R5-1: buildPrintCommand resets accumulator so maxIter reuse does not leak prior body", () => {
+    // Sandcastle reuses one AgentProvider + parseStreamLine across maxIter.
+    const agent = agyAgent("");
+    let last = "";
+    for (const line of ["ROUND1_TAG", "ROUND1_DONE"]) {
+      for (const ev of agent.parseStreamLine(line)) {
+        if (ev.type === "result") last = ev.result;
+      }
+    }
+    expect(last).toContain("ROUND1_TAG");
+
+    // Next iteration: buildPrintCommand is invoked before streaming (print path).
+    agent.buildPrintCommand({
+      prompt: "iter-2",
+      dangerouslySkipPermissions: false,
+    });
+    last = "";
+    for (const line of ["ROUND2_ONLY"]) {
+      for (const ev of agent.parseStreamLine(line)) {
+        if (ev.type === "result") last = ev.result;
+      }
+    }
+    expect(last).toBe("ROUND2_ONLY");
+    expect(last).not.toMatch(/ROUND1/);
+  });
 });
 
 describe("#905 residual opencode eviction + zai fail-closed", () => {
