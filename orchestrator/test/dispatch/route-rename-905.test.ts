@@ -157,6 +157,23 @@ describe("#905 agy AgentProvider + bare-ping", () => {
     expect(agentResult).toBe(lines.join("\n"));
   });
 
+  it("#905: interactive args use --prompt-interactive, never --print with prompt value", () => {
+    const args = agyAgent("Gemini 3.5 Flash").buildInteractiveArgs!({
+      prompt: "seed-prompt-body",
+      dangerouslySkipPermissions: false,
+    });
+    expect(args[0]).toBe("agy");
+    expect(args).toContain("--sandbox");
+    expect(args).toContain("--model");
+    expect(args).toContain("Gemini 3.5 Flash");
+    expect(args).toContain("--prompt-interactive");
+    expect(args).toContain("seed-prompt-body");
+    // Headless print-mode shape must not appear on interactive.
+    expect(args).not.toContain("--print");
+    const pi = args.indexOf("--prompt-interactive");
+    expect(args[pi + 1]).toBe("seed-prompt-body");
+  });
+
   it("R5-1: buildPrintCommand resets accumulator so maxIter reuse does not leak prior body", () => {
     // Sandcastle reuses one AgentProvider + parseStreamLine across maxIter.
     const agent = agyAgent("");

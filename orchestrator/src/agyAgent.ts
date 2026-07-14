@@ -139,11 +139,15 @@ export function agyAgent(
     },
     buildInteractiveArgs({ prompt }) {
       resetAccumulator();
-      // Interactive path still uses --print <value> (not the headless empty+stdin form).
+      // Interactive = TTY session (Sandcastle wires process.stdin as the keyboard).
+      // Seed with --prompt-interactive / -i — NEVER --print <value>.
+      // --print '' + stdin is headless-only (buildPrintCommand / agyPrintInvocation);
+      // stuffing the seed into --print breaks the #905 print contract and confuses
+      // print-mode vs interactive-mode (agy 1.0.7 treats the next token as print value).
       const args = ["agy", "--sandbox"];
       const trimmed = model.trim();
       if (trimmed) args.push("--model", trimmed);
-      if (prompt) args.push("--print", prompt);
+      if (prompt) args.push("--prompt-interactive", prompt);
       return args;
     },
     parseStreamLine,
