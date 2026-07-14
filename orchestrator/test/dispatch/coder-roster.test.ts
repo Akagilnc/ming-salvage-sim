@@ -17,6 +17,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  completedS6RoundsFromLedger,
   CODER_REC_FALLBACK_AFTER_ROUNDS,
   CODER_ROSTER,
   CODER_ROSTER_VERSION,
@@ -1007,5 +1008,55 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     expect(backend.coderModels).toContain("gpt-5.6-terra");
     const firstTerra = backend.coderModels.indexOf("gpt-5.6-terra");
     expect(firstTerra).toBe(1 + CODER_REC_FALLBACK_AFTER_ROUNDS);
+  });
+});
+
+describe("#899 non-converging rounds — count completed S6 rounds only", () => {
+  // 2026-07-15 live kill-chain: the in-memory ledger carries BOTH a
+  // worker_monitor_spawned row AND a completion row per S6 round (plus
+  // bookkeeping event rows). Counting raw `step === "S6"` rows doubled one
+  // real round into 2, hit CODER_REC_FALLBACK_AFTER_ROUNDS, advanced the
+  // roster onto the reviewer's own slug (gpt-5.6-sol), and pool separation
+  // then exhausted the roster — silently killing three consecutive runs.
+  it("counts one completed round despite spawn + completion + redispatch rows", () => {
+    expect(
+      completedS6RoundsFromLedger([
+        { step: "S2" },
+        { step: "S3", event: "worker_monitor_spawned" },
+        { step: "S3" },
+        { step: "S4" },
+        { step: "S5", event: "worker_monitor_spawned" },
+        { step: "S5" },
+        { step: "mechanical_redispatch_attempt", event: "mechanical_redispatch_attempt" },
+        { step: "S6", event: "worker_monitor_spawned" },
+        { step: "S6" },
+        { step: "S4" },
+      ]),
+    ).toBe(1);
+  });
+
+  it("counts two rounds across two completed S6 reviews", () => {
+    expect(
+      completedS6RoundsFromLedger([
+        { step: "S6", event: "worker_monitor_spawned" },
+        { step: "S6" },
+        { step: "S6", event: "worker_monitor_spawned" },
+        { step: "S6" },
+      ]),
+    ).toBe(2);
+  });
+
+  it("counts zero when an S6 worker was spawned but never completed", () => {
+    expect(
+      completedS6RoundsFromLedger([
+        { step: "S6", event: "worker_monitor_spawned" },
+      ]),
+    ).toBe(0);
+  });
+
+  it("ignores completed rows of other steps", () => {
+    expect(
+      completedS6RoundsFromLedger([{ step: "S3" }, { step: "S5" }, { step: "S4" }]),
+    ).toBe(0);
   });
 });
