@@ -50,7 +50,6 @@ import { FIX_FOCUS_LANDING_FILE } from "../../../src/findingFamilies.js";
 import { familyEscalationState } from "../../../src/family/ledger.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import {
-  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_SKILLS_DIR,
   SANDBOX_SOUL_ENV,
   soulsMount,
@@ -1081,17 +1080,13 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
 });
 
 describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)", () => {
-  it("mounts OpenCode auth without inspecting credential metadata", () => {
-    vi.stubEnv("ORCHESTRATOR_MERGER_MODEL", "glm-5.2");
-    const dir = mkdtempSync(join(tmpdir(), "family-opencode-oauth-"));
-    const authFile = join(dir, "auth.json");
-    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
+  it("#905: merger sandbox has no opencode auth mount", () => {
     const b = new FakeSeamsBackend(opts(trackRepo()));
-    expect(b.sandboxConfig({ opencodeAuthFile: authFile }).mounts).toContainEqual({
-      hostPath: authFile,
-      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
-      readonly: true,
-    });
+    expect(
+      b.sandboxConfig({}).mounts.some((m: { sandboxPath: string }) =>
+        m.sandboxPath.includes("opencode"),
+      ),
+    ).toBe(false);
   });
   // F28: the merger conflict fallback follows the "one mirror new soul" model —
   // the merger soul must be selected the SAME way coder/reviewer are: activated
