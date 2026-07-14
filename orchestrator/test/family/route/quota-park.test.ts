@@ -165,8 +165,8 @@ function epicWith(...childIssues: number[]): FamilyEpic {
 
 function quotaWaitError(opts: {
   readonly resetAt: Date;
-  readonly pool?: "zai" | "grok";
-  readonly step?: "S3" | "S7" | "S9";
+  readonly pool?: "zai" | "grok" | "codex";
+  readonly step?: "S1" | "S3" | "S7" | "S9" | "S10" | "S12";
   /** N2: family S3 wall role — required for dual-slot refusal nail. */
   readonly cmrPass?: "completeness" | "correctness";
 }): QuotaWaitForResetError {
@@ -762,6 +762,134 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
         cmrPass: "correctness",
       }),
     ).toEqual(["cmrCorrectness"]);
+  });
+
+  it("C1: endgame wall steps map to real consume slots (not S7/ship)", () => {
+    expect(
+      familyRelaySlotsForWall({ phase: "online_review", wallStep: "S9" }),
+    ).toEqual(["verify"]);
+    expect(
+      familyRelaySlotsForWall({ phase: "online_review", wallStep: "S10" }),
+    ).toEqual(["fixer"]);
+    expect(
+      familyRelaySlotsForWall({ phase: "online_review", wallStep: "S12" }),
+    ).toEqual(["docRelease"]);
+    expect(familyRelaySlotsForWall({ phase: "merge", wallStep: "S1" })).toEqual(
+      ["merger"],
+    );
+    // Phase fallback must not rewrite ship for online-review.
+    expect(
+      familyRelaySlotsForWall({
+        phase: "online_review",
+        wallStep: "S0",
+      }),
+    ).toEqual(["verify"]);
+  });
+
+  it("C1: QuotaWait step S9 rewrites verify, leaves ship unchanged", async () => {
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+    const { recordShipped } = await import("../../../src/family/ledger.js");
+
+    let onlineReviewModels: string[] = [];
+    let verifyDispatches = 0;
+
+    // Seed an open shipped so the runner takes online-review barrier path.
+    // Use verifyCmr final to ship then throw S9 wall on open-shipped re-entry.
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/909-base",
+      now: () => now,
+      relayPools: liveBatonRelayPools(resetAt),
+      applyRelayBatonToRoute: (route, baton, _step, opts) => {
+        // Production apply; assert slots argument is verify-only for S9.
+        expect(opts?.slots).toEqual(["verify"]);
+        return applyRelayBatonToRoute(route, baton, _step, opts);
+      },
+      verifyCmr: async (input) => {
+        if (input.phase !== "final") return { ok: true, ran: true };
+        verifyDispatches += 1;
+        if (verifyDispatches === 1) {
+          await recordShipped(familyBackend, {
+            pr: "pr://family/c1-s9",
+            familyHeadAfter: "family-base-0",
+          });
+          // First final entry ships then online-review wall with S9.
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S9" });
+        }
+        // After baton: should re-enter open-shipped online-review, not re-ship.
+        return { ok: true, ran: true };
+      },
+    });
+
+    // Ship once; S9 wall must not rewrite ship slot (verify only).
+    expect(
+      familyBackend.ledger.filter((e) => e.status === "shipped"),
+    ).toHaveLength(1);
+    const relayAudit = familyBackend.ledger.filter(
+      (e) =>
+        e.status === "worker_dispatched" &&
+        typeof e.workerStep === "string" &&
+        e.workerStep.startsWith("quota_relay"),
+    );
+    // When baton is live beyond T, relay applies verify slots (not ship).
+    if (relayAudit.length > 0) {
+      expect(relayAudit.some((e) => String(e.reason).includes("verify"))).toBe(
+        true,
+      );
+      expect(relayAudit.every((e) => !String(e.reason).includes("slots=[ship]"))).toBe(
+        true,
+      );
+    }
+    void onlineReviewModels;
+    void result;
+  });
+
+  it("C1 pure: familyWallStepFromQuotaWait keeps S9 (isStepId alone would drop it)", async () => {
+    const { familyWallStepFromQuotaWait } = await import(
+      "../../../src/family/runner.js"
+    );
+    const { isStepId } = await import("../../../src/types.js");
+    const resetAt = new Date("2026-07-14T14:00:00.000Z");
+    const err = quotaWaitError({ resetAt, pool: "grok", step: "S9" });
+    // Precondition: SliceStepId guard rejects S9 (the bug root).
+    expect(isStepId("S9")).toBe(false);
+    expect(familyWallStepFromQuotaWait({ err, phase: "online_review" })).toBe(
+      "S9",
+    );
+    expect(
+      familyRelaySlotsForWall({
+        phase: "online_review",
+        wallStep: familyWallStepFromQuotaWait({ err, phase: "online_review" }),
+      }),
+    ).toEqual(["verify"]);
+    // Default when step missing: online_review → S9 (not S7/ship).
+    const errNoStep = quotaWaitError({ resetAt, pool: "grok", step: "S3" });
+    // strip step
+    const bare = new QuotaWaitForResetError({
+      disposition: errNoStep.disposition,
+      applied: {
+        killed: false,
+        ledgerEntry: {
+          ...errNoStep.applied.ledgerEntry!,
+          step: undefined as unknown as "S3",
+        },
+      },
+      pool: errNoStep.pool,
+      probe: { kind: "quota_limited", resetAt, detail: "429" },
+    });
+    expect(
+      familyWallStepFromQuotaWait({ err: bare, phase: "online_review" }),
+    ).toBe("S9");
   });
 
   it("NEGATIVE: beyond T + explicit dead/unprobed pools → park, never fake relay", async () => {

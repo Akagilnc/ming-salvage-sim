@@ -55,7 +55,7 @@ import {
 import { parkOrRelayQuotaWall } from "../quotaParkRelay.js";
 import { MAX_RELAY_HANDOFFS } from "../relayDispatch.js";
 import { logDriverStage } from "../stageLog.js";
-import { isStepId } from "../types.js";
+import { isAnyStepId, isStepId } from "../types.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
   Backend,
@@ -228,9 +228,34 @@ type FamilyQuotaWallDecision =
       readonly focusPath: string | undefined;
     };
 
+/** Family barrier / merge wall phases that share the park/relay machine. */
+export type FamilyQuotaWallPhase =
+  | "wave"
+  | "final"
+  | "online_review"
+  | "merge";
+
+/**
+ * Correctness C1 — wall step for baton consume slots.
+ * Prefer the QuotaWait ledger step when it is a full StepId (incl. S9–S12);
+ * never coerce endgame steps off the map via {@link isStepId} alone.
+ * Phase defaults only when the error carries no usable step.
+ */
+export function familyWallStepFromQuotaWait(opts: {
+  readonly err: QuotaWaitForResetError;
+  readonly phase: FamilyQuotaWallPhase;
+}): StepId {
+  const raw = opts.err.applied.ledgerEntry?.step;
+  if (raw !== undefined && isAnyStepId(raw)) return raw;
+  if (opts.phase === "online_review") return "S9";
+  if (opts.phase === "merge") return "S1";
+  if (opts.phase === "wave") return "S9";
+  return "S7";
+}
+
 async function decideFamilyQuotaWall(opts: {
   readonly err: QuotaWaitForResetError;
-  readonly phase: "wave" | "final" | "online_review";
+  readonly phase: FamilyQuotaWallPhase;
   readonly familyBackend: FamilyBackend;
   readonly singleSliceBackend: Backend;
   readonly familyBase: string;
@@ -286,11 +311,18 @@ async function decideFamilyQuotaWall(opts: {
   };
 
   const currentPool = billingPoolFromQuotaPool(opts.err.pool);
-  const step: SliceStepId =
-    opts.err.applied.ledgerEntry?.step !== undefined &&
-    isStepId(opts.err.applied.ledgerEntry.step)
-      ? opts.err.applied.ledgerEntry.step
-      : "S7";
+  // C1: full StepId (S9/S10/S12/S1…) for consume-slot map — isStepId-only
+  // coercion to S7 rewrote online-review verify onto ship.
+  const wallStep = familyWallStepFromQuotaWait({
+    err: opts.err,
+    phase: opts.phase,
+  });
+  // parkOrRelayQuotaWall ledger rows are child LedgerEntry (SliceStepId only);
+  // endgame walls keep their identity on family audit + baton apply, park uses
+  // a SliceStepId stand-in when needed.
+  const parkStep: import("../types.js").SliceStepId = isStepId(wallStep)
+    ? wallStep
+    : "S7";
   // Family reuses S3/S7 ids but consumes cmr/ship — never single-slice coder map.
   // N2: prefer explicit opts.cmrPass, else stamp from the QuotaWait error (pass
   // worker rethrow). S3 without pass must not dual-rewrite both CMR slots.
@@ -303,7 +335,7 @@ async function decideFamilyQuotaWall(opts: {
   try {
     wallSlots = familyRelaySlotsForWall({
       phase: opts.phase,
-      wallStep: step,
+      wallStep,
       ...(wallCmrPass !== undefined ? { cmrPass: wallCmrPass } : {}),
     });
   } catch (slotErr) {
@@ -402,11 +434,18 @@ async function decideFamilyQuotaWall(opts: {
     opts.wallHitBillingPools,
   );
 
+  // C6: durable handoff into family telemetry/ledger dir when available —
+  // never invent progress with stateDir undefined while still staging focus.
+  const familyStateDir = opts.familyBackend.resolveTelemetryDir?.({
+    familyBase: opts.familyBase,
+    familyIssue: opts.epicIssue,
+  });
+
   const outcome = await parkOrRelayQuotaWall({
-    step,
+    step: parkStep,
     err: opts.err,
     ledger: inMemoryLedger,
-    stateDir: undefined,
+    stateDir: familyStateDir,
     sessionId: opts.runId,
     backend: opts.singleSliceBackend,
     resolveBranchHEAD: async () => {
@@ -456,7 +495,7 @@ async function decideFamilyQuotaWall(opts: {
   const appliedRoute = applyFn(
     opts.modelRoute,
     outcome.nextBaton,
-    step,
+    wallStep,
     { slots: wallSlots },
   );
   try {
@@ -491,7 +530,7 @@ async function decideFamilyQuotaWall(opts: {
  * channel (DELETE pollution of ship/etc. after a cmr wall).
  */
 async function runFamilyBarrierWithQuotaRelay<T>(opts: {
-  readonly phase: "wave" | "final" | "online_review";
+  readonly phase: FamilyQuotaWallPhase;
   readonly familyBackend: FamilyBackend;
   readonly singleSliceBackend: Backend;
   readonly familyBase: string;
@@ -513,6 +552,11 @@ async function runFamilyBarrierWithQuotaRelay<T>(opts: {
   /** Correctness B3 — shared wall-hit set for the whole family run. */
   readonly wallHitBillingPools?: Set<BillingPoolId>;
   readonly applyRelayBatonToRoute?: ApplyRelayBatonToRouteFn;
+  /**
+   * C4 — run-scoped slot-scoped pool binding retained across barriers.
+   * Seed so a baton pool from a prior barrier is not dropped on the next.
+   */
+  readonly initialRelayBilling?: FamilyRelayBillingBinding;
 }): Promise<
   | {
       readonly kind: "ok";
@@ -524,7 +568,9 @@ async function runFamilyBarrierWithQuotaRelay<T>(opts: {
 > {
   let route = opts.modelRoute;
   // Slot-scoped only — never a bare sticky pool that fans to all roles.
-  let relayBilling: FamilyRelayBillingBinding | undefined;
+  // C4: retain prior barrier's slot bindings when re-entering a new barrier.
+  let relayBilling: FamilyRelayBillingBinding | undefined =
+    opts.initialRelayBilling;
   for (;;) {
     try {
       const value = await opts.run(route, relayBilling);
@@ -1382,6 +1428,8 @@ export async function runFamily(
   // and re-dispatches with baton model + **slot-scoped** billing pool only.
   // No barrier-wide sticky pool (F2: unrelated roles keep natural channel).
   let activeRoute: ResolvedModelRoute = modelRoute;
+  // C4: slot-scoped baton pool retained across barriers (not barrier-local only).
+  let runRelayBilling: FamilyRelayBillingBinding | undefined;
   const relayHandoffs = { count: 0 };
   /** Correctness B3 — pools that already walled this family run (no live re-offer). */
   const wallHitBillingPools = new Set<BillingPoolId>();
@@ -1951,12 +1999,49 @@ export async function runFamily(
     // child as `"ran"`/`"failed"` instead of a stale `"merged"`.
     for (const r of ran) {
       if (r.status === "ran" && r.branch !== undefined) {
-        const mergeResult = await mergeChild(familyBackend, {
-          childIssue: r.issue,
-          childBranch: r.branch,
-          modelRoute: activeRoute,
+        // C3: merger QuotaWait must enter the same park/relay machine (S1→merger),
+        // not kill the family run outside the decision loop.
+        const mergeBarrier = await runFamilyBarrierWithQuotaRelay({
+          phase: "merge",
+          familyBackend,
+          singleSliceBackend,
+          familyBase,
+          familyHead,
           runId,
+          modelRoute: activeRoute,
+          recordedResults: childResults,
+          epicChildren: epic.children,
+          epicIssue: epic.issue,
+          relayHandoffs,
+          wallHitBillingPools,
+          ...(runRelayBilling !== undefined
+            ? { initialRelayBilling: runRelayBilling }
+            : {}),
+          ...(applyRelayOverride !== undefined
+            ? { applyRelayBatonToRoute: applyRelayOverride }
+            : {}),
+          ...(input.relayPools !== undefined
+            ? { relayPools: input.relayPools }
+            : {}),
+          ...(input.now !== undefined ? { now: input.now } : {}),
+          ...(epic.admissionSkipped !== undefined &&
+          epic.admissionSkipped.length > 0
+            ? { admissionSkipped: epic.admissionSkipped }
+            : {}),
+          run: (route) =>
+            mergeChild(familyBackend, {
+              childIssue: r.issue,
+              childBranch: r.branch!,
+              modelRoute: route,
+              runId,
+            }),
         });
+        if (mergeBarrier.kind === "park") return mergeBarrier.result;
+        activeRoute = mergeBarrier.route;
+        if (mergeBarrier.relayBilling !== undefined) {
+          runRelayBilling = mergeBarrier.relayBilling;
+        }
+        const mergeResult = mergeBarrier.value;
         if (mergeResult.escalation !== undefined) {
           familyHead = mergeResult.familyHead;
           childResults.push({ issue: r.issue, status: "failed", branch: r.branch });
@@ -2113,6 +2198,9 @@ export async function runFamily(
       epicIssue: epic.issue,
       relayHandoffs,
       wallHitBillingPools,
+      ...(runRelayBilling !== undefined
+        ? { initialRelayBilling: runRelayBilling }
+        : {}),
       ...(applyRelayOverride !== undefined
         ? { applyRelayBatonToRoute: applyRelayOverride }
         : {}),
@@ -2147,6 +2235,9 @@ export async function runFamily(
     });
     if (waveBarrier.kind === "park") return waveBarrier.result;
     activeRoute = waveBarrier.route;
+    if (waveBarrier.relayBilling !== undefined) {
+      runRelayBilling = waveBarrier.relayBilling;
+    }
     const waveVerify = waveBarrier.value;
     if (!waveVerify.ok) {
       // Fail-fast (decision 3④): do not排下一波. #296's red wave lands here; the
@@ -2449,6 +2540,9 @@ export async function runFamily(
       epicIssue: epic.issue,
       relayHandoffs,
       wallHitBillingPools,
+      ...(runRelayBilling !== undefined
+        ? { initialRelayBilling: runRelayBilling }
+        : {}),
       ...(applyRelayOverride !== undefined
         ? { applyRelayBatonToRoute: applyRelayOverride }
         : {}),
@@ -2481,6 +2575,9 @@ export async function runFamily(
     });
     if (reviewBarrier.kind === "park") return reviewBarrier.result;
     activeRoute = reviewBarrier.route;
+    if (reviewBarrier.relayBilling !== undefined) {
+      runRelayBilling = reviewBarrier.relayBilling;
+    }
     const reviewLoop = reviewBarrier.value;
     if (!reviewLoop.ok) {
       const stopSummary =
@@ -2594,6 +2691,9 @@ export async function runFamily(
     epicIssue: epic.issue,
     relayHandoffs,
     wallHitBillingPools,
+    ...(runRelayBilling !== undefined
+      ? { initialRelayBilling: runRelayBilling }
+      : {}),
     ...(applyRelayOverride !== undefined
       ? { applyRelayBatonToRoute: applyRelayOverride }
       : {}),
@@ -2802,6 +2902,9 @@ export async function runFamily(
   });
   if (finalBarrier.kind === "park") return finalBarrier.result;
   activeRoute = finalBarrier.route;
+  if (finalBarrier.relayBilling !== undefined) {
+    runRelayBilling = finalBarrier.relayBilling;
+  }
   const finalVerify = finalBarrier.value;
   // B4: open-shipped re-entry already built a structured FamilyRunResult
   // (success or escalated with stopSummary) — do not rewrite to verify_failed.

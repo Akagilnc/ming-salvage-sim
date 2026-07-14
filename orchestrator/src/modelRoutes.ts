@@ -517,17 +517,22 @@ export function relaySlotForSingleSliceWallStep(
  * {@link dispatchFamilyWorker} / WorkerSpec actually read.
  *
  * Family reuses child StepIds with different consume slots:
+ *   S1 → merger (conflict-resolver agent; family telemetry id)
  *   S3 → cmrCompleteness / cmrCorrectness (integrated CMR pass workers)
  *   S5 → coderFix
  *   S7 → ship
  *   S9 → verify, S10 → fixer, S12 → docRelease
+ *
+ * Correctness C1: endgame steps must never coerce onto ship/coder. Phase
+ * fallbacks apply only when the step is not an explicit wall role.
  */
 export function familyRelaySlotsForWall(opts: {
-  readonly phase: "wave" | "final" | "online_review";
+  readonly phase: "wave" | "final" | "online_review" | "merge";
   readonly wallStep: StepId;
   readonly cmrPass?: "completeness" | "correctness";
 }): ReadonlyArray<ModelRouteSlot> {
   const step = opts.wallStep;
+  if (step === "S1") return ["merger"];
   if (step === "S3") {
     if (opts.cmrPass === "correctness") return ["cmrCorrectness"];
     if (opts.cmrPass === "completeness") return ["cmrCompleteness"];
@@ -543,7 +548,10 @@ export function familyRelaySlotsForWall(opts: {
   if (step === "S9") return ["verify"];
   if (step === "S10") return ["fixer"];
   if (step === "S12") return ["docRelease"];
+  // Explicit wall roles above. Phase fallbacks never rewrite ship for
+  // online-review / wave verify barriers (C1: online-review must not touch ship).
   if (opts.phase === "online_review") return ["verify"];
+  if (opts.phase === "merge") return ["merger"];
   if (opts.phase === "wave") return ["verify"];
   // final with ambiguous step — cover primary final consume slots
   return ["cmrCompleteness", "ship"];
