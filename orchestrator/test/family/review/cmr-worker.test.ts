@@ -138,6 +138,37 @@ function typedSandboxRunResult<T>(
   return { ...sandboxRunResult(fields), output };
 }
 
+/**
+ * Models Sandcastle's native typed-output transport at the public sandbox seam:
+ * one initial submission, then up to `maxRetries` resumes of that exact agent
+ * session after schema failures.  The backend must make only this one call;
+ * Sandcastle owns the re-ask loop rather than the runner replaying a reviewer.
+ */
+function fakeNativeReceiptReask<T>(
+  output: { readonly maxRetries?: number },
+  receipts: readonly unknown[],
+  schema: { safeParse(value: unknown): { success: boolean } },
+  sessionId: string,
+): {
+  readonly attempts: ReadonlyArray<{ readonly sessionId: string; readonly receipt: unknown }>;
+  readonly resumes: ReadonlyArray<{ readonly sessionId: string; readonly feedback: string }>;
+  readonly result?: T;
+} {
+  const attempts: Array<{ readonly sessionId: string; readonly receipt: unknown }> = [];
+  const resumes: Array<{ readonly sessionId: string; readonly feedback: string }> = [];
+  const maxRetries = output.maxRetries ?? 0;
+  for (const [index, receipt] of receipts.entries()) {
+    attempts.push({ sessionId, receipt });
+    if (schema.safeParse(receipt).success) return { attempts, resumes, result: receipt as T };
+    if (index === maxRetries) break;
+    resumes.push({
+      sessionId,
+      feedback: "The typed CMR receipt was malformed; re-emit only a valid <cmr> receipt.",
+    });
+  }
+  return { attempts, resumes };
+}
+
 const cleanups: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -831,7 +862,9 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
-    const attempts: Array<{ readonly sessionId: string; readonly receipt: unknown }> = [];
+    let nativeReask:
+      | ReturnType<typeof fakeNativeReceiptReask>
+      | undefined;
     let sandcastleCalls = 0;
     class Backend extends RealFamilyBackend {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
@@ -845,11 +878,14 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         // Fake Sandcastle consumes the initial receipt plus two same-session
-        // retries before reporting the framework's normal exhaustion error.
-        for (const receipt of [{ converged: true }, { converged: true }, { converged: true }]) {
-          attempts.push({ sessionId: "sess-cmr-exhausted", receipt });
-          expect(workerReceiptSchema("cmr").safeParse(receipt).success).toBe(false);
-        }
+        // resumes before reporting the framework's normal exhaustion error.
+        nativeReask = fakeNativeReceiptReask(
+          options.output!,
+          [{ converged: true }, { converged: true }, { converged: true }],
+          workerReceiptSchema("cmr"),
+          "sess-cmr-exhausted",
+        );
+        expect(nativeReask.result).toBeUndefined();
         throw new sc.StructuredOutputError("bad output", {
           tag: "cmr",
           rawMatched: JSON.stringify({
@@ -882,11 +918,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       })],
     });
     expect(sandcastleCalls).toBe(1);
-    expect(attempts).toHaveLength(RECEIPT_MAX_RETRIES + 1);
-    expect(attempts).toEqual([
+    expect(nativeReask?.attempts).toHaveLength(RECEIPT_MAX_RETRIES + 1);
+    expect(nativeReask?.attempts).toEqual([
       { sessionId: "sess-cmr-exhausted", receipt: { converged: true } },
       { sessionId: "sess-cmr-exhausted", receipt: { converged: true } },
       { sessionId: "sess-cmr-exhausted", receipt: { converged: true } },
+    ]);
+    expect(nativeReask?.resumes).toEqual([
+      { sessionId: "sess-cmr-exhausted", feedback: expect.any(String) },
+      { sessionId: "sess-cmr-exhausted", feedback: expect.any(String) },
     ]);
   });
 
@@ -896,7 +936,9 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
-    const attempts: Array<{ readonly sessionId: string; readonly receipt: unknown }> = [];
+    let nativeReask:
+      | ReturnType<typeof fakeNativeReceiptReask<typeof completeVerdict>>
+      | undefined;
     let sandcastleCalls = 0;
     const completeVerdict = {
       converged: true,
@@ -914,17 +956,14 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         // Fake Sandcastle: its retry loop owns the retries. The runner gets one
         // call and supplies only the typed-output policy.
         expect(options.output).toEqual(expect.objectContaining({ tag: "cmr", maxRetries: 2 }));
-        const sequence = [
-          { ...completeVerdict, findingsCount: undefined },
-          completeVerdict,
-        ];
-        for (const receipt of sequence) {
-          attempts.push({ sessionId: "same-cmr-reviewer-session", receipt });
-          if (workerReceiptSchema("cmr").safeParse(receipt).success) {
-            return typedSandboxRunResult(receipt, { sessionId: "same-cmr-reviewer-session" });
-          }
-        }
-        throw new Error("fake Sandcastle should recover the second receipt");
+        nativeReask = fakeNativeReceiptReask<typeof completeVerdict>(
+          options.output!,
+          [{ ...completeVerdict, findingsCount: undefined }, completeVerdict],
+          workerReceiptSchema("cmr"),
+          "same-cmr-reviewer-session",
+        );
+        if (nativeReask.result === undefined) throw new Error("fake Sandcastle should recover the second receipt");
+        return typedSandboxRunResult(nativeReask.result, { sessionId: "same-cmr-reviewer-session" });
       }
     }
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-native-retry-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
@@ -934,12 +973,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       converged: true,
       findingsCount: 0,
     });
-    expect(attempts).toEqual([
+    expect(nativeReask?.attempts).toEqual([
       { sessionId: "same-cmr-reviewer-session", receipt: { ...completeVerdict, findingsCount: undefined } },
       { sessionId: "same-cmr-reviewer-session", receipt: completeVerdict },
     ]);
+    expect(nativeReask?.resumes).toEqual([
+      { sessionId: "same-cmr-reviewer-session", feedback: expect.any(String) },
+    ]);
     expect(sandcastleCalls).toBe(1);
-    expect(attempts).toHaveLength(2);
+    expect(nativeReask?.attempts).toHaveLength(2);
   });
 
   it("lets the independent escalation bell through before malformed bell cargo can suppress it", () => {
