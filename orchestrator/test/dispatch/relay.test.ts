@@ -31,6 +31,7 @@ import {
   buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
+  resolveRelayPools,
   selectCapacityRelayBaton,
   selectNextRelayBaton,
   type BillingPoolEntry,
@@ -2184,6 +2185,42 @@ describe("#686 R2 production seams", () => {
         pools,
       }),
     ).toBe(false);
+  });
+
+  it("B3: after wall on A, A is not re-offered as live baton via knownLive smoke", () => {
+    // Smoke still marks grok-build as passed; after it walls, the next wall on
+    // codex-5h must not promote grok-build back to live (ping-pong until cap).
+    const wallHits = new Set<BillingPoolId>(["grok-build"]);
+    const pools = resolveRelayPools(
+      "codex-5h",
+      new Date(NOW.getTime() + 45 * 60 * 1000),
+      undefined,
+      ["grok-build", "codex-5h"],
+      wallHits,
+    );
+    expect(pools.find((p) => p.id === "codex-5h")?.status).toBe("limited");
+    expect(pools.find((p) => p.id === "grok-build")?.status).not.toBe("live");
+    const next = selectNextRelayBaton({
+      currentModelId: "terra@med",
+      currentPool: "codex-5h",
+      rosterOrder: resolveCoderRecOrder(
+        "Coder-Rec: terra@med → grok-4.5 → luna@med",
+      ),
+      pools,
+    });
+    // grok-4.5 only served by wall-hit grok-build; luna also on limited codex-5h.
+    expect(next).toBeUndefined();
+
+    // Positive: first wall on A still promotes other smoke-live pools.
+    const afterFirst = resolveRelayPools(
+      "grok-build",
+      new Date(NOW.getTime() + 45 * 60 * 1000),
+      undefined,
+      ["grok-build", "codex-5h"],
+      new Set<BillingPoolId>(["grok-build"]),
+    );
+    expect(afterFirst.find((p) => p.id === "grok-build")?.status).toBe("limited");
+    expect(afterFirst.find((p) => p.id === "codex-5h")?.status).toBe("live");
   });
 
   it("P2: MAX_RELAY_HANDOFFS counts chain from ledger history", () => {
