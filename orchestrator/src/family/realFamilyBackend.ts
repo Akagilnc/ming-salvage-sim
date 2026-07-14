@@ -59,6 +59,7 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import {
   reaskReceiptOrFallback,
+  reaskUnreadableReceiptOrFallback,
   workerReceiptOutput,
   workerReceiptIsReadable,
   workerReceiptSchema,
@@ -1609,13 +1610,21 @@ export class RealFamilyBackend implements FamilyBackend {
             "family CMR",
           );
         }
+        const receiptResult = await reaskUnreadableReceiptOrFallback({
+          unreadable: this.cmrReceiptIsUnreadable(result, outcomeLanding.path),
+          reask: () => this.reaskCmrReceipt(
+            spec, ctx, auth, frozenReviewLegs, outcomeLanding, result,
+          ),
+          fallback: () => result,
+          worker: "family CMR",
+        });
         return withCmrSession(
           cmrOutcomeFromResult({
-            ...result,
+            ...receiptResult,
             cmrReviewLegs: frozenReviewLegs,
             outcomePath: outcomeLanding.path,
           }),
-          lastSessionIdIfPresent(result),
+          lastSessionIdIfPresent(receiptResult),
         );
       } finally {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
@@ -1701,16 +1710,14 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
           });
-          let receiptResult = result;
-          if (this.familyCoderReceiptIsUnreadable(
-            result as { readonly output?: unknown }, outcomeLanding.path,
-          )) {
-            receiptResult = await reaskReceiptOrFallback(
-              () => this.reaskFamilyCoderReceipt(spec, ctx, auth, outcomeLanding, result),
-              () => result,
-              "family coder",
-            );
-          }
+          const receiptResult = await reaskUnreadableReceiptOrFallback({
+            unreadable: this.familyCoderReceiptIsUnreadable(
+              result as { readonly output?: unknown }, outcomeLanding.path,
+            ),
+            reask: () => this.reaskFamilyCoderReceipt(spec, ctx, auth, outcomeLanding, result),
+            fallback: () => result,
+            worker: "family coder",
+          });
           return this.familyCoderResultFromRun(receiptResult, spec, outcomeLanding.path);
         } finally {
           this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
@@ -1938,6 +1945,43 @@ export class RealFamilyBackend implements FamilyBackend {
     } catch {
       return true;
     }
+  }
+
+  private cmrReceiptIsUnreadable(
+    result: { readonly output?: unknown; readonly stdout?: string },
+    outcomePath: string,
+  ): boolean {
+    if (workerReceiptIsReadable("cmr", result.output)) return false;
+    try {
+      return !workerReceiptIsReadable("cmr", readRequiredWorkerOutcomeSidecar(outcomePath));
+    } catch {
+      return true;
+    }
+  }
+
+  private async reaskCmrReceipt(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    auth: CmrAuth,
+    frozenReviewLegs: ReadonlyArray<{ readonly family: string; readonly slug: string }>,
+    outcomeLanding: { path: string; sandboxPath: string },
+    result: unknown,
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    const sessionId = lastSessionIdIfPresent(result);
+    if (sessionId === undefined) return result as Awaited<ReturnType<typeof sc.run>>;
+    return await this.runAgentSandbox({
+      name: "family-cmr-receipt-reask",
+      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+      cwd: this.opts.workingRepo,
+      sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
+      agent: this.agentForSpec(spec, ctx),
+      maxIterations: 1,
+      completionSignal: spec.completionSignal,
+      branchStrategy: { type: "head" },
+      resumeSession: sessionId,
+      promptFile: join(this.opts.promptsDir, spec.promptFile),
+      output: workerReceiptOutput("cmr", workerReceiptSchema("cmr")),
+    });
   }
 
   private async reaskFamilyCoderReceipt(
@@ -3323,9 +3367,19 @@ export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
   outcomePath?: string;
+  output?: unknown;
   stdout?: string;
 }): CmrWorkerOutcome {
   const stdout = (result.stdout ?? "").trim();
+  if (result.output !== undefined) {
+    const classified = classifyCmrOutcomePayload(result.output, "CMR typed receipt");
+    if (classified.kind === "escalate") return classified;
+    const findingsCount = parseFindingsSentinel(stdout);
+    return {
+      ...classified,
+      ...(classified.kind === "verdict" && findingsCount !== undefined ? { findingsCount } : {}),
+    };
+  }
   if (result.outcomePath !== undefined) {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);

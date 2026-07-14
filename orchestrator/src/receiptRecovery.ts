@@ -73,7 +73,7 @@ export function workerReceiptOutput(
 export function isReceiptRecoveryFailure(error: unknown): boolean {
   if (error instanceof sc.StructuredOutputError) return true;
   return error instanceof Error &&
-    /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession)/i.test(error.message);
+    /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession|output\.maxRetries requires an agent provider that supports session resumption)/i.test(error.message);
 }
 
 /**
@@ -92,4 +92,16 @@ export async function reaskReceiptOrFallback<T>(
     console.warn(`[orchestrator] ${worker} receipt recovery exhausted; using existing fallback`);
     return fallback();
   }
+}
+
+/** Run one official typed re-ask only when the caller found an unreadable receipt. */
+export async function reaskUnreadableReceiptOrFallback<T>(params: {
+  readonly unreadable: boolean;
+  readonly reask: () => Promise<T>;
+  readonly fallback: () => T;
+  readonly worker: string;
+}): Promise<T> {
+  return params.unreadable
+    ? reaskReceiptOrFallback(params.reask, params.fallback, params.worker)
+    : params.fallback();
 }
