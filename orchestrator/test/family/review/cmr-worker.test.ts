@@ -765,7 +765,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(spec.soul).toBe("cmr");
   });
 
-  it("uses the canonical CMR sidecar without validating optional tag telemetry", async () => {
+  it("lets Sandcastle validate the CMR receipt with its native retry budget", async () => {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -782,41 +782,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     }
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
     await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
-    expect("output" in runs[0]!).toBe(false);
-  });
-
-  it("re-asks an unreadable CMR sidecar through the worker's captured session", async () => {
-    const repo = realRepo335();
-    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
-    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
-    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
-    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
-    const runs: Parameters<typeof sc.run>[0][] = [];
-    class Backend extends RealFamilyBackend {
-      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
-      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
-      protected override async runAgentSandbox(options: Parameters<typeof sc.run>[0]): Promise<Awaited<ReturnType<typeof sc.run>>> {
-        runs.push(options);
-        if (runs.length === 1) {
-          return { output: { malformed: true }, stdout: "", iterations: [{ sessionId: "cmr-bad-receipt" }] } as unknown as Awaited<ReturnType<typeof sc.run>>;
-        }
-        return {
-          output: { converged: true, successfulLegs: DEFAULT_CMR_LEGS, ...VALID_CMR_VERDICT_FIELDS },
-          stdout: "",
-          iterations: [{ sessionId: "cmr-corrected-receipt" }],
-        } as unknown as Awaited<ReturnType<typeof sc.run>>;
-      }
-    }
-    const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-reask-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
-
-    await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).resolves.toMatchObject({
-      kind: "verdict", successfulLegs: DEFAULT_CMR_LEGS, sessionId: "cmr-corrected-receipt",
-    });
-    expect(runs).toHaveLength(2);
-    expect(runs[0]).not.toHaveProperty("output");
-    expect(runs[1]).toMatchObject({
-      resumeSession: "cmr-bad-receipt",
-      maxIterations: 1,
+    expect(runs[0]).toMatchObject({
       output: expect.objectContaining({ tag: "cmr", maxRetries: 2 }),
     });
   });
@@ -2122,14 +2088,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         this.calls += 1;
-        // A sidecar is the worker's canonical outcome channel.  If we still
-        // attach typed output here, Sandcastle retries the deliberately absent
-        // compatibility tag before the runner can consume this valid outcome.
-        if ("output" in options) {
-          throw new sc.StructuredOutputError("compatibility tag absent", {
-            tag: "cmr", rawMatched: undefined, commits: [], branch: "fb", sessionId: "cmr-sidecar",
-          });
-        }
+        expect(options.output).toEqual(expect.objectContaining({ tag: "cmr", maxRetries: 2 }));
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(
           outcomePathAtRun,
@@ -2140,10 +2099,19 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
           }),
           "utf8",
         );
-        return {
+        const result: Awaited<ReturnType<typeof sc.run>> & { output: unknown } = {
           completionSignal: "CMR_STEP_COMPLETE",
           stdout: "compatibility tag intentionally absent",
-        } as Awaited<ReturnType<typeof sc.run>>;
+          output: {
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          },
+          iterations: [],
+          commits: [],
+          branch: "fb",
+        };
+        return result;
       }
     }
     const be = new OutcomeCleanupBackend({
@@ -2160,7 +2128,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
 
     const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
 
-    expect(outcome).toMatchObject({ kind: "verdict", converged: true });
+    expect(outcome).toMatchObject({ kind: "verdict", successfulLegs: DEFAULT_CMR_LEGS });
     expect(be.calls).toBe(1);
     expect(outcomePathAtRun).toBeDefined();
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
