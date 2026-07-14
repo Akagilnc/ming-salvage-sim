@@ -5,10 +5,19 @@
  * when this leg is dead (Gemini consumer EOL), optional-leg degrade only —
  * never substitute another vendor's model under the agy name.
  *
- * Invocation contract mirrors `ak-cross-m-review/backends/gemini.sh`:
- *   `agy --sandbox [--model X] --print ''` with the prompt on stdin.
+ * ## Invocation class (one contract, two modes)
+ *
+ * 1. **Headless / print** (workers + bare-ping):  
+ *    `agy --sandbox [--model X] --print-timeout 15m --print ''` + **prompt on stdin**.  
+ *    NEVER put the prompt after `--print` (agy 1.0.7 treats the next token as
+ *    the print value; huge prompts hit ARG_MAX).
+ * 2. **Interactive** (Sandcastle TTY; `process.stdin` is the keyboard):  
+ *    `agy --sandbox [--model X] --prompt-interactive <seed>`.  
+ *    NEVER use `--print <seed>` here — that is print-mode, not interactive.
+ *
  * NEVER `--dangerously-skip-permissions` (re-consents a high scope and breaks
- * headless auth on the next run).
+ * headless auth on the next run). Mirrors `ak-cross-m-review/backends/gemini.sh`
+ * for print mode.
  */
 
 import type * as sc from "@ai-hero/sandcastle";
@@ -38,6 +47,10 @@ type AgyParsedStreamEvent =
  * multi-line tags (e.g. `<merger>…</merger>` + `STEP_COMPLETE`) to the final
  * line. A stateful parser re-emits the **accumulated** body on every result so
  * last-wins still retains the full stdout.
+ *
+ * R5-1: one parser instance is only valid for **one** Sandcastle iteration.
+ * Call {@link createAgyStreamParser} again (or the agent’s build* reset) at the
+ * start of each print/interactive invocation — do not share body across maxIter.
  */
 export function createAgyStreamParser(): (
   line: string,
@@ -63,13 +76,6 @@ export function parseAgyStreamLine(line: string): Array<AgyParsedStreamEvent> {
 }
 
 /**
- * Shared headless agy invocation (gemini.sh contract):
- *   `agy --sandbox [--model X] --print ''` with the prompt on stdin.
- *
- * Single source for {@link agyAgent} and bare-ping smoke — never put the
- * prompt after `--print` (agy 1.0.7 treats the next token as the print value).
- */
-/**
  * agy default print timeout is 5m — too short for long family/CMR legs.
  * Correctness C10: pin ≥15m. Value MUST be a Go duration string (`15m`,
  * `900000ms`) — bare milliseconds (`"900000"`) are rejected by the CLI.
@@ -78,6 +84,10 @@ export const AGY_PRINT_TIMEOUT = "15m";
 /** @deprecated use AGY_PRINT_TIMEOUT (`"15m"`); bare ms numbers break agy CLI. */
 export const AGY_PRINT_TIMEOUT_MS = 15 * 60 * 1000;
 
+/**
+ * Headless / print-mode argv + stdin (workers, bare-ping, gemini.sh shape).
+ * Invariant: the token after `--print` is always `""`; prompt is only on stdin.
+ */
 export function agyPrintInvocation(
   model: string,
   prompt: string,
@@ -98,31 +108,38 @@ export function agyPrintInvocation(
 }
 
 /**
- * Build a sandcastle AgentProvider that runs the real `agy` CLI headless
- * (`--sandbox --print ''` + stdin prompt).
+ * Interactive / TTY argv (Sandcastle `buildInteractiveArgs` — no stdin pipe for
+ * the seed; process.stdin is the keyboard).
+ * Invariant: never `--print`; seed uses `--prompt-interactive` when non-empty.
+ * Leading binary name is `agy` (full argv for interactive exec).
+ */
+export function agyInteractiveArgs(
+  model: string,
+  prompt: string,
+): readonly string[] {
+  const args: string[] = ["agy", "--sandbox"];
+  const trimmedModel = model.trim();
+  if (trimmedModel !== "") args.push("--model", trimmedModel);
+  if (prompt) args.push("--prompt-interactive", prompt);
+  return args;
+}
+
+/**
+ * Build a sandcastle AgentProvider that runs the real `agy` CLI.
  *
- * Correctness R5-1: Sandcastle reuses one AgentProvider across `maxIter`
- * iterations and keeps the same `parseStreamLine` reference. Accumulator
- * state MUST reset at each print/interactive invocation so iter N cannot
- * prepend iter N−1's body (while still accumulating multi-line within one
- * invocation — B1).
+ * Both buildPrintCommand and buildInteractiveArgs go through the shared
+ * helpers above (class seam — no second copy of print/interactive shape).
+ * Stream accumulation is one {@link createAgyStreamParser} per iteration:
+ * build* replaces the parser so maxIter cannot leak prior body (R5-1) while
+ * multi-line within an iteration still accumulates (B1).
  */
 export function agyAgent(
   model: string,
   options?: AgyAgentOptions,
 ): sc.AgentProvider {
-  // Mutable body shared by parseStreamLine; reset in build* at iteration start.
-  let body = "";
-  const parseStreamLine = (line: string): Array<AgyParsedStreamEvent> => {
-    if (line.length === 0) return [];
-    body = body.length === 0 ? line : `${body}\n${line}`;
-    return [
-      { type: "text", text: line },
-      { type: "result", result: body },
-    ];
-  };
-  const resetAccumulator = (): void => {
-    body = "";
+  let parseStreamLine = createAgyStreamParser();
+  const resetStreamParser = (): void => {
+    parseStreamLine = createAgyStreamParser();
   };
   return {
     name: "agy",
@@ -130,7 +147,7 @@ export function agyAgent(
     captureSessions: false,
     buildPrintCommand({ prompt }) {
       // Ignore dangerouslySkipPermissions: agy hard-forbids that flag.
-      resetAccumulator();
+      resetStreamParser();
       const inv = agyPrintInvocation(model, prompt);
       return {
         command: `agy ${inv.args.map(shellEscape).join(" ")}`,
@@ -138,18 +155,9 @@ export function agyAgent(
       };
     },
     buildInteractiveArgs({ prompt }) {
-      resetAccumulator();
-      // Interactive = TTY session (Sandcastle wires process.stdin as the keyboard).
-      // Seed with --prompt-interactive / -i — NEVER --print <value>.
-      // --print '' + stdin is headless-only (buildPrintCommand / agyPrintInvocation);
-      // stuffing the seed into --print breaks the #905 print contract and confuses
-      // print-mode vs interactive-mode (agy 1.0.7 treats the next token as print value).
-      const args = ["agy", "--sandbox"];
-      const trimmed = model.trim();
-      if (trimmed) args.push("--model", trimmed);
-      if (prompt) args.push("--prompt-interactive", prompt);
-      return args;
+      resetStreamParser();
+      return [...agyInteractiveArgs(model, prompt)];
     },
-    parseStreamLine,
+    parseStreamLine: (line) => parseStreamLine(line),
   };
 }
