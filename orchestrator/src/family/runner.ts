@@ -252,6 +252,11 @@ async function decideFamilyQuotaWall(opts: {
   readonly applyRelayBatonToRoute?: ApplyRelayBatonToRouteFn;
   /** When known, narrow family S3 CMR wall to the pass that hit the wall. */
   readonly cmrPass?: "completeness" | "correctness";
+  /**
+   * Correctness B3 — run-scoped wall-hit pools excluded from knownLive promote.
+   * Mutated here when this wall's pool is recorded.
+   */
+  readonly wallHitBillingPools?: Set<BillingPoolId>;
 }): Promise<FamilyQuotaWallDecision> {
   const buildParkResult = async (
     stopSummary: StopSummary,
@@ -387,11 +392,14 @@ async function decideFamilyQuotaWall(opts: {
 
   // Shared pool seam: explicit override wins; else default + route-smoke knownLive
   // so production can reach a live baton without test-only injection.
+  // B3: accumulate wall-hit pools so smoke-passed walls stay out of knownLive.
+  opts.wallHitBillingPools?.add(currentPool);
   const pools = resolveRelayPools(
     currentPool,
     opts.err.disposition.resetAt,
     opts.relayPools,
     knownLiveBillingPoolsFromRoute(opts.modelRoute),
+    opts.wallHitBillingPools,
   );
 
   const outcome = await parkOrRelayQuotaWall({
@@ -502,6 +510,8 @@ async function runFamilyBarrierWithQuotaRelay<T>(opts: {
   ) => Promise<T>;
   /** Mutable handoff counter shared across barriers in one family run. */
   readonly relayHandoffs: { count: number };
+  /** Correctness B3 — shared wall-hit set for the whole family run. */
+  readonly wallHitBillingPools?: Set<BillingPoolId>;
   readonly applyRelayBatonToRoute?: ApplyRelayBatonToRouteFn;
 }): Promise<
   | {
@@ -542,6 +552,9 @@ async function runFamilyBarrierWithQuotaRelay<T>(opts: {
         ...(opts.now !== undefined ? { now: opts.now() } : {}),
         ...(opts.applyRelayBatonToRoute !== undefined
           ? { applyRelayBatonToRoute: opts.applyRelayBatonToRoute }
+          : {}),
+        ...(opts.wallHitBillingPools !== undefined
+          ? { wallHitBillingPools: opts.wallHitBillingPools }
           : {}),
         relayHandoffsSoFar: opts.relayHandoffs.count,
       });
@@ -1370,6 +1383,8 @@ export async function runFamily(
   // No barrier-wide sticky pool (F2: unrelated roles keep natural channel).
   let activeRoute: ResolvedModelRoute = modelRoute;
   const relayHandoffs = { count: 0 };
+  /** Correctness B3 — pools that already walled this family run (no live re-offer). */
+  const wallHitBillingPools = new Set<BillingPoolId>();
   const applyRelayOverride = input.applyRelayBatonToRoute;
   console.info(
     `[orchestrator:family] model route lineup\n${printableRouteLineup(activeRoute)}`,
@@ -2097,6 +2112,7 @@ export async function runFamily(
       epicChildren: epic.children,
       epicIssue: epic.issue,
       relayHandoffs,
+      wallHitBillingPools,
       ...(applyRelayOverride !== undefined
         ? { applyRelayBatonToRoute: applyRelayOverride }
         : {}),
@@ -2432,6 +2448,7 @@ export async function runFamily(
       epicChildren: epic.children,
       epicIssue: epic.issue,
       relayHandoffs,
+      wallHitBillingPools,
       ...(applyRelayOverride !== undefined
         ? { applyRelayBatonToRoute: applyRelayOverride }
         : {}),
@@ -2573,6 +2590,7 @@ export async function runFamily(
     epicChildren: epic.children,
     epicIssue: epic.issue,
     relayHandoffs,
+    wallHitBillingPools,
     ...(applyRelayOverride !== undefined
       ? { applyRelayBatonToRoute: applyRelayOverride }
       : {}),
