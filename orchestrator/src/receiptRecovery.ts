@@ -11,11 +11,6 @@ const decisionBellSchema = z.object({
   escalate: z.unknown(),
 }).passthrough();
 
-const coderReceiptSchema = z.object({
-  committed: z.boolean(),
-  commitsAdded: z.number().int().nonnegative(),
-}).passthrough();
-
 const reviewerReceiptSchema = z.object({
   findings: z.array(z.unknown()),
 }).passthrough();
@@ -52,17 +47,14 @@ const cmrReceiptSchema = z.union([
   }).passthrough(),
 ]);
 
-type WorkerReceiptRole = "coder" | "reviewer" | "cmr";
+/** Typed traffic-signal seats only (#899): reviewer open-count + CMR open-count. */
+type WorkerReceiptRole = "reviewer" | "cmr";
 
 /** The role contract Sandcastle validates before deciding whether to re-ask. */
 export function workerReceiptSchema(role: WorkerReceiptRole): z.ZodType {
   return z.union([
     decisionBellSchema,
-    role === "coder"
-      ? coderReceiptSchema
-      : role === "reviewer"
-        ? reviewerReceiptSchema
-        : cmrReceiptSchema,
+    role === "reviewer" ? reviewerReceiptSchema : cmrReceiptSchema,
   ]);
 }
 
@@ -83,7 +75,8 @@ export function isReceiptRecoveryFailure(error: unknown): boolean {
 
 /**
  * Keep native receipt re-ask failure mapping and the pre-existing fallback
- * topology in one seam for every runner path.
+ * topology in one seam for every typed traffic-signal path (reviewer / CMR).
+ * Coder cargo never uses this seam (#899 Out of Scope).
  */
 export async function reaskReceiptOrFallback<T>(
   reask: () => Promise<T>,
@@ -97,47 +90,4 @@ export async function reaskReceiptOrFallback<T>(
     console.warn(`[orchestrator] ${worker} receipt recovery exhausted; using existing fallback`);
     return fallback();
   }
-}
-
-/**
- * Resume a worker only at the transport boundary where its final receipt could
- * not be decoded.  The caller supplies Sandcastle's typed resume; this seam
- * deliberately does not inspect the receipt's claims or schema itself.
- */
-export async function resumeTypedReceiptOrFallback<T>(params: {
-  readonly sessionId: string | undefined;
-  readonly receiptWasUnreadable: boolean;
-  readonly resume: (sessionId: string) => Promise<T>;
-  readonly fallback: () => T;
-  readonly worker: string;
-}): Promise<T> {
-  if (!params.receiptWasUnreadable || params.sessionId === undefined) {
-    return params.fallback();
-  }
-  return await reaskReceiptOrFallback(
-    () => params.resume(params.sessionId!),
-    params.fallback,
-    params.worker,
-  );
-}
-
-/**
- * Run the one-iteration typed receipt resume only when the original transport
- * could not decode a final receipt.  Both ordinary and family workers share
- * this executor; their sandbox, agent, and prompt remain caller parameters.
- */
-export async function resumeTypedReceiptRun<T>(params: {
-  readonly result: T;
-  readonly receiptWasUnreadable: boolean;
-  readonly sessionId: string | undefined;
-  readonly resume: (sessionId: string) => Promise<T>;
-  readonly worker: string;
-}): Promise<T> {
-  return await resumeTypedReceiptOrFallback({
-    receiptWasUnreadable: params.receiptWasUnreadable,
-    sessionId: params.sessionId,
-    resume: params.resume,
-    fallback: () => params.result,
-    worker: params.worker,
-  });
 }
