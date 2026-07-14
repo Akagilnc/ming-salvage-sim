@@ -11,7 +11,7 @@ Current authority: 本 ADR 只保留“命名路线 + slug 注册表 + family-ti
 slug→后端 从写死的 switch 改成**数据驱动注册表**：每条 = `slug → {provider, model-id, options, family, strong-leg}`，覆盖 Sandcastle 原生 6 provider（`claudeCode` / `codex` / `opencode` / `copilot` / `cursor` / `pi`）。加一个「已烤进镜像的 CLI」的兄弟模型（haiku→claudeCode、spark→codex）= **注册表加一行、零代码**；加一个**新 CLI**（opencode 跑 glm5.2 等）= 烤二进制进镜像 + 挂 auth **一次**，之后该 CLI 的多模型全靠加行解锁。**注册表是 slug→后端唯一真源**——路线表、override 与角色/动作配置只引用 slug。
 
 **不变式可校验，不靠手填表不出错**：
-- **family-tight 自动校验**：每个 slug 标 `family`，Policy / route parser 对所有槽（含 cmr 腿集合）校验 `*-tight` 不含对应家族；`*-cheap` 不适用该断言。表示 tight 家族的编码细节归 #422。解析结果只交回调用它的 Policy / Action；Runner 不读取违规 flag、模型或家族。手动 override 破坏 family-tight 时不得静默放行；需要人类确认时，由调用 Action 的 worker 主动提交 decision gate，Runner 只原样转运。
+- **family-tight 自动校验**：每个 slug 标 `family`，Policy / route parser 对所有槽（含 cmr 腿集合）校验 `*-tight` 不含对应家族；`*-cheap` 不适用该断言。表示 tight 家族的编码细节归 #422。解析结果只交回调用它的 Policy / Action；Runner 不读取违规 flag、模型或家族。命名 tight 路线或手动 override 只要破坏 family-tight，就在最早的纯配置 preflight 中零副作用 fail-closed；不静默放行、不启动 worker，也不把配置矛盾交给 Runner 或 decision gate。
 - **强腿身份 vs cmr-腿成员（两条轴，别混）**：`strong-leg` 标**只认 opus/codex**、是 cmr **底线**资格（ADR 0032 的 floor 只数它）；这与「能否当一条 cmr 参与腿」是**两回事**。便宜模型（glm/haiku/spark）若将来要参与 cmr = **加进某路线的 cmr 腿集合**（多一票 voice），**绝不翻 `strong-leg`**——否则一个 cheap 模型会满足 floor、在 opus+codex 双死时错误放行、绕过承重闸（违反 0032）。要让 cheap 模型**撑底线**须**同时改 0032 的 floor 不变式**（不在本设计内；经验验证见 #424）。
 - **fail-closed**：无效路线名 / 无效 slug 一律 fail-closed（throw / 拒跑），typo 不静默跑成错的或不存在的模型。
 - **可观测**：解析出的最终阵容跑前可打印 / 审计（每 worker 用哪个模型一目了然）。

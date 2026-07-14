@@ -20,10 +20,11 @@ reads worker prose or completion evidence**:
 
 1. **exit code** — process life or death; only a real process failure enters
    the mechanical retry lane.
-2. **reviewer self-declared open-count** — `0` closes the current review gate;
+2. **reviewer self-declared blocking open-count** — `0` closes the current review gate;
    `>0` follows the fixed topology defined only in #869. This README does not
    restate the intermediate repair/verification/finalization route, and the
-   runner never derives or reconciles the number.
+   runner never derives or reconciles the number. P4 findings remain recorded
+   as non-blocking terminal rows and are not part of this count.
 3. **worker-raised decision gate** — relayed to the human unchanged; the runner
    never presses or interprets the gate itself.
 
@@ -311,7 +312,7 @@ Exact gate order and repair re-entry live only in #869. This README records the
 role boundaries:
 
 - Per-slice coder, reviewer and fixer are independent workers. The reviewer
-  reports its own unresolved open-count; the runner never reads the findings or
+  reports its own blocking unresolved open-count; the runner never reads the findings or
   checks the repair.
 - Integrated completeness and correctness remain distinct professional review
   actions over the assembled delivery base (a single slice branch or family
@@ -431,11 +432,12 @@ Field-level JSDoc lives on `TelemetryCollectRecord.first_output_at` in
 `test/**`, so every test fixture and mock must satisfy the current production
 contracts before the behavioral suite runs.
 
-Caveat: repository CI currently runs only the Python engine tests and the web
-build — the orchestrator vitest suite is NOT a required check yet (#838), so
-run `npx vitest run` locally before merging anything that touches
-`orchestrator/`. Individually-green branches can still combine into a red
-main across cross-slice seams; the integrated gates exist precisely for that.
+Repository CI now runs orchestrator `npm test` as its own job, in addition to
+the Python engine and web jobs. This README does not assert which jobs the
+GitHub ruleset marks as required, so still run `npm test` locally before
+merging orchestrator changes. Individually-green branches can still combine
+into a red main across cross-slice seams; the integrated gates exist precisely
+for that.
 
 ## Known failure signatures
 

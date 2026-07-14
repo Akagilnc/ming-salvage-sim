@@ -5,7 +5,7 @@
 **runner = 交通警察，只准做三件事，三件之外零判断权（ADR 0131，母法沿革 0062）：**
 
 1. **数 exit code** —— 进程死活。进程崩的机械重试（#598）挂在这条通道上，不读任何字。
-2. **数 findings 计数** —— 读 reviewer **自报**的 open-count：**说几条就是几条**（0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒：修复腿之后必派 fresh 复审，fixer 自翻的行在 fresh 终翻前仍计未决（ADR 0129）。轮到谁由拓扑写死，runner 仍只读数）。runner 不派生、不复核、不拿数组长度对账。
+2. **数 findings 计数** —— 读 reviewer **自报**的阻塞未决 open-count：**说几条就是几条**（0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒：修复腿之后必派 fresh 复审，fixer 自翻的阻塞行在 fresh 终翻前仍计未决（ADR 0129）。P4 以 non-blocking 终态留档，不进 open-count。轮到谁由拓扑写死，runner 仍只读数）。runner 不派生、不复核、不拿数组长度对账。
 3. **转决策门** —— worker 自己按的 decision/raise 原样递给人。转运，不裁决。
 
 **没有例外（owner 2026-07-13）**：三件之外不存在第四通道——「coder/ship 真源 = git/host 外部事实」的例外**已废止**。coder/ship 说 OK 就是 OK：completed = 进下一棒，交卷条内容只作 cargo 透传（cargo 缺失不改命运，下一棒 worker 自己能查）；交付/提交的自证归 worker soul（报成功前自验 + 幂等条款）；白跑由下一棒智慧体接住（reviewer 判空 diff，打回或 raise）。Generic Runner 永不用 `git rev-list` / `ls-remote` / `gh pr view` 裁 worker 成败，也不直接开切 worktree、维护 family merge queue 或解释恢复记录；这些外部副作用分别归 Scene Provisioning / Recovery、Family Integration Merge 与对应专业 owner。
