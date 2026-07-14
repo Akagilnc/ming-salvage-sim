@@ -158,8 +158,8 @@ export function billingPoolForModelRef(
  * Build a route pool table for a quota-wall disposition: the wall-hit pool is
  * `limited` (with resetAt). Every other billing pool defaults to **not-live**
  * (`dead`) unless the caller supplies a probed/override table via
- * `RunInput.relayPools` — unknown pool state must not fabricate live batons
- * (#686 R2 / iron rule: park when unprobed).
+ * `RunInput.relayPools` / `FamilyRunInput.relayPools` — unknown pool state must
+ * not fabricate live batons (#686 R2 / iron rule: park when unprobed).
  */
 export function buildDefaultBillingPools(input: {
   readonly limitedPool: BillingPoolId;
@@ -191,6 +191,40 @@ export function buildDefaultBillingPools(input: {
       models: DEFAULT_POOL_MODELS[id],
     };
   });
+}
+
+/**
+ * Loose pool-table row accepted on {@link RunInput.relayPools} /
+ * {@link FamilyRunInput.relayPools} (tests + probed production tables).
+ */
+export type RelayPoolOverride = {
+  readonly id: string;
+  readonly status: BillingPoolStatus;
+  readonly resetAt?: Date;
+  readonly parkThresholdMs: number;
+  readonly models: ReadonlyArray<string>;
+};
+
+/**
+ * Shared single-slice + family seam: use an explicit probed/override table when
+ * present; otherwise {@link buildDefaultBillingPools} (wall-hit limited, rest
+ * dead). Never invents live batons from unprobed state.
+ */
+export function resolveRelayPools(
+  limitedPool: BillingPoolId,
+  resetAt: Date | undefined,
+  override?: ReadonlyArray<RelayPoolOverride>,
+): ReadonlyArray<BillingPoolEntry> {
+  if (override !== undefined) {
+    return override.map((p) => ({
+      id: p.id as BillingPoolId,
+      status: p.status,
+      ...(p.resetAt !== undefined ? { resetAt: p.resetAt } : {}),
+      parkThresholdMs: p.parkThresholdMs,
+      models: p.models,
+    }));
+  }
+  return buildDefaultBillingPools({ limitedPool, resetAt });
 }
 
 export interface NextRelayBaton {

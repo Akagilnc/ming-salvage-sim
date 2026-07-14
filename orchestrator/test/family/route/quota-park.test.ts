@@ -1,11 +1,12 @@
 /**
- * #909 B1 — family runner boundary must *consume* QuotaWaitForResetError
+ * #909 B1 / F1–F2 — family runner boundary must *consume* QuotaWaitForResetError
  * (park / relay), not let it crash the family run or collapse into a generic
  * failed leg. Sandbox wrap + verifyCmr rethrow already landed; this covers
- * runFamily / verifyCmr call sites.
+ * runFamily / verifyCmr call sites and hard-nails relay when a live baton is
+ * injected (shared resolveRelayPools + epic Coder-Rec seams).
  */
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -29,6 +30,8 @@ import type {
   MergeRequest,
 } from "../../../src/family/types.js";
 
+const CODER_REC_BODY = "Coder-Rec: grok-4.5 → terra@med → luna@med";
+
 function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "family-quota-park-"));
   const git = (args: string[]) =>
@@ -43,6 +46,7 @@ function makeRepo(): string {
 }
 
 class ChildBackend implements Backend {
+  readonly metaFetches: number[] = [];
   async smokeModelRoute(route: any) {
     const { smokeRouteModels } = await import("../../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
@@ -54,19 +58,20 @@ class ChildBackend implements Backend {
     return this.runStep(spec);
   }
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
+    this.metaFetches.push(issueNumber);
     return {
       number: issueNumber,
       isReadyForAgent: true,
       hasSubIssues: false,
       isClosed: false,
       openBlockedBy: [],
-      body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+      body: CODER_REC_BODY,
     };
   }
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
     return {
       number: issueNumber,
-      body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+      body: CODER_REC_BODY,
       comments: [],
       agentBrief: "## Agent Brief",
     };
@@ -150,6 +155,50 @@ function quotaWaitError(opts: {
   });
 }
 
+/** Live alternate pool table — mirrors single-slice relayPools injection. */
+function liveBatonRelayPools(resetAt: Date) {
+  return [
+    {
+      id: "grok-build",
+      status: "limited" as const,
+      resetAt,
+      parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+      models: ["grok-4.5"],
+    },
+    {
+      id: "cursor",
+      status: "dead" as const,
+      parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+      models: [] as string[],
+    },
+    {
+      id: "zai",
+      status: "dead" as const,
+      parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+      models: [] as string[],
+    },
+    {
+      id: "codex-5h",
+      status: "live" as const,
+      parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+      models: [
+        "terra@med",
+        "luna@med",
+        "sol@med",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+      ],
+    },
+    {
+      id: "claude",
+      status: "dead" as const,
+      parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+      models: ["sonnet-5", "haiku-4.5", "sonnet", "haiku"],
+    },
+  ];
+}
+
 describe("#909 family runner consumes QuotaWait park/relay at verify boundary", () => {
   it("wave verify 429 → park (escalated + provider_degraded), not uncaught crash", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
@@ -163,6 +212,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       familyBackend,
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/909-base",
+      now: () => now,
       verifyCmr: async (input) => {
         if (input.phase === "wave") {
           waveCalls += 1;
@@ -170,8 +220,6 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
         }
         return { ok: true, ran: true };
       },
-      // Inject clock via env? family uses Date.now internally — park path
-      // does not need beyond-T; within-T park is the primary AC.
     });
 
     expect(waveCalls).toBe(1);
@@ -197,7 +245,8 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
   });
 
   it("final verify 429 → park outcome (not generic failed ship/cmr leg)", async () => {
-    const resetAt = new Date("2026-07-14T12:10:00.000Z");
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
     const familyBackend = new FakeFamilyBackend();
     // Pre-merge so we reach final barrier quickly.
     familyBackend.ledger.push({
@@ -211,6 +260,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       familyBackend,
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/909-base",
+      now: () => now,
       verifyCmr: async (input) => {
         if (input.phase === "final") {
           throw quotaWaitError({ resetAt, step: "S7" });
@@ -225,10 +275,104 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(result.failedPhase).toBeUndefined();
   });
 
-  it("beyond T + live baton at final barrier → relay handoff (not crash)", async () => {
+  it("beyond T + live baton at final barrier → hard relay (focus staged, not soft park OK)", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
     // Beyond T (reset more than 30m away) → relay when live baton exists.
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    const childBackend = new ChildBackend();
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/909-base",
+      now: () => now,
+      // Explicit probed table — same seam as single-slice RunInput.relayPools.
+      relayPools: liveBatonRelayPools(resetAt),
+      verifyCmr: async (input) => {
+        if (input.phase === "final") {
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    // Hard assert: beyond T + live baton MUST relay, not park_fallback.
+    expect(result.status).toBe("escalated");
+    expect(result.stopSummary.reason).toBe("provider_degraded");
+    expect(result.stopSummary.summary).toMatch(
+      /quota wall relay staged.*grok-build.*codex-5h|relay staged/i,
+    );
+    expect(result.stopSummary.repairHint).toMatch(/relay baton|re-feed/i);
+    // Focus file staged on the family working repo (shared tryStageRelayFocusFile).
+    const focusPath = join(worktree, RELAY_FOCUS_FILENAME);
+    expect(existsSync(focusPath)).toBe(true);
+    const focus = readFileSync(focusPath, "utf8");
+    // Coder-Rec order from epic body → next baton is terra@med on codex-5h.
+    expect(focus).toMatch(/terra@med|gpt-5\.6-terra/i);
+    expect(focus).toMatch(/codex-5h/i);
+    // Family audit row names the relay outcome (non-blocking).
+    const relayAudit = familyBackend.ledger.filter(
+      (e) =>
+        e.status === "worker_dispatched" &&
+        typeof e.workerStep === "string" &&
+        e.workerStep.startsWith("quota_relay:"),
+    );
+    expect(relayAudit.length).toBeGreaterThanOrEqual(1);
+    // Epic Coder-Rec body was actually read (not resolveCoderRecOrder(undefined)).
+    expect(childBackend.metaFetches).toContain(909);
+  });
+
+  it("beyond T + no live baton → park_fallback (park still OK)", async () => {
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+
+    // No relayPools → buildDefaultBillingPools marks unprobed pools dead → park.
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/909-base",
+      now: () => now,
+      verifyCmr: async (input) => {
+        if (input.phase === "final") {
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.stopSummary.reason).toBe("provider_degraded");
+    expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
+    expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
+    const parkAudit = familyBackend.ledger.filter(
+      (e) =>
+        e.status === "worker_dispatched" &&
+        typeof e.workerStep === "string" &&
+        e.workerStep.startsWith("quota_park"),
+    );
+    expect(parkAudit.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("within T + live baton still parks (threshold wins over baton)", async () => {
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 10 * 60 * 1000);
     const worktree = makeRepo();
     const familyBackend = new FakeFamilyBackend(worktree);
     familyBackend.ledger.push({
@@ -242,6 +386,8 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       familyBackend,
       singleSliceBackend: new ChildBackend(),
       familyBase: "family/909-base",
+      now: () => now,
+      relayPools: liveBatonRelayPools(resetAt),
       verifyCmr: async (input) => {
         if (input.phase === "final") {
           throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
@@ -250,15 +396,9 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       },
     });
 
-    // Relay stages focus + returns structured outcome (park_fallback if no
-    // baton / staging fails still escalates — never uncaught throw).
     expect(result.status).toBe("escalated");
-    expect(result.stopSummary.reason).toBe("provider_degraded");
-    // When relay succeeds, focus file is staged on the family working repo.
-    // (If pool table has no live baton for this fixture, park_fallback is OK —
-    // either way must not crash.)
-    if (existsSync(join(worktree, RELAY_FOCUS_FILENAME))) {
-      expect(result.stopSummary.summary).toMatch(/quota|relay|baton/i);
-    }
+    expect(result.stopSummary.summary).toMatch(/quota wait for reset/i);
+    expect(result.stopSummary.summary).not.toMatch(/relay staged/i);
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
   });
 });

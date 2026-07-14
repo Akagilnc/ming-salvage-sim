@@ -36,7 +36,7 @@ import {
 import { resolveCoderRecOrder } from "../coderRoster.js";
 import {
   billingPoolFromQuotaPool,
-  buildDefaultBillingPools,
+  resolveRelayPools,
 } from "../quotaPoolTable.js";
 import {
   isQuotaWaitForResetError,
@@ -111,10 +111,42 @@ function filled(value: string | undefined): string | undefined {
 }
 
 /**
+ * Resolve epic Coder-Rec body for family quota walls. Prefer live issue meta,
+ * then snapshot; missing/broken body degrades to default roster (same spirit as
+ * single-slice resume degrade — never invent tokens, never crash the park path).
+ */
+async function resolveFamilyCoderRecBody(
+  backend: Backend,
+  epicIssue: number,
+): Promise<string | undefined> {
+  try {
+    const meta = await backend.fetchIssueMeta(epicIssue);
+    if (typeof meta.body === "string" && meta.body.trim().length > 0) {
+      return meta.body;
+    }
+  } catch {
+    // fall through to snapshot
+  }
+  try {
+    const snapshot = await backend.fetchIssueSnapshot(epicIssue);
+    if (typeof snapshot.body === "string" && snapshot.body.trim().length > 0) {
+      return snapshot.body;
+    }
+  } catch {
+    // degrade to default roster
+  }
+  return undefined;
+}
+
+/**
  * #909 — family barrier hit QuotaWaitForResetError. Reuse the single-slice
- * park/relay decision machine ({@link parkOrRelayQuotaWall}); map either
- * outcome to a structured FamilyRunResult escalate (provider_degraded), never
- * uncaught throw / generic failed leg. Do NOT write a blocking
+ * park/relay decision machine ({@link parkOrRelayQuotaWall}) with the same pool
+ * table + Coder-Rec roster seams ({@link resolveRelayPools} /
+ * {@link resolveCoderRecOrder}); map either outcome to a structured
+ * FamilyRunResult escalate (provider_degraded), never uncaught throw / generic
+ * failed leg. Beyond T + live baton → stage relay focus (no in-process multi-leg
+ * CMR re-dispatch; re-feed continues with the baton — matches single-slice
+ * staging contract at a barrier with no step loop). Do NOT write a blocking
  * `escalationKind:"failure"` family ledger row — re-feed must re-enter the
  * barrier (same spirit as single-slice planResume on `quota_wait_for_reset`).
  */
@@ -129,6 +161,8 @@ async function consumeFamilyQuotaWait(opts: {
   readonly modelRoute: ResolvedModelRoute;
   readonly recordedResults: ReadonlyArray<FamilyChildResult>;
   readonly epicChildren: ReadonlyArray<ChildSlice>;
+  readonly epicIssue: number;
+  readonly relayPools?: FamilyRunInput["relayPools"];
   readonly admissionSkipped?: FamilyRunResult["admissionSkipped"];
   readonly now?: Date;
 }): Promise<FamilyRunResult> {
@@ -140,6 +174,20 @@ async function consumeFamilyQuotaWait(opts: {
       : "S7";
   const inMemoryLedger: LedgerEntry[] = [];
   const worktreePath = opts.familyBackend.resolveFamilyWorkingRepo?.();
+  const coderRecBody = await resolveFamilyCoderRecBody(
+    opts.singleSliceBackend,
+    opts.epicIssue,
+  );
+  let rosterOrder;
+  try {
+    rosterOrder = resolveCoderRecOrder(coderRecBody);
+  } catch {
+    // Broken / unknown Coder-Rec on epic must not crash the park path.
+    rosterOrder = resolveCoderRecOrder(undefined);
+  }
+  // Prefer the wall-hit role's model id when known; family barriers default to
+  // the coder slot (same as single-slice S2/default baton source).
+  const currentModelId = opts.modelRoute.slots.coder;
   const outcome = await parkOrRelayQuotaWall({
     step,
     err: opts.err,
@@ -160,13 +208,16 @@ async function consumeFamilyQuotaWait(opts: {
     },
     hashPrompt: async () => `family-quota-${opts.phase}`,
     worktreePath,
-    currentModelId: opts.modelRoute.slots.coder,
+    currentModelId,
     currentPool,
-    rosterOrder: resolveCoderRecOrder(undefined),
-    pools: buildDefaultBillingPools({
-      limitedPool: currentPool,
-      resetAt: opts.err.disposition.resetAt,
-    }),
+    rosterOrder,
+    // Shared single-slice pool seam — explicit probed table when present;
+    // otherwise wall-hit limited + unprobed dead (no fabricated batons).
+    pools: resolveRelayPools(
+      currentPool,
+      opts.err.disposition.resetAt,
+      opts.relayPools,
+    ),
     now: opts.now ?? new Date(),
     state_summary: `family ${opts.phase} quota wall on ${currentPool}; barrier preserved for re-feed`,
   });
@@ -1784,6 +1835,11 @@ export async function runFamily(
           modelRoute: activeRoutePolicy.route,
           recordedResults: childResults,
           epicChildren: epic.children,
+          epicIssue: epic.issue,
+          ...(input.relayPools !== undefined
+            ? { relayPools: input.relayPools }
+            : {}),
+          ...(input.now !== undefined ? { now: input.now() } : {}),
           ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
             ? { admissionSkipped: epic.admissionSkipped }
             : {}),
@@ -2108,6 +2164,11 @@ export async function runFamily(
           modelRoute: activeRoutePolicy.route,
           recordedResults: children,
           epicChildren: epic.children,
+          epicIssue: epic.issue,
+          ...(input.relayPools !== undefined
+            ? { relayPools: input.relayPools }
+            : {}),
+          ...(input.now !== undefined ? { now: input.now() } : {}),
           ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
             ? { admissionSkipped: epic.admissionSkipped }
             : {}),
@@ -2255,6 +2316,11 @@ export async function runFamily(
         modelRoute: activeRoutePolicy.route,
         recordedResults: childResults,
         epicChildren: epic.children,
+        epicIssue: epic.issue,
+        ...(input.relayPools !== undefined
+          ? { relayPools: input.relayPools }
+          : {}),
+        ...(input.now !== undefined ? { now: input.now() } : {}),
         ...(epic.admissionSkipped !== undefined && epic.admissionSkipped.length > 0
           ? { admissionSkipped: epic.admissionSkipped }
           : {}),

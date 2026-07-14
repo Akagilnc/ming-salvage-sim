@@ -90,8 +90,8 @@ import {
   DEFAULT_PARK_THRESHOLD_MS,
   billingPoolForModelRef,
   billingPoolFromQuotaPool,
-  buildDefaultBillingPools,
   findLiveBillingPoolForModel,
+  resolveRelayPools as resolveRelayPoolsFromTable,
   type BillingPoolEntry,
   type BillingPoolId,
   type NextRelayBaton,
@@ -1771,18 +1771,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const resolveRelayPools = (
     limitedPool: BillingPoolId,
     resetAt: Date | undefined,
-  ): ReadonlyArray<BillingPoolEntry> => {
-    if (input.relayPools !== undefined) {
-      return input.relayPools.map((p) => ({
-        id: p.id as BillingPoolId,
-        status: p.status,
-        ...(p.resetAt !== undefined ? { resetAt: p.resetAt } : {}),
-        parkThresholdMs: p.parkThresholdMs,
-        models: p.models,
-      }));
-    }
-    return buildDefaultBillingPools({ limitedPool, resetAt });
-  };
+  ): ReadonlyArray<BillingPoolEntry> =>
+    resolveRelayPoolsFromTable(limitedPool, resetAt, input.relayPools);
 
   const hasExplicitRelayPools = input.relayPools !== undefined;
 

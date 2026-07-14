@@ -276,6 +276,7 @@ export {
   buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
+  resolveRelayPools,
   selectCapacityRelayBaton,
   selectNextRelayBaton,
 } from "./quotaPoolTable.js";
@@ -286,6 +287,7 @@ export type {
   NextRelayBaton,
   ParkOrRelayDecision,
   PoolTable,
+  RelayPoolOverride,
   SelectNextRelayBatonInput,
 } from "./quotaPoolTable.js";
 export {
