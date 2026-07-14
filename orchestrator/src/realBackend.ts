@@ -59,7 +59,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -81,6 +81,7 @@ import {
   sourceAuthFailureStopSummary,
   type StopSummary,
 } from "./stopSummary.js";
+import { agyPrintInvocation } from "./agyAgent.js";
 import {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -171,23 +172,31 @@ export function barePingArgv(
           "bypassPermissions",
         ],
       };
-    case "opencode":
+    case "agy": {
+      // #905 r2: same shape as agyAgent / gemini.sh — shared helper, no clone.
+      // `--print ''` + stdin; never put the prompt after --print (agy 1.0.7).
+      const inv = agyPrintInvocation(model, prompt);
       return {
-        file: "opencode",
-        args: ["run", "--dangerously-skip-permissions", "-m", model, prompt],
+        file: "agy",
+        args: inv.args,
+        input: inv.stdin,
       };
+    }
     case "grok":
+      // Align with grokAgent headless: prompt on stdin (not -p argv).
+      // Plain text (no streaming-json) so barePingNonceSatisfied still sees the nonce line.
       return {
         file: "grok",
         args: [
-          "-p",
-          prompt,
+          "--prompt-file",
+          "/dev/stdin",
           "-m",
           model,
           "--always-approve",
           "--permission-mode",
           "bypassPermissions",
         ],
+        input: prompt,
       };
     case "cursor":
       // Sandcastle 0.10.0 invokes the standalone `agent` binary (not `cursor agent`).
@@ -226,9 +235,10 @@ import {
 import { legacyDispatchWorker } from "./dispatchWorker.js";
 import {
   handleIdleThreshold,
-  isAgentIdleTimeoutError,
   QuotaWaitForResetError,
+  resolveSandboxIdleAfterQuotaProbe,
   runPoolProbe,
+  withIdleQuotaProbeDisposition,
   type HandleIdleThresholdResult,
   type QuotaPoolId,
   type QuotaProbeResult,
@@ -728,47 +738,17 @@ export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
  * symlink into this tree) so the bind-mount does not hide PATH.
  */
 export const SANDBOX_GROK_DIR = "/home/agent/.grok";
-/** OpenCode Go auth is a single read-only file; SQLite/runtime state stays per-container. */
-export const SANDBOX_OPENCODE_AUTH_FILE = "/home/agent/.local/share/opencode/auth.json";
-
-export function opencodeAuthMount(home: string): {
-  hostPath: string;
-  sandboxPath: string;
-  readonly: true;
-} {
-  return {
-    hostPath: join(home, ".local", "share", "opencode", "auth.json"),
-    sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
-    readonly: true,
-  };
-}
-
-export function hostOpenCodeAuthFile(home: string): string | undefined {
-  const path = opencodeAuthMount(home).hostPath;
-  return existsSync(path) ? path : undefined;
-}
-
-export function appendOpenCodeAuthMount(
-  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
-  hostPath: string | undefined,
-): void {
-  if (hostPath !== undefined) {
-    mounts.push({ hostPath, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true });
-  }
-}
-
 /**
- * Provision optional OpenCode credentials identically in every worker sandbox.
- * Credential validity is established only by the live route smoke.
+ * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
+ * runtime config INSIDE the worker container (#335 / #905). Host file
+ * `~/.sc-agy-oauth-token` is copied into a per-run dir mounted HERE as
+ * `antigravity-oauth-token`. Writable (NOT read-only): the agy CLI writes
+ * cache/log/state under its config dir. Host-mirrored auth-mount pattern
+ * matches codex (`SANDBOX_CODEX_DIR`) / grok (`SANDBOX_GROK_DIR`).
  */
-export function applyUniformCredentialProvisioning(input: {
-  env: Record<string, string>;
-  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[];
-  opencodeAuthFile?: string;
-}): void {
-  if (process.env.GLM_KEY !== undefined) input.env.GLM_KEY = process.env.GLM_KEY;
-  appendOpenCodeAuthMount(input.mounts, input.opencodeAuthFile);
-}
+export const SANDBOX_AGY_DIR = "/home/agent/.gemini/antigravity-cli";
+/** The agy OAuth token filename inside {@link SANDBOX_AGY_DIR}. */
+export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -881,6 +861,92 @@ export function soulsMount(soulsDir: string): { hostPath: string; sandboxPath: s
     sandboxPath: "/home/agent/.orchestrator/souls",
     readonly: true,
   };
+}
+
+/**
+ * #911 — container home environment file (worker-facing CLAUDE.md).
+ * Live-mounted at Claude's user config path; same freshness discipline as souls
+ * (not baked into the image).
+ */
+export const SANDBOX_HOME_CLAUDE_MD = "/home/agent/.claude/CLAUDE.md";
+/** Filename written into the per-issue codex auth dir (replaces host AGENTS.md). */
+export const CODEX_HOME_AGENTS_FILENAME = "AGENTS.md";
+
+/** Default: `image/home/CLAUDE.md` sibling of `image/souls/`. */
+export function homeEnvFileFromSoulsDir(soulsDir: string): string {
+  return join(dirname(soulsDir), "home", "CLAUDE.md");
+}
+
+/** Pure mount spec for the container home CLAUDE.md (#911). */
+export function homeClaudeMount(
+  homeEnvFile: string,
+): { hostPath: string; sandboxPath: string; readonly: true } {
+  return {
+    hostPath: homeEnvFile,
+    sandboxPath: SANDBOX_HOME_CLAUDE_MD,
+    readonly: true,
+  };
+}
+
+/**
+ * Write/replace `AGENTS.md` inside a per-issue codex auth dir with the container
+ * home body so host owner global AGENTS.md never reaches the worker (#911).
+ */
+export function provisionCodexHomeAgents(authDir: string, homeEnvFile: string): void {
+  const dest = join(authDir, CODEX_HOME_AGENTS_FILENAME);
+  copyFileSync(homeEnvFile, dest);
+  chmodSync(dest, 0o644);
+}
+
+/** Append the live home CLAUDE.md mount (idempotent push; caller owns array). */
+export function appendHomeEnvMount(
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
+  homeEnvFile: string,
+): void {
+  mounts.push(homeClaudeMount(homeEnvFile));
+}
+
+/**
+ * #905 / #335 — single seam for the agy OAuth dir mount.
+ * Best-effort: missing host token ⇒ undefined (caller degrades or fail-closes
+ * when the selected provider is agy). Per-invocation unique dir under `root`
+ * so concurrent workers never share runtime state.
+ */
+export function provisionAgyAuthDir(
+  home: string,
+  root: string,
+  prefix: string,
+): string | undefined {
+  let tempAgyDir: string | undefined;
+  try {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    tempAgyDir = mkdtempSync(join(root, prefix));
+    const src = join(home, ".sc-agy-oauth-token");
+    // C8: blank/whitespace-only token must NOT yield a defined agyDir that
+    // skips fail-closed preflight — copy then reject empty bodies.
+    const body = readFileSync(src, "utf8");
+    if (body.trim().length === 0) {
+      rmSync(tempAgyDir, { recursive: true, force: true });
+      return undefined;
+    }
+    copyFileSync(src, join(tempAgyDir, AGY_TOKEN_FILENAME));
+    chmodSync(join(tempAgyDir, AGY_TOKEN_FILENAME), 0o600);
+    return tempAgyDir;
+  } catch {
+    if (tempAgyDir !== undefined) {
+      rmSync(tempAgyDir, { recursive: true, force: true });
+    }
+    return undefined;
+  }
+}
+
+/** Append agy auth mount when present (writable — agy writes runtime state). */
+export function appendAgyAuthMount(
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
+  agyDir: string | undefined,
+): void {
+  if (agyDir === undefined) return;
+  mounts.push({ hostPath: agyDir, sandboxPath: SANDBOX_AGY_DIR });
 }
 
 /**
@@ -1558,7 +1624,6 @@ export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
   "docRelease.md",
   "fixer.md",
   "merger.md",
-  "output_protocol.md",
   "reviewer.md",
   "ship.md",
   "verify.md",
@@ -1595,7 +1660,8 @@ export function soulsDirError(
     return (
       `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
       `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
-      `must be present (every file under image/souls, incl. output_protocol.md and docRelease.md).`
+      `must be present (every file under image/souls, incl. docRelease.md; ` +
+      `cmr_completeness/cmr_correctness may be relative symlinks to verify.md).`
     );
   }
   return undefined;
@@ -1666,13 +1732,21 @@ export interface RealBackendOptions {
    */
   readonly promptsDir: string;
   /**
-   * Host dir containing souls (coder.md etc + output_protocol.md) to bind-mount
-   * into the container at /home/agent/.orchestrator/souls . #372: souls are
-   * mounted live (rather than baked) so source edits take effect on next dispatch
-   * without a full image layer change for data files.
-   * REQUIRED: souls are no longer baked into the image.
+   * Host dir containing souls (coder.md etc) to bind-mount into the container at
+   * /home/agent/.orchestrator/souls . #372: souls are mounted live (rather than
+   * baked) so source edits take effect on next dispatch without a full image
+   * layer change for data files. REQUIRED: souls are no longer baked into the image.
+   * #911: output_protocol.md removed (home env + dispatch prompts cover it);
+   * cmr_completeness/cmr_correctness are relative symlinks to verify.md.
    */
   readonly soulsDir: string;
+  /**
+   * #911 — host path to the container home environment file (default:
+   * sibling `image/home/CLAUDE.md` next to soulsDir). Live-mounted for Claude at
+   * {@link SANDBOX_HOME_CLAUDE_MD}; content also replaces AGENTS.md in the
+   * per-issue codex auth dir.
+   */
+  readonly homeEnvFile?: string;
   /** Override $HOME for auth path construction (tests). */
   readonly home?: string;
   /**
@@ -2000,7 +2074,14 @@ export class RealBackend implements Backend {
       claude = false;
     }
     const grok = existsSync(join(home, ".grok", "auth.json"));
-    return { claude, grok };
+    let agy = false;
+    try {
+      const tok = readFileSync(join(home, ".sc-agy-oauth-token"), "utf8").trim();
+      agy = tok.length > 0;
+    } catch {
+      agy = false;
+    }
+    return { claude, grok, agy };
   }
 
   private cliVersionForSlug(slug: string, billingPool?: string): string {
@@ -2100,9 +2181,11 @@ export class RealBackend implements Backend {
   /**
    * Fail loudly at construction if soulsDir is missing or not a usable dir
    * containing the full REQUIRED_SOUL_FILES set. Souls are no longer baked (#372);
-   * an incomplete/wrong dir (e.g. orchestrator/image/ or missing reviewer.md
-   * / output_protocol.md) would now sail through to runtime (no more baked copies).
+   * an incomplete/wrong dir (e.g. orchestrator/image/ or missing reviewer.md)
+   * would now sail through to runtime (no more baked copies).
    * Delegates to the pure {@link soulsDirError} (single source of messages/checks).
+   * #911 also requires the container home env file (sibling image/home/CLAUDE.md
+   * by default) so dual-mount cannot silently skip.
    */
   private validateSoulsDir(): void {
     const dir = this.opts.soulsDir;
@@ -2112,6 +2195,19 @@ export class RealBackend implements Backend {
       : [];
     const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
     if (err !== undefined) throw new Error(err);
+    const homeEnv = this.resolveHomeEnvFile();
+    // Fail-closed: path must be a regular file (directory would dual-mount as dir).
+    if (!existsSync(homeEnv) || !statSync(homeEnv).isFile()) {
+      throw new Error(
+        `RealBackend: home env file missing at "${homeEnv}" ` +
+          `(#911 dual-mount needs image/home/CLAUDE.md next to souls, or opts.homeEnvFile).`,
+      );
+    }
+  }
+
+  /** #911: resolve the container home CLAUDE.md path (live-mount + codex AGENTS). */
+  protected resolveHomeEnvFile(): string {
+    return this.opts.homeEnvFile ?? homeEnvFileFromSoulsDir(this.opts.soulsDir);
   }
 
   /**
@@ -2500,12 +2596,14 @@ export class RealBackend implements Backend {
     claudeToken?: string;
     /** Per-issue host dir for grok auth, only when host `~/.grok/auth.json` exists. */
     grokAuthDir?: string;
-    opencodeAuthFile?: string;
+    /** Per-run agy OAuth dir (host-mirrored antigravity config), or undefined. */
+    agyDir?: string;
     providerAuth: ProviderAuthAvailability;
   } {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
     // production keeps the os.homedir() default when opts.home is omitted.
-    const paths = buildAuthPaths(issueNumber, this.opts.home ?? homedir());
+    const home = this.opts.home ?? homedir();
+    const paths = buildAuthPaths(issueNumber, home);
     rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
     // Owner-only dir: this holds copied credential material (auth.json /
     // config.toml). 0o700 keeps it off world-readable multi-user hosts
@@ -2530,6 +2628,9 @@ export class RealBackend implements Backend {
     // minimal container config instead of copying the host's (#378). Always written
     // so the dir is a valid mount even when codex auth was absent.
     writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
+    // #911: replace any host AGENTS.md that might otherwise reach the worker via
+    // CODEX_HOME with the container home environment body (one source, dual mount).
+    provisionCodexHomeAgents(paths.hostCodexAuthDir, this.resolveHomeEnvFile());
     // #807: grok auth is BEST-EFFORT + fail-closed skip. Host missing
     // `~/.grok/auth.json` ⇒ omit the mount entirely (unlike codex, which still
     // mounts an empty-ish dir for config.toml). Presence gate = copy success.
@@ -2543,6 +2644,13 @@ export class RealBackend implements Backend {
       rmSync(grokAuthDir, { recursive: true, force: true });
       grokAuthDir = undefined;
     }
+    // #905: agy OAuth — reuse the shared CMR seam so single-slice sandboxes that
+    // route to agy get a real token mount (not host-smoke-green / container-red).
+    const agyDir = provisionAgyAuthDir(
+      home,
+      join(home, ".sc-orchestrator"),
+      `slice-agy-${issueNumber}-`,
+    );
     // The Claude token is BEST-EFFORT (#384 codex P2). The coder step now runs
     // Codex (model gpt-5.6-terra), so it no longer needs CLAUDE_CODE_OAUTH_TOKEN. A host
     // with Codex auth but no `~/.sc-claude-token` must still start the worker — a
@@ -2559,8 +2667,12 @@ export class RealBackend implements Backend {
       authDir: paths.hostCodexAuthDir,
       claudeToken,
       grokAuthDir,
-      opencodeAuthFile: hostOpenCodeAuthFile(this.opts.home ?? homedir()),
-      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+      agyDir,
+      providerAuth: {
+        claude: claudeToken !== undefined,
+        grok: grokAuthDir !== undefined,
+        agy: agyDir !== undefined,
+      },
     };
   }
 
@@ -2611,7 +2723,7 @@ export class RealBackend implements Backend {
         ),
       ),
       providerAuth: auth.providerAuth,
-      cleanup: () => this.cleanupTempAuthDirs([auth.grokAuthDir]),
+      cleanup: () => this.cleanupTempAuthDirs([auth.grokAuthDir, auth.agyDir]),
     };
   }
 
@@ -2697,7 +2809,8 @@ export class RealBackend implements Backend {
       ghToken?: string;
       /** #807: optional per-issue grok auth dir (omit when host auth absent). */
       grokAuthDir?: string;
-      opencodeAuthFile?: string;
+      /** #905: optional per-run agy OAuth dir (omit when host token absent). */
+      agyDir?: string;
     },
     spec: Pick<StepSpec, "role" | "soul"> & { model?: string },
     issueNumber?: number,
@@ -2746,15 +2859,14 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyUniformCredentialProvisioning({
-      env,
-      mounts,
-      opencodeAuthFile: auth.opencodeAuthFile,
-    });
+    // #905: agy OAuth — same CMR seam (writable antigravity config dir).
+    appendAgyAuthMount(mounts, auth.agyDir);
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
+    // #911: live-mount container home CLAUDE.md (freshness discipline = souls).
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     if (options?.fixFindingsLanding !== undefined) {
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
@@ -3086,8 +3198,9 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Production agent-sandbox entry (#683). Runs Sandcastle, and on idle timeout
-   * probes the worker's quota pool BEFORE hang disposition:
+   * Production agent-sandbox entry (#683/#909). Runs Sandcastle, and on idle
+   * timeout probes the worker's quota pool BEFORE hang disposition via the
+   * shared {@link withIdleQuotaProbeDisposition} (same path family uses):
    *   - 429/limit → {@link QuotaWaitForResetError} (park step for quota reset;
    *     ledger row via applied.ledgerEntry for runner park; do NOT mark failed)
    *   - probe ok / network error → fail-safe rethrow the idle error (kill is a
@@ -3099,22 +3212,11 @@ export class RealBackend implements Backend {
     const { quotaProbe, ...scOptions } = options;
     this.activeSandboxWorkerPid = undefined;
     try {
-      return await this.invokeSandcastleRun(scOptions);
-    } catch (err) {
-      if (!isAgentIdleTimeoutError(err) || quotaProbe === undefined) {
-        throw err;
-      }
-      const result = await this.resolveIdleAfterQuotaProbe({
-        ...quotaProbe,
+      return await withIdleQuotaProbeDisposition({
+        quotaProbe,
+        run: () => this.invokeSandcastleRun(scOptions),
+        resolveIdle: (ctx) => this.resolveIdleAfterQuotaProbe(ctx),
       });
-      if (result.disposition.kind === "wait_for_reset") {
-        // 429: park for quota reset. Sandbox already released by Sandcastle;
-        // runner consumes this error via existing park machinery (not S8 error).
-        throw new QuotaWaitForResetError(result);
-      }
-      // Internal Sandcastle timeout fallback: the sandbox already owns its
-      // teardown. Do not kill via the old backend-local pid path.
-      throw err;
     } finally {
       this.activeSandboxWorkerPid = undefined;
     }
@@ -3128,24 +3230,12 @@ export class RealBackend implements Backend {
   protected async resolveIdleAfterQuotaProbe(
     ctx: QuotaProbeRunContext,
   ): Promise<HandleIdleThresholdResult> {
-    const pid = this.resolveWorkerPid(ctx);
-    return handleIdleThreshold({
+    return resolveSandboxIdleAfterQuotaProbe({
       modelRef: ctx.modelRef,
-      worker: {
-        pid,
-        ...(ctx.step !== undefined ? { step: ctx.step } : {}),
-      },
-      actions: {
-        // The live monitor owns verified pid-tree kill. This action is only a
-        // no-op for the post-Sandcastle internal-timeout fallback.
-        killPidTree: () => undefined,
-        // Durable park marker is written once by runner.parkQuotaWaitForReset
-        // with real sessionId/prompt_hash/branchHEAD. Do not double-write here
-        // with placeholder audit fields (#683 integration R1).
-        recordLedger: async () => undefined,
-        now: () => this.idleNow(),
-      },
-      probe: (pool) => this.runQuotaProbe(pool),
+      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
+      workerPid: this.resolveWorkerPid(ctx),
+      runQuotaProbe: (pool) => this.runQuotaProbe(pool),
+      now: () => this.idleNow(),
     });
   }
 

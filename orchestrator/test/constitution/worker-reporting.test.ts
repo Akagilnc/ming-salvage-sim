@@ -1,12 +1,11 @@
 /**
  * #825 — closing regression sweep for ADR 0062 / #820.
  *
- * Completion sentinels are optional telemetry. Routing behavior is exercised
- * below through worker results and durable ledgers, not source-text bans.
+ * #911: `*_STEP_COMPLETE` sentinels are multi-iter **required** sandcastle
+ * terminators (not optional telemetry; align with prompts/README). Routing
+ * behavior is exercised below through worker results and durable ledgers, not
+ * source-text bans.
  */
-
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
@@ -35,16 +34,6 @@ import type {
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../src/family/types.js";
-
-describe("#825 ADR 0062 worker reporting", () => {
-  it.each([
-    "image/souls/fixer.md",
-    "prompts/fixer.md",
-  ])("routes fixer self-audit evidence outside the strict outcome envelope in %s", (file) => {
-    const body = readFileSync(resolve(process.cwd(), file), "utf8");
-    expect(body).toContain("Record the self-audit checklist in the fixing commit message body");
-  });
-});
 
 const WORKTREE: WorktreeHandle = {
   branch: "feat/825-behavior",

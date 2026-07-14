@@ -20,6 +20,7 @@ import {
   CODER_REC_FALLBACK_AFTER_ROUNDS,
   CODER_ROSTER,
   CODER_ROSTER_VERSION,
+  CoderRecError,
   DEFAULT_CODER_REC_ORDER,
   lookupCoderRosterEntry,
   parseCoderRec,
@@ -89,6 +90,111 @@ describe("#767 Coder-Rec roster — parse", () => {
   });
 });
 
+describe("#906 Coder-Rec — markdown parse + fail-closed", () => {
+  it("parses bold-wrapped Coder-Rec (#899 accident fixture)", () => {
+    // Machine treated markdown bold as "no marking" and silently fell to route
+    // default coder. After #906 the stripped text must yield the legal order.
+    expect(
+      parseCoderRec("- **Coder-Rec: grok-4.5 → sol@med**\n"),
+    ).toEqual(["grok-4.5", "sol@med"]);
+  });
+
+  it("parses inline-code and linked Coder-Rec lines", () => {
+    expect(
+      parseCoderRec("- `Coder-Rec: grok-4.5 → terra@med`\n"),
+    ).toEqual(["grok-4.5", "terra@med"]);
+    expect(
+      parseCoderRec(
+        "[Coder-Rec: grok-4.5 → luna@med](https://example.com/roster)\n",
+      ),
+    ).toEqual(["grok-4.5", "luna@med"]);
+  });
+
+  it("fail-closes when stripped text still has a broken Coder-Rec mark", () => {
+    expect(() => parseCoderRec("Please set Coder-Rec carefully.\n")).toThrow(
+      CoderRecError,
+    );
+    expect(() => parseCoderRec("Coder-Rec:   \n")).toThrow(/Coder-Rec/i);
+    expect(() => parseCoderRec("- **Coder-Rec** alone\n")).toThrow(
+      /could not be parsed|no model token/i,
+    );
+  });
+
+  it("N4: broken-mark presence probe is case-insensitive (matches line /i)", () => {
+    // Line match is /i; presence probe must not miss alternate casing and
+    // silently treat a broken mark as "absent" (would weaken #906 fail-closed).
+    expect(() => parseCoderRec("Please set coder-rec carefully.\n")).toThrow(
+      CoderRecError,
+    );
+    expect(() => parseCoderRec("CODER-REC alone without tokens\n")).toThrow(
+      /could not be parsed|Coder-Rec/i,
+    );
+    // Legal line with alternate casing still parses (line regex already /i).
+    expect(parseCoderRec("coder-rec: grok-4.5 → terra@med\n")).toEqual([
+      "grok-4.5",
+      "terra@med",
+    ]);
+  });
+
+  it("B2: parses Coder-Rec from a GFM table cell (tableCell toString)", () => {
+    // Without tableCell extraction, presence only sees plain lines → silent
+    // default roster while the designer mark is clearly in the issue body.
+    const body = [
+      "| Field | Value |",
+      "| --- | --- |",
+      "| roster | Coder-Rec: grok-4.5 → terra@med |",
+      "",
+    ].join("\n");
+    expect(parseCoderRec(body)).toEqual(["grok-4.5", "terra@med"]);
+    expect(resolveCoderRecOrder(body).map((e) => e.id)).toEqual([
+      "grok-4.5",
+      "terra@med",
+    ]);
+  });
+
+  it("B2: fail-closed when Coder-Rec mark is only in raw HTML (AST miss)", () => {
+    // raw HTML is not walked into plain lines; raw-body presence must still
+    // fail-closed rather than treat the mark as absent.
+    expect(() => parseCoderRec("<div>Coder-Rec carefully broken</div>\n")).toThrow(
+      CoderRecError,
+    );
+  });
+
+  it("errors on unregistered model tokens and lists legal roster ids", () => {
+    expect(() =>
+      resolveCoderRecOrder(
+        "Coder-Rec: grok-4.5 → not-a-model → terra@med",
+      ),
+    ).toThrow(CoderRecError);
+    try {
+      resolveCoderRecOrder("Coder-Rec: totally-bogus → also-fake");
+      expect.unreachable("expected unregistered tokens to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(CoderRecError);
+      const message = (err as Error).message;
+      expect(message).toMatch(/unregistered|unknown|not.?registered|invalid/i);
+      expect(message).toMatch(/totally-bogus/);
+      for (const id of CODER_ROSTER.map((e) => e.id)) {
+        expect(message).toContain(id);
+      }
+    }
+  });
+
+  it("keeps route preset when the body has no Coder-Rec mark at all", () => {
+    expect(parseCoderRec("## Scope\nNo marking here.\n")).toBeUndefined();
+    const base = resolveRouteModels("normal", {});
+    const applied = applyCoderRecToRoute(
+      base,
+      "## Scope\nNo marking here.\n",
+      0,
+      {},
+    );
+    expect(applied.skippedForMissingMarking).toBe(true);
+    expect(applied.route.slots.coder).toBe(base.slots.coder);
+    expect(applied.entry).toBeUndefined();
+  });
+});
+
 describe("#767 Coder-Rec roster — table + resolve order", () => {
   it("ships a versioned roster covering the ratified coder pool", () => {
     expect(CODER_ROSTER_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}/);
@@ -121,42 +227,9 @@ describe("#767 Coder-Rec roster — table + resolve order", () => {
     ).toEqual(["terra@med", "sol@med"]);
   });
 
-  it("keeps only roster-valid entries from a Coder-Rec line", () => {
-    const order = resolveCoderRecOrder(
-      "Coder-Rec: grok-4.5 → not-a-model → terra@med → luna@med",
-    );
-    expect(order.map((e) => e.id)).toEqual([
-      "grok-4.5",
-      "terra@med",
-      "luna@med",
-    ]);
-  });
-
   it("falls back to the roster default order when the marking is absent", () => {
     const order = resolveCoderRecOrder("## Scope\nnothing\n");
     expect(order.map((e) => e.id)).toEqual([...DEFAULT_CODER_REC_ORDER]);
-  });
-
-  it("logs a one-line diagnostic when invalid tokens are dropped", () => {
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const order = resolveCoderRecOrder(
-      "Coder-Rec: grok-4.5 → not-a-model → terra@med",
-    );
-    expect(order.map((e) => e.id)).toEqual(["grok-4.5", "terra@med"]);
-    expect(info).toHaveBeenCalledWith(
-      expect.stringMatching(/dropped.*not-a-model|invalid Coder-Rec/i),
-    );
-    info.mockRestore();
-  });
-
-  it("logs a one-line diagnostic when the whole line degrades to the default order", () => {
-    const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    const order = resolveCoderRecOrder("Coder-Rec: totally-bogus → also-fake");
-    expect(order.map((e) => e.id)).toEqual([...DEFAULT_CODER_REC_ORDER]);
-    expect(info).toHaveBeenCalledWith(
-      expect.stringMatching(/degrad|default order|all.?invalid/i),
-    );
-    info.mockRestore();
   });
 });
 
@@ -438,6 +511,37 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
 
   it("lets ORCHESTRATOR_CODER_MODEL win over the design-time marking", () => {
     const base = resolveRouteModels("normal", { coder: "sonnet" });
+    const applied = applyCoderRecToRoute(
+      base,
+      "Coder-Rec: grok-4.5 → terra@med",
+      0,
+      { ORCHESTRATOR_CODER_MODEL: "opus" },
+    );
+    expect(applied.skippedForEnvOverride).toBe(true);
+    expect(applied.route.slots.coder).toBe("sonnet");
+  });
+
+  it("#906 S1: env override still validates a present Coder-Rec mark (no silent skip)", () => {
+    const base = resolveRouteModels("normal", { coder: "sonnet" });
+    // Dirty mark must throw even when env owns the coder slot — otherwise
+    // mid-run relay bare-calls resolveCoderRecOrder and dies uncaught.
+    expect(() =>
+      applyCoderRecToRoute(
+        base,
+        "Coder-Rec: totally-bogus → also-fake",
+        0,
+        { ORCHESTRATOR_CODER_MODEL: "opus" },
+      ),
+    ).toThrow(CoderRecError);
+    expect(() =>
+      applyCoderRecToRoute(
+        base,
+        "Please set Coder-Rec carefully.\n",
+        0,
+        { ORCHESTRATOR_CODER_MODEL: "opus" },
+      ),
+    ).toThrow(CoderRecError);
+    // Valid mark + env: slot stays env/route; no throw.
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
@@ -737,6 +841,60 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     expect(result.errorPackage?.failedStep).toBe("S0");
     expect(result.errorPackage?.reason).toMatch(/tight route violation.*coder=.*gpt-5\.6-terra/i);
     expect(backend.coderModels).toEqual([]);
+  });
+
+  it("#906: bold Coder-Rec (#899 fixture) applies and dispatches the marked coder", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    // Sol alone fails pool-separation on normal route; use a legal bold pair
+    // that still matches the #899 markdown shape (`- **Coder-Rec: …**`).
+    const backend = new CoderRecBackend(
+      "- **Coder-Rec: grok-4.5 → sol@med**\n",
+    );
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+    expect(result.status).toBe("success");
+    expect(backend.coderModels).toEqual(["grok-4.5"]);
+    expect(backend.coderModels).not.toContain("sonnet");
+  });
+
+  it("#906: broken Coder-Rec mark fail-closes at admission with zero dispatch", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    const backend = new CoderRecBackend("Please set Coder-Rec carefully.\n");
+    const result = await runOrchestrator({ issueNumber: 906, backend });
+    expect(result.status).toBe("escalate");
+    expect(result.errorPackage?.failedStep).toBe("S0");
+    expect(result.errorPackage?.reason).toMatch(/Coder-Rec/i);
+    expect(backend.coderModels).toEqual([]);
+    expect(backend.events.filter((e) => e.startsWith("dispatch:"))).toEqual([]);
+  });
+
+  it("#906: unregistered Coder-Rec model fail-closes and lists legal roster ids", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    const backend = new CoderRecBackend(
+      "Coder-Rec: totally-bogus → also-fake\n",
+    );
+    const result = await runOrchestrator({ issueNumber: 906, backend });
+    expect(result.status).toBe("escalate");
+    expect(result.errorPackage?.failedStep).toBe("S0");
+    expect(result.errorPackage?.reason).toMatch(/totally-bogus/);
+    for (const id of CODER_ROSTER.map((e) => e.id)) {
+      expect(result.errorPackage?.reason).toContain(id);
+    }
+    expect(backend.coderModels).toEqual([]);
+  });
+
+  it("#906 S1: env override + dirty Coder-Rec body fail-closes at admission (not mid-run)", async () => {
+    // ORCHESTRATOR_CODER_MODEL used to short-circuit before body parse; relay
+    // later bare-called resolveCoderRecOrder and could throw uncaught.
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "sonnet");
+    const backend = new CoderRecBackend(
+      "Coder-Rec: totally-bogus → also-fake\n",
+    );
+    const result = await runOrchestrator({ issueNumber: 906, backend });
+    expect(result.status).toBe("escalate");
+    expect(result.errorPackage?.failedStep).toBe("S0");
+    expect(result.errorPackage?.reason).toMatch(/totally-bogus|Coder-Rec/i);
+    expect(backend.coderModels).toEqual([]);
+    expect(backend.events.filter((e) => e.startsWith("dispatch:"))).toEqual([]);
   });
 
   it("S0 smokes the Coder-Rec final route once, not the preset then the override", async () => {

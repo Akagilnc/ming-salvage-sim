@@ -16,6 +16,12 @@ import {
   resolveModelSlug,
   type ModelFamily,
 } from "./modelRegistry.js";
+import {
+  billingPoolForModelRef,
+  type BillingPoolId,
+  type NextRelayBaton,
+} from "./quotaPoolTable.js";
+import type { StepId } from "./types.js";
 
 export type RouteSmokeStatus =
   | { readonly state: "unverified" }
@@ -494,6 +500,153 @@ export function withCoderSlot(
 }
 
 /**
+ * Single-slice wall-step → route slot (child runner only).
+ * S3/S6 → reviewer, S5 → coderFix, else coder. Family barriers MUST NOT use
+ * this map alone: they reuse S3/S7 ids but consume cmr* and ship slots.
+ */
+export function relaySlotForSingleSliceWallStep(
+  wallStep: StepId,
+): ModelRouteSlot {
+  if (wallStep === "S3" || wallStep === "S6") return "reviewer";
+  if (wallStep === "S5") return "coderFix";
+  return "coder";
+}
+
+/**
+ * #909 — family barrier wall → the ModelRouteSlot(s) that
+ * {@link dispatchFamilyWorker} / WorkerSpec actually read.
+ *
+ * Family reuses child StepIds with different consume slots:
+ *   S1 → merger (conflict-resolver agent; family telemetry id)
+ *   S3 → cmrCompleteness / cmrCorrectness (integrated CMR pass workers)
+ *   S5 → coderFix
+ *   S7 → ship
+ *   S9 → verify, S10 → fixer, S12 → docRelease
+ *
+ * Correctness C1: endgame steps must never coerce onto ship/coder. Phase
+ * fallbacks apply only when the step is not an explicit wall role.
+ */
+export function familyRelaySlotsForWall(opts: {
+  readonly phase: "wave" | "final" | "online_review" | "merge";
+  readonly wallStep: StepId;
+  readonly cmrPass?: "completeness" | "correctness";
+}): ReadonlyArray<ModelRouteSlot> {
+  const step = opts.wallStep;
+  if (step === "S1") return ["merger"];
+  if (step === "S3") {
+    if (opts.cmrPass === "correctness") return ["cmrCorrectness"];
+    if (opts.cmrPass === "completeness") return ["cmrCompleteness"];
+    // Correctness N2 / F2 residual: one pass 429 must not rewrite the other CMR
+    // slot. Require the hit pass (or wall role); never default both.
+    throw new Error(
+      "familyRelaySlotsForWall: S3 wall requires cmrPass " +
+        "(completeness|correctness); refusing to rewrite both CMR slots",
+    );
+  }
+  if (step === "S5") return ["coderFix"];
+  if (step === "S7") return ["ship"];
+  if (step === "S9") return ["verify"];
+  if (step === "S10") return ["fixer"];
+  if (step === "S12") return ["docRelease"];
+  // Explicit wall roles above. Phase fallbacks never rewrite ship for
+  // online-review / wave verify barriers (C1: online-review must not touch ship).
+  if (opts.phase === "online_review") return ["verify"];
+  if (opts.phase === "merge") return ["merger"];
+  if (opts.phase === "wave") return ["verify"];
+  // final with ambiguous step — cover primary final consume slots
+  return ["cmrCompleteness", "ship"];
+}
+
+/**
+ * Mutate one non-coder slot and refresh smoke keys for the new slug
+ * (reuse prior passed smoke for the same slug when present).
+ */
+function withSingleRouteSlot(
+  route: ResolvedModelRoute,
+  slot: ModelRouteSlot,
+  slug: string,
+): ResolvedModelRoute {
+  const trimmed = slug.trim();
+  assertKnownWorkerSlug(trimmed);
+  if (slot === "coder") return withCoderSlot(route, trimmed);
+  const slots: ModelSlotMap = { ...route.slots, [slot]: trimmed };
+  const next: Pick<ResolvedModelRoute, "slots" | "legCollections"> = {
+    slots,
+    legCollections: route.legCollections,
+  };
+  const smoke: Record<string, RouteSmokeStatus> = { ...route.smoke };
+  for (const entry of routeSmokeEntries(next)) {
+    if (smoke[entry.key] !== undefined) continue;
+    const prior = Object.entries(route.smoke).find(
+      ([key, status]) =>
+        key.endsWith(`:${entry.slug}`) && status.state === "passed",
+    );
+    smoke[entry.key] = prior?.[1] ?? { state: "unverified" };
+  }
+  return {
+    ...route,
+    slots,
+    tightFamilyViolations: tightFamilyViolations(
+      slots,
+      route.legCollections,
+      ROUTE_PRESETS[route.routeName]?.tightFamilies ?? [],
+    ),
+    smoke,
+  };
+}
+
+/**
+ * #686 / #909 — pure apply of a relay baton onto a resolved route (shared by
+ * single-slice and family).
+ *
+ * - When `opts.slots` is provided (family barrier path), rewrite those exact
+ *   ModelRouteSlots that `dispatchFamilyWorker` reads (cmr slots, ship, verify, ...).
+ * - Otherwise use the single-slice StepId map: S3/S6 → reviewer, S5 → coderFix,
+ *   else coder (+coderFix via {@link withCoderSlot}).
+ *
+ * Does not carry sticky state — callers own that. Apply is load-bearing:
+ * identity / coder-only apply on a family cmr/ship wall must fail consumed-slot nails.
+ */
+export function applyRelayBatonToRoute(
+  route: ResolvedModelRoute,
+  baton: Pick<NextRelayBaton, "slug">,
+  wallStep: StepId = "S2",
+  opts?: { readonly slots?: ReadonlyArray<ModelRouteSlot> },
+): ResolvedModelRoute {
+  const trimmed = baton.slug.trim();
+  assertKnownWorkerSlug(trimmed);
+  const targetSlots =
+    opts?.slots !== undefined && opts.slots.length > 0
+      ? opts.slots
+      : [relaySlotForSingleSliceWallStep(wallStep)];
+
+  let next = route;
+  for (const slot of targetSlots) {
+    next = withSingleRouteSlot(next, slot, trimmed);
+  }
+  return next;
+}
+
+/**
+ * Production live-baton evidence: billing pools of smoke-`passed` route models.
+ * Shared by single-slice + family so default runs can obtain a live pool table
+ * without test-only `relayPools` injection. Unverified/failed smokes contribute
+ * nothing — unknown state stays not-live.
+ */
+export function knownLiveBillingPoolsFromRoute(
+  route: Pick<ResolvedModelRoute, "slots" | "legCollections" | "smoke">,
+): ReadonlyArray<BillingPoolId> {
+  const live = new Set<BillingPoolId>();
+  for (const entry of routeSmokeEntries(route)) {
+    const status = route.smoke[entry.key];
+    if (status?.state !== "passed") continue;
+    const pool = billingPoolForModelRef(entry.slug);
+    if (pool !== undefined) live.add(pool);
+  }
+  return [...live];
+}
+
+/**
  * All self-review peers in a complete landed route except one slot owned by
  * the relay candidate. Exclusion is by slot identity: a matching slug in any
  * other slot or CMR review leg remains a conflict.
@@ -738,12 +891,16 @@ async function askContinue(message: string): Promise<boolean> {
 /**
  * Apply design-time Coder-Rec selection onto a resolved route (#767).
  *
- * Ops env `ORCHESTRATOR_CODER_MODEL` still wins (explicit override). An explicit
- * `ORCHESTRATOR_CODER_FIX_MODEL` remains authoritative for just coderFix.
+ * Ops env `ORCHESTRATOR_CODER_MODEL` still wins *slot selection* (explicit
+ * override). An explicit `ORCHESTRATOR_CODER_FIX_MODEL` remains authoritative
+ * for just coderFix. Env does **not** skip validation of a present Coder-Rec
+ * mark (#906 S1): broken / unregistered marks fail closed at admission so
+ * mid-run relay `resolveCoderRecOrder` cannot be the first throw.
  * Otherwise,
  * only an explicit `Coder-Rec:` marking in the issue body overrides the active
  * route's coder slot — unmarked issues keep the route preset. A present but
- * all-invalid marking falls through to {@link DEFAULT_CODER_REC_ORDER}.
+ * broken / unregistered marking throws (fail-closed; #906) — never silent
+ * fallthrough to the default order.
  * Entries are checked against every complete-route peer other than the coder
  * slot they replace. Sol's resulting per-slice reviewer pairing is still
  * modeled by {@link withCoderSlot}; it does not exempt any CMR checkpoint.
@@ -760,6 +917,13 @@ export function applyCoderRecToRoute(
   /** True when no Coder-Rec line was present — route coder left untouched. */
   readonly skippedForMissingMarking: boolean;
 } {
+  // #906 S1: always admit/validate a present mark before any env short-circuit.
+  // resolveCoderRecOrder: absent → default order (no throw); present broken /
+  // unknown → throws CoderRecError. Env may still own the *slot* below.
+  if (issueBody !== undefined && issueBody.length > 0) {
+    void resolveCoderRecOrder(issueBody);
+  }
+
   const coderEnvOverride = env.ORCHESTRATOR_CODER_MODEL?.trim();
   if (coderEnvOverride !== undefined && coderEnvOverride !== "") {
     return {

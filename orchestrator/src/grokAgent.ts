@@ -11,6 +11,9 @@
  */
 
 import type * as sc from "@ai-hero/sandcastle";
+import { shellEscape } from "./shellEscape.js";
+
+export { shellEscape } from "./shellEscape.js";
 
 /** Options for the in-house grok AgentProvider (not a sandcastle export). */
 export interface GrokAgentOptions {
@@ -30,13 +33,6 @@ export interface GrokAgentOptions {
    * It remains accepted for compatibility with provider option plumbing.
    */
   readonly captureSessions?: boolean;
-}
-
-/** Shell-escape a single argv token for inclusion in a `sandbox.exec` command string. */
-export function shellEscape(value: string): string {
-  if (value.length === 0) return "''";
-  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /**

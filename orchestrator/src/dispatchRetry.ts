@@ -276,6 +276,14 @@ export async function retryProcessCrash<T>(
     try {
       return await fn();
     } catch (err) {
+      // #683/#686/#909: resource failures park/relay — NEVER mechanical-retry
+      // (same discipline as withMechanicalRetry; merger thrashing a 429 wall
+      // would burn attempts and risk resetBeforeRetry drift).
+      if (isQuotaWaitForResetError(err)) throw err;
+      const capacityError = capacityRelayErrorFrom(err);
+      if (capacityError !== undefined) throw capacityError;
+      if (isHangWithLivePoolError(err)) throw err;
+      if (isSelfReportedRelayError(err)) throw err;
       lastError = err;
     }
   }
