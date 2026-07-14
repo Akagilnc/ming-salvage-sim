@@ -762,7 +762,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(spec.soul).toBe("cmr");
   });
 
-  it("gives CMR receipts Sandcastle's native two-retry policy", async () => {
+  it("uses the canonical CMR sidecar without validating optional tag telemetry", async () => {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -779,7 +779,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     }
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
     await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
-    expect(runs[0]!.output).toMatchObject({ tag: "cmr", maxRetries: 2 });
+    expect("output" in runs[0]!).toBe(false);
   });
 
   it("keeps the existing CMR fallback topology when native receipt retries are exhausted", async () => {
@@ -2059,6 +2059,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
     let outcomePathAtRun: string | undefined;
     class OutcomeCleanupBackend extends RealFamilyBackend {
+      public calls = 0;
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
@@ -2073,23 +2074,30 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         return landing;
       }
       protected override async runAgentSandbox(
-        _options: Parameters<typeof sc.run>[0],
+        options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        this.calls += 1;
+        // A sidecar is the worker's canonical outcome channel.  If we still
+        // attach typed output here, Sandcastle retries the deliberately absent
+        // compatibility tag before the runner can consume this valid outcome.
+        if ("output" in options) {
+          throw new sc.StructuredOutputError("compatibility tag absent", {
+            tag: "cmr", rawMatched: undefined, commits: [], branch: "fb", sessionId: "cmr-sidecar",
+          });
+        }
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(
           outcomePathAtRun,
           JSON.stringify({
-            escalate: {
-              reason: "review unavailable",
-              diagnosis: "synthetic test verdict",
-              escalationKind: "decision",
-            },
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
           }),
           "utf8",
         );
         return {
           completionSignal: "CMR_STEP_COMPLETE",
-          stdout: "<cmr>{}</cmr>",
+          stdout: "compatibility tag intentionally absent",
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -2107,7 +2115,8 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
 
     const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
 
-    expect(outcome.kind).toBe("escalate");
+    expect(outcome).toMatchObject({ kind: "verdict", converged: true });
+    expect(be.calls).toBe(1);
     expect(outcomePathAtRun).toBeDefined();
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });

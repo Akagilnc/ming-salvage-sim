@@ -65,7 +65,7 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
-  isReceiptRecoveryFailure,
+  reaskReceiptOrFallback,
   workerReceiptOutput,
   workerReceiptIsReadable,
   workerReceiptSchema,
@@ -3003,9 +3003,12 @@ export class RealBackend implements Backend {
       },
       });
     } catch (err) {
-      if (!isReceiptRecoveryFailure(err)) throw err;
-      console.warn(`[orchestrator] ${spec.id}-${spec.role} receipt recovery exhausted; using existing fallback`);
-      return { output: this.decodeOutput(spec, undefined), sessionId: undefined };
+      // Initial typed workers share the same native failure mapping as coder re-asks.
+      return await reaskReceiptOrFallback(
+        async () => { throw err; },
+        () => ({ output: this.decodeOutput(spec, undefined), sessionId: undefined }),
+        `${spec.id}-${spec.role}`,
+      );
     }
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     if (
@@ -3015,23 +3018,22 @@ export class RealBackend implements Backend {
     ) {
       const sessionId = lastSessionId(result);
       if (sessionId !== undefined) {
-        let reasked: Awaited<ReturnType<typeof sc.run>>;
-        try {
-          reasked = await this.reaskCoderReceipt(
+        return await reaskReceiptOrFallback(
+          async () => {
+            const reasked = await this.reaskCoderReceipt(
             spec, worktree, issueNumber, box, sessionId, options,
-          );
-        } catch (err) {
-          if (!isReceiptRecoveryFailure(err)) throw err;
-          console.warn(`[orchestrator] ${spec.id}-${spec.role} receipt recovery exhausted; using existing fallback`);
-          return { output: this.decodeOutput(spec, undefined), sessionId };
-        }
-        return {
-          output: this.decodeOutput(
-            spec,
-            this.rawOutputFor(reasked, spec, true, options),
-          ),
-          sessionId: lastSessionId(reasked) ?? sessionId,
-        };
+            );
+            return {
+              output: this.decodeOutput(
+                spec,
+                this.rawOutputFor(reasked, spec, true, options),
+              ),
+              sessionId: lastSessionId(reasked) ?? sessionId,
+            };
+          },
+          () => ({ output: this.decodeOutput(spec, undefined), sessionId }),
+          `${spec.id}-${spec.role}`,
+        );
       }
     }
     const output = this.decodeOutput(spec, raw);
