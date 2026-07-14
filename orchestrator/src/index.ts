@@ -4,15 +4,12 @@ export { route } from "./route.js";
 export type { RouteContext, RouteDecision } from "./route.js";
 export {
   contractDriftStopSummary,
-  findingDescriptor,
   infraFailureStopSummary,
   providerDegradedStopSummary,
-  stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
 } from "./stopSummary.js";
 export type {
   AcceptedSuppressionSummary,
-  FindingDescriptor,
   HeadFreshnessSummary,
   ProviderDegradationSummary,
   ShipFailureSummary,
@@ -57,7 +54,6 @@ export {
   extractClaudeTokens,
   extractCodexTokens,
   extractTokensFromLog,
-  getTelemetryRunEnvironment,
   hashDirectoryContents,
   newLegId,
   readDispatchLogSlice,

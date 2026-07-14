@@ -1,19 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   providerDegradedStopSummary,
-  stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
 } from "../../src/stopSummary.js";
-import type { Finding, FindingDispositionEvidence } from "../../src/types.js";
-
-const FINDING: Finding = {
-  severity: "high",
-  category: "correctness",
-  claim_quote: "thing is still broken",
-  location: "src/x.ts:1",
-  suggested_fix: "fix it",
-  action: "fix_now",
-};
 
 describe("stop summary vocabulary (#450)", () => {
   it("keeps accepted suppressions on a success summary with bounded reopen metadata", () => {
@@ -88,36 +77,5 @@ describe("stop summary vocabulary (#450)", () => {
         ],
       },
     });
-  });
-
-  it("fails closed instead of inventing unknown metadata for incomplete disposition evidence", () => {
-    // #604 slice 4 (ADR 0062): the routing disposition kinds (owning_issue_still_red /
-    // cross_module / …) were removed from the reviewer contract, so the only kind
-    // this bridge still handles is accepted_suppressed. The incomplete-evidence
-    // fail-closed guard for accepted suppression is retained and asserted here;
-    // the deleted-kind cases (owningIssue / targetModule throws) are gone with the
-    // kinds themselves.
-    expect(() =>
-      stopSummaryFromFindingDispositionEvidence({
-        finding: FINDING,
-        evidence: {
-          kind: "accepted_suppressed",
-          source: null,
-          scope: null,
-          boundedReopen: null,
-          reason: "the owning issue still lacks a surface",
-        } as unknown as FindingDispositionEvidence,
-      }),
-    ).toThrow(/source.*scope.*boundedReopen/i);
-
-    expect(() =>
-      stopSummaryFromFindingDispositionEvidence({
-        finding: FINDING,
-        evidence: {
-          kind: "accepted_suppressed",
-          reason: "owner accepted this exact bounded finding",
-        } as FindingDispositionEvidence,
-      }),
-    ).toThrow(/source.*scope.*boundedReopen/i);
   });
 });

@@ -12,7 +12,6 @@ import {
   isLiveGithubReviewPollEnabled,
   parsePrRef,
   unresolvedThreadCount,
-  type CheckRunSnapshot,
   type PrReviewSnapshot,
 } from "./botPolling.js";
 import type { Sh } from "./familyDriver.js";
@@ -623,28 +622,4 @@ export async function runAutoMergeStage(
     };
   }
   return { ok: true, terminalState: "merged", record };
-}
-
-/** Offline/test helper: build a minimal snapshot from check-runs only. */
-export function snapshotFromCheckRuns(
-  base: Pick<PrReviewSnapshot, "repo" | "prNumber" | "prUrl" | "headOid">,
-  checkRuns: ReadonlyArray<CheckRunSnapshot>,
-  threads: PrReviewSnapshot["threads"] = [],
-): PrReviewSnapshot {
-  return {
-    ...base,
-    pollCount: 1,
-    bots: {
-      coderabbit: { state: "complete", findingCount: 0 },
-      sourcery: { state: "complete", findingCount: 0 },
-      codex: { state: "complete", findingCount: 0 },
-      gemini: { state: "complete", findingCount: 0 },
-    },
-    threads,
-    checkRuns,
-    totalFindingCount: 0,
-    quiescent: true,
-    roundTriggerUsed: { headOid: base.headOid, triggeredAt: "1970-01-01T00:00:00.000Z" },
-    checkRunsEmptyMeans: "pending",
-  };
 }

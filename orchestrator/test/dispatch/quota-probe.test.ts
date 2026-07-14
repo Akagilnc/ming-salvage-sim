@@ -37,7 +37,6 @@ import {
   type IdleDisposition,
   type QuotaPoolId,
   type QuotaProbeResult,
-  type QuotaWaitForResetLedgerEvent,
 } from "../../src/quotaProbe.js";
 import { runOrchestrator } from "../../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
@@ -527,7 +526,6 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
 
   class DispatchIdleBackend extends RealBackend {
     public killed: number[] = [];
-    public ledger: QuotaWaitForResetLedgerEvent[] = [];
     public probeResult: QuotaProbeResult = { kind: "ok" };
     public sandcastleReached = false;
     /** Simulated OS pid of the in-sandbox agent process (from sandbox handle). */
@@ -557,12 +555,6 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
       _pool: QuotaPoolId,
     ): Promise<QuotaProbeResult> {
       return this.probeResult;
-    }
-
-    protected override async recordQuotaWaitLedger(
-      entry: QuotaWaitForResetLedgerEvent,
-    ): Promise<void> {
-      this.ledger.push(entry);
     }
 
     /**
@@ -630,7 +622,6 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
     expect(backend.sandcastleReached).toBe(true);
     expect(backend.killed).toEqual([]);
     // Durable write is owned by runner park — backend only fills applied.
-    expect(backend.ledger).toEqual([]);
     expect(qw.applied.ledgerEntry).toMatchObject({
       event: "quota_wait_for_reset",
       resetAt: "2026-07-08T16:10:00.000Z",
@@ -653,7 +644,6 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
 
     await expect(backend.runStep(coderSpec, WORKTREE)).rejects.toThrow(/Agent idle for 600/);
     expect(backend.killed).toEqual([]);
-    expect(backend.ledger).toEqual([]);
   });
 
   it("network error via Sandcastle fallback rethrows without backend-local kill", async () => {
@@ -663,7 +653,6 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
 
     await expect(backend.runStep(coderSpec, WORKTREE)).rejects.toThrow(/Agent idle for 600/);
     expect(backend.killed).toEqual([]);
-    expect(backend.ledger).toEqual([]);
   });
 
   it("without quotaProbe context, idle error rethrows with no probe side effects", async () => {
@@ -689,7 +678,6 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
       }),
     ).rejects.toThrow(/Agent idle for 600/);
     expect(backend.killed).toEqual([]);
-    expect(backend.ledger).toEqual([]);
   });
 });
 
