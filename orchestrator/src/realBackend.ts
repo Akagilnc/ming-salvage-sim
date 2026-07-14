@@ -226,9 +226,10 @@ import {
 import { legacyDispatchWorker } from "./dispatchWorker.js";
 import {
   handleIdleThreshold,
-  isAgentIdleTimeoutError,
   QuotaWaitForResetError,
+  resolveSandboxIdleAfterQuotaProbe,
   runPoolProbe,
+  withIdleQuotaProbeDisposition,
   type HandleIdleThresholdResult,
   type QuotaPoolId,
   type QuotaProbeResult,
@@ -3086,8 +3087,9 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Production agent-sandbox entry (#683). Runs Sandcastle, and on idle timeout
-   * probes the worker's quota pool BEFORE hang disposition:
+   * Production agent-sandbox entry (#683/#909). Runs Sandcastle, and on idle
+   * timeout probes the worker's quota pool BEFORE hang disposition via the
+   * shared {@link withIdleQuotaProbeDisposition} (same path family uses):
    *   - 429/limit → {@link QuotaWaitForResetError} (park step for quota reset;
    *     ledger row via applied.ledgerEntry for runner park; do NOT mark failed)
    *   - probe ok / network error → fail-safe rethrow the idle error (kill is a
@@ -3099,22 +3101,11 @@ export class RealBackend implements Backend {
     const { quotaProbe, ...scOptions } = options;
     this.activeSandboxWorkerPid = undefined;
     try {
-      return await this.invokeSandcastleRun(scOptions);
-    } catch (err) {
-      if (!isAgentIdleTimeoutError(err) || quotaProbe === undefined) {
-        throw err;
-      }
-      const result = await this.resolveIdleAfterQuotaProbe({
-        ...quotaProbe,
+      return await withIdleQuotaProbeDisposition({
+        quotaProbe,
+        run: () => this.invokeSandcastleRun(scOptions),
+        resolveIdle: (ctx) => this.resolveIdleAfterQuotaProbe(ctx),
       });
-      if (result.disposition.kind === "wait_for_reset") {
-        // 429: park for quota reset. Sandbox already released by Sandcastle;
-        // runner consumes this error via existing park machinery (not S8 error).
-        throw new QuotaWaitForResetError(result);
-      }
-      // Internal Sandcastle timeout fallback: the sandbox already owns its
-      // teardown. Do not kill via the old backend-local pid path.
-      throw err;
     } finally {
       this.activeSandboxWorkerPid = undefined;
     }
@@ -3128,24 +3119,12 @@ export class RealBackend implements Backend {
   protected async resolveIdleAfterQuotaProbe(
     ctx: QuotaProbeRunContext,
   ): Promise<HandleIdleThresholdResult> {
-    const pid = this.resolveWorkerPid(ctx);
-    return handleIdleThreshold({
+    return resolveSandboxIdleAfterQuotaProbe({
       modelRef: ctx.modelRef,
-      worker: {
-        pid,
-        ...(ctx.step !== undefined ? { step: ctx.step } : {}),
-      },
-      actions: {
-        // The live monitor owns verified pid-tree kill. This action is only a
-        // no-op for the post-Sandcastle internal-timeout fallback.
-        killPidTree: () => undefined,
-        // Durable park marker is written once by runner.parkQuotaWaitForReset
-        // with real sessionId/prompt_hash/branchHEAD. Do not double-write here
-        // with placeholder audit fields (#683 integration R1).
-        recordLedger: async () => undefined,
-        now: () => this.idleNow(),
-      },
-      probe: (pool) => this.runQuotaProbe(pool),
+      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
+      workerPid: this.resolveWorkerPid(ctx),
+      runQuotaProbe: (pool) => this.runQuotaProbe(pool),
+      now: () => this.idleNow(),
     });
   }
 

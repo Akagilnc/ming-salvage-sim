@@ -115,6 +115,7 @@ import {
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
+import { isQuotaWaitForResetError } from "../quotaProbe.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import type {
   CleanupResult,
@@ -1439,6 +1440,10 @@ async function dispatchOrAbort(
     );
   } catch (err) {
     if (err instanceof OnlineReviewLoopTerminal) throw err;
+    // #909: 429/quota park signal must NOT collapse into generic startup
+    // `{kind:"failed"}` (leg-kill). Rethrow so upper family/runner can park or
+    // relay — same typed terminal as single-slice withMechanicalRetry.
+    if (isQuotaWaitForResetError(err)) throw err;
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)
     }`;
