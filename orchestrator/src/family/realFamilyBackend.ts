@@ -848,6 +848,18 @@ export class RealFamilyBackend implements FamilyBackend {
             "semantics (a thrown sc.run startup error would surface as an opaque wave abort).",
         };
       }
+      // N3: agy-selected merger without OAuth is fail-closed (structured non-resolve).
+      if (modelFamilyForSlug(mergerModel()) === "agy" && auth.agyDir === undefined) {
+        return {
+          resolved: false,
+          reason:
+            "merger worker cannot start without agy OAuth token — the merger slot is " +
+            "agy-family; host ~/.sc-agy-oauth-token must be provisioned into the " +
+            "sandbox (provisionAgyAuthDir). Without it the worker fails to start " +
+            "and never resolves; returning a structured non-resolve here keeps " +
+            "resolveMergeConflict's loud-throw semantics.",
+        };
+      }
       const outcomeLanding = this.prepareMergerOutcomeLanding();
       try {
         const model = mergerModel();
@@ -920,7 +932,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
     }
   }
 
@@ -981,9 +993,12 @@ export class RealFamilyBackend implements FamilyBackend {
       // claude token absent ⇒ the top-level merger worker degrades; the
       // runMergerAgent preflight returns a structured non-resolve.
     }
+    // N3: reuse shared agy OAuth seam (same as CMR/ship) so merger=agy can start.
+    const agyDir = provisionAgyAuthDir(home, root, "merger-agy-");
     return {
       codexAuthDir,
       claudeToken,
+      agyDir,
     };
   }
 
@@ -1033,6 +1048,8 @@ export class RealFamilyBackend implements FamilyBackend {
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
+    // N3: mount agy OAuth when provisioned (writable antigravity config dir).
+    appendAgyAuthMount(mounts, auth.agyDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3323,7 +3340,9 @@ export interface ShipAuth {
  * The merger worker's auth (integ-cmr int-r2 A-1). When the active route selects a
  * Claude-family merger slug, the claude OAuth token is its OWN auth
  * (LOAD-BEARING) — `runMergerAgent` preflights it and returns a structured
- * non-resolve when absent. The merger resolves + commits the merge in place
+ * non-resolve when absent. When the merger slot is agy, the OAuth dir is likewise
+ * load-bearing (N3: reuse provisionAgyAuthDir / appendAgyAuthMount; fail-closed
+ * without token). The merger resolves + commits the merge in place
  * (`branchStrategy:{type:"head"}`); it never pushes or opens a PR.
  */
 export interface MergerAuth {
@@ -3331,6 +3350,8 @@ export interface MergerAuth {
   readonly codexAuthDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
+  /** Per-run agy OAuth dir (shared provisionAgyAuthDir seam), or undefined. */
+  readonly agyDir?: string;
 }
 
 /**
