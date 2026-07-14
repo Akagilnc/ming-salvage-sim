@@ -628,7 +628,7 @@ _Avoid_: 把 answer 当新的需求 brief、由 family ledger 重复持久化、
 _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
 
 **策略解析 / Policy Resolution**:
-需要模型的 Action 交出角色要求与固定有序席位后，机械选择第一个客观可用席位，或回答当前无席位；第一版的席位身份是“接入渠道 + 模型”，指标只记录、不评分。
+Worker Invocation 取得角色要求、固定有序席位与客观可用性事实后，交给 Policy 机械返回第一个可用席位、等待到何时或当前无席位；第一版的席位身份是“接入渠道 + 模型”，指标只记录、不评分。
 _Avoid_: 让 Runner 选模型、按 finding / 评审轮数换模型、跨池同模型归一、另建第二张换棒顺序表
 
 **cheap vs tight**(某家族吃紧的两档):
