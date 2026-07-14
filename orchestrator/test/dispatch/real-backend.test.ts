@@ -80,6 +80,7 @@ import { resolveRouteModels } from "../../src/modelRoutes.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
+import { workerReceiptSchema } from "../../src/receiptRecovery.js";
 
 type AgentRunResult = Awaited<ReturnType<typeof sc.run>>;
 
@@ -1753,6 +1754,15 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       tag: "review",
       maxRetries: 2,
     });
+  });
+
+  it("rejects malformed reviewer receipts so Sandcastle re-asks the author", () => {
+    expect(workerReceiptSchema("reviewer").safeParse({ findings: [] }).success).toBe(true);
+    expect(workerReceiptSchema("reviewer").safeParse({ findings: "missing array" }).success).toBe(false);
+    expect(workerReceiptSchema("reviewer").safeParse({}).success).toBe(false);
+    expect(workerReceiptSchema("reviewer").safeParse({
+      escalate: { reason: "owner decision", diagnosis: "design fork" },
+    }).success).toBe(true);
   });
 
   it("accepts a reviewer verdict from any one supported outcome channel", () => {
