@@ -19,7 +19,7 @@ _Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamil
 _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue 建多个并行现场
 
 **家族子工作树（Family Child Worktree）**:
-家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，但 successor agent/session/checkpoint 按选棒结果决定，可变化，不另建替代现场。直接输入子 issue 号时，只有无既有 scene 且 Issue Admission 确认为 open + ready 叶子才走单片模式的独立 worktree 和 PR；closed/open-unready 无 scene 叶子 quiet skip；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
+家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，successor 席位由 Policy 按 ADR 0134 的固定顺序选择，再由 Worker Invocation 为该席位启动新的 agent/session/checkpoint，不另建替代现场。直接输入子 issue 号时，只有无既有 scene 且 Issue Admission 确认为 open + ready 叶子才走单片模式的独立 worktree 和 PR；closed/open-unready 无 scene 叶子 quiet skip；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
 **议题准入（Issue Admission）**:
@@ -35,7 +35,7 @@ _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代�
 _Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
 
 **Worker Invocation 生命周期**:
-Execution Capsule 只持有 live scene identity / handle，Lineage 只保存 locator 与恢复记录，Scene Provisioning / Recovery 单一查询 Lineage 并找回或重连同一 scene。Worker Invocation Action 消费已恢复的 Capsule handle，只拥有该 scene 内的 worker crash/re-entry、内部 worker retry budget、是否重派 worker，以及 worker 进程与当前角色 session 的恢复。Runner 只依据 exit-code 通道，在同一 fixed flow position 执行 #598 的有界进程重试；耗尽即终止 run，不进入下一 Action。ordinary retry/resume 恢复当前角色原 session，relay 则保留 scene、worktree、baton 与旧 session/checkpoint records，successor session 按选棒结果决定。
+Execution Capsule 只持有 live scene identity / handle，Lineage 只保存 locator 与恢复记录，Scene Provisioning / Recovery 单一查询 Lineage 并找回或重连同一 scene。Worker Invocation Action 消费已恢复的 Capsule handle，只拥有该 scene 内的 worker crash/re-entry、内部 worker retry budget、是否重派 worker，以及 worker 进程与当前角色 session 的恢复。Runner 只依据 exit-code 通道，在同一 fixed flow position 执行 #598 的有界进程重试；耗尽即终止 run，不进入下一 Action。ordinary retry/resume 恢复当前角色原 session；relay 保留 scene、worktree、baton 与旧 session/checkpoint records，successor 席位由 Policy 按 ADR 0134 的固定顺序选择，再由 Worker Invocation 启动新 session。
 _Avoid_: 让 Runner 消费 Worker Invocation 内部的 worker retry budget 或选择重派 worker、把有界进程重试变成第四通道、让 Worker Invocation 重建 scene/locator/live handle、把 relay 写成 same-session、把 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
 
 ### Runtime And LLM
@@ -525,7 +525,7 @@ _Avoid_: 第二案头/独立急务界面；把六动作做成通用下旨的语�
 ### Epic Orchestration
 
 **Epic 编排器**:
-把一个 issue 喂进去、沿唯一交付主流程自治跑到 merge 与收尾的本地自动化。它复用 Sandcastle 底座(容器隔离、订阅 auth、分支、Ralph 循环),由 runner 调度相互独立的专业动作完成开发、评审、修复、合并、发布和清理。
+把一个 issue 喂进去、沿唯一交付主流程自治跑到 merge 与收尾的本地自动化。它以 Sandcastle 作为唯一 agent 执行底座，由 runner 调度相互独立的专业动作完成开发、评审、修复、合并、发布和清理；底层能力归属只读 ADR 0128 与 #868，不在流程或术语表复制。
 _Avoid_: CI、流水线(太泛)、hermes(那是一个具体后端不是编排器)
 
 **交付主流程**:
@@ -624,8 +624,12 @@ _Avoid_: step ledger(那是单片的)、状态文件(太泛)
 _Avoid_: 把 answer 当新的需求 brief、由 family ledger 重复持久化、让 runner 解释答案或覆盖固定控制字段、把进程失败当可自动恢复
 
 **路线 / route**:
-一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定模型。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。切路线 = 拨一个总开关、整套翻；任一 seat 可被单独 override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死)，故没有 seat 能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(0031)
+一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定可执行席位。第一版以「接入渠道 + 模型」识别席位，例如 xAI/Grok 与 Cursor/Grok 是两个独立候选，不归并成“同一模型的两个池”。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。切路线 = 拨一个总开关、整套翻；任一 seat 可被单独 override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死)，故没有 seat 能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(0031, 0134)
 _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
+
+**策略解析 / Policy Resolution**:
+Worker Invocation 取得角色要求、固定有序席位与客观可用性事实后，交给 Policy 机械返回第一个可用席位、等待到何时或当前无席位，并可附供 Action 与 telemetry 使用的 provider-neutral 客观原因；Runner 不消费这些结果。第一版的席位身份是“接入渠道 + 模型”，指标只记录、不评分。(0134)
+_Avoid_: 让 Runner 选模型、按 finding / 评审轮数换模型、跨池同模型归一、另建第二张换棒顺序表
 
 **cheap vs tight**(某家族吃紧的两档):
 **cheap = 额度不足、省着用** = 把吃紧家族从除 cmr 强腿外的所有槽撤掉、只留它在承重闸当一条腿;**tight = 基本耗尽** = 连那条 cmr 腿也撤、全家族清零。cheap↔tight 差且只差吃紧家族的那一条 cmr 腿(其余槽都已撤离、相同)。家族用量梯度:normal(全量)→ cheap(只剩 cmr 一腿)→ tight(零)。
