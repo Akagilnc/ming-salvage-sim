@@ -200,6 +200,12 @@ export interface VerifyCmrInput {
   /** The family-startup-smoked route carried into every family worker dispatch. */
   readonly modelRoute?: ResolvedModelRoute;
   /**
+   * #686 / #909 — sticky baton billing pool for re-dispatch after a family
+   * quota relay. When set, every family worker DispatchContext carries it so
+   * the real provider/CLI channel matches the baton (not only the model slug).
+   */
+  readonly billingPool?: string;
+  /**
    * The child issue numbers whose merge into the family base was LLM-resolved
    * (#295), derived by the spine from the durable family ledger (#291 缺口 1). The
    * `"final"` phase forwards it to {@link IntegratedCmrRequest.llmResolvedChildren}
@@ -589,6 +595,7 @@ async function runCmrCoderFix(input: {
   readonly escalationAnswer?: EscalationAnswerPayload;
   readonly familyIssue?: number;
   readonly resolvedRoute: ResolvedModelRoute;
+  readonly billingPool?: string;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -604,6 +611,7 @@ async function runCmrCoderFix(input: {
     escalationAnswer,
     familyIssue,
     resolvedRoute,
+    billingPool,
   } = input;
   const reasonPrefix =
     `integrated cmr ${pass} coder-fix for ` +
@@ -619,6 +627,7 @@ async function runCmrCoderFix(input: {
       familyBase,
       ...(runId !== undefined ? { runId } : {}),
       modelRoute: resolvedRoute,
+      ...(billingPool !== undefined ? { billingPool } : {}),
       // 信封宪法 (ADR 0062): only identity keys + count on the dispatch structure;
       // rich finding content travels in the separate landing payload below.
       blockingFindingIdentityKeys,
@@ -996,6 +1005,7 @@ export async function runFamilyOnlineReviewLoop(input: {
   readonly runId?: string;
   readonly ship: ShipResult;
   readonly resolvedRoute?: ResolvedModelRoute;
+  readonly billingPool?: string;
   readonly escalationAnswer?: EscalationAnswerPayload;
 }): Promise<OnlineReviewLoopStageResult> {
   const repo =
@@ -1030,6 +1040,7 @@ export async function runFamilyOnlineReviewLoop(input: {
     familyBase: input.familyBase,
     ...(input.runId !== undefined ? { runId: input.runId } : {}),
     modelRoute,
+    ...(input.billingPool !== undefined ? { billingPool: input.billingPool } : {}),
     repo,
     prUrl,
     prHead: input.ship.prHead,
@@ -1584,6 +1595,7 @@ async function runIntegratedCmrPass(input: {
   >;
   readonly resolvedRoute: ResolvedModelRoute;
   readonly allowCoderFix: boolean;
+  readonly billingPool?: string;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -1596,6 +1608,7 @@ async function runIntegratedCmrPass(input: {
     familyIssue,
     moduleContext,
     resolvedRoute,
+    billingPool,
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
     allowCoderFix,
@@ -1625,6 +1638,7 @@ async function runIntegratedCmrPass(input: {
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
     modelRoute: resolvedRoute,
+    ...(billingPool !== undefined ? { billingPool } : {}),
     cmrPass: pass,
     ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
       ? { llmResolvedChildren }
@@ -1710,6 +1724,7 @@ async function runIntegratedCmrPass(input: {
       escalationAnswer,
       familyIssue,
       resolvedRoute,
+      ...(billingPool !== undefined ? { billingPool } : {}),
     });
     if (!fixRound.result.ok) return fixRound;
     return {
@@ -1849,6 +1864,7 @@ async function runIntegratedCmrPass(input: {
         escalationAnswer,
         familyIssue,
         resolvedRoute,
+        ...(billingPool !== undefined ? { billingPool } : {}),
       });
       if (!fixRound.result.ok) return fixRound;
       const updatedPriorKeys = [
@@ -1921,6 +1937,7 @@ export async function runVerifyCmr(
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
     modelRoute,
+    billingPool,
     runId,
   } = input;
 
@@ -2030,6 +2047,7 @@ export async function runVerifyCmr(
     priorCmrFindingIdentityKeysByPass: activePriorKeysByPass,
     resolvedRoute,
     allowCoderFix: true,
+    ...(billingPool !== undefined ? { billingPool } : {}),
   });
   if (!completeness.result.ok) return completeness.result;
   if (completeness.restartFinalBarrier !== undefined) {
@@ -2039,6 +2057,7 @@ export async function runVerifyCmr(
       familyBase,
       runId,
       modelRoute,
+      ...(billingPool !== undefined ? { billingPool } : {}),
       llmResolvedChildren,
       escalationAnswer,
       familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
@@ -2066,6 +2085,7 @@ export async function runVerifyCmr(
       priorCmrFindingIdentityKeysByPass: correctnessPriorKeysByPass,
       resolvedRoute,
       allowCoderFix: true,
+      ...(billingPool !== undefined ? { billingPool } : {}),
     });
     if (!correctness.result.ok) return correctness.result;
     if (correctness.restartFinalBarrier === undefined) {
@@ -2144,6 +2164,7 @@ export async function runVerifyCmr(
     familyBase,
     ...(runId !== undefined ? { runId } : {}),
     modelRoute: resolvedRoute,
+    ...(billingPool !== undefined ? { billingPool } : {}),
     ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
   };
   const shipResult = await dispatchOrAbort(
@@ -2321,6 +2342,7 @@ export async function runVerifyCmr(
       status: "pr_opened",
     },
     resolvedRoute,
+    ...(billingPool !== undefined ? { billingPool } : {}),
   });
   const familyLedgerForHead = await familyBackend.readFamilyLedger();
   const knownPostFixHead =
