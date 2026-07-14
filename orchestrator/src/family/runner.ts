@@ -2578,6 +2578,9 @@ export async function runFamily(
   }
 
   // #909: final barrier 429 → park or apply baton + re-dispatch (full invariant).
+  // B4: open-shipped terminal FamilyRunResult (escalated with stopSummary) must
+  // not collapse into finalize("final") → bare verify_failed.
+  let openShippedTerminal: FamilyRunResult | undefined;
   const finalBarrier = await runFamilyBarrierWithQuotaRelay({
     phase: "final",
     familyBackend,
@@ -2610,6 +2613,21 @@ export async function runFamily(
         barrierHead,
       );
       if (openShipped !== undefined) {
+        // B4: reuse shipped-resume tail — preserve stopSummary + escalated status
+        // instead of bare {ok:false} → finalize verify_failed.
+        const ledgerMerged = await currentMerged(familyBackend);
+        const openChildren: FamilyChildResult[] = epic.children.map((child) =>
+          childResults.some(
+            (c) => c.issue === child.issue && c.status === "merged",
+          ) || ledgerMerged.has(child.issue)
+            ? {
+                issue: child.issue,
+                status: ledgerMerged.has(child.issue)
+                  ? ("already_done" as const)
+                  : ("merged" as const),
+              }
+            : { issue: child.issue, status: "skipped" as const },
+        );
         const reviewLoop = await runFamilyOnlineReviewLoop({
           familyBackend,
           familyBase,
@@ -2630,8 +2648,39 @@ export async function runFamily(
             : {}),
           ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         });
-        if (!reviewLoop.ok) return { ok: false, ran: true };
-        // Mirror verifyCmr post-ship tail: converge marker + auto-merge + cleanup.
+        if (!reviewLoop.ok) {
+          const stopSummary =
+            reviewLoop.stopSummary ??
+            infraFailureStopSummary({
+              summary:
+                "family online review loop did not converge during open-shipped re-entry",
+              repairHint:
+                "repair or answer the worker-reported stop, then re-feed the family run",
+            });
+          await recordFamilyEscalated(familyBackend, {
+            escalationKind:
+              stopSummary.reason === "decision_gate_park"
+                ? "decision"
+                : "failure",
+            phase: "final",
+            reason: stopSummary.summary,
+            familyHeadAfter: barrierHead,
+            stopSummary,
+          });
+          openShippedTerminal = {
+            status: "escalated",
+            familyBase,
+            familyHead: barrierHead,
+            stopSummary,
+            children: openChildren,
+            ...(epic.admissionSkipped !== undefined &&
+            epic.admissionSkipped.length > 0
+              ? { admissionSkipped: epic.admissionSkipped }
+              : {}),
+          };
+          return { ok: false, ran: true };
+        }
+        // Mirror shipped-resume / verifyCmr post-ship tail.
         const convergedHead =
           (await readCurrentFamilyHead(familyBackend, familyBase)) ??
           openShipped.familyHeadAfter;
@@ -2649,21 +2698,70 @@ export async function runFamily(
           prUrl: openShipped.pr,
         });
         if (familyAutoMergeIncomplete(autoMerge)) {
+          const stopSummary =
+            autoMerge.stopSummary ??
+            decisionGateParkStopSummary({
+              summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
+              repairHint:
+                "resolve the worker-reported merge stop, then re-feed the family run",
+            });
+          await recordFamilyEscalated(familyBackend, {
+            escalationKind:
+              stopSummary.reason === "decision_gate_park"
+                ? "decision"
+                : "failure",
+            phase: "final",
+            reason: stopSummary.summary,
+            familyHeadAfter: convergedHead,
+            stopSummary,
+          });
+          openShippedTerminal = {
+            status: "escalated",
+            familyBase,
+            familyHead: convergedHead,
+            stopSummary,
+            children: openChildren,
+            ...(epic.admissionSkipped !== undefined &&
+            epic.admissionSkipped.length > 0
+              ? { admissionSkipped: epic.admissionSkipped }
+              : {}),
+          };
           return { ok: false, ran: true };
         }
-        const cleanupGate = await ensureFamilyPostMergeCleanup({
+        const cleanupBlocked = await requirePostMergeCleanupForAlreadyDone({
           familyBackend,
           familyBase,
           runId,
           familyHeadAfter: convergedHead,
           prUrl: openShipped.pr,
           familyIssue: epic.issue,
-          phase: "final",
-          recordAbortOnFailure: true,
+          resolvedRoute: route,
+          children: openChildren,
+          ...(epic.admissionSkipped !== undefined &&
+          epic.admissionSkipped.length > 0
+            ? { admissionSkipped: epic.admissionSkipped }
+            : {}),
         });
-        return cleanupGate.ok
-          ? { ok: true, ran: true }
-          : { ok: false, ran: true };
+        if (cleanupBlocked !== undefined) {
+          openShippedTerminal = cleanupBlocked;
+          return { ok: false, ran: true };
+        }
+        openShippedTerminal = {
+          status: "success",
+          familyBase,
+          familyHead: convergedHead,
+          stopSummary: {
+            reason: "already_done",
+            summary:
+              "family review loop resumed from the open-shipped checkpoint and converged",
+          },
+          children: openChildren,
+          ...(epic.admissionSkipped !== undefined &&
+          epic.admissionSkipped.length > 0
+            ? { admissionSkipped: epic.admissionSkipped }
+            : {}),
+        };
+        return { ok: true, ran: true };
       }
       return verifyCmr({
         phase: "final",
@@ -2705,6 +2803,12 @@ export async function runFamily(
   if (finalBarrier.kind === "park") return finalBarrier.result;
   activeRoute = finalBarrier.route;
   const finalVerify = finalBarrier.value;
+  // B4: open-shipped re-entry already built a structured FamilyRunResult
+  // (success or escalated with stopSummary) — do not rewrite to verify_failed.
+  if (openShippedTerminal !== undefined) {
+    familyHead = openShippedTerminal.familyHead ?? familyHead;
+    return openShippedTerminal;
+  }
   if (!finalVerify.ok) {
     // #296's failing integrated cmr lands here. #293 no-op never trips it. The
     // result carries the merged children AND `status:"verify_failed"`/`failedPhase:
