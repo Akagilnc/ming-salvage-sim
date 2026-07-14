@@ -80,7 +80,10 @@ import { resolveRouteModels } from "../../src/modelRoutes.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
 import { StructuredOutputError } from "@ai-hero/sandcastle";
-import { workerReceiptSchema } from "../../src/receiptRecovery.js";
+import {
+  decisionGateSignalSchema,
+  workerReceiptSchema,
+} from "../../src/receiptRecovery.js";
 
 type AgentRunResult = Awaited<ReturnType<typeof sc.run>>;
 
@@ -1573,15 +1576,16 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("does not attach Output.object for single-iter coder so absent cargo never SO-retries", async () => {
-    // #899 / ADR 0131 R9: coder cargo is fully opaque — no Output.object.
-    // Missing tag or style-changed cargo must not trigger structured-output repair.
+  it("attaches signal-only Output.object for single-iter coder without re-asking opaque cargo", async () => {
+    // #899: decision-gate Output.object is attached; ordinary cargo fields stay
+    // opaque (missing committed/commitsAdded does not force a second invocation).
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: "coder completed implementation but omitted its receipt",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-opaque",
+      output: {},
     });
 
     await expect(
@@ -1599,16 +1603,20 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toBeUndefined();
+    expect(backend.agentOptions[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
     expect(backend.agentOptions[0]!.resumeSession).toBeUndefined();
   });
 
-  it("does not re-ask coder cargo when the receipt omits a cargo field", async () => {
+  it("does not re-ask coder cargo when the typed receipt omits a cargo field", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: '<coder>{"committed": true}</coder>',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-partial-cargo",
+      output: { committed: true },
     });
 
     await expect(backend.runStep({ ...coderSpec, maxIter: 1 }, {
@@ -1620,7 +1628,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toBeUndefined();
+    expect(backend.agentOptions[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
   });
 
   it("fails the Action on a malformed coder decision gate without inventing a park", async () => {
@@ -1629,6 +1640,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"escalate":{"reason":"","diagnosis":""}}</coder>',
       commits: [],
       sessionId: "sess-coder-bad-gate",
+      output: { escalate: { reason: "", diagnosis: "" } },
     });
 
     await expect(
@@ -1637,8 +1649,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }),
     ).rejects.toThrow(/malformed decision gate/);
     expect(backend.agentOptions).toHaveLength(1);
-    // Post-hoc classify — no SO attachment for opaque coder cargo.
-    expect(backend.agentOptions[0]!.output).toBeUndefined();
+    // Signal-only SO is attached so Sandcastle can re-ask; post-decode still
+    // fails closed when a malformed bell somehow lands past the schema.
+    expect(backend.agentOptions[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
   });
 
   it("keeps a single Sandcastle invocation when a missing coder receipt has no session", async () => {
@@ -1676,6 +1692,28 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.agentOptions).toHaveLength(1);
   });
 
+  it("propagates StructuredOutputError when coder decision-gate retries are exhausted", async () => {
+    // #899: coder signal-only SO exhaust → Action non-zero for #598 redispatch.
+    const backend = makeBackend();
+    const err = new StructuredOutputError("bad output", {
+      tag: "coder",
+      rawMatched: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }),
+      commits: [],
+      branch: "feat/x",
+      sessionId: "sess-coder-exhausted",
+    });
+    backend.agentFailures.push(err);
+
+    await expect(backend.runStep({ ...coderSpec, maxIter: 1 }, {
+      branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
+    })).rejects.toBe(err);
+    expect(backend.agentOptions).toHaveLength(1);
+    expect(backend.agentOptions[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
+  });
+
   it("continues a resumed clean-exit coder when receipt cargo is absent", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
@@ -1700,14 +1738,15 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
-  it("does not attach Output.object when resuming a coder seat (opaque cargo)", async () => {
-    // Resume keeps maxIterations:1; #899 R9 still leaves coder cargo opaque so
-    // a missing tag never triggers structured-output repair.
+  it("attaches signal-only decision Output.object when resuming a coder seat", async () => {
+    // Resume is maxIterations:1; #899 attaches decision-gate Output.object while
+    // ordinary cargo fields stay opaque inside decisionGateSignalSchema.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "resumed worker completed without a cargo tag",
       commits: [{ sha: "abc123" }],
       sessionId: "prior-coder-session",
+      output: {},
     });
 
     await expect(backend.resumeSession(
@@ -1718,7 +1757,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "prior-coder-session",
     });
-    expect(backend.lastAgentOptions?.output).toBeUndefined();
+    expect(backend.lastAgentOptions?.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
@@ -1783,6 +1825,30 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       tag: "review",
       maxRetries: 2,
     });
+  });
+
+  it("rejects malformed coder decision gates so Sandcastle re-asks while opaque cargo passes", () => {
+    // #899: signal-only decisionGateSignalSchema — ordinary cargo never SO-retries;
+    // present-but-malformed escalate fails schema so Sandcastle same-session re-asks.
+    expect(decisionGateSignalSchema.safeParse({}).success).toBe(true);
+    expect(decisionGateSignalSchema.safeParse({ committed: true }).success).toBe(true);
+    expect(decisionGateSignalSchema.safeParse({ committed: "not-bool" }).success).toBe(true);
+    expect(decisionGateSignalSchema.safeParse(null).success).toBe(true);
+    expect(decisionGateSignalSchema.safeParse("not-object").success).toBe(true);
+    expect(decisionGateSignalSchema.safeParse({
+      escalate: { reason: "owner decision", diagnosis: "design fork" },
+    }).success).toBe(true);
+    expect(decisionGateSignalSchema.safeParse({ escalate: {} }).success).toBe(false);
+    expect(decisionGateSignalSchema.safeParse({
+      escalate: { reason: "", diagnosis: "x" },
+    }).success).toBe(false);
+    expect(decisionGateSignalSchema.safeParse({
+      escalate: { reason: "need owner", diagnosis: "" },
+    }).success).toBe(false);
+    expect(decisionGateSignalSchema.safeParse({
+      committed: true,
+      escalate: { reason: "", diagnosis: "" },
+    }).success).toBe(false);
   });
 
   it("rejects malformed reviewer receipts so Sandcastle re-asks the author", () => {

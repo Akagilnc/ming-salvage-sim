@@ -2337,9 +2337,9 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 
-  it("does not attach Output.object for family coder so opaque cargo never SO-retries", async () => {
-    // #899 / ADR 0131 R9: family coder cargo stays fully opaque — no Output.object.
-    // Malformed/absent committed cargo does not force a structured-output re-ask.
+  it("attaches signal-only decision Output.object for family coder without cargo-shape re-ask", async () => {
+    // #899: decision-gate Output.object is attached; malformed committed cargo is
+    // still opaque and does not force a second cargo-shape invocation.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -2370,6 +2370,8 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
           stdout: "family coder finished with opaque sidecar cargo",
           commits: [],
           iterations: [{ sessionId: "family-coder-malformed" }],
+          // Typed validated "no escalate" with opaque cargo fields.
+          output: { committed: "not-a-boolean" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -2391,7 +2393,10 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
     expect(be.calls).toHaveLength(1);
-    expect(be.calls[0]!.output).toBeUndefined();
+    expect(be.calls[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
     expect(be.calls[0]!.resumeSession).toBeUndefined();
   });
 
