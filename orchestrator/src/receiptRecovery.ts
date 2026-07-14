@@ -56,11 +56,6 @@ export function workerReceiptSchema(role: WorkerReceiptRole): z.ZodType {
   ]);
 }
 
-/** Whether a recovered compatibility receipt satisfies its role contract. */
-export function workerReceiptIsReadable(role: WorkerReceiptRole, receipt: unknown): boolean {
-  return workerReceiptSchema(role).safeParse(receipt).success;
-}
-
 /** One typed receipt definition for every worker path. */
 export function workerReceiptOutput(
   tag: string,
@@ -94,14 +89,24 @@ export async function reaskReceiptOrFallback<T>(
   }
 }
 
-/** Run one official typed re-ask only when the caller found an unreadable receipt. */
-export async function reaskUnreadableReceiptOrFallback<T>(params: {
-  readonly unreadable: boolean;
-  readonly reask: () => Promise<T>;
+/**
+ * Resume a worker only at the transport boundary where its final receipt could
+ * not be decoded.  The caller supplies Sandcastle's typed resume; this seam
+ * deliberately does not inspect the receipt's claims or schema itself.
+ */
+export async function resumeTypedReceiptOrFallback<T>(params: {
+  readonly sessionId: string | undefined;
+  readonly receiptWasUnreadable: boolean;
+  readonly resume: (sessionId: string) => Promise<T>;
   readonly fallback: () => T;
   readonly worker: string;
 }): Promise<T> {
-  return params.unreadable
-    ? reaskReceiptOrFallback(params.reask, params.fallback, params.worker)
-    : params.fallback();
+  if (!params.receiptWasUnreadable || params.sessionId === undefined) {
+    return params.fallback();
+  }
+  return await reaskReceiptOrFallback(
+    () => params.resume(params.sessionId!),
+    params.fallback,
+    params.worker,
+  );
 }

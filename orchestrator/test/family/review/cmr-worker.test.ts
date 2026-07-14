@@ -2061,7 +2061,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(existsSync(grokDir)).toBe(false);
   });
 
-  it("the successful container path removes the temporary outcome sidecar directory", async () => {
+  it("uses Sandcastle's typed CMR receipt when the sidecar cargo is malformed, then removes it", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
@@ -2092,11 +2092,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(
           outcomePathAtRun,
-          JSON.stringify({
-            converged: true,
-            successfulLegs: DEFAULT_CMR_LEGS,
-            ...VALID_CMR_VERDICT_FIELDS,
-          }),
+          JSON.stringify({ converged: "not-a-verdict" }),
           "utf8",
         );
         const result: Awaited<ReturnType<typeof sc.run>> & { output: unknown } = {
