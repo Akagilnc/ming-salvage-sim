@@ -106,7 +106,7 @@ import {
   SANDBOX_FIX_FOCUS_PATH_ENV,
 } from "../realBackend.js";
 import {
-  handleIdleThreshold,
+  resolveSandboxIdleAfterQuotaProbe,
   runPoolProbe,
   withIdleQuotaProbeDisposition,
   type HandleIdleThresholdResult,
@@ -1663,20 +1663,13 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async resolveIdleAfterQuotaProbe(
     ctx: QuotaProbeRunContext,
   ): Promise<HandleIdleThresholdResult> {
-    const pid =
-      ctx.workerPid !== undefined && ctx.workerPid > 0 ? ctx.workerPid : 0;
-    return handleIdleThreshold({
+    return resolveSandboxIdleAfterQuotaProbe({
       modelRef: ctx.modelRef,
-      worker: {
-        pid,
-        ...(ctx.step !== undefined ? { step: ctx.step } : {}),
-      },
-      actions: {
-        killPidTree: () => undefined,
-        recordLedger: async () => undefined,
-        now: () => this.idleNow(),
-      },
-      probe: (pool) => this.runQuotaProbe(pool),
+      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
+      workerPid:
+        ctx.workerPid !== undefined && ctx.workerPid > 0 ? ctx.workerPid : 0,
+      runQuotaProbe: (pool) => this.runQuotaProbe(pool),
+      now: () => this.idleNow(),
     });
   }
 

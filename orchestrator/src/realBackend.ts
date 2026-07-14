@@ -227,6 +227,7 @@ import { legacyDispatchWorker } from "./dispatchWorker.js";
 import {
   handleIdleThreshold,
   QuotaWaitForResetError,
+  resolveSandboxIdleAfterQuotaProbe,
   runPoolProbe,
   withIdleQuotaProbeDisposition,
   type HandleIdleThresholdResult,
@@ -3118,24 +3119,12 @@ export class RealBackend implements Backend {
   protected async resolveIdleAfterQuotaProbe(
     ctx: QuotaProbeRunContext,
   ): Promise<HandleIdleThresholdResult> {
-    const pid = this.resolveWorkerPid(ctx);
-    return handleIdleThreshold({
+    return resolveSandboxIdleAfterQuotaProbe({
       modelRef: ctx.modelRef,
-      worker: {
-        pid,
-        ...(ctx.step !== undefined ? { step: ctx.step } : {}),
-      },
-      actions: {
-        // The live monitor owns verified pid-tree kill. This action is only a
-        // no-op for the post-Sandcastle internal-timeout fallback.
-        killPidTree: () => undefined,
-        // Durable park marker is written once by runner.parkQuotaWaitForReset
-        // with real sessionId/prompt_hash/branchHEAD. Do not double-write here
-        // with placeholder audit fields (#683 integration R1).
-        recordLedger: async () => undefined,
-        now: () => this.idleNow(),
-      },
-      probe: (pool) => this.runQuotaProbe(pool),
+      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
+      workerPid: this.resolveWorkerPid(ctx),
+      runQuotaProbe: (pool) => this.runQuotaProbe(pool),
+      now: () => this.idleNow(),
     });
   }
 
