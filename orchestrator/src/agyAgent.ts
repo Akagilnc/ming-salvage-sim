@@ -21,7 +21,7 @@
  */
 
 import type * as sc from "@ai-hero/sandcastle";
-import { shellEscape } from "./grokAgent.js";
+import { shellEscape } from "./shellEscape.js";
 
 /** Options for the in-house agy AgentProvider (not a sandcastle export). */
 export interface AgyAgentOptions {
@@ -81,8 +81,6 @@ export function parseAgyStreamLine(line: string): Array<AgyParsedStreamEvent> {
  * `900000ms`) — bare milliseconds (`"900000"`) are rejected by the CLI.
  */
 export const AGY_PRINT_TIMEOUT = "15m";
-/** @deprecated use AGY_PRINT_TIMEOUT (`"15m"`); bare ms numbers break agy CLI. */
-export const AGY_PRINT_TIMEOUT_MS = 15 * 60 * 1000;
 
 /**
  * Headless / print-mode argv + stdin (workers, bare-ping, gemini.sh shape).
