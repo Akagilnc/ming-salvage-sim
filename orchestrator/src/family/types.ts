@@ -909,6 +909,25 @@ export interface FamilyRunInput {
    * impl re-reads the epic's sub-issues + `blocked_by` via `gh`.
    */
   readonly refetchEpic?: () => Promise<FamilyEpic>;
+  /**
+   * #686 / #909 — optional route pool table for park-vs-relay at family barriers
+   * (verify / final / online_review). Same contract as single-slice
+   * {@link RunInput.relayPools}: when absent, wall-hit pool is limited and every
+   * other pool is not-live until probed (no fabricated batons). Tests inject a
+   * live alternate pool to assert relay staging.
+   */
+  readonly relayPools?: ReadonlyArray<{
+    readonly id: string;
+    readonly status: "live" | "limited" | "dead";
+    readonly resetAt?: Date;
+    readonly parkThresholdMs: number;
+    readonly models: ReadonlyArray<string>;
+  }>;
+  /**
+   * #686 / #909 — optional clock for park-vs-relay threshold tests (within T /
+   * beyond T). Production leaves this unset (wall clock).
+   */
+  readonly now?: () => Date;
 }
 
 /**
