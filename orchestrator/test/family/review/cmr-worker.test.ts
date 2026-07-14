@@ -830,10 +830,20 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    const attempts: string[] = [];
     class Backend extends RealFamilyBackend {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
-      protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        expect(options.output).toEqual(expect.objectContaining({ tag: "cmr", maxRetries: 2 }));
+        // Fake Sandcastle consumes the initial receipt plus two same-session
+        // retries before reporting the framework's normal exhaustion error.
+        for (const receipt of [{ converged: true }, { converged: true }, { converged: true }]) {
+          attempts.push("sess-cmr-exhausted");
+          expect(workerReceiptSchema("cmr").safeParse(receipt).success).toBe(false);
+        }
         throw new sc.StructuredOutputError("bad output", {
           tag: "cmr",
           rawMatched: JSON.stringify({
@@ -865,28 +875,59 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         location: "orchestrator/src/family/realFamilyBackend.ts:1606",
       })],
     });
+    expect(attempts).toEqual([
+      "sess-cmr-exhausted",
+      "sess-cmr-exhausted",
+      "sess-cmr-exhausted",
+    ]);
   });
 
-  it("re-asks the same CMR reviewer when an otherwise legal verdict omits its open count", () => {
+  it("delegates a malformed CMR receipt's bad-to-good retry sequence to Sandcastle", async () => {
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    const attempts: Array<{ readonly sessionId: string; readonly receipt: unknown }> = [];
     const completeVerdict = {
       converged: true,
       findingsCount: 0,
       successfulLegs: [...DEFAULT_CMR_LEGS],
-      claimedFixedFindingIdentityKeys: [],
-      priorFindingDispositions: [],
-      evidencePaths: ["cmr/review-summary.json"],
+      ...VALID_CMR_VERDICT_FIELDS,
     };
-    expect(workerReceiptSchema("cmr").safeParse(completeVerdict).success).toBe(true);
-    expect(workerReceiptSchema("cmr").safeParse({
-      ...completeVerdict,
-      findingsCount: undefined,
-    }).success).toBe(false);
-    expect(workerReceiptSchema("cmr").safeParse({ converged: true }).success).toBe(false);
-    expect(workerReceiptSchema("cmr").safeParse({ converged: "yes" }).success).toBe(false);
-    expect(workerReceiptSchema("cmr").safeParse({}).success).toBe(false);
-    expect(workerReceiptSchema("cmr").safeParse({
-      escalate: { reason: "design fork", diagnosis: "owner choice required" },
-    }).success).toBe(true);
+    class Backend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        // Fake Sandcastle: its retry loop owns the retries. The runner gets one
+        // call and supplies only the typed-output policy.
+        expect(options.output).toEqual(expect.objectContaining({ tag: "cmr", maxRetries: 2 }));
+        const sequence = [
+          { ...completeVerdict, findingsCount: undefined },
+          completeVerdict,
+        ];
+        for (const receipt of sequence) {
+          attempts.push({ sessionId: "same-cmr-reviewer-session", receipt });
+          if (workerReceiptSchema("cmr").safeParse(receipt).success) {
+            return typedSandboxRunResult(receipt, { sessionId: "same-cmr-reviewer-session" });
+          }
+        }
+        throw new Error("fake Sandcastle should recover the second receipt");
+      }
+    }
+    const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-native-retry-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
+
+    await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).resolves.toMatchObject({
+      kind: "verdict",
+      converged: true,
+      findingsCount: 0,
+    });
+    expect(attempts).toEqual([
+      { sessionId: "same-cmr-reviewer-session", receipt: { ...completeVerdict, findingsCount: undefined } },
+      { sessionId: "same-cmr-reviewer-session", receipt: completeVerdict },
+    ]);
   });
 
   it("lets the independent escalation bell through before malformed bell cargo can suppress it", () => {
