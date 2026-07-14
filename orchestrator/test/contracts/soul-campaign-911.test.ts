@@ -309,6 +309,39 @@ describe("#911 prompts: STEP_COMPLETE is mandatory multi-iter terminator, not op
       expect(text, name).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
     }
   });
+
+  // B2: after #911 symlink-to-verify, integrated CMR prompts must still order
+  // workers to read/obey runner-written focus+route parameter files FIRST.
+  it("integrated CMR prompts mandate reading and obeying .cmr-focus.md + .cmr-route.json FIRST", () => {
+    for (const name of [
+      "integrated_cmr_completeness.md",
+      "integrated_cmr_correctness.md",
+    ] as const) {
+      const text = readFileSync(join(promptsDir, name), "utf8");
+      const collapsed = norm(text);
+      expect(collapsed, name).toMatch(/\.cmr-focus\.md/);
+      expect(collapsed, name).toMatch(/\.cmr-route\.json/);
+      // Thin mandatory discipline — not merely "runner writes".
+      // Filenames may be bare or fenced in backticks in the prompt prose.
+      expect(collapsed, name).toMatch(
+        /read and obey `?\.cmr-focus\.md`? and `?\.cmr-route\.json`? at the repo root FIRST/i,
+      );
+    }
+  });
+
+  // B3: when-path-is-set write obligation (not only the without-path tag fallback).
+  it("integrated CMR prompts require writing terminal JSON to $ORCHESTRATOR_OUTCOME_PATH when set", () => {
+    for (const name of [
+      "integrated_cmr_completeness.md",
+      "integrated_cmr_correctness.md",
+    ] as const) {
+      const text = readFileSync(join(promptsDir, name), "utf8");
+      const collapsed = norm(text);
+      expect(collapsed, name).toMatch(
+        /when `?\$ORCHESTRATOR_OUTCOME_PATH`? is set,? write (the same terminal JSON object|.*JSON.*) (directly )?to that path/i,
+      );
+    }
+  });
 });
 
 describe("#911 family dual-mount (RealFamilyBackend)", () => {
@@ -319,8 +352,48 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
     public shipCfg() {
       return this.shipSandboxConfig({ claudeToken: "tok" });
     }
+    public cmrCfg() {
+      return this.cmrSandboxConfig(
+        { claudeToken: "tok" },
+        [{ family: "codex", slug: "gpt-5.6-sol" }],
+      );
+    }
+    public familyCoderCfg() {
+      return this.familyCoderSandboxConfig(
+        { claudeToken: "tok" },
+        "sonnet",
+        {},
+        { path: "/tmp/outcome-911.json", sandboxPath: "/tmp/outcome.json" },
+      );
+    }
+    public familyReviewLoopCfg() {
+      return this.familyReviewLoopSandboxConfig(
+        { claudeToken: "tok" },
+        {
+          id: "S3",
+          kind: "reviewer",
+          role: "reviewer",
+          soul: "READ-ONLY",
+          host: "claude",
+          session: "fresh",
+          contextRetention: "clean",
+          promptFile: "reviewer_review.md",
+          completionSignal: "REVIEWER_STEP_COMPLETE",
+          maxIter: 1,
+          model: "sonnet",
+          toolchain: [],
+        },
+        {},
+      );
+    }
     public mountMerger() {
       return this.mountMergerAuth();
+    }
+    public mountCmr() {
+      return this.mountCmrAuth();
+    }
+    public mountShip() {
+      return this.mountShipAuth();
     }
   }
 
@@ -357,6 +430,15 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
     expect(be.shipCfg().mounts).toContainEqual(expected);
   });
 
+  // B6: more family sandbox configs must carry the home dual-mount (same mount helper).
+  it("family cmr + coder-fix + review-loop sandboxes live-mount home CLAUDE.md", () => {
+    const be = new FamilyProbe(familyOpts());
+    const expected = homeClaudeMount(homeEnvFile);
+    expect(be.cmrCfg().mounts).toContainEqual(expected);
+    expect(be.familyCoderCfg().mounts).toContainEqual(expected);
+    expect(be.familyReviewLoopCfg().mounts).toContainEqual(expected);
+  });
+
   it("family mountMergerAuth writes container AGENTS.md into the codex auth dir", () => {
     const home = mkdtempSync(join(tmpdir(), "fam-auth-911-"));
     tempHomes.push(home);
@@ -371,6 +453,28 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
     expect(existsSync(agents)).toBe(true);
     expect(readFileSync(agents, "utf8")).toBe(readFileSync(homeEnvFile, "utf8"));
     expect(readFileSync(agents, "utf8")).not.toMatch(/HOST OWNER/);
+  });
+
+  // B6: more codex auth provision paths replace host AGENTS.md with container home body.
+  it("family mountCmrAuth + mountShipAuth write container AGENTS.md into codex auth dirs", () => {
+    const home = mkdtempSync(join(tmpdir(), "fam-auth-911-cmr-ship-"));
+    tempHomes.push(home);
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "auth.json"), '{"tokens":{}}\n');
+    writeFileSync(join(home, ".codex", "AGENTS.md"), "# HOST OWNER — must be replaced\n");
+
+    const be = new FamilyProbe(familyOpts({ home }));
+    const expectedBody = readFileSync(homeEnvFile, "utf8");
+    for (const [label, auth] of [
+      ["cmr", be.mountCmr()],
+      ["ship", be.mountShip()],
+    ] as const) {
+      expect(auth.codexAuthDir, label).toBeTruthy();
+      const agents = join(auth.codexAuthDir as string, "AGENTS.md");
+      expect(existsSync(agents), label).toBe(true);
+      expect(readFileSync(agents, "utf8"), label).toBe(expectedBody);
+      expect(readFileSync(agents, "utf8"), label).not.toMatch(/HOST OWNER/);
+    }
   });
 
   it("missing home env file fails loud at RealFamilyBackend construction", () => {
