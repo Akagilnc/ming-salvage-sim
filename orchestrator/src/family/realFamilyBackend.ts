@@ -245,7 +245,10 @@ const CMR_SOUL = "cmr";
 const SHIP_SOUL: StepSoul = "ship";
 
 /** Compatibility read model for durable family-ledger escalation rows. */
-export interface FamilyEscalationRecord extends Omit<FamilyEscalation, "escalationKind"> {
+export interface FamilyEscalationRecord extends Omit<
+  FamilyEscalation,
+  "escalationKind"
+> {
   readonly escalationKind?: FamilyLedgerEntry["escalationKind"];
   readonly familyHeadAfter?: string;
 }
@@ -438,7 +441,8 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   private validateSoulsDir(): void {
     const dir = this.opts.soulsDir;
-    const dirExists = isAbsolute(dir) && existsSync(dir) && statSync(dir).isDirectory();
+    const dirExists =
+      isAbsolute(dir) && existsSync(dir) && statSync(dir).isDirectory();
     const missing = dirExists
       ? REQUIRED_SOUL_FILES.filter((f) => !existsSync(join(dir, f)))
       : [];
@@ -477,7 +481,10 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` + pure (no container/I/O) so a unit test asserts the resolved model
    * without spinning a real `sc.run`.
    */
-  protected agentForSpec(spec: WorkerSpec, ctx?: Pick<DispatchContext, "billingPool">): sc.AgentProvider {
+  protected agentForSpec(
+    spec: WorkerSpec,
+    ctx?: Pick<DispatchContext, "billingPool">,
+  ): sc.AgentProvider {
     return agentForSlug(
       spec.model,
       effortForLiveOfficer(spec.model, spec),
@@ -488,10 +495,15 @@ export class RealFamilyBackend implements FamilyBackend {
   /** Typed provider gate shared by every family `sc.run` dispatch. */
   protected unavailableWorkerProviderAuth(
     spec: Pick<WorkerSpec, "model">,
-    auth: Pick<CmrAuth | ShipAuth, "claudeToken" | "grokAuthDir" | "providerAuth">,
+    auth: Pick<
+      CmrAuth | ShipAuth,
+      "claudeToken" | "grokAuthDir" | "providerAuth"
+    >,
     ctx?: Pick<DispatchContext, "billingPool">,
   ): "claude" | "grok" | undefined {
-    const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
+    const pool = isBillingPoolDispatchId(ctx?.billingPool)
+      ? ctx.billingPool
+      : undefined;
     return unavailableProviderAuth(
       resolveModelSlugForPool(spec.model, pool).provider,
       auth.providerAuth ?? {
@@ -515,7 +527,10 @@ export class RealFamilyBackend implements FamilyBackend {
   private readFamilyLedgerFile(): ReadonlyArray<FamilyLedgerEntry> | undefined {
     let raw: string;
     try {
-      raw = readFileSync(join(this.opts.ledgerDir, FAMILY_LEDGER_FILENAME), "utf8");
+      raw = readFileSync(
+        join(this.opts.ledgerDir, FAMILY_LEDGER_FILENAME),
+        "utf8",
+      );
     } catch (err) {
       // ONLY "file does not exist yet" (ENOENT) means an empty ledger. Any OTHER
       // read failure (EACCES, EISDIR, transient IO, path corruption) must FAIL
@@ -547,7 +562,10 @@ export class RealFamilyBackend implements FamilyBackend {
   private readLegacyEscalationRecords(): ReadonlyArray<FamilyEscalationRecord> {
     let raw: string;
     try {
-      raw = readFileSync(join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME), "utf8");
+      raw = readFileSync(
+        join(this.opts.ledgerDir, FAMILY_ESCALATION_FILENAME),
+        "utf8",
+      );
     } catch (err) {
       if (isFileNotFound(err)) return [];
       throw new Error(
@@ -573,7 +591,8 @@ export class RealFamilyBackend implements FamilyBackend {
           : "legacy family escalation",
       ...(record.escalationKind == null
         ? { escalationKind: "decision" as const }
-        : record.escalationKind === "decision" || record.escalationKind === "failure"
+        : record.escalationKind === "decision" ||
+            record.escalationKind === "failure"
           ? { escalationKind: record.escalationKind }
           : {}),
       ...(record.familyHeadAfter != null
@@ -583,16 +602,26 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   async readFamilyHead(familyBase: string): Promise<string> {
-    const out = await this.sh("git", ["rev-parse", familyBase], this.opts.workingRepo);
+    const out = await this.sh(
+      "git",
+      ["rev-parse", familyBase],
+      this.opts.workingRepo,
+    );
     return out.trim();
   }
 
   async readFamilyCurrentHead(): Promise<string> {
-    const out = await this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo);
+    const out = await this.sh(
+      "git",
+      ["rev-parse", "HEAD"],
+      this.opts.workingRepo,
+    );
     return out.trim();
   }
 
-  async readFamilyTrackedStatus(_familyBase: string): Promise<readonly string[]> {
+  async readFamilyTrackedStatus(
+    _familyBase: string,
+  ): Promise<readonly string[]> {
     const out = await this.sh(
       "git",
       ["status", "--short", "--untracked-files=no"],
@@ -629,7 +658,9 @@ export class RealFamilyBackend implements FamilyBackend {
     // `git merge` on the one clone would contend on `.git/index.lock` / HEAD. Keying
     // both critical sections on `workingRepo` makes a child cut and a family merge
     // never touch the shared `.git` at once (a different clone never blocks).
-    return runExclusive(this.opts.workingRepo, () => this.mergeChildLocked(child));
+    return runExclusive(this.opts.workingRepo, () =>
+      this.mergeChildLocked(child),
+    );
   }
 
   /** The git-mutating body of {@link mergeChildIntoFamilyBase}, under the per-clone mutex. */
@@ -656,7 +687,12 @@ export class RealFamilyBackend implements FamilyBackend {
       // entry on a conflicted result. A non-conflict git failure RETHROWS so the
       // wave aborts loudly with the original git error (decision 3④/5 "不静默吞").
       if (this.mergeInProgress(repo)) {
-        return { familyHead: familyHeadBefore, familyHeadBefore, childHead, conflicted: true };
+        return {
+          familyHead: familyHeadBefore,
+          familyHeadBefore,
+          childHead,
+          conflicted: true,
+        };
       }
       throw err;
     }
@@ -664,9 +700,15 @@ export class RealFamilyBackend implements FamilyBackend {
     return { familyHead, familyHeadBefore, childHead };
   }
 
-  async resolveMergeConflict(req: ConflictResolveRequest): Promise<MergeResult> {
+  async resolveMergeConflict(
+    req: ConflictResolveRequest,
+  ): Promise<MergeResult> {
     const repo = this.opts.workingRepo;
-    const familyHeadBefore = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
+    const familyHeadBefore = this.sh(
+      "git",
+      ["rev-parse", this.opts.familyBase],
+      repo,
+    );
     const childHead = this.sh("git", ["rev-parse", req.childBranch], repo);
     // ONE agent under the `merger` soul + `resolving-merge-conflicts` skill,
     // scoped to THIS in-progress conflicting merge: resolve each hunk → `git add`
@@ -711,8 +753,16 @@ export class RealFamilyBackend implements FamilyBackend {
     // ancestor does the merge count as landed. Anything else → `conflicted:true` so
     // the merger refuses to record `merged` (invariant: "an unresolved conflict
     // never looks clean").
-    const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
-    const childLanded = this.childLandedOnFamilyBase(familyHeadBefore, childHead, repo);
+    const familyHead = this.sh(
+      "git",
+      ["rev-parse", this.opts.familyBase],
+      repo,
+    );
+    const childLanded = this.childLandedOnFamilyBase(
+      familyHeadBefore,
+      childHead,
+      repo,
+    );
     return childLanded
       ? { familyHead, familyHeadBefore, childHead }
       : { familyHead, familyHeadBefore, childHead, conflicted: true };
@@ -731,7 +781,11 @@ export class RealFamilyBackend implements FamilyBackend {
     repo: string,
   ): boolean {
     if (this.mergeInProgress(repo)) return false;
-    const familyHead = this.sh("git", ["rev-parse", this.opts.familyBase], repo);
+    const familyHead = this.sh(
+      "git",
+      ["rev-parse", this.opts.familyBase],
+      repo,
+    );
     return (
       familyHead !== familyHeadBefore &&
       this.isAncestorOf(childHead, familyHead, repo) &&
@@ -744,7 +798,11 @@ export class RealFamilyBackend implements FamilyBackend {
   /** A resolved conflict must be represented by a real two-parent merge commit. */
   protected isMergeCommit(commit: string, repo: string): boolean {
     try {
-      const parents = this.sh("git", ["show", "-s", "--format=%P", commit], repo)
+      const parents = this.sh(
+        "git",
+        ["show", "-s", "--format=%P", commit],
+        repo,
+      )
         .trim()
         .split(/\s+/)
         .filter(Boolean);
@@ -760,7 +818,11 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** A merger commit containing conflict markers is not a clean resolution. */
-  protected hasConflictMarkers(before: string, after: string, repo: string): boolean {
+  protected hasConflictMarkers(
+    before: string,
+    after: string,
+    repo: string,
+  ): boolean {
     try {
       const changed = this.sh(
         "git",
@@ -771,7 +833,15 @@ export class RealFamilyBackend implements FamilyBackend {
       if (paths.length === 0) return false;
       const matches = this.sh(
         "git",
-        ["grep", "-n", "-E", "^(<<<<<<<|=======|>>>>>>>)( |$)", after, "--", ...paths],
+        [
+          "grep",
+          "-n",
+          "-E",
+          "^(<<<<<<<|=======|>>>>>>>)( |$)",
+          after,
+          "--",
+          ...paths,
+        ],
         repo,
       );
       return matches.trim().length > 0;
@@ -782,9 +852,17 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** True iff `ancestor` is an ancestor of `descendant` (`git merge-base --is-ancestor`). */
-  protected isAncestorOf(ancestor: string, descendant: string, repo: string): boolean {
+  protected isAncestorOf(
+    ancestor: string,
+    descendant: string,
+    repo: string,
+  ): boolean {
     try {
-      this.sh("git", ["merge-base", "--is-ancestor", ancestor, descendant], repo);
+      this.sh(
+        "git",
+        ["merge-base", "--is-ancestor", ancestor, descendant],
+        repo,
+      );
       return true;
     } catch (err) {
       // exit 1 = a legit "not an ancestor"; anything else (128 bad object / broken
@@ -803,7 +881,11 @@ export class RealFamilyBackend implements FamilyBackend {
    */
   protected async runMergerAgent(
     req: ConflictResolveRequest,
-  ): Promise<{ resolved: boolean; reason?: string; escalation?: FamilyEscalation }> {
+  ): Promise<{
+    resolved: boolean;
+    reason?: string;
+    escalation?: FamilyEscalation;
+  }> {
     // FAIL-CLOSED on the WORKER's OWN auth (integ-cmr int-r2 A-1, mirroring the
     // cmr/ship worker preflight): when the merger slot resolves to a Claude-family
     // model, the Claude OAuth token is THIS worker's auth, not a degradable leg.
@@ -817,7 +899,10 @@ export class RealFamilyBackend implements FamilyBackend {
     // the sandbox (no double-mount).
     const auth = this.mountMergerAuth();
     try {
-      if (modelFamilyForSlug(mergerModel()) === "claude" && auth.claudeToken === undefined) {
+      if (
+        modelFamilyForSlug(mergerModel()) === "claude" &&
+        auth.claudeToken === undefined
+      ) {
         return {
           resolved: false,
           reason:
@@ -852,7 +937,9 @@ export class RealFamilyBackend implements FamilyBackend {
           familyIssue: req.childIssue,
           stateDir: this.opts.ledgerDir,
           ...(req.runId !== undefined ? { runId: req.runId } : {}),
-          ...(req.modelRoute !== undefined ? { modelRoute: req.modelRoute } : {}),
+          ...(req.modelRoute !== undefined
+            ? { modelRoute: req.modelRoute }
+            : {}),
         };
         const telemetry = createTelemetryLegStamper({
           ledgerDir: this.opts.ledgerDir,
@@ -877,12 +964,21 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
           });
-          const outcome = mergerOutcomeFromResult({ ...result, outcomePath: outcomeLanding.path });
+          const outcome = mergerOutcomeFromResult({
+            ...result,
+            outcomePath: outcomeLanding.path,
+          });
           telemetry.stampCollect({
             kind: "result",
             result: outcome.resolved
-              ? { kind: "completed", output: { kind: "merge", familyHead: this.opts.familyBase } }
-              : { kind: "failed", reason: outcome.reason ?? "merger agent did not resolve" },
+              ? {
+                  kind: "completed",
+                  output: { kind: "merge", familyHead: this.opts.familyBase },
+                }
+              : {
+                  kind: "failed",
+                  reason: outcome.reason ?? "merger agent did not resolve",
+                },
           });
           return outcome;
         } catch (error) {
@@ -899,9 +995,14 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /** The merger agent's sandbox (souls + skills baked into the image + optional auth). */
-  protected prepareMergerOutcomeLanding(): { path: string; sandboxPath: string } {
+  protected prepareMergerOutcomeLanding(): {
+    path: string;
+    sandboxPath: string;
+  } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
-    const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-merger-"));
+    const dir = mkdtempSync(
+      join(this.opts.ledgerDir, "worker-outcome-merger-"),
+    );
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
     this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
@@ -931,9 +1032,15 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       mkdirSync(root, { recursive: true, mode: 0o700 });
       tempCodexDir = mkdtempSync(join(root, "merger-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
+      copyFileSync(
+        join(home, ".codex", "auth.json"),
+        join(tempCodexDir, "auth.json"),
+      );
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
+      writeContainerCodexConfig(
+        join(tempCodexDir, "config.toml"),
+        this.opts.codexFast,
+      );
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ no codex mount. Reclaim the mkdtemp dir if it was
@@ -992,19 +1099,34 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+    mounts: ReadonlyArray<{
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }>;
   } {
-    const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
-    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    const env: Record<string, string> = {
+      ...SPAWNED_WORKER_ENV,
+      [SANDBOX_SOUL_ENV]: MERGER_SOUL,
+    };
+    if (auth.claudeToken !== undefined)
+      env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    const mounts: {
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }[] = [];
     if (
       auth.codexAuthDir !== undefined &&
       modelFamilyForSlug(mergerModel()) === "codex"
     ) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+      mounts.push({
+        hostPath: auth.codexAuthDir,
+        sandboxPath: SANDBOX_CODEX_DIR,
+      });
     }
     applyUniformCredentialProvisioning({
       env,
@@ -1040,7 +1162,9 @@ export class RealFamilyBackend implements FamilyBackend {
 
   // ─────────────────────────── verify ───────────────────────────
 
-  async runFamilyVerify(request: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
+  async runFamilyVerify(
+    request: FamilyVerifyRequest,
+  ): Promise<FamilyVerifyResult> {
     const repo = this.opts.workingRepo;
     // Verify runs against the family base (checked out). Both phases run typecheck
     // + tests; "final" runs the FULL suite (vitest run is already the full suite
@@ -1063,7 +1187,9 @@ export class RealFamilyBackend implements FamilyBackend {
    * clone. `protected` so a unit test drives the green/red branch without a real
    * `npx tsc` / `npx vitest` run. A non-zero exit throws (the caller packages it).
    */
-  protected async runVerifyCommands(_request: FamilyVerifyRequest): Promise<void> {
+  protected async runVerifyCommands(
+    _request: FamilyVerifyRequest,
+  ): Promise<void> {
     // Run where the Node project lives, NOT the clone root — else npx finds no
     // package.json/config (online R2 Codex P1). Precedence (#4): explicit verifyCwd
     // > the lazy diff-inferred cwd (the dominant changed subproject) > the clone root.
@@ -1127,7 +1253,12 @@ export class RealFamilyBackend implements FamilyBackend {
         cwd,
       );
     } else if (scripts.includes("build")) {
-      this.runObservedVerification(_request, "typecheck", ["run", "build"], cwd);
+      this.runObservedVerification(
+        _request,
+        "typecheck",
+        ["run", "build"],
+        cwd,
+      );
     }
     if (scripts.includes("test")) {
       this.runObservedVerification(
@@ -1155,16 +1286,12 @@ export class RealFamilyBackend implements FamilyBackend {
     const startedAt = process.hrtime.bigint();
     let passed = false;
     try {
-      const output = this.sh(
-        "npm",
-        args,
-        cwd,
-        PROVISION_SUBPROCESS_TIMEOUT_MS,
-      );
+      const output = this.sh("npm", args, cwd, PROVISION_SUBPROCESS_TIMEOUT_MS);
       passed = true;
       return output;
     } finally {
-      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      const durationMs =
+        Number(process.hrtime.bigint() - startedAt) / 1_000_000;
       // Intentionally detached: a slow/full telemetry filesystem must not delay
       // or change the project's verify verdict.
       const stampInput = {
@@ -1185,7 +1312,10 @@ export class RealFamilyBackend implements FamilyBackend {
           await recordVerificationStamp(this.opts.ledgerDir, stampInput);
         })
         .catch((error: unknown) => {
-          console.warn("verification telemetry stamp failed; continuing", error);
+          console.warn(
+            "verification telemetry stamp failed; continuing",
+            error,
+          );
         });
     }
   }
@@ -1214,7 +1344,9 @@ export class RealFamilyBackend implements FamilyBackend {
 
   protected packageScripts(cwd: string): readonly string[] {
     try {
-      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
+      const pkg = JSON.parse(
+        readFileSync(join(cwd, "package.json"), "utf8"),
+      ) as {
         scripts?: Record<string, unknown>;
       };
       return Object.keys(pkg.scripts ?? {});
@@ -1298,7 +1430,11 @@ export class RealFamilyBackend implements FamilyBackend {
     // #735: real 文档发布 worker shares the family review-loop agent path
     // (invoke /gstack-document-release). Offline/test stubs stay on backends
     // that short-circuit dispatchWorker or on the legacy offline hatch.
-    if (spec.kind === "verify" || spec.kind === "fixer" || spec.kind === "docRelease") {
+    if (
+      spec.kind === "verify" ||
+      spec.kind === "fixer" ||
+      spec.kind === "docRelease"
+    ) {
       return this.runFamilyReviewLoopWorker(spec, ctx, landing);
     }
     if (spec.kind !== "cmr") {
@@ -1385,7 +1521,9 @@ export class RealFamilyBackend implements FamilyBackend {
           reason: outcome.reason,
           diagnosis: outcome.diagnosis,
         },
-        ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
+        ...(outcome.sessionId !== undefined
+          ? { sessionId: outcome.sessionId }
+          : {}),
       };
     }
     return {
@@ -1393,10 +1531,14 @@ export class RealFamilyBackend implements FamilyBackend {
       output: {
         kind: "cmr",
         ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-        ...(outcome.converged !== undefined ? { converged: outcome.converged } : {}),
+        ...(outcome.converged !== undefined
+          ? { converged: outcome.converged }
+          : {}),
         ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
         successfulLegs: outcome.successfulLegs,
-        ...(outcome.skippedLegs !== undefined ? { skippedLegs: outcome.skippedLegs } : {}),
+        ...(outcome.skippedLegs !== undefined
+          ? { skippedLegs: outcome.skippedLegs }
+          : {}),
         ...(outcome.claimedFixedFindingIdentityKeys !== undefined
           ? {
               claimedFixedFindingIdentityKeys:
@@ -1406,7 +1548,9 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.priorFindingDispositions !== undefined
           ? { priorFindingDispositions: outcome.priorFindingDispositions }
           : {}),
-        ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
+        ...(outcome.findings !== undefined
+          ? { findings: outcome.findings }
+          : {}),
         ...(outcome.findingsCount !== undefined
           ? { findingsCount: outcome.findingsCount }
           : {}),
@@ -1415,7 +1559,9 @@ export class RealFamilyBackend implements FamilyBackend {
           : {}),
         evidencePaths: outcome.evidencePaths,
       },
-      ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
+      ...(outcome.sessionId !== undefined
+        ? { sessionId: outcome.sessionId }
+        : {}),
     };
   }
 
@@ -1429,7 +1575,9 @@ export class RealFamilyBackend implements FamilyBackend {
    * pass. (Kept so a #296-era consumer that reaches `runIntegratedCmr` directly
    * still type-checks; `dispatchFamilyWorker` prefers `dispatchWorker`.)
    */
-  async runIntegratedCmr(request: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
+  async runIntegratedCmr(
+    request: IntegratedCmrRequest,
+  ): Promise<IntegratedCmrResult> {
     return this.runCmr(request);
   }
 
@@ -1439,7 +1587,9 @@ export class RealFamilyBackend implements FamilyBackend {
    * path. `protected` so the e2e / a unit test may still override it for the legacy
    * gate, but the production path no longer reaches it.
    */
-  protected async runCmr(request: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
+  protected async runCmr(
+    request: IntegratedCmrRequest,
+  ): Promise<IntegratedCmrResult> {
     void request;
     throw new Error(
       "runIntegratedCmr: the real ak-cross-m-review is dispatched as the container " +
@@ -1523,12 +1673,17 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountCmrAuth();
     try {
-      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      const missingProvider = this.unavailableWorkerProviderAuth(
+        spec,
+        auth,
+        ctx,
+      );
       if (missingProvider !== undefined) {
         return {
           kind: "escalate",
           reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
-          diagnosis: "typed provider availability preflight rejected the cmr launch before sc.run",
+          diagnosis:
+            "typed provider availability preflight rejected the cmr launch before sc.run",
           escalation: runnerSynthesizedFailureEscalation({
             reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
             diagnosis:
@@ -1536,10 +1691,14 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
+      if (
+        modelFamilyForSlug(spec.model) === "claude" &&
+        auth.claudeToken === undefined
+      ) {
         return {
           kind: "escalate",
-          reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the cmr worker cannot start",
+          reason:
+            "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the cmr worker cannot start",
           diagnosis:
             "the integrated cmr worker is the container's top-level claude (sc.claudeCode); " +
             "its OAuth token (~/.sc-claude-token → CLAUDE_CODE_OAUTH_TOKEN) is the worker's " +
@@ -1590,6 +1749,7 @@ export class RealFamilyBackend implements FamilyBackend {
           // separate family coder-fix worker.
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
+          output: this.familyReceiptOutput(spec),
         });
         return withCmrSession(
           cmrOutcomeFromResult({
@@ -1603,7 +1763,11 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([
+        auth.codexAuthDir,
+        auth.agyDir,
+        auth.grokAuthDir,
+      ]);
     }
   }
 
@@ -1636,17 +1800,25 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountShipAuth();
     try {
-      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      const missingProvider = this.unavailableWorkerProviderAuth(
+        spec,
+        auth,
+        ctx,
+      );
       if (missingProvider !== undefined) {
         return {
           kind: "escalated",
           escalation: runnerSynthesizedFailureEscalation({
             reason: `no ${missingProvider} auth — the family coder-fix provider cannot start`,
-            diagnosis: "typed provider availability preflight rejected the coder-fix launch before sc.run",
+            diagnosis:
+              "typed provider availability preflight rejected the coder-fix launch before sc.run",
           }),
         };
       }
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
+      if (
+        modelFamilyForSlug(spec.model) === "claude" &&
+        auth.claudeToken === undefined
+      ) {
         return {
           kind: "escalated",
           escalation: runnerSynthesizedFailureEscalation({
@@ -1683,7 +1855,23 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
           });
-          return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
+          const receiptResult = this.familyCoderReceiptIsUnreadable(
+            result as { readonly output?: unknown },
+            outcomeLanding.path,
+          )
+            ? await this.reaskFamilyCoderReceipt(
+                spec,
+                ctx,
+                auth,
+                outcomeLanding,
+                result,
+              )
+            : result;
+          return this.familyCoderResultFromRun(
+            receiptResult,
+            spec,
+            outcomeLanding.path,
+          );
         } finally {
           this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
         }
@@ -1743,19 +1931,33 @@ export class RealFamilyBackend implements FamilyBackend {
   protected writeFamilyFixFocusFile(
     landing?: WorkerLandingPayload,
   ): { path: string; sandboxPath: string } | undefined {
-    if (landing?.findingFamilies === undefined || landing.findingFamilies.length === 0) {
-      rmSync(join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE), { force: true });
+    if (
+      landing?.findingFamilies === undefined ||
+      landing.findingFamilies.length === 0
+    ) {
+      rmSync(join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE), {
+        force: true,
+      });
       return undefined;
     }
     this.excludeOptionalRuntimeFileFromGit(FIX_FOCUS_LANDING_FILE);
     const path = join(this.opts.workingRepo, FIX_FOCUS_LANDING_FILE);
-    writeFileSync(path, `${formatFixFocusMarkdown(landing.findingFamilies)}\n`, "utf8");
+    writeFileSync(
+      path,
+      `${formatFixFocusMarkdown(landing.findingFamilies)}\n`,
+      "utf8",
+    );
     return { path, sandboxPath: FIX_FOCUS_LANDING_FILE };
   }
 
-  protected prepareFamilyCoderOutcomeLanding(): { path: string; sandboxPath: string } {
+  protected prepareFamilyCoderOutcomeLanding(): {
+    path: string;
+    sandboxPath: string;
+  } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
-    const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-family-coder-fix-"));
+    const dir = mkdtempSync(
+      join(this.opts.ledgerDir, "worker-outcome-family-coder-fix-"),
+    );
     let success = false;
     try {
       const path = join(dir, "outcome.json");
@@ -1770,9 +1972,14 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
-  protected prepareFamilyReviewOutcomeLanding(): { path: string; sandboxPath: string } {
+  protected prepareFamilyReviewOutcomeLanding(): {
+    path: string;
+    sandboxPath: string;
+  } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
-    const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-family-review-"));
+    const dir = mkdtempSync(
+      join(this.opts.ledgerDir, "worker-outcome-family-review-"),
+    );
     let success = false;
     try {
       const path = join(dir, "outcome.json");
@@ -1793,7 +2000,13 @@ export class RealFamilyBackend implements FamilyBackend {
     fixFocusLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
     return docker(
-      this.familyCoderSandboxConfig(auth, model, ctx, outcomeLanding, fixFocusLanding),
+      this.familyCoderSandboxConfig(
+        auth,
+        model,
+        ctx,
+        outcomeLanding,
+        fixFocusLanding,
+      ),
     );
   }
 
@@ -1806,7 +2019,11 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+    mounts: ReadonlyArray<{
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }>;
   } {
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
@@ -1823,10 +2040,18 @@ export class RealFamilyBackend implements FamilyBackend {
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
       env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
     }
-    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    if (auth.claudeToken !== undefined)
+      env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
-      { hostPath: outcomeLanding.path, sandboxPath: outcomeLanding.sandboxPath },
+    const mounts: {
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }[] = [
+      {
+        hostPath: outcomeLanding.path,
+        sandboxPath: outcomeLanding.sandboxPath,
+      },
     ];
     if (fixFocusLanding !== undefined) {
       mounts.push({
@@ -1836,10 +2061,16 @@ export class RealFamilyBackend implements FamilyBackend {
       });
     }
     if (auth.codexAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+      mounts.push({
+        hostPath: auth.codexAuthDir,
+        sandboxPath: SANDBOX_CODEX_DIR,
+      });
     }
     if (auth.grokAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+      mounts.push({
+        hostPath: auth.grokAuthDir,
+        sandboxPath: SANDBOX_GROK_DIR,
+      });
     }
     applyUniformCredentialProvisioning({
       env,
@@ -1856,12 +2087,13 @@ export class RealFamilyBackend implements FamilyBackend {
     result: Pick<
       Awaited<ReturnType<typeof sc.run>>,
       "completionSignal" | "stdout" | "commits" | "iterations"
-    >,
+    > & { readonly output?: unknown },
     spec: WorkerSpec,
     outcomePath: string,
   ): WorkerResult {
     try {
-      const raw = readRequiredWorkerOutcomeSidecar(outcomePath);
+      const raw =
+        result.output ?? readRequiredWorkerOutcomeSidecar(outcomePath);
       const decisionBell = probeWorkerDecisionBell(raw);
       if (decisionBell !== undefined) {
         return {
@@ -1894,6 +2126,55 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
+  /** One official Sandcastle receipt definition for the family coder/reviewer paths. */
+  private familyReceiptOutput(spec: WorkerSpec): sc.OutputDefinition {
+    return sc.Output.object({
+      tag: spec.kind === "cmr" ? "cmr" : "coder",
+      schema: z.unknown(),
+      maxRetries: 2,
+    });
+  }
+
+  private familyCoderReceiptIsUnreadable(
+    result: { readonly output?: unknown },
+    outcomePath: string,
+  ): boolean {
+    if (result.output !== undefined) return false;
+    try {
+      const raw = readRequiredWorkerOutcomeSidecar(outcomePath);
+      if (probeWorkerDecisionBell(raw) !== undefined) return false;
+      parseCoderSelfReport(raw);
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  private async reaskFamilyCoderReceipt(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    auth: ShipAuth,
+    outcomeLanding: { path: string; sandboxPath: string },
+    result: Pick<Awaited<ReturnType<typeof sc.run>>, "iterations">,
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    const sessionId = lastSessionId(result);
+    if (sessionId === undefined)
+      return result as Awaited<ReturnType<typeof sc.run>>;
+    return await this.runAgentSandbox({
+      name: "family-coder-receipt-reask",
+      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+      cwd: this.opts.workingRepo,
+      sandbox: this.familyCoderSandbox(auth, spec.model, ctx, outcomeLanding),
+      agent: this.agentForSpec(spec, ctx),
+      maxIterations: 1,
+      completionSignal: spec.completionSignal,
+      branchStrategy: { type: "head" },
+      resumeSession: sessionId,
+      promptFile: join(this.opts.promptsDir, spec.promptFile),
+      output: this.familyReceiptOutput(spec),
+    });
+  }
+
   private familyCoderOutput(output: SelfReportedCoder): CoderResult {
     return {
       kind: "coder",
@@ -1916,22 +2197,29 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const auth = this.mountShipAuth();
     try {
-      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      const missingProvider = this.unavailableWorkerProviderAuth(
+        spec,
+        auth,
+        ctx,
+      );
       if (missingProvider !== undefined) {
         return {
           kind: "escalated",
           escalation: runnerSynthesizedFailureEscalation({
             reason: `no ${missingProvider} auth — the family ${spec.kind} provider cannot start`,
-            diagnosis: "typed provider availability preflight rejected the review-loop launch before sc.run",
+            diagnosis:
+              "typed provider availability preflight rejected the review-loop launch before sc.run",
           }),
         };
       }
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
+      if (
+        modelFamilyForSlug(spec.model) === "claude" &&
+        auth.claudeToken === undefined
+      ) {
         return {
           kind: "escalated",
           escalation: runnerSynthesizedFailureEscalation({
-            reason:
-              `no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family ${spec.kind} worker cannot start`,
+            reason: `no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family ${spec.kind} worker cannot start`,
             diagnosis:
               `the family ${spec.kind} worker is a top-level Claude worker when the ` +
               "active route selects a Claude-family model; provide " +
@@ -1947,7 +2235,9 @@ export class RealFamilyBackend implements FamilyBackend {
           ? undefined
           : this.writeFamilyOnlineReviewLandingFile(ctx, landing);
       const fixFocusLanding =
-        spec.kind === "fixer" ? this.writeFamilyFixFocusFile(landing) : undefined;
+        spec.kind === "fixer"
+          ? this.writeFamilyFixFocusFile(landing)
+          : undefined;
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
         const result = await this.runAgentSandbox({
@@ -1968,7 +2258,11 @@ export class RealFamilyBackend implements FamilyBackend {
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
         });
-        return this.familyReviewLoopResultFromRun(result, spec, outcomeLanding.path);
+        return this.familyReviewLoopResultFromRun(
+          result,
+          spec,
+          outcomeLanding.path,
+        );
       } finally {
         if (onlineReviewLanding !== undefined) {
           rmSync(onlineReviewLanding.path, { force: true });
@@ -2001,7 +2295,8 @@ export class RealFamilyBackend implements FamilyBackend {
           onlineReviewSnapshot: landing.onlineReviewSnapshot,
           shipDelivery: landing.shipDelivery,
           onlineReviewRound: landing.onlineReviewRound ?? ctx.onlineReviewRound,
-          fixMarkedFindingIdentityKeys: landing.fixMarkedFindingIdentityKeys ?? [],
+          fixMarkedFindingIdentityKeys:
+            landing.fixMarkedFindingIdentityKeys ?? [],
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
             : {}),
@@ -2048,7 +2343,11 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+    mounts: ReadonlyArray<{
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }>;
   } {
     const soul = soulForStep({
       role: spec.role,
@@ -2073,9 +2372,14 @@ export class RealFamilyBackend implements FamilyBackend {
       env[SANDBOX_ISSUE_NUMBER_ENV] = issue;
       env[SANDBOX_ISSUE_NUMBER_ALIAS_ENV] = issue;
     }
-    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    if (auth.claudeToken !== undefined)
+      env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    const mounts: {
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }[] = [];
     if (onlineReviewLanding !== undefined) {
       mounts.push({
         hostPath: onlineReviewLanding.path,
@@ -2097,10 +2401,16 @@ export class RealFamilyBackend implements FamilyBackend {
       });
     }
     if (auth.codexAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+      mounts.push({
+        hostPath: auth.codexAuthDir,
+        sandboxPath: SANDBOX_CODEX_DIR,
+      });
     }
     if (auth.grokAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+      mounts.push({
+        hostPath: auth.grokAuthDir,
+        sandboxPath: SANDBOX_GROK_DIR,
+      });
     }
     applyUniformCredentialProvisioning({
       env,
@@ -2112,7 +2422,10 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   protected familyReviewLoopResultFromRun(
-    result: Pick<Awaited<ReturnType<typeof sc.run>>, "completionSignal" | "stdout" | "iterations">,
+    result: Pick<
+      Awaited<ReturnType<typeof sc.run>>,
+      "completionSignal" | "stdout" | "iterations"
+    >,
     spec: WorkerSpec,
     outcomePath?: string,
   ): WorkerResult {
@@ -2121,7 +2434,11 @@ export class RealFamilyBackend implements FamilyBackend {
       if (spec.kind === "verify") {
         const parsed = parseVerifyOutcome(result.stdout, outcomePath);
         if (parsed.kind === "escalate") {
-          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+          return {
+            kind: "escalated",
+            escalation: parsed.escalation,
+            sessionId,
+          };
         }
         if (parsed.kind === "cargo") {
           return {
@@ -2135,7 +2452,11 @@ export class RealFamilyBackend implements FamilyBackend {
       if (spec.kind === "fixer") {
         const parsed = parseFixerOutcome(result.stdout, outcomePath);
         if (parsed.kind === "escalate") {
-          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+          return {
+            kind: "escalated",
+            escalation: parsed.escalation,
+            sessionId,
+          };
         }
         if (parsed.kind === "cargo") {
           return {
@@ -2149,7 +2470,11 @@ export class RealFamilyBackend implements FamilyBackend {
       if (spec.kind === "cleanup") {
         const parsed = parseCleanupOutcome(result.stdout, outcomePath);
         if (parsed.kind === "escalate") {
-          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+          return {
+            kind: "escalated",
+            escalation: parsed.escalation,
+            sessionId,
+          };
         }
         if (parsed.kind === "cargo") {
           return {
@@ -2210,7 +2535,8 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const scope = `git diff ${startHead}...${familyBase}`;
     const focusLine =
-      ctx.llmResolvedChildren !== undefined && ctx.llmResolvedChildren.length > 0
+      ctx.llmResolvedChildren !== undefined &&
+      ctx.llmResolvedChildren.length > 0
         ? `Machine-resolved child merges (a machine resolved a conflict — review their merge seams with SPECIAL care): ${ctx.llmResolvedChildren
             .map((n) => `#${n}`)
             .join(", ")}.`
@@ -2274,7 +2600,9 @@ export class RealFamilyBackend implements FamilyBackend {
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
   ): void {
     const ctx =
-      typeof ctxOrPass === "string" || ctxOrPass === undefined || ctxOrPass === null
+      typeof ctxOrPass === "string" ||
+      ctxOrPass === undefined ||
+      ctxOrPass === null
         ? { cmrPass: ctxOrPass ?? undefined }
         : ctxOrPass;
     const body = JSON.stringify(
@@ -2292,15 +2620,22 @@ export class RealFamilyBackend implements FamilyBackend {
       2,
     );
     this.excludeFromGit(CMR_ROUTE_FILENAME);
-    writeFileSync(join(this.opts.workingRepo, CMR_ROUTE_FILENAME), body + "\n", "utf8");
+    writeFileSync(
+      join(this.opts.workingRepo, CMR_ROUTE_FILENAME),
+      body + "\n",
+      "utf8",
+    );
   }
 
-  protected prepareCmrOutcomeLanding(
-    ctx: DispatchContext,
-  ): { path: string; sandboxPath: string } {
+  protected prepareCmrOutcomeLanding(ctx: DispatchContext): {
+    path: string;
+    sandboxPath: string;
+  } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
     const pass = ctx.cmrPass ?? "legacy";
-    const dir = mkdtempSync(join(this.opts.ledgerDir, `worker-outcome-cmr-${pass}-`));
+    const dir = mkdtempSync(
+      join(this.opts.ledgerDir, `worker-outcome-cmr-${pass}-`),
+    );
     const path = join(dir, "outcome.json");
     writeFileSync(path, "", "utf8");
     this.excludeOptionalRuntimeFileFromGit(WORKER_OUTCOME_REPO_FILE);
@@ -2386,13 +2721,19 @@ export class RealFamilyBackend implements FamilyBackend {
       // mounted. mkdtempSync gives each invocation its own owner-only (0700) dir.
       mkdirSync(root, { recursive: true, mode: 0o700 });
       tempCodexDir = mkdtempSync(join(root, "cmr-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
+      copyFileSync(
+        join(home, ".codex", "auth.json"),
+        join(tempCodexDir, "auth.json"),
+      );
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
       // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
       // bwrap is impossible — the failure that degrades cmr legs to static-only).
       // The host config.toml is host-personal and irrelevant — only auth.json
       // crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
+      writeContainerCodexConfig(
+        join(tempCodexDir, "config.toml"),
+        this.opts.codexFast,
+      );
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
@@ -2411,7 +2752,10 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       mkdirSync(root, { recursive: true, mode: 0o700 });
       tempGrokDir = mkdtempSync(join(root, "cmr-grok-auth-"));
-      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+      copyFileSync(
+        join(home, ".grok", "auth.json"),
+        join(tempGrokDir, "auth.json"),
+      );
       chmodSync(join(tempGrokDir, "auth.json"), 0o600);
       grokAuthDir = tempGrokDir;
     } catch {
@@ -2431,7 +2775,10 @@ export class RealFamilyBackend implements FamilyBackend {
       // would also cross-talk runtime state between concurrent workers.
       mkdirSync(root, { recursive: true, mode: 0o700 });
       tempAgyDir = mkdtempSync(join(root, "cmr-agy-"));
-      copyFileSync(join(home, ".sc-agy-oauth-token"), join(tempAgyDir, AGY_TOKEN_FILENAME));
+      copyFileSync(
+        join(home, ".sc-agy-oauth-token"),
+        join(tempAgyDir, AGY_TOKEN_FILENAME),
+      );
       chmodSync(join(tempAgyDir, AGY_TOKEN_FILENAME), 0o600);
       agyDir = tempAgyDir;
     } catch {
@@ -2466,7 +2813,10 @@ export class RealFamilyBackend implements FamilyBackend {
       opencodeAuthFile: hostOpenCodeAuthFile(home),
       claudeToken,
       ghToken: this.readGhToken(),
-      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+      providerAuth: {
+        claude: claudeToken !== undefined,
+        grok: grokAuthDir !== undefined,
+      },
     };
   }
 
@@ -2515,7 +2865,11 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+    mounts: ReadonlyArray<{
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }>;
   } {
     // ORCHESTRATOR_REPO too: the cmr worker runs `gh issue view` (completeness
     // authority) AND `gh issue create` (defer→tracker), both needing `--repo
@@ -2537,7 +2891,8 @@ export class RealFamilyBackend implements FamilyBackend {
     if (codexReviewLeg !== undefined) {
       env.CMR_CODEX_MODEL = codexReviewLeg.slug;
     }
-    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    if (auth.claudeToken !== undefined)
+      env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =
     // DELIVERED-vs-spec authority) reads GH_TOKEN. Inject only when present (mirrors
     // shipSandboxConfig's `!== undefined` guard); UNLIKE ship there is NO preflight —
@@ -2546,18 +2901,28 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    const mounts: {
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }[] = [];
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
     // `readonly`); codex auth likewise. No skills mount — the baked image wins (#334).
     if (auth.codexAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+      mounts.push({
+        hostPath: auth.codexAuthDir,
+        sandboxPath: SANDBOX_CODEX_DIR,
+      });
     }
     if (auth.agyDir !== undefined) {
       mounts.push({ hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR });
     }
     if (auth.grokAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+      mounts.push({
+        hostPath: auth.grokAuthDir,
+        sandboxPath: SANDBOX_GROK_DIR,
+      });
     }
     applyUniformCredentialProvisioning({
       env,
@@ -2659,7 +3024,11 @@ export class RealFamilyBackend implements FamilyBackend {
     // returns (online review r1 — 3 bots: leaked temp dirs).
     const auth = this.mountShipAuth();
     try {
-      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
+      const missingProvider = this.unavailableWorkerProviderAuth(
+        spec,
+        auth,
+        ctx,
+      );
       if (missingProvider !== undefined) {
         return {
           kind: "escalate",
@@ -2673,15 +3042,20 @@ export class RealFamilyBackend implements FamilyBackend {
           }),
         };
       }
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
+      if (
+        modelFamilyForSlug(spec.model) === "claude" &&
+        auth.claudeToken === undefined
+      ) {
         return {
           kind: "escalate",
-          reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
+          reason:
+            "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
           diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
           escalation: runnerSynthesizedFailureEscalation({
             reason:
               "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
-            diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+            diagnosis:
+              "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
           }),
         };
       }
@@ -2696,7 +3070,8 @@ export class RealFamilyBackend implements FamilyBackend {
       if (auth.ghToken === undefined) {
         return {
           kind: "escalate",
-          reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
+          reason:
+            "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
           diagnosis:
             "the family ship worker invokes gstack-ship, whose family delivery is a PR " +
             "(`gh pr create --base`); the 2b image bakes the gh CLI but no gh auth. " +
@@ -2704,7 +3079,8 @@ export class RealFamilyBackend implements FamilyBackend {
             "to inject as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a " +
             "late in-container `gh pr create` failure would surface as an opaque error).",
           escalation: runnerSynthesizedFailureEscalation({
-            reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
+            reason:
+              "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
             diagnosis:
               "the family ship worker cannot open its PR without host GitHub authentication",
           }),
@@ -2720,7 +3096,12 @@ export class RealFamilyBackend implements FamilyBackend {
       this.writeShipFocusFile(ctx);
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
       try {
-        const result = await this.shipContainerRun(spec, auth, outcomeLanding, ctx);
+        const result = await this.shipContainerRun(
+          spec,
+          auth,
+          outcomeLanding,
+          ctx,
+        );
         return shipOutcomeFromResult({
           ...result,
           outcomePath: outcomeLanding.path,
@@ -2762,7 +3143,10 @@ export class RealFamilyBackend implements FamilyBackend {
     });
   }
 
-  protected prepareFamilyShipOutcomeLanding(): { path: string; sandboxPath: string } {
+  protected prepareFamilyShipOutcomeLanding(): {
+    path: string;
+    sandboxPath: string;
+  } {
     mkdirSync(this.opts.ledgerDir, { recursive: true });
     const dir = mkdtempSync(join(this.opts.ledgerDir, "worker-outcome-ship-"));
     const path = join(dir, "outcome.json");
@@ -2827,7 +3211,9 @@ export class RealFamilyBackend implements FamilyBackend {
         mkdirSync(join(abs, ".."), { recursive: true });
         appendFileSync(
           abs,
-          (existing.endsWith("\n") || existing === "" ? "" : "\n") + filename + "\n",
+          (existing.endsWith("\n") || existing === "" ? "" : "\n") +
+            filename +
+            "\n",
           "utf8",
         );
       }
@@ -2863,12 +3249,18 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       mkdirSync(root, { recursive: true, mode: 0o700 });
       tempCodexDir = mkdtempSync(join(root, "ship-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
+      copyFileSync(
+        join(home, ".codex", "auth.json"),
+        join(tempCodexDir, "auth.json"),
+      );
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
       // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
       // bwrap is impossible). The host config.toml is host-personal and irrelevant
       // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
+      writeContainerCodexConfig(
+        join(tempCodexDir, "config.toml"),
+        this.opts.codexFast,
+      );
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
@@ -2885,7 +3277,10 @@ export class RealFamilyBackend implements FamilyBackend {
     try {
       mkdirSync(root, { recursive: true, mode: 0o700 });
       tempGrokDir = mkdtempSync(join(root, "ship-grok-auth-"));
-      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+      copyFileSync(
+        join(home, ".grok", "auth.json"),
+        join(tempGrokDir, "auth.json"),
+      );
       chmodSync(join(tempGrokDir, "auth.json"), 0o600);
       grokAuthDir = tempGrokDir;
     } catch {
@@ -2910,7 +3305,10 @@ export class RealFamilyBackend implements FamilyBackend {
       opencodeAuthFile: hostOpenCodeAuthFile(home),
       claudeToken,
       ghToken: this.readGhToken(),
-      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+      providerAuth: {
+        claude: claudeToken !== undefined,
+        grok: grokAuthDir !== undefined,
+      },
     };
   }
 
@@ -2945,7 +3343,11 @@ export class RealFamilyBackend implements FamilyBackend {
   ): {
     imageName: string;
     env: Record<string, string>;
-    mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
+    mounts: ReadonlyArray<{
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }>;
   } {
     // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
     // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the family ship sandbox must
@@ -2956,7 +3358,8 @@ export class RealFamilyBackend implements FamilyBackend {
       [SANDBOX_SOUL_ENV]: SHIP_SOUL,
       [SANDBOX_REPO_ENV]: this.opts.repo,
     };
-    if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
+    if (auth.claudeToken !== undefined)
+      env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
     // gate is the runShipWorker preflight).
@@ -2964,12 +3367,22 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
+    const mounts: {
+      hostPath: string;
+      sandboxPath: string;
+      readonly?: boolean;
+    }[] = [];
     if (auth.codexAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+      mounts.push({
+        hostPath: auth.codexAuthDir,
+        sandboxPath: SANDBOX_CODEX_DIR,
+      });
     }
     if (auth.grokAuthDir !== undefined) {
-      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+      mounts.push({
+        hostPath: auth.grokAuthDir,
+        sandboxPath: SANDBOX_GROK_DIR,
+      });
     }
     applyUniformCredentialProvisioning({
       env,
@@ -3021,7 +3434,9 @@ export class RealFamilyBackend implements FamilyBackend {
   /** Read the durable escalate stuck-points (for the caller / a re-entry). */
   async readEscalations(): Promise<ReadonlyArray<FamilyEscalationRecord>> {
     const ledgerEscalations = (this.readFamilyLedgerFile() ?? [])
-      .filter((entry) => entry.status === "escalated" && entry.event === "escalated")
+      .filter(
+        (entry) => entry.status === "escalated" && entry.event === "escalated",
+      )
       .map((entry) => ({
         reason:
           typeof entry.reason === "string" && entry.reason.trim().length > 0
@@ -3087,7 +3502,11 @@ export class RealFamilyBackend implements FamilyBackend {
         // candidate-list path; empty string is treated as absent too.
         if (typeof childBranch === "string" && childBranch.length > 0) {
           try {
-            const childHead = sh(["rev-parse", "--verify", `${childBranch}^{commit}`]);
+            const childHead = sh([
+              "rev-parse",
+              "--verify",
+              `${childBranch}^{commit}`,
+            ]);
             return { exists: true, childHead };
           } catch {
             return { exists: false };
@@ -3095,7 +3514,11 @@ export class RealFamilyBackend implements FamilyBackend {
         }
         for (const branch of candidateBranches(childIssue)) {
           try {
-            const childHead = sh(["rev-parse", "--verify", `${branch}^{commit}`]);
+            const childHead = sh([
+              "rev-parse",
+              "--verify",
+              `${branch}^{commit}`,
+            ]);
             return { exists: true, childHead };
           } catch {
             // continue to next candidate
@@ -3106,7 +3529,11 @@ export class RealFamilyBackend implements FamilyBackend {
       isAncestor: async (childHead: string, liveHead: string) => {
         try {
           // `--is-ancestor` exits 0 iff childHead is an ancestor of liveHead.
-          this.sh("git", ["merge-base", "--is-ancestor", childHead, liveHead], repo);
+          this.sh(
+            "git",
+            ["merge-base", "--is-ancestor", childHead, liveHead],
+            repo,
+          );
           return true;
         } catch (err) {
           // exit 1 = legit "not an ancestor"; exit 128 (bad object / broken repo) is
@@ -3318,7 +3745,9 @@ export function cmrOutcomeFromResult(result: {
 
 /** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
 export function parseFindingsSentinel(stdout: string): number | undefined {
-  const matches = [...stdout.matchAll(/(?:^|\n)findings\s*=\s*(\d+)\s*(?=\n|$)/g)];
+  const matches = [
+    ...stdout.matchAll(/(?:^|\n)findings\s*=\s*(\d+)\s*(?=\n|$)/g),
+  ];
   const raw = matches.at(-1)?.[1];
   if (raw === undefined) return undefined;
   const count = Number(raw);
@@ -3499,7 +3928,8 @@ function normalizeCmrReviewerFinding(
   }
   return {
     ...finding,
-    disposition_reason: finding.disposition.reason ?? finding.disposition_reason,
+    disposition_reason:
+      finding.disposition.reason ?? finding.disposition_reason,
     disposition: {
       ...finding.disposition,
       findingIdentity:
@@ -3511,7 +3941,9 @@ function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<string, unknown> {
+function normalizeKnownCmrAliases(
+  parsed: Record<string, unknown>,
+): Record<string, unknown> {
   // #711: accept finding_families / recurring_from_rounds wire aliases (spec)
   // before .strict() schemas reject them as extra keys.
   const withFamilies = normalizeFindingFamiliesWireAliases(parsed);
@@ -3577,7 +4009,8 @@ function classifyCmrOutcomePayload(
     : undefined;
   const evidencePaths = Array.isArray(normalizedParsed.evidencePaths)
     ? normalizedParsed.evidencePaths.filter(
-        (path): path is string => typeof path === "string" && path.trim().length > 0,
+        (path): path is string =>
+          typeof path === "string" && path.trim().length > 0,
       )
     : [];
   const skippedLegs = softParseSkippedLegs(normalizedParsed.skippedLegs);
@@ -3611,7 +4044,10 @@ function classifyCmrOutcomePayload(
   };
 }
 
-function sparseCmrCargo(): Extract<CmrWorkerOutcome, { readonly kind: "verdict" }> {
+function sparseCmrCargo(): Extract<
+  CmrWorkerOutcome,
+  { readonly kind: "verdict" }
+> {
   return { kind: "verdict", successfulLegs: [], evidencePaths: [] };
 }
 
@@ -3629,7 +4065,10 @@ export function mergerOutcomeFromResult(result: {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
-        return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
+        return classifyMergerOutcomePayload(
+          sidecar,
+          "merger agent outcome sidecar",
+        );
       }
     } catch (err) {
       return {
@@ -3669,7 +4108,10 @@ export function parseMergerOutcome(stdout: string): {
   try {
     parsed = JSON.parse(last.trim());
   } catch {
-    return { resolved: false, reason: "merger agent <merger> tag was not valid JSON" };
+    return {
+      resolved: false,
+      reason: "merger agent <merger> tag was not valid JSON",
+    };
   }
   return classifyMergerOutcomePayload(parsed, "merger agent <merger> tag");
 }
@@ -3814,7 +4256,10 @@ function parseOutcomePayload(
             try {
               const compatibility = JSON.parse(last.trim());
               if (probeWorkerDecisionBell(compatibility) !== undefined) {
-                return { parsed: compatibility, source: `${tag} worker <${tag}> tag` };
+                return {
+                  parsed: compatibility,
+                  source: `${tag} worker <${tag}> tag`,
+                };
               }
             } catch {
               // Compatibility cargo is unreadable and carries no extractable bell.
@@ -3863,7 +4308,9 @@ const RECEIPT_CARGO: ReceiptCargo = { kind: "cargo" };
 
 function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
   const escalation = probeWorkerDecisionBell(parsed);
-  return escalation === undefined ? undefined : { kind: "escalate", escalation };
+  return escalation === undefined
+    ? undefined
+    : { kind: "escalate", escalation };
 }
 
 export function parseVerifyOutcome(
@@ -3880,21 +4327,26 @@ export function parseVerifyOutcome(
   const stringArray = (value: unknown): value is string[] =>
     Array.isArray(value) && value.every((item) => typeof item === "string");
   const findingDispositions = Array.isArray(parsed.findingDispositions)
-    ? parsed.findingDispositions.filter((item): item is OnlineReviewFindingDisposition => {
-        if (!isJsonRecord(item)) return false;
-        return (
-          typeof item.identityKey === "string" &&
-          typeof item.threadId === "string" &&
-          (item.action === "fix" || item.action === "reject" || item.action === "defer") &&
-          (item.reason === undefined || typeof item.reason === "string")
-        );
-      })
+    ? parsed.findingDispositions.filter(
+        (item): item is OnlineReviewFindingDisposition => {
+          if (!isJsonRecord(item)) return false;
+          return (
+            typeof item.identityKey === "string" &&
+            typeof item.threadId === "string" &&
+            (item.action === "fix" ||
+              item.action === "reject" ||
+              item.action === "defer") &&
+            (item.reason === undefined || typeof item.reason === "string")
+          );
+        },
+      )
     : undefined;
   const threadReplies = Array.isArray(parsed.threadReplies)
-    ? parsed.threadReplies.filter((item): item is OnlineReviewThreadReply =>
-        isJsonRecord(item) &&
-        typeof item.threadId === "string" &&
-        typeof item.body === "string",
+    ? parsed.threadReplies.filter(
+        (item): item is OnlineReviewThreadReply =>
+          isJsonRecord(item) &&
+          typeof item.threadId === "string" &&
+          typeof item.body === "string",
       )
     : undefined;
   const terminalState: VerifyWorkerTerminalState | undefined =
@@ -3908,11 +4360,11 @@ export function parseVerifyOutcome(
     ...attachSanitizedFindingFamilies(
       {
         converged: parsed.converged,
-        ...(findingDispositions !== undefined
-          ? { findingDispositions }
-          : {}),
+        ...(findingDispositions !== undefined ? { findingDispositions } : {}),
         ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
-          ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
+          ? {
+              fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys,
+            }
           : {}),
         ...(threadReplies !== undefined ? { threadReplies } : {}),
         ...(stringArray(parsed.threadsToResolve)
@@ -3922,7 +4374,9 @@ export function parseVerifyOutcome(
           ? { deferredIssueUrls: parsed.deferredIssueUrls }
           : {}),
         ...(terminalState !== undefined ? { terminalState } : {}),
-        ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
+        ...(typeof parsed.isRecheck === "boolean"
+          ? { isRecheck: parsed.isRecheck }
+          : {}),
       },
       parsed.findingFamilies,
     ),
@@ -3947,7 +4401,8 @@ export function parseFixerOutcome(
     ...(typeof parsed.alreadySatisfied === "boolean"
       ? { alreadySatisfied: parsed.alreadySatisfied }
       : {}),
-    ...(typeof parsed.fixCommitSha === "string" && parsed.fixCommitSha.length > 0
+    ...(typeof parsed.fixCommitSha === "string" &&
+    parsed.fixCommitSha.length > 0
       ? { fixCommitSha: parsed.fixCommitSha }
       : {}),
   };
@@ -3981,18 +4436,19 @@ export function parseCleanupOutcome(
     ok: parsed.ok,
     ...(Array.isArray(parsed.issuesClosed) &&
     parsed.issuesClosed.every(
-      (issue): issue is number => Number.isInteger(issue) && (issue as number) > 0,
+      (issue): issue is number =>
+        Number.isInteger(issue) && (issue as number) > 0,
     )
       ? { issuesClosed: parsed.issuesClosed }
       : {}),
     ...(typeof parsed.parentIssueClosed === "boolean"
       ? { parentIssueClosed: parsed.parentIssueClosed }
       : {}),
-    ...(branchOutcome !== undefined
-      ? { branchOutcome }
-      : {}),
+    ...(branchOutcome !== undefined ? { branchOutcome } : {}),
     ...(Array.isArray(parsed.skippedReasons) &&
-    parsed.skippedReasons.every((reason): reason is string => typeof reason === "string")
+    parsed.skippedReasons.every(
+      (reason): reason is string => typeof reason === "string",
+    )
       ? { skippedReasons: parsed.skippedReasons }
       : {}),
   };
@@ -4010,6 +4466,9 @@ export function parseDocReleaseOutcome(
   const decisionBell = receiptDecisionBell(parsed);
   if (decisionBell !== undefined) return decisionBell;
   if (typeof parsed.released !== "boolean") return RECEIPT_CARGO;
-  const candidate: DocReleaseResult = { kind: "docRelease", released: parsed.released };
+  const candidate: DocReleaseResult = {
+    kind: "docRelease",
+    released: parsed.released,
+  };
   return candidate;
 }
