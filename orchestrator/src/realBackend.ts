@@ -243,6 +243,7 @@ import {
   type QuotaPoolId,
   type QuotaProbeResult,
 } from "./quotaProbe.js";
+import { withMonitorStreamHeartbeat } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   readRequiredWorkerOutcomeSidecar as readRequiredOutcomeSidecar,
@@ -3194,7 +3195,10 @@ export class RealBackend implements Backend {
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    return await sc.run(options);
+    // #899 hotfix: the #684 monitor only sees the bridge's stdout; forward
+    // agent-stream liveness as a throttled heartbeat so healthy long steps
+    // are not idle-killed (see sandboxStreamHeartbeat.ts).
+    return await sc.run(withMonitorStreamHeartbeat(options));
   }
 
   /**
