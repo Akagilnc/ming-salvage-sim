@@ -163,10 +163,8 @@ describe("#905 agy AgentProvider + bare-ping", () => {
     const print = agyPrintInvocation("Gemini 3.5 Flash", seed);
     expect(print.args[print.args.indexOf("--print") + 1]).toBe("");
     expect(print.stdin).toBe(seed);
-    // Non-empty prompt must never appear as the --print value on any print path.
-    for (const a of print.args) {
-      if (a === seed) expect(print.args[print.args.indexOf("--print") + 1]).toBe("");
-    }
+    // Prompt is only on stdin — never an argv token after --print.
+    expect(print.args).not.toContain(seed);
 
     const interactive = agyInteractiveArgs("Gemini 3.5 Flash", seed);
     expect(interactive[0]).toBe("agy");
