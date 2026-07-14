@@ -12,7 +12,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { agyAgent, agyPrintInvocation } from "../../src/agyAgent.js";
+import {
+  agyAgent,
+  agyPrintInvocation,
+  createAgyStreamParser,
+} from "../../src/agyAgent.js";
 import {
   POOL_DISPATCH_BINDINGS,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
@@ -119,6 +123,36 @@ describe("#905 agy AgentProvider + bare-ping", () => {
       "",
     ]);
     expect(built.input).toBe(prompt);
+  });
+
+  it("B1: multi-line <merger> + STEP_COMPLETE keeps full body under last-wins result", () => {
+    // Sandcastle: resultText = parsed.result on every result event (last wins).
+    // Per-line result used to drop tags and keep only STEP_COMPLETE.
+    const parse = createAgyStreamParser();
+    const lines = [
+      '<merger>{"resolved":true,"notes":"both sides kept"}</merger>',
+      "MERGER_STEP_COMPLETE",
+    ];
+    let resultText = "";
+    for (const line of lines) {
+      for (const ev of parse(line)) {
+        if (ev.type === "result") resultText = ev.result;
+      }
+    }
+    expect(resultText).toContain("<merger>");
+    expect(resultText).toContain('"resolved":true');
+    expect(resultText).toContain("MERGER_STEP_COMPLETE");
+    expect(resultText).toBe(lines.join("\n"));
+
+    // Production agent instance shares the same accumulator contract.
+    const agent = agyAgent("");
+    let agentResult = "";
+    for (const line of lines) {
+      for (const ev of agent.parseStreamLine(line)) {
+        if (ev.type === "result") agentResult = (ev as { result: string }).result;
+      }
+    }
+    expect(agentResult).toBe(lines.join("\n"));
   });
 });
 
