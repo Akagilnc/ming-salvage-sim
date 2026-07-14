@@ -166,7 +166,7 @@ function epicWith(...childIssues: number[]): FamilyEpic {
 function quotaWaitError(opts: {
   readonly resetAt: Date;
   readonly pool?: "zai" | "grok";
-  readonly step?: "S3" | "S7";
+  readonly step?: "S3" | "S7" | "S9";
 }): QuotaWaitForResetError {
   const pool = opts.pool ?? "zai";
   const step = opts.step ?? "S3";
@@ -385,7 +385,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(secondSpec.model).toMatch(/gpt-5\.6-terra|terra/i);
     expect(firstSpec.model).not.toBe(secondSpec.model);
 
-    // Baton pool must stick into re-dispatch DispatchContext.
+    // Baton pool reaches re-dispatch for the wall roles (slot-scoped, not bare sticky).
     expect(finalBillingPools[0]).toBeUndefined();
     expect(finalBillingPools[1]).toBe("codex-5h");
 
@@ -548,6 +548,120 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(cmrWorkerSpec("fresh", "completeness", first).model).toBe(
       cmrWorkerSpec("fresh", "completeness", second).model,
     );
+  });
+
+  it("F2: after cmr wall relay, ship slot keeps natural pool (no sticky codex-5h on sonnet)", async () => {
+    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
+    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+
+    const shipBillingPools: Array<string | undefined> = [];
+    let finalCalls = 0;
+    const { billingPoolForFamilyWorker } = await import(
+      "../../../src/family/verifyCmr.js"
+    );
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/909-base",
+      now: () => now,
+      relayPools: liveBatonRelayPools(resetAt),
+      verifyCmr: async (input) => {
+        if (input.phase !== "final") return { ok: true, ran: true };
+        finalCalls += 1;
+        if (finalCalls === 1) {
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S3" });
+        }
+        // Second dispatch: wall slots got baton pool; ship must NOT.
+        const cmrPool = billingPoolForFamilyWorker({
+          billingPool: input.billingPool,
+          billingPoolSlots: input.billingPoolSlots,
+          kind: "cmr",
+          cmrPass: "completeness",
+        });
+        const shipPool = billingPoolForFamilyWorker({
+          billingPool: input.billingPool,
+          billingPoolSlots: input.billingPoolSlots,
+          kind: "ship",
+        });
+        shipBillingPools.push(shipPool);
+        expect(cmrPool).toBe("codex-5h");
+        expect(shipPool).toBeUndefined();
+        // Unchanged ship model must not pair with codex provider via sticky pool.
+        expect(input.modelRoute?.slots.ship).toMatch(/sonnet/i);
+        expect(input.modelRoute?.slots.cmrCompleteness).toMatch(
+          /gpt-5\.6-terra|terra/i,
+        );
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(finalCalls).toBe(2);
+    expect(result.status).not.toBe("escalated");
+    expect(shipBillingPools).toEqual([undefined]);
+  });
+
+  it("F1: online-review 429 after recordShipped does not re-ship (ship count stays 1)", async () => {
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+
+    let shipDispatches = 0;
+    let onlineReviewDispatches = 0;
+    let verifyCmrEntries = 0;
+    const { recordShipped } = await import("../../../src/family/ledger.js");
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/909-base",
+      now: () => now,
+      relayPools: liveBatonRelayPools(resetAt),
+      verifyCmr: async (input) => {
+        if (input.phase !== "final") return { ok: true, ran: true };
+        verifyCmrEntries += 1;
+        shipDispatches += 1;
+        await recordShipped(familyBackend, {
+          pr: "pr://family/909-base",
+          familyHeadAfter: "family-base-0",
+        });
+        // Simulate online-review quota wall after ship checkpoint.
+        throw quotaWaitError({ resetAt, pool: "grok", step: "S9" });
+      },
+    });
+
+    // First entry: verifyCmr ships + throws online-review quota.
+    // Re-entry: open-shipped short-circuit must only re-dispatch online-review
+    // (not re-enter verifyCmr / re-ship). Online-review path parks or continues
+    // without a second ship.
+    expect(shipDispatches).toBe(1);
+    expect(verifyCmrEntries).toBe(1);
+    // Open-shipped path re-dispatches online review under the barrier; with
+    // default FakeFamilyBackend (no review workers) the loop may fail-closed —
+    // the correctness nail is ship count, not full online-review success.
+    expect(familyBackend.ledger.filter((e) => e.status === "shipped")).toHaveLength(
+      1,
+    );
+    // Barrier may park or escalate from incomplete online-review; never re-ship.
+    void onlineReviewDispatches;
+    void result;
   });
 
   it("pure apply: family slots rewrite cmr/ship; single-slice S7 still only coder", () => {

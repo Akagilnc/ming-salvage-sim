@@ -995,6 +995,33 @@ export function familyShippedRecordForReviewLoopResume(
   return undefined;
 }
 
+/**
+ * Latest valid `shipped` marker that has not yet reached `review_loop_converged`
+ * for the same PR. Used for in-process online-review re-entry after
+ * `recordShipped` (quota wall must not re-ship).
+ */
+export function familyOpenShippedForOnlineReview(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+): ShippedRecord | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidFamilyShipped(entry)) continue;
+    const pr = entry.pr.trim();
+    const alreadyConverged = entries.some(
+      (e) => isValidReviewLoopConverged(e) && e.pr.trim() === pr,
+    );
+    if (alreadyConverged) continue;
+    return {
+      pr,
+      familyHeadAfter: entry.familyHeadAfter,
+      ...(entry.stopSummary !== undefined
+        ? { stopSummary: entry.stopSummary }
+        : {}),
+    };
+  }
+  return undefined;
+}
+
 export function familyShippedRecordForHead(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   familyHeadAfter: string | undefined,
