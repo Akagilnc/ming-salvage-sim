@@ -69,6 +69,12 @@ export function parseAgyStreamLine(line: string): Array<AgyParsedStreamEvent> {
  * Single source for {@link agyAgent} and bare-ping smoke — never put the
  * prompt after `--print` (agy 1.0.7 treats the next token as the print value).
  */
+/**
+ * agy default print timeout is 5m — too short for long family/CMR legs.
+ * Correctness C10: pin ≥15m to match worker idle / hang thresholds.
+ */
+export const AGY_PRINT_TIMEOUT_MS = 15 * 60 * 1000;
+
 export function agyPrintInvocation(
   model: string,
   prompt: string,
@@ -78,6 +84,9 @@ export function agyPrintInvocation(
     args: [
       "--sandbox",
       ...(trimmedModel !== "" ? (["--model", trimmedModel] as const) : []),
+      // C10: explicit print-timeout ≥15m (agy default 5m is too short).
+      "--print-timeout",
+      String(AGY_PRINT_TIMEOUT_MS),
       "--print",
       "",
     ],

@@ -253,6 +253,13 @@ export async function parkOrRelayQuotaWall(opts: {
     try {
       staged.focus.commit();
     } catch {
+      // C9: promote/commit failed after durable handoff write — discard staged
+      // focus and do not leave an uncancelled half-applied baton as progress.
+      try {
+        staged.focus.discard();
+      } catch {
+        // best-effort cleanup
+      }
       return {
         kind: "park",
         result: await parkQuotaWaitForReset({

@@ -140,7 +140,7 @@ import {
   readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
 import { probeWorkerDecisionBell } from "../workerReceipt.js";
-import { modelForSlot } from "../modelRoutes.js";
+import { modelForSlot, type ResolvedModelRoute } from "../modelRoutes.js";
 import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
@@ -354,8 +354,8 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
 /** The merger agent's completion signal (matches prompts/merger_resolve_conflict.md). */
 const MERGER_COMPLETION_SIGNAL = "MERGER_STEP_COMPLETE";
 /** The merger resolver model slot, selected by the active route. */
-export function mergerModel(): string {
-  return modelForSlot("merger");
+export function mergerModel(route?: ResolvedModelRoute): string {
+  return route?.slots.merger ?? modelForSlot("merger");
 }
 
 /**
@@ -836,7 +836,8 @@ export class RealFamilyBackend implements FamilyBackend {
     // the sandbox (no double-mount).
     const auth = this.mountMergerAuth();
     try {
-      if (modelFamilyForSlug(mergerModel()) === "claude" && auth.claudeToken === undefined) {
+      const model = mergerModel(req.modelRoute);
+      if (modelFamilyForSlug(model) === "claude" && auth.claudeToken === undefined) {
         return {
           resolved: false,
           reason:
@@ -849,7 +850,7 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       // N3: agy-selected merger without OAuth is fail-closed (structured non-resolve).
-      if (modelFamilyForSlug(mergerModel()) === "agy" && auth.agyDir === undefined) {
+      if (modelFamilyForSlug(model) === "agy" && auth.agyDir === undefined) {
         return {
           resolved: false,
           reason:
@@ -860,9 +861,24 @@ export class RealFamilyBackend implements FamilyBackend {
             "resolveMergeConflict's loud-throw semantics.",
         };
       }
+      // C5: merger=grok without SuperGrok creds is fail-closed (same N3 shape).
+      if (
+        modelFamilyForSlug(model) === "other" &&
+        model.startsWith("grok") &&
+        auth.grokAuthDir === undefined
+      ) {
+        return {
+          resolved: false,
+          reason:
+            "merger worker cannot start without SuperGrok auth — the merger slot is " +
+            "grok-family; host grok credentials must be provisioned into the " +
+            "sandbox (mountMergerAuth grokAuthDir). Without it the worker fails to " +
+            "start and never resolves; returning a structured non-resolve here keeps " +
+            "resolveMergeConflict's loud-throw semantics.",
+        };
+      }
       const outcomeLanding = this.prepareMergerOutcomeLanding();
       try {
-        const model = mergerModel();
         const telemetrySpec: WorkerSpec = {
           id: "S1",
           kind: "merge",
@@ -901,13 +917,14 @@ export class RealFamilyBackend implements FamilyBackend {
             name: `merger-resolve-${req.childIssue}`,
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
-            sandbox: this.mergerSandbox(auth, outcomeLanding),
+            sandbox: this.mergerSandbox(auth, outcomeLanding, model),
             agent: agentForSlug(model),
             maxIterations: 1,
             completionSignal: MERGER_COMPLETION_SIGNAL,
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
             // #909: same quota-probe context as single-slice runAgentSandbox.
+            // C3: step S1 maps to merger consume slot in familyRelaySlotsForWall.
             quotaProbe: {
               modelRef: model,
               step: "S1",
@@ -932,7 +949,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -949,8 +966,9 @@ export class RealFamilyBackend implements FamilyBackend {
   protected mergerSandbox(
     auth: MergerAuth = this.mountMergerAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    modelSlug?: string,
   ): sc.SandboxProvider {
-    return docker(this.mergerSandboxConfig(auth, outcomeLanding));
+    return docker(this.mergerSandboxConfig(auth, outcomeLanding, modelSlug));
   }
 
   /**
@@ -995,10 +1013,28 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     // N3: reuse shared agy OAuth seam (same as CMR/ship) so merger=agy can start.
     const agyDir = provisionAgyAuthDir(home, root, "merger-agy-");
+    // C5: SuperGrok auth for merger=grok (same host mirror as CMR/ship).
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, "merger-grok-auth-"));
+      copyFileSync(
+        join(home, ".grok", "auth.json"),
+        join(tempGrokDir, "auth.json"),
+      );
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
     return {
       codexAuthDir,
       claudeToken,
       agyDir,
+      grokAuthDir,
     };
   }
 
@@ -1031,11 +1067,13 @@ export class RealFamilyBackend implements FamilyBackend {
   protected mergerSandboxConfig(
     auth: MergerAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
+    modelSlug?: string,
   ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
+    const model = modelSlug ?? mergerModel();
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
@@ -1044,9 +1082,13 @@ export class RealFamilyBackend implements FamilyBackend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (
       auth.codexAuthDir !== undefined &&
-      modelFamilyForSlug(mergerModel()) === "codex"
+      modelFamilyForSlug(model) === "codex"
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
+    }
+    // C5: SuperGrok auth mount when merger slot is grok-family.
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
     // N3: mount agy OAuth when provisioned (writable antigravity config dir).
     appendAgyAuthMount(mounts, auth.agyDir);
@@ -3352,6 +3394,11 @@ export interface MergerAuth {
   readonly claudeToken?: string;
   /** Per-run agy OAuth dir (shared provisionAgyAuthDir seam), or undefined. */
   readonly agyDir?: string;
+  /**
+   * C5 — per-run SuperGrok auth dir (same seam as CMR/ship), or undefined.
+   * Load-bearing when the merger slot is grok-family.
+   */
+  readonly grokAuthDir?: string;
 }
 
 /**
