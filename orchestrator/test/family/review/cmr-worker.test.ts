@@ -863,6 +863,38 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     }).success).toBe(true);
   });
 
+  it("lets the independent escalation bell through before malformed bell cargo can suppress it", () => {
+    expect(workerReceiptSchema("cmr").safeParse({ escalate: {} }).success).toBe(true);
+  });
+
+  it("keeps approved finding-family cargo on an otherwise typed CMR verdict", () => {
+    expect(workerReceiptSchema("cmr").safeParse({
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      evidencePaths: ["cmr/review-summary.json"],
+      findingFamilies: [{ identityKeys: ["correctness|x|y"] }],
+    }).success).toBe(true);
+  });
+
+  it("parks on an outcome-sidecar bell even when the recovered typed verdict is otherwise valid", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cmr-recovered-bell-"));
+    const outcomePath = join(dir, ".orchestrator-outcome.json");
+    writeFileSync(outcomePath, JSON.stringify({ escalate: {} }));
+
+    expect(cmrOutcomeFromResult({
+      output: {
+        converged: true,
+        successfulLegs: [...DEFAULT_CMR_LEGS],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        evidencePaths: ["cmr/review-summary.json"],
+      },
+      outcomePath,
+    })).toMatchObject({ kind: "escalate", reason: "", diagnosis: "" });
+  });
+
   it("dispatches the family coder-fix spec to runFamilyCoderFixWorker — /tdd + retained coder context", async () => {
     const be = fixtured();
     await be.dispatchWorker(familyCoderFixWorkerSpec(), {

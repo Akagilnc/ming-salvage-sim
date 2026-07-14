@@ -1606,7 +1606,17 @@ export class RealFamilyBackend implements FamilyBackend {
         } catch (err) {
           return await reaskReceiptOrFallback(
             async () => { throw err; },
-            () => cmrOutcomeFromResult({ cmrReviewLegs: frozenReviewLegs, stdout: "" }),
+            // Retain every already-landed receipt channel for the established
+            // reviewer→fixer fallback.  A retry exhaustion changes transport
+            // status only; it must not manufacture a sparse verdict and discard
+            // the reviewer's findings cargo.
+            () => cmrOutcomeFromResult({
+              cmrReviewLegs: frozenReviewLegs,
+              outcomePath: outcomeLanding.path,
+              stdout: typeof (err as { rawMatched?: unknown }).rawMatched === "string"
+                ? (err as { rawMatched: string }).rawMatched
+                : "",
+            }),
             "family CMR",
           );
         }
@@ -3330,6 +3340,21 @@ export function cmrOutcomeFromResult(result: {
   stdout?: string;
 }): CmrWorkerOutcome {
   const stdout = (result.stdout ?? "").trim();
+  // A doorbell is the one runner-visible receipt signal. Probe every transport
+  // channel before accepting typed cargo so a recovered verdict cannot mask a
+  // concurrent sidecar escalation.
+  if (result.outcomePath !== undefined) {
+    try {
+      const sidecarBell = probeWorkerDecisionBell(
+        readWorkerOutcomeSidecar(result.outcomePath),
+      );
+      if (sidecarBell !== undefined) return { kind: "escalate", ...sidecarBell };
+    } catch {
+      // An unreadable sidecar is cargo failure, not a new fate branch.
+    }
+  }
+  const stdoutBell = parseCmrOutcome(stdout);
+  if (stdoutBell.kind === "escalate") return stdoutBell;
   if (result.output !== undefined) {
     const classified = classifyCmrOutcomePayload(result.output, "CMR typed receipt");
     if (classified.kind === "escalate") return classified;
