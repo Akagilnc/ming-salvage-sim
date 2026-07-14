@@ -17,9 +17,30 @@ const reviewerReceiptSchema = z.object({
   findings: z.array(z.unknown()),
 }).passthrough();
 
-const cmrReceiptSchema = z.object({
-  converged: z.boolean(),
-}).passthrough();
+const cmrLegSchema = z.string().trim().min(1);
+const cmrSkippedLegSchema = z.object({
+  slug: cmrLegSchema,
+  reason: z.string().trim().min(1),
+}).strict();
+const cmrVerdictFields = {
+  successfulLegs: z.array(cmrLegSchema),
+  skippedLegs: z.array(cmrSkippedLegSchema).optional(),
+  claimedFixedFindingIdentityKeys: z.array(z.string()),
+  priorFindingDispositions: z.array(z.unknown()),
+  evidencePaths: z.array(z.string()),
+};
+const cmrReceiptSchema = z.union([
+  z.object({
+    converged: z.literal(true),
+    ...cmrVerdictFields,
+  }).strict(),
+  z.object({
+    converged: z.literal(false),
+    reason: z.string().trim().min(1),
+    findings: z.array(z.unknown()).optional(),
+    ...cmrVerdictFields,
+  }).strict(),
+]);
 
 type WorkerReceiptRole = "coder" | "reviewer" | "cmr";
 
@@ -52,5 +73,5 @@ export function workerReceiptOutput(
 export function isReceiptRecoveryFailure(error: unknown): boolean {
   if (error instanceof sc.StructuredOutputError) return true;
   return error instanceof Error &&
-    /(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)/i.test(error.message);
+    /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession)/i.test(error.message);
 }
