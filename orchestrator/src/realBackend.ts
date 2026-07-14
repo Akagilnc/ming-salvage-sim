@@ -2787,7 +2787,47 @@ export class RealBackend implements Backend {
   /** Build the output definition for a step's role. */
   private outputFor(spec: StepSpec): sc.OutputDefinition {
     const tag = spec.role === "reviewer" ? "review" : spec.role;
-    return sc.Output.object({ tag, schema: workerReceiptSchema });
+    return sc.Output.object({ tag, schema: workerReceiptSchema, maxRetries: 2 });
+  }
+
+  /**
+   * Re-ask a multi-iteration coder for its final receipt through Sandcastle's
+   * native structured-output recovery.  Normal coder runs cannot declare an
+   * `output` (Sandcastle requires a single iteration), so this is only entered
+   * after their tail receipt cannot be extracted.  Reviewer and normal resume
+   * paths already carry {@link outputFor}, whose `maxRetries` lets Sandcastle
+   * perform this same recovery within their original call.
+   */
+  private async reaskCoderReceipt(
+    spec: StepSpec,
+    worktree: WorktreeHandle,
+    issueNumber: number,
+    box: ReturnType<RealBackend["box"]>,
+    sessionId: string,
+    options?: AgentStepRunOptions,
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    const pool = isBillingPoolDispatchId(options?.billingPool)
+      ? options.billingPool
+      : undefined;
+    return await this.runAgentSandbox({
+      name: `${spec.id}-${spec.role}-receipt-reask`,
+      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+      cwd: worktree.path,
+      sandbox: box.sandbox,
+      agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec), pool),
+      maxIterations: 1,
+      completionSignal: spec.completionSignal,
+      branchStrategy: { type: "head" },
+      resumeSession: sessionId,
+      promptFile: join(this.opts.promptsDir, spec.promptFile),
+      output: this.outputFor(spec),
+      quotaProbe: {
+        modelRef: spec.model,
+        step: spec.id,
+        worktreePath: worktree.path,
+        issueNumber,
+      },
+    });
   }
 
   /**
@@ -2955,6 +2995,30 @@ export class RealBackend implements Backend {
       },
     });
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
+    if (
+      spec.role === "coder" &&
+      !typedOutputUsed &&
+      raw === undefined
+    ) {
+      const sessionId = lastSessionId(result);
+      if (sessionId !== undefined) {
+        const reasked = await this.reaskCoderReceipt(
+          spec,
+          worktree,
+          issueNumber,
+          box,
+          sessionId,
+          options,
+        );
+        return {
+          output: this.decodeOutput(
+            spec,
+            this.rawOutputFor(reasked, spec, true, options),
+          ),
+          sessionId: lastSessionId(reasked) ?? sessionId,
+        };
+      }
+    }
     const output = this.decodeOutput(spec, raw);
     return { output, sessionId: lastSessionId(result) };
     } finally {

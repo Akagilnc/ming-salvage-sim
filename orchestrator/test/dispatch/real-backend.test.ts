@@ -88,11 +88,13 @@ function agentRunResult({
   stdout,
   commits = [],
   sessionId,
+  output,
 }: {
   readonly completionSignal?: string;
   readonly stdout: string;
   readonly commits?: ReadonlyArray<{ sha: string }>;
   readonly sessionId: string;
+  readonly output?: unknown;
 }): AgentRunResult {
   return {
     branch: "test-agent-branch",
@@ -100,7 +102,8 @@ function agentRunResult({
     stdout,
     commits: [...commits],
     iterations: [{ sessionId }],
-  };
+    ...(output !== undefined ? { output } : {}),
+  } as AgentRunResult;
 }
 
 /** #748: per-test $HOME so RealBackend never reads/writes real ~/.sc-orchestrator. */
@@ -1460,7 +1463,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   class PreflightBackend extends RealBackend {
     public agentRunReached = false;
     public agentResult?: Awaited<ReturnType<typeof sc.run>>;
+    public agentResults: Array<Awaited<ReturnType<typeof sc.run>>> = [];
     public lastAgentOptions?: Parameters<typeof sc.run>[0];
+    public agentOptions: Array<Parameters<typeof sc.run>[0]> = [];
     public preflightResults = new Map<string, boolean>();
     public preflightHook?: (tool: string) => Promise<void>;
     /** Final reachable commits after the fresh worker's pinned baseline. */
@@ -1494,7 +1499,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       options: Parameters<typeof sc.run>[0],
     ): Promise<Awaited<ReturnType<typeof sc.run>>> {
       this.lastAgentOptions = options;
+      this.agentOptions.push(options);
       this.agentRunReached = true;
+      const queued = this.agentResults.shift();
+      if (queued !== undefined) return queued;
       if (this.agentResult !== undefined) return this.agentResult;
       throw new Error("agent sandbox should not run during this test");
     }
@@ -1569,6 +1577,62 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
+  it("re-asks the coder session with Sandcastle typed output when its tail receipt is absent", async () => {
+    const backend = makeBackend();
+    backend.agentResults.push(
+      agentRunResult({
+        completionSignal: "CODER_STEP_COMPLETE",
+        stdout: "coder completed implementation but omitted its receipt",
+        commits: [{ sha: "abc123" }],
+        sessionId: "sess-coder-reask",
+      }),
+      agentRunResult({
+        completionSignal: "CODER_STEP_COMPLETE",
+        stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>',
+        commits: [],
+        sessionId: "sess-coder-reask",
+        output: { committed: true, commitsAdded: 1 },
+      }),
+    );
+
+    await expect(
+      backend.runStep(coderSpec, {
+        branch: "feat/issue-899",
+        base: "main",
+        path: "/tmp/worktree/issue-899",
+      }),
+    ).resolves.toMatchObject({
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+    });
+
+    expect(backend.agentOptions).toHaveLength(2);
+    const reask = backend.agentOptions[1]!;
+    expect(reask.resumeSession).toBe("sess-coder-reask");
+    expect(reask.maxIterations).toBe(1);
+    expect(reask.output).toMatchObject({ tag: "coder", maxRetries: 2 });
+  });
+
+  it("keeps the existing coder fallback when a missing receipt has no session to re-ask", async () => {
+    const backend = makeBackend();
+    backend.agentResult = {
+      branch: "test-agent-branch",
+      stdout: "coder completed implementation but omitted its receipt",
+      commits: [{ sha: "abc123" }],
+      iterations: [{}],
+    } as AgentRunResult;
+
+    await expect(
+      backend.runStep(coderSpec, {
+        branch: "feat/issue-899",
+        base: "main",
+        path: "/tmp/worktree/issue-899",
+      }),
+    ).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+    });
+    expect(backend.agentOptions).toHaveLength(1);
+  });
+
   it("continues a resumed clean-exit coder when receipt cargo is absent", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
@@ -1609,6 +1673,30 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }),
     ).resolves.toMatchObject({
       output: { kind: "coder", committed: false, commitsAdded: 0 },
+    });
+  });
+
+  it("lets Sandcastle re-ask reviewer receipts through the shared two-retry definition", async () => {
+    const backend = makeBackend();
+    backend.agentResult = agentRunResult({
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stdout: '<review>{"findings": []}</review>',
+      commits: [],
+      sessionId: "sess-review-reask",
+      output: { findings: [] },
+    });
+
+    await expect(
+      backend.runStep(reviewerSpec, {
+        branch: "feat/issue-899",
+        base: "main",
+        path: "/tmp/worktree/issue-899",
+      }),
+    ).resolves.toMatchObject({ output: { kind: "reviewer", findings: [] } });
+
+    expect(backend.lastAgentOptions?.output).toMatchObject({
+      tag: "review",
+      maxRetries: 2,
     });
   });
 
