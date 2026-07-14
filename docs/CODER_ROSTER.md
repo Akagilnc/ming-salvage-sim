@@ -50,7 +50,7 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
 1. S0 读 issue body；**仅当存在 `Coder-Rec:` 行**时覆盖 coder（+ coderFix）槽。
 2. 派工第一个花名册合法项。
 3. 每完成 `CODER_REC_FALLBACK_AFTER_ROUNDS`（默认 2）个不收敛的 S6 fix 轮 → 顺位补位。
-4. `ORCHESTRATOR_CODER_MODEL` 显式覆盖时：**覆盖决定最终 model**，但 issue body 里**若存在** `Coder-Rec` 字样，仍须通过 admission 校验（坏格式 / 未注册名 → fail-closed、零派单）；校验通过后才用 env 覆盖，而不是静默跳过坏标记。
+4. `ORCHESTRATOR_CODER_MODEL` 显式覆盖时，跳过 Coder-Rec（运维优先）。
 5. 无 `Coder-Rec:` 行 → 保持当前 `ORCHESTRATOR_ROUTE` 预设 coder。
 
 ## 池分工硬原则

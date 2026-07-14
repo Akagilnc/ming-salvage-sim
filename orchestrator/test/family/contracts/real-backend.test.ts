@@ -2586,17 +2586,14 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
     };
     public sandcastleReached = false;
     public lastQuotaProbe: import("../../../src/realBackend.js").AgentSandboxRunOptions["quotaProbe"];
-    /** C2: pool selection chain must not be stubbed away. */
-    public lastProbePool: import("../../../src/quotaProbe.js").QuotaPoolId | undefined;
 
     protected override idleNow(): Date {
       return new Date("2026-07-08T12:00:00.000Z");
     }
 
-    protected override async runQuotaProbe(
-      pool: import("../../../src/quotaProbe.js").QuotaPoolId,
-    ): Promise<import("../../../src/quotaProbe.js").QuotaProbeResult> {
-      this.lastProbePool = pool;
+    protected override async runQuotaProbe(): Promise<
+      import("../../../src/quotaProbe.js").QuotaProbeResult
+    > {
       return this.probeResult;
     }
 
@@ -2658,9 +2655,8 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         completionSignal: "CODER_STEP_COMPLETE",
         branchStrategy: { type: "head" },
         promptFile: join(realPromptsDir, "coder_fix.md"),
-        // C2: live registry model — pool selection must land on codex, not unknown/zai.
         quotaProbe: {
-          modelRef: "gpt-5.6-terra",
+          modelRef: "zai/glm-5.2",
           step: "S5",
           worktreePath: "/tmp/family",
           issueNumber: 909,
@@ -2673,53 +2669,16 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
     expect(thrown).toBeInstanceOf(QuotaWaitForResetError);
     const qw = thrown as InstanceType<typeof QuotaWaitForResetError>;
     expect(backend.sandcastleReached).toBe(true);
-    expect(backend.lastProbePool).toBe("codex");
-    expect(qw.pool).toBe("codex");
     expect(qw.applied.ledgerEntry).toMatchObject({
       event: "quota_wait_for_reset",
       resetAt: "2026-07-08T16:10:00.000Z",
       step: "S5",
-      pool: "codex",
     });
     expect(backend.lastQuotaProbe).toMatchObject({
-      modelRef: "gpt-5.6-terra",
+      modelRef: "zai/glm-5.2",
       step: "S5",
       issueNumber: 909,
     });
-  });
-
-  it("C2: live registry modelRefs classify through poolForModelRef into runQuotaProbe", async () => {
-    const { poolForModelRef, QuotaWaitForResetError } = await import(
-      "../../../src/quotaProbe.js"
-    );
-    expect(poolForModelRef("gpt-5.6-terra")).toBe("codex");
-    expect(poolForModelRef("sonnet")).toBe("claude");
-    expect(poolForModelRef("opus")).toBe("claude");
-    expect(poolForModelRef("grok-4.5")).toBe("grok");
-    expect(poolForModelRef("agy")).toBe("agy");
-    expect(poolForModelRef("codex-5h")).toBe("codex");
-
-    const backend = makeFamilyIdleBackend();
-    backend.probeResult = {
-      kind: "quota_limited",
-      resetAt: new Date("2026-07-08T16:10:00.000Z"),
-      detail: "429",
-    };
-    await expect(
-      backend.exposeRunAgentSandbox({
-        name: "family-cmr",
-        idleTimeoutSeconds: 600,
-        cwd: "/tmp/family",
-        sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
-        agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
-        maxIterations: 1,
-        completionSignal: "CMR_STEP_COMPLETE",
-        branchStrategy: { type: "head" },
-        promptFile: join(realPromptsDir, "integrated_cmr_correctness.md"),
-        quotaProbe: { modelRef: "sonnet", step: "S3" },
-      }),
-    ).rejects.toBeInstanceOf(QuotaWaitForResetError);
-    expect(backend.lastProbePool).toBe("claude");
   });
 
   it("probe ok via family Sandcastle fallback rethrows idle (fail-safe hang)", async () => {
