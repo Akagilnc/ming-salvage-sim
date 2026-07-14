@@ -100,9 +100,19 @@ import {
   soulsMount,
   REQUIRED_SOUL_FILES,
   soulsDirError,
+  type AgentSandboxRunOptions,
+  type QuotaProbeRunContext,
   type SelfReportedCoder,
   SANDBOX_FIX_FOCUS_PATH_ENV,
 } from "../realBackend.js";
+import {
+  handleIdleThreshold,
+  runPoolProbe,
+  withIdleQuotaProbeDisposition,
+  type HandleIdleThresholdResult,
+  type QuotaPoolId,
+  type QuotaProbeResult,
+} from "../quotaProbe.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   attachSanitizedFindingFamilies,
@@ -876,6 +886,13 @@ export class RealFamilyBackend implements FamilyBackend {
             completionSignal: MERGER_COMPLETION_SIGNAL,
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+            // #909: same quota-probe context as single-slice runAgentSandbox.
+            quotaProbe: {
+              modelRef: model,
+              step: "S1",
+              worktreePath: this.opts.workingRepo,
+              issueNumber: req.childIssue,
+            },
           });
           const outcome = mergerOutcomeFromResult({ ...result, outcomePath: outcomeLanding.path });
           telemetry.stampCollect({
@@ -1590,6 +1607,8 @@ export class RealFamilyBackend implements FamilyBackend {
           // separate family coder-fix worker.
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
+          // #909: shared sandbox quota-probe (billing pool when relayed).
+          quotaProbe: this.familyQuotaProbeContext(spec, ctx),
         });
         return withCmrSession(
           cmrOutcomeFromResult({
@@ -1608,10 +1627,93 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   // ADR 0131 removed the same-worker outcome rewrite ladder.
-  protected async runAgentSandbox(
+
+  /**
+   * Thin Sandcastle `sc.run` seam (parallel to {@link RealBackend.invokeSandcastleRun}).
+   * Unit tests override THIS method to fake container results while still
+   * exercising the shared #909 idle/quota wrap in {@link runAgentSandbox}.
+   */
+  protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     return await sc.run(options);
+  }
+
+  /**
+   * Production family agent-sandbox entry (#909). Same shared idle → quota-probe
+   * disposition as single-slice {@link RealBackend.runAgentSandbox} via
+   * {@link withIdleQuotaProbeDisposition} — 429 parks (QuotaWaitForResetError),
+   * probe-ok/network rethrows idle (fail-safe hang). Do not re-clone the catch.
+   */
+  protected async runAgentSandbox(
+    options: AgentSandboxRunOptions,
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    const { quotaProbe, ...scOptions } = options;
+    return withIdleQuotaProbeDisposition({
+      quotaProbe,
+      run: () => this.invokeSandcastleRun(scOptions),
+      resolveIdle: (ctx) => this.resolveIdleAfterQuotaProbe(ctx),
+    });
+  }
+
+  /**
+   * #683/#909 idle disposition — same handleIdleThreshold composition as
+   * single-slice; durable park ledger is owned by the runner, not here.
+   */
+  protected async resolveIdleAfterQuotaProbe(
+    ctx: QuotaProbeRunContext,
+  ): Promise<HandleIdleThresholdResult> {
+    const pid =
+      ctx.workerPid !== undefined && ctx.workerPid > 0 ? ctx.workerPid : 0;
+    return handleIdleThreshold({
+      modelRef: ctx.modelRef,
+      worker: {
+        pid,
+        ...(ctx.step !== undefined ? { step: ctx.step } : {}),
+      },
+      actions: {
+        killPidTree: () => undefined,
+        recordLedger: async () => undefined,
+        now: () => this.idleNow(),
+      },
+      probe: (pool) => this.runQuotaProbe(pool),
+    });
+  }
+
+  /** Clock for wait-for-reset ledger `ts` (injectable via override in tests). */
+  protected idleNow(): Date {
+    return new Date();
+  }
+
+  /**
+   * Pool probe used after idle threshold (#683/#909). Default = real
+   * {@link runPoolProbe}; tests stub three outcomes.
+   */
+  protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
+    return runPoolProbe(pool);
+  }
+
+  /**
+   * Build the #909 quotaProbe context for a family productive worker.
+   * Prefer active billing pool (relay) when present — same rule as single-slice
+   * {@link RealBackend.handleMonitoredWorkerIdle}.
+   */
+  protected familyQuotaProbeContext(
+    spec: WorkerSpec,
+    ctx?: Pick<DispatchContext, "billingPool" | "familyIssue">,
+  ): QuotaProbeRunContext {
+    const modelRef =
+      ctx !== undefined && isBillingPoolDispatchId(ctx.billingPool)
+        ? ctx.billingPool
+        : spec.model;
+    return {
+      modelRef,
+      step: spec.id,
+      worktreePath: this.opts.workingRepo,
+      ...(ctx?.familyIssue !== undefined
+        ? { issueNumber: ctx.familyIssue }
+        : {}),
+    };
   }
 
   // ─────────────────────────── family coder-fix ───────────────────────────
@@ -1682,6 +1784,8 @@ export class RealFamilyBackend implements FamilyBackend {
             completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
+            // #909: shared sandbox quota-probe.
+            quotaProbe: this.familyQuotaProbeContext(spec, ctx),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -1967,6 +2071,8 @@ export class RealFamilyBackend implements FamilyBackend {
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
+          // #909: shared sandbox quota-probe.
+          quotaProbe: this.familyQuotaProbeContext(spec, ctx),
         });
         return this.familyReviewLoopResultFromRun(result, spec, outcomeLanding.path);
       } finally {
@@ -2743,9 +2849,11 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
-    ctx?: Pick<DispatchContext, "billingPool">,
+    ctx?: Pick<DispatchContext, "billingPool" | "familyIssue">,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    return sc.run({
+    // #909: route ship through runAgentSandbox (not bare sc.run) so the shared
+    // idle → quota-probe wrap applies on the same seam as other family workers.
+    return this.runAgentSandbox({
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
@@ -2759,6 +2867,7 @@ export class RealFamilyBackend implements FamilyBackend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
+      quotaProbe: this.familyQuotaProbeContext(spec, ctx),
     });
   }
 

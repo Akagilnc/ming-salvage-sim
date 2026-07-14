@@ -34,6 +34,7 @@ import {
   runPoolProbe,
   serializeQuotaWaitForResetBridge,
   tryParseQuotaWaitForResetBridge,
+  withIdleQuotaProbeDisposition,
   type IdleDisposition,
   type QuotaPoolId,
   type QuotaProbeResult,
@@ -488,6 +489,88 @@ describe("#683 isAgentIdleTimeoutError", () => {
       ),
     ).toBe(true);
     expect(isAgentIdleTimeoutError(new Error("ECONNREFUSED"))).toBe(false);
+  });
+});
+
+describe("#909 withIdleQuotaProbeDisposition (shared single-slice + family wrap)", () => {
+  function idleErr(): Error {
+    return Object.assign(new Error("Agent idle for 600 seconds — no output received."), {
+      name: "AgentIdleTimeoutError",
+      _tag: "AgentIdleTimeoutError",
+    });
+  }
+
+  it("429 after idle → QuotaWaitForResetError", async () => {
+    const resetAt = new Date("2026-07-08T16:10:00.000Z");
+    await expect(
+      withIdleQuotaProbeDisposition({
+        quotaProbe: { modelRef: "zai/glm-5.2", step: "S2" },
+        run: async () => {
+          throw idleErr();
+        },
+        resolveIdle: async () => ({
+          disposition: {
+            kind: "wait_for_reset",
+            pool: "zai",
+            resetAt,
+            reason: "quota limited (429); wait for reset",
+          },
+          applied: {
+            killed: false,
+            ledgerEntry: {
+              event: "quota_wait_for_reset",
+              pool: "zai",
+              resetAt: resetAt.toISOString(),
+              reason: "quota limited (429); wait for reset",
+              step: "S2",
+              workerPid: 0,
+              ts: "2026-07-08T12:00:00.000Z",
+            },
+          },
+          pool: "zai",
+          probe: { kind: "quota_limited", resetAt, detail: "429" },
+        }),
+      }),
+    ).rejects.toBeInstanceOf(QuotaWaitForResetError);
+  });
+
+  it("probe hang disposition rethrows original idle error", async () => {
+    const original = idleErr();
+    await expect(
+      withIdleQuotaProbeDisposition({
+        quotaProbe: { modelRef: "gpt-5.6-terra", step: "S3" },
+        run: async () => {
+          throw original;
+        },
+        resolveIdle: async () => ({
+          disposition: {
+            kind: "hang",
+            pool: "unknown",
+            reason: "idle threshold exceeded; quota probe ok",
+          },
+          applied: { killed: false },
+          pool: "unknown",
+          probe: { kind: "ok" },
+        }),
+      }),
+    ).rejects.toBe(original);
+  });
+
+  it("non-idle errors bypass the probe", async () => {
+    let resolved = false;
+    await expect(
+      withIdleQuotaProbeDisposition({
+        quotaProbe: { modelRef: "zai/glm-5.2" },
+        run: async () => {
+          throw new Error("ECONNREFUSED");
+        },
+        resolveIdle: async () => {
+          resolved = true;
+          throw new Error("should not probe");
+        },
+      }),
+    ).rejects.toThrow(/ECONNREFUSED/);
+    expect(resolved).toBe(false);
   });
 });
 
