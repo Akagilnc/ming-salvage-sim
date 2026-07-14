@@ -150,7 +150,9 @@ ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # default — nested bwrap/userns is not a container concern (old codex-bwrap note
 # removed in #911).
 COPY skills/ /home/agent/.agents/skills/
-RUN ln -sfn /home/agent/.agents/skills /home/agent/.claude/skills
+# Base image may lack ~/.claude — mkdir parent before compat symlink or bake fails.
+RUN mkdir -p /home/agent/.claude \
+ && ln -sfn /home/agent/.agents/skills /home/agent/.claude/skills
 # Bake the content manifest of exactly what was baked, so a built image is
 # auditable (skill source is mutable host state — build.sh writes the sha256).
 COPY skills-manifest.txt skills-manifest.sha256 /home/agent/.orchestrator/

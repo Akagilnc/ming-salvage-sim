@@ -251,6 +251,21 @@ describe("#911 Containerfile skills shared pool", () => {
     // codex bwrap userns runtime commentary removed (#911).
     expect(cf).not.toMatch(/codex ships its own bwrap sandbox/i);
   });
+
+  it("N0: creates ~/.claude parent before the skills compat symlink (base may lack it)", () => {
+    const cf = readFileSync(containerfile, "utf8");
+    // Bake fails with `ln -sfn … /home/agent/.claude/skills` when parent is
+    // missing — mkdir -p must precede the symlink in the same RUN (or earlier).
+    const mkdirIdx = cf.search(
+      /mkdir\s+-p\s+\/home\/agent\/\.claude(?:\s|$|")/,
+    );
+    const lnIdx = cf.search(
+      /ln\s+-s(?:fn)?\s+\/home\/agent\/\.agents\/skills\s+\/home\/agent\/\.claude\/skills/,
+    );
+    expect(mkdirIdx).toBeGreaterThanOrEqual(0);
+    expect(lnIdx).toBeGreaterThanOrEqual(0);
+    expect(mkdirIdx).toBeLessThan(lnIdx);
+  });
 });
 
 describe("#911 prompts: STEP_COMPLETE is mandatory multi-iter terminator, not optional telemetry", () => {
