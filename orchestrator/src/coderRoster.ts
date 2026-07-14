@@ -139,6 +139,14 @@ function plainTextLinesFromMarkdown(body: string): string[] {
         if (text.length > 0) lines.push(text);
         continue;
       }
+      // Correctness B2 / #906: GFM table cells hold designer Coder-Rec marks.
+      // Without tableCell extraction the walk only sees table→row structure and
+      // never surfaces cell text — silent absent → default roster.
+      if (node.type === "tableCell") {
+        const text = toString(node).trim();
+        if (text.length > 0) lines.push(text);
+        continue;
+      }
       if (node.type === "code") {
         for (const line of node.value.split("\n")) {
           const text = line.trim();
@@ -177,7 +185,10 @@ export function parseCoderRec(
         "expected a line like `Coder-Rec: model1 → model2`",
     );
   }
-  if (CODER_REC_MARK.test(plain)) {
+  // Presence on extracted plain text OR raw body: fail-closed when a mark is
+  // visible in the issue but the AST walk did not yield a legal line (B2 residual
+  // shapes — raw HTML, future mdast nodes, etc.). Never silent-default.
+  if (CODER_REC_MARK.test(plain) || CODER_REC_MARK.test(issueBody)) {
     throw new CoderRecError(
       "broken_mark",
       "Coder-Rec marking is present but could not be parsed; " +
