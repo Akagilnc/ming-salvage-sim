@@ -136,6 +136,30 @@ describe("#906 Coder-Rec — markdown parse + fail-closed", () => {
     ]);
   });
 
+  it("B2: parses Coder-Rec from a GFM table cell (tableCell toString)", () => {
+    // Without tableCell extraction, presence only sees plain lines → silent
+    // default roster while the designer mark is clearly in the issue body.
+    const body = [
+      "| Field | Value |",
+      "| --- | --- |",
+      "| roster | Coder-Rec: grok-4.5 → terra@med |",
+      "",
+    ].join("\n");
+    expect(parseCoderRec(body)).toEqual(["grok-4.5", "terra@med"]);
+    expect(resolveCoderRecOrder(body).map((e) => e.id)).toEqual([
+      "grok-4.5",
+      "terra@med",
+    ]);
+  });
+
+  it("B2: fail-closed when Coder-Rec mark is only in raw HTML (AST miss)", () => {
+    // raw HTML is not walked into plain lines; raw-body presence must still
+    // fail-closed rather than treat the mark as absent.
+    expect(() => parseCoderRec("<div>Coder-Rec carefully broken</div>\n")).toThrow(
+      CoderRecError,
+    );
+  });
+
   it("errors on unregistered model tokens and lists legal roster ids", () => {
     expect(() =>
       resolveCoderRecOrder(
