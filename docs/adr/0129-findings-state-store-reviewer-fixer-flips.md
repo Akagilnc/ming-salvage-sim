@@ -6,7 +6,7 @@ Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive c
 
 ## 决定
 
-评审循环的发现流转从「散文卷面 + runner 收账」改为 **findings 状态库**：复审员以**写行**交发现；修复腿修复后**翻该行状态**（fixed，或 refuted + 证据）；下一轮复审员验证后**再翻**（确认关闭 / 打回重开）并可选留言。写入接口在**写入点**做字段与状态跳转校验，错误即时反馈给写入方自行改写；Runner 不承担卷面审判，也不查询状态库。**阻塞项只有下一轮 fresh 复审员的终翻才解除未决态；fixer 自翻的 fixed / refuted 仍计入未决数**。P4 也必须入库，但由 reviewer 直接写为 `deferred` / non-blocking 终态，不进 fixer 循环、不计入 open-count；延后需满足 CMR 契约的严格条件，不是普通缓办筐。reviewer 完成判断后向 Runner 自报阻塞未决数 `0` 或 `>0`，或主动提交需要人类决定；不另造 worker outcome JSON。
+评审循环的发现流转从「散文卷面 + runner 收账」改为 **findings 状态库**：复审员以**写行**交发现；修复腿修复后**翻该行状态**（fixed，或 refuted + 证据）；下一轮复审员验证后**再翻**（确认关闭 / 打回重开）并可选留言。写入接口在**写入点**做字段与状态跳转校验，错误即时反馈给写入方自行改写；Runner 不承担卷面审判，也不查询状态库。**阻塞项只有下一轮 fresh 复审员的终翻才解除未决态；fixer 自翻的 fixed / refuted 仍计入未决数**。每个 review Action 按其 versioned review authority 自己标记 blocking 与 non-blocking terminal；后者不进 fixer 循环，也不计入 open-count。严重度与终态的具体口径归该 authority，不由 Runner 或状态库解释。reviewer 完成判断后向 Runner 自报阻塞未决数 `0` 或 `>0`，或主动提交需要人类决定；不另造 worker outcome JSON。
 
 ## 定理（owner 2026-07-12）
 
@@ -24,4 +24,4 @@ runner 是交通警察，不是刑警：能力多大，责任才配多大——T
 
 ## 后果
 
-漏答结构性不可能（阻塞行不翻恒开，无需「交代下落」）；多写行=多一条可追溯记录，天然欢迎；P4 以明确 non-blocking 终态留档，不制造虚假 fixer 工作；驳回=一次状态翻转+证据留言，不需要词表发明；库形态选型 / 状态机定义 / 接口契约归 #861 实现票。
+漏答结构性不可能（阻塞行不翻恒开，无需「交代下落」）；多写行=多一条可追溯记录，天然欢迎；非阻塞发现以其 review authority 定义的 terminal 留档，不制造虚假 fixer 工作；驳回=一次状态翻转+证据留言，不需要词表发明；库形态选型 / 状态机定义 / 接口契约归 #861 实现票。

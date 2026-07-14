@@ -30,6 +30,10 @@ _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 单一负责 live GitHub 准入事实的 Action。目标无保留 scene 时，它读取目标状态、`ready-for-agent` 与 native sub-issues：closed 目标或 open-unready 叶子 quiet skip；open + ready 叶子可走 single；open parent 进入 family。retained standalone 的 owning Flow 在派每个新 Action 前复用它的 direct 分支只刷新 live open/closed/ready 状态，不重新分类、准入或查询 locator。family 首次启动及每次重入时，同一 Action 的 family 分支 refetch membership、状态、标签与依赖，完成过滤和 cycle 处置并产出候选/依赖交通事实。locator 与 scene 所有权只由 Scene Provisioning / Recovery 查询；保留 scene 永远优先重入 owning flow，closed standalone 的停止派工与 reopen 恢复由 owning Flow 按单片现场契约处理。准确调用位置只读 #869，产品契约见 #871。
 _Avoid_: 先创建现场再做无现场准入、用缓存或本地推断代替 live facts、让 Issue Admission 读取 locator、让 Action 与 Runner 各做一遍 admission
 
+**现场供给 / 恢复（Scene Provisioning / Recovery）**:
+单一负责当前 Flow 的 scene inventory、Lineage locator 查询与同一 scene 的 Capsule 取得/恢复；它只产出无 scene、当前 flow 所有、其他 flow 所有的 scene traffic facts。准入与拓扑归 Issue Admission / Flow，不归本 Action。
+_Avoid_: 让它重新准入 issue、解释 delivery topology、由 Runner 查询 locator
+
 **合并工（Merger Worker）**:
 只在子分支机械合并回父工作树发生真实 Git 冲突时出场、负责解决该次冲突的 worker。无冲突时由确定性合并直接完成，不调用模型。
 _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代替干净的 Git 合并

@@ -23,8 +23,9 @@ reads worker prose or completion evidence**:
 2. **reviewer self-declared blocking open-count** — `0` closes the current review gate;
    `>0` follows the fixed topology defined only in #869. This README does not
    restate the intermediate repair/verification/finalization route, and the
-   runner never derives or reconciles the number. P4 findings remain recorded
-   as non-blocking terminal rows and are not part of this count.
+   runner never derives or reconciles the number. Each review Action marks
+   blocking and non-blocking terminal under its versioned review authority;
+   only the former belongs in this count.
 3. **worker-raised decision gate** — relayed to the human unchanged; the runner
    never presses or interprets the gate itself.
 
