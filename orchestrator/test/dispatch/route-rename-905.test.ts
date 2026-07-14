@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   agyAgent,
+  agyInteractiveArgs,
   agyPrintInvocation,
   createAgyStreamParser,
 } from "../../src/agyAgent.js";
@@ -157,24 +158,42 @@ describe("#905 agy AgentProvider + bare-ping", () => {
     expect(agentResult).toBe(lines.join("\n"));
   });
 
-  it("#905: interactive args use --prompt-interactive, never --print with prompt value", () => {
-    const args = agyAgent("Gemini 3.5 Flash").buildInteractiveArgs!({
-      prompt: "seed-prompt-body",
+  it("#905 class: print mode always --print ''; interactive never uses --print", () => {
+    const seed = "seed-prompt-body";
+    const print = agyPrintInvocation("Gemini 3.5 Flash", seed);
+    expect(print.args[print.args.indexOf("--print") + 1]).toBe("");
+    expect(print.stdin).toBe(seed);
+    // Non-empty prompt must never appear as the --print value on any print path.
+    for (const a of print.args) {
+      if (a === seed) expect(print.args[print.args.indexOf("--print") + 1]).toBe("");
+    }
+
+    const interactive = agyInteractiveArgs("Gemini 3.5 Flash", seed);
+    expect(interactive[0]).toBe("agy");
+    expect(interactive).toContain("--prompt-interactive");
+    expect(interactive).not.toContain("--print");
+    expect(interactive[interactive.indexOf("--prompt-interactive") + 1]).toBe(
+      seed,
+    );
+
+    // Agent surfaces are the same class seam (no second shape).
+    const agent = agyAgent("Gemini 3.5 Flash");
+    const agentPrint = agent.buildPrintCommand({
+      prompt: seed,
       dangerouslySkipPermissions: false,
     });
-    expect(args[0]).toBe("agy");
-    expect(args).toContain("--sandbox");
-    expect(args).toContain("--model");
-    expect(args).toContain("Gemini 3.5 Flash");
-    expect(args).toContain("--prompt-interactive");
-    expect(args).toContain("seed-prompt-body");
-    // Headless print-mode shape must not appear on interactive.
-    expect(args).not.toContain("--print");
-    const pi = args.indexOf("--prompt-interactive");
-    expect(args[pi + 1]).toBe("seed-prompt-body");
+    expect(agentPrint.stdin).toBe(seed);
+    expect(agentPrint.command).toContain("--print ''");
+    expect(agentPrint.command).not.toContain(seed);
+
+    const agentInteractive = agent.buildInteractiveArgs!({
+      prompt: seed,
+      dangerouslySkipPermissions: false,
+    });
+    expect(agentInteractive).toEqual([...interactive]);
   });
 
-  it("R5-1: buildPrintCommand resets accumulator so maxIter reuse does not leak prior body", () => {
+  it("R5-1 class: print and interactive build* both reset stream body across maxIter", () => {
     // Sandcastle reuses one AgentProvider + parseStreamLine across maxIter.
     const agent = agyAgent("");
     let last = "";
@@ -185,19 +204,33 @@ describe("#905 agy AgentProvider + bare-ping", () => {
     }
     expect(last).toContain("ROUND1_TAG");
 
-    // Next iteration: buildPrintCommand is invoked before streaming (print path).
+    // Print iteration reset.
     agent.buildPrintCommand({
       prompt: "iter-2",
       dangerouslySkipPermissions: false,
     });
     last = "";
-    for (const line of ["ROUND2_ONLY"]) {
+    for (const line of ["ROUND2_PRINT"]) {
       for (const ev of agent.parseStreamLine(line)) {
         if (ev.type === "result") last = ev.result;
       }
     }
-    expect(last).toBe("ROUND2_ONLY");
+    expect(last).toBe("ROUND2_PRINT");
     expect(last).not.toMatch(/ROUND1/);
+
+    // Interactive iteration reset (same class of build* boundary).
+    agent.buildInteractiveArgs!({
+      prompt: "iter-3",
+      dangerouslySkipPermissions: false,
+    });
+    last = "";
+    for (const line of ["ROUND3_INTERACTIVE"]) {
+      for (const ev of agent.parseStreamLine(line)) {
+        if (ev.type === "result") last = ev.result;
+      }
+    }
+    expect(last).toBe("ROUND3_INTERACTIVE");
+    expect(last).not.toMatch(/ROUND1|ROUND2/);
   });
 });
 
