@@ -1364,7 +1364,7 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
       grokAuthDir: undefined,
       claudeToken: undefined,
       ghToken: undefined,
-      providerAuth: { claude: false, grok: false },
+      providerAuth: { claude: false, grok: false, agy: false },
     });
   });
 

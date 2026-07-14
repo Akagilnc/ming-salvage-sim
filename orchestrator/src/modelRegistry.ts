@@ -53,6 +53,8 @@ export type ModelProviderFactory =
 export interface ProviderAuthAvailability {
   readonly claude: boolean;
   readonly grok: boolean;
+  /** #905: agy OAuth token presence (container mount required for real agy). */
+  readonly agy: boolean;
 }
 
 /**
@@ -62,9 +64,10 @@ export interface ProviderAuthAvailability {
 export function unavailableProviderAuth(
   provider: ModelProviderFactory,
   availability: ProviderAuthAvailability,
-): "claude" | "grok" | undefined {
+): "claude" | "grok" | "agy" | undefined {
   if (provider === "claudeCode" && !availability.claude) return "claude";
   if (provider === "grok" && !availability.grok) return "grok";
+  if (provider === "agy" && !availability.agy) return "agy";
   return undefined;
 }
 

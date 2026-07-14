@@ -37,7 +37,10 @@ import {
   soulsDirError,
   soulsMount,
 } from "../../src/realBackend.js";
-import { RealFamilyBackend } from "../../src/family/realFamilyBackend.js";
+import {
+  RealFamilyBackend,
+  SANDBOX_AGY_DIR,
+} from "../../src/family/realFamilyBackend.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const imageDir = join(here, "..", "..", "image");
@@ -484,6 +487,40 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
           familyOpts({ homeEnvFile: join(tmpdir(), "no-such-home-env-911-CLAUDE.md") }),
         ),
     ).toThrow(/home env file missing/);
+  });
+
+  it("homeEnvFile that is a directory fails construction (fail-closed dual-mount)", () => {
+    const dirAsHomeEnv = mkdtempSync(join(tmpdir(), "home-env-dir-911-"));
+    expect(
+      () => new FamilyProbe(familyOpts({ homeEnvFile: dirAsHomeEnv })),
+    ).toThrow(/home env file missing/);
+  });
+
+  it("F3: mountShipAuth + ship sandbox include agy OAuth mount (reuse CMR seam)", () => {
+    const home = mkdtempSync(join(tmpdir(), "fam-agy-ship-"));
+    tempHomes.push(home);
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "auth.json"), '{"tokens":{}}\n');
+    writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-token-xyz\n");
+    writeFileSync(join(home, ".sc-claude-token"), "claude-tok\n");
+
+    class AgyShipProbe extends FamilyProbe {
+      public shipCfgFor(auth: ReturnType<FamilyProbe["mountShip"]>) {
+        return this.shipSandboxConfig(auth);
+      }
+    }
+    const be = new AgyShipProbe(familyOpts({ home }));
+    const auth = be.mountShip();
+    expect(auth.agyDir).toBeTruthy();
+    expect(existsSync(join(auth.agyDir as string, "antigravity-oauth-token"))).toBe(
+      true,
+    );
+    // shipSandboxConfig must mount the same SANDBOX_AGY_DIR path as CMR.
+    const cfg = be.shipCfgFor(auth);
+    expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(true);
+    const agyMount = cfg.mounts.find((m) => m.sandboxPath === SANDBOX_AGY_DIR);
+    expect(agyMount?.hostPath).toBe(auth.agyDir);
+    expect(agyMount?.readonly).not.toBe(true);
   });
 });
 

@@ -55,6 +55,8 @@ function tempHome(prefix = "bare-ping-884-"): string {
   mkdirSync(join(home, ".codex"), { recursive: true });
   writeFileSync(join(home, ".codex", "auth.json"), "{}\n");
   writeFileSync(join(home, ".sc-claude-token"), "test-token\n");
+  // #905: agy OAuth for real agy bare-ping / workers (fail-closed without it).
+  writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-test-token\n");
   // #807/#905: grok auth for SuperGrok bare-ping / workers.
   mkdirSync(join(home, ".grok"), { recursive: true });
   writeFileSync(join(home, ".grok", "auth.json"), "{}\n");

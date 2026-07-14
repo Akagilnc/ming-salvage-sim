@@ -81,8 +81,11 @@ import {
   candidateBranches,
   lastSessionId,
   parseCoderSelfReport,
+  SANDBOX_AGY_DIR,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
+  appendAgyAuthMount,
+  provisionAgyAuthDir,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   soulForStep,
@@ -202,20 +205,8 @@ export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
 /** Legacy durable escalate stuck-point filename, read for migration/back-compat. */
 export const FAMILY_ESCALATION_FILENAME = "family-escalations.jsonl";
 
-/**
- * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
- * runtime config INSIDE the cmr worker container (#335 / #333 gotcha). The host
- * file `~/.sc-agy-oauth-token` is copied into a per-run dir mounted HERE as
- * `antigravity-oauth-token`. It is a WRITABLE dir (NOT read-only): the agy CLI
- * writes cache/log/state under its config dir, so a read-only mount would make the
- * agy cmr leg fail at startup and degrade the cmr to codex-only (the #333 spike's
- * agy leg only caught the injected bug WITH its file token mounted writable). The
- * path mirrors the host `~/.gemini/antigravity-cli/` exactly, the same
- * host-mirrored auth-mount pattern codex (`SANDBOX_CODEX_DIR`) uses.
- */
-export const SANDBOX_AGY_DIR = "/home/agent/.gemini/antigravity-cli";
-/** The agy OAuth token filename inside {@link SANDBOX_AGY_DIR}. */
-export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
+/** Re-export agy mount constants (canonical definitions live in realBackend). */
+export { SANDBOX_AGY_DIR, AGY_TOKEN_FILENAME } from "../realBackend.js";
 
 /**
  * The git-ignored cmr FOCUS file written into the family-base worktree (#335): it
@@ -461,7 +452,8 @@ export class RealFamilyBackend implements FamilyBackend {
     const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
     if (err !== undefined) throw new Error(err);
     const homeEnv = this.resolveHomeEnvFile();
-    if (!existsSync(homeEnv)) {
+    // Fail-closed: path must be a regular file (directory would dual-mount as dir).
+    if (!existsSync(homeEnv) || !statSync(homeEnv).isFile()) {
       throw new Error(
         `RealFamilyBackend: home env file missing at "${homeEnv}" ` +
           `(#911 dual-mount needs image/home/CLAUDE.md next to souls, or opts.homeEnvFile).`,
@@ -511,15 +503,19 @@ export class RealFamilyBackend implements FamilyBackend {
   /** Typed provider gate shared by every family `sc.run` dispatch. */
   protected unavailableWorkerProviderAuth(
     spec: Pick<WorkerSpec, "model">,
-    auth: Pick<CmrAuth | ShipAuth, "claudeToken" | "grokAuthDir" | "providerAuth">,
+    auth: Pick<
+      CmrAuth | ShipAuth,
+      "claudeToken" | "grokAuthDir" | "agyDir" | "providerAuth"
+    >,
     ctx?: Pick<DispatchContext, "billingPool">,
-  ): "claude" | "grok" | undefined {
+  ): "claude" | "grok" | "agy" | undefined {
     const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
     return unavailableProviderAuth(
       resolveModelSlugForPool(spec.model, pool).provider,
       auth.providerAuth ?? {
         claude: auth.claudeToken !== undefined,
         grok: auth.grokAuthDir !== undefined,
+        agy: auth.agyDir !== undefined,
       },
     );
   }
@@ -1807,7 +1803,7 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -1954,6 +1950,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendAgyAuthMount(mounts, auth.agyDir);
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
@@ -2090,7 +2087,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -2213,6 +2210,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendAgyAuthMount(mounts, auth.agyDir);
     mounts.push(soulsMount(this.opts.soulsDir));
     appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
@@ -2529,29 +2527,8 @@ export class RealFamilyBackend implements FamilyBackend {
       }
     }
 
-    // agy OAuth token → a per-run WRITABLE dir mounted at the antigravity config
-    // path (the agy CLI writes cache/log under its config dir, so it must NOT be
-    // read-only — #333 gotcha).
-    let agyDir: string | undefined;
-    let tempAgyDir: string | undefined;
-    try {
-      // Per-INVOCATION unique dir (codex cmr R2): same concurrency hazard as the
-      // codex dir above — and the agy dir is mounted WRITABLE, so a shared path
-      // would also cross-talk runtime state between concurrent workers.
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempAgyDir = mkdtempSync(join(root, "cmr-agy-"));
-      copyFileSync(join(home, ".sc-agy-oauth-token"), join(tempAgyDir, AGY_TOKEN_FILENAME));
-      chmodSync(join(tempAgyDir, AGY_TOKEN_FILENAME), 0o600);
-      agyDir = tempAgyDir;
-    } catch {
-      // agy token absent ⇒ the agy leg degrades (no mount); cmr falls to the rest.
-      // Reclaim the mkdtemp dir if it was created before copy/chmod threw (online
-      // review r2, gemini): on the degrade path agyDir stays undefined, so the
-      // per-invocation dir would otherwise leak past the caller's finally cleanup.
-      if (agyDir === undefined && tempAgyDir !== undefined) {
-        rmSync(tempAgyDir, { recursive: true, force: true });
-      }
-    }
+    // agy OAuth token → shared seam (writable antigravity config dir — #333 gotcha).
+    const agyDir = provisionAgyAuthDir(home, root, "cmr-agy-");
 
     let claudeToken: string | undefined;
     try {
@@ -2574,7 +2551,11 @@ export class RealFamilyBackend implements FamilyBackend {
       grokAuthDir,
       claudeToken,
       ghToken: this.readGhToken(),
-      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+      providerAuth: {
+        claude: claudeToken !== undefined,
+        grok: grokAuthDir !== undefined,
+        agy: agyDir !== undefined,
+      },
     };
   }
 
@@ -2661,9 +2642,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
-    if (auth.agyDir !== undefined) {
-      mounts.push({ hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR });
-    }
+    appendAgyAuthMount(mounts, auth.agyDir);
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
@@ -2833,7 +2812,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -3002,6 +2981,9 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(tempGrokDir, { recursive: true, force: true });
       }
     }
+    // #905: agy OAuth for non-CMR sandboxes (ship / coder-fix / online-review) —
+    // reuse the same CMR seam so an agy-routed worker gets a real token mount.
+    const agyDir = provisionAgyAuthDir(home, root, "ship-agy-");
     let claudeToken: string | undefined;
     try {
       const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
@@ -3016,9 +2998,14 @@ export class RealFamilyBackend implements FamilyBackend {
     return {
       codexAuthDir,
       grokAuthDir,
+      agyDir,
       claudeToken,
       ghToken: this.readGhToken(),
-      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+      providerAuth: {
+        claude: claudeToken !== undefined,
+        grok: grokAuthDir !== undefined,
+        agy: agyDir !== undefined,
+      },
     };
   }
 
@@ -3079,6 +3066,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
+    appendAgyAuthMount(mounts, auth.agyDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3317,6 +3305,8 @@ export interface ShipAuth {
   readonly codexAuthDir?: string;
   /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
   readonly grokAuthDir?: string;
+  /** Per-run agy OAuth dir (host-mirrored antigravity config), or undefined. */
+  readonly agyDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
