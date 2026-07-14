@@ -500,31 +500,119 @@ export function withCoderSlot(
 }
 
 /**
+ * Single-slice wall-step → route slot (child runner only).
+ * S3/S6 → reviewer, S5 → coderFix, else coder. Family barriers MUST NOT use
+ * this map alone: they reuse S3/S7 ids but consume cmr* and ship slots.
+ */
+export function relaySlotForSingleSliceWallStep(
+  wallStep: StepId,
+): ModelRouteSlot {
+  if (wallStep === "S3" || wallStep === "S6") return "reviewer";
+  if (wallStep === "S5") return "coderFix";
+  return "coder";
+}
+
+/**
+ * #909 — family barrier wall → the ModelRouteSlot(s) that
+ * {@link dispatchFamilyWorker} / WorkerSpec actually read.
+ *
+ * Family reuses child StepIds with different consume slots:
+ *   S3 → cmrCompleteness / cmrCorrectness (integrated CMR pass workers)
+ *   S5 → coderFix
+ *   S7 → ship
+ *   S9 → verify, S10 → fixer, S12 → docRelease
+ */
+export function familyRelaySlotsForWall(opts: {
+  readonly phase: "wave" | "final" | "online_review";
+  readonly wallStep: StepId;
+  readonly cmrPass?: "completeness" | "correctness";
+}): ReadonlyArray<ModelRouteSlot> {
+  const step = opts.wallStep;
+  if (step === "S3") {
+    if (opts.cmrPass === "correctness") return ["cmrCorrectness"];
+    if (opts.cmrPass === "completeness") return ["cmrCompleteness"];
+    // Unknown pass: rewrite both CMR consume slots so either barrier gets the baton.
+    return ["cmrCompleteness", "cmrCorrectness"];
+  }
+  if (step === "S5") return ["coderFix"];
+  if (step === "S7") return ["ship"];
+  if (step === "S9") return ["verify"];
+  if (step === "S10") return ["fixer"];
+  if (step === "S12") return ["docRelease"];
+  if (opts.phase === "online_review") return ["verify"];
+  if (opts.phase === "wave") return ["verify"];
+  // final with ambiguous step — cover primary final consume slots
+  return ["cmrCompleteness", "ship"];
+}
+
+/**
+ * Mutate one non-coder slot and refresh smoke keys for the new slug
+ * (reuse prior passed smoke for the same slug when present).
+ */
+function withSingleRouteSlot(
+  route: ResolvedModelRoute,
+  slot: ModelRouteSlot,
+  slug: string,
+): ResolvedModelRoute {
+  const trimmed = slug.trim();
+  assertKnownWorkerSlug(trimmed);
+  if (slot === "coder") return withCoderSlot(route, trimmed);
+  const slots: ModelSlotMap = { ...route.slots, [slot]: trimmed };
+  const next: Pick<ResolvedModelRoute, "slots" | "legCollections"> = {
+    slots,
+    legCollections: route.legCollections,
+  };
+  const smoke: Record<string, RouteSmokeStatus> = { ...route.smoke };
+  for (const entry of routeSmokeEntries(next)) {
+    if (smoke[entry.key] !== undefined) continue;
+    const prior = Object.entries(route.smoke).find(
+      ([key, status]) =>
+        key.endsWith(`:${entry.slug}`) && status.state === "passed",
+    );
+    smoke[entry.key] = prior?.[1] ?? { state: "unverified" };
+  }
+  return {
+    ...route,
+    slots,
+    tightFamilyViolations: tightFamilyViolations(
+      slots,
+      route.legCollections,
+      ROUTE_PRESETS[route.routeName]?.tightFamilies ?? [],
+    ),
+    smoke,
+  };
+}
+
+/**
  * #686 / #909 — pure apply of a relay baton onto a resolved route (shared by
- * single-slice and family). Role-aware slot mutation matches the single-slice
- * runner wall-step map: S3/S6 → reviewer, S5 → coderFix, else coder (+coderFix
- * via {@link withCoderSlot}). Does not carry sticky state — callers own that.
+ * single-slice and family).
+ *
+ * - When `opts.slots` is provided (family barrier path), rewrite those exact
+ *   ModelRouteSlots that `dispatchFamilyWorker` reads (cmr slots, ship, verify, ...).
+ * - Otherwise use the single-slice StepId map: S3/S6 → reviewer, S5 → coderFix,
+ *   else coder (+coderFix via {@link withCoderSlot}).
+ *
+ * Does not carry sticky state — callers own that. Apply is load-bearing:
+ * identity / coder-only apply on a family cmr/ship wall must fail consumed-slot nails.
  */
 export function applyRelayBatonToRoute(
   route: ResolvedModelRoute,
   baton: Pick<NextRelayBaton, "slug">,
   wallStep: StepId = "S2",
+  opts?: { readonly slots?: ReadonlyArray<ModelRouteSlot> },
 ): ResolvedModelRoute {
   const trimmed = baton.slug.trim();
   assertKnownWorkerSlug(trimmed);
-  if (wallStep === "S3" || wallStep === "S6") {
-    return {
-      ...route,
-      slots: { ...route.slots, reviewer: trimmed },
-    };
+  const targetSlots =
+    opts?.slots !== undefined && opts.slots.length > 0
+      ? opts.slots
+      : [relaySlotForSingleSliceWallStep(wallStep)];
+
+  let next = route;
+  for (const slot of targetSlots) {
+    next = withSingleRouteSlot(next, slot, trimmed);
   }
-  if (wallStep === "S5") {
-    return {
-      ...route,
-      slots: { ...route.slots, coderFix: trimmed },
-    };
-  }
-  return withCoderSlot(route, trimmed);
+  return next;
 }
 
 /**

@@ -5,19 +5,33 @@
  *   换棒路径存在至少一个可达的活棒，且超 T 时系统真的换到该棒接续
  *   （下一棒 dispatch 用新 model/pool），不是只写 `.relay-focus.md` 后 escalate。
  *
- * Nails: apply + re-dispatch / park-masquerade red / #906 fail-closed /
- * dead pools park / production live via route smoke (no test-only injection).
+ * Nails (load-bearing — nop apply must RED):
+ *   - 2nd barrier dispatch uses baton on REAL consume slots
+ *     (cmrCompleteness / ship), not hollow slots.coder
+ *   - first !== second on the consumed field (wall model → baton)
+ *   - identity applyRelayBatonToRoute → positive nail fails
+ *   - park when dead pools; #906 broken mark + total body-read fail-closed
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runFamily } from "../../../src/family/runner.js";
+import {
+  cmrWorkerSpec,
+  familyShipWorkerSpec,
+} from "../../../src/family/dispatchFamilyWorker.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import { DEFAULT_PARK_THRESHOLD_MS } from "../../../src/quotaPoolTable.js";
 import { RELAY_FOCUS_FILENAME } from "../../../src/relayDispatch.js";
 import { CoderRecError } from "../../../src/coderRoster.js";
+import {
+  applyRelayBatonToRoute,
+  familyRelaySlotsForWall,
+  resolveActiveModelRoute,
+  type ResolvedModelRoute,
+} from "../../../src/modelRoutes.js";
 import type {
   Backend,
   IssueMeta,
@@ -33,7 +47,6 @@ import type {
   FamilyLedgerEntry,
   MergeRequest,
 } from "../../../src/family/types.js";
-import type { ResolvedModelRoute } from "../../../src/modelRoutes.js";
 
 const CODER_REC_BODY = "Coder-Rec: grok-4.5 → terra@med → luna@med";
 const BROKEN_CODER_REC_BODY = "Coder-Rec: totally-bogus → also-fake";
@@ -54,8 +67,16 @@ function makeRepo(): string {
 class ChildBackend implements Backend {
   readonly metaFetches: number[] = [];
   readonly bodyByIssue = new Map<number, string>();
+  readonly failMeta: boolean;
+  readonly failSnapshot: boolean;
 
-  constructor(opts?: { readonly epicBody?: string }) {
+  constructor(opts?: {
+    readonly epicBody?: string;
+    readonly failMeta?: boolean;
+    readonly failSnapshot?: boolean;
+  }) {
+    this.failMeta = opts?.failMeta === true;
+    this.failSnapshot = opts?.failSnapshot === true;
     if (opts?.epicBody !== undefined) {
       this.bodyByIssue.set(909, opts.epicBody);
     } else {
@@ -75,6 +96,7 @@ class ChildBackend implements Backend {
   }
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     this.metaFetches.push(issueNumber);
+    if (this.failMeta) throw new Error("meta read failed (test)");
     return {
       number: issueNumber,
       isReadyForAgent: true,
@@ -85,6 +107,7 @@ class ChildBackend implements Backend {
     };
   }
   async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
+    if (this.failSnapshot) throw new Error("snapshot read failed (test)");
     return {
       number: issueNumber,
       body: this.bodyByIssue.get(issueNumber) ?? CODER_REC_BODY,
@@ -294,7 +317,12 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(result.failedPhase).toBeUndefined();
   });
 
-  it("POSITIVE: beyond T + live baton → apply + re-dispatch next barrier on toModel/toPool", async () => {
+  it("POSITIVE: beyond T + live baton → apply rewrites cmrCompleteness (WorkerSpec.model) first!==second", async () => {
+    // Wall model must sit on the limited pool (grok), otherwise selectNextRelayBaton
+    // picks same-model 换马甲 (sol→codex) and the consumed slug never changes —
+    // hollow relative to "baton model on REAL slot".
+    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
+    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
     const now = new Date("2026-07-14T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
@@ -307,6 +335,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     });
 
     const finalRoutes: ResolvedModelRoute[] = [];
+    const finalBillingPools: Array<string | undefined> = [];
     let finalCalls = 0;
 
     const result = await runFamily({
@@ -322,9 +351,10 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
         if (input.modelRoute !== undefined) {
           finalRoutes.push(input.modelRoute);
         }
-        // First dispatch still on wall-hit scene → 429; second must be the baton.
+        finalBillingPools.push(input.billingPool);
+        // First dispatch still on wall-hit scene → 429 on S3 CMR wall.
         if (finalCalls === 1) {
-          throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S3" });
         }
         return { ok: true, ran: true };
       },
@@ -335,10 +365,29 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(result.status).not.toBe("escalated");
     expect(result.stopSummary?.reason).not.toBe("provider_degraded");
 
-    // Second dispatch uses baton model (terra / gpt-5.6-terra) — applyRelayBaton mutation.
     expect(finalRoutes).toHaveLength(2);
+    const first = finalRoutes[0]!;
     const second = finalRoutes[1]!;
-    expect(second.slots.coder).toMatch(/gpt-5\.6-terra|terra/i);
+
+    // Document the hollow trap: default normal coder is already terra —
+    // asserting slots.coder alone is not load-bearing.
+    expect(first.slots.coder).toMatch(/gpt-5\.6-terra|terra/i);
+
+    // REAL consume slot: wall = grok-4.5, baton = terra.
+    expect(first.slots.cmrCompleteness).toBe("grok-4.5");
+    expect(second.slots.cmrCompleteness).toMatch(/gpt-5\.6-terra|terra/i);
+    expect(first.slots.cmrCompleteness).not.toBe(second.slots.cmrCompleteness);
+
+    // WorkerSpec.model is what dispatchFamilyWorker actually launches.
+    const firstSpec = cmrWorkerSpec("fresh", "completeness", first);
+    const secondSpec = cmrWorkerSpec("fresh", "completeness", second);
+    expect(firstSpec.model).toBe("grok-4.5");
+    expect(secondSpec.model).toMatch(/gpt-5\.6-terra|terra/i);
+    expect(firstSpec.model).not.toBe(secondSpec.model);
+
+    // Baton pool must stick into re-dispatch DispatchContext.
+    expect(finalBillingPools[0]).toBeUndefined();
+    expect(finalBillingPools[1]).toBe("codex-5h");
 
     // Focus still staged for worker brief continuity.
     const focusPath = join(worktree, RELAY_FOCUS_FILENAME);
@@ -360,9 +409,58 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(result.stopSummary?.summary ?? "").not.toMatch(/relay staged/i);
   });
 
-  it("POSITIVE production path: route smoke yields live baton without relayPools injection", async () => {
+  it("POSITIVE: ship (S7) wall rewrites ship slot — WorkerSpec.model first!==second", async () => {
     const now = new Date("2026-07-14T12:00:00.000Z");
-    // Beyond T on grok-build; normal route smokes codex models → codex-5h known-live.
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+
+    const finalRoutes: ResolvedModelRoute[] = [];
+    let finalCalls = 0;
+
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/909-base",
+      now: () => now,
+      relayPools: liveBatonRelayPools(resetAt),
+      verifyCmr: async (input) => {
+        if (input.phase !== "final") return { ok: true, ran: true };
+        finalCalls += 1;
+        if (input.modelRoute !== undefined) finalRoutes.push(input.modelRoute);
+        if (finalCalls === 1) {
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(finalCalls).toBe(2);
+    expect(result.status).not.toBe("escalated");
+    expect(finalRoutes).toHaveLength(2);
+    const first = finalRoutes[0]!;
+    const second = finalRoutes[1]!;
+    // Default ship is sonnet; baton terra — first !== second on REAL slot.
+    expect(first.slots.ship).toMatch(/sonnet/i);
+    expect(second.slots.ship).toMatch(/gpt-5\.6-terra|terra/i);
+    expect(first.slots.ship).not.toBe(second.slots.ship);
+    const firstSpec = familyShipWorkerSpec(first);
+    const secondSpec = familyShipWorkerSpec(second);
+    expect(firstSpec.model).not.toBe(secondSpec.model);
+    expect(secondSpec.model).toMatch(/gpt-5\.6-terra|terra/i);
+  });
+
+  it("POSITIVE production path: route smoke yields live baton without relayPools injection", async () => {
+    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
+    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    // Beyond T on grok-build; route smoke marks codex models live → baton terra.
     const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
     const worktree = makeRepo();
     const familyBackend = new FakeFamilyBackend(worktree);
@@ -387,7 +485,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
         finalCalls += 1;
         if (input.modelRoute !== undefined) finalRoutes.push(input.modelRoute);
         if (finalCalls === 1) {
-          throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S3" });
         }
         return { ok: true, ran: true };
       },
@@ -395,8 +493,90 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
 
     expect(finalCalls).toBe(2);
     expect(result.status).not.toBe("escalated");
-    expect(finalRoutes[1]?.slots.coder).toMatch(/gpt-5\.6-terra|terra/i);
+    expect(finalRoutes[0]?.slots.cmrCompleteness).toBe("grok-4.5");
+    expect(finalRoutes[1]?.slots.cmrCompleteness).toMatch(/gpt-5\.6-terra|terra/i);
+    expect(finalRoutes[0]?.slots.cmrCompleteness).not.toBe(
+      finalRoutes[1]?.slots.cmrCompleteness,
+    );
     expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(true);
+  });
+
+  it("LOAD-BEARING: identity applyRelayBaton → positive consumed-slot nail fails", async () => {
+    vi.stubEnv("ORCHESTRATOR_CMR_COMPLETENESS_MODEL", "grok-4.5");
+    vi.stubEnv("ORCHESTRATOR_CMR_CORRECTNESS_MODEL", "grok-4.5");
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+
+    const finalRoutes: ResolvedModelRoute[] = [];
+    let finalCalls = 0;
+
+    // Still relays (park/relay machine runs) but route slots stay identity.
+    await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/909-base",
+      now: () => now,
+      relayPools: liveBatonRelayPools(resetAt),
+      applyRelayBatonToRoute: (route) => route, // identity — hollow apply
+      verifyCmr: async (input) => {
+        if (input.phase !== "final") return { ok: true, ran: true };
+        finalCalls += 1;
+        if (input.modelRoute !== undefined) finalRoutes.push(input.modelRoute);
+        if (finalCalls === 1) {
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S3" });
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(finalCalls).toBe(2);
+    expect(finalRoutes).toHaveLength(2);
+    // Under identity apply the consumed slot does NOT change → nail is RED.
+    // This is the proof that the positive test above is load-bearing.
+    const first = finalRoutes[0]!;
+    const second = finalRoutes[1]!;
+    expect(first.slots.cmrCompleteness).toBe("grok-4.5");
+    expect(second.slots.cmrCompleteness).toBe(first.slots.cmrCompleteness);
+    expect(cmrWorkerSpec("fresh", "completeness", first).model).toBe(
+      cmrWorkerSpec("fresh", "completeness", second).model,
+    );
+  });
+
+  it("pure apply: family slots rewrite cmr/ship; single-slice S7 still only coder", () => {
+    const route = resolveActiveModelRoute();
+    const baton = { slug: "gpt-5.6-terra" };
+    const wallSlots = familyRelaySlotsForWall({
+      phase: "final",
+      wallStep: "S3",
+    });
+    expect(wallSlots).toEqual(["cmrCompleteness", "cmrCorrectness"]);
+
+    const familyApplied = applyRelayBatonToRoute(route, baton, "S3", {
+      slots: wallSlots,
+    });
+    expect(familyApplied.slots.cmrCompleteness).toBe("gpt-5.6-terra");
+    expect(familyApplied.slots.cmrCorrectness).toBe("gpt-5.6-terra");
+    // coder may already be terra on normal — not the proof surface
+    expect(familyApplied.slots.ship).toBe(route.slots.ship);
+
+    const shipApplied = applyRelayBatonToRoute(route, baton, "S7", {
+      slots: familyRelaySlotsForWall({ phase: "final", wallStep: "S7" }),
+    });
+    expect(shipApplied.slots.ship).toBe("gpt-5.6-terra");
+    expect(shipApplied.slots.cmrCompleteness).toBe(route.slots.cmrCompleteness);
+
+    // Single-slice S7 (no slots opt) still uses coder map — not ship.
+    const singleSlice = applyRelayBatonToRoute(route, baton, "S7");
+    expect(singleSlice.slots.coder).toBe("gpt-5.6-terra");
+    expect(singleSlice.slots.ship).toBe(route.slots.ship);
   });
 
   it("NEGATIVE: beyond T + explicit dead/unprobed pools → park, never fake relay", async () => {
@@ -422,7 +602,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       verifyCmr: async (input) => {
         if (input.phase === "final") {
           finalCalls += 1;
-          throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S3" });
         }
         return { ok: true, ran: true };
       },
@@ -502,7 +682,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       verifyCmr: async (input) => {
         if (input.phase === "final") {
           finalCalls += 1;
-          throw quotaWaitError({ resetAt, pool: "grok", step: "S7" });
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S3" });
         }
         return { ok: true, ran: true };
       },
@@ -521,5 +701,45 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(childBackend.metaFetches).toContain(909);
     // Type-level: CoderRecError remains the fail-closed signal class.
     expect(CoderRecError).toBeDefined();
+  });
+
+  it("NEGATIVE #906 F2: total body-read failure must not silent-default roster", async () => {
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+    const childBackend = new ChildBackend({
+      failMeta: true,
+      failSnapshot: true,
+    });
+
+    let finalCalls = 0;
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: childBackend,
+      familyBase: "family/909-base",
+      now: () => now,
+      relayPools: liveBatonRelayPools(resetAt),
+      verifyCmr: async (input) => {
+        if (input.phase === "final") {
+          finalCalls += 1;
+          throw quotaWaitError({ resetAt, pool: "grok", step: "S3" });
+        }
+        return { ok: true, ran: true };
+      },
+    });
+
+    expect(finalCalls).toBe(1);
+    expect(result.status).toBe("escalated");
+    expect(
+      `${result.stopSummary.summary} ${result.stopSummary.repairHint ?? ""} ${result.escalation?.diagnosis ?? ""}`,
+    ).toMatch(/Coder-Rec|unreadable|meta|snapshot/i);
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
   });
 });

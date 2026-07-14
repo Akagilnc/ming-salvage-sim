@@ -269,7 +269,9 @@ export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./cod
 export {
   applyCoderRecToRoute,
   applyRelayBatonToRoute,
+  familyRelaySlotsForWall,
   knownLiveBillingPoolsFromRoute,
+  relaySlotForSingleSliceWallStep,
   withCoderSlot,
 } from "./modelRoutes.js";
 

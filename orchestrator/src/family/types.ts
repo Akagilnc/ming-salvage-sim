@@ -23,6 +23,7 @@ import type {
   EscalationKind,
   Finding,
   PriorFindingDisposition,
+  StepId,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -39,7 +40,10 @@ import type {
   VerifyCmrResult,
 } from "./verifyCmr.js";
 import type { StopSummary } from "../stopSummary.js";
-import type { ResolvedModelRoute } from "../modelRoutes.js";
+import type {
+  ModelRouteSlot,
+  ResolvedModelRoute,
+} from "../modelRoutes.js";
 
 /** The two runner-visible integrated CMR gates (#419). */
 export type IntegratedCmrPass = "completeness" | "correctness";
@@ -928,6 +932,17 @@ export interface FamilyRunInput {
    * beyond T). Production leaves this unset (wall clock).
    */
   readonly now?: () => Date;
+  /**
+   * #909 test seam — override pure baton apply. Production leaves unset.
+   * Identity override must make the positive consumed-slot nail RED
+   * (prove apply is load-bearing, not stage-only).
+   */
+  readonly applyRelayBatonToRoute?: (
+    route: ResolvedModelRoute,
+    baton: { readonly slug: string },
+    wallStep?: StepId,
+    opts?: { readonly slots?: ReadonlyArray<ModelRouteSlot> },
+  ) => ResolvedModelRoute;
 }
 
 /**
