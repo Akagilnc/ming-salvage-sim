@@ -54,7 +54,10 @@ import {
   type CmrWorkerOutcome,
   type ShipAuth,
 } from "../../../src/family/realFamilyBackend.js";
-import { workerReceiptSchema } from "../../../src/receiptRecovery.js";
+import {
+  isReceiptRecoveryFailure,
+  workerReceiptSchema,
+} from "../../../src/receiptRecovery.js";
 import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
@@ -780,6 +783,48 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
     await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
     expect("output" in runs[0]!).toBe(false);
+  });
+
+  it("re-asks an unreadable CMR sidecar through the worker's captured session", async () => {
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    const runs: Parameters<typeof sc.run>[0][] = [];
+    class Backend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(options: Parameters<typeof sc.run>[0]): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        runs.push(options);
+        if (runs.length === 1) {
+          return { output: { malformed: true }, stdout: "", iterations: [{ sessionId: "cmr-bad-receipt" }] } as unknown as Awaited<ReturnType<typeof sc.run>>;
+        }
+        return {
+          output: { converged: true, successfulLegs: DEFAULT_CMR_LEGS, ...VALID_CMR_VERDICT_FIELDS },
+          stdout: "",
+          iterations: [{ sessionId: "cmr-corrected-receipt" }],
+        } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-reask-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
+
+    await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).resolves.toMatchObject({
+      kind: "verdict", successfulLegs: DEFAULT_CMR_LEGS, sessionId: "cmr-corrected-receipt",
+    });
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).not.toHaveProperty("output");
+    expect(runs[1]).toMatchObject({
+      resumeSession: "cmr-bad-receipt",
+      maxIterations: 1,
+      output: expect.objectContaining({ tag: "cmr", maxRetries: 2 }),
+    });
+  });
+
+  it("falls back when Sandcastle reports its actual non-resumable maxRetries error", () => {
+    expect(isReceiptRecoveryFailure(new Error(
+      'output.maxRetries requires an agent provider that supports session resumption. The "grok" provider does not. Use claudeCode, codex, or pi, or set maxRetries to 0.',
+    ))).toBe(true);
   });
 
   it("keeps the existing CMR fallback topology when native receipt retries are exhausted", async () => {
