@@ -7,16 +7,9 @@ Read the role soul first (live-mounted):
 ```
 
 Then follow that soul (审卷官 character; symlink → `verify.md`) and the
-worktree's `CLAUDE.md`. This is the runner-dispatched step6 correctness gate
-(after step5 completeness has passed).
-
-Read and obey `.cmr-focus.md` and `.cmr-route.json` at the repo root FIRST. The
-focus file pins the exact review-scope diff (`git diff <cut SHA>...<familyBase>`)
-and machine-resolved child merges — inspect those seams with special care. The
-route file is the runner-selected CMR review-leg collection; honor it when
-invoking the gate (including any missing/omitted leg), and escalate if available
-tooling cannot run that leg set. The runner only schedules you and writes those
-parameter files; do not invent scope or legs outside them.
+worktree's `CLAUDE.md`. This is the runner-dispatched step6 correctness gate.
+The runner only schedules you after step5 completeness has passed and writes
+`.cmr-focus.md` plus `.cmr-route.json`.
 
 **Invoke `ak-cmr-correctness` only** (this pass's skill). Do not re-run
 completeness. You judge the review surface; do not repair code or create fix
@@ -29,11 +22,6 @@ correctness, cross-slice contracts, and regressions. Do not re-run the completen
 gate in this worker.
 
 ## Required output
-
-When you are done (or are escalating), the real completion evidence is the
-single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
-set (sidecar is authoritative for the runner), together with the typed `<cmr>`
-outcome. For compatibility with older runners, also emit the `<cmr>` tag.
 
 When the review is complete, emit `findings = x` on its own line, replacing `x`
 with the number of findings. This fragment is required even when the count is 0.
@@ -122,9 +110,7 @@ Rules:
   MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
   `action:"fix_now"` (that would silently turn the governance suppression into a
   blocker).
-- When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same terminal JSON object
-  directly to that path (sidecar is authoritative for the runner). Without
-  `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag as the last typed tag; if you
-  iterate, the last typed `<cmr>` tag is the one that counts. On the final
+- Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag as the last typed tag;
+  if you iterate, the last typed `<cmr>` tag is the one that counts. On the final
   multi-iter step you MUST print CMR_STEP_COMPLETE on its own final line
   (sandcastle iteration terminator — not optional telemetry).
