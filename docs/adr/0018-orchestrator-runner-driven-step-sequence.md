@@ -15,7 +15,7 @@ Current authority: #869 单一拥有现行交付拓扑，ADR 0131 单一拥有 R
 1. 每个专业 worker 只完成一个明确 Action / 角色范围；Runner 按 #869 固定拓扑与 ADR 0131 三通道调用下一 Action，不解析 completionSignal、output schema 或 worker 内容。
 2. **`/tdd` 内层红绿留给 skill，v1 不机器验**（步内执行很少错，机器化代价不划算）。
 3. **每步写 step ledger** = 防跳步真源（事后看跳没跳）+ 续跑真源（下一步只读 ledger，不靠 LLM 记忆）。
-4. Worker Invocation Action 内部负责固定运行上下文装配；`Runtime Context Materialization` 不再是独立 Action。Runner 不临场拼方法 prompt，也不读取其内容。
+4. 需要模型的专业 Action 通过共享 Worker Invocation capability 完成固定运行上下文装配；`Runtime Context Materialization` 不再是独立 Action。该 capability 不是 Flow position，Runner 不临场拼方法 prompt，也不读取其内容。
 5. review loop 只读取 reviewer 自报 open-count：`0` 关环，`>0` 按 #869 固定拓扑继续；worker 主动提交 decision gate 时由 Runner 原样转运。Runner 不看 reviewer JSON、严重度、action 字段或 finding 内容。
 
 > 旧 S0–S8 / StepSpec / 结构化输出路由只保留为历史背景；现行顺序见 #869，Runner 边界见 ADR 0131。
