@@ -481,6 +481,37 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     expect(applied.route.slots.coder).toBe("sonnet");
   });
 
+  it("#906 S1: env override still validates a present Coder-Rec mark (no silent skip)", () => {
+    const base = resolveRouteModels("normal", { coder: "sonnet" });
+    // Dirty mark must throw even when env owns the coder slot — otherwise
+    // mid-run relay bare-calls resolveCoderRecOrder and dies uncaught.
+    expect(() =>
+      applyCoderRecToRoute(
+        base,
+        "Coder-Rec: totally-bogus → also-fake",
+        0,
+        { ORCHESTRATOR_CODER_MODEL: "opus" },
+      ),
+    ).toThrow(CoderRecError);
+    expect(() =>
+      applyCoderRecToRoute(
+        base,
+        "Please set Coder-Rec carefully.\n",
+        0,
+        { ORCHESTRATOR_CODER_MODEL: "opus" },
+      ),
+    ).toThrow(CoderRecError);
+    // Valid mark + env: slot stays env/route; no throw.
+    const applied = applyCoderRecToRoute(
+      base,
+      "Coder-Rec: grok-4.5 → terra@med",
+      0,
+      { ORCHESTRATOR_CODER_MODEL: "opus" },
+    );
+    expect(applied.skippedForEnvOverride).toBe(true);
+    expect(applied.route.slots.coder).toBe("sonnet");
+  });
+
   it("preserves an explicit coderFix env override while applying Coder-Rec to coder", () => {
     const base = resolveRouteModels("normal", { coderFix: "opus" });
     const applied = applyCoderRecToRoute(
@@ -809,6 +840,21 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
       expect(result.errorPackage?.reason).toContain(id);
     }
     expect(backend.coderModels).toEqual([]);
+  });
+
+  it("#906 S1: env override + dirty Coder-Rec body fail-closes at admission (not mid-run)", async () => {
+    // ORCHESTRATOR_CODER_MODEL used to short-circuit before body parse; relay
+    // later bare-called resolveCoderRecOrder and could throw uncaught.
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "sonnet");
+    const backend = new CoderRecBackend(
+      "Coder-Rec: totally-bogus → also-fake\n",
+    );
+    const result = await runOrchestrator({ issueNumber: 906, backend });
+    expect(result.status).toBe("escalate");
+    expect(result.errorPackage?.failedStep).toBe("S0");
+    expect(result.errorPackage?.reason).toMatch(/totally-bogus|Coder-Rec/i);
+    expect(backend.coderModels).toEqual([]);
+    expect(backend.events.filter((e) => e.startsWith("dispatch:"))).toEqual([]);
   });
 
   it("S0 smokes the Coder-Rec final route once, not the preset then the override", async () => {
