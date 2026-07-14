@@ -111,7 +111,6 @@ Rules:
   `action:"fix_now"` (that would silently turn the governance suppression into a
   blocker).
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag as the last typed tag;
-  if you iterate, the last typed `<cmr>` tag is the one that counts. The optional
-  telemetry line below may follow it.
-- On the final multi-iter step you MUST print CMR_STEP_COMPLETE on its own
-  final line (sandcastle iteration terminator — not optional telemetry).
+  if you iterate, the last typed `<cmr>` tag is the one that counts. On the final
+  multi-iter step you MUST print CMR_STEP_COMPLETE on its own final line
+  (sandcastle iteration terminator — not optional telemetry).

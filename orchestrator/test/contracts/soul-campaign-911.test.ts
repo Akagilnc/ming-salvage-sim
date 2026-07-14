@@ -264,11 +264,24 @@ describe("#911 prompts: STEP_COMPLETE is mandatory multi-iter terminator, not op
     "docRelease.md",
   ];
 
-  it("no dispatch prompt still calls STEP_COMPLETE optional telemetry", () => {
+  it("no dispatch prompt still calls STEP_COMPLETE optional telemetry (incl. split lines)", () => {
     for (const name of prompts) {
       const text = readFileSync(join(promptsDir, name), "utf8");
-      expect(text, name).not.toMatch(/For optional telemetry, you may print \w+_STEP_COMPLETE/i);
-      expect(text, name).not.toMatch(/completion signal is optional telemetry/i);
+      const collapsed = norm(text);
+      // Collapse whitespace so "optional\\ntelemetry" split-line misses fail.
+      expect(collapsed, name).not.toMatch(
+        /for optional telemetry, you may print \w+_step_complete/i,
+      );
+      expect(collapsed, name).not.toMatch(
+        /completion signal is optional telemetry/i,
+      );
+      expect(collapsed, name).not.toMatch(
+        /optional telemetry (and may be printed|line below may follow)/i,
+      );
+      // Positive: still frames STEP_COMPLETE as required terminator somewhere.
+      expect(collapsed, name).toMatch(
+        /must print \w+_step_complete|required sandcastle terminator|multi-iter completion signal is a required/i,
+      );
     }
   });
 
