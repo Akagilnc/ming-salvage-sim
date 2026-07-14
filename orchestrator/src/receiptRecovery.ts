@@ -5,7 +5,10 @@ import { z } from "zod";
 export const RECEIPT_MAX_RETRIES = 2;
 
 const decisionBellSchema = z.object({
-  escalate: z.object({ reason: z.string(), diagnosis: z.string() }),
+  // The runner's decision-bell probe owns the payload validation.  A bell must
+  // never be rejected by typed receipt validation merely because its cargo is
+  // malformed: that would turn a human-stop signal into a retryable receipt.
+  escalate: z.unknown(),
 }).passthrough();
 
 const coderReceiptSchema = z.object({
@@ -28,18 +31,21 @@ const cmrVerdictFields = {
   claimedFixedFindingIdentityKeys: z.array(z.string()),
   priorFindingDispositions: z.array(z.unknown()),
   evidencePaths: z.array(z.string()),
+  // Finding families are reviewer cargo consumed by the next fixer; their
+  // tolerant parser owns their shape, not Sandcastle's receipt boundary.
+  findingFamilies: z.unknown().optional(),
 };
 const cmrReceiptSchema = z.union([
   z.object({
     converged: z.literal(true),
     ...cmrVerdictFields,
-  }).strict(),
+  }).passthrough(),
   z.object({
     converged: z.literal(false),
     reason: z.string().trim().min(1),
     findings: z.array(z.unknown()).optional(),
     ...cmrVerdictFields,
-  }).strict(),
+  }).passthrough(),
 ]);
 
 type WorkerReceiptRole = "coder" | "reviewer" | "cmr";
