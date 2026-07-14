@@ -2825,7 +2825,9 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       resumeSession: sessionId,
-      promptFile: join(this.opts.promptsDir, spec.promptFile),
+      // A malformed final receipt is transport-only: preserve the warm session
+      // but ask for the receipt, never replay the completed coder prompt.
+      promptFile: join(this.opts.promptsDir, "coder_receipt_reask.md"),
       output: this.outputFor(spec),
       quotaProbe: {
         modelRef: spec.model,

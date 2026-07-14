@@ -28,13 +28,13 @@ and explain the reason in the review body, which the fixer reads.
 Converged:
 
 ```text
-<cmr>{"converged": true, "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
+<cmr>{"converged": true, "findingsCount": 0, "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
 ```
 
 Not converged:
 
 ```text
-<cmr>{"converged": false, "reason": "<short>", "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now"}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
+<cmr>{"converged": false, "reason": "<short>", "findingsCount": 1, "successfulLegs": ["opus", "gpt-5.6-sol"], "skippedLegs": [{"slug": "agy", "reason": "quota unavailable"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "findings": [{"severity": "medium", "category": "correctness", "claim_quote": "<stable claim>", "location": "<file-or-scope>", "suggested_fix": "<next step>", "action": "fix_now"}], "evidencePaths": ["cmr/review-summary.json"]}</cmr>
 ```
 
 Escalation:
@@ -81,6 +81,10 @@ Rules:
   list relative paths to existing review/test artifacts under the repo root. Do
   not use absolute paths or `..`; the guard rejects paths it cannot resolve under
   `$PWD`.
+- On any converged or not-converged verdict, `findingsCount` is REQUIRED and must
+  equal the `x` declared in the standalone `findings = x` line. This is the
+  reviewer-declared open count; do not derive it from or reconcile it against
+  structured finding cargo.
 - Report each active finding with only its body (`severity`, `category`,
   `claim_quote`, `location`, `suggested_fix`) plus an `action`. Do not emit routing
   disposition kinds — there are none. Every finding you report that is not an

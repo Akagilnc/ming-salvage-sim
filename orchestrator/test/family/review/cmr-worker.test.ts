@@ -836,9 +836,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
         throw new sc.StructuredOutputError("bad output", {
           tag: "cmr",
-          rawMatched: `<cmr>${JSON.stringify({
+          rawMatched: JSON.stringify({
             converged: false,
             reason: "review finding survives malformed receipt",
+            findingsCount: 1,
             successfulLegs: [...DEFAULT_CMR_LEGS],
             ...VALID_CMR_VERDICT_FIELDS,
             findings: [{
@@ -849,7 +850,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
               suggested_fix: "preserve the landing cargo",
               action: "fix_now",
             }],
-          })}</cmr>`,
+          }),
           commits: [], branch: "fb", sessionId: "sess-cmr-exhausted",
         });
       }
@@ -866,15 +867,20 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     });
   });
 
-  it("rejects malformed CMR receipts so Sandcastle re-asks the reviewer", () => {
+  it("re-asks the same CMR reviewer when an otherwise legal verdict omits its open count", () => {
     const completeVerdict = {
       converged: true,
+      findingsCount: 0,
       successfulLegs: [...DEFAULT_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       evidencePaths: ["cmr/review-summary.json"],
     };
     expect(workerReceiptSchema("cmr").safeParse(completeVerdict).success).toBe(true);
+    expect(workerReceiptSchema("cmr").safeParse({
+      ...completeVerdict,
+      findingsCount: undefined,
+    }).success).toBe(false);
     expect(workerReceiptSchema("cmr").safeParse({ converged: true }).success).toBe(false);
     expect(workerReceiptSchema("cmr").safeParse({ converged: "yes" }).success).toBe(false);
     expect(workerReceiptSchema("cmr").safeParse({}).success).toBe(false);
@@ -890,6 +896,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   it("keeps approved finding-family cargo on an otherwise typed CMR verdict", () => {
     expect(workerReceiptSchema("cmr").safeParse({
       converged: true,
+      findingsCount: 0,
       successfulLegs: [...DEFAULT_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
@@ -906,6 +913,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(cmrOutcomeFromResult({
       output: {
         converged: true,
+        findingsCount: 0,
         successfulLegs: [...DEFAULT_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
@@ -2180,6 +2188,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         );
         return typedSandboxRunResult({
           converged: true,
+          findingsCount: 0,
           successfulLegs: DEFAULT_CMR_LEGS,
           ...VALID_CMR_VERDICT_FIELDS,
         }, {
@@ -2202,7 +2211,11 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
 
     const outcome = await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
 
-    expect(outcome).toMatchObject({ kind: "verdict", successfulLegs: DEFAULT_CMR_LEGS });
+    expect(outcome).toMatchObject({
+      kind: "verdict",
+      findingsCount: 0,
+      successfulLegs: DEFAULT_CMR_LEGS,
+    });
     expect(be.calls).toBe(1);
     expect(outcomePathAtRun).toBeDefined();
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
@@ -2263,6 +2276,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(be.calls[1]).toEqual(expect.objectContaining({
       resumeSession: "family-coder-malformed",
       maxIterations: 1,
+      promptFile: join(realPromptsDir, "coder_receipt_reask.md"),
       output: expect.objectContaining({ tag: "coder", maxRetries: 2 }),
     }));
   });

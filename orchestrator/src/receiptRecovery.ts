@@ -26,6 +26,10 @@ const cmrSkippedLegSchema = z.object({
   reason: z.string().trim().min(1),
 }).strict();
 const cmrVerdictFields = {
+  // ADR 0131: the reviewer, not the runner, declares the open finding count.
+  // Keep that declaration in the typed receipt so Sandcastle re-asks the same
+  // reviewer when an otherwise valid verdict omits it.
+  findingsCount: z.number().int().nonnegative(),
   successfulLegs: z.array(cmrLegSchema),
   skippedLegs: z.array(cmrSkippedLegSchema).optional(),
   claimedFixedFindingIdentityKeys: z.array(z.string()),

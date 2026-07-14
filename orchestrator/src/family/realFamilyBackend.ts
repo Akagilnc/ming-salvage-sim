@@ -1613,9 +1613,7 @@ export class RealFamilyBackend implements FamilyBackend {
             () => cmrOutcomeFromResult({
               cmrReviewLegs: frozenReviewLegs,
               outcomePath: outcomeLanding.path,
-              stdout: typeof (err as { rawMatched?: unknown }).rawMatched === "string"
-                ? (err as { rawMatched: string }).rawMatched
-                : "",
+              stdout: cmrRawMatchedAsStdout((err as { rawMatched?: unknown }).rawMatched),
             }),
             "family CMR",
           );
@@ -1972,7 +1970,9 @@ export class RealFamilyBackend implements FamilyBackend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       resumeSession: sessionId,
-      promptFile: join(this.opts.promptsDir, spec.promptFile),
+      // The implementation has already run.  The resumed worker only needs to
+      // emit its final typed receipt; replaying coder_fix.md can repeat edits.
+      promptFile: join(this.opts.promptsDir, "coder_receipt_reask.md"),
       output: this.familyCoderReceiptOutput(),
     });
   }
@@ -3424,6 +3424,18 @@ export function cmrOutcomeFromResult(result: {
   };
 }
 
+/**
+ * Sandcastle's StructuredOutputError exposes the raw matched tag contents, not
+ * necessarily complete stdout.  Restore the compatibility envelope only for
+ * raw JSON cargo so the existing CMR parser receives its real transport shape.
+ */
+function cmrRawMatchedAsStdout(rawMatched: unknown): string {
+  if (typeof rawMatched !== "string") return "";
+  const raw = rawMatched.trim();
+  if (raw === "") return "";
+  return /<cmr>[\s\S]*<\/cmr>/.test(raw) ? raw : `<cmr>${raw}</cmr>`;
+}
+
 /** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
 export function parseFindingsSentinel(stdout: string): number | undefined {
   const matches = [...stdout.matchAll(/(?:^|\n)findings\s*=\s*(\d+)\s*(?=\n|$)/g)];
@@ -3696,6 +3708,11 @@ function classifyCmrOutcomePayload(
   const priorFindingDispositions = softParsePriorFindingDispositions(
     normalizedParsed.priorFindingDispositions,
   );
+  const findingsCount = typeof normalizedParsed.findingsCount === "number" &&
+    Number.isSafeInteger(normalizedParsed.findingsCount) &&
+    normalizedParsed.findingsCount >= 0
+    ? normalizedParsed.findingsCount
+    : undefined;
   return {
     kind: "verdict",
     ...(typeof normalizedParsed.converged === "boolean"
@@ -3714,6 +3731,7 @@ function classifyCmrOutcomePayload(
       ? { priorFindingDispositions }
       : {}),
     ...(findings !== undefined ? { findings } : {}),
+    ...(findingsCount !== undefined ? { findingsCount } : {}),
     ...attachSanitizedFindingFamilies({}, normalizedParsed.findingFamilies),
     evidencePaths,
   };
