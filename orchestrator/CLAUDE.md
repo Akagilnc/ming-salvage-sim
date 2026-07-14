@@ -5,7 +5,7 @@
 **runner = 交通警察，只准做三件事，三件之外零判断权（ADR 0131，母法沿革 0062）：**
 
 1. **数 exit code** —— 进程死活。进程崩的机械重试（#598）挂在这条通道上，不读任何字。
-2. **数 findings 计数** —— 读 reviewer **自报**的阻塞未决 open-count：**说几条就是几条**（0 = 收敛关环；>0 = 环继续——按**固定拓扑**交替派下一棒：修复腿之后必派 fresh 复审，fixer 自翻的阻塞行在 fresh 终翻前仍计未决（ADR 0129）。P4 以 non-blocking 终态留档，不进 open-count。轮到谁由拓扑写死，runner 仍只读数）。runner 不派生、不复核、不拿数组长度对账。
+2. **数 findings 计数** —— 读 reviewer **自报**的 blocking unresolved open-count：**说几条就是几条**（0 = 收敛关环；>0 = 按 #869 fixed topology 继续）。每个 review Action 按其 versioned review authority 自己标记 blocking 与 non-blocking terminal；Runner 不解释 severity 或状态库。runner 不派生、不复核、不拿数组长度对账。
 3. **转决策门** —— worker 自己按的 decision/raise 原样递给人。转运，不裁决。
 
 **没有例外（owner 2026-07-13）**：三件之外不存在第四通道——「coder/ship 真源 = git/host 外部事实」的例外**已废止**。coder/ship 说 OK 就是 OK：completed = 进下一棒，交卷条内容只作 cargo 透传（cargo 缺失不改命运，下一棒 worker 自己能查）；交付/提交的自证归 worker soul（报成功前自验 + 幂等条款）；白跑由下一棒智慧体接住（reviewer 判空 diff，打回或 raise）。Generic Runner 永不用 `git rev-list` / `ls-remote` / `gh pr view` 裁 worker 成败，也不直接开切 worktree、维护 family merge queue 或解释恢复记录；这些外部副作用分别归 Scene Provisioning / Recovery、Family Integration Merge 与对应专业 owner。
@@ -14,7 +14,7 @@
 
 **从不读字。** 卷面（findings 数组、散文、任何内容）只给下一个智慧体读：fixer 读卷，数对不上 / 读不懂 → 打回 reviewer 或 raise（走决策门）。**存在即违宪、发现即砍**：runner 对 worker 输出做任何格式 / schema / 合法性校验（处置再温柔也算，「写入点对账」也算）；runner 复核或覆写 worker 自报的计数（count-vs-array 一致性闸、按数组长度改写自报数）；runner 读出 malformed / protocol-failure 后计次机械重派；runner 用 git/host 查询裁 worker 成败（commit 判庭 / 交付观测庭）；runner 替 worker 编造 failure（synthesizedFailure = 伪造信封签名——仅通道①进程事实派生的 infra 包除外）。
 
-**卷面不可用（信封提取不出）一律零判断——决策门准入原则：人环只接真决策；「认定不可用」本身就是判断，runner 无权下；runner 更无权自己按决策门（通道③只转运 worker 按的门，替按=伪造门铃）。** Sandcastle 在当前专业 Action 内按 typed-output `maxRetries` 让原 worker 重交；仍失败时让该 Action 非零退出，Runner 只按通道①在同一 fixed position 走 #598，不得把原料递 fixer、不得当作 0 放行下一棒。只有 worker 自己提交的有效 decision gate 才走通道③。Action 已成功退出时，coder/ship 的空 diff / 缺 cargo 仍由下一棒智慧体判断。卷面质量归交卷契约（ADR 0130，住 worker 侧 soul / skill）；有效 findings 的搬运走 artifact pointer（ADR 0129 findings 状态库）。
+**卷面不可用（信封提取不出）一律零判断——决策门准入原则：人环只接真决策；「认定不可用」本身就是判断，runner 无权下；runner 更无权自己按决策门（通道③只转运 worker 按的门，替按=伪造门铃）。** Canonical target 由 #899 落地：专业 Action 在自身内部使用 Sandcastle typed-output retry；当前 legacy 尚未具备这项能力，不得写成当前专业 Action 已如此。当前 Action 无法完成交卷时非零退出，Runner 只按通道①在同一 fixed position 走 #598，不得把原料递 fixer、不得当作 0 放行下一棒。只有 worker 自己提交的有效 decision gate 才走通道③。Action 已成功退出时，coder/ship 的空 diff / 缺 cargo 仍由下一棒智慧体判断。卷面质量归交卷契约（ADR 0130，住 worker 侧 soul / skill）；有效 findings 的搬运走 artifact pointer（ADR 0129 findings 状态库）。
 
 ## 其余铁律
 
