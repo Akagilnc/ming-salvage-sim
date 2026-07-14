@@ -89,8 +89,10 @@ export interface MechanicalRetryOptions {
   readonly onFailure?: (outcome: DispatchOutcome, attempt: number) => Promise<void>;
   /**
    * Optional escape hatch for an outcome that is not a process failure and must
-   * surface unchanged. The runner uses it for structured-output throws, which it
-   * forwards to the fixer as receipt cargo; there is no second retry counter.
+   * surface unchanged. Callers that own a domain-specific throw→result converter
+   * claim the outcome so the generic layer does not double-count it.
+   * #899: StructuredOutputError after maxRetries is a process-level failure for
+   * #598, not a caller-owned path that feeds empty cargo to the fixer.
    */
   readonly callerOwns?: (outcome: DispatchOutcome) => boolean;
   /**

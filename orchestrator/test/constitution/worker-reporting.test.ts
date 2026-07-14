@@ -137,7 +137,9 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     expect(result.stepLedger.find((row) => row.step === "S2")?.output).toMatchObject({ committed: true });
   });
 
-  it("coder StructuredOutputError cargo advances without git adjudication or decision park", async () => {
+  it("coder StructuredOutputError is mechanical-retried at the same step without decision park", async () => {
+    // #899: typed-signal SOE exhaust is process-level #598 redispatch, not
+    // silent advance as committed:0 and not a decision-gate park.
     const backend = new ScriptedRunnerBackend((spec, attempt) => {
       if (spec.id === "S2" && attempt === 1) {
         const err = new Error("coder outcome JSON was truncated");
@@ -150,7 +152,7 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     const result = await runOrchestrator({ issueNumber: 825, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(1);
+    expect(backend.dispatches.filter((row) => row.startsWith("S2:")).length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
   });
 

@@ -252,7 +252,8 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     }
   });
 
-  it("continues to S3 without a git verdict when the coder receipt is malformed", async () => {
+  it("mechanical-retries StructuredOutputError at S2 then continues without a decision park", async () => {
+    // #899: SOE exhaust is process-level #598 redispatch, not silent advance.
     const root = mkdtempSync(join(tmpdir(), "orch-786-malformed-coder-"));
     const telemetryDir = join(root, ".ledger-786");
     execFileSync("git", ["init", "--initial-branch=main", root]);
@@ -261,6 +262,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     execFileSync("git", ["-C", root, "commit", "--allow-empty", "-m", "initial"]);
 
     class MalformedCoderTelemetryBackend extends DispatchBackend {
+      private coderAttempts = 0;
       override readonly worktree: WorktreeHandle = {
         branch: "feat/orchestrator/issue-786",
         base: "main",
@@ -280,10 +282,17 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
         this.specs.push(spec);
         this.ctxs.push(ctx);
         if (spec.kind === "coder") {
+          this.coderAttempts += 1;
           execFileSync("git", ["-C", root, "commit", "--allow-empty", "-m", "worker commit"]);
-          const err = new Error("coder outcome JSON was truncated");
-          err.name = "StructuredOutputError";
-          throw err;
+          if (this.coderAttempts === 1) {
+            const err = new Error("coder outcome JSON was truncated");
+            err.name = "StructuredOutputError";
+            throw err;
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
         }
         return {
           kind: "completed",
@@ -296,16 +305,16 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       const backend = new MalformedCoderTelemetryBackend();
       const result = await runOrchestrator({ issueNumber: 786, backend });
       expect(result.status).toBe("success");
-      expect(backend.specs.filter((spec) => spec.id === "S2")).toHaveLength(1);
+      expect(backend.specs.filter((spec) => spec.id === "S2").length).toBeGreaterThanOrEqual(2);
       expect(backend.specs.filter((spec) => spec.id === "S3")).toHaveLength(1);
       expect(result.stepLedger.find((entry) => entry.step === "S2")?.output)
-        .toMatchObject({ kind: "coder", committed: false });
+        .toMatchObject({ kind: "coder", committed: true, commitsAdded: 1 });
       let commits: TelemetryCommitRecord[] = [];
       await vi.waitFor(() => {
         commits = readTelemetryRecords(telemetryDir).filter(
           (record): record is TelemetryCommitRecord => record.phase === "commit",
         );
-        expect(commits).toHaveLength(1);
+        expect(commits.length).toBeGreaterThanOrEqual(1);
       });
       expect(commits[0]).toMatchObject({ issue: 786, runId: backend.ctxs[0]?.runId });
     } finally {
