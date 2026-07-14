@@ -22,13 +22,27 @@ import type { StepId } from "./types.js";
 import { withProviderTimeout } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
 
-/** Provider quota pool the worker is drawing from. */
-export type QuotaPoolId = "zai" | "opencode-go" | "grok" | "unknown";
+/**
+ * Provider quota pool the worker is drawing from.
+ * Correctness C2: live family roles (codex / claude / agy / grok) must classify
+ * onto real pool ids — not `unknown` — so park/relay attributes the wall correctly.
+ */
+export type QuotaPoolId =
+  | "zai"
+  | "opencode-go"
+  | "grok"
+  | "codex"
+  | "claude"
+  | "agy"
+  | "unknown";
 
 const QUOTA_POOL_IDS: ReadonlySet<string> = new Set<QuotaPoolId>([
   "zai",
   "opencode-go",
   "grok",
+  "codex",
+  "claude",
+  "agy",
   "unknown",
 ]);
 
@@ -58,13 +72,18 @@ function isBridgeStepId(value: unknown): value is StepId {
 
 /**
  * Per-pool probe kind (config follows the route/model table companion).
- *   - zai_chat      — minimal chat completions request
- *   - grok_tbd      — reserved (SuperGrok probe not yet codified)
- *   - none          — no probe registered → treat as probe error (fail-safe hang)
+ *   - zai_chat         — minimal chat completions request (live HTTP probe)
+ *   - provider_status  — classified live provider pool; no dedicated HTTP probe
+ *                        yet → fail-safe hang on idle (honest). Tests inject
+ *                        {@link handleIdleThreshold}'s probe to nail wait_for_reset
+ *                        while still exercising real poolForModelRef selection.
+ *   - none             — no probe registered → treat as probe error (fail-safe hang)
  *
  * #905 r2: former OpenCode PONG kind removed — orchestrator never spawns that CLI.
+ * Correctness C2: grok_tbd retired in favor of provider_status for parity with
+ * codex/claude/agy (same honest fail-safe; pool id is no longer unknown).
  */
-export type PoolProbeKind = "zai_chat" | "grok_tbd" | "none";
+export type PoolProbeKind = "zai_chat" | "provider_status" | "none";
 
 export interface PoolProbeConfig {
   readonly pool: QuotaPoolId;
@@ -162,8 +181,27 @@ const POOL_PROBE_CONFIG: Readonly<Record<QuotaPoolId, PoolProbeConfig>> = {
   },
   grok: {
     pool: "grok",
-    kind: "grok_tbd",
-    description: "SuperGrok pool probe TBD; until codified, treat as fail-safe hang on idle",
+    kind: "provider_status",
+    description:
+      "SuperGrok / grok-build billing boundary; no HTTP probe yet — fail-safe hang on idle until codified",
+  },
+  codex: {
+    pool: "codex",
+    kind: "provider_status",
+    description:
+      "Codex / codex-5h billing boundary; no HTTP probe yet — fail-safe hang on idle until codified",
+  },
+  claude: {
+    pool: "claude",
+    kind: "provider_status",
+    description:
+      "Claude Code / Anthropic billing boundary; no HTTP probe yet — fail-safe hang on idle until codified",
+  },
+  agy: {
+    pool: "agy",
+    kind: "provider_status",
+    description:
+      "agy / Gemini billing boundary; no HTTP probe yet — fail-safe hang on idle until codified",
   },
   unknown: {
     pool: "unknown",
@@ -188,15 +226,53 @@ export function poolForModelRef(modelRef: string): QuotaPoolId {
   const raw = modelRef.trim().toLowerCase();
   if (raw.length === 0) return "unknown";
 
+  // Billing-pool dispatch ids (relay / DispatchContext.billingPool) first.
+  if (raw === "codex-5h" || raw === "codex") return "codex";
+  if (raw === "claude" || raw === "anthropic") return "claude";
+  if (raw === "grok-build" || raw === "grok") return "grok";
+  if (raw === "agy") return "agy";
+  if (raw === "zai") return "zai";
+  if (raw === "cursor") return "unknown";
+
   // Explicit provider prefix wins.
-  if (raw.startsWith("zai/") || raw === "zai") return "zai";
+  if (raw.startsWith("zai/") || raw.startsWith("zai:")) return "zai";
   // #905 r2: opencode-go model refs no longer map to a live probe pool.
   // Historical strings fall through to unknown (fail-safe hang), not a spawn.
   if (raw.startsWith("opencode-go/") || raw === "opencode-go") return "unknown";
 
   // Grok CLI family (SuperGrok subscription pool).
-  if (raw.startsWith("grok-") || raw === "grok" || raw.startsWith("grok/")) {
+  if (raw.startsWith("grok-") || raw.startsWith("grok/")) {
     return "grok";
+  }
+
+  // Codex / OpenAI ChatGPT subscription pool (live registry: gpt-5.6-*).
+  if (
+    raw.startsWith("gpt-") ||
+    raw.includes("terra") ||
+    raw.includes("luna") ||
+    raw.includes("sol") ||
+    raw.startsWith("codex")
+  ) {
+    return "codex";
+  }
+
+  // Claude Code / Anthropic pool (live registry: sonnet / haiku / opus).
+  if (
+    raw === "sonnet" ||
+    raw === "haiku" ||
+    raw === "opus" ||
+    raw.startsWith("sonnet") ||
+    raw.startsWith("haiku") ||
+    raw.startsWith("opus") ||
+    raw.startsWith("claude") ||
+    raw.includes("claude-")
+  ) {
+    return "claude";
+  }
+
+  // agy / Gemini consumer pool.
+  if (raw.includes("gemini") || raw.startsWith("agy/") || raw.startsWith("agy-")) {
+    return "agy";
   }
 
   // Bare GLM ids default to zai (primary free/lite path).
@@ -371,10 +447,13 @@ export async function runPoolProbe(
   switch (cfg.kind) {
     case "zai_chat":
       return runZaiChatProbe(deps);
-    case "grok_tbd":
+    case "provider_status":
+      // Honest fail-safe: pool is classified (park/relay can attribute walls
+      // when QuotaWait is established), but idle alone cannot invent a 429
+      // without a real status endpoint. Network probe not yet codified.
       return {
         kind: "error",
-        cause: "grok pool probe not yet codified (kind=grok_tbd)",
+        cause: `provider_status probe not yet codified for pool "${pool}" (fail-safe hang on idle)`,
       };
     case "none":
       return {

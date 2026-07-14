@@ -105,11 +105,20 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
     case "anthropic":
       // Claude Code OAuth / Anthropic subscription — same boundary as cmr Claude leg.
       return "claude";
+    case "agy":
+      // Gemini / agy shares no dedicated BillingPoolId row yet; park/relay
+      // attributes via codex-adjacent capacity only when a baton exists. Prefer
+      // cursor-empty → zai-adjacent until an agy billing row lands.
+      return "zai";
     case "opencode-go":
       // Go-pool GLM/kimi share the zai-adjacent free/lite billing boundary for
       // relay lookup until a dedicated billing row exists.
       return "zai";
     default:
+      // Correctness C2: never silently map unknown → grok-build (mis-attributes
+      // codex/claude walls). Callers should classify via poolForModelRef first;
+      // residual unknown still parks under a stable default without inventing
+      // a live baton (buildDefaultBillingPools marks others dead).
       return "grok-build";
   }
 }
