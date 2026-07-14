@@ -1464,6 +1464,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     public agentRunReached = false;
     public agentResult?: Awaited<ReturnType<typeof sc.run>>;
     public agentResults: Array<Awaited<ReturnType<typeof sc.run>>> = [];
+    public agentFailures: unknown[] = [];
     public lastAgentOptions?: Parameters<typeof sc.run>[0];
     public agentOptions: Array<Parameters<typeof sc.run>[0]> = [];
     public preflightResults = new Map<string, boolean>();
@@ -1503,6 +1504,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       this.agentRunReached = true;
       const queued = this.agentResults.shift();
       if (queued !== undefined) return queued;
+      const failure = this.agentFailures.shift();
+      if (failure !== undefined) throw failure;
       if (this.agentResult !== undefined) return this.agentResult;
       throw new Error("agent sandbox should not run during this test");
     }
@@ -1628,6 +1631,58 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         path: "/tmp/worktree/issue-899",
       }),
     ).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+    });
+    expect(backend.agentOptions).toHaveLength(1);
+  });
+
+  it("keeps the existing coder fallback when native receipt retries are exhausted", async () => {
+    const backend = makeBackend();
+    backend.agentResults.push(agentRunResult({
+      stdout: "coder omitted its receipt",
+      commits: [{ sha: "abc123" }],
+      sessionId: "sess-coder-reask-exhausted",
+    }));
+    backend.agentFailures.push(new StructuredOutputError("bad output", {
+      tag: "coder", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "sess-coder-reask-exhausted",
+    }));
+
+    await expect(backend.runStep(coderSpec, {
+      branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
+    })).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      sessionId: "sess-coder-reask-exhausted",
+    });
+    expect(backend.agentOptions).toHaveLength(2);
+  });
+
+  it("keeps the existing coder fallback when receipt recovery loses its session", async () => {
+    const backend = makeBackend();
+    backend.agentResults.push(agentRunResult({
+      stdout: "coder omitted its receipt",
+      commits: [{ sha: "abc123" }],
+      sessionId: "sess-coder-reask-missing",
+    }));
+    backend.agentFailures.push(new Error("resume session sess-coder-reask-missing not found"));
+
+    await expect(backend.runStep(coderSpec, {
+      branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
+    })).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      sessionId: "sess-coder-reask-missing",
+    });
+    expect(backend.agentOptions).toHaveLength(2);
+  });
+
+  it("keeps reviewer fallback topology when typed receipt retries are exhausted", async () => {
+    const backend = makeBackend();
+    backend.agentFailures.push(new StructuredOutputError("bad output", {
+      tag: "review", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "sess-review-exhausted",
+    }));
+
+    await expect(backend.runStep(reviewerSpec, {
+      branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
+    })).resolves.toMatchObject({
       output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
     expect(backend.agentOptions).toHaveLength(1);

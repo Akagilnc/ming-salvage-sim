@@ -57,6 +57,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import { z } from "zod";
+import { isReceiptRecoveryFailure, workerReceiptOutput } from "../receiptRecovery.js";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -1684,12 +1685,19 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
           });
-          const receiptResult = this.familyCoderReceiptIsUnreadable(
-            result as { readonly output?: unknown },
-            outcomeLanding.path,
-          )
-            ? await this.reaskFamilyCoderReceipt(spec, ctx, auth, outcomeLanding, result)
-            : result;
+          let receiptResult = result;
+          if (this.familyCoderReceiptIsUnreadable(
+            result as { readonly output?: unknown }, outcomeLanding.path,
+          )) {
+            try {
+              receiptResult = await this.reaskFamilyCoderReceipt(
+                spec, ctx, auth, outcomeLanding, result,
+              );
+            } catch (err) {
+              if (!isReceiptRecoveryFailure(err)) throw err;
+              console.warn("[orchestrator] family coder receipt recovery exhausted; using existing fallback");
+            }
+          }
           return this.familyCoderResultFromRun(receiptResult, spec, outcomeLanding.path);
         } finally {
           this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
@@ -1903,11 +1911,7 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /** One official Sandcastle receipt definition for the family coder/reviewer paths. */
   private familyReceiptOutput(spec: WorkerSpec): sc.OutputDefinition {
-    return sc.Output.object({
-      tag: spec.kind === "cmr" ? "cmr" : "coder",
-      schema: z.unknown(),
-      maxRetries: 2,
-    });
+    return workerReceiptOutput(spec.kind === "cmr" ? "cmr" : "coder");
   }
 
   private familyCoderReceiptIsUnreadable(
