@@ -165,10 +165,7 @@ export function relayCandidateConflictSlugs(
   candidate: CoderRosterEntry,
   wallStep: StepId,
 ): ReadonlyArray<string> {
-  const replacedSlot =
-    wallStep === "S3" || wallStep === "S6"
-      ? "reviewer"
-      : "coder";
+  const replacedSlot = relaySlotForWallStep(wallStep);
   const candidateRoute =
     replacedSlot === "coder"
       ? withCoderSlot(route, candidate.slug)
@@ -178,6 +175,14 @@ export function relayCandidateConflictSlugs(
         };
 
   return routeConflictSlugsExcluding(candidateRoute, replacedSlot);
+}
+
+function relaySlotForWallStep(
+  wallStep: StepId,
+): "coder" | "reviewer" | "coderFix" {
+  if (wallStep === "S3" || wallStep === "S6") return "reviewer";
+  if (wallStep === "S5") return "coderFix";
+  return "coder";
 }
 
 /** Merge resume history with the display-seeded ledger without replaying shared rows. */
@@ -1796,6 +1801,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * but clears so #767 quality advance (S6 rounds) still runs.
    */
   let stickyRelayCoderSlug: string | undefined;
+  /** S5 resource relay is independent from the normal S2 coder slot. */
+  let stickyRelayCoderFixSlug: string | undefined;
   /** #686 — last written relay focus path (forwarded on next dispatch). */
   let activeRelayFocusPath: string | undefined;
   /** The only step allowed to consume the current relay pool and focus baton. */
@@ -1818,8 +1825,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       return undefined;
     }
+    if (
+      stickyRelayCoderFixSlug !== undefined &&
+      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
+    ) {
+      if (modelRoute.slots.coderFix !== stickyRelayCoderFixSlug) {
+        modelRoute = {
+          ...modelRoute,
+          slots: { ...modelRoute.slots, coderFix: stickyRelayCoderFixSlug },
+        };
+        stepSpecs = stepSpecsForRoute(modelRoute);
+        routeSmokeChecked = false;
+      }
+      return undefined;
+    }
     if (stickyRelayCoderSlug !== undefined) {
       stickyRelayCoderSlug = undefined;
+    }
+    if (stickyRelayCoderFixSlug !== undefined) {
+      stickyRelayCoderFixSlug = undefined;
     }
     const applied = applyCoderRecToRoute(
       modelRoute,
@@ -1875,11 +1899,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const applyRelayBaton = (baton: NextRelayBaton, wallStep?: StepId): void => {
     currentBillingPool = baton.pool;
     activeRelayStep = wallStep ?? "S2";
+    const relaySlot = relaySlotForWallStep(wallStep ?? "S2");
     const slots = { ...modelRoute.slots };
-    if (wallStep === "S3" || wallStep === "S6") {
+    if (relaySlot === "reviewer") {
       slots.reviewer = baton.slug;
+    } else if (relaySlot === "coderFix") {
+      slots.coderFix = baton.slug;
+      stickyRelayCoderFixSlug = baton.slug;
     } else {
-      // S2/S5/default — coder (+ coderFix) slot; sticky for resource relay only.
+      // S2/default — coder (+ coderFix) slot; sticky for resource relay only.
       modelRoute = withCoderSlot(modelRoute, baton.slug);
       stickyRelayCoderSlug = baton.slug;
       stepSpecs = stepSpecsForRoute(modelRoute);
@@ -1970,10 +1998,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   });
 
   const modelRefForWallStep = (wallStep: StepId): string => {
-    const slots = modelRoute.slots;
-    return wallStep === "S3" || wallStep === "S6"
-      ? slots.reviewer
-      : slots.coder;
+    return modelRoute.slots[relaySlotForWallStep(wallStep)];
   };
 
   const modelIdForWallStep = (wallStep: StepId): string => {
@@ -2036,10 +2061,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
   };
 
-  const currentCoderModelId = (): string => {
-    const slug = modelRoute.slots.coder;
-    return lookupCoderRosterEntry(slug)?.id ?? slug;
-  };
   const reviewerSlugsForRelayCandidate = (
     candidate: CoderRosterEntry,
     wallStep: StepId,
@@ -3275,7 +3296,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     reason ??
                     `mechanical retry exhausted on ${step}; uncommitted drift preserved`,
                   reason: reason ?? "mechanical retry exhausted",
-                  currentModelId: currentCoderModelId(),
+                  currentModelId: modelIdForWallStep(step),
                   currentPool,
                   rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
                   pools,

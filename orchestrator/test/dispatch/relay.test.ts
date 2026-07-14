@@ -646,6 +646,142 @@ describe("#787 capacity relay", () => {
     });
   });
 
+  it("keeps an S5 wall relay on the coder-fix slot", async () => {
+    const worktree: WorktreeHandle = {
+      branch: "fix/873-s5-coder-fix-relay",
+      base: "main",
+      path: mkdtempSync(join(tmpdir(), "relay-873-s5-coder-fix-")),
+    };
+    const coderFixModels: string[] = [];
+    const blockingFinding = {
+      severity: "medium" as const,
+      category: "correctness",
+      claim_quote: "needs one repair pass",
+      location: "runner.ts:1",
+      suggested_fix: "repair it",
+      action: "fix_now" as const,
+    };
+
+    class CoderFixCapacityBackend implements Backend {
+      async smokeModelRoute(route: any): Promise<any> {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      }
+      async findResumeState(): Promise<undefined> { return undefined; }
+      async resumeSession(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async fetchIssueMeta(n: number): Promise<IssueMeta> {
+        return {
+          number: n,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+          body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+        };
+      }
+      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
+        return {
+          number: n,
+          body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
+          comments: [],
+          agentBrief: "",
+        };
+      }
+      async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
+      async writeSnapshot(): Promise<void> {}
+      async runStep(): Promise<StepOutput> {
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+      async writeLedger(): Promise<void> {}
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "reviewer" && spec.id === "S3") {
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [blockingFinding] },
+          };
+        }
+        if (spec.kind === "coder" && spec.id === "S5") {
+          coderFixModels.push(spec.model);
+          if (spec.model === "gpt-5.6-terra") {
+            return { kind: "failed", reason: "Selected model is at capacity" };
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer" && spec.id === "S6") {
+          return {
+            kind: "completed",
+            output: {
+              kind: "reviewer",
+              findings: [],
+              priorFindingDispositions: [{
+                identityKey: "correctness|runner.ts:1|needs one repair pass",
+                status: "verified-closed",
+              }],
+            },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+        }
+        if (spec.kind === "ship") {
+          return {
+            kind: "completed",
+            output: { kind: "ship", branch: worktree.branch, status: "pushed" },
+          };
+        }
+        const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+        if (skeleton !== undefined) return skeleton;
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+    }
+
+    const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
+    const previousCoderFix = process.env.ORCHESTRATOR_CODER_FIX_MODEL;
+    const previousReviewer = process.env.ORCHESTRATOR_REVIEWER_MODEL;
+    process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
+    process.env.ORCHESTRATOR_CODER_FIX_MODEL = "gpt-5.6-terra";
+    process.env.ORCHESTRATOR_REVIEWER_MODEL = "opus";
+    try {
+      const result = await runOrchestrator({
+        issueNumber: 873,
+        backend: new CoderFixCapacityBackend(),
+        relayPools: [{
+          id: "codex-5h",
+          status: "live",
+          parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+          models: ["terra@med", "luna@med"],
+        }],
+        now: () => now,
+      });
+
+      expect(result.status, JSON.stringify(result, null, 2)).toBe("success");
+      expect(coderFixModels).toEqual(["gpt-5.6-terra", "gpt-5.6-luna"]);
+      expect(result.stepLedger).toContainEqual(expect.objectContaining({
+        event: "relay_baton_handoff",
+        step: "S5",
+        fromModelId: "terra@med",
+        toModelId: "luna@med",
+        toPool: "codex-5h",
+      }));
+    } finally {
+      if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
+      else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
+      if (previousCoderFix === undefined) delete process.env.ORCHESTRATOR_CODER_FIX_MODEL;
+      else process.env.ORCHESTRATOR_CODER_FIX_MODEL = previousCoderFix;
+      if (previousReviewer === undefined) delete process.env.ORCHESTRATOR_REVIEWER_MODEL;
+      else process.env.ORCHESTRATOR_REVIEWER_MODEL = previousReviewer;
+      rmSync(worktree.path, { recursive: true, force: true });
+    }
+  });
+
   it.each(["S3", "S6"] as const)(
     "uses the reviewer pool and next reviewer baton for first-leg %s capacity",
     async (capacityStep) => {
