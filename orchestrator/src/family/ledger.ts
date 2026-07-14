@@ -22,7 +22,6 @@ import type {
   CleanupResult,
   EscalationAnswerPayload,
   EscalationKind,
-  FindingDisposition,
 } from "../types.js";
 import { isValidCleanupResult } from "../reviewLoopOutcome.js";
 import {
@@ -86,8 +85,6 @@ export interface AbortedRecord {
    * carries nothing (`undefined`), which the runner treats as an unclassified abort.
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
-  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
-  readonly cmrDispositions?: readonly FindingDisposition[];
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
 }
@@ -140,279 +137,8 @@ export interface CmrPassedRecord {
   readonly familyHeadAfter?: string;
   /** Resolved route fingerprint for the CMR worker and declared review legs. */
   readonly routeFingerprint?: string;
-  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
-  readonly cmrDispositions?: readonly FindingDisposition[];
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
-}
-
-/** A durable, phase-level marker written immediately before a ship dispatch (#823). */
-export interface ShipDispatchAttemptRecord {
-  readonly phase: "final";
-  readonly shipDispatchId: string;
-}
-
-export type ShipDispatchReservationRecord = ShipDispatchAttemptRecord;
-
-/**
- * Advisory ship-worker completion, durable before host PR observation (#823).
- *
- * Unlike `shipped`, this proves only what the worker reported. Consumers must
- * still verify `pr` against host GitHub before treating delivery as truth.
- */
-export interface ShipCompletedRecord {
-  readonly pr: string;
-  readonly branch: string;
-}
-
-/**
- * Count confirmed ship dispatches in the durable open streak. The explicit
- * anchor survives intervening CMR passes and ship-induced HEAD movement.
- */
-export function shipDispatchAttemptsSinceLatestCorrectnessCmrPass(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-): number {
-  const latestBoundary = lastIndexWhere(
-    entries,
-    (entry) =>
-      entry.status === "ship_streak_opened" || entry.status === "ship_streak_closed",
-  );
-  if (latestBoundary >= 0) {
-    const boundary = entries[latestBoundary]!;
-    if (boundary.status === "ship_streak_closed") {
-      const laterCmr = entries.slice(latestBoundary + 1).some(
-        (entry) =>
-          entry.status === "cmr_passed" &&
-          entry.phase === "final" &&
-          entry.cmrPass === "correctness",
-      );
-      if (laterCmr || boundary.shipStreakOutcome === "shipped") return 0;
-      const opened = lastIndexWhere(
-        entries.slice(0, latestBoundary),
-        (entry) => entry.status === "ship_streak_opened",
-      );
-      if (opened < 0) return 0;
-      return shipAttemptsBetween(entries, opened, latestBoundary);
-    }
-    return shipAttemptsBetween(entries, latestBoundary, entries.length);
-  }
-  return legacyShipAttempts(entries);
-}
-
-function shipAttemptsBetween(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-  openedIndex: number,
-  endExclusive: number,
-): number {
-  const opened = entries[openedIndex]!;
-  return (
-    (opened.shipAttemptsAtOpen ?? 0) +
-    entries.slice(openedIndex + 1, endExclusive).filter(
-      (entry) => entry.status === "ship_dispatch_attempt" && entry.phase === "final",
-    ).length
-  );
-}
-
-function legacyShipAttempts(entries: ReadonlyArray<FamilyLedgerEntry>): number {
-  let attempts = 0;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (entry.status === "cmr_passed" && entry.cmrPass === "correctness") return attempts;
-    if (entry.status === "ship_dispatch_attempt" && entry.phase === "final") attempts += 1;
-  }
-  return 0;
-}
-
-/** Count unconfirmed reservations in the durable open streak (infra retry lane). */
-export function unconfirmedShipReservationsSinceLatestCorrectnessCmrPass(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-): number {
-  const latestBoundary = lastIndexWhere(
-    entries,
-    (entry) =>
-      entry.status === "ship_streak_opened" || entry.status === "ship_streak_closed",
-  );
-  if (latestBoundary >= 0) {
-    const boundary = entries[latestBoundary]!;
-    if (boundary.status === "ship_streak_closed") {
-      const laterCmr = entries.slice(latestBoundary + 1).some(
-        (entry) => entry.status === "cmr_passed" && entry.cmrPass === "correctness",
-      );
-      if (laterCmr || boundary.shipStreakOutcome === "shipped") return 0;
-      const opened = lastIndexWhere(
-        entries.slice(0, latestBoundary),
-        (entry) => entry.status === "ship_streak_opened",
-      );
-      if (opened < 0) return 0;
-      return unconfirmedReservationsBetween(entries, opened, latestBoundary);
-    }
-    return unconfirmedReservationsBetween(entries, latestBoundary, entries.length);
-  }
-  return legacyUnconfirmedReservations(entries);
-}
-
-function unconfirmedReservationsBetween(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-  openedIndex: number,
-  endExclusive: number,
-): number {
-  const confirmed = new Set<string>();
-  let reservations = entries[openedIndex]!.shipInfraAttemptsAtOpen ?? 0;
-  for (let i = endExclusive - 1; i > openedIndex; i--) {
-    const entry = entries[i]!;
-    if (
-      entry.status === "ship_dispatch_attempt" &&
-      entry.shipDispatchId !== undefined
-    ) {
-      confirmed.add(entry.shipDispatchId);
-    }
-    if (
-      entry.status === "ship_dispatch_reserved" &&
-      entry.shipDispatchId !== undefined &&
-      !confirmed.has(entry.shipDispatchId)
-    ) {
-      reservations += 1;
-    }
-  }
-  return reservations;
-}
-
-function legacyUnconfirmedReservations(entries: ReadonlyArray<FamilyLedgerEntry>): number {
-  const confirmed = new Set<string>();
-  let reservations = 0;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (entry.status === "cmr_passed" && entry.cmrPass === "correctness") break;
-    if (entry.status === "ship_dispatch_attempt" && entry.shipDispatchId !== undefined) {
-      confirmed.add(entry.shipDispatchId);
-    }
-    if (
-      entry.status === "ship_dispatch_reserved" &&
-      entry.shipDispatchId !== undefined &&
-      !confirmed.has(entry.shipDispatchId)
-    ) {
-      reservations += 1;
-    }
-  }
-  return reservations;
-}
-
-function lastIndexWhere(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-  predicate: (entry: FamilyLedgerEntry) => boolean,
-): number {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    if (predicate(entries[i]!)) return i;
-  }
-  return -1;
-}
-
-export function activeShipStreakId(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (entry.status === "ship_streak_closed") return undefined;
-    if (entry.status === "ship_streak_opened") return entry.shipStreakId;
-  }
-  return undefined;
-}
-
-export async function recordShipStreakOpened(
-  backend: FamilyBackend,
-  record: {
-    readonly shipStreakId: string;
-    readonly shipAttemptsAtOpen: number;
-    readonly shipInfraAttemptsAtOpen: number;
-  },
-): Promise<void> {
-  await backend.appendFamilyLedger({
-    status: "ship_streak_opened",
-    event: "ship_streak_opened",
-    phase: "final",
-    ...record,
-  });
-}
-
-export async function recordShipStreakClosed(
-  backend: FamilyBackend,
-  record: {
-    readonly shipStreakId: string;
-    readonly shipStreakOutcome: "shipped" | "exhausted";
-  },
-): Promise<void> {
-  await backend.appendFamilyLedger({
-    status: "ship_streak_closed",
-    event: "ship_streak_closed",
-    phase: "final",
-    ...record,
-  });
-}
-
-export async function recordShipDispatchReservation(
-  backend: FamilyBackend,
-  record: ShipDispatchReservationRecord,
-): Promise<void> {
-  await backend.appendFamilyLedger({
-    status: "ship_dispatch_reserved",
-    event: "ship_dispatch_reserved",
-    phase: record.phase,
-    shipDispatchId: record.shipDispatchId,
-  });
-}
-
-/** Append the confirmed-launch half of a ship dispatch marker (#823). */
-export async function recordShipDispatchAttempt(
-  backend: FamilyBackend,
-  record: ShipDispatchAttemptRecord,
-): Promise<void> {
-  await backend.appendFamilyLedger({
-    status: "ship_dispatch_attempt",
-    event: "ship_dispatch_attempt",
-    phase: record.phase,
-    shipDispatchId: record.shipDispatchId,
-  });
-}
-
-/** Persist the worker-reported PR locator before any host observation (#823). */
-export async function recordShipCompleted(
-  backend: FamilyBackend,
-  record: ShipCompletedRecord,
-): Promise<void> {
-  const pr = record.pr.trim();
-  const shipBranch = record.branch.trim();
-  if (pr.length === 0 || shipBranch.length === 0) {
-    throw new Error("family ship_completed marker must include non-empty PR locator and branch");
-  }
-  await backend.appendFamilyLedger({
-    status: "ship_completed",
-    event: "ship_completed",
-    phase: "final",
-    pr,
-    shipBranch,
-    ts: new Date().toISOString(),
-  });
-}
-
-/** Return the latest complete advisory ship observation input, if any (#823). */
-export function familyShipCompletedRecord(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-): ShipCompletedRecord | undefined {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (
-      entry.status === "ship_completed" &&
-      entry.event === "ship_completed" &&
-      entry.phase === "final" &&
-      typeof entry.pr === "string" &&
-      entry.pr.trim().length > 0 &&
-      typeof entry.shipBranch === "string" &&
-      entry.shipBranch.trim().length > 0
-    ) {
-      return { pr: entry.pr.trim(), branch: entry.shipBranch.trim() };
-    }
-  }
-  return undefined;
 }
 
 /** A red integrated CMR review outcome handed back to the runner before fix (#550). */
@@ -426,8 +152,6 @@ export interface CmrReviewedRecord {
    * reads ONLY this off a `cmr_reviewed` row.
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
-  /** Governance side-channel (#604 slice 3 / ADR 0062): cross-round dispositions. */
-  readonly cmrDispositions?: readonly FindingDisposition[];
   readonly stopSummary?: StopSummary;
 }
 
@@ -560,7 +284,6 @@ export async function recordAborted(
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
-      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({
@@ -592,7 +315,6 @@ export async function recordCmrPassed(
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
-      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         successStopSummary(
@@ -623,7 +345,6 @@ export async function recordCmrReviewed(
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
-      cmrDispositions: record.cmrDispositions,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({
@@ -1041,9 +762,54 @@ export function familyEscalationState(
 }
 
 /**
+ * Heads reachable from `fromHead` by walking ONLY phase:final
+ * `cmr_fix_committed` rows that appear AFTER `startIndex` and whose
+ * `familyHeadBefore` is already reachable. Used by the #881 live-semantic
+ * resume guard: barrier-internal coder-fix commits advance HEAD without
+ * invalidating an earlier pass (live final-barrier loop does the same).
+ *
+ * Fail closed: incomplete fix rows (missing before/after) never extend the
+ * set; pre-pass fix rows are ignored because the scan starts after the pass.
+ */
+function barrierInternalHeadsReachableFrom(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  startIndex: number,
+  fromHead: string,
+): Set<string> {
+  const reachable = new Set<string>([fromHead]);
+  for (let i = startIndex + 1; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (
+      e.status !== "cmr_fix_committed" ||
+      e.event !== "cmr_fix_committed" ||
+      e.phase !== "final"
+    ) {
+      continue;
+    }
+    const before =
+      typeof e.familyHeadBefore === "string" ? e.familyHeadBefore.trim() : "";
+    const after =
+      typeof e.familyHeadAfter === "string" ? e.familyHeadAfter.trim() : "";
+    if (before.length === 0 || after.length === 0) continue;
+    if (reachable.has(before)) reachable.add(after);
+  }
+  return reachable;
+}
+
+/**
  * Did a specific integrated CMR pass already pass for the CURRENT family base
- * HEAD? This is a resume guard, so it fails closed when the current head is
- * missing or the ledger row lacks the complete cmr_passed shape.
+ * HEAD (or an earlier head in the same final barrier whose subsequent advance
+ * is explained only by barrier-internal fix commits)?
+ *
+ * Resume guard (#434, revised #881 to match live barrier semantics):
+ *   - exact head match on a complete `cmr_passed` row → skip
+ *   - head advanced ONLY via phase:final `cmr_fix_committed` chain after that
+ *     pass marker → skip (live loop does not re-run an earlier pass after a
+ *     later pass's coder-fix advances HEAD)
+ *   - head advanced without such a chain (barrier-external) → re-verify
+ *
+ * Fails closed when the current head is missing or the ledger row lacks the
+ * complete cmr_passed shape (status/event/phase/pass/head/routeFingerprint).
  */
 export function cmrPassAlreadyPassed(
   entries: ReadonlyArray<FamilyLedgerEntry>,
@@ -1053,26 +819,42 @@ export function cmrPassAlreadyPassed(
     readonly routeFingerprint?: string;
   },
 ): boolean {
-  if (input.familyHeadAfter == null || input.familyHeadAfter.trim().length === 0) {
+  if (
+    input.familyHeadAfter === undefined ||
+    input.familyHeadAfter.trim().length === 0
+  ) {
     return false;
   }
   if (
-    input.routeFingerprint == null ||
+    input.routeFingerprint === undefined ||
     input.routeFingerprint.trim().length === 0
   ) {
     return false;
   }
-  return entries.some(
-    (e) =>
-      e.status === "cmr_passed" &&
-      e.event === "cmr_passed" &&
-      e.phase === "final" &&
-      e.cmrPass === input.cmrPass &&
-      e.familyHeadAfter != null &&
-      e.familyHeadAfter === input.familyHeadAfter &&
-      e.routeFingerprint != null &&
-      e.routeFingerprint === input.routeFingerprint,
-  );
+  const currentHead = input.familyHeadAfter.trim();
+  const routeFingerprint = input.routeFingerprint.trim();
+
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    if (
+      e.status !== "cmr_passed" ||
+      e.event !== "cmr_passed" ||
+      e.phase !== "final" ||
+      e.cmrPass !== input.cmrPass ||
+      e.familyHeadAfter === undefined ||
+      e.familyHeadAfter.trim().length === 0 ||
+      e.routeFingerprint === undefined ||
+      e.routeFingerprint.trim() !== routeFingerprint
+    ) {
+      continue;
+    }
+    const passHead = e.familyHeadAfter.trim();
+    if (passHead === currentHead) return true;
+    // #881: same final barrier, head advanced only by barrier-internal fixes.
+    const reachable = barrierInternalHeadsReachableFrom(entries, i, passHead);
+    if (reachable.has(currentHead)) return true;
+  }
+  return false;
 }
 
 /**
@@ -1573,32 +1355,6 @@ export function familyPostMergeCleanupForHead(
     }
   }
   return undefined;
-}
-
-/**
- * Does the ledger contain a legacy terminal shipped marker that predates
- * `familyHeadAfter` binding? It proves a ship/PR already happened, but it cannot
- * prove which HEAD that PR covers, so resume must fail closed instead of either
- * silently skipping a newer head or re-running ship and duplicating the PR attempt.
- */
-export function hasUnboundLegacyShippedMarker(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-): boolean {
-  return entries.some(
-    (e) =>
-      e.status === "shipped" &&
-      e.event === "shipped" &&
-      e.phase === "final" &&
-      typeof e.pr === "string" &&
-      e.pr.trim().length > 0 &&
-      (typeof e.familyHeadAfter !== "string" || e.familyHeadAfter.trim().length === 0),
-  );
-}
-
-export function hasBoundShippedMarker(
-  entries: ReadonlyArray<FamilyLedgerEntry>,
-): boolean {
-  return entries.some((e) => isValidFamilyShipped(e));
 }
 
 /**

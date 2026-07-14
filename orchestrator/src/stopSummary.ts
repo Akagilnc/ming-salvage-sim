@@ -1,6 +1,3 @@
-import type { Finding, FindingDispositionEvidence } from "./types.js";
-import { findingIdentityKey } from "./findings.js";
-
 export type StopReason =
   | "success"
   | "same_module_still_red"
@@ -18,45 +15,10 @@ export type StopReason =
   | "already_done"
   | "resumed";
 
-/**
- * Thin typed description of a finding for persistence on a ledger/StopSummary
- * (#604 F5, 信封宪法 ADR 0062). A StopSummary is a persisted run-terminus record;
- * it must carry only the finding's IDENTITY (identityKey), SEVERITY, and a short
- * human summary — never the full {@link Finding} rich content (claim_quote /
- * suggested_fix / disposition evidence). The rich Finding travels only in the
- * live coder-fix landing payload (see verifyCmr `{ blockingFindings }`), never
- * into the ledger. Keeps the persisted structure thin so rich reviewer content
- * cannot leak back into durable state.
- */
-export interface FindingDescriptor {
-  readonly identityKey: string;
-  readonly severity: Finding["severity"];
-  readonly summary: string;
-}
-
-export function findingDescriptor(finding: Finding, summary?: string): FindingDescriptor {
-  return {
-    identityKey: findingIdentityKey(finding),
-    severity: finding.severity,
-    summary: summary ?? finding.claim_quote,
-  };
-}
-
 export interface StopSummary {
   readonly reason: StopReason;
   readonly summary: string;
   readonly repairHint?: string;
-  /**
-   * Thin typed descriptor of the finding that drove this stop — identity +
-   * severity + summary only. NOT the full {@link Finding} (#604 F5, ADR 0062):
-   * rich finding content must not be persisted on the ledger; it travels in the
-   * live coder-fix landing payload instead.
-   */
-  readonly findingDescriptor?: FindingDescriptor;
-  // #604 correctness r2 (C4): targetModule/owningIssue/missingSurface/nextStep
-  // were only ever set by the removed dead route-kind branches of
-  // stopReasonForFindingDisposition — no producer sets them and no consumer
-  // reads them off a StopSummary. Removed with the dead branches (ADR 0062).
   readonly metadata?: StopSummaryMetadata;
 }
 
@@ -139,31 +101,6 @@ export interface TrustBoundarySummary {
   readonly sourceKind: string;
 }
 
-// #604 correctness r2 (C4) / ADR 0062: the routing disposition kinds
-// (owning_issue_still_red / cross_module / spec_conflict / infra_failure) were
-// deleted from the reviewer contract — the runner is a pure scheduler that
-// counts blocking findings, it does not read a route kind. The only live caller
-// (verifyCmr.ts) passes `same_module`, so those four input branches were
-// unreachable dead code (with their derived StopSummary fields
-// targetModule/owningIssue/missingSurface/nextStep). They are removed here. The
-// `StopReason` union keeps its reserved runner terminal-state words unchanged.
-export type FindingDispositionStopInput = {
-  readonly kind: "same_module";
-  readonly finding: Finding;
-  readonly reason?: string;
-};
-
-export function stopReasonForFindingDisposition(
-  input: FindingDispositionStopInput,
-): StopSummary {
-  const summary = input.reason ?? "same-module finding is still red";
-  return {
-    reason: "same_module_still_red",
-    summary,
-    findingDescriptor: findingDescriptor(input.finding, summary),
-  };
-}
-
 export function successStopSummary(input?: {
   readonly acceptedSuppressions?: ReadonlyArray<AcceptedSuppressionSummary>;
   readonly providerDegraded?: ReadonlyArray<ProviderDegradationSummary>;
@@ -218,66 +155,6 @@ export function sourceAuthFailureStopSummary(input: {
       },
     },
   };
-}
-
-export function stopSummaryFromFindingDispositionEvidence(input: {
-  readonly finding: Finding;
-  readonly evidence: FindingDispositionEvidence;
-}): StopSummary {
-  const { finding, evidence } = input;
-  const requireField = (
-    value: string | undefined,
-    field: string,
-    kind: string,
-  ): string => {
-    if (value == null || value.trim() === "") {
-      throw new Error(`${kind} disposition evidence requires ${field}`);
-    }
-    return value;
-  };
-  // #604 slice 4 (ADR 0062): the only reviewer-emitted disposition kind is
-  // accepted_suppressed — the routing kinds were removed from the contract.
-  switch (evidence.kind) {
-    case "accepted_suppressed":
-      {
-        const missing = [
-          evidence.source == null || evidence.source.trim() === ""
-            ? "source"
-            : undefined,
-          evidence.scope == null || evidence.scope.trim() === ""
-            ? "scope"
-            : undefined,
-          evidence.boundedReopen == null || evidence.boundedReopen.trim() === ""
-            ? "boundedReopen"
-            : undefined,
-        ].filter((field): field is string => field !== undefined);
-        if (missing.length > 0) {
-          throw new Error(
-            `accepted_suppressed disposition evidence requires ${missing.join(", ")}`,
-          );
-        }
-      }
-      return {
-        reason: "accepted_suppressed",
-        summary: evidence.reason,
-        findingDescriptor: findingDescriptor(finding, evidence.reason),
-        metadata: {
-          acceptedSuppressions: [
-            {
-              source: requireField(evidence.source, "source", evidence.kind),
-              scope: requireField(evidence.scope, "scope", evidence.kind),
-              reason: evidence.reason,
-              findingIdentity: evidence.findingIdentity ?? findingIdentityKey(finding),
-              boundedReopen: requireField(
-                evidence.boundedReopen,
-                "boundedReopen",
-                evidence.kind,
-              ),
-            },
-          ],
-        },
-      };
-  }
 }
 
 export function infraFailureStopSummary(input: {

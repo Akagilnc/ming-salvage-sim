@@ -1,3 +1,7 @@
-The output contract: create the nonce evidence file at {{NONCE_FILE}} (relative
-to your working directory) containing exactly {{NONCE}}, then emit
-ROUTE_SMOKE_COMPLETE.
+#884 bare-ping smoke (credential oracle only).
+
+Reply with exactly: {{NONCE}}
+
+No tools, no files, no repo work. Emitting the nonce proves the selected
+model×pipe credential is alive. Tool capability is verified at image bake time,
+not at every ignition.

@@ -25,7 +25,6 @@
  * `orchestrator/README.md` § first_output_at.
  */
 
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
@@ -43,6 +42,7 @@ import ts from "typescript";
 import {
   resolveCoderRecOrder,
 } from "./coderRoster.js";
+import { execFileAsyncWithTimeout } from "./externalCall.js";
 import {
   effortForLiveOfficer,
   modelFamilyForSlug,
@@ -107,11 +107,6 @@ export function clearTelemetryRunEnvironment(): void {
   telemetryRunEnvironment = {};
 }
 
-/** Read the current process-level run environment (tests / diagnostics). */
-export function getTelemetryRunEnvironment(): TelemetryRunEnvironment {
-  return telemetryRunEnvironment;
-}
-
 /**
  * Wire worker-image config into telemetry (called by RealBackend /
  * RealFamilyBackend immediately before an absent environment stamp). Best-effort:
@@ -158,23 +153,25 @@ export async function configureTelemetryFromWorkerImage(opts: {
 }
 
 /** Async counterpart used by the first-run environment stamp path. */
-function resolveDockerImageDigestAsync(imageTag: string): Promise<string | null> {
-  if (imageTag.trim().length === 0) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    execFile(
+async function resolveDockerImageDigestAsync(
+  imageTag: string,
+): Promise<string | null> {
+  if (imageTag.trim().length === 0) return null;
+  try {
+    // #884: clocked via externalCall chokepoint (best-effort — null on any fail).
+    const stdout = await execFileAsyncWithTimeout(
       "docker",
       ["image", "inspect", "--format", "{{.Id}}", imageTag],
-      { encoding: "utf8", timeout: 5_000 },
-      (err, stdout) => {
-        if (err !== null) {
-          resolve(null);
-          return;
-        }
-        const value = String(stdout).trim();
-        resolve(value.length > 0 ? value : null);
+      {
+        stage: "telemetry:docker-inspect",
+        timeoutMs: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
       },
     );
-  });
+    const value = stdout.trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -351,8 +348,6 @@ export type TelemetryErrorCategory =
 export type TelemetryTerminal =
   | "completed"
   | "failed"
-  | "malformed"
-  | "outcome_protocol_failure"
   | "escalated"
   | "thrown";
 
@@ -493,9 +488,7 @@ export interface TelemetryReviewRoundRecord extends TelemetryRecordBase {
     | "blocking"
     | "not_converged"
     | "escalated"
-    | "failed"
-    | "malformed"
-    | "protocol_failure";
+    | "failed";
   /**
    * Whether the runner accepted this review result after every terminal gate.
    * `unknown` means runner-side durable persistence threw before the terminal
@@ -912,22 +905,6 @@ export function classifyWorkerTerminal(
             ? null
             : categorized,
         errorMessage: reason.length > 0 ? reason : null,
-        sessionId,
-      };
-    }
-    if (r.kind === "malformed") {
-      return {
-        terminal: "malformed",
-        errorCategory: categoryFromReason(r.reason),
-        errorMessage: r.reason,
-        sessionId,
-      };
-    }
-    if (r.kind === "outcome_protocol_failure") {
-      return {
-        terminal: "outcome_protocol_failure",
-        errorCategory: categoryFromReason(r.reason),
-        errorMessage: r.reason,
         sessionId,
       };
     }
@@ -1522,16 +1499,17 @@ async function gitOutput(
   repoPath: string,
   args: readonly string[],
 ): Promise<string | undefined> {
-  return await new Promise((resolve) => {
-    execFile("git", [...args], {
+  try {
+    // #884: clocked via externalCall chokepoint (best-effort — undefined on fail).
+    const stdout = await execFileAsyncWithTimeout("git", args, {
+      stage: "telemetry:git",
       cwd: repoPath,
-      encoding: "utf8",
-      timeout: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
-      killSignal: "SIGTERM",
-    }, (err, stdout) => {
-      resolve(err === null ? String(stdout) : undefined);
+      timeoutMs: TELEMETRY_SUBPROCESS_TIMEOUT_MS,
     });
-  });
+    return stdout;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function collectCommitMetricsAsync(

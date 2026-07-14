@@ -22,11 +22,10 @@
  *     single-slice step ledger, but a distinct file.
  *   - runFamilyVerify          → `npx tsc --noEmit` + `npx vitest run` against the
  *     family base; green → {ok:true}, red → {ok:false, errorPackage:{reason}}.
- *   - runIntegratedCmr         → a thin wrap of the local `ak-cross-m-review`
- *     pipeline behind the {@link runCmr} protected seam.
- *   - openFamilyPr             → push the family base + `gh pr create` and STOP
- *     (the family orchestrator's autonomy ends at the PR; online bot cmr + merge
- *     are the separate pr-review-loop stage).
+ *   - runIntegratedCmr         → a legacy per-method throw seam; production CMR
+ *     runs as a container worker through `dispatchWorker`.
+ *   - dispatchWorker(ship)     → the `gstack-ship` worker opens the family PR;
+ *     online bot CMR + merge remain the separate PR-review-loop stage.
  *   - recordAborted            → the #296 in-memory back-compat seam (a no-op
  *     here): the durable PHASE-LEVEL `aborted` entry is `recordDurableAbort`'s job
  *     (verifyCmr.ts calls both; only the durable writer appends — exactly one entry).
@@ -36,14 +35,12 @@
  *     `git rev-parse` / `git rev-parse --verify` / `git merge-base --is-ancestor`.
  *
  * SEAM BOUNDARY: the deterministic git / file ops run directly; the external side
- * effects (the merger agent container, `gh pr create`, `ak-cross-m-review`) go
- * through protected methods a unit test overrides — so the contract is verified
- * zero-container, and the real container / real GitHub only run on the driver /
- * manual-smoke path (the next unit). This file does NOT wire into the driver / run
- * end-to-end — that is the下一个 unit.
+ * effects go through dispatch/protected seams that unit tests can override. The
+ * production driver is wired to this backend; real container/GitHub effects run
+ * only on its driver/manual-smoke path.
  */
 
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "../externalCall.js";
 import {
   appendFileSync,
   chmodSync,
@@ -69,9 +66,9 @@ import {
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
 import { writeContainerCodexConfig } from "../containerCodexConfig.js";
-import { NoOpenPrForBranchError, resolveHostTruthPr } from "../autoMerge.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
+import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   effortForLiveOfficer,
   isBillingPoolDispatchId,
@@ -84,14 +81,11 @@ import {
   applyUniformCredentialProvisioning,
   hostOpenCodeAuthFile,
   candidateBranches,
-  extractCoderTag,
   lastSessionId,
   parseCoderSelfReport,
-  reconcileCoderCommits,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
-  SANDBOX_ONLINE_REVIEW_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   soulForStep,
   SANDBOX_ISSUE_NUMBER_ALIAS_ENV,
@@ -107,27 +101,20 @@ import {
   REQUIRED_SOUL_FILES,
   soulsDirError,
   type SelfReportedCoder,
-  verifyOutputSchema,
-  fixerOutputSchema,
-  cleanupOutputSchema,
-  docReleaseOutputSchema,
   SANDBOX_FIX_FOCUS_PATH_ENV,
 } from "../realBackend.js";
-import {
-  isValidCleanupResult,
-  isValidDocReleaseResult,
-  isValidFixerResult,
-  isValidVerifyResult,
-  skeletonReviewLoopWorkerResult,
-} from "../reviewLoopOutcome.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   attachSanitizedFindingFamilies,
   formatFixFocusMarkdown,
   normalizeFindingFamiliesWireAliases,
 } from "../findingFamilies.js";
-import { ONLINE_REVIEW_LANDING_FILE } from "../onlineReviewLoop.js";
 import {
+  ONLINE_REVIEW_LANDING_FILE,
+  SANDBOX_ONLINE_REVIEW_PATH_ENV,
+} from "./onlineReviewLoop.js";
+import {
+  PROVISION_SUBPROCESS_TIMEOUT_MS,
   provisionNodeModules,
   resolveTemplateProjectDir,
   runProvisionCommand,
@@ -138,11 +125,8 @@ import {
   readWorkerOutcomeSidecar,
   readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
-import {
-  cmrLegAccountingFailure,
-  modelForSlot,
-  type CmrLegAccountingRoute,
-} from "../modelRoutes.js";
+import { probeWorkerDecisionBell } from "../workerReceipt.js";
+import { modelForSlot } from "../modelRoutes.js";
 import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
@@ -158,11 +142,7 @@ import {
 import { dispatchPostMergeCleanup } from "../postMergeCleanup.js";
 import type { Sh } from "../familyDriver.js";
 import { recordFamilyEscalated } from "./ledger.js";
-import {
-  isFilledString,
-  shipOutcomeFromResult,
-  type ShipWorkerOutcome,
-} from "../shipOutcome.js";
+import { shipOutcomeFromResult } from "../shipOutcome.js";
 import {
   configureTelemetryFromWorkerImage,
   createTelemetryLegStamper,
@@ -176,14 +156,17 @@ import type {
   CoderResult,
   DispatchContext,
   DocReleaseResult,
+  Escalation,
   WorkerMonitorHandle,
   Finding,
   FindingFamily,
   FixerResult,
-  CmrResult,
+  OnlineReviewFindingDisposition,
+  OnlineReviewThreadReply,
   PriorFindingDisposition,
   StepSoul,
   VerifyResult,
+  VerifyWorkerTerminalState,
   WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
@@ -200,12 +183,7 @@ import type {
   IntegratedCmrResult,
   MergeRequest,
   MergeResult,
-  OpenFamilyPrRequest,
-  OpenFamilyPrResult,
   ReconcileGit,
-  VerifyFamilyShippedPrRequest,
-  VerifyFamilyShippedPrResult,
-  FindFamilyShippedPrResult,
 } from "./types.js";
 
 /** The family-ledger sibling filename (under {@link RealFamilyBackendOptions.ledgerDir}). */
@@ -245,9 +223,7 @@ export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
  * family ship worker runs (cmr S336 r5): it pins the family base branch + the
  * CONFIGURED PR target base (`opts.base`) + the repo slug, so the in-container
  * `gstack-ship` opens the family PR against the RIGHT base. Without it gstack-ship
- * INFERS the base from the repo default branch (main) — silently regressing the
- * legacy `openFamilyPr` `gh pr create --base this.opts.base` contract whenever the
- * family run targets a non-main integration branch (e.g. `integ/291-wave3`).
+ * infers the repo default branch and cannot honor a non-main integration target.
  */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
@@ -267,10 +243,9 @@ const CMR_SOUL = "cmr";
  * TODOS.md) never the PR body — not the coder's TDD build loop.
  */
 const SHIP_SOUL: StepSoul = "ship";
-const OUTCOME_REWRITE_PROMPT = "outcome_rewrite.md";
 
 /** Compatibility read model for durable family-ledger escalation rows. */
-export interface FamilyEscalationRecord extends FamilyEscalation {
+export interface FamilyEscalationRecord extends Omit<FamilyEscalation, "escalationKind"> {
   readonly escalationKind?: FamilyLedgerEntry["escalationKind"];
   readonly familyHeadAfter?: string;
 }
@@ -318,7 +293,7 @@ export interface RealFamilyBackendOptions {
    * Precedence: `verifyCwd` (explicit) > `resolveVerifyCwd()` (inferred) > `workingRepo`.
    */
   readonly resolveVerifyCwd?: () => string | undefined;
-  /** GitHub repo slug for `gh` (`owner/name`) — for openFamilyPr. */
+  /** GitHub repo slug for `gh` (`owner/name`). */
   readonly repo: string;
   /** The base branch the family PR targets (e.g. an integration branch or "main"). */
   readonly base: string;
@@ -332,14 +307,6 @@ export interface RealFamilyBackendOptions {
   readonly soulsDir: string;
   /** The profile image (skills + CLIs baked in; souls mounted live #372) for the merger agent sandbox. */
   readonly imageName: string;
-  /**
-   * DEPRECATED (#334): host dir of dev skills to bind-mount for the merger. The
-   * 2b image bakes `resolving-merge-conflicts`; `mergerSandboxConfig()` no longer
-   * mounts host skills (a runtime mount would SHADOW the baked skill). Kept
-   * OPTIONAL for back-compat; no longer read. Remove once callers drop it.
-   * (Souls are mounted live per #372, not baked.)
-   */
-  readonly skillsMount?: string;
   /**
    * The family base HEAD at run setup — the baseline {@link ReconcileGit.familyBaseStartHead}
    * returns (the spine provides it; the only baseline available when the ledger is
@@ -370,7 +337,6 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     "integrated_cmr_completeness.md",
     "integrated_cmr_correctness.md",
     "coder_fix.md",
-    OUTCOME_REWRITE_PROMPT,
     "family_ship.md",
     MERGER_CONFLICT_PROMPT,
     VERIFY_PROMPT_FILE,
@@ -487,94 +453,19 @@ export class RealFamilyBackend implements FamilyBackend {
    * — the same seam pattern RealBackend's `sh` uses. The default `cwd` is the
    * dedicated clone (every family git op anchors there).
    */
-  protected sh(file: string, args: string[], cwd?: string): string {
-    return execFileSync(file, args, {
+  protected sh(
+    file: string,
+    args: string[],
+    cwd?: string,
+    timeoutMs?: number,
+  ): string {
+    // Mixed read/write seam (merge/push/pr create + rev-parse). Default
+    // no-retry so a timed-out mutation is never auto-replayed (#884 cmr r7).
+    return shWithClock(file, args, {
+      stage: `subprocess:${file}`,
       cwd: cwd ?? this.opts.workingRepo,
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
-  }
-
-  protected verifyFamilyShipPr(input: {
-    readonly pr: string;
-    readonly familyBase: string;
-  }):
-    | { ok: true; headOid: string; prUrl: string }
-    | {
-        ok: false;
-        kind: "pr_missing" | "observation_failed" | "mismatch";
-        reason: string;
-      } {
-    try {
-      const resolved = resolveHostTruthPr(
-        (file, args) => this.sh(file, args, this.opts.workingRepo),
-        this.opts.repo,
-        input.familyBase,
-        input.pr,
-      );
-      if (resolved.baseRefName !== this.opts.base) {
-        return {
-          ok: false,
-          kind: "mismatch",
-          reason: `family PR "${resolved.prUrl}" targets base "${String(resolved.baseRefName)}" but expected "${this.opts.base}"`,
-        };
-      }
-      return { ok: true, headOid: resolved.headOid, prUrl: resolved.prUrl };
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      const kind = err instanceof NoOpenPrForBranchError ? "pr_missing" : "observation_failed";
-      return {
-        ok: false,
-        kind,
-        reason: `could not verify family PR "${input.pr}" base/head via gh pr view: ${detail}`,
-      };
-    }
-  }
-
-  async verifyFamilyShippedPr(
-    request: VerifyFamilyShippedPrRequest,
-  ): Promise<VerifyFamilyShippedPrResult> {
-    const verifiedPr = this.verifyFamilyShipPr({
-      pr: request.pr,
-      familyBase: request.familyBase,
+      timeoutMs,
     });
-    if (!verifiedPr.ok) return verifiedPr;
-    if (verifiedPr.headOid !== request.expectedHead) {
-      return {
-        ok: false,
-        kind: "mismatch",
-        reason:
-          `family PR "${request.pr}" head ${verifiedPr.headOid} ` +
-          `does not match current family HEAD ${request.expectedHead}`,
-      };
-    }
-    return { ok: true };
-  }
-
-  async findFamilyShippedPr(input: {
-    readonly familyBase: string;
-    readonly expectedHead: string;
-  }): Promise<FindFamilyShippedPrResult> {
-    try {
-      const resolved = resolveHostTruthPr(
-        (file, args) => this.sh(file, args, this.opts.workingRepo),
-        this.opts.repo,
-        input.familyBase,
-      );
-      if (resolved.baseRefName !== this.opts.base) {
-        return { ok: false, kind: "mismatch", reason: `host family PR "${resolved.prUrl}" targets base "${String(resolved.baseRefName)}" but expected "${this.opts.base}"` };
-      }
-      if (resolved.headOid !== input.expectedHead) {
-        return { ok: false, kind: "mismatch", reason: `host family PR head ${resolved.headOid} does not match current family HEAD ${input.expectedHead}` };
-      }
-      return { ok: true, pr: resolved.prUrl };
-    } catch (err) {
-      return {
-        ok: false,
-        kind: err instanceof NoOpenPrForBranchError ? "pr_missing" : "observation_failed",
-        reason: `could not discover family PR via host truth: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
   }
 
   /**
@@ -1264,7 +1155,12 @@ export class RealFamilyBackend implements FamilyBackend {
     const startedAt = process.hrtime.bigint();
     let passed = false;
     try {
-      const output = this.sh("npm", args, cwd);
+      const output = this.sh(
+        "npm",
+        args,
+        cwd,
+        PROVISION_SUBPROCESS_TIMEOUT_MS,
+      );
       passed = true;
       return output;
     } finally {
@@ -1372,17 +1268,19 @@ export class RealFamilyBackend implements FamilyBackend {
    *   - coder (#550): a family coder-fix worker invoking `/tdd` for blocking CMR
    *     findings (`runFamilyCoderFixWorker`).
    *   - ship (#336): a container ship worker invoking `gstack-ship` 止于 PR
-   *     (`dispatchShipWorker`) — this REPLACED the legacy inline `openFamilyPr`.
+   *     (`dispatchShipWorker`).
    * Every OTHER family worker kind (merge — B 段) still forwards to the legacy
    * wrapper until its own slice wires it.
    *
    * The cmr worker (`cmrWorkerSpec`) = the 2b container's TOP-LEVEL route-selected
    * reviewer for ONE ADR 0030 pass (completeness or correctness). It
    * `Skill`-invokes ak-cross-m-review in-container and returns a TERMINAL review
-   * verdict. The runner (`verifyCmr.ts`) owns pass order, route-leg accounting,
-   * ADR0032 strong-leg floor, blocking-finding classification, coder-fix dispatch,
-   * and fresh re-review before ship. A non-converged review outcome is a completed
-   * CMR payload the runner routes; it is NOT a failed worker.
+   * verdict. The runner (`verifyCmr.ts`) owns pass order, ADR0032 strong-leg /
+   * required-leg floor, three-channel routing (exit / findings count / decision
+   * gate), coder-fix dispatch, and fresh re-review before ship. #875 demolished
+   * the accounting court (leg-accounting death / claimed-fixed coverage /
+   * disposition-enum kill). A non-converged review outcome is a completed CMR
+   * payload the runner routes; it is NOT a failed worker.
    */
   async dispatchWorker(
     spec: WorkerSpec,
@@ -1390,39 +1288,12 @@ export class RealFamilyBackend implements FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult> {
     if (spec.kind === "ship") {
-      // #336: the family ship step (止于 PR) is a CONTAINER ship WORKER invoking
-      // `gstack-ship` (replacing the inline `openFamilyPr`).
+      // #336: the family ship step (止于 PR) is a container ship worker invoking
+      // `gstack-ship`.
       return this.dispatchShipWorker(spec, ctx);
     }
     if (spec.kind === "coder") {
       return this.runFamilyCoderFixWorker(spec, ctx, landing);
-    }
-    // S11 post-merge cleanup (#603): deterministic when landing carries pr_merged.
-    if (spec.kind === "cleanup") {
-      if (landing?.cleanupDispatch !== undefined) {
-        const ghSh: Sh = (file, args) =>
-          execFileSync(file, args, {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-          }).trim();
-        try {
-          const output = dispatchPostMergeCleanup(landing, ctx, ghSh);
-          return { kind: "completed", output };
-        } catch (err) {
-          return {
-            kind: "failed",
-            reason: err instanceof Error ? err.message : String(err),
-          };
-        }
-      }
-      const stub = skeletonReviewLoopWorkerResult(spec.kind);
-      if (stub !== undefined) {
-        return stub;
-      }
-      return {
-        kind: "failed",
-        reason: `family ${spec.kind} stub unavailable`,
-      };
     }
     // #735: real 文档发布 worker shares the family review-loop agent path
     // (invoke /gstack-document-release). Offline/test stubs stay on backends
@@ -1442,6 +1313,15 @@ export class RealFamilyBackend implements FamilyBackend {
     }
     const outcome = await this.runCmrWorker(spec, ctx);
     return this.cmrOutcomeToWorkerResult(outcome, ctx);
+  }
+
+  async runPostMergeCleanup(
+    landing: WorkerLandingPayload,
+    ctx: DispatchContext,
+  ): Promise<CleanupResult> {
+    const ghSh: Sh = (file, args) =>
+      shWithClock(file, args, { stage: `cleanup:${file}` });
+    return dispatchPostMergeCleanup(landing, ctx, ghSh);
   }
 
   /**
@@ -1491,29 +1371,6 @@ export class RealFamilyBackend implements FamilyBackend {
     return workerResultFromMonitorSidecar(handle, exitCode);
   }
 
-  async rewriteWorkerOutcome(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-    attempt: number,
-  ): Promise<WorkerResult> {
-    if (spec.kind !== "cmr") {
-      return {
-        kind: "failed",
-        reason:
-          `outcome protocol rewrite for worker kind "${spec.kind}" is not implemented`,
-      };
-    }
-    const outcome = await this.runCmrOutcomeRewrite(
-      spec,
-      ctx,
-      protocolFailure,
-      attempt,
-    );
-    if (outcome.kind === "outcome_protocol_failure") return outcome;
-    return this.cmrOutcomeToWorkerResult(outcome, ctx);
-  }
-
   private cmrOutcomeToWorkerResult(
     outcome: CmrWorkerOutcome,
     ctx: DispatchContext,
@@ -1524,43 +1381,11 @@ export class RealFamilyBackend implements FamilyBackend {
       // pass — verifyCmr.ts calls escalateFamily with this reason.
       return {
         kind: "escalated",
-        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
+        escalation: outcome.escalation ?? {
+          reason: outcome.reason,
+          diagnosis: outcome.diagnosis,
+        },
         ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
-      };
-    }
-    if (outcome.kind === "malformed") {
-      // No parseable verdict ⇒ malformed (the gate must never read it as a pass).
-      return {
-        kind: "malformed",
-        reason: outcome.reason,
-        ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
-        ...(outcome.cmrLegAccountingPayload !== undefined
-          ? { cmrLegAccountingPayload: outcome.cmrLegAccountingPayload }
-          : {}),
-        ...(outcome.priorVerdict !== undefined
-          ? {
-              cmrPriorOutput: {
-                kind: "cmr",
-                ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-                converged: outcome.priorVerdict.converged,
-                ...(outcome.priorVerdict.reason !== undefined
-                  ? { reason: outcome.priorVerdict.reason }
-                  : {}),
-                successfulLegs: outcome.priorVerdict.successfulLegs,
-                ...(outcome.priorVerdict.skippedLegs !== undefined
-                  ? { skippedLegs: outcome.priorVerdict.skippedLegs }
-                  : {}),
-                claimedFixedFindingIdentityKeys:
-                  outcome.priorVerdict.claimedFixedFindingIdentityKeys,
-                priorFindingDispositions:
-                  outcome.priorVerdict.priorFindingDispositions,
-                ...(outcome.priorVerdict.findings !== undefined
-                  ? { findings: outcome.priorVerdict.findings }
-                  : {}),
-                evidencePaths: outcome.priorVerdict.evidencePaths,
-              },
-            }
-          : {}),
       };
     }
     return {
@@ -1568,7 +1393,7 @@ export class RealFamilyBackend implements FamilyBackend {
       output: {
         kind: "cmr",
         ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-        converged: outcome.converged,
+        ...(outcome.converged !== undefined ? { converged: outcome.converged } : {}),
         ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
         successfulLegs: outcome.successfulLegs,
         ...(outcome.skippedLegs !== undefined ? { skippedLegs: outcome.skippedLegs } : {}),
@@ -1659,6 +1484,12 @@ export class RealFamilyBackend implements FamilyBackend {
           "scope (integrated CMR pass prompts); refusing to fall back to a possibly-stale " +
           "main...HEAD scope (a fail-open that would review the wrong diff). Provide " +
           "RealFamilyBackendOptions.familyBaseStartHead.",
+        escalation: runnerSynthesizedFailureEscalation({
+          reason:
+            "no familyBaseStartHead (cut SHA) recorded — cannot pin the cmr review scope",
+          diagnosis:
+            "the integrated cmr focus file must pin the exact cut-SHA review scope before launch",
+        }),
       };
     }
     // FAIL-CLOSED on the WORKER's OWN auth (codex cmr R4): when the cmr slot
@@ -1683,6 +1514,11 @@ export class RealFamilyBackend implements FamilyBackend {
           "cmrWorkerSpec must freeze the route-selected cmrReview leg collection before " +
           "dispatch. Refusing to re-read process.env in runCmrWorker because that can " +
           "write a route file that disagrees with the verified route fingerprint.",
+        escalation: runnerSynthesizedFailureEscalation({
+          reason: "cmr worker spec missing frozen review legs",
+          diagnosis:
+            "cmrWorkerSpec must freeze the route-selected review legs before launch",
+        }),
       };
     }
     const auth = this.mountCmrAuth();
@@ -1693,6 +1529,11 @@ export class RealFamilyBackend implements FamilyBackend {
           kind: "escalate",
           reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
           diagnosis: "typed provider availability preflight rejected the cmr launch before sc.run",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: `no ${missingProvider} auth — the selected cmr provider cannot start`,
+            diagnosis:
+              "typed provider availability preflight rejected the cmr launch before sc.run",
+          }),
         };
       }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
@@ -1705,6 +1546,12 @@ export class RealFamilyBackend implements FamilyBackend {
             "OWN auth, not a degradable reviewer leg. Without it the worker fails to start " +
             "and never emits a verdict; escalating here keeps the escalate续跑 semantics " +
             "(a thrown sc.run startup error would bypass verifyCmr's structured routing).",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason:
+              "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the cmr worker cannot start",
+            diagnosis:
+              "the selected top-level Claude CMR worker cannot start without its OAuth token",
+          }),
         };
       }
       // Check out the family base so the in-container ak-cross-m-review reviews the
@@ -1729,8 +1576,8 @@ export class RealFamilyBackend implements FamilyBackend {
           cwd: this.opts.workingRepo,
           sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
           // Derive the model from the spec via the shared validated seam (cmr S336 r7
-          // symmetry): resolve the worker's slug through the same registry as the
-          // single-slice + family ship paths — no constant that could silently drift
+          // symmetry): resolve the worker's slug through the shared family registry —
+          // no constant that could silently drift
           // from the spec the runner declares.
           agent: this.agentForSpec(spec, ctx),
           // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
@@ -1760,117 +1607,7 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
-  protected async runCmrOutcomeRewrite(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-    attempt: number,
-  ): Promise<CmrWorkerOutcome | Extract<WorkerResult, { kind: "outcome_protocol_failure" }>> {
-    if (ctx.familyBase === undefined) {
-      return {
-        kind: "malformed",
-        reason: "cmr outcome rewrite requires ctx.familyBase",
-        ...(protocolFailure.sessionId !== undefined
-          ? { sessionId: protocolFailure.sessionId }
-          : {}),
-      };
-    }
-    if (protocolFailure.sessionId === undefined) {
-      return {
-        kind: "malformed",
-        reason:
-          "cmr outcome rewrite requires the malformed worker sessionId to resume the same producing worker",
-      };
-    }
-    const frozenReviewLegs = spec.cmrReviewLegs;
-    if (frozenReviewLegs === undefined) {
-      return {
-        kind: "malformed",
-        reason: "cmr outcome rewrite requires frozen review legs on the worker spec",
-        sessionId: protocolFailure.sessionId,
-      };
-    }
-    const auth = this.mountCmrAuth();
-    try {
-      const missingProvider = this.unavailableWorkerProviderAuth(spec, auth, ctx);
-      if (missingProvider !== undefined) {
-        return {
-          kind: "malformed",
-          reason: `cmr outcome rewrite cannot resume without ${missingProvider} auth`,
-          sessionId: protocolFailure.sessionId,
-        };
-      }
-      if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
-        return {
-          kind: "malformed",
-          reason:
-            "cmr outcome rewrite cannot resume the same Claude worker without CLAUDE_CODE_OAUTH_TOKEN",
-          sessionId: protocolFailure.sessionId,
-        };
-      }
-      this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      const gitBefore = this.captureOutcomeRewriteGitEvidence();
-      const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
-      try {
-        const result = await this.runAgentSandbox({
-          name: `family-cmr-findings-supplement-${ctx.cmrPass ?? "legacy"}-${attempt}`,
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: this.opts.workingRepo,
-          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
-          agent: this.agentForSpec(spec, ctx),
-          maxIterations: 1,
-          completionSignal: spec.completionSignal,
-          branchStrategy: { type: "head" },
-          resumeSession: protocolFailure.sessionId,
-          promptFile: join(this.opts.promptsDir, OUTCOME_REWRITE_PROMPT),
-          promptArgs: {
-            ATTEMPT: String(attempt),
-            FAILURE_REASON: protocolFailure.reason,
-            WORKER_KIND: spec.kind,
-            CMR_PASS: ctx.cmrPass ?? "legacy",
-            COMPLETION_SIGNAL: spec.completionSignal,
-          },
-        });
-        if (protocolFailure.cmrPriorOutput !== undefined) {
-          const findingsCount = parseFindingsSentinel(result.stdout);
-          if (findingsCount === undefined) {
-            return {
-              kind: "malformed",
-              reason: `same reviewer supplement attempt ${attempt} omitted findings = x`,
-              sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-              priorVerdict: cmrResultToWorkerVerdict(protocolFailure.cmrPriorOutput),
-            };
-          }
-          return {
-            ...cmrResultToWorkerVerdict(protocolFailure.cmrPriorOutput),
-            findingsCount,
-            sessionId: lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-          };
-        }
-        const outcome = withCmrSession(
-          cmrOutcomeFromResult({
-            ...result,
-            cmrReviewLegs: frozenReviewLegs,
-            outcomePath: outcomeLanding.path,
-          }),
-          lastSessionIdIfPresent(result) ?? protocolFailure.sessionId,
-        );
-        const gitFailure = this.outcomeRewriteGitFailure({
-          before: gitBefore,
-          after: this.captureOutcomeRewriteGitEvidence(),
-          attempt,
-          sessionId: outcome.sessionId,
-        });
-        if (gitFailure !== undefined) return gitFailure;
-        return outcome;
-      } finally {
-        this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
-      }
-    } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
-    }
-  }
-
+  // ADR 0131 removed the same-worker outcome rewrite ladder.
   protected async runAgentSandbox(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
@@ -1903,16 +1640,16 @@ export class RealFamilyBackend implements FamilyBackend {
       if (missingProvider !== undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason: `no ${missingProvider} auth — the family coder-fix provider cannot start`,
             diagnosis: "typed provider availability preflight rejected the coder-fix launch before sc.run",
-          },
+          }),
         };
       }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason:
               "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family coder-fix worker cannot start",
             diagnosis:
@@ -1920,21 +1657,10 @@ export class RealFamilyBackend implements FamilyBackend {
               "active route selects a Claude-family coderFix model; provide " +
               "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude " +
               "coderFix route.",
-          },
+          }),
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
-      // Keep the baseline before Sandcastle starts. `result.commits` is an
-      // observation log across iterations, so a later rebase/squash/drop can
-      // leave it containing SHAs that are no longer reachable from final HEAD.
-      let headBefore: string | undefined;
-      try {
-        headBefore = this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo);
-      } catch {
-        // Commit reconciliation remains advisory when a pre-worker baseline cannot
-        // be observed. The worker must still run and emit unknown-count telemetry.
-        headBefore = undefined;
-      }
       const fixFindingsLanding = this.writeFamilyFixFindingsFile(ctx, landing);
       const fixFocusLanding = this.writeFamilyFixFocusFile(landing);
       try {
@@ -1957,7 +1683,7 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
           });
-          return this.familyCoderResultFromRun(result, spec, outcomeLanding.path, headBefore);
+          return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
           this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
         }
@@ -1986,6 +1712,9 @@ export class RealFamilyBackend implements FamilyBackend {
           // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
           // ADR 0062) — never from the runner's thin DispatchContext.
           blockingFindings: landing?.blockingFindings ?? [],
+          ...(landing?.rawReviewerArtifacts !== undefined
+            ? { rawReviewerArtifacts: landing.rawReviewerArtifacts }
+            : {}),
           blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
           ...(ctx.preexistingAssertionTouched === true
             ? { preexistingAssertionTouched: true }
@@ -2130,54 +1859,38 @@ export class RealFamilyBackend implements FamilyBackend {
     >,
     spec: WorkerSpec,
     outcomePath: string,
-    headBefore: string | undefined,
   ): WorkerResult {
     try {
       const raw = readRequiredWorkerOutcomeSidecar(outcomePath);
-      const truth = reconcileCoderCommits(
-        parseCoderSelfReport(raw),
-        this.familyCoderGitCommitCount(headBefore),
-      );
+      const decisionBell = probeWorkerDecisionBell(raw);
+      if (decisionBell !== undefined) {
+        return {
+          kind: "escalated",
+          escalation: decisionBell,
+          sessionId: lastSessionId(result),
+        };
+      }
+      const parsed = (() => {
+        try {
+          return parseCoderSelfReport(raw);
+        } catch {
+          return undefined;
+        }
+      })();
       return {
         kind: "completed",
-        output: this.familyCoderOutput(truth),
+        output:
+          parsed !== undefined
+            ? this.familyCoderOutput(parsed)
+            : { kind: "coder", committed: false, commitsAdded: 0 },
         sessionId: lastSessionId(result),
       };
-    } catch (err) {
-      return {
-        kind: "malformed",
-        reason:
-          `family coder-fix worker output malformed: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-        sessionId: lastSessionId(result),
-      };
-    }
-  }
-
-  /**
-   * Derive family coder-fix commit truth from the final graph, not Sandcastle's
-   * cumulative observed-commit list. `headBefore..HEAD` counts commits reachable
-   * from final HEAD but not the pinned pre-worker baseline; that deliberately
-   * excludes commits subsequently made unreachable by rebase, squash, or drop.
-   * Merge commits remain one reachable commit each, matching git's default
-   * `rev-list --count` history-walk semantics.
-   */
-  protected familyCoderGitCommitCount(headBefore: string | undefined): number | undefined {
-    if (headBefore === undefined || headBefore.trim().length === 0) {
-      return undefined;
-    }
-    try {
-      const rawCount = this.sh(
-        "git",
-        ["rev-list", "--count", `${headBefore.trim()}..HEAD`],
-        this.opts.workingRepo,
-      );
-      const count = Number(rawCount);
-      return Number.isSafeInteger(count) && count >= 0 ? count : undefined;
     } catch {
-      // Git observation is telemetry only. The fresh reviewer, not this probe,
-      // decides whether the coder-fix actually closed the findings.
-      return undefined;
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
+        sessionId: lastSessionId(result),
+      };
     }
   }
 
@@ -2186,12 +1899,6 @@ export class RealFamilyBackend implements FamilyBackend {
       kind: "coder",
       committed: output.committed,
       commitsAdded: output.commitsAdded,
-      ...(output.repairEvidence !== undefined
-        ? { repairEvidence: output.repairEvidence }
-        : {}),
-      ...(output.selfReportDiscrepancy !== undefined
-        ? { selfReportDiscrepancy: output.selfReportDiscrepancy }
-        : {}),
       ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
     };
   }
@@ -2213,25 +1920,23 @@ export class RealFamilyBackend implements FamilyBackend {
       if (missingProvider !== undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason: `no ${missingProvider} auth — the family ${spec.kind} provider cannot start`,
             diagnosis: "typed provider availability preflight rejected the review-loop launch before sc.run",
-            synthesizedFailure: true,
-          },
+          }),
         };
       }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
         return {
           kind: "escalated",
-          escalation: {
+          escalation: runnerSynthesizedFailureEscalation({
             reason:
               `no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the family ${spec.kind} worker cannot start`,
             diagnosis:
               `the family ${spec.kind} worker is a top-level Claude worker when the ` +
               "active route selects a Claude-family model; provide " +
               "CLAUDE_CODE_OAUTH_TOKEN / ~/.sc-claude-token or select a non-Claude route.",
-            synthesizedFailure: true,
-          },
+          }),
         };
       }
       this.sh("git", ["checkout", ctx.familyBase], this.opts.workingRepo);
@@ -2415,90 +2120,65 @@ export class RealFamilyBackend implements FamilyBackend {
       const sessionId = lastSessionIdIfPresent(result);
       if (spec.kind === "verify") {
         const parsed = parseVerifyOutcome(result.stdout, outcomePath);
-        if (parsed.kind === "malformed") {
-          return { kind: "malformed", reason: parsed.reason, sessionId };
+        if (parsed.kind === "escalate") {
+          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+        }
+        if (parsed.kind === "cargo") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+            sessionId,
+          };
         }
         return { kind: "completed", output: parsed, sessionId };
       }
       if (spec.kind === "fixer") {
         const parsed = parseFixerOutcome(result.stdout, outcomePath);
-        if (parsed.kind === "malformed") {
-          return { kind: "malformed", reason: parsed.reason, sessionId };
+        if (parsed.kind === "escalate") {
+          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+        }
+        if (parsed.kind === "cargo") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+            sessionId,
+          };
         }
         return { kind: "completed", output: parsed, sessionId };
       }
       if (spec.kind === "cleanup") {
         const parsed = parseCleanupOutcome(result.stdout, outcomePath);
-        if (parsed.kind === "malformed") {
-          return { kind: "malformed", reason: parsed.reason, sessionId };
+        if (parsed.kind === "escalate") {
+          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+        }
+        if (parsed.kind === "cargo") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: false, commitsAdded: 0 },
+            sessionId,
+          };
         }
         return { kind: "completed", output: parsed, sessionId };
       }
       const parsed = parseDocReleaseOutcome(result.stdout, outcomePath);
-      if (parsed.kind === "malformed") {
-        return { kind: "malformed", reason: parsed.reason, sessionId };
+      if (parsed.kind === "escalate") {
+        return { kind: "escalated", escalation: parsed.escalation, sessionId };
+      }
+      if (parsed.kind === "cargo") {
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: false, commitsAdded: 0 },
+          sessionId,
+        };
       }
       return { kind: "completed", output: parsed, sessionId };
-    } catch (err) {
+    } catch {
       return {
-        kind: "malformed",
-        reason:
-          `family ${spec.kind} worker output malformed: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
         sessionId: lastSessionIdIfPresent(result),
       };
     }
-  }
-
-  private captureOutcomeRewriteGitEvidence(): {
-    readonly head: string;
-    readonly trackedStatus: readonly string[];
-  } {
-    const trackedStatus = this.sh("git", [
-      "status",
-      "--short",
-      "--untracked-files=no",
-    ], this.opts.workingRepo).trim();
-    return {
-      head: this.sh("git", ["rev-parse", "HEAD"], this.opts.workingRepo).trim(),
-      trackedStatus: trackedStatus === "" ? [] : trackedStatus.split(/\r?\n/),
-    };
-  }
-
-  private outcomeRewriteGitFailure(input: {
-    readonly before: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
-    readonly after: ReturnType<RealFamilyBackend["captureOutcomeRewriteGitEvidence"]>;
-    readonly attempt: number;
-    readonly sessionId?: string;
-  }): Extract<WorkerResult, { kind: "outcome_protocol_failure" }> | undefined {
-    const headMoved = input.before.head !== input.after.head;
-    const trackedDirty = input.after.trackedStatus.length > 0;
-    if (!headMoved && !trackedDirty) return undefined;
-
-    const commitEvidence = headMoved
-      ? this.sh("git", [
-          "log",
-          "--oneline",
-          `${input.before.head}..${input.after.head}`,
-        ], this.opts.workingRepo)
-      : "";
-    const reasons = [
-      headMoved
-        ? `outcome rewrite moved HEAD from ${input.before.head} to ${input.after.head}; commits: ${
-            commitEvidence === "" ? "(no descendant commits listed)" : commitEvidence
-          }`
-        : undefined,
-      trackedDirty
-        ? `outcome rewrite left tracked changes: ${input.after.trackedStatus.join("; ")}`
-        : undefined,
-    ].filter((reason): reason is string => reason !== undefined);
-
-    return {
-      kind: "outcome_protocol_failure",
-      reason: reasons.join(" | "),
-      attempts: input.attempt,
-      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
-    };
   }
 
   /**
@@ -2901,10 +2581,10 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Dispatch the FAMILY ship WORKER (#336): a CONTAINER ship worker invoking
    * `gstack-ship` over the family base, 止于 PR (the online bot cmr + merge are the
-   * separate pr-review-loop stage). Maps the {@link ShipWorkerOutcome} to the full
+   * separate pr-review-loop stage). Maps the ship receipt to the full
    * {@link WorkerResult} union (PRD #330 R2): shipped → `completed` ShipResult; a
-   * genuine block → `escalated`; a hard ship/test failure → `failed`; unparseable →
-   * `malformed`. A rerun-able flake is NOT escalated — the worker reruns it itself.
+   * genuine block → `escalated`. A rerun-able flake is handled inside the worker;
+   * other clean-exit cargo returns a completed placeholder.
    */
   protected async dispatchShipWorker(
     spec: WorkerSpec,
@@ -2922,58 +2602,25 @@ export class RealFamilyBackend implements FamilyBackend {
       // decide) — the family escalate续跑 path (verifyCmr calls escalateFamily).
       return {
         kind: "escalated",
-        escalation: { reason: outcome.reason, diagnosis: outcome.diagnosis },
-      };
-    }
-    if (outcome.kind === "failed") {
-      // A hard ship/test failure no rerun cleared → the family PR could not open
-      // (verifyCmr fail-safes a non-ship/non-completed result to INCOMPLETE_GATE).
-      return { kind: "failed", reason: `${outcome.reason} — ${outcome.diagnosis}` };
-    }
-    if (outcome.kind === "malformed") {
-      return { kind: "malformed", reason: outcome.reason };
-    }
-    // Fail-CLOSED on the FAMILY contract (prompts/family_ship.md): a family ship
-    // delivery is a family PR — the ONLY accepted shipped status is "pr_opened"
-    // with a `pr` URL. The shared parser also accepts "pushed" (legal for a SINGLE
-    // slice, prompts/ship.md), so a family worker that pushed-but-opened-no-PR
-    // would otherwise be read as a completed family delivery → verifyCmr ok:true on
-    // a PHANTOM family PR (cmr S336 r2 F1). The single-slice consumer keeps "pushed"
-    // (legal there); only THIS family consumer narrows it (verifyCmr never reads
-    // success on a non-PR family ship). The `pr` belt uses isFilledString as
-    // defense-in-depth (the parser already enforces non-empty pr — cmr S336 r3).
-    if (outcome.status !== "pr_opened" || !isFilledString(outcome.pr)) {
-      return {
-        kind: "malformed",
-        reason: `family ship worker reported status "${outcome.status}" — the family delivery must be "pr_opened" with a \`pr\` URL (family_ship.md allows only pr_opened; "pushed" is single-slice only)`,
-      };
-    }
-    const verifiedPr = this.verifyFamilyShipPr({
-      pr: outcome.pr,
-      familyBase: ctx.familyBase,
-    });
-    // A host-confirmed metadata mismatch is observed-but-unexpected state, not a
-    // malformed worker response. Escalate it durably so verifyCmr never maps a
-    // deliberately closed or otherwise mismatched claimed PR into another
-    // mutating ship dispatch. Missing PRs and unknown observations remain
-    // lifecycle outcomes owned by verifyCmr.
-    if (!verifiedPr.ok && verifiedPr.kind === "mismatch") {
-      return {
-        kind: "escalated",
-        escalation: {
-          reason: verifiedPr.reason,
-          diagnosis: "claimed family PR metadata was observed but did not match the delivery contract",
+        escalation: outcome.escalation ?? {
+          reason: outcome.reason,
+          diagnosis: outcome.diagnosis,
         },
+      };
+    }
+    if (outcome.kind === "completed") {
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
       };
     }
     return {
       kind: "completed",
       output: {
         kind: "ship",
-        branch: outcome.branch,
+        branch: outcome.branch ?? ctx.familyBase,
         status: outcome.status,
-        pr: verifiedPr.ok ? verifiedPr.prUrl : outcome.pr,
-        ...(verifiedPr.ok ? { prHead: verifiedPr.headOid } : {}),
+        ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
       },
     };
   }
@@ -2993,7 +2640,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async runShipWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
-  ): Promise<ShipWorkerOutcome> {
+  ): Promise<ReturnType<typeof shipOutcomeFromResult>> {
     // FAIL-CLOSED on the WORKER's OWN auth (cmr S336 r8, mirroring the cmr worker's
     // preflight ~645-666): when the ship slot resolves to a Claude-family model,
     // the Claude OAuth token is NOT a degradable codex/gh LEG — it is THIS worker's
@@ -3019,6 +2666,11 @@ export class RealFamilyBackend implements FamilyBackend {
           reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
           diagnosis:
             "selected provider cannot start without CLAUDE_CODE_OAUTH_TOKEN when Claude is selected; typed provider availability preflight rejected the ship launch before sc.run",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: `no ${missingProvider} auth — the selected ship provider cannot start`,
+            diagnosis:
+              "typed provider availability preflight rejected the ship launch before sc.run",
+          }),
         };
       }
       if (modelFamilyForSlug(spec.model) === "claude" && auth.claudeToken === undefined) {
@@ -3026,6 +2678,11 @@ export class RealFamilyBackend implements FamilyBackend {
           kind: "escalate",
           reason: "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
           diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason:
+              "no Claude worker auth (CLAUDE_CODE_OAUTH_TOKEN) — the ship worker cannot start",
+            diagnosis: "ship worker cannot start without CLAUDE_CODE_OAUTH_TOKEN",
+          }),
         };
       }
       // FAIL-CLOSED on gh auth (cmr S336 r10): the family delivery's ONLY accepted
@@ -3046,15 +2703,19 @@ export class RealFamilyBackend implements FamilyBackend {
             "Provide a host gh login (`gh auth login`) so `gh auth token` yields a token " +
             "to inject as GH_TOKEN. Escalating here keeps the escalate续跑 semantics (a " +
             "late in-container `gh pr create` failure would surface as an opaque error).",
+          escalation: runnerSynthesizedFailureEscalation({
+            reason: "no gh auth (GH_TOKEN) — the family ship worker cannot `gh pr create`",
+            diagnosis:
+              "the family ship worker cannot open its PR without host GitHub authentication",
+          }),
         };
       }
       // Check out the family base so gstack-ship delivers the RIGHT branch.
       this.sh("git", ["checkout", ctx.familyBase!], this.opts.workingRepo);
       // cmr S336 r5: thread the CONFIGURED PR target base into the worker via a
-      // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise INFERS
-      // the base from the repo default branch (main), regressing the legacy
-      // `openFamilyPr` `gh pr create --base this.opts.base` contract on a non-main
-      // target. Written AFTER the checkout (the file lives in the family-base
+      // git-ignored focus file the prompt reads FIRST. gstack-ship otherwise infers
+      // the repo default branch and misses a configured non-main target. Written
+      // AFTER the checkout (the file lives in the family-base
       // worktree) and BEFORE the container so the worker can read it.
       this.writeShipFocusFile(ctx);
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
@@ -3089,8 +2750,7 @@ export class RealFamilyBackend implements FamilyBackend {
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: this.opts.workingRepo,
       sandbox: this.shipSandbox(auth, outcomeLanding),
-      // Derive the model from the spec via the SAME validated mapping the
-      // single-slice ship path uses (realBackend.ts:2122) — NOT a hardcoded id.
+      // Derive the model from the spec via the validated registry — NOT a hardcoded id.
       // A hardcoded family model bypassed `modelIdForSlug` AND pinned a DIFFERENT
       // id (claude-sonnet-4-5) than the verified `sonnet → claude-sonnet-5`
       // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
@@ -3116,8 +2776,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * r5): the family base branch + the CONFIGURED PR target base (`opts.base`) + the
    * repo slug. The worker's prompt reads it FIRST so the in-container `gstack-ship`
    * opens the family PR against the configured base instead of its inferred repo
-   * default — preserving the legacy `openFamilyPr` `--base this.opts.base` contract
-   * (the lone load-bearing item gstack-ship cannot infer: `--head` = the checked-out
+   * default (the lone load-bearing item gstack-ship cannot infer: `--head` = the checked-out
    * branch, `--repo` = the clone's origin, title/body/CHANGELOG = the skill's own,
    * push = the skill's; ONLY the non-default target base is unknowable to it).
    * `protected` so a unit test can fixture it without a real worktree.
@@ -3256,8 +2915,7 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10) — the same
-   * extraction the single-slice ship uses (`RealBackend.readGhToken`). The token
+   * Read the host's gh OAuth token via `gh auth token` (cmr S336 r10). The token
    * lives in the host's OS keyring (not a portable hosts.yml), so we extract it with
    * gh itself and inject it as {@link SANDBOX_GH_TOKEN_ENV}. Returns undefined when gh
    * is unauthenticated / absent (the `runShipWorker` preflight then escalates — gh is
@@ -3275,7 +2933,7 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /**
    * The docker options the family ship sandbox runs under — the pure SANDBOX-CONFIG
-   * seam (mirrors `cmrSandboxConfig` / `RealBackend.shipSandboxConfig`). No
+   * seam (mirrors `cmrSandboxConfig`). No
    * container, no I/O: a unit test asserts the mounts + soul env. The ship worker
    * runs under the WRITE (`coder`) soul (it commits the bump + pushes), with codex
    * auth + the claude token + the gh token (GH_TOKEN, cmr S336 r10), NO skills mount
@@ -3292,7 +2950,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // ORCHESTRATOR_REPO too: the ship soul records a deferred finding with
     // `gh issue create --repo "$ORCHESTRATOR_REPO"`, so the family ship sandbox must
     // export it or that tracker write fails on an unset var (codex #384 — symmetric
-    // with the single-slice ship sandbox).
+    // with the other family worker sandboxes).
     const env: Record<string, string> = {
       ...SPAWNED_WORKER_ENV,
       [SANDBOX_SOUL_ENV]: SHIP_SOUL,
@@ -3301,7 +2959,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // cmr S336 r10: the in-container `gh pr create` (the family delivery) reads
     // GH_TOKEN. Set only when present (the pure seam stays tolerant; the REQUIRE-gh
-    // gate is the runShipWorker preflight — symmetric with the single-slice path).
+    // gate is the runShipWorker preflight).
     if (auth.ghToken !== undefined) env[SANDBOX_GH_TOKEN_ENV] = auth.ghToken;
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
@@ -3330,46 +2988,6 @@ export class RealFamilyBackend implements FamilyBackend {
     return { imageName: this.opts.imageName, env, mounts };
   }
 
-  // ─────────────────────────── open PR (止于 PR) — legacy inline ───────────────
-
-  /**
-   * LEGACY inline 止于 PR (push family base + `gh pr create`). RETAINED as a
-   * `protected`-style fallback the production seam no longer reaches: ADR 0026 /
-   * #336 makes 止于 PR a ship WORKER (gstack-ship via {@link dispatchShipWorker}).
-   * A direct caller (a test / a back-compat path bypassing the unified seam) may
-   * still reach it; verifyCmr always dispatches through dispatchFamilyWorker.
-   */
-  async openFamilyPr(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult> {
-    const repo = this.opts.workingRepo;
-    // ONLY here do we push the family base + open the PR — and STOP (the family
-    // orchestrator's autonomy ends at the PR; online bot cmr + merge are the
-    // separate pr-review-loop stage). This is the SOLE remote push.
-    this.sh("git", ["push", "-u", "origin", request.familyBase], repo);
-    const url = this.sh(
-      "gh",
-      [
-        "pr",
-        "create",
-        "--repo",
-        this.opts.repo,
-        "--base",
-        this.opts.base,
-        "--head",
-        request.familyBase,
-        "--fill",
-      ],
-      repo,
-    );
-    const verifiedPr = this.verifyFamilyShipPr({
-      pr: url,
-      familyBase: request.familyBase,
-    });
-    if (!verifiedPr.ok) {
-      throw new Error(verifiedPr.reason);
-    }
-    return { url: verifiedPr.prUrl, prHead: verifiedPr.headOid };
-  }
-
   // ─────────────────────────── aborted / escalate ───────────────────────────
 
   async recordAborted(_event: FamilyAbortedEvent): Promise<void> {
@@ -3392,7 +3010,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // This is the resume truth the family runner reads: no later
     // `escalation_answered` row keeps the run paused; a later answer reopens it.
     await recordFamilyEscalated(this, {
-      escalationKind: escalation.escalationKind ?? "decision",
+      escalationKind: escalation.escalationKind,
       phase: escalation.phase ?? "final",
       reason: escalation.reason,
       familyHeadAfter: escalation.familyHeadAfter,
@@ -3506,19 +3124,17 @@ export class RealFamilyBackend implements FamilyBackend {
 /**
  * The classified outcome of the integrated cmr WORKER's run (#335). One of:
  *   - `verdict`   — the worker produced a `{converged, reason?, successfulLegs}`
- *     verdict plus the leg slugs that actually reviewed (the normal case;
- *     `verifyCmr.ts` reads `converged` and enforces ADR0032's strong-leg floor);
+ *     verdict plus reviewer-reported leg evidence (the normal case; route smoke
+ *     has already checked required-leg availability before worker dispatch);
  *   - `escalate`  — the worker is model-stuck (skill missing / no leg ran / it
  *     could not produce a verdict) ⇒ the runner's escalate续跑 fork, NOT a pass;
- *   - `malformed` — the run emitted no parseable `<cmr>` tag ⇒ the gate must never
- *     read it as a pass (fail-closed).
  * Deliberately NOT the bare {@link IntegratedCmrResult}: a cmr worker also has the
- * escalate / malformed WorkerResult-level cases the bare verdict cannot carry.
+ * escalate WorkerResult-level case the bare verdict cannot carry.
  */
 export type CmrWorkerOutcome =
   | {
       readonly kind: "verdict";
-      readonly converged: boolean;
+      readonly converged?: boolean;
       readonly reason?: string;
       readonly successfulLegs: readonly string[];
       readonly skippedLegs?: readonly CmrSkippedLeg[];
@@ -3534,17 +3150,8 @@ export type CmrWorkerOutcome =
       readonly kind: "escalate";
       readonly reason: string;
       readonly diagnosis: string;
+      readonly escalation?: Escalation;
       readonly sessionId?: string;
-    }
-  | {
-      readonly kind: "malformed";
-      readonly reason: string;
-      readonly sessionId?: string;
-      readonly priorVerdict?: Extract<CmrWorkerOutcome, { readonly kind: "verdict" }>;
-      readonly cmrLegAccountingPayload?: {
-        readonly successfulLegs?: readonly string[];
-        readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-      };
     };
 
 interface CmrSkippedLeg {
@@ -3557,25 +3164,6 @@ function withCmrSession(
   sessionId: string | undefined,
 ): CmrWorkerOutcome {
   return sessionId === undefined ? outcome : { ...outcome, sessionId };
-}
-
-function cmrResultToWorkerVerdict(
-  output: CmrResult,
-): Extract<CmrWorkerOutcome, { readonly kind: "verdict" }> {
-  return {
-    kind: "verdict",
-    converged: output.converged,
-    ...(output.reason !== undefined ? { reason: output.reason } : {}),
-    successfulLegs: output.successfulLegs ?? [],
-    ...(output.skippedLegs !== undefined ? { skippedLegs: output.skippedLegs } : {}),
-    claimedFixedFindingIdentityKeys: output.claimedFixedFindingIdentityKeys,
-    priorFindingDispositions: output.priorFindingDispositions,
-    ...(output.findings !== undefined ? { findings: output.findings } : {}),
-    ...(output.findingFamilies !== undefined
-      ? { findingFamilies: output.findingFamilies }
-      : {}),
-    evidencePaths: output.evidencePaths ?? [],
-  };
 }
 
 function lastSessionIdIfPresent(result: unknown): string | undefined {
@@ -3660,43 +3248,72 @@ export interface MergerAuth {
  * completion proof and verdict source. Legacy/no-sidecar workers still require the
  * Sandcastle completion signal before stdout fallback is trusted.
  */
+/** Preserve only the reviewer-declared sentinel count; structured rows stay cargo. */
 export function cmrOutcomeFromResult(result: {
   completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
   outcomePath?: string;
-  stdout: string;
+  stdout?: string;
 }): CmrWorkerOutcome {
+  const stdout = (result.stdout ?? "").trim();
   if (result.outcomePath !== undefined) {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
         const classified = classifyCmrOutcomePayload(
           sidecar,
-          result.cmrReviewLegs ?? process.env,
           "cmr worker outcome sidecar",
         );
-        if (classified.kind !== "verdict") return classified;
-        const findingsCount = parseFindingsSentinel(result.stdout);
-        if (findingsCount === undefined) {
-          return {
-            kind: "malformed",
-            reason: "cmr reviewer output omitted required findings = x fragment",
-            priorVerdict: classified,
-          };
+        if (classified.kind === "escalate") return classified;
+        const stdoutBell = parseCmrOutcome(stdout);
+        if (stdoutBell.kind === "escalate") return stdoutBell;
+        const findingsCount = parseFindingsSentinel(stdout);
+        if (classified.kind !== "verdict") {
+          return findingsCount === undefined
+            ? classified
+            : {
+                kind: "verdict",
+                successfulLegs: [],
+                evidencePaths: [],
+                findingsCount,
+              };
         }
-        return { ...classified, findingsCount };
+        return {
+          ...classified,
+          ...(findingsCount !== undefined ? { findingsCount } : {}),
+        };
       }
-    } catch (err) {
+    } catch {
+      const stdoutBell = parseCmrOutcome(stdout);
+      if (stdoutBell.kind === "escalate") return stdoutBell;
+      const findingsCount = parseFindingsSentinel(stdout);
       return {
-        kind: "malformed",
-        reason:
-          `cmr worker outcome sidecar protocol failure: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+        ...stdoutBell,
+        ...(stdoutBell.kind === "verdict" && findingsCount !== undefined
+          ? { findingsCount }
+          : {}),
       };
     }
   }
 
-  return parseCmrOutcome(result.stdout, result.cmrReviewLegs);
+  // Stdout-only / blank-sidecar fallback preserves the same declaration channel.
+  const fromStdout = parseCmrOutcome(stdout);
+  const declared = parseFindingsSentinel(stdout);
+  if (fromStdout.kind !== "verdict") {
+    return declared === undefined
+      ? fromStdout
+      : {
+          kind: "verdict",
+          successfulLegs: [],
+          evidencePaths: [],
+          findingsCount: declared,
+        };
+  }
+  const findingsCount = declared;
+  return {
+    ...fromStdout,
+    ...(findingsCount !== undefined ? { findingsCount } : {}),
+  };
 }
 
 /** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
@@ -3712,27 +3329,40 @@ export function parseFindingsSentinel(stdout: string): number | undefined {
 const nonEmpty = z.string().trim().min(1);
 
 /**
- * The three — and ONLY three — `<cmr>` shapes (integ-cmr int-r1, Finding A;
- * mirrors shipOutcome.ts `.strict()` union). Each is `.strict()` so any EXTRA /
- * mixed key (a converged success carrying an `escalate` verdict, an off-contract
- * field) is rejected → malformed, closing the same "too-lax shape leaks the pass
- * branch" fail-open the ship parser was already hardened against. The contract is
- * the integrated CMR pass prompts' "must match one of the shapes above exactly":
- *   1. `{converged:true, successfulLegs, skippedLegs?, evidencePaths}`           — converged;
- *   2. `{converged:false, reason, successfulLegs, skippedLegs?, evidencePaths}`  — not converged;
- *   3. `{escalate:{reason, diagnosis}}`            — could not run the review.
- * Verdicts must also account for every default CMR leg: each must be either
- * successful or explicitly skipped.
- * Escalate is tried FIRST (a stuck worker carries no usable verdict).
+ * Optional CMR cargo decoders. Escalation is probed independently before these
+ * fields; none of the cargo shapes can reject a completed reviewer receipt.
  */
 const cmrLegSlugSchema = z.string().trim().min(1);
 const cmrSkippedLegSchema = z
   .object({ slug: cmrLegSlugSchema, reason: nonEmpty })
   .strict();
-const cmrVerdictLegsSchema = {
-  successfulLegs: z.array(cmrLegSlugSchema).min(1),
-  skippedLegs: z.array(cmrSkippedLegSchema).optional(),
-} as const;
+// #875 kill-axis: leg lists are worker prose at parse — non-array / empty /
+// chatty skip elements must not shape-kill the whole verdict. Required-leg
+// availability is checked earlier by route smoke, not recreated in this parser.
+function softParseSuccessfulLegs(raw: unknown): string[] {
+  // Always a string[] on the verdict type (CmrWorkerOutcome requires it).
+  // Missing / non-array / empty remains [] for the mechanical downstream reader.
+  if (!Array.isArray(raw)) return [];
+  const kept: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      kept.push(item.trim());
+    }
+  }
+  return kept;
+}
+function softParseSkippedLegs(
+  raw: unknown,
+): Array<{ slug: string; reason: string }> | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const kept: Array<{ slug: string; reason: string }> = [];
+  for (const item of raw) {
+    const parsed = cmrSkippedLegSchema.safeParse(item);
+    if (parsed.success) kept.push(parsed.data);
+  }
+  return kept;
+}
 const cmrFindingDispositionSchema = z
   .object({
     identityKey: nonEmpty,
@@ -3747,43 +3377,38 @@ const cmrFindingDispositionSchema = z
     scope: z.string().optional(),
     boundedReopen: z.string().optional(),
   })
-  .strict()
-  .superRefine((disposition, ctx) => {
-    if (disposition.status !== "accepted_suppressed") return;
-    for (const field of ["reason", "source", "scope", "boundedReopen"] as const) {
-      if (disposition[field] === undefined || disposition[field].trim() === "") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `accepted_suppressed prior finding disposition requires ${field}`,
-          path: [field],
-        });
-      }
-    }
-    if (
-      disposition.source !== undefined &&
-      !hasExplicitAcceptedSuppressionSource(disposition.source)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "accepted_suppressed prior finding disposition requires explicit user/ADR/issue source",
-        path: ["source"],
-      });
-    }
-    if (
-      disposition.boundedReopen !== undefined &&
-      !hasBoundedReopenCondition(disposition.boundedReopen)
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "accepted_suppressed prior finding disposition requires bounded reopen condition",
-        path: ["boundedReopen"],
-      });
-    }
-  });
-const cmrClosureSchema = {
-  claimedFixedFindingIdentityKeys: z.array(nonEmpty),
-  priorFindingDispositions: z.array(cmrFindingDispositionSchema),
-} as const;
+  .strict();
+// #875 kill-axis: priorFindingDispositions are opaque worker prose at parse.
+// Omitting the array, incomplete accepted_suppressed fields, unknown status
+// buckets, or extra chatty keys must NOT make the whole verdict malformed.
+// Keep only well-formed entries; drop the rest (they do not govern).
+// Governance for *finding* suppressions stays strict on
+// cmrDispositionEvidenceSchema; pass-time acceptedSuppressions still filters
+// via hasAcceptedSuppressionAuthority.
+function softParsePriorFindingDispositions(
+  raw: unknown,
+): PriorFindingDisposition[] | undefined {
+  if (raw === undefined) return undefined;
+  // Non-array chatty values (object/string/null) → empty prose, not malformed.
+  if (!Array.isArray(raw)) return [];
+  const kept: PriorFindingDisposition[] = [];
+  for (const item of raw) {
+    const parsed = cmrFindingDispositionSchema.safeParse(item);
+    if (parsed.success) kept.push(parsed.data);
+  }
+  return kept;
+}
+function softParseClaimedFixedFindingIdentityKeys(
+  raw: unknown,
+): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const kept: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && item.trim().length > 0) kept.push(item);
+  }
+  return kept;
+}
 // #604 slice 4 (ADR 0062): the CMR reviewer contract no longer carries routing
 // disposition kinds — the only disposition a reviewer may emit is the
 // accepted-suppression governance carrier.
@@ -3838,8 +3463,7 @@ export const cmrReviewerFindingSchema = z
     }
     // #604 correctness r1 (P2-a): an `accepted_suppressed` governance disposition
     // is ONLY valid on a wont_fix/rejected finding. On a fix_now finding it would
-    // otherwise validate, and classifyFindings (fix_now ⇒ blocking) would silently
-    // turn the governance suppression into a blocker. Reject it here.
+    // otherwise validate despite contradicting the suppression contract.
     if (
       finding.action !== "wont_fix" &&
       finding.action !== "rejected" &&
@@ -3883,49 +3507,6 @@ function normalizeCmrReviewerFinding(
     },
   };
 }
-const cmrFindingsSchema = {
-  findings: z.array(cmrReviewerFindingSchema).optional(),
-  // #711: malformed families degrade to no brief — never block the CMR gate.
-  findingFamilies: z.unknown().optional(),
-} as const;
-const cmrEvidenceSchema = {
-  evidencePaths: z.array(nonEmpty).min(1),
-} as const;
-const cmrConvergedSchema = z
-  .object({
-    converged: z.literal(true),
-    ...cmrVerdictLegsSchema,
-    ...cmrClosureSchema,
-    ...cmrFindingsSchema,
-    ...cmrEvidenceSchema,
-  })
-  .strict()
-  .superRefine((outcome, ctx) => {
-    const fixNowIndex = outcome.findings?.findIndex(
-      (finding) => finding.action === "fix_now",
-    );
-    if (fixNowIndex !== undefined && fixNowIndex >= 0) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["findings", fixNowIndex, "action"],
-        message: "converged CMR outcome cannot carry fix_now findings",
-      });
-    }
-  });
-const cmrRedSchema = z
-  .object({
-    converged: z.literal(false),
-    reason: nonEmpty,
-    ...cmrVerdictLegsSchema,
-    ...cmrClosureSchema,
-    ...cmrFindingsSchema,
-    ...cmrEvidenceSchema,
-  })
-  .strict();
-const cmrEscalateSchema = z
-  .object({ escalate: z.object({ reason: nonEmpty, diagnosis: nonEmpty }).strict() })
-  .strict();
-
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -3956,133 +3537,82 @@ function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<strin
  * Parse the cmr worker's `<cmr>{…}</cmr>` outcome from its stdout (#335). Pure so
  * it is unit-tested without a container.
  *
- * integ-cmr int-r1 (Finding A): classification is centralized into three
- * `.strict()` zod schemas (mirroring shipOutcome.ts). `safeParse` rejects every
- * EXTRA / mixed key, a NON-boolean `converged`, a blank `reason`, and a garbage
- * escalate (blank reason/diagnosis) → all map to malformed (fail-CLOSED: the gate
- * must NEVER read an ambiguous or off-contract run as a pass). Only the LAST
- * `<cmr>` tag is read (the worker may iterate).
+ * The independent bell probe precedes verdict cargo parsing, so unrelated schema
+ * defects cannot suppress escalation. Verdict parsing is tolerant cargo support;
+ * reviewer fate comes from its declared count. Only the LAST `<cmr>` tag is read.
  */
-export function parseCmrOutcome(
-  stdout: string,
-  routeOrEnv: CmrLegAccountingRoute = process.env,
-): CmrWorkerOutcome {
+export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
   const re = /<cmr>([\s\S]*?)<\/cmr>/g;
   let last: string | undefined;
   for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
   if (last === undefined) {
-    return { kind: "malformed", reason: "cmr worker emitted no <cmr> tag" };
+    return sparseCmrCargo();
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(last.trim());
   } catch {
-    return { kind: "malformed", reason: "cmr worker <cmr> tag was not valid JSON" };
+    return sparseCmrCargo();
   }
-  return classifyCmrOutcomePayload(parsed, routeOrEnv, "cmr worker <cmr> tag");
+  return classifyCmrOutcomePayload(parsed, "cmr worker <cmr> tag");
 }
 
 function classifyCmrOutcomePayload(
   parsed: unknown,
-  routeOrEnv: CmrLegAccountingRoute,
-  source: string,
+  _source: string,
 ): CmrWorkerOutcome {
-  // `JSON.parse` succeeds on bare literals (`null` / `true` / `5`); the strict
-  // schemas reject every non-object, but guard explicitly so the malformed
-  // message stays specific (mirrors parseShipOutcome / parseMergerOutcome).
-  if (!isJsonRecord(parsed)) {
-    return { kind: "malformed", reason: `${source} was not a JSON object` };
-  }
+  if (!isJsonRecord(parsed)) return sparseCmrCargo();
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
-  if (
-    normalizedParsed.converged === true &&
-    Array.isArray(normalizedParsed.findings) &&
-    normalizedParsed.findings.some(
-      (finding) => isJsonRecord(finding) && finding.action === "fix_now",
-    )
-  ) {
-    return {
-      kind: "malformed",
-      reason: `${source} cannot be converged while findings include fix_now actions`,
-    };
+  const decisionBell = probeWorkerDecisionBell(normalizedParsed);
+  if (decisionBell !== undefined) {
+    return { kind: "escalate", ...decisionBell };
   }
-  // Escalate FIRST — a model-stuck worker never carries a usable verdict.
-  const escalate = cmrEscalateSchema.safeParse(normalizedParsed);
-  if (escalate.success) {
-    return {
-      kind: "escalate",
-      reason: escalate.data.escalate.reason,
-      diagnosis: escalate.data.escalate.diagnosis,
-    };
-  }
-  if (cmrConvergedSchema.safeParse(normalizedParsed).success) {
-    const converged = cmrConvergedSchema.parse(normalizedParsed);
-    const legAccountingFailure = cmrLegAccountingFailure(converged, routeOrEnv);
-    if (legAccountingFailure !== undefined) {
-      return {
-        kind: "malformed",
-        reason: legAccountingFailure,
-        cmrLegAccountingPayload: {
-          successfulLegs: converged.successfulLegs,
-          ...(converged.skippedLegs !== undefined
-            ? { skippedLegs: converged.skippedLegs }
-            : {}),
-        },
-      };
-    }
-    return {
-      kind: "verdict",
-      converged: true,
-      successfulLegs: converged.successfulLegs,
-      ...(converged.skippedLegs !== undefined ? { skippedLegs: converged.skippedLegs } : {}),
-      claimedFixedFindingIdentityKeys:
-        converged.claimedFixedFindingIdentityKeys,
-      priorFindingDispositions: converged.priorFindingDispositions,
-      ...(converged.findings !== undefined
-        ? { findings: converged.findings.map(normalizeCmrReviewerFinding) }
-        : {}),
-      ...attachSanitizedFindingFamilies({}, converged.findingFamilies),
-      evidencePaths: converged.evidencePaths,
-    };
-  }
-  const red = cmrRedSchema.safeParse(normalizedParsed);
-  if (red.success) {
-    const legAccountingFailure = cmrLegAccountingFailure(red.data, routeOrEnv);
-    if (legAccountingFailure !== undefined) {
-      return {
-        kind: "malformed",
-        reason: legAccountingFailure,
-        cmrLegAccountingPayload: {
-          successfulLegs: red.data.successfulLegs,
-          ...(red.data.skippedLegs !== undefined
-            ? { skippedLegs: red.data.skippedLegs }
-            : {}),
-        },
-      };
-    }
-    return {
-      kind: "verdict",
-      converged: false,
-      reason: red.data.reason,
-      successfulLegs: red.data.successfulLegs,
-      ...(red.data.skippedLegs !== undefined ? { skippedLegs: red.data.skippedLegs } : {}),
-      claimedFixedFindingIdentityKeys: red.data.claimedFixedFindingIdentityKeys,
-      priorFindingDispositions: red.data.priorFindingDispositions,
-      ...(red.data.findings !== undefined
-        ? { findings: red.data.findings.map(normalizeCmrReviewerFinding) }
-        : {}),
-      ...attachSanitizedFindingFamilies({}, red.data.findingFamilies),
-      evidencePaths: red.data.evidencePaths,
-    };
-  }
+  const findings = Array.isArray(normalizedParsed.findings)
+    ? normalizedParsed.findings.flatMap((rawFinding) => {
+        const candidate = cmrReviewerFindingSchema.safeParse(rawFinding);
+        return candidate.success
+          ? [normalizeCmrReviewerFinding(candidate.data)]
+          : [];
+      })
+    : undefined;
+  const evidencePaths = Array.isArray(normalizedParsed.evidencePaths)
+    ? normalizedParsed.evidencePaths.filter(
+        (path): path is string => typeof path === "string" && path.trim().length > 0,
+      )
+    : [];
+  const skippedLegs = softParseSkippedLegs(normalizedParsed.skippedLegs);
+  const claimedFixedFindingIdentityKeys =
+    softParseClaimedFixedFindingIdentityKeys(
+      normalizedParsed.claimedFixedFindingIdentityKeys,
+    );
+  const priorFindingDispositions = softParsePriorFindingDispositions(
+    normalizedParsed.priorFindingDispositions,
+  );
   return {
-    kind: "malformed",
-    reason:
-      `${source} matched no valid shape (expected one of: ` +
-      "{converged:true,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
-      "{converged:false,reason,successfulLegs,skippedLegs?,claimedFixedFindingIdentityKeys,priorFindingDispositions,evidencePaths}, " +
-      "{escalate:{reason,diagnosis}} — non-empty strings, no extra keys)",
+    kind: "verdict",
+    ...(typeof normalizedParsed.converged === "boolean"
+      ? { converged: normalizedParsed.converged }
+      : {}),
+    ...(typeof normalizedParsed.reason === "string" &&
+    normalizedParsed.reason.trim().length > 0
+      ? { reason: normalizedParsed.reason }
+      : {}),
+    successfulLegs: softParseSuccessfulLegs(normalizedParsed.successfulLegs),
+    ...(skippedLegs !== undefined ? { skippedLegs } : {}),
+    ...(claimedFixedFindingIdentityKeys !== undefined
+      ? { claimedFixedFindingIdentityKeys }
+      : {}),
+    ...(priorFindingDispositions !== undefined
+      ? { priorFindingDispositions }
+      : {}),
+    ...(findings !== undefined ? { findings } : {}),
+    ...attachSanitizedFindingFamilies({}, normalizedParsed.findingFamilies),
+    evidencePaths,
   };
+}
+
+function sparseCmrCargo(): Extract<CmrWorkerOutcome, { readonly kind: "verdict" }> {
+  return { kind: "verdict", successfulLegs: [], evidencePaths: [] };
 }
 
 /**
@@ -4111,28 +3641,9 @@ export function mergerOutcomeFromResult(result: {
   return parseMergerOutcome(result.stdout);
 }
 
-/**
- * The two — and ONLY two — `<merger>` shapes (integ-cmr int-r1, Finding A; mirrors
- * shipOutcome.ts `.strict()` union). Each is `.strict()` so a resolved:true carrying
- * an EXTRA / mixed key (e.g. an `escalate` verdict, an off-contract field) is
- * rejected → NOT a clean resolve (fail-CLOSED). The contract is
- * prompts/merger_resolve_conflict.md "must match the shape above exactly":
- *   1. `{resolved:true, tradeoffs?}`               — resolved (tradeoffs OPTIONAL note);
- *   2. `{resolved:false, escalate:{reason, diagnosis}}` — escalate (could not resolve).
- * `tradeoffs` is optional (the prompt allows an empty/absent note); the escalate
- * `diagnosis` is optional at the schema layer to keep surfacing a reason-only legacy
- * escalate, but a blank `reason` no longer coerces into a resolve.
- */
+/** Resolved cargo stays strict; the decision bell is probed independently first. */
 const mergerResolvedSchema = z
   .object({ resolved: z.literal(true), tradeoffs: z.string().optional() })
-  .strict();
-const mergerEscalateSchema = z
-  .object({
-    resolved: z.literal(false),
-    escalate: z
-      .object({ reason: nonEmpty, diagnosis: nonEmpty.optional() })
-      .strict(),
-  })
   .strict();
 
 /**
@@ -4140,11 +3651,9 @@ const mergerEscalateSchema = z
  * shape in prompts/merger_resolve_conflict.md). Pure so it is unit-tested without
  * a container. Returns whether it resolved + an optional escalate reason.
  *
- * integ-cmr int-r1 (Finding A): classification is centralized into two `.strict()`
- * zod schemas (mirroring shipOutcome.ts). A resolved:true carrying any extra/mixed
- * key (the dangerous false-clean: a success payload smuggling an escalate) no
- * longer counts as resolved → fail-CLOSED to unresolved. Only the LAST `<merger>`
- * tag is read (the agent may iterate).
+ * The decision bell is an independent existence probe, so malformed sibling cargo
+ * cannot turn a worker-pressed gate into a mechanical conflict retry. Resolved cargo
+ * remains strict. Only the LAST `<merger>` tag is read (the agent may iterate).
  */
 export function parseMergerOutcome(stdout: string): {
   resolved: boolean;
@@ -4170,34 +3679,27 @@ function classifyMergerOutcomePayload(
   source: string,
 ): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
   // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"`; the
-  // strict schemas reject every non-object, but guard explicitly so the message
+  // strict resolved schema rejects every non-object, but guard explicitly so the message
   // stays specific (agy R1: a non-object must never crash or coerce to resolved).
   if (parsed === null || typeof parsed !== "object") {
     return { resolved: false, reason: `${source} was not a JSON object` };
   }
-  if (mergerResolvedSchema.safeParse(parsed).success) {
-    return { resolved: true };
-  }
-  const escalate = mergerEscalateSchema.safeParse(parsed);
-  if (escalate.success) {
+  const decisionBell = probeWorkerDecisionBell(parsed);
+  if (decisionBell !== undefined) {
     return {
-      // `reason` is a required `nonEmpty` field in mergerEscalateSchema, so it is
-      // always a non-empty string here — the old `?? diagnosis` fallback was dead
-      // code (online review r3, gemini). `diagnosis` stays an optional schema field.
       resolved: false,
-      reason: escalate.data.escalate.reason,
+      reason: decisionBell.reason,
       escalation: {
-        reason: escalate.data.escalate.reason,
-        ...(escalate.data.escalate.diagnosis !== undefined
-          ? { diagnosis: escalate.data.escalate.diagnosis }
-          : {}),
+        ...decisionBell,
         escalationKind: "decision",
         phase: "wave",
       },
     };
   }
-  // No strict schema matched → off-contract (mixed payload, extra key, blank
-  // reason, unknown shape). Fail-CLOSED: never read as a clean resolve.
+  if (mergerResolvedSchema.safeParse(parsed).success) {
+    return { resolved: true };
+  }
+  // No resolved schema matched → off-contract cargo. Never read it as a clean resolve.
   return { resolved: false, reason: "merger did not resolve" };
 }
 
@@ -4306,9 +3808,31 @@ function parseOutcomePayload(
     try {
       const sidecar = readWorkerOutcomeSidecar(outcomePath);
       if (sidecar !== undefined) {
+        if (probeWorkerDecisionBell(sidecar) === undefined) {
+          const last = extractLastTag(stdout, tag);
+          if (last !== undefined) {
+            try {
+              const compatibility = JSON.parse(last.trim());
+              if (probeWorkerDecisionBell(compatibility) !== undefined) {
+                return { parsed: compatibility, source: `${tag} worker <${tag}> tag` };
+              }
+            } catch {
+              // Compatibility cargo is unreadable and carries no extractable bell.
+            }
+          }
+        }
         return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
       }
     } catch (err) {
+      const last = extractLastTag(stdout, tag);
+      if (last !== undefined) {
+        try {
+          const parsed = JSON.parse(last.trim());
+          return { parsed, source: `${tag} worker <${tag}> tag` };
+        } catch {
+          // The sidecar and compatibility receipt are both unreadable cargo.
+        }
+      }
       return {
         error: `${tag} worker outcome sidecar protocol failure: ${err instanceof Error ? err.message : String(err)}`,
       };
@@ -4328,154 +3852,164 @@ function parseOutcomePayload(
   }
 }
 
+type ReceiptDecisionBell = {
+  readonly kind: "escalate";
+  readonly escalation: { readonly reason: string; readonly diagnosis: string };
+};
+
+type ReceiptCargo = { readonly kind: "cargo" };
+
+const RECEIPT_CARGO: ReceiptCargo = { kind: "cargo" };
+
+function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
+  const escalation = probeWorkerDecisionBell(parsed);
+  return escalation === undefined ? undefined : { kind: "escalate", escalation };
+}
+
 export function parseVerifyOutcome(
   stdout: string,
   outcomePath?: string,
-): VerifyResult | { kind: "malformed"; reason: string } {
+): VerifyResult | ReceiptDecisionBell | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "verify", outcomePath);
-  if ("error" in payload) return { kind: "malformed", reason: payload.error };
-  const parsed = payload.parsed;
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "verify worker <verify> tag was not a JSON object" };
-  }
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side (realBackend decodeOutput). Extra keys → malformed (fail-closed),
-  // matching parseCmrOutcome / parse* style and the header claim to "Mirror cmr…parse style".
-  const shape = verifyOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "verify worker <verify> tag did not satisfy verifyOutputSchema (extra keys or wrong types)",
-    };
-  }
-  const v = shape.data;
+  if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
+  const parsed = normalizeFindingFamiliesWireAliases(payload.parsed);
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  const decisionBell = receiptDecisionBell(parsed);
+  if (decisionBell !== undefined) return decisionBell;
+  if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
+  const stringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  const findingDispositions = Array.isArray(parsed.findingDispositions)
+    ? parsed.findingDispositions.filter((item): item is OnlineReviewFindingDisposition => {
+        if (!isJsonRecord(item)) return false;
+        return (
+          typeof item.identityKey === "string" &&
+          typeof item.threadId === "string" &&
+          (item.action === "fix" || item.action === "reject" || item.action === "defer") &&
+          (item.reason === undefined || typeof item.reason === "string")
+        );
+      })
+    : undefined;
+  const threadReplies = Array.isArray(parsed.threadReplies)
+    ? parsed.threadReplies.filter((item): item is OnlineReviewThreadReply =>
+        isJsonRecord(item) &&
+        typeof item.threadId === "string" &&
+        typeof item.body === "string",
+      )
+    : undefined;
+  const terminalState: VerifyWorkerTerminalState | undefined =
+    parsed.terminalState === "mergeable" ||
+    parsed.terminalState === "round_budget_exhausted" ||
+    parsed.terminalState === "decision_gate_raised"
+      ? parsed.terminalState
+      : undefined;
   const candidate: VerifyResult = {
     kind: "verify",
     ...attachSanitizedFindingFamilies(
       {
-        converged: v.converged,
-        ...(v.findingDispositions !== undefined
-          ? { findingDispositions: v.findingDispositions }
+        converged: parsed.converged,
+        ...(findingDispositions !== undefined
+          ? { findingDispositions }
           : {}),
-        ...(v.fixMarkedFindingIdentityKeys !== undefined
-          ? { fixMarkedFindingIdentityKeys: v.fixMarkedFindingIdentityKeys }
+        ...(stringArray(parsed.fixMarkedFindingIdentityKeys)
+          ? { fixMarkedFindingIdentityKeys: parsed.fixMarkedFindingIdentityKeys }
           : {}),
-        ...(v.threadReplies !== undefined ? { threadReplies: v.threadReplies } : {}),
-        ...(v.threadsToResolve !== undefined
-          ? { threadsToResolve: v.threadsToResolve }
+        ...(threadReplies !== undefined ? { threadReplies } : {}),
+        ...(stringArray(parsed.threadsToResolve)
+          ? { threadsToResolve: parsed.threadsToResolve }
           : {}),
-        ...(v.deferredIssueUrls !== undefined
-          ? { deferredIssueUrls: v.deferredIssueUrls }
+        ...(stringArray(parsed.deferredIssueUrls)
+          ? { deferredIssueUrls: parsed.deferredIssueUrls }
           : {}),
-        ...(v.terminalState !== undefined ? { terminalState: v.terminalState } : {}),
-        ...(v.isRecheck !== undefined ? { isRecheck: v.isRecheck } : {}),
+        ...(terminalState !== undefined ? { terminalState } : {}),
+        ...(typeof parsed.isRecheck === "boolean" ? { isRecheck: parsed.isRecheck } : {}),
       },
-      v.findingFamilies,
+      parsed.findingFamilies,
     ),
   };
-  if (!isValidVerifyResult(candidate)) {
-    return { kind: "malformed", reason: "verify worker <verify> tag did not satisfy isValidVerifyResult guard" };
-  }
   return candidate;
 }
 
 export function parseFixerOutcome(
   stdout: string,
   outcomePath?: string,
-): FixerResult | { kind: "malformed"; reason: string } {
+): FixerResult | ReceiptDecisionBell | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "fixer", outcomePath);
-  if ("error" in payload) return { kind: "malformed", reason: payload.error };
+  if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "fixer worker <fixer> tag was not a JSON object" };
-  }
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side. Extra keys → malformed (fail-closed).
-  const shape = fixerOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "fixer worker <fixer> tag did not satisfy fixerOutputSchema (extra keys or wrong types)",
-    };
-  }
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  const decisionBell = receiptDecisionBell(parsed);
+  if (decisionBell !== undefined) return decisionBell;
+  if (typeof parsed.committed !== "boolean") return RECEIPT_CARGO;
   const candidate: FixerResult = {
     kind: "fixer",
-    committed: shape.data.committed,
-    ...(shape.data.alreadySatisfied === true ? { alreadySatisfied: true } : {}),
-    ...(shape.data.fixCommitSha !== undefined
-      ? { fixCommitSha: shape.data.fixCommitSha }
+    committed: parsed.committed,
+    ...(typeof parsed.alreadySatisfied === "boolean"
+      ? { alreadySatisfied: parsed.alreadySatisfied }
+      : {}),
+    ...(typeof parsed.fixCommitSha === "string" && parsed.fixCommitSha.length > 0
+      ? { fixCommitSha: parsed.fixCommitSha }
       : {}),
   };
-  if (!isValidFixerResult(candidate)) {
-    return { kind: "malformed", reason: "fixer worker <fixer> tag did not satisfy isValidFixerResult guard" };
-  }
   return candidate;
 }
 
 export function parseCleanupOutcome(
   stdout: string,
   outcomePath?: string,
-): CleanupResult | { kind: "malformed"; reason: string } {
+): CleanupResult | ReceiptDecisionBell | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "cleanup", outcomePath);
-  if ("error" in payload) return { kind: "malformed", reason: payload.error };
+  if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "cleanup worker <cleanup> tag was not a JSON object" };
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  const decisionBell = receiptDecisionBell(parsed);
+  if (decisionBell !== undefined) return decisionBell;
+  if (typeof parsed.terminal !== "boolean" || typeof parsed.ok !== "boolean") {
+    return RECEIPT_CARGO;
   }
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side. Extra keys → malformed (fail-closed).
-  const shape = cleanupOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "cleanup worker <cleanup> tag did not satisfy cleanupOutputSchema (extra keys or wrong types)",
-    };
-  }
+  const branchOutcome =
+    parsed.branchOutcome === "deleted" ||
+    parsed.branchOutcome === "already_gone" ||
+    parsed.branchOutcome === "skipped_tip_drift" ||
+    parsed.branchOutcome === "skipped_pr_not_merged" ||
+    parsed.branchOutcome === "skipped_precondition"
+      ? parsed.branchOutcome
+      : undefined;
   const candidate: CleanupResult = {
     kind: "cleanup",
-    terminal: shape.data.terminal,
-    ok: shape.data.ok,
-    ...(shape.data.issuesClosed !== undefined
-      ? { issuesClosed: shape.data.issuesClosed }
+    terminal: parsed.terminal,
+    ok: parsed.ok,
+    ...(Array.isArray(parsed.issuesClosed) &&
+    parsed.issuesClosed.every(
+      (issue): issue is number => Number.isInteger(issue) && (issue as number) > 0,
+    )
+      ? { issuesClosed: parsed.issuesClosed }
       : {}),
-    ...(shape.data.parentIssueClosed === true
-      ? { parentIssueClosed: true }
+    ...(typeof parsed.parentIssueClosed === "boolean"
+      ? { parentIssueClosed: parsed.parentIssueClosed }
       : {}),
-    ...(shape.data.branchOutcome !== undefined
-      ? { branchOutcome: shape.data.branchOutcome }
+    ...(branchOutcome !== undefined
+      ? { branchOutcome }
       : {}),
-    ...(shape.data.skippedReasons !== undefined
-      ? { skippedReasons: shape.data.skippedReasons }
+    ...(Array.isArray(parsed.skippedReasons) &&
+    parsed.skippedReasons.every((reason): reason is string => typeof reason === "string")
+      ? { skippedReasons: parsed.skippedReasons }
       : {}),
   };
-  if (!isValidCleanupResult(candidate)) {
-    return { kind: "malformed", reason: "cleanup worker <cleanup> tag did not satisfy isValidCleanupResult guard" };
-  }
   return candidate;
 }
 
 export function parseDocReleaseOutcome(
   stdout: string,
   outcomePath?: string,
-): DocReleaseResult | { kind: "malformed"; reason: string } {
+): DocReleaseResult | ReceiptDecisionBell | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "docRelease", outcomePath);
-  if ("error" in payload) return { kind: "malformed", reason: payload.error };
+  if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
-  if (parsed === null || typeof parsed !== "object") {
-    return { kind: "malformed", reason: "docRelease worker <docRelease> tag was not a JSON object" };
-  }
-  // #596 r2 (R2-1): strict key validation via the same .strict() schema used on
-  // single-slice side. Extra keys → malformed (fail-closed).
-  const shape = docReleaseOutputSchema.safeParse(parsed);
-  if (!shape.success) {
-    return {
-      kind: "malformed",
-      reason: "docRelease worker <docRelease> tag did not satisfy docReleaseOutputSchema (extra keys or wrong types)",
-    };
-  }
-  const candidate: DocReleaseResult = { kind: "docRelease", released: shape.data.released };
-  if (!isValidDocReleaseResult(candidate)) {
-    return { kind: "malformed", reason: "docRelease worker <docRelease> tag did not satisfy isValidDocReleaseResult guard" };
-  }
+  if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
+  const decisionBell = receiptDecisionBell(parsed);
+  if (decisionBell !== undefined) return decisionBell;
+  if (typeof parsed.released !== "boolean") return RECEIPT_CARGO;
+  const candidate: DocReleaseResult = { kind: "docRelease", released: parsed.released };
   return candidate;
 }

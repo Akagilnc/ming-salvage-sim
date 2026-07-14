@@ -60,7 +60,6 @@ const result = await runFamilyDriver({
   soulsDir: `${ORCH}/image/souls`,
   ledgerDir: join(homedir(), ".sc-orchestrator", "dogfood-362-ledger"),
   imageName: imageTag,
-  skillsMount: join(homedir(), ".claude", "skills"),
   // 无 sh override、无 backend factory override = 真编排器 vanilla 跑
 });
 

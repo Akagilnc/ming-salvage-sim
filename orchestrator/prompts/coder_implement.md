@@ -20,6 +20,10 @@ retry, escalate instead of guessing from stale local context.
 
 Do not use `.orchestrator-snapshot.json` as execution input.
 
+Before reporting completion, verify that your deliverable is committed and a
+real commit exists in the worktree history. If there is no deliverable, exit
+truthfully as failed or explain it through your decision gate.
+
 If `.relay-focus.md` is present at the worktree root, read that baton handoff
 brief (`state_summary` / remaining) from a prior resource-relay (#686) before
 continuing. Continue from that scene — do not reset or discard uncommitted work
@@ -70,8 +74,7 @@ Rules:
 - **`committed` / `commitsAdded` must ALWAYS reflect the REAL git state, even when
   escalating.** `commitsAdded` must equal the number of `git commit` commands you
   actually made in this worker run; if you make multiple commits, report the full
-  count. The runner derives final truth from git and records any mismatch as
-  discrepancy telemetry. So
+  count. The runner transports your report without adjudicating it. So
   if you already made a baseline / fix commit and THEN hit an escalating blocker in
   the second review, report `committed:true` with the real count PLUS `escalate` —
   NOT `committed:false, commitsAdded:0`. `escalate` is orthogonal to the count.
