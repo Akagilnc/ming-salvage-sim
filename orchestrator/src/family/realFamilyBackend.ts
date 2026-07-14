@@ -59,9 +59,8 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import {
   reaskReceiptOrFallback,
-  reaskUnreadableReceiptOrFallback,
+  resumeTypedReceiptOrFallback,
   workerReceiptOutput,
-  workerReceiptIsReadable,
   workerReceiptSchema,
 } from "../receiptRecovery.js";
 
@@ -1703,11 +1702,12 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
           });
-          const receiptResult = await reaskUnreadableReceiptOrFallback({
-            unreadable: this.familyCoderReceiptIsUnreadable(
+          const receiptResult = await resumeTypedReceiptOrFallback({
+            receiptWasUnreadable: this.familyCoderReceiptWasUnreadable(
               result as { readonly output?: unknown }, outcomeLanding.path,
             ),
-            reask: () => this.reaskFamilyCoderReceipt(spec, ctx, auth, outcomeLanding, result),
+            sessionId: lastSessionId(result),
+            resume: () => this.reaskFamilyCoderReceipt(spec, ctx, auth, outcomeLanding, result),
             fallback: () => result,
             worker: "family coder",
           });
@@ -1927,14 +1927,17 @@ export class RealFamilyBackend implements FamilyBackend {
     return workerReceiptOutput("coder", workerReceiptSchema("coder"));
   }
 
-  private familyCoderReceiptIsUnreadable(
+  private familyCoderReceiptWasUnreadable(
     result: { readonly output?: unknown },
     outcomePath: string,
   ): boolean {
-    if (workerReceiptIsReadable("coder", result.output)) return false;
     try {
-      const raw = readRequiredWorkerOutcomeSidecar(outcomePath);
-      return !workerReceiptIsReadable("coder", raw);
+      // This is the existing coder transport parser, not a second receipt
+      // contract gate. Sandcastle alone validates the retried typed receipt.
+      const raw = result.output ?? readRequiredWorkerOutcomeSidecar(outcomePath);
+      if (probeWorkerDecisionBell(raw) !== undefined) return false;
+      parseCoderSelfReport(raw);
+      return false;
     } catch {
       return true;
     }

@@ -66,9 +66,8 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
   reaskReceiptOrFallback,
-  reaskUnreadableReceiptOrFallback,
+  resumeTypedReceiptOrFallback,
   workerReceiptOutput,
-  workerReceiptIsReadable,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
 
@@ -3012,18 +3011,25 @@ export class RealBackend implements Backend {
       );
     }
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-    if (
-      spec.role === "coder" &&
-      !typedOutputUsed &&
-      !workerReceiptIsReadable("coder", raw)
-    ) {
+    const coderReceiptWasUnreadable = (() => {
+      if (spec.role !== "coder" || typedOutputUsed) return false;
+      if (probeWorkerDecisionBell(raw) !== undefined) return false;
+      try {
+        parseCoderSelfReport(raw);
+        return false;
+      } catch {
+        return true;
+      }
+    })();
+    if (coderReceiptWasUnreadable) {
       const sessionId = lastSessionId(result);
       if (sessionId !== undefined) {
-        return await reaskUnreadableReceiptOrFallback({
-          unreadable: true,
-          reask: async () => {
+        return await resumeTypedReceiptOrFallback({
+          receiptWasUnreadable: true,
+          sessionId,
+          resume: async (resumeSession) => {
             const reasked = await this.reaskCoderReceipt(
-            spec, worktree, issueNumber, box, sessionId, options,
+            spec, worktree, issueNumber, box, resumeSession, options,
             );
             return {
               output: this.decodeOutput(
