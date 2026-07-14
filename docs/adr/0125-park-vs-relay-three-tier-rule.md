@@ -4,7 +4,7 @@ Date: 2026-07-10
 
 ## Status
 
-Accepted（2026-07-14 起由 ADR 0134 收窄候选耗尽终局）
+Accepted；ADR 0134 拟取代其中“无活棒 → 静默 park 兜底”的候选耗尽规则
 
 ## Decision
 
