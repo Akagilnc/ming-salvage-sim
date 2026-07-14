@@ -49,22 +49,22 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 ## 开发流程（想法 → merge，2026-06-17 定，本项目试行）
 
-> **完整流程文档（Matt Pocock 整套，严格按 Matt 试水）→ [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**（canonical 顺序 / decision-mapping 大目标推雾 / to-prd 两层设计 / 设计六层阶梯 / triage 入口匝道 / 全 skill 速查 / 追踪模型 / 切片并行全在那）。
+> **完整流程文档（Matt Pocock 整套，严格按 Matt 试水）→ [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**（canonical 顺序 / decision-mapping 大目标推雾 / to-spec 两层设计 / 设计六层阶梯 / triage 入口匝道 / 全 skill 速查 / 追踪模型 / 切片并行全在那）。
 > **标签 Matt 纯化（2026-06-17）**：全仓删掉 `priority/*` `area/*` `type/*` 那套，**只剩 7 个** —— `bug`/`enhancement`（category）+ `needs-triage`/`needs-info`/`ready-for-agent`/`ready-for-human`/`wontfix`（state）。
 
-**贯穿原则**：持久件做小做单一（一条 ADR 一个不可逆决策、一个 issue 一个切片）；**设计分层落（六层阶梯见 DEV_WORKFLOW.md）**——不可逆决策→ADR、架构级（模块/接口/契约/schema）→`to-prd` 的 Implementation Decisions、**只有代码级实现（真函数/文件结构）才留 `/tdd` 现场长**（「最后责任时刻」：可逆→写码时长；设计时「忽然难受」=越线信号）。⚠️ 别把「详设留 TDD 长」误读成「to-prd 之后到代码之间无设计」——架构级早在 `to-prd` 钉了。跨 session 靠文档 + 你本人 re-seed，**handoff ≠ 交接**（同一个你驱动）；session 边界画在「上下文满/脏」处、不钉死在某步，小功能可一个 session 连做。
+**贯穿原则**：持久件做小做单一（一条 ADR 一个不可逆决策、一个 issue 一个切片）；**设计分层落（六层阶梯见 DEV_WORKFLOW.md）**——不可逆决策→ADR、架构级（模块/接口/契约/schema）→`to-spec` 的 Implementation Decisions、**只有代码级实现（真函数/文件结构）才留 `/tdd` 现场长**（「最后责任时刻」：可逆→写码时长；设计时「忽然难受」=越线信号）。⚠️ 别把「详设留 TDD 长」误读成「to-spec 之后到代码之间无设计」——架构级早在 `to-spec` 钉了。跨 session 靠文档 + 你本人 re-seed，**handoff ≠ 交接**（同一个你驱动）；session 边界画在「上下文满/脏」处、不钉死在某步，小功能可一个 session 连做。
 
-**流水线 + skill（Matt canonical 顺序；标〔项目加〕的是 Matt 之外本项目的闸）**：
-1. 想法 → **`grill-with-docs`**（有 codebase）/ `grill-me`（无）→ 逼问（核心引擎 `/grilling`），决策结晶**当场**写 **tiny 单决策 ADR** + `CONTEXT.md` 词表。**逼问那一步在这、不在 to-prd；止于不可逆决策。** 大/模糊、一次 session 定不完的，先 **`decision-mapping`** 建决策图逐票推雾、路清再往下。
+**流水线 + skill（Matt canonical 顺序；标〔项目加〕的是 Matt 之外本项目的闸）**。⚠️ 2026-07-14 上游改名：`to-prd`→`to-spec`（纯改名，产物即 PRD）、`to-issues`→`to-tickets`（改名 + 内建原生挂接）；旧名已失效，历史 ADR/log 里的旧名不回改：
+1. 想法 → **`grill-with-docs`**（有 codebase）/ `grill-me`（无）→ 逼问（核心引擎 `/grilling`），决策结晶**当场**写 **tiny 单决策 ADR** + `CONTEXT.md` 词表。**逼问那一步在这、不在 to-spec；止于不可逆决策。** 大/模糊、一次 session 定不完的，先 **`decision-mapping`** 建决策图逐票推雾、路清再往下。
 2. （可选）`prototype` 去风险（状态/UI 开放问题）——`handoff` 出/回桥接（原型在独立 session 跑），答案落 ADR/issue/NOTES、原型删。
-3. **`to-prd`** → **完整 PRD**（不访谈，只综合 grill 的结论）：详尽 user stories + **Implementation Decisions + Testing Decisions（两层设计）** + Out of Scope；发 issue tracker 当父/epic、贴 `ready-for-agent`。**禁文件路径/代码片段。**
-4. **`to-issues`** 切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**⚠️ 切完必做原生补救**：① 子挂父 **native sub-issue**（`POST issues/<父>/sub_issues`）② 子↔子 **native blocked_by**（`POST issues/<blocked>/dependencies/blocked_by`）③ **撤父工作态标签**变 tracker（Matt #292）。命令见 [DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)。
-5. 〔项目加〕设计评审（**在 to-issues 之后**——cmr 审含切片布线的设计全家；#470/#471/#478 实践序，2026-07-03 修订原 4/5 对调）：`ak-cross-m-review`（本地 cmr）+ 线上 bot → 合 ADR、Status→Accepted。**闸前 hold**：切片在本闸收敛前不带 `ready-for-agent`（防扫标签的 agent 抢跑未评审切片），merge+Accepted 后统一贴回。〈设计侧到此结束〉
-6. **逐切片各开新 session `implement`**（canonical 构建步；自治/编排器里不直接 invoke umbrella，内联其流程）：约定 seam 调 `/tdd`（never refactor while RED）→ 跑 typecheck/单测/全量 → baseline commit；**代码级实现现场长**（架构级早在 to-prd 钉了）。硬 bug → `diagnosing-bugs`、架构清理 → `improve-codebase-architecture`。
+3. **`to-spec`**（旧名 to-prd，产物即 PRD）→ **完整 PRD**（不访谈，只综合 grill 的结论）：详尽 user stories + **Implementation Decisions + Testing Decisions（两层设计）** + Out of Scope；发 issue tracker 当父/epic、贴 `ready-for-agent`。**禁文件路径/代码片段。**
+4. **`to-tickets`**（旧名 to-issues，2026-07-14 上游改名）切 thin vertical-slice 子 issue（带 Parent + 验收 + HITL/AFK + blocked-by）。**新版已内建**①子挂父 native sub-issue ②子↔子 native blocked_by（skill 原文「Use the platform's native blocking / sub-issue relationship」）。**⚠️ 切完仍需手动**：③ **撤父工作态标签**变 tracker（skill 明令 Do NOT modify parent，这步归我们）；另注意它**默认自动贴 `ready-for-agent`**——设计闸前调用必须明示「先不贴标」（见步骤 5 闸前 hold）。核验/手补命令见 [DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)。
+5. 〔项目加〕设计评审（**在 to-tickets 之后**——cmr 审含切片布线的设计全家；#470/#471/#478 实践序，2026-07-03 修订原 4/5 对调）：`ak-cross-m-review`（本地 cmr）+ 线上 bot → 合 ADR、Status→Accepted。**闸前 hold**：切片在本闸收敛前不带 `ready-for-agent`（防扫标签的 agent 抢跑未评审切片），merge+Accepted 后统一贴回。〈设计侧到此结束〉
+6. **逐切片各开新 session `implement`**（canonical 构建步；自治/编排器里不直接 invoke umbrella，内联其流程）：约定 seam 调 `/tdd`（never refactor while RED）→ 跑 typecheck/单测/全量 → baseline commit；**代码级实现现场长**（架构级早在 to-spec 钉了）。硬 bug → `diagnosing-bugs`、架构清理 → `improve-codebase-architecture`。
 7. 〔项目加〕baseline commit 后代码评审：手动/单 session 场景单评用 `/code-review`（Standards + Spec 两轴；它评 `fixed-point...HEAD`，所以必须已有 commit）；**编排器 coder worker 不起 reviewer、不跑 `/code-review`**，单评由 runner 派出的 `/code-review` reviewer worker 承担。然后 per-slice `ak-cross-m-review`（**本项目手动多-session 开发流**的逐切片 cmr：codex+agy 跨家族——区别于 `## Skill routing` 里 #330 **编排器容器 worker** 的分解，那里 `/code-review` 是 runner 派发的 Matt 单评 reviewer worker、`ak-cross-m-review` 仍作整合 cmr）+ ship-pre 双闸 + 线上 bot；`gstack-ship` 收尾。评审修复一律追加新 commit，禁止 amend。
 8. merge commit（不 squash）→ 关子 issue；全完 → 关父 issue。
 
-> **分叉**：步骤 3→4（`to-prd`→`to-issues`）只在「多 session 大活」才走；**单 session 能完的小活直接在同一窗口 implement、跳过 3-5（含步骤 5 设计评审闸——小活无设计文档，不涉）**。步骤 1→3→4 留**同一不间断上下文窗口**（别中途 compact）；每个子 issue **开新 session** 做 6。`triage` 不在这条主线上——它是**入口匝道**，只处理你没创建的外来 issue；`to-issues` 的产出规格即 agent-ready、不再 triage（但贴 `ready-for-agent` **标签**的时机受步骤 5 闸前 hold 约束——闸收敛后统一贴）。
+> **分叉**：步骤 3→4（`to-spec`→`to-tickets`）只在「多 session 大活」才走；**单 session 能完的小活直接在同一窗口 implement、跳过 3-5（含步骤 5 设计评审闸——小活无设计文档，不涉）**。步骤 1→3→4 留**同一不间断上下文窗口**（别中途 compact）；每个子 issue **开新 session** 做 6。`triage` 不在这条主线上——它是**入口匝道**，只处理你没创建的外来 issue；`to-tickets` 的产出规格即 agent-ready、不再 triage（但贴 `ready-for-agent` **标签**的时机受步骤 5 闸前 hold 约束——闸收敛后统一贴）。
 
 **两层分工（2026-06-16 定）**：策划+架构 session 出 ADR，开发 session 读 ADR 做（同一 agent 可兼策划/架构两角，但当下分清在哪层、别拿字段/schema/现有代码卡玩法设计）。
 **文档三层（采 Matt Pocock grill-with-docs DDD）**：① `CONTEXT.md`=领域词表（是什么、零实现）；② `docs/adr/`=非显然决策的为什么（**ADR-FORMAT：1-3 句、单决策、稀有**，hard-to-reverse / surprising / real-tradeoff 才建，不是 spec；大模板会把可逆细节吸进来＝过度设计，避开）；③ 详设/代码任务 → issue；④ 实现 → 代码。给 AI 最薄一层。
