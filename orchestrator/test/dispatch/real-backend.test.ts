@@ -1581,23 +1581,15 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("re-asks the coder session with Sandcastle typed output when its tail receipt is absent", async () => {
+  it("does not re-ask multi-iter coder cargo when the tail receipt is absent (opaque cargo)", async () => {
+    // #899 Out of Scope: coder ordinary cargo is never a typed Sandcastle repair loop.
     const backend = makeBackend();
-    backend.agentResults.push(
-      agentRunResult({
-        completionSignal: "CODER_STEP_COMPLETE",
-        stdout: "coder completed implementation but omitted its receipt",
-        commits: [{ sha: "abc123" }],
-        sessionId: "sess-coder-reask",
-      }),
-      agentRunResult({
-        completionSignal: "CODER_STEP_COMPLETE",
-        stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>',
-        commits: [],
-        sessionId: "sess-coder-reask",
-        output: { committed: true, commitsAdded: 1 },
-      }),
-    );
+    backend.agentResult = agentRunResult({
+      completionSignal: "CODER_STEP_COMPLETE",
+      stdout: "coder completed implementation but omitted its receipt",
+      commits: [{ sha: "abc123" }],
+      sessionId: "sess-coder-opaque",
+    });
 
     await expect(
       backend.runStep(coderSpec, {
@@ -1606,44 +1598,36 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         path: "/tmp/worktree/issue-899",
       }),
     ).resolves.toMatchObject({
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      sessionId: "sess-coder-opaque",
     });
 
-    expect(backend.agentOptions).toHaveLength(2);
-    const reask = backend.agentOptions[1]!;
-    expect(reask.resumeSession).toBe("sess-coder-reask");
-    expect(reask.maxIterations).toBe(1);
-    expect(reask.promptFile).toMatch(/coder_receipt_reask\.md$/);
-    expect(reask.output).toMatchObject({ tag: "coder", maxRetries: 2 });
+    expect(backend.agentOptions).toHaveLength(1);
+    expect(backend.agentOptions[0]!.output).toBeUndefined();
+    expect(backend.agentOptions[0]!.resumeSession).toBeUndefined();
   });
 
-  it("re-asks the coder session when its tail receipt omits a required field", async () => {
+  it("does not re-ask multi-iter coder cargo when the tail receipt omits a cargo field", async () => {
     const backend = makeBackend();
-    backend.agentResults.push(
-      agentRunResult({
-        stdout: '<coder>{"committed": true}</coder>',
-        commits: [{ sha: "abc123" }],
-        sessionId: "sess-coder-malformed-reask",
-      }),
-      agentRunResult({
-        stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>',
-        commits: [],
-        sessionId: "sess-coder-malformed-reask",
-        output: { committed: true, commitsAdded: 1 },
-      }),
-    );
+    backend.agentResult = agentRunResult({
+      stdout: '<coder>{"committed": true}</coder>',
+      commits: [{ sha: "abc123" }],
+      sessionId: "sess-coder-partial-cargo",
+    });
 
     await expect(backend.runStep(coderSpec, {
       branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
     })).resolves.toMatchObject({
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      // Opaque cargo path: decode tolerates missing commitsAdded as 0 without
+      // a second Sandcastle invocation / typed Output.object repair.
+      output: { kind: "coder", committed: true, commitsAdded: 0 },
     });
 
-    expect(backend.agentOptions).toHaveLength(2);
-    expect(backend.agentOptions[1]!.resumeSession).toBe("sess-coder-malformed-reask");
+    expect(backend.agentOptions).toHaveLength(1);
+    expect(backend.agentOptions[0]!.output).toBeUndefined();
   });
 
-  it("keeps the existing coder fallback when a missing receipt has no session to re-ask", async () => {
+  it("keeps a single Sandcastle invocation when a missing coder receipt has no session", async () => {
     const backend = makeBackend();
     backend.agentResult = {
       branch: "test-agent-branch",
@@ -1662,62 +1646,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
     expect(backend.agentOptions).toHaveLength(1);
-  });
-
-  it("keeps the existing coder fallback when native receipt retries are exhausted", async () => {
-    const backend = makeBackend();
-    backend.agentResults.push(agentRunResult({
-      stdout: "coder omitted its receipt",
-      commits: [{ sha: "abc123" }],
-      sessionId: "sess-coder-reask-exhausted",
-    }));
-    backend.agentFailures.push(new StructuredOutputError("bad output", {
-      tag: "coder", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "sess-coder-reask-exhausted",
-    }));
-
-    await expect(backend.runStep(coderSpec, {
-      branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
-    })).resolves.toMatchObject({
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-      sessionId: "sess-coder-reask-exhausted",
-    });
-    expect(backend.agentOptions).toHaveLength(2);
-  });
-
-  it("keeps the existing coder fallback when receipt recovery loses its session", async () => {
-    const backend = makeBackend();
-    backend.agentResults.push(agentRunResult({
-      stdout: "coder omitted its receipt",
-      commits: [{ sha: "abc123" }],
-      sessionId: "sess-coder-reask-missing",
-    }));
-    backend.agentFailures.push(new Error("resume session sess-coder-reask-missing not found"));
-
-    await expect(backend.runStep(coderSpec, {
-      branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
-    })).resolves.toMatchObject({
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-      sessionId: "sess-coder-reask-missing",
-    });
-    expect(backend.agentOptions).toHaveLength(2);
-  });
-
-  it("keeps the existing coder fallback when its provider cannot resume", async () => {
-    const backend = makeBackend();
-    backend.agentResults.push(agentRunResult({
-      stdout: "coder omitted its receipt",
-      commits: [{ sha: "abc123" }],
-      sessionId: "sess-coder-non-resumable",
-    }));
-    backend.agentFailures.push(new Error("opencode does not support resumeSession"));
-
-    await expect(backend.runStep(coderSpec, {
-      branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
-    })).resolves.toMatchObject({
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-      sessionId: "sess-coder-non-resumable",
-    });
-    expect(backend.agentOptions).toHaveLength(2);
   });
 
   it("keeps reviewer fallback topology when typed receipt retries are exhausted", async () => {
@@ -1758,20 +1686,26 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
-  it("keeps the resumed coder's existing fallback when native receipt retries are exhausted", async () => {
+  it("does not attach typed cargo output when resuming a multi-iter coder", async () => {
+    // Resume is maxIterations:1, but #899 keeps coder cargo opaque — only
+    // reviewer/open-count + decision-gate traffic use Output.object maxRetries.
     const backend = makeBackend();
-    backend.agentFailures.push(new StructuredOutputError("bad output", {
-      tag: "coder", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "prior-coder-session",
-    }));
+    backend.agentResult = agentRunResult({
+      stdout: "resumed worker completed without a cargo tag",
+      commits: [{ sha: "abc123" }],
+      sessionId: "prior-coder-session",
+    });
 
     await expect(backend.resumeSession(
       coderSpec,
       { branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899" },
       "prior-coder-session",
-    )).resolves.toEqual({
+    )).resolves.toMatchObject({
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "prior-coder-session",
     });
+    expect(backend.lastAgentOptions?.output).toBeUndefined();
+    expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
   it("preserves a missing reviewer count as unusable cargo for the fixer", async () => {

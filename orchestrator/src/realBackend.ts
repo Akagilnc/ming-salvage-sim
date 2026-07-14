@@ -66,7 +66,6 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
   reaskReceiptOrFallback,
-  resumeTypedReceiptRun,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
@@ -2786,56 +2785,14 @@ export class RealBackend implements Backend {
     };
   }
 
-  /** Build the output definition for a step's role. */
-  private outputFor(spec: StepSpec): sc.OutputDefinition {
-    const tag = spec.role === "reviewer" ? "review" : spec.role;
-    const schema =
-      spec.role === "coder" || spec.role === "reviewer"
-        ? workerReceiptSchema(spec.role)
-        : z.unknown();
-    return workerReceiptOutput(tag, schema);
-  }
-
   /**
-   * Re-ask a multi-iteration coder for its final receipt through Sandcastle's
-   * native structured-output recovery.  Normal coder runs cannot declare an
-   * `output` (Sandcastle requires a single iteration), so this is only entered
-   * after their tail receipt cannot be extracted.  Reviewer and normal resume
-   * paths already carry {@link outputFor}, whose `maxRetries` lets Sandcastle
-   * perform this same recovery within their original call.
+   * Typed Sandcastle output is only for ADR 0131 traffic signals on single-iter
+   * seats (#899): reviewer open-count / findings envelope (+ decision bell).
+   * Coder cargo stays opaque — no Output.object, no homemade re-ask loop.
    */
-  private async reaskCoderReceipt(
-    spec: StepSpec,
-    worktree: WorktreeHandle,
-    issueNumber: number,
-    box: ReturnType<RealBackend["box"]>,
-    sessionId: string,
-    options?: AgentStepRunOptions,
-  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const pool = isBillingPoolDispatchId(options?.billingPool)
-      ? options.billingPool
-      : undefined;
-    return await this.runAgentSandbox({
-      name: `${spec.id}-${spec.role}-receipt-reask`,
-      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-      cwd: worktree.path,
-      sandbox: box.sandbox,
-      agent: agentForSlug(spec.model, effortForLiveOfficer(spec.model, spec), pool),
-      maxIterations: 1,
-      completionSignal: spec.completionSignal,
-      branchStrategy: { type: "head" },
-      resumeSession: sessionId,
-      // A malformed final receipt is transport-only: preserve the warm session
-      // but ask for the receipt, never replay the completed coder prompt.
-      promptFile: join(this.opts.promptsDir, "coder_receipt_reask.md"),
-      output: this.outputFor(spec),
-      quotaProbe: {
-        modelRef: spec.model,
-        step: spec.id,
-        worktreePath: worktree.path,
-        issueNumber,
-      },
-    });
+  private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
+    if (spec.role !== "reviewer") return undefined;
+    return workerReceiptOutput("review", workerReceiptSchema("reviewer"));
   }
 
   /**
@@ -2960,8 +2917,11 @@ export class RealBackend implements Backend {
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
+    const typedOutput = this.outputFor(spec);
     const typedOutputUsed =
-      spec.maxIter === 1 && options?.outcomeLanding === undefined;
+      typedOutput !== undefined &&
+      spec.maxIter === 1 &&
+      options?.outcomeLanding === undefined;
     const box = this.box(issueNumber, spec, options);
     try {
     const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
@@ -2990,11 +2950,10 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // Structured output only when Sandcastle should own tag parsing. When the
-      // runner supplied an outcome sidecar, do not pass `output`: Sandcastle
-      // would throw on a bad/missing compatibility tag before the backend can
-      // read the sidecar machine protocol.
-      ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
+      // #899: only reviewer traffic signals attach Output.object(+maxRetries).
+      // Coder cargo stays opaque; sidecar-mounted runs skip typed output so the
+      // machine protocol can land before Sandcastle validates a tag.
+      ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.
       quotaProbe: {
@@ -3005,7 +2964,9 @@ export class RealBackend implements Backend {
       },
       });
     } catch (err) {
-      // Initial typed workers share the same native failure mapping as coder re-asks.
+      // Typed reviewer seats only: map Sandcastle exhaust / non-resumable to the
+      // pre-existing empty-cargo fallback topology. Coder never enters here via
+      // Output.object (#899 opaque cargo).
       return await reaskReceiptOrFallback(
         async () => { throw err; },
         () => ({ output: this.decodeOutput(spec, undefined), sessionId: undefined }),
@@ -3013,42 +2974,6 @@ export class RealBackend implements Backend {
       );
     }
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-    const coderReceiptWasUnreadable = (() => {
-      if (spec.role !== "coder" || typedOutputUsed) return false;
-      if (probeWorkerDecisionBell(raw) !== undefined) return false;
-      try {
-        parseCoderSelfReport(raw);
-        return false;
-      } catch {
-        return true;
-      }
-    })();
-    if (coderReceiptWasUnreadable) {
-      const sessionId = lastSessionId(result);
-      if (sessionId !== undefined) {
-        return await resumeTypedReceiptRun({
-          result: {
-            output: this.decodeOutput(spec, undefined),
-            sessionId,
-          },
-          receiptWasUnreadable: true,
-          sessionId,
-          resume: async (resumeSession) => {
-            const reasked = await this.reaskCoderReceipt(
-            spec, worktree, issueNumber, box, resumeSession, options,
-            );
-            return {
-              output: this.decodeOutput(
-                spec,
-                this.rawOutputFor(reasked, spec, true, options),
-              ),
-              sessionId: lastSessionId(reasked) ?? sessionId,
-            };
-          },
-          worker: `${spec.id}-${spec.role}`,
-        });
-      }
-    }
     const output = this.decodeOutput(spec, raw);
     return { output, sessionId: lastSessionId(result) };
     } finally {
@@ -3077,7 +3002,9 @@ export class RealBackend implements Backend {
     try {
       const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
       this.assertProviderAuth(spec.model, pool, box.providerAuth);
-      const typedOutputUsed = options?.outcomeLanding === undefined;
+      const typedOutput = this.outputFor(spec);
+      const typedOutputUsed =
+        typedOutput !== undefined && options?.outcomeLanding === undefined;
       const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -3097,11 +3024,8 @@ export class RealBackend implements Backend {
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
-        // A resume runs maxIterations:1, so typed output is valid unless the
-        // outcome sidecar is mounted. With a sidecar, keep Sandcastle from
-        // pre-parsing the compatibility tag before rawOutputFor can read the
-        // runner-owned file.
-        ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
+        // Resume is single-iter; only reviewer traffic signals take typed output.
+        ...(typedOutputUsed ? { output: typedOutput } : {}),
         // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
         quotaProbe: {
           modelRef: spec.model,

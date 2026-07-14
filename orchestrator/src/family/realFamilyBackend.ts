@@ -59,7 +59,6 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import {
   reaskReceiptOrFallback,
-  resumeTypedReceiptRun,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "../receiptRecovery.js";
@@ -1693,6 +1692,8 @@ export class RealFamilyBackend implements FamilyBackend {
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
+          // #899: family coder cargo is opaque — one Sandcastle invocation, no
+          // typed Output.object re-ask for committed/commitsAdded cargo.
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1710,16 +1711,7 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
           });
-          const receiptResult = await resumeTypedReceiptRun({
-            result,
-            receiptWasUnreadable: this.familyCoderReceiptWasUnreadable(
-              result as { readonly output?: unknown }, outcomeLanding.path,
-            ),
-            sessionId: lastSessionId(result),
-            resume: () => this.reaskFamilyCoderReceipt(spec, ctx, auth, outcomeLanding, result),
-            worker: "family coder",
-          });
-          return this.familyCoderResultFromRun(receiptResult, spec, outcomeLanding.path);
+          return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
           this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
         }
@@ -1928,53 +1920,6 @@ export class RealFamilyBackend implements FamilyBackend {
         sessionId: lastSessionId(result),
       };
     }
-  }
-
-  /** The typed re-ask is only used for a malformed family coder receipt. */
-  private familyCoderReceiptOutput(): sc.OutputDefinition {
-    return workerReceiptOutput("coder", workerReceiptSchema("coder"));
-  }
-
-  private familyCoderReceiptWasUnreadable(
-    result: { readonly output?: unknown },
-    outcomePath: string,
-  ): boolean {
-    try {
-      // This is the existing coder transport parser, not a second receipt
-      // contract gate. Sandcastle alone validates the retried typed receipt.
-      const raw = result.output ?? readRequiredWorkerOutcomeSidecar(outcomePath);
-      if (probeWorkerDecisionBell(raw) !== undefined) return false;
-      parseCoderSelfReport(raw);
-      return false;
-    } catch {
-      return true;
-    }
-  }
-
-  private async reaskFamilyCoderReceipt(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    auth: ShipAuth,
-    outcomeLanding: { path: string; sandboxPath: string },
-    result: Pick<Awaited<ReturnType<typeof sc.run>>, "iterations">,
-  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const sessionId = lastSessionId(result);
-    if (sessionId === undefined) return result as Awaited<ReturnType<typeof sc.run>>;
-    return await this.runAgentSandbox({
-      name: "family-coder-receipt-reask",
-      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-      cwd: this.opts.workingRepo,
-      sandbox: this.familyCoderSandbox(auth, spec.model, ctx, outcomeLanding),
-      agent: this.agentForSpec(spec, ctx),
-      maxIterations: 1,
-      completionSignal: spec.completionSignal,
-      branchStrategy: { type: "head" },
-      resumeSession: sessionId,
-      // The implementation has already run.  The resumed worker only needs to
-      // emit its final typed receipt; replaying coder_fix.md can repeat edits.
-      promptFile: join(this.opts.promptsDir, "coder_receipt_reask.md"),
-      output: this.familyCoderReceiptOutput(),
-    });
   }
 
   private familyCoderOutput(output: SelfReportedCoder): CoderResult {

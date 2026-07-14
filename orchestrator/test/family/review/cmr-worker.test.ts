@@ -2316,7 +2316,8 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 
-  it("re-asks the family coder from its malformed outcome sidecar through Sandcastle typed output", async () => {
+  it("treats family coder malformed sidecar as opaque cargo without a typed re-ask", async () => {
+    // #899 Out of Scope: coder ordinary cargo is never a Sandcastle repair loop.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -2340,11 +2341,8 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         this.calls.push(options);
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
-        if (this.calls.length === 1) {
-          writeFileSync(outcomePathAtRun, JSON.stringify({ committed: "not-a-boolean" }), "utf8");
-          return sandboxRunResult({ sessionId: "family-coder-malformed" });
-        }
-        return typedSandboxRunResult({ committed: true, commitsAdded: 1 }, {
+        writeFileSync(outcomePathAtRun, JSON.stringify({ committed: "not-a-boolean" }), "utf8");
+        return sandboxRunResult({
           completionSignal: "CODER_STEP_COMPLETE",
           sessionId: "family-coder-malformed",
         });
@@ -2365,18 +2363,14 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
 
     await expect(be.run(familyCoderFixWorkerSpec(), { familyBase: "fb" })).resolves.toMatchObject({
       kind: "completed",
-      output: { kind: "coder", committed: true, commitsAdded: 1 },
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
-    expect(be.calls).toHaveLength(2);
-    expect(be.calls[1]).toEqual(expect.objectContaining({
-      resumeSession: "family-coder-malformed",
-      maxIterations: 1,
-      promptFile: join(realPromptsDir, "coder_receipt_reask.md"),
-      output: expect.objectContaining({ tag: "coder", maxRetries: 2 }),
-    }));
+    expect(be.calls).toHaveLength(1);
+    expect(be.calls[0]!.output).toBeUndefined();
+    expect(be.calls[0]!.resumeSession).toBeUndefined();
   });
 
-  it("keeps the family coder fallback when malformed sidecar cargo has no session", async () => {
+  it("keeps a single family coder invocation when sidecar cargo is absent", async () => {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -2399,36 +2393,6 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       kind: "completed", output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
     expect(be.calls).toBe(1);
-  });
-
-  it("logs and keeps the family coder fallback when native receipt retries exhaust", async () => {
-    const repo = realRepo335();
-    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
-    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
-    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
-    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
-    class ExhaustedBackend extends RealFamilyBackend {
-      public calls = 0;
-      public run(spec: ReturnType<typeof familyCoderFixWorkerSpec>, ctx: DispatchContext) {
-        return this.runFamilyCoderFixWorker(spec, ctx);
-      }
-      protected override mountShipAuth(): ShipAuth { return { claudeToken: "tok" }; }
-      protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
-        this.calls += 1;
-        if (this.calls === 1) return sandboxRunResult({ sessionId: "family-coder-exhausted" });
-        throw new sc.StructuredOutputError("bad output", {
-          tag: "coder", rawMatched: undefined, commits: [], branch: "fb", sessionId: "family-coder-exhausted",
-        });
-      }
-    }
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const be = new ExhaustedBackend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("family-coder-exhausted-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
-
-    await expect(be.run(familyCoderFixWorkerSpec(), { familyBase: "fb" })).resolves.toMatchObject({
-      kind: "completed", output: { kind: "coder", committed: false, commitsAdded: 0 },
-    });
-    expect(be.calls).toBe(2);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("family coder receipt recovery exhausted"));
   });
 
   it("a prepared but blank CMR outcome sidecar falls back to legacy stdout", async () => {
