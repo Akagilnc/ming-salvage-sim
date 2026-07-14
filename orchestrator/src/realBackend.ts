@@ -67,6 +67,7 @@ import { z } from "zod";
 import {
   isReceiptRecoveryFailure,
   workerReceiptOutput,
+  workerReceiptIsReadable,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
 
@@ -3010,7 +3011,7 @@ export class RealBackend implements Backend {
     if (
       spec.role === "coder" &&
       !typedOutputUsed &&
-      raw === undefined
+      !workerReceiptIsReadable("coder", raw)
     ) {
       const sessionId = lastSessionId(result);
       if (sessionId !== undefined) {
@@ -3100,6 +3101,10 @@ export class RealBackend implements Backend {
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
+      if (err instanceof sc.StructuredOutputError) {
+        console.warn(`[orchestrator] ${spec.id}-${spec.role} resumed receipt recovery exhausted; using existing fallback`);
+        return { output: this.decodeOutput(spec, undefined), sessionId };
+      }
       // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
       // session falls back to a fresh run() (keep committed worktree progress,
       // lose in-session memory). Signal mismatches, schema parse failures, auth

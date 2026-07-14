@@ -17,9 +17,27 @@ const reviewerReceiptSchema = z.object({
   findings: z.array(z.unknown()),
 }).passthrough();
 
+const cmrReceiptSchema = z.object({
+  converged: z.boolean(),
+}).passthrough();
+
+type WorkerReceiptRole = "coder" | "reviewer" | "cmr";
+
 /** The role contract Sandcastle validates before deciding whether to re-ask. */
-export function workerReceiptSchema(role: "coder" | "reviewer"): z.ZodType {
-  return z.union([decisionBellSchema, role === "coder" ? coderReceiptSchema : reviewerReceiptSchema]);
+export function workerReceiptSchema(role: WorkerReceiptRole): z.ZodType {
+  return z.union([
+    decisionBellSchema,
+    role === "coder"
+      ? coderReceiptSchema
+      : role === "reviewer"
+        ? reviewerReceiptSchema
+        : cmrReceiptSchema,
+  ]);
+}
+
+/** Whether a recovered compatibility receipt satisfies its role contract. */
+export function workerReceiptIsReadable(role: WorkerReceiptRole, receipt: unknown): boolean {
+  return workerReceiptSchema(role).safeParse(receipt).success;
 }
 
 /** One typed receipt definition for every worker path. */

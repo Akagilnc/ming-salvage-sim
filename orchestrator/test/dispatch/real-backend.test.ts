@@ -1616,6 +1616,32 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(reask.output).toMatchObject({ tag: "coder", maxRetries: 2 });
   });
 
+  it("re-asks the coder session when its tail receipt omits a required field", async () => {
+    const backend = makeBackend();
+    backend.agentResults.push(
+      agentRunResult({
+        stdout: '<coder>{"committed": true}</coder>',
+        commits: [{ sha: "abc123" }],
+        sessionId: "sess-coder-malformed-reask",
+      }),
+      agentRunResult({
+        stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>',
+        commits: [],
+        sessionId: "sess-coder-malformed-reask",
+        output: { committed: true, commitsAdded: 1 },
+      }),
+    );
+
+    await expect(backend.runStep(coderSpec, {
+      branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
+    })).resolves.toMatchObject({
+      output: { kind: "coder", committed: true, commitsAdded: 1 },
+    });
+
+    expect(backend.agentOptions).toHaveLength(2);
+    expect(backend.agentOptions[1]!.resumeSession).toBe("sess-coder-malformed-reask");
+  });
+
   it("keeps the existing coder fallback when a missing receipt has no session to re-ask", async () => {
     const backend = makeBackend();
     backend.agentResult = {
@@ -1711,6 +1737,22 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
+  });
+
+  it("keeps the resumed coder's existing fallback when native receipt retries are exhausted", async () => {
+    const backend = makeBackend();
+    backend.agentFailures.push(new StructuredOutputError("bad output", {
+      tag: "coder", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "prior-coder-session",
+    }));
+
+    await expect(backend.resumeSession(
+      coderSpec,
+      { branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899" },
+      "prior-coder-session",
+    )).resolves.toEqual({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      sessionId: "prior-coder-session",
+    });
   });
 
   it("preserves a missing reviewer count as unusable cargo for the fixer", async () => {
