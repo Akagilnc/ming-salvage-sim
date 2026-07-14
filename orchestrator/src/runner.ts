@@ -1545,6 +1545,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   /** #686 — last applied relay baton's billing pool (drives next exhaustion lookup). */
   let currentBillingPool: BillingPoolId | undefined;
   /**
+   * Correctness B3 — run-scoped pools that already hit a quota wall this run.
+   * Excluded from route-smoke knownLive promotion so a smoke-passed pool cannot
+   * re-enter as a live baton and ping-pong until the handoff cap.
+   */
+  const wallHitBillingPools = new Set<BillingPoolId>();
+  /**
    * #686 — sticky resource-relay baton slug. Scopes stickiness to resource
    * handoffs only: blocks Coder-Rec snap-back while nonConvergingRounds === 0,
    * but clears so #767 quality advance (S6 rounds) still runs.
@@ -1779,15 +1785,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
      * is first-leg proof / hang probe, not smoke of unrelated route slots.
      */
     forQuotaWall = false,
-  ): ReadonlyArray<BillingPoolEntry> =>
-    resolveRelayPoolsFromTable(
+  ): ReadonlyArray<BillingPoolEntry> => {
+    if (forQuotaWall) wallHitBillingPools.add(limitedPool);
+    return resolveRelayPoolsFromTable(
       limitedPool,
       resetAt,
       input.relayPools,
       forQuotaWall
         ? knownLiveBillingPoolsFromRoute(modelRoute)
         : undefined,
+      forQuotaWall ? wallHitBillingPools : undefined,
     );
+  };
 
   const hasExplicitRelayPools = input.relayPools !== undefined;
 

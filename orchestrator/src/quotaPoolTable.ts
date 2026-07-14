@@ -212,12 +212,18 @@ export type RelayPoolOverride = {
  * to `live`. Explicit override is authoritative — tests and production probes
  * that pass a full table are not rewritten. Never invents live batons from
  * empty/unprobed state when no known-live evidence is supplied.
+ *
+ * Correctness B3: {@link wallHitPools} is a run-scoped set of pools that already
+ * hit a quota wall this run. They stay excluded from knownLive promotion so a
+ * smoke-passed pool that already walled cannot re-appear as a live baton and
+ * ping-pong until the handoff cap.
  */
 export function resolveRelayPools(
   limitedPool: BillingPoolId,
   resetAt: Date | undefined,
   override?: ReadonlyArray<RelayPoolOverride>,
   knownLivePools?: ReadonlyArray<BillingPoolId> | ReadonlySet<BillingPoolId>,
+  wallHitPools?: ReadonlyArray<BillingPoolId> | ReadonlySet<BillingPoolId>,
 ): ReadonlyArray<BillingPoolEntry> {
   if (override !== undefined) {
     return override.map((p) => ({
@@ -230,14 +236,18 @@ export function resolveRelayPools(
   }
   const base = buildDefaultBillingPools({ limitedPool, resetAt });
   if (knownLivePools === undefined) return base;
-  const live =
-    knownLivePools instanceof Set
-      ? knownLivePools
-      : new Set<BillingPoolId>(knownLivePools);
+  const live = new Set<BillingPoolId>(knownLivePools);
+  // Copy so callers' run-scoped sets are not mutated by this resolution.
+  const wallHit = new Set<BillingPoolId>(wallHitPools ?? []);
+  // Current wall always counts as hit for this resolution.
+  wallHit.add(limitedPool);
+  // Never re-promote a wall-hit pool from smoke knownLive.
+  for (const id of wallHit) live.delete(id);
   if (live.size === 0) return base;
   return base.map((pool) => {
     // Wall-hit pool stays limited (reset clock); do not promote it to live.
     if (pool.id === limitedPool) return pool;
+    if (wallHit.has(pool.id)) return pool;
     if (!live.has(pool.id)) return pool;
     return { ...pool, status: "live" as const };
   });
