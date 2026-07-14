@@ -127,10 +127,11 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(spec.skill).toBe("gstack-ship");
   });
 
-  it("the family ship spec is a WRITE/coder worker with an iterative budget, while cmr is a single clean review pass", () => {
+  it("the family ship spec is a WRITE/coder single-iteration seat, while cmr is a single clean review pass", () => {
     const spec = familyShipWorkerSpec();
     expect(spec.role).toBe("coder");
-    expect(spec.maxIter).toBeGreaterThan(1);
+    // #899 / ADR 0128: every selected seat is single-iteration.
+    expect(spec.maxIter).toBe(1);
     // The cmr pass worker is a clean reviewer boundary. A red outcome returns to
     // the runner, which dispatches coder-fix separately.
     expect(cmrWorkerSpec().role).toBe("reviewer");

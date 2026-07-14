@@ -165,15 +165,15 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     }
   });
 
-  // ── AC-4b: coder maxIter present and > 1 (iterative within-step budget) ──
-  //   ADR 0030 uses separate reviewer/fix workers, but each worker still has its
-  //   own bounded retry budget for transient CLI/tool failures.
+  // ── AC-4b: coder maxIter is single-iteration (#899 / ADR 0128) ──
+  //   Each selected seat runs one Sandcastle iteration; skill work finishes
+  //   inside that invocation (no outer Ralph multi-iter).
 
-  it("coder maxIter > 1 (iterative within-step budget)", async () => {
+  it("coder maxIter is 1 (single-iteration seat)", async () => {
     const specs = await runAndCapture();
     const s2 = specs.find((s) => s.id === "S2")!;
     expect(s2.maxIter).toBeDefined();
-    expect(s2.maxIter!).toBeGreaterThan(1);
+    expect(s2.maxIter!).toBe(1);
   });
 
   // ── AC-4c: completionSignal present on every agent step ──

@@ -361,7 +361,8 @@ export function fixerWorkerSpec(
     skill: SKILL_FOR_KIND.fixer,
     promptFile: FIXER_PROMPT_FILE,
     completionSignal: "FIXER_STEP_COMPLETE",
-    maxIter: 5,
+    // #899 / ADR 0128: one single-iteration Sandcastle run per selected seat.
+    maxIter: 1,
     model,
     soul: "fixer",
     toolchain: [],

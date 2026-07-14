@@ -149,22 +149,18 @@ export interface StepSpec {
    */
   readonly completionSignal: string;
   /**
-   * Per-step iteration cap = the WITHIN-STEP agent (Ralph) retry budget for a
-   * single `sandbox.run()`. NOT the fix-loop convergence round limit.
+   * Per-seat Sandcastle iteration budget for a single `sandbox.run()`.
+   * NOT the fix-loop convergence round limit (runner topology owns that).
    *
-   * - coder / fix steps: > 1 (the agent iterates within the one step until the
-   *   step's work is done or it escalates).
-   * - reviewer steps: exactly 1 (single pass — reviewer never self-edits).
+   * #899 / ADR 0128: every selected seat is a single-iteration run (`maxIter: 1`).
+   * The skill finishes inside that one invocation; native structured-output
+   * re-asks (`Output.object` maxRetries) happen in-session and are not extra
+   * outer iterations. There is no outer Ralph multi-iter budget on worker seats.
    *
    * SEMANTICS (堵 #256 misuse): hitting maxIter means THAT step ends normally —
    * the outer `route()` loop then continues as usual. It is NEVER "the
    * orchestrator gives up": the orchestrator only stops when the MODEL emits an
    * `escalate` signal (US#18/US#19), never by counting iterations/rounds.
-   *
-   * v0.1: the runner does NOT enforce maxIter (lazy field on worker specs).
-   * When #256 wires Sandcastle, maxIter MUST be implemented with exactly this
-   * semantics (within-step retry budget) and MUST NOT degrade into a
-   * "count-to-N-then-give-up" fix-loop cap, which would violate US#18.
    */
   readonly maxIter: number;
   /**
@@ -298,10 +294,15 @@ export interface CoderOutput {
   readonly escalate?: Escalation;
 }
 
-/** Output of a reviewer step (S3/S6). `findings` is the reviewer's declared open-item cargo. */
+/**
+ * Output of a reviewer step (S3/S6). `findingsCount` is the self-reported open
+ * count (ADR 0131 / #899 routing signal); `findings` rows are cargo for the fixer.
+ */
 export interface ReviewerOutput {
   readonly kind: "reviewer";
   readonly findings: ReadonlyArray<Finding>;
+  /** Reviewer-declared open count; structured rows never supply a missing count. */
+  readonly findingsCount?: number;
   readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;

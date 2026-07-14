@@ -106,26 +106,26 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
     );
   });
 
-  // ADR 0131: the escalate block's presence is the decision bell. Its fields are
-  // cargo; missing, blank, or mistyped cargo does not unpress the bell.
-  describe("decision bell presence is independent of escalate cargo quality", () => {
-    it("escalate:{} (empty) ⇒ escalate", () => {
-      expect(parseShipOutcome('<ship>{"escalate": {}}</ship>').kind).toBe("escalate");
+  // #899: only well-formed bells (non-empty reason+diagnosis) are fate signals.
+  // Malformed escalate must not enter the human loop (Output.object re-asks).
+  describe("malformed decision bells do not enter the human loop", () => {
+    it("escalate:{} (empty) ⇒ completed cargo", () => {
+      expect(parseShipOutcome('<ship>{"escalate": {}}</ship>').kind).toBe("completed");
     });
-    it("escalate with non-string reason ⇒ escalate", () => {
+    it("escalate with non-string reason ⇒ completed cargo", () => {
       expect(
         parseShipOutcome('<ship>{"escalate": {"reason": 123, "diagnosis": "x"}}</ship>').kind,
-      ).toBe("escalate");
+      ).toBe("completed");
     });
-    it("escalate missing diagnosis ⇒ escalate", () => {
+    it("escalate missing diagnosis ⇒ completed cargo", () => {
       expect(parseShipOutcome('<ship>{"escalate": {"reason": "stuck"}}</ship>').kind).toBe(
-        "escalate",
+        "completed",
       );
     });
-    it("escalate with empty-string fields ⇒ escalate", () => {
+    it("escalate with empty-string fields ⇒ completed cargo", () => {
       expect(
         parseShipOutcome('<ship>{"escalate": {"reason": "", "diagnosis": "   "}}</ship>').kind,
-      ).toBe("escalate");
+      ).toBe("completed");
     });
   });
 
@@ -255,7 +255,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     expect(o).toEqual({ kind: "completed" });
   });
 
-  it("keeps malformed sidecar text as non-fateful cargo while still probing stdout for a bell", () => {
+  it("keeps malformed sidecar text as non-fateful cargo without promoting stdout", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -269,7 +269,9 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     expect(o.kind).toBe("completed");
   });
 
-  it("rings a stdout decision bell before unrelated parseable sidecar cargo", () => {
+  it("does not let stdout decision bells override non-bell sidecar cargo", () => {
+    // #899: decision gates come only from Output.object / machine sidecar payload,
+    // never from a stdout compatibility tag that bypasses schema validation.
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-bell-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, JSON.stringify({ unrelatedCargo: true }), "utf8");
@@ -279,11 +281,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       outcomePath,
     });
 
-    expect(o).toMatchObject({
-      kind: "escalate",
-      reason: "owner choice",
-      diagnosis: "ship fork",
-    });
+    expect(o.kind).toBe("completed");
   });
 
   it("rejects a blank guarded ship sidecar instead of falling back to stdout", () => {

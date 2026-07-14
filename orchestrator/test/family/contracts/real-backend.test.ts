@@ -1411,17 +1411,19 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     expect(outcome).not.toHaveProperty("findingsCount");
   });
 
-  it("preserves cmr verdict and findings sentinel semantics after trimming CRLF stdout", () => {
+  it("preserves cmr verdict and findingsCount after trimming CRLF stdout", () => {
+    // #899: open-count is the receipt's findingsCount field, not a stdout sentinel.
     const outcome = cmrOutcomeFromResult({
       stdout:
         "\r\n  <cmr>" + JSON.stringify({
           converged: false,
           reason: "two findings remain",
+          findingsCount: 2,
           successfulLegs: ["gpt-5.6-sol"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           evidencePaths: ["cmr/review.json"],
-        }) + "</cmr>\r\nfindings = 2\r\n  ",
+        }) + "</cmr>\r\n  ",
     });
 
     expect(outcome).toMatchObject({

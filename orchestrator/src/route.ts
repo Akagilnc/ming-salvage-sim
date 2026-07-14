@@ -84,7 +84,10 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S4": {
       if (ctx.output?.kind === "reviewer") {
-        const blockingCount = ctx.output.findings.length;
+        // ADR 0131 / #899: route on the self-reported open-count when present;
+        // process-internal seams may still declare via the findings array.
+        const blockingCount =
+          ctx.output.findingsCount ?? ctx.output.findings.length;
         return blockingCount > 0
           ? { kind: "next", step: "S5" }
           : { kind: "next", step: "S7" };
