@@ -64,6 +64,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
+import { isReceiptRecoveryFailure, workerReceiptOutput } from "./receiptRecovery.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
@@ -2787,7 +2788,7 @@ export class RealBackend implements Backend {
   /** Build the output definition for a step's role. */
   private outputFor(spec: StepSpec): sc.OutputDefinition {
     const tag = spec.role === "reviewer" ? "review" : spec.role;
-    return sc.Output.object({ tag, schema: workerReceiptSchema, maxRetries: 2 });
+    return workerReceiptOutput(tag);
   }
 
   /**
@@ -2958,7 +2959,9 @@ export class RealBackend implements Backend {
     try {
     const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
     this.assertProviderAuth(spec.model, pool, box.providerAuth);
-    const result = await this.runAgentSandbox({
+    let result: Awaited<ReturnType<typeof sc.run>>;
+    try {
+      result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
@@ -2993,7 +2996,12 @@ export class RealBackend implements Backend {
         worktreePath: worktree.path,
         issueNumber,
       },
-    });
+      });
+    } catch (err) {
+      if (!isReceiptRecoveryFailure(err)) throw err;
+      console.warn(`[orchestrator] ${spec.id}-${spec.role} receipt recovery exhausted; using existing fallback`);
+      return { output: this.decodeOutput(spec, undefined), sessionId: undefined };
+    }
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     if (
       spec.role === "coder" &&
@@ -3002,14 +3010,16 @@ export class RealBackend implements Backend {
     ) {
       const sessionId = lastSessionId(result);
       if (sessionId !== undefined) {
-        const reasked = await this.reaskCoderReceipt(
-          spec,
-          worktree,
-          issueNumber,
-          box,
-          sessionId,
-          options,
-        );
+        let reasked: Awaited<ReturnType<typeof sc.run>>;
+        try {
+          reasked = await this.reaskCoderReceipt(
+            spec, worktree, issueNumber, box, sessionId, options,
+          );
+        } catch (err) {
+          if (!isReceiptRecoveryFailure(err)) throw err;
+          console.warn(`[orchestrator] ${spec.id}-${spec.role} receipt recovery exhausted; using existing fallback`);
+          return { output: this.decodeOutput(spec, undefined), sessionId };
+        }
         return {
           output: this.decodeOutput(
             spec,
