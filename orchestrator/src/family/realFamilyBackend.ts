@@ -102,6 +102,9 @@ import {
   soulsDirError,
   type SelfReportedCoder,
   SANDBOX_FIX_FOCUS_PATH_ENV,
+  appendHomeEnvMount,
+  homeEnvFileFromSoulsDir,
+  provisionCodexHomeAgents,
 } from "../realBackend.js";
 import {
   FIX_FOCUS_LANDING_FILE,
@@ -305,6 +308,11 @@ export interface RealFamilyBackendOptions {
    * REQUIRED (souls no longer baked).
    */
   readonly soulsDir: string;
+  /**
+   * #911 — container home environment file (default: sibling image/home/CLAUDE.md).
+   * Live-mounted for Claude; content also replaces AGENTS.md in per-issue codex auth dirs.
+   */
+  readonly homeEnvFile?: string;
   /** The profile image (skills + CLIs baked in; souls mounted live #372) for the merger agent sandbox. */
   readonly imageName: string;
   /**
@@ -432,7 +440,7 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Fail loudly at construction if soulsDir missing or invalid or incomplete.
    * Souls are no longer baked (#372); an existing but wrong/incomplete dir
-   * (missing e.g. reviewer.md / output_protocol.md) would sail to runtime.
+   * (missing e.g. reviewer.md / verify.md) would sail to runtime.
    * Delegates to the pure {@link soulsDirError} from realBackend (single source;
    * identical messages for both backends).
    */
@@ -444,6 +452,13 @@ export class RealFamilyBackend implements FamilyBackend {
       : [];
     const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
     if (err !== undefined) throw new Error(err);
+    const homeEnv = this.resolveHomeEnvFile();
+    if (!existsSync(homeEnv)) {
+      throw new Error(
+        `RealFamilyBackend: home env file missing at "${homeEnv}" ` +
+          `(#911 dual-mount needs image/home/CLAUDE.md next to souls, or opts.homeEnvFile).`,
+      );
+    }
   }
 
   /**
@@ -934,6 +949,8 @@ export class RealFamilyBackend implements FamilyBackend {
       copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
       writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
+      // #911: replace host AGENTS.md with container home environment body.
+      provisionCodexHomeAgents(tempCodexDir, this.resolveHomeEnvFile());
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ no codex mount. Reclaim the mkdtemp dir if it was
@@ -1020,12 +1037,19 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: souls mount live for merger worker (data files not baked).
     // Use shared helper (forces readonly:true, single hard-coded sandbox path).
     mounts.push(soulsMount(this.opts.soulsDir));
+    // #911: live-mount container home CLAUDE.md.
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return {
       imageName: this.opts.imageName,
       env,
       // #334: no skills mount — the baked image provides the merger skill.
       mounts,
     };
+  }
+
+  /** #911: container home CLAUDE.md (default sibling of soulsDir). */
+  protected resolveHomeEnvFile(): string {
+    return this.opts.homeEnvFile ?? homeEnvFileFromSoulsDir(this.opts.soulsDir);
   }
 
   /** Is a git merge in progress (MERGE_HEAD present)? */
@@ -1849,6 +1873,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2108,6 +2133,7 @@ export class RealFamilyBackend implements FamilyBackend {
       opencodeAuthFile: auth.opencodeAuthFile,
     });
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2393,6 +2419,8 @@ export class RealFamilyBackend implements FamilyBackend {
       // The host config.toml is host-personal and irrelevant — only auth.json
       // crosses. Write the minimal container config (#378).
       writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
+      // #911: replace host AGENTS.md with container home environment body.
+      provisionCodexHomeAgents(tempCodexDir, this.resolveHomeEnvFile());
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
@@ -2573,6 +2601,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: souls mount live for integrated cmr worker (souls not baked).
     // Shared helper (single source for the mount + readonly:true).
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2869,6 +2898,8 @@ export class RealFamilyBackend implements FamilyBackend {
       // bwrap is impossible). The host config.toml is host-personal and irrelevant
       // — only auth.json crosses. Write the minimal container config (#378).
       writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
+      // #911: replace host AGENTS.md with container home environment body.
+      provisionCodexHomeAgents(tempCodexDir, this.resolveHomeEnvFile());
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
@@ -2985,6 +3016,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: souls mount live for family ship worker.
     // Shared helper forces readonly:true at every site.
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 

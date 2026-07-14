@@ -6,10 +6,12 @@ Read the role soul first (live-mounted):
 /home/agent/.orchestrator/souls/cmr_completeness.md
 ```
 
-Then follow that soul and the worktree's `CLAUDE.md`. This is the runner-dispatched
-step5 completeness gate. The runner only schedules you and writes `.cmr-focus.md`
-plus `.cmr-route.json`; the CMR method lives in the role soul (live-mounted) and baked skill, not in
-this prompt.
+Then follow that soul (审卷官 character; symlink → `verify.md`) and the
+worktree's `CLAUDE.md`. This is the runner-dispatched step5 completeness gate.
+The runner only schedules you and writes `.cmr-focus.md` plus `.cmr-route.json`.
+
+**Invoke `ak-cmr-completeness` only** (this pass's skill). Do not run correctness.
+You judge the review surface; do not repair code or create fix commits.
 
 ## Pass scope
 
@@ -109,4 +111,5 @@ Rules:
 - Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag as the last typed tag;
   if you iterate, the last typed `<cmr>` tag is the one that counts. The optional
   telemetry line below may follow it.
-- For optional telemetry, you may print CMR_STEP_COMPLETE on its own final line.
+- On the final multi-iter step you MUST print CMR_STEP_COMPLETE on its own
+  final line (sandcastle iteration terminator — not optional telemetry).
