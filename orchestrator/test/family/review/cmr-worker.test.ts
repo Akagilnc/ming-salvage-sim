@@ -824,7 +824,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     ))).toBe(true);
   });
 
-  it("keeps the existing CMR fallback topology when native receipt retries are exhausted", async () => {
+  it("preserves StructuredOutputError receipt cargo when native retries are exhausted", async () => {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -835,14 +835,34 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
         throw new sc.StructuredOutputError("bad output", {
-          tag: "cmr", rawMatched: undefined, commits: [], branch: "fb", sessionId: "sess-cmr-exhausted",
+          tag: "cmr",
+          rawMatched: `<cmr>${JSON.stringify({
+            converged: false,
+            reason: "review finding survives malformed receipt",
+            successfulLegs: [...DEFAULT_CMR_LEGS],
+            ...VALID_CMR_VERDICT_FIELDS,
+            findings: [{
+              severity: "high",
+              category: "correctness",
+              claim_quote: "reviewer cargo survives",
+              location: "orchestrator/src/family/realFamilyBackend.ts:1606",
+              suggested_fix: "preserve the landing cargo",
+              action: "fix_now",
+            }],
+          })}</cmr>`,
+          commits: [], branch: "fb", sessionId: "sess-cmr-exhausted",
         });
       }
     }
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-exhausted-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
 
     await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).resolves.toMatchObject({
-      kind: "verdict", successfulLegs: [], evidencePaths: [],
+      kind: "verdict",
+      converged: false,
+      reason: "review finding survives malformed receipt",
+      findings: [expect.objectContaining({
+        location: "orchestrator/src/family/realFamilyBackend.ts:1606",
+      })],
     });
   });
 
