@@ -37,6 +37,7 @@ import {
   soulsDirError,
   soulsMount,
 } from "../../src/realBackend.js";
+import { RealFamilyBackend } from "../../src/family/realFamilyBackend.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const imageDir = join(here, "..", "..", "image");
@@ -287,6 +288,85 @@ describe("#911 prompts: STEP_COMPLETE is mandatory multi-iter terminator, not op
       const text = readFileSync(join(promptsDir, name), "utf8");
       expect(text).toContain(signal);
     }
+  });
+
+  it("every dispatch prompt documents $ORCHESTRATOR_OUTCOME_PATH after output_protocol deletion", () => {
+    for (const name of prompts) {
+      const text = readFileSync(join(promptsDir, name), "utf8");
+      expect(text, name).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
+    }
+  });
+});
+
+describe("#911 family dual-mount (RealFamilyBackend)", () => {
+  class FamilyProbe extends RealFamilyBackend {
+    public mergerCfg() {
+      return this.mergerSandboxConfig({});
+    }
+    public shipCfg() {
+      return this.shipSandboxConfig({ claudeToken: "tok" });
+    }
+    public mountMerger() {
+      return this.mountMergerAuth();
+    }
+  }
+
+  function familyOpts(over: {
+    home?: string;
+    homeEnvFile?: string;
+    workingRepo?: string;
+    ledgerDir?: string;
+  } = {}) {
+    const home = over.home ?? mkdtempSync(join(tmpdir(), "fam-home-911-"));
+    if (!over.home) tempHomes.push(home);
+    const workingRepo = over.workingRepo ?? mkdtempSync(join(tmpdir(), "fam-repo-911-"));
+    if (!over.workingRepo) tempHomes.push(workingRepo);
+    const ledgerDir = over.ledgerDir ?? mkdtempSync(join(tmpdir(), "fam-ledger-911-"));
+    if (!over.ledgerDir) tempHomes.push(ledgerDir);
+    return {
+      workingRepo,
+      familyBase: "family/911-base",
+      ledgerDir,
+      repo: "owner/name",
+      base: "main",
+      promptsDir,
+      soulsDir,
+      imageName: "img",
+      home,
+      homeEnvFile: over.homeEnvFile,
+    };
+  }
+
+  it("family merger + ship sandboxes live-mount home CLAUDE.md", () => {
+    const be = new FamilyProbe(familyOpts());
+    const expected = homeClaudeMount(homeEnvFile);
+    expect(be.mergerCfg().mounts).toContainEqual(expected);
+    expect(be.shipCfg().mounts).toContainEqual(expected);
+  });
+
+  it("family mountMergerAuth writes container AGENTS.md into the codex auth dir", () => {
+    const home = mkdtempSync(join(tmpdir(), "fam-auth-911-"));
+    tempHomes.push(home);
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "auth.json"), '{"tokens":{}}\n');
+    writeFileSync(join(home, ".codex", "AGENTS.md"), "# HOST OWNER — must be replaced\n");
+
+    const be = new FamilyProbe(familyOpts({ home }));
+    const auth = be.mountMerger();
+    expect(auth.codexAuthDir).toBeTruthy();
+    const agents = join(auth.codexAuthDir as string, "AGENTS.md");
+    expect(existsSync(agents)).toBe(true);
+    expect(readFileSync(agents, "utf8")).toBe(readFileSync(homeEnvFile, "utf8"));
+    expect(readFileSync(agents, "utf8")).not.toMatch(/HOST OWNER/);
+  });
+
+  it("missing home env file fails loud at RealFamilyBackend construction", () => {
+    expect(
+      () =>
+        new FamilyProbe(
+          familyOpts({ homeEnvFile: join(tmpdir(), "no-such-home-env-911-CLAUDE.md") }),
+        ),
+    ).toThrow(/home env file missing/);
   });
 });
 

@@ -12,7 +12,9 @@ PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 
 ## Output
 
-Emit `<verify>` JSON. Shape:
+When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same terminal JSON object
+directly to that path (sidecar is authoritative for the runner). For
+compatibility, also emit `<verify>` JSON. Shape:
 
 On the final multi-iter step you MUST print VERIFY_STEP_COMPLETE on its own
 final line (sandcastle iteration terminator — not optional telemetry).

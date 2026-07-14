@@ -1,8 +1,10 @@
 /**
  * #825 — closing regression sweep for ADR 0062 / #820.
  *
- * Completion sentinels are optional telemetry. Routing behavior is exercised
- * below through worker results and durable ledgers, not source-text bans.
+ * #911: `*_STEP_COMPLETE` sentinels are multi-iter **required** sandcastle
+ * terminators (not optional telemetry; align with prompts/README). Routing
+ * behavior is exercised below through worker results and durable ledgers, not
+ * source-text bans.
  */
 
 import { readFileSync } from "node:fs";
