@@ -4,7 +4,7 @@ Date: 2026-07-10
 
 ## Status
 
-Accepted
+Accepted（2026-07-14 起由 ADR 0134 收窄候选耗尽终局）
 
 ## Decision
 
@@ -12,4 +12,4 @@ worker 撞额度墙（#683 探针 429，带 `resetAt`）时三段式裁决：①
 
 ## Consequences
 
-#683 的 quota park 与 #686 的 relay 在同一处置点分叉；判据机械可测，不留模型自由裁量。
+#683 的 quota park 与 #686 的 relay 在同一处置点分叉；判据机械可测，不留模型自由裁量。ADR 0134 生效后，①解释为同一可执行席位等待，②解释为沿固定席位顺序换棒，③候选耗尽不再静默 park，而是保留现场并走既有 decision gate。
