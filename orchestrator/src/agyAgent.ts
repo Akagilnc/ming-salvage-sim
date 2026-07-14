@@ -25,19 +25,41 @@ export interface AgyAgentOptions {
   readonly captureSessions?: boolean;
 }
 
+type AgyParsedStreamEvent =
+  | { type: "text"; text: string }
+  | { type: "result"; result: string };
+
 /**
  * Map plain-text agy stdout lines into sandcastle ParsedStreamEvent.
  * agy print mode is prose, not streaming-json — each non-empty line is text.
+ *
+ * Correctness B1: Sandcastle keeps only the last `{type:"result"}` as the run
+ * body (`resultText = parsed.result`). Emitting a per-line result collapses
+ * multi-line tags (e.g. `<merger>…</merger>` + `STEP_COMPLETE`) to the final
+ * line. A stateful parser re-emits the **accumulated** body on every result so
+ * last-wins still retains the full stdout.
  */
-export function parseAgyStreamLine(line: string): Array<
-  | { type: "text"; text: string }
-  | { type: "result"; result: string }
-> {
-  if (line.length === 0) return [];
-  return [
-    { type: "text", text: line },
-    { type: "result", result: line },
-  ];
+export function createAgyStreamParser(): (
+  line: string,
+) => Array<AgyParsedStreamEvent> {
+  let body = "";
+  return (line: string): Array<AgyParsedStreamEvent> => {
+    if (line.length === 0) return [];
+    body = body.length === 0 ? line : `${body}\n${line}`;
+    return [
+      { type: "text", text: line },
+      { type: "result", result: body },
+    ];
+  };
+}
+
+/**
+ * Single-line helper (stateless). For multi-line workers use
+ * {@link createAgyStreamParser} / {@link agyAgent} so the final result retains
+ * the full body under Sandcastle's last-wins result semantics.
+ */
+export function parseAgyStreamLine(line: string): Array<AgyParsedStreamEvent> {
+  return createAgyStreamParser()(line);
 }
 
 /**
@@ -71,6 +93,8 @@ export function agyAgent(
   model: string,
   options?: AgyAgentOptions,
 ): sc.AgentProvider {
+  // One accumulator per agent instance — multi-line stdout must not collapse.
+  const parseStreamLine = createAgyStreamParser();
   return {
     name: "agy",
     env: options?.env ?? {},
@@ -91,8 +115,6 @@ export function agyAgent(
       if (prompt) args.push("--print", prompt);
       return args;
     },
-    parseStreamLine(line) {
-      return parseAgyStreamLine(line);
-    },
+    parseStreamLine,
   };
 }
