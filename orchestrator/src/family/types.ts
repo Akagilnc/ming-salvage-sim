@@ -912,9 +912,9 @@ export interface FamilyRunInput {
   /**
    * #686 / #909 — optional route pool table for park-vs-relay at family barriers
    * (verify / final / online_review). Same contract as single-slice
-   * {@link RunInput.relayPools}: when absent, wall-hit pool is limited and every
-   * other pool is not-live until probed (no fabricated batons). Tests inject a
-   * live alternate pool to assert relay staging.
+   * {@link RunInput.relayPools}: when present, authoritative. When absent,
+   * wall-hit limited + route-smoke knownLive (no fabricated batons). Beyond T +
+   * live baton → apply baton and re-dispatch the barrier (not stage-only).
    */
   readonly relayPools?: ReadonlyArray<{
     readonly id: string;

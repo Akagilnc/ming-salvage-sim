@@ -1731,11 +1731,12 @@ export interface RunInput {
    */
   readonly family?: FamilyContext;
   /**
-   * #686 — optional route pool table override for park-vs-relay at the #683
-   * disposition point. When absent, the runner builds a default table where the
-   * wall-hit pool is `limited` and every other pool is **not-live** until probed
-   * (unknown state must not fabricate live batons). Tests that need a live
-   * alternate baton pass an explicit probed table via this field.
+   * #686 / #909 — optional route pool table override for park-vs-relay at the
+   * #683 disposition point. When present, the table is authoritative. When
+   * absent, wall-hit pool is `limited` and other pools stay not-live unless
+   * route-smoke proves them live ({@link knownLiveBillingPoolsFromRoute}) —
+   * production path without test-only injection. Unknown/unprobed state still
+   * must not fabricate live batons.
    */
   readonly relayPools?: ReadonlyArray<{
     readonly id: string;
