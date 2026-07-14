@@ -1845,11 +1845,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (stickyRelayCoderFixSlug !== undefined) {
       stickyRelayCoderFixSlug = undefined;
     }
-    const applied = applyCoderRecToRoute(
-      modelRoute,
-      coderRecIssueBody,
-      nonConvergingRounds,
-    );
+    let applied: ReturnType<typeof applyCoderRecToRoute>;
+    try {
+      applied = applyCoderRecToRoute(
+        modelRoute,
+        coderRecIssueBody,
+        nonConvergingRounds,
+      );
+    } catch (err) {
+      // #906: broken Coder-Rec mark / unregistered model → admission fail-closed
+      // (same family as route smoke failure): escalate, zero dispatch.
+      const diagnosis = err instanceof Error ? err.message : String(err);
+      return {
+        kind: "stop",
+        escalation: {
+          reason: "Coder-Rec admission failure",
+          diagnosis,
+        },
+      };
+    }
     if (applied.skippedForEnvOverride) {
       coderRecEnvSkipped = true;
       return undefined;
