@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { agyAgent } from "../../src/agyAgent.js";
+import { agyAgent, agyPrintInvocation } from "../../src/agyAgent.js";
 import {
   POOL_DISPATCH_BINDINGS,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
@@ -22,6 +22,7 @@ import {
 } from "../../src/modelRegistry.js";
 import { resolveRouteModels } from "../../src/modelRoutes.js";
 import { barePingArgv } from "../../src/realBackend.js";
+import { poolForModelRef, probeConfigForPool, runPoolProbe } from "../../src/quotaProbe.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const orchestratorRoot = join(here, "..", "..");
@@ -82,12 +83,75 @@ describe("#905 agy AgentProvider + bare-ping", () => {
     expect(cmd.stdin).toBe("Reply with exactly: nonce");
   });
 
-  it("bare-pings via the agy binary", () => {
-    const built = barePingArgv("agy", "", "Reply with exactly: nonce-905");
-    expect(built.file).toBe("agy");
-    expect(built.args).toContain("--sandbox");
+  it("bare-ping argv matches agyAgent / gemini.sh (--print '' + stdin, never argv prompt)", () => {
+    const prompt = "Reply with exactly: nonce-905";
+    const built = barePingArgv("agy", "", prompt);
+    const shared = agyPrintInvocation("", prompt);
+    const agent = agyAgent("").buildPrintCommand({
+      prompt,
+      dangerouslySkipPermissions: true,
+    });
+
+    expect(built).toEqual({
+      file: "agy",
+      args: shared.args,
+      input: prompt,
+    });
+    // gemini.sh: --print takes empty string; prompt rides stdin (no ARG_MAX).
     expect(built.args).toContain("--print");
-    expect(JSON.stringify(built)).not.toMatch(/opencode/i);
+    expect(built.args[built.args.indexOf("--print") + 1]).toBe("");
+    expect(built.args).not.toContain(prompt);
+    expect(built.input).toBe(prompt);
+    // Same shape as production AgentProvider (shared helper, no second clone).
+    expect(agent.stdin).toBe(prompt);
+    expect(agent.command).toContain("--print ''");
+    expect(agent.command).not.toContain(prompt);
+  });
+
+  it("bare-ping with an explicit model still uses empty --print + stdin", () => {
+    const prompt = "nonce-model";
+    const built = barePingArgv("agy", "Gemini 3.5 Flash", prompt);
+    expect(built.args).toEqual([
+      "--sandbox",
+      "--model",
+      "Gemini 3.5 Flash",
+      "--print",
+      "",
+    ]);
+    expect(built.input).toBe(prompt);
+  });
+});
+
+describe("#905 residual opencode eviction + zai fail-closed", () => {
+  it("does not bind empty zai pool to cursor (no silent rewrite surface)", () => {
+    expect(POOL_DISPATCH_BINDINGS.zai).toBeUndefined();
+    // Non-pinned slug stays on its registry provider under zai — no rewrite.
+    expect(resolveModelSlugForPool("sonnet", "zai")).toEqual(resolveModelSlug("sonnet"));
+    expect(resolveModelSlugForPool("gpt-5.6-terra", "zai")).toEqual(
+      resolveModelSlug("gpt-5.6-terra"),
+    );
+  });
+
+  it("never spawns the opencode binary from quota probe paths", async () => {
+    // Retired pool → fail-safe error; no runCommand hook remains to spawn.
+    const result = await runPoolProbe("opencode-go", {});
+    expect(result.kind).toBe("error");
+    expect(probeConfigForPool("opencode-go").kind).toBe("none");
+    // Historical model refs no longer route to a live opencode-go probe pool.
+    expect(poolForModelRef("opencode-go/glm-5.2")).not.toBe("opencode-go");
+    expect(poolForModelRef("kimi-k2")).not.toBe("opencode-go");
+
+    const probeSrc = readFileSync(
+      join(orchestratorRoot, "src", "quotaProbe.ts"),
+      "utf8",
+    );
+    expect(probeSrc).not.toMatch(/runOpencodePongProbe/);
+    // No argv spawn of the bare opencode binary (probe-table only).
+    expect(probeSrc).not.toMatch(/\bopencode\s+run\b/);
+    expect(probeSrc).not.toMatch(/--dangerously-skip-permissions/);
+    // Dep surface: no injectable shell runner for a PONG path.
+    expect(probeSrc).not.toMatch(/runCommand\??:/);
+    expect(probeSrc).not.toMatch(/opencodeGoModel/);
   });
 });
 

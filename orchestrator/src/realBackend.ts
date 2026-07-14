@@ -81,6 +81,7 @@ import {
   sourceAuthFailureStopSummary,
   type StopSummary,
 } from "./stopSummary.js";
+import { agyPrintInvocation } from "./agyAgent.js";
 import {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -171,18 +172,16 @@ export function barePingArgv(
           "bypassPermissions",
         ],
       };
-    case "agy":
-      // Real Antigravity/Gemini CLI (#905). Match gemini.sh form: --sandbox
-      // before --print; never --dangerously-skip-permissions.
+    case "agy": {
+      // #905 r2: same shape as agyAgent / gemini.sh — shared helper, no clone.
+      // `--print ''` + stdin; never put the prompt after --print (agy 1.0.7).
+      const inv = agyPrintInvocation(model, prompt);
       return {
         file: "agy",
-        args: [
-          "--sandbox",
-          ...(model.trim() !== "" ? (["--model", model] as const) : []),
-          "--print",
-          prompt,
-        ],
+        args: inv.args,
+        input: inv.stdin,
       };
+    }
     case "grok":
       return {
         file: "grok",

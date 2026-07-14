@@ -41,6 +41,29 @@ export function parseAgyStreamLine(line: string): Array<
 }
 
 /**
+ * Shared headless agy invocation (gemini.sh contract):
+ *   `agy --sandbox [--model X] --print ''` with the prompt on stdin.
+ *
+ * Single source for {@link agyAgent} and bare-ping smoke — never put the
+ * prompt after `--print` (agy 1.0.7 treats the next token as the print value).
+ */
+export function agyPrintInvocation(
+  model: string,
+  prompt: string,
+): { readonly args: readonly string[]; readonly stdin: string } {
+  const trimmedModel = model.trim();
+  return {
+    args: [
+      "--sandbox",
+      ...(trimmedModel !== "" ? (["--model", trimmedModel] as const) : []),
+      "--print",
+      "",
+    ],
+    stdin: prompt,
+  };
+}
+
+/**
  * Build a sandcastle AgentProvider that runs the real `agy` CLI headless
  * (`--sandbox --print ''` + stdin prompt).
  */
@@ -48,24 +71,23 @@ export function agyAgent(
   model: string,
   options?: AgyAgentOptions,
 ): sc.AgentProvider {
-  const trimmedModel = model.trim();
   return {
     name: "agy",
     env: options?.env ?? {},
     captureSessions: false,
     buildPrintCommand({ prompt }) {
       // Ignore dangerouslySkipPermissions: agy hard-forbids that flag.
-      const modelFlag = trimmedModel
-        ? ` --model ${shellEscape(trimmedModel)}`
-        : "";
+      const inv = agyPrintInvocation(model, prompt);
       return {
-        command: `agy --sandbox${modelFlag} --print ''`,
-        stdin: prompt,
+        command: `agy ${inv.args.map(shellEscape).join(" ")}`,
+        stdin: inv.stdin,
       };
     },
     buildInteractiveArgs({ prompt }) {
+      // Interactive path still uses --print <value> (not the headless empty+stdin form).
       const args = ["agy", "--sandbox"];
-      if (trimmedModel) args.push("--model", trimmedModel);
+      const trimmed = model.trim();
+      if (trimmed) args.push("--model", trimmed);
       if (prompt) args.push("--print", prompt);
       return args;
     },
