@@ -746,3 +746,77 @@ export function isQuotaWaitForResetError(err: unknown): err is QuotaWaitForReset
       (err as { readonly name?: unknown }).name === "QuotaWaitForResetError")
   );
 }
+
+/**
+ * #683/#909 — single shared Sandcastle-idle → quota-probe disposition.
+ *
+ * Both single-slice {@code RealBackend.runAgentSandbox} and family
+ * {@code RealFamilyBackend.runAgentSandbox} MUST route through this helper so a
+ * 429/limit idle is rethrown as {@link QuotaWaitForResetError} (park/wait), not
+ * treated as a hang kill of the worker leg. Do not clone this catch on either
+ * track.
+ *
+ * {@code quotaProbe} absent ⇒ idle errors rethrow unchanged (no probe).
+ */
+export async function withIdleQuotaProbeDisposition<T>(input: {
+  readonly quotaProbe:
+    | {
+        readonly modelRef: string;
+        readonly step?: StepId;
+        readonly workerPid?: number;
+        readonly worktreePath?: string;
+        readonly issueNumber?: number;
+      }
+    | undefined;
+  readonly run: () => Promise<T>;
+  readonly resolveIdle: (ctx: {
+    readonly modelRef: string;
+    readonly step?: StepId;
+    readonly workerPid?: number;
+    readonly worktreePath?: string;
+    readonly issueNumber?: number;
+  }) => Promise<HandleIdleThresholdResult>;
+}): Promise<T> {
+  try {
+    return await input.run();
+  } catch (err) {
+    if (!isAgentIdleTimeoutError(err) || input.quotaProbe === undefined) {
+      throw err;
+    }
+    const result = await input.resolveIdle(input.quotaProbe);
+    if (result.disposition.kind === "wait_for_reset") {
+      throw new QuotaWaitForResetError(result);
+    }
+    throw err;
+  }
+}
+
+/**
+ * #683/#909 shared idle → probe composition for Sandcastle fallback (and any
+ * backend that already owns pid resolution). Both RealBackend and
+ * RealFamilyBackend call this so the handleIdleThreshold wiring is not a
+ * near-clone on each track. Durable park ledger stays runner-owned.
+ */
+export async function resolveSandboxIdleAfterQuotaProbe(input: {
+  readonly modelRef: string;
+  readonly step?: StepId;
+  readonly workerPid: number;
+  readonly runQuotaProbe: (pool: QuotaPoolId) => Promise<QuotaProbeResult>;
+  readonly now?: () => Date;
+}): Promise<HandleIdleThresholdResult> {
+  return handleIdleThreshold({
+    modelRef: input.modelRef,
+    worker: {
+      pid: input.workerPid,
+      ...(input.step !== undefined ? { step: input.step } : {}),
+    },
+    actions: {
+      // Live monitor owns verified pid-tree kill; Sandcastle fallback is post-release.
+      killPidTree: () => undefined,
+      // Runner parkQuotaWaitForReset writes the single durable marker.
+      recordLedger: async () => undefined,
+      ...(input.now !== undefined ? { now: input.now } : {}),
+    },
+    probe: (pool) => input.runQuotaProbe(pool),
+  });
+}
