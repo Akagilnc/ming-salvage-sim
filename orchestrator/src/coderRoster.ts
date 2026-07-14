@@ -108,7 +108,9 @@ export const CODER_REC_FALLBACK_AFTER_ROUNDS = 2;
 const CODER_REC_LINE =
   /^\s*(?:[-*+]\s+)?Coder-Rec\s*:\s*(.+?)\s*$/im;
 
-const CODER_REC_MARK = /Coder-Rec/;
+// Case-insensitive: align presence probe with CODER_REC_LINE's /i flag so
+// `coder-rec carefully` is broken-mark fail-closed, not silent absent (N4).
+const CODER_REC_MARK = /Coder-Rec/i;
 
 function splitCoderRecTokens(raw: string): string[] {
   return raw

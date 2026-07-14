@@ -120,6 +120,22 @@ describe("#906 Coder-Rec — markdown parse + fail-closed", () => {
     );
   });
 
+  it("N4: broken-mark presence probe is case-insensitive (matches line /i)", () => {
+    // Line match is /i; presence probe must not miss alternate casing and
+    // silently treat a broken mark as "absent" (would weaken #906 fail-closed).
+    expect(() => parseCoderRec("Please set coder-rec carefully.\n")).toThrow(
+      CoderRecError,
+    );
+    expect(() => parseCoderRec("CODER-REC alone without tokens\n")).toThrow(
+      /could not be parsed|Coder-Rec/i,
+    );
+    // Legal line with alternate casing still parses (line regex already /i).
+    expect(parseCoderRec("coder-rec: grok-4.5 → terra@med\n")).toEqual([
+      "grok-4.5",
+      "terra@med",
+    ]);
+  });
+
   it("errors on unregistered model tokens and lists legal roster ids", () => {
     expect(() =>
       resolveCoderRecOrder(
