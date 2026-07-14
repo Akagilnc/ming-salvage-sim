@@ -29,7 +29,9 @@ push failure → `released: false` (or no valid tag). Auto-merge must not procee
 
 ## Output
 
-Emit `<docRelease>` JSON. Thin schema only:
+When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same terminal JSON object
+directly to that path (sidecar is authoritative for the runner). For
+compatibility, also emit `<docRelease>` JSON. Thin schema only:
 
 ```json
 {"released": true}
