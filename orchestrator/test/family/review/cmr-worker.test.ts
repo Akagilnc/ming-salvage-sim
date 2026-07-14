@@ -2364,12 +2364,14 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         this.calls.push(options);
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(outcomePathAtRun, JSON.stringify({ committed: "not-a-boolean" }), "utf8");
-        return sandboxRunResult({
-          completionSignal: "CODER_STEP_COMPLETE",
-          sessionId: "family-coder-malformed",
-          // Typed validated "no escalate" with opaque cargo fields.
-          output: { committed: "not-a-boolean" },
-        });
+        // Typed validated "no escalate" with opaque cargo fields.
+        return typedSandboxRunResult(
+          { committed: "not-a-boolean" },
+          {
+            completionSignal: "CODER_STEP_COMPLETE",
+            sessionId: "family-coder-malformed",
+          },
+        );
       }
     }
 

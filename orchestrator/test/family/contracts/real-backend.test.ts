@@ -1302,12 +1302,20 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       // sidecar escalate must not enter the human loop for any review-loop role.
       class Harness extends RealFamilyBackend {
         public classify(
-          result: { output?: unknown; stdout: string; iterations?: unknown[] },
+          result: {
+            output?: unknown;
+            stdout: string;
+            iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+          },
           kind: typeof role,
           outcomePath: string,
         ) {
           return this.familyReviewLoopResultFromRun(
-            { ...result, iterations: result.iterations ?? [] },
+            {
+              stdout: result.stdout,
+              iterations: [...(result.iterations ?? [])],
+              ...(result.output !== undefined ? { output: result.output } : {}),
+            },
             {
               kind,
               id: "S9",
