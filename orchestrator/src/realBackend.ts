@@ -65,6 +65,7 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
+  decisionGateSignalSchema,
   isMalformedDecisionGate,
   reaskReceiptOrThrow,
   wellFormedDecisionBell,
@@ -2788,16 +2789,19 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Typed Sandcastle output for ADR 0131 open-count traffic signals (#899).
-   * Reviewer seats attach Output.object(maxRetries:2). Coder ordinary cargo
-   * stays fully opaque (ADR 0131 / #899 R9): missing or style-changed cargo
-   * must never trigger structured-output repair. Coder decision gates are
-   * classified post-hoc via {@link wellFormedDecisionBell} /
-   * {@link isMalformedDecisionGate} (malformed → Action non-zero for #598).
+   * Typed Sandcastle output for ADR 0131 traffic signals (#899):
+   * - reviewer: open-count receipt (`findingsCount` + optional decision bell)
+   * - coder: signal-only decision gate ({@link decisionGateSignalSchema}) so
+   *   malformed bells get same-session native re-ask while ordinary cargo
+   *   fields (committed/commitsAdded) stay untyped and never force cargo-shape
+   *   repair (ADR 0131).
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     if (spec.role === "reviewer") {
       return workerReceiptOutput("review", workerReceiptSchema("reviewer"));
+    }
+    if (spec.role === "coder") {
+      return workerReceiptOutput("coder", decisionGateSignalSchema);
     }
     return undefined;
   }
@@ -2879,25 +2883,24 @@ export class RealBackend implements Backend {
         findings?: unknown;
         priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
       };
+      // ADR 0131 / #899: open-count is findingsCount only — never derive from
+      // findings-array cargo length. Missing count → unusable receipt (fixer path).
       const findingsCount =
         typeof receipt.findingsCount === "number" &&
         Number.isSafeInteger(receipt.findingsCount) &&
         receipt.findingsCount >= 0
           ? receipt.findingsCount
           : undefined;
-      // Prefer explicit self-report; fall back to findings-array declaration for
-      // process-internal seams that still emit only the array (ADR 0131).
+      if (findingsCount === undefined) {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
       const findings = Array.isArray(receipt.findings)
         ? (receipt.findings as ReadonlyArray<Finding>)
         : [];
-      const declaredCount = findingsCount ?? (Array.isArray(receipt.findings) ? findings.length : undefined);
-      if (declaredCount === undefined) {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
-      }
       return {
         kind: "reviewer",
         findings,
-        findingsCount: declaredCount,
+        findingsCount,
         ...(Array.isArray(receipt.priorFindingDispositions)
           ? { priorFindingDispositions: receipt.priorFindingDispositions }
           : {}),
@@ -2969,9 +2972,9 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: reviewer open-count attaches Output.object(+maxRetries). Coder
-      // seats stay untyped so missing/style-changed opaque cargo never triggers
-      // structured-output repair (ADR 0131 / R9).
+      // #899: traffic signals attach Output.object(+maxRetries). Reviewer uses
+      // open-count schema; coder uses signal-only decisionGateSignalSchema so
+      // ordinary cargo stays opaque (no committed/commitsAdded shape re-ask).
       ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.

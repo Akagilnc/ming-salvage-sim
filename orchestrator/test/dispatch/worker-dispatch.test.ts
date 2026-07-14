@@ -136,7 +136,7 @@ class DispatchBackend implements Backend {
       };
     }
     if (spec.kind === "reviewer") {
-      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
     throw new Error(`unexpected child worker kind: ${spec.kind}`);
   }
@@ -296,7 +296,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
         }
         return {
           kind: "completed",
-          output: { kind: "reviewer", findings: [] },
+          output: { kind: "reviewer", findings: [], findingsCount: 0 },
         };
       }
     }
@@ -338,7 +338,7 @@ describe("#331 non-completed WorkerResult routing", () => {
           escalation: { reason: "design blocker", diagnosis: "need a human" },
         };
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
   }
 
@@ -360,7 +360,7 @@ describe("#331 non-completed WorkerResult routing", () => {
       if (spec.kind === "coder") {
         return { kind: "failed", reason: "container crashed" };
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
   }
 
@@ -729,7 +729,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       this.runStepOutcomeLandings.push(options?.outcomeLanding);
       return spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
-        : { kind: "reviewer", findings: [] };
+        : { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     async resumeSession(
       _spec: StepSpec,

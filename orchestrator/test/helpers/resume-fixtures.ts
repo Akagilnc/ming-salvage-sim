@@ -187,7 +187,7 @@ export class ResumeBackend implements Backend {
     this.resumeSessionCalls.push([spec.id, sessionId]);
     this.runStepIds.push(spec.id);
     if (spec.role === "reviewer") {
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
@@ -236,7 +236,7 @@ export class ResumeBackend implements Backend {
     this.calls.push(`runStep(${spec.id})`);
     this.runStepIds.push(spec.id);
     if (spec.role === "reviewer") {
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
@@ -275,8 +275,7 @@ export class DispatchRecordingResumeBackend extends ResumeBackend {
       return {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: CLAIMED_FIXED_KEY, status: "verified-closed" },
           ],

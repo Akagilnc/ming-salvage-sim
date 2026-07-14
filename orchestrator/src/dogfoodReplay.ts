@@ -402,7 +402,7 @@ class DogfoodSingleSliceBackend implements Backend {
     if (spec.role === "reviewer") {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
-      return scripted ?? { kind: "reviewer", findings: [] };
+      return scripted ?? { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     const scripted =
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
@@ -423,7 +423,7 @@ class DogfoodSingleSliceBackend implements Backend {
       this.reviewerAttempt += 1;
       return {
         kind: "completed",
-        output: scripted ?? { kind: "reviewer", findings: [] },
+        output: scripted ?? { kind: "reviewer", findings: [], findingsCount: 0 },
       };
     }
     const scripted =
@@ -616,7 +616,11 @@ function noProgressDecisionLedger(
       output: { kind: "coder", committed: true, commitsAdded: 1 },
     }),
     ledgerEntry("S3", {
-      output: { kind: "reviewer", findings },
+      output: {
+        kind: "reviewer",
+        findings,
+        findingsCount: findings.length,
+      },
     }),
     ledgerEntry("S4"),
     ledgerEntry("S5", {
@@ -626,6 +630,7 @@ function noProgressDecisionLedger(
       output: {
         kind: "reviewer",
         findings,
+        findingsCount: findings.length,
         priorFindingDispositions: dispositions,
       },
     }),
@@ -637,6 +642,7 @@ function noProgressDecisionLedger(
       output: {
         kind: "reviewer",
         findings,
+        findingsCount: findings.length,
         priorFindingDispositions: dispositions,
       },
     }),
@@ -668,9 +674,8 @@ async function runnerAnsweredResumeReplay(): Promise<SeamReplay> {
     ],
   }, [
     {
-      kind: "reviewer",
-      findings: [],
-      priorFindingDispositions: [
+      kind: "reviewer", findings: [], findingsCount: 0,
+        priorFindingDispositions: [
         { identityKey: activeKey, status: "verified-closed" },
       ],
     },
@@ -725,17 +730,16 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
   const backend = new DogfoodSingleSliceBackend(
     undefined,
     [
-      { kind: "reviewer", findings: [originalFinding] },
+      { kind: "reviewer", findings: [originalFinding], findingsCount: 1 },
       {
         kind: "reviewer",
-        findings: [changedFinding],
+        findings: [changedFinding], findingsCount: 1,
         priorFindingDispositions: [
           { identityKey: originalKey, status: "verified-closed" },
         ],
       },
       {
-        kind: "reviewer",
-        findings: [],
+        kind: "reviewer", findings: [], findingsCount: 0,
         priorFindingDispositions: [
           { identityKey: changedKey, status: "verified-closed" },
         ],
@@ -801,8 +805,8 @@ async function runnerTargetedResetReplay(): Promise<SeamReplay> {
   }, [
     {
       kind: "reviewer",
-      findings: [siblingFinding],
-      priorFindingDispositions: [
+      findings: [siblingFinding], findingsCount: 1,
+        priorFindingDispositions: [
         { identityKey: targetKey, status: "verified-closed" },
         { identityKey: siblingKey, status: "still-active" },
       ],
@@ -875,8 +879,7 @@ async function runnerReviewerEscalationReplay(input: {
 }): Promise<SeamReplay> {
   const backend = new DogfoodSingleSliceBackend(undefined, [
     {
-      kind: "reviewer",
-      findings: [],
+      kind: "reviewer", findings: [], findingsCount: 0,
       escalate: input.escalation,
     },
   ]);
@@ -1686,11 +1689,10 @@ async function closurePositiveReplay(): Promise<SeamReplay> {
   });
   const key = findingIdentityKey(closureFinding);
   const backend = new DogfoodSingleSliceBackend(undefined, [
-    { kind: "reviewer", findings: [closureFinding] },
+    { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
     {
-      kind: "reviewer",
-      findings: [],
-      priorFindingDispositions: [
+      kind: "reviewer", findings: [], findingsCount: 0,
+        priorFindingDispositions: [
         { identityKey: key, status: "verified-closed" },
       ],
     },
@@ -1879,8 +1881,8 @@ async function closureContextMissingReplay(): Promise<SeamReplay> {
     location: "orchestrator/src/runner.ts:376",
   });
   const backend = new DogfoodSingleSliceBackend(undefined, [
-    { kind: "reviewer", findings: [closureFinding] },
-    { kind: "reviewer", findings: [] },
+    { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
+    { kind: "reviewer", findings: [], findingsCount: 0 },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
   if (result.status !== "success") {
@@ -2318,10 +2320,10 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     mechanism: "reviewer_text_only_no_progress",
     finding: textOnlyNoProgressFinding,
     reviewerOutputs: [
-      { kind: "reviewer", findings: [textOnlyNoProgressFinding] },
+      { kind: "reviewer", findings: [textOnlyNoProgressFinding], findingsCount: 1 },
       {
         kind: "reviewer",
-        findings: [textOnlyNoProgressNarrowedFinding],
+        findings: [textOnlyNoProgressNarrowedFinding], findingsCount: 1,
         priorFindingDispositions: [
           { identityKey: textOnlyNoProgressKey, status: "still-active" },
         ],
@@ -2334,7 +2336,7 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
             claim_quote: "changes cannot prove implementation progress",
             suggested_fix: "same finding with another wording-only review change",
           },
-        ],
+        ], findingsCount: 1,
         priorFindingDispositions: [
           { identityKey: textOnlyNoProgressKey, status: "still-active" },
           { identityKey: textOnlyNoProgressNarrowedKey, status: "still-active" },
@@ -2351,17 +2353,17 @@ export async function issue451DogfoodReplay(): Promise<DogfoodReplay> {
     mechanism: "claimed_attempt_without_observable_progress",
     finding: noObservableProgressFinding,
     reviewerOutputs: [
-      { kind: "reviewer", findings: [noObservableProgressFinding] },
+      { kind: "reviewer", findings: [noObservableProgressFinding], findingsCount: 1 },
       {
         kind: "reviewer",
-        findings: [noObservableProgressFinding],
+        findings: [noObservableProgressFinding], findingsCount: 1,
         priorFindingDispositions: [
           { identityKey: noObservableProgressKey, status: "still-active" },
         ],
       },
       {
         kind: "reviewer",
-        findings: [noObservableProgressFinding],
+        findings: [noObservableProgressFinding], findingsCount: 1,
         priorFindingDispositions: [
           { identityKey: noObservableProgressKey, status: "still-active" },
         ],
