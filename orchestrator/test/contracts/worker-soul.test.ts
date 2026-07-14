@@ -227,13 +227,15 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(p).not.toMatch(/\bRED\b|\bGREEN\b|\brefactor\b|Baseline commit|\bOpus\b|\bsubagent\b|ak-cross-m-review/i);
   });
 
-  it("fix/review prompt files stay thin and leave path/review method to the soul", () => {
+  it("fix/review prompts stay entrypoints; #911 vacuum puts mechanical method in prompts", () => {
     const fix = read("coder_fix.md");
     expect(fix).toMatch(/\/home\/agent\/\.orchestrator\/souls\/coder\.md/);
-    expect(fix).toMatch(/fix-findings path/i);
+    expect(fix).toMatch(/fix-findings path|fix-findings\.json/i);
     expect(fix).toMatch(/escalationAnswer/i);
     expect(fix).not.toMatch(/sibling ledger|legacy compatibility fallback|Prefer the sibling ledger/is);
-    expect(fix).not.toMatch(/gh issue view|same-pattern check|fix-introduced-bug check/i);
+    // #911 vacuum: gh issue view / fix-focus method live in the fix prompt.
+    expect(fix).toMatch(/gh issue view/i);
+    expect(fix).toMatch(/\.fix-focus\.md/);
 
     const familyShip = read("family_ship.md");
     expect(familyShip).toMatch(/\/home\/agent\/\.orchestrator\/souls\/ship\.md/);
@@ -242,10 +244,10 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
 
     const review = read("reviewer_review.md");
     expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
-    expect(review).toMatch(/role soul \(live-mounted\) plus runner\s+parameters/i);
+    expect(review).toMatch(/role soul \(live-mounted\)|review character belongs to the role soul/i);
     expect(review).toMatch(/escalationAnswer/i);
-    expect(review).not.toMatch(/\.orchestrator-snapshot\.json/i);
-    expect(review).not.toMatch(/fetch the current issue body|Retry transient network failures|Review the current full slice diff/is);
+    // Snapshot policy is stated as not-execution-input (allowed).
+    expect(review).toMatch(/not execution input/i);
   });
 
   it("the worker image bakes the Matt code-review skill for reviewer workers", () => {
@@ -254,43 +256,39 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     const end = build.indexOf(")", start);
     const closureBlock = build.slice(start, end);
     expect(closureBlock).toMatch(/\bcode-review\b/);
-    // #372: souls (incl output_protocol.md) are mounted live, not staged/copied in build.sh.
+    // #372/#911: souls (+ home env) are mounted live, not staged/copied in build.sh.
     // The presence in source souls/ is asserted by other reads; build no longer bakes souls.
   });
 
-  it("the coder soul carries implementation/fix process but not the per-slice review loop", () => {
+  it("the coder soul is the Chinese character edition (implementation craft, not review loop)", () => {
     const soul = readSoul("coder.md");
-    expect(soul).toMatch(/Invoke `\/tdd`/i);
-    expect(soul).toMatch(/coder-fix|fix worker|blocking review findings/i);
-    expect(soul).toMatch(/escalationAnswer/i);
+    expect(soul).toMatch(/切片工匠/);
+    expect(soul).toMatch(/\/tdd/);
+    expect(soul).toMatch(/coder-fix|被派修 finding/);
+    expect(soul).toMatch(/owner 亲笔/);
+    expect(soul).toMatch(/非 owner/);
     expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
-    expect(soul).toMatch(/gh issue view/i);
-    expect(soul).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
-    expect(soul).toMatch(/comment\.author\.login.*repo owner/is);
-    expect(soul).toMatch(/non-owner.*Agent Brief.*ordinary\s+issue text/is);
-    expect(soul).toMatch(/non-owner.*title.*body.*comments.*data-only/is);
-    expect(soul).toMatch(/must not.*instructions.*scope changes.*commands/is);
-    expect(soul).toMatch(/credential-handling\s+requests/i);
-    expect(soul).toMatch(/Snapshot files.*not execution input/is);
   });
 
-  it("coder soul, not the thin fix prompt, owns author-aware live issue reads", () => {
-    const prompt = read("coder_fix.md");
+  it("author-aware live issue reads live in implement + fix prompts (soul owns character)", () => {
+    const implement = read("coder_implement.md");
+    const fix = read("coder_fix.md");
     const soul = readSoul("coder.md");
-    expect(prompt).not.toMatch(/gh issue view|comment\.author\.login|credential-handling/i);
-    expect(soul).toMatch(/--json[^`]*title[^`]*author[^`]*body[^`]*comments/is);
-    expect(soul).toMatch(/comment\.author\.login.*repo owner/is);
-    expect(soul).toMatch(/credential-handling\s+requests/i);
+    expect(implement).toMatch(/gh issue view/i);
+    expect(fix).toMatch(/gh issue view/i);
+    expect(soul).toMatch(/亲自拉取 issue 全文/);
   });
 
-  it("the reviewer soul carries snapshot-input policy outside the thin prompt", () => {
+  it("the reviewer soul is the Chinese character edition; prompt carries fixed-point/scope", () => {
     const soul = readSoul("reviewer.md");
-    expect(soul).toMatch(/Snapshot files.*not execution input/is);
-    expect(soul).toMatch(/git state for the review scope/i);
-    expect(soul).toMatch(/escalationAnswer/i);
+    const prompt = read("reviewer_review.md");
+    expect(soul).toMatch(/当前全量 diff|全量 diff/);
+    expect(soul).toMatch(/\/code-review/);
+    expect(soul).toMatch(/只评审不修复/);
+    expect(prompt).toMatch(/origin\/main|Snapshot files|escalationAnswer/i);
   });
 
-  it("#419 integrated cmr pass entrypoints read pass-specific souls that invoke only their lens gate", () => {
+  it("#419/#911 integrated cmr prompts invoke pass skills; souls are verify via symlink", () => {
     const completenessPrompt = read("integrated_cmr_completeness.md");
     const correctnessPrompt = read("integrated_cmr_correctness.md");
     expect(completenessPrompt).toMatch(
@@ -299,31 +297,28 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(correctnessPrompt).toMatch(
       /\/home\/agent\/\.orchestrator\/souls\/cmr_correctness\.md/,
     );
+    expect(completenessPrompt).toMatch(/\bak-cmr-completeness\b/);
+    expect(completenessPrompt).not.toMatch(/\bak-cmr-correctness\b/);
+    expect(correctnessPrompt).toMatch(/\bak-cmr-correctness\b/);
+    expect(correctnessPrompt).not.toMatch(/\bak-cmr-completeness\b/);
 
+    // #911: both mount names resolve to verify soul character.
     const completenessSoul = readSoul("cmr_completeness.md");
-    expect(completenessSoul).toMatch(/\bak-cmr-completeness\b/);
-    expect(completenessSoul).not.toMatch(/\bak-cmr-correctness\b/);
-    expect(completenessSoul).not.toMatch(/Gate 2|correctness gate|Run only the correctness/is);
-
     const correctnessSoul = readSoul("cmr_correctness.md");
-    expect(correctnessSoul).toMatch(/\bak-cmr-correctness\b/);
-    expect(correctnessSoul).not.toMatch(/\bak-cmr-completeness\b/);
-    expect(correctnessSoul).not.toMatch(/Gate 1|completeness gate|Run only the completeness/is);
+    expect(completenessSoul).toBe(readSoul("verify.md"));
+    expect(correctnessSoul).toBe(readSoul("verify.md"));
+    expect(completenessSoul).toMatch(/审卷官/);
+    expect(completenessSoul).toMatch(/不改码/);
   });
 
-  it("#549 integrated cmr pass souls are reviewer workers, not persistent fixers", () => {
+  it("#549/#911 integrated cmr pass souls (verify) judge only — no repair/commit", () => {
     for (const soulName of ["cmr_completeness.md", "cmr_correctness.md"]) {
       const soul = readSoul(soulName);
-
-      expect(soul).toMatch(/reviewer worker/i);
-      expect(soul).toMatch(/findings\/outcome/i);
-      expect(soul).toMatch(/return\s+control\s+to\s+the\s+runner/i);
-      expect(soul).toMatch(/must not repair/i);
-      expect(soul).toMatch(/must not[^.]*create a fix commit/i);
+      expect(soul).toMatch(/审卷官|只判卷/);
+      expect(soul).toMatch(/不改码/);
+      expect(soul).toMatch(/不 commit/);
       expect(soul).not.toMatch(/coder-fix/i);
       expect(soul).not.toMatch(/Fix every gap|Fix P0\/P1|After every fix/i);
-      expect(soul).not.toMatch(/Commit each coherent fix|git commit|do not push or open a PR/i);
-      expect(soul).not.toMatch(/gh issue create|TODOS\.md/i);
     }
   });
 
@@ -351,22 +346,17 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     }
   });
 
-  it("the baked shared output protocol owns sidecar parser validation", () => {
-    const protocol = readSoul("output_protocol.md");
-    expect(protocol).toMatch(/ORCHESTRATOR_OUTCOME_PATH/);
-    expect(protocol).toMatch(/write[\s\S]*directly/i);
-    expect(protocol).not.toMatch(/python3 -c 'import json/);
-    expect(protocol).not.toMatch(/python3 -m json\.tool/);
-
-    for (const soulName of [
-      "coder.md",
-      "reviewer.md",
-      "merger.md",
-      "ship.md",
+  it("#911 output_protocol.md is gone; outcome path contract lives in prompts + home env", () => {
+    expect(() => readSoul("output_protocol.md")).toThrow();
+    for (const promptName of [
+      "coder_implement.md",
+      "reviewer_review.md",
+      "merger_resolve_conflict.md",
+      "family_ship.md",
     ]) {
-      expect(readSoul(soulName)).toMatch(
-        /\/home\/agent\/\.orchestrator\/souls\/output_protocol\.md/,
-      );
+      const prompt = read(promptName);
+      expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
+      expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
     }
   });
 
@@ -397,16 +387,18 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(reviewer).toMatch(/do not emit `accepted_suppressed`/i);
   });
 
-  it("standalone reviewer prompt and soul do not advertise accepted_suppressed as supported output", () => {
-    for (const text of [read("reviewer_review.md"), readSoul("reviewer.md")]) {
-      expect(text).toMatch(/do not emit `accepted_suppressed`/i);
-      expect(text).not.toMatch(
-        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen[\s\S]*(findingIdentity|finding identity)[\s\S]*optional/i,
-      );
-      expect(text).not.toMatch(
-        /priorFindingDispositions[\s\S]*accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
-      );
-    }
+  it("standalone reviewer prompt does not advertise accepted_suppressed as supported output", () => {
+    const text = read("reviewer_review.md");
+    expect(text).toMatch(/do not emit `accepted_suppressed`/i);
+    expect(text).not.toMatch(
+      /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen[\s\S]*(findingIdentity|finding identity)[\s\S]*optional/i,
+    );
+    expect(text).not.toMatch(
+      /priorFindingDispositions[\s\S]*accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
+    );
+    // Character soul may mention accepted_suppressed only as a legal concept via
+    // verify; the standalone reviewer soul does not emit governance fields.
+    expect(readSoul("reviewer.md")).not.toMatch(/accepted_suppressed/);
   });
 
   it("integrated-cmr prompts include accepted_suppressed terminal closure metadata", () => {

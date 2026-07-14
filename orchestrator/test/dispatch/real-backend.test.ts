@@ -1011,11 +1011,12 @@ describe("realBackend soulsDirError (#372)", () => {
 
   it("dir-exists-but-missing-souls throws with the missing filenames", () => {
     // dir exists but points at wrong/incomplete set (e.g. image/ instead of image/souls,
-    // or partial checkout missing reviewer.md / output_protocol.md etc).
-    const err = soulsDirError(abs, true, true, ["reviewer.md", "output_protocol.md"]);
+    // or partial checkout missing reviewer.md / verify.md etc).
+    const err = soulsDirError(abs, true, true, ["reviewer.md", "verify.md"]);
     expect(err).toMatch(/missing required soul file\(s\)/);
     expect(err).toMatch(/reviewer\.md/);
-    expect(err).toMatch(/output_protocol\.md/);
+    expect(err).toMatch(/verify\.md/);
+    expect(err).not.toMatch(/output_protocol\.md/);
     expect(err).toMatch(/All of \[/);
     expect(err).not.toMatch(/promptFile/); // distinct from prompts error
   });
@@ -1152,7 +1153,8 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
       msg = String(e?.message ?? e);
     }
     expect(msg).toMatch(/cmr\.md/);
-    expect(msg).toMatch(/output_protocol\.md/);
+    expect(msg).toMatch(/verify\.md/);
+    expect(msg).not.toMatch(/output_protocol\.md/);
     expect(msg).toMatch(/All of \[/);
   });
 });

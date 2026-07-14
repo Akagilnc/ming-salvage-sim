@@ -201,7 +201,7 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
   // per-slice reviewer path, while integrated CMR remains family-layer.
   const skillRouting = claudeMd.slice(claudeMd.indexOf("\n## Skill routing"));
 
-  it("the reviewer soul is the live read-only full-diff reviewer", () => {
+  it("the reviewer soul is the live full-diff character edition (#911)", () => {
     const staleCoderOwnedReviewClaim = new RegExp(
       [
         "per-slice review lives\\s+",
@@ -211,25 +211,22 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
       "i",
     );
 
-    expect(reviewerSoul).toMatch(/READ-ONLY/);
-    expect(reviewerSoul).toMatch(/current full slice diff/i);
-    expect(reviewerSoul).toMatch(/fresh\s+full-diff re-review/i);
+    expect(reviewerSoul).toMatch(/全量 diff|当前全量 diff/);
+    expect(reviewerSoul).toMatch(/只评审不修复/);
     expect(reviewerSoul).not.toMatch(staleCoderOwnedReviewClaim);
   });
 
-  it("the reviewer soul routes the compatibility reviewer to Matt code-review", () => {
+  it("the reviewer soul routes to Matt code-review; fixed-point lives in prompt/CLAUDE", () => {
     expect(reviewerSoul).toMatch(/\/code-review/);
     expect(reviewerSoul).not.toMatch(/builtin `\/review`/i);
-    expect(reviewerSoul).toMatch(/Standards \+ Spec|two-axis|fixed-point/i);
-    expect(reviewerSoul).toMatch(/origin\/main/);
-    expect(reviewerSoul).toMatch(/otherwise use `main`/i);
+    // #911: fixed-point prose moved to reviewer_review.md / Skill routing.
+    expect(skillRouting).toMatch(/origin\/main/);
   });
 
-  it("the reviewer soul names ak-cross-m-review only as the family-layer review", () => {
-    // It may still mention ak-cross-m-review, but only as the integrated/
-    // cross-family gate — NOT as part of the runner-visible per-slice review/fix
-    // loop.
-    expect(reviewerSoul).toMatch(/integrated|cross-family|跨片|family/i);
+  it("the reviewer soul does not own the family-layer ak-cross-m-review loop", () => {
+    // #911 character soul is per-slice only; integrated CMR stays in Skill routing.
+    expect(reviewerSoul).not.toMatch(/ak-cross-m-review/);
+    expect(skillRouting).toMatch(/ak-cross-m-review/);
   });
 
   it("the CLAUDE.md ## Skill routing keeps runner-visible per-slice review/fix and integrated cmr separate", () => {

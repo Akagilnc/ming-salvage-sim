@@ -59,7 +59,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -850,6 +850,49 @@ export function soulsMount(soulsDir: string): { hostPath: string; sandboxPath: s
 }
 
 /**
+ * #911 — container home environment file (worker-facing CLAUDE.md).
+ * Live-mounted at Claude's user config path; same freshness discipline as souls
+ * (not baked into the image).
+ */
+export const SANDBOX_HOME_CLAUDE_MD = "/home/agent/.claude/CLAUDE.md";
+/** Filename written into the per-issue codex auth dir (replaces host AGENTS.md). */
+export const CODEX_HOME_AGENTS_FILENAME = "AGENTS.md";
+
+/** Default: `image/home/CLAUDE.md` sibling of `image/souls/`. */
+export function homeEnvFileFromSoulsDir(soulsDir: string): string {
+  return join(dirname(soulsDir), "home", "CLAUDE.md");
+}
+
+/** Pure mount spec for the container home CLAUDE.md (#911). */
+export function homeClaudeMount(
+  homeEnvFile: string,
+): { hostPath: string; sandboxPath: string; readonly: true } {
+  return {
+    hostPath: homeEnvFile,
+    sandboxPath: SANDBOX_HOME_CLAUDE_MD,
+    readonly: true,
+  };
+}
+
+/**
+ * Write/replace `AGENTS.md` inside a per-issue codex auth dir with the container
+ * home body so host owner global AGENTS.md never reaches the worker (#911).
+ */
+export function provisionCodexHomeAgents(authDir: string, homeEnvFile: string): void {
+  const dest = join(authDir, CODEX_HOME_AGENTS_FILENAME);
+  copyFileSync(homeEnvFile, dest);
+  chmodSync(dest, 0o644);
+}
+
+/** Append the live home CLAUDE.md mount (idempotent push; caller owns array). */
+export function appendHomeEnvMount(
+  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
+  homeEnvFile: string,
+): void {
+  mounts.push(homeClaudeMount(homeEnvFile));
+}
+
+/**
  * Host paths for the per-issue codex auth copy + the claude token (spike
  * contract). codex auth MUST live under $HOME (colima shares $HOME into the
  * Docker VM; $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty →
@@ -1524,7 +1567,6 @@ export const REQUIRED_SOUL_FILES: ReadonlyArray<string> = [
   "docRelease.md",
   "fixer.md",
   "merger.md",
-  "output_protocol.md",
   "reviewer.md",
   "ship.md",
   "verify.md",
@@ -1561,7 +1603,8 @@ export function soulsDirError(
     return (
       `RealBackend: soulsDir "${soulsDir}" is missing required soul file(s): ` +
       `${missingFiles.join(", ")}. All of [${REQUIRED_SOUL_FILES.join(", ")}] ` +
-      `must be present (every file under image/souls, incl. output_protocol.md and docRelease.md).`
+      `must be present (every file under image/souls, incl. docRelease.md; ` +
+      `cmr_completeness/cmr_correctness may be relative symlinks to verify.md).`
     );
   }
   return undefined;
@@ -1632,13 +1675,21 @@ export interface RealBackendOptions {
    */
   readonly promptsDir: string;
   /**
-   * Host dir containing souls (coder.md etc + output_protocol.md) to bind-mount
-   * into the container at /home/agent/.orchestrator/souls . #372: souls are
-   * mounted live (rather than baked) so source edits take effect on next dispatch
-   * without a full image layer change for data files.
-   * REQUIRED: souls are no longer baked into the image.
+   * Host dir containing souls (coder.md etc) to bind-mount into the container at
+   * /home/agent/.orchestrator/souls . #372: souls are mounted live (rather than
+   * baked) so source edits take effect on next dispatch without a full image
+   * layer change for data files. REQUIRED: souls are no longer baked into the image.
+   * #911: output_protocol.md removed (home env + dispatch prompts cover it);
+   * cmr_completeness/cmr_correctness are relative symlinks to verify.md.
    */
   readonly soulsDir: string;
+  /**
+   * #911 — host path to the container home environment file (default:
+   * sibling `image/home/CLAUDE.md` next to soulsDir). Live-mounted for Claude at
+   * {@link SANDBOX_HOME_CLAUDE_MD}; content also replaces AGENTS.md in the
+   * per-issue codex auth dir.
+   */
+  readonly homeEnvFile?: string;
   /** Override $HOME for auth path construction (tests). */
   readonly home?: string;
   /**
@@ -2066,9 +2117,11 @@ export class RealBackend implements Backend {
   /**
    * Fail loudly at construction if soulsDir is missing or not a usable dir
    * containing the full REQUIRED_SOUL_FILES set. Souls are no longer baked (#372);
-   * an incomplete/wrong dir (e.g. orchestrator/image/ or missing reviewer.md
-   * / output_protocol.md) would now sail through to runtime (no more baked copies).
+   * an incomplete/wrong dir (e.g. orchestrator/image/ or missing reviewer.md)
+   * would now sail through to runtime (no more baked copies).
    * Delegates to the pure {@link soulsDirError} (single source of messages/checks).
+   * #911 also requires the container home env file (sibling image/home/CLAUDE.md
+   * by default) so dual-mount cannot silently skip.
    */
   private validateSoulsDir(): void {
     const dir = this.opts.soulsDir;
@@ -2078,6 +2131,18 @@ export class RealBackend implements Backend {
       : [];
     const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
     if (err !== undefined) throw new Error(err);
+    const homeEnv = this.resolveHomeEnvFile();
+    if (!existsSync(homeEnv)) {
+      throw new Error(
+        `RealBackend: home env file missing at "${homeEnv}" ` +
+          `(#911 dual-mount needs image/home/CLAUDE.md next to souls, or opts.homeEnvFile).`,
+      );
+    }
+  }
+
+  /** #911: resolve the container home CLAUDE.md path (live-mount + codex AGENTS). */
+  protected resolveHomeEnvFile(): string {
+    return this.opts.homeEnvFile ?? homeEnvFileFromSoulsDir(this.opts.soulsDir);
   }
 
   /**
@@ -2495,6 +2560,9 @@ export class RealBackend implements Backend {
     // minimal container config instead of copying the host's (#378). Always written
     // so the dir is a valid mount even when codex auth was absent.
     writeContainerCodexConfig(join(paths.hostCodexAuthDir, "config.toml"), this.opts.codexFast);
+    // #911: replace any host AGENTS.md that might otherwise reach the worker via
+    // CODEX_HOME with the container home environment body (one source, dual mount).
+    provisionCodexHomeAgents(paths.hostCodexAuthDir, this.resolveHomeEnvFile());
     // #807: grok auth is BEST-EFFORT + fail-closed skip. Host missing
     // `~/.grok/auth.json` ⇒ omit the mount entirely (unlike codex, which still
     // mounts an empty-ish dir for config.toml). Presence gate = copy success.
@@ -2713,6 +2781,8 @@ export class RealBackend implements Backend {
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
+    // #911: live-mount container home CLAUDE.md (freshness discipline = souls).
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     if (options?.fixFindingsLanding !== undefined) {
       mounts.push({
         hostPath: options.fixFindingsLanding.path,
