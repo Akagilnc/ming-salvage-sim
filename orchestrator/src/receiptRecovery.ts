@@ -116,3 +116,24 @@ export async function resumeTypedReceiptOrFallback<T>(params: {
     params.worker,
   );
 }
+
+/**
+ * Run the one-iteration typed receipt resume only when the original transport
+ * could not decode a final receipt.  Both ordinary and family workers share
+ * this executor; their sandbox, agent, and prompt remain caller parameters.
+ */
+export async function resumeTypedReceiptRun<T>(params: {
+  readonly result: T;
+  readonly receiptWasUnreadable: boolean;
+  readonly sessionId: string | undefined;
+  readonly resume: (sessionId: string) => Promise<T>;
+  readonly worker: string;
+}): Promise<T> {
+  return await resumeTypedReceiptOrFallback({
+    receiptWasUnreadable: params.receiptWasUnreadable,
+    sessionId: params.sessionId,
+    resume: params.resume,
+    fallback: () => params.result,
+    worker: params.worker,
+  });
+}
