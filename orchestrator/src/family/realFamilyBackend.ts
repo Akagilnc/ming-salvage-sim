@@ -1599,9 +1599,10 @@ export class RealFamilyBackend implements FamilyBackend {
             // separate family coder-fix worker.
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
-            // The mounted outcome sidecar is this worker's canonical receipt.
-            // Do not make Sandcastle validate optional compatibility telemetry
-            // before cmrOutcomeFromResult can consume a valid sidecar.
+            // Sandcastle owns malformed-receipt recovery.  The sidecar remains
+            // cargo for cmrOutcomeFromResult; it is never a runner validation
+            // gate or a second receipt parser.
+            output: workerReceiptOutput("cmr", workerReceiptSchema("cmr")),
           });
         } catch (err) {
           return await reaskReceiptOrFallback(
@@ -1610,21 +1611,13 @@ export class RealFamilyBackend implements FamilyBackend {
             "family CMR",
           );
         }
-        const receiptResult = await reaskUnreadableReceiptOrFallback({
-          unreadable: this.cmrReceiptIsUnreadable(result, outcomeLanding.path),
-          reask: () => this.reaskCmrReceipt(
-            spec, ctx, auth, frozenReviewLegs, outcomeLanding, result,
-          ),
-          fallback: () => result,
-          worker: "family CMR",
-        });
         return withCmrSession(
           cmrOutcomeFromResult({
-            ...receiptResult,
+            ...result,
             cmrReviewLegs: frozenReviewLegs,
             outcomePath: outcomeLanding.path,
           }),
-          lastSessionIdIfPresent(receiptResult),
+          lastSessionIdIfPresent(result),
         );
       } finally {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
@@ -1945,43 +1938,6 @@ export class RealFamilyBackend implements FamilyBackend {
     } catch {
       return true;
     }
-  }
-
-  private cmrReceiptIsUnreadable(
-    result: { readonly output?: unknown; readonly stdout?: string },
-    outcomePath: string,
-  ): boolean {
-    if (workerReceiptIsReadable("cmr", result.output)) return false;
-    try {
-      return !workerReceiptIsReadable("cmr", readRequiredWorkerOutcomeSidecar(outcomePath));
-    } catch {
-      return true;
-    }
-  }
-
-  private async reaskCmrReceipt(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    auth: CmrAuth,
-    frozenReviewLegs: ReadonlyArray<{ readonly family: string; readonly slug: string }>,
-    outcomeLanding: { path: string; sandboxPath: string },
-    result: unknown,
-  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const sessionId = lastSessionIdIfPresent(result);
-    if (sessionId === undefined) return result as Awaited<ReturnType<typeof sc.run>>;
-    return await this.runAgentSandbox({
-      name: "family-cmr-receipt-reask",
-      idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-      cwd: this.opts.workingRepo,
-      sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
-      agent: this.agentForSpec(spec, ctx),
-      maxIterations: 1,
-      completionSignal: spec.completionSignal,
-      branchStrategy: { type: "head" },
-      resumeSession: sessionId,
-      promptFile: join(this.opts.promptsDir, spec.promptFile),
-      output: workerReceiptOutput("cmr", workerReceiptSchema("cmr")),
-    });
   }
 
   private async reaskFamilyCoderReceipt(
