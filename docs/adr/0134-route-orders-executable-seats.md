@@ -4,7 +4,7 @@ Date: 2026-07-14
 
 ## Status
 
-Proposed
+Accepted（2026-07-14；#870 本地 CMR R7/R8 + PR #908 R1/R2）
 
 ## Decision
 

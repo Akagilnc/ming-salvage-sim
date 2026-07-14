@@ -4,7 +4,7 @@ Date: 2026-07-11
 
 ## Status
 
-Accepted；ADR 0134 拟取代其中“先在当前 live billing pool 换 checkpoint”的池优先规则
+Accepted；其中“先在当前 live billing pool 换 checkpoint”的池优先规则已由 ADR 0134 取代（2026-07-14）
 
 ## Decision
 
