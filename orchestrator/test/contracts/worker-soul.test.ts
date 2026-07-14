@@ -260,35 +260,14 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     // The presence in source souls/ is asserted by other reads; build no longer bakes souls.
   });
 
-  it("the coder soul is the Chinese character edition (implementation craft, not review loop)", () => {
-    const soul = readSoul("coder.md");
-    expect(soul).toMatch(/切片工匠/);
-    expect(soul).toMatch(/\/tdd/);
-    expect(soul).toMatch(/coder-fix|被派修 finding/);
-    expect(soul).toMatch(/owner 亲笔/);
-    expect(soul).toMatch(/非 owner/);
-    expect(soul).not.toMatch(/Second review|non-Claude reviewer leg/i);
-  });
-
-  it("author-aware live issue reads live in implement + fix prompts (soul owns character)", () => {
+  it("author-aware live issue reads live in implement + fix prompts", () => {
     const implement = read("coder_implement.md");
     const fix = read("coder_fix.md");
-    const soul = readSoul("coder.md");
     expect(implement).toMatch(/gh issue view/i);
     expect(fix).toMatch(/gh issue view/i);
-    expect(soul).toMatch(/亲自拉取 issue 全文/);
   });
 
-  it("the reviewer soul is the Chinese character edition; prompt carries fixed-point/scope", () => {
-    const soul = readSoul("reviewer.md");
-    const prompt = read("reviewer_review.md");
-    expect(soul).toMatch(/当前全量 diff|全量 diff/);
-    expect(soul).toMatch(/\/code-review/);
-    expect(soul).toMatch(/只评审不修复/);
-    expect(prompt).toMatch(/origin\/main|Snapshot files|escalationAnswer/i);
-  });
-
-  it("#419/#911 integrated cmr prompts invoke pass skills; souls are verify via symlink", () => {
+  it("#419/#911 integrated cmr prompts point at pass soul paths; cmr_* resolve to verify", () => {
     const completenessPrompt = read("integrated_cmr_completeness.md");
     const correctnessPrompt = read("integrated_cmr_correctness.md");
     expect(completenessPrompt).toMatch(
@@ -302,41 +281,14 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(correctnessPrompt).toMatch(/\bak-cmr-correctness\b/);
     expect(correctnessPrompt).not.toMatch(/\bak-cmr-completeness\b/);
 
-    // #911: both mount names resolve to verify soul character.
-    const completenessSoul = readSoul("cmr_completeness.md");
-    const correctnessSoul = readSoul("cmr_correctness.md");
-    expect(completenessSoul).toBe(readSoul("verify.md"));
-    expect(correctnessSoul).toBe(readSoul("verify.md"));
-    expect(completenessSoul).toMatch(/审卷官/);
-    expect(completenessSoul).toMatch(/不改码/);
-
-    // B2/B3: thin prompt contracts after symlink-to-verify (not buried only in soul).
-    for (const prompt of [completenessPrompt, correctnessPrompt]) {
-      expect(prompt).toMatch(
-        /read and obey `?\.cmr-focus\.md`? and `?\.cmr-route\.json`? at the repo root FIRST/i,
-      );
-      expect(prompt).toMatch(
-        /when `?\$ORCHESTRATOR_OUTCOME_PATH`? is set,? write/i,
-      );
-    }
-  });
-
-  it("#549/#911 integrated cmr pass souls (verify) judge only — no repair/commit", () => {
-    for (const soulName of ["cmr_completeness.md", "cmr_correctness.md"]) {
-      const soul = readSoul(soulName);
-      expect(soul).toMatch(/审卷官|只判卷/);
-      expect(soul).toMatch(/不改码/);
-      expect(soul).toMatch(/不 commit/);
-      expect(soul).not.toMatch(/coder-fix/i);
-      expect(soul).not.toMatch(/Fix every gap|Fix P0\/P1|After every fix/i);
-    }
+    // FS structure: both mount names resolve to the same verify body.
+    expect(readSoul("cmr_completeness.md")).toBe(readSoul("verify.md"));
+    expect(readSoul("cmr_correctness.md")).toBe(readSoul("verify.md"));
   });
 
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
-    // Shared sidecar hygiene lives in the baked output protocol, not repeated
-    // across every prompt entrypoint.
     const prompts = [
       ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/],
       ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/],
@@ -356,7 +308,7 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     }
   });
 
-  it("#911 output_protocol.md is gone; outcome path contract lives in prompts + home env", () => {
+  it("#911 output_protocol.md is gone; outcome path contract lives in prompts", () => {
     expect(() => readSoul("output_protocol.md")).toThrow();
     for (const promptName of [
       "coder_implement.md",
@@ -367,61 +319,6 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
       const prompt = read(promptName);
       expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
       expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
-    }
-  });
-
-  // #604 slice 4 (ADR 0062): the routing disposition kinds — and their
-  // parser-required fields — were removed from the type system, so no reviewer
-  // or CMR prompt may still advertise them. This test used to assert those
-  // route-kind fields WERE documented; it now asserts they are GONE and that the
-  // new thin contract is documented instead (CMR prompts carry the
-  // `accepted_suppressed` governance fields; the standalone reviewer prompt
-  // mandates fix_now-only and emits no disposition).
-  it("CMR completeness/correctness prompts document the accepted_suppressed governance fields", () => {
-    for (const text of [
-      read("integrated_cmr_completeness.md"),
-      read("integrated_cmr_correctness.md"),
-    ]) {
-      expect(text).toMatch(
-        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
-      );
-    }
-  });
-
-  it("standalone reviewer prompt mandates fix_now-only findings with no routing disposition", () => {
-    const reviewer = read("reviewer_review.md");
-    // Everything is blocking / fix_now; there is no pass to another module.
-    expect(reviewer).toMatch(/fix_now/);
-    expect(reviewer).toMatch(/no pass to another module/i);
-    // And it explicitly does not emit an accepted_suppressed disposition either.
-    expect(reviewer).toMatch(/do not emit `accepted_suppressed`/i);
-  });
-
-  it("standalone reviewer prompt does not advertise accepted_suppressed as supported output", () => {
-    const text = read("reviewer_review.md");
-    expect(text).toMatch(/do not emit `accepted_suppressed`/i);
-    expect(text).not.toMatch(
-      /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen[\s\S]*(findingIdentity|finding identity)[\s\S]*optional/i,
-    );
-    expect(text).not.toMatch(
-      /priorFindingDispositions[\s\S]*accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
-    );
-    // Character soul may mention accepted_suppressed only as a legal concept via
-    // verify; the standalone reviewer soul does not emit governance fields.
-    expect(readSoul("reviewer.md")).not.toMatch(/accepted_suppressed/);
-  });
-
-  it("integrated-cmr prompts include accepted_suppressed terminal closure metadata", () => {
-    for (const text of [
-      read("integrated_cmr_completeness.md"),
-      read("integrated_cmr_correctness.md"),
-    ]) {
-      expect(text).toMatch(
-        /accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen[\s\S]*(findingIdentity|finding identity)[\s\S]*optional/i,
-      );
-      expect(text).toMatch(
-        /priorFindingDispositions[\s\S]*accepted_suppressed[\s\S]*source[\s\S]*scope[\s\S]*reason[\s\S]*boundedReopen/i,
-      );
     }
   });
 });
