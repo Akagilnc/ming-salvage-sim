@@ -1539,7 +1539,13 @@ async function dispatchOrAbort(
     // #909: 429/quota park signal must NOT collapse into generic startup
     // `{kind:"failed"}` (leg-kill). Rethrow so upper family/runner can park or
     // relay — same typed terminal as single-slice withMechanicalRetry.
-    if (isQuotaWaitForResetError(err)) throw err;
+    if (isQuotaWaitForResetError(err)) {
+      // N2: stamp the hit CMR pass so wall relay rewrites only that slot.
+      if (ctx.cmrPass === "completeness" || ctx.cmrPass === "correctness") {
+        err.cmrPass = ctx.cmrPass;
+      }
+      throw err;
+    }
     const reason = `family ${spec.kind} worker threw on startup: ${
       err instanceof Error ? err.message : String(err)
     }`;

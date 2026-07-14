@@ -527,6 +527,12 @@ export class QuotaWaitForResetError extends Error {
   readonly disposition: Extract<IdleDisposition, { kind: "wait_for_reset" }>;
   readonly applied: ApplyIdleDispositionResult;
   readonly pool: QuotaPoolId;
+  /**
+   * Family integrated-CMR wall role when the idle/429 happened on a pass worker.
+   * Set by the family dispatch layer so relay rewrites only the hit CMR slot
+   * (correctness N2 — never both).
+   */
+  cmrPass?: "completeness" | "correctness";
 
   constructor(result: HandleIdleThresholdResult) {
     if (result.disposition.kind !== "wait_for_reset") {

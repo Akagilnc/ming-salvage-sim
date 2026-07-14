@@ -531,8 +531,12 @@ export function familyRelaySlotsForWall(opts: {
   if (step === "S3") {
     if (opts.cmrPass === "correctness") return ["cmrCorrectness"];
     if (opts.cmrPass === "completeness") return ["cmrCompleteness"];
-    // Unknown pass: rewrite both CMR consume slots so either barrier gets the baton.
-    return ["cmrCompleteness", "cmrCorrectness"];
+    // Correctness N2 / F2 residual: one pass 429 must not rewrite the other CMR
+    // slot. Require the hit pass (or wall role); never default both.
+    throw new Error(
+      "familyRelaySlotsForWall: S3 wall requires cmrPass " +
+        "(completeness|correctness); refusing to rewrite both CMR slots",
+    );
   }
   if (step === "S5") return ["coderFix"];
   if (step === "S7") return ["ship"];
