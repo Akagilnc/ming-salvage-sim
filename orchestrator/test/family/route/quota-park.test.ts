@@ -673,6 +673,51 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     void result;
   });
 
+  it("B4: open-shipped online-review failure preserves stopSummary + escalated", async () => {
+    // Non-test PR handle → offline poll inadmissible → online-review fails with
+    // structured stopSummary. Open-shipped re-entry must surface escalated + that
+    // summary, not collapse to bare finalize verify_failed.
+    const now = new Date("2026-07-14T12:00:00.000Z");
+    const resetAt = new Date(now.getTime() + 2 * DEFAULT_PARK_THRESHOLD_MS);
+    const worktree = makeRepo();
+    const familyBackend = new FakeFamilyBackend(worktree);
+    familyBackend.ledger.push({
+      childIssue: 10,
+      status: "merged",
+      familyHeadAfter: "family-base-0",
+    });
+
+    const { recordShipped } = await import("../../../src/family/ledger.js");
+    const result = await runFamily({
+      epic: epicWith(10),
+      familyBackend,
+      singleSliceBackend: new ChildBackend(),
+      familyBase: "family/909-base",
+      now: () => now,
+      relayPools: liveBatonRelayPools(resetAt),
+      verifyCmr: async (input) => {
+        if (input.phase !== "final") return { ok: true, ran: true };
+        await recordShipped(familyBackend, {
+          pr: "https://example.com/not-a-test-pr-handle",
+          familyHeadAfter: "family-base-0",
+        });
+        throw quotaWaitError({ resetAt, pool: "grok", step: "S9" });
+      },
+    });
+
+    expect(result.status).toBe("escalated");
+    expect(result.stopSummary).toBeDefined();
+    expect(result.stopSummary?.summary).toMatch(
+      /online review|inadmissible|open-shipped|did not converge/i,
+    );
+    expect(result.stopSummary?.summary).not.toMatch(
+      /verify\/cmr barrier failed/i,
+    );
+    expect(
+      familyBackend.ledger.filter((e) => e.status === "shipped"),
+    ).toHaveLength(1);
+  });
+
   it("pure apply: family slots rewrite cmr/ship; single-slice S7 still only coder", () => {
     const route = resolveActiveModelRoute();
     const baton = { slug: "gpt-5.6-terra" };
