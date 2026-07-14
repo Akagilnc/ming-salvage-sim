@@ -589,8 +589,8 @@ _Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它�
 _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worker 的判据)、subagent(worker 是顶层容器、不是 runner 的子代理)。
 
 **reviewer worker**:
-被 runner 派出、只负责评审的 worker。它可以读 scope/issue/ADR、运行评审所需测试、按所属动作调用模型腿并汇总证据，但不承担持久修复；完成后只自报 open-count 或提交需要人类决定，finding 内容留给 fixer 与 fresh reviewer，不交给 runner 裁判。
-_Avoid_: 自评自修、顺手修一下、把 CMR reviewer 当 coder-fix。
+被 runner 派出、只负责评审的 worker。它可以读 scope/issue/ADR、运行评审所需测试、按所属动作调用模型腿并汇总证据，但不承担持久修复；即使复用一个支持自治修复循环的评审 engine，编排器内也只调用它的单次 reviewer pass，完成后自报 open-count 或提交需要人类决定，finding 内容留给 fixer 与 fresh reviewer，不交给 runner 裁判。
+_Avoid_: 自评自修、顺手修一下、在 reviewer worker 内启动 engine 自带的 fix loop、把 CMR reviewer 当 coder-fix。
 
 **coder-fix worker**:
 被 runner 派出、专门处理 reviewer 交来的未决项的 worker。它逐项验真、完成修复与自查，并把结果留给 fresh reviewer 全量复核；具体接力顺序由唯一交付主流程定义。Runner 不读取提交或修复证据。
