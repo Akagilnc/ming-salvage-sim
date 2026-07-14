@@ -304,15 +304,13 @@ describe("#683 per-pool probe config (配置随 route / model)", () => {
     expect(cfg.kind).toBe("none");
   });
 
-  it("grok/codex/claude/agy pools → provider_status (C2 classified, honest fail-safe)", () => {
-    for (const pool of ["grok", "codex", "claude", "agy"] as const) {
-      const cfg = probeConfigForPool(pool);
-      expect(cfg.pool).toBe(pool);
-      expect(cfg.kind).toBe("provider_status");
-    }
+  it("grok pool → TBD probe kind (reserved)", () => {
+    const cfg = probeConfigForPool("grok");
+    expect(cfg.pool).toBe("grok");
+    expect(cfg.kind).toBe("grok_tbd");
   });
 
-  it("model ref maps to pool (route-table companion + C2 live registry)", () => {
+  it("model ref maps to pool (route-table companion)", () => {
     const cases: ReadonlyArray<[string, QuotaPoolId]> = [
       ["zai/glm-5.2", "zai"],
       ["glm-5.2", "zai"],
@@ -323,17 +321,8 @@ describe("#683 per-pool probe config (配置随 route / model)", () => {
       ["kimi-k2", "unknown"],
       ["grok-build", "grok"],
       ["grok-composer-2.5-fast", "grok"],
-      ["grok-4.5", "grok"],
-      // C2: production registry models must classify (not unknown).
-      ["sonnet", "claude"],
-      ["haiku", "claude"],
-      ["opus", "claude"],
-      ["gpt-5.6-terra", "codex"],
-      ["gpt-5.6-sol", "codex"],
-      ["gpt-5.5", "codex"],
-      ["codex-5h", "codex"],
-      ["claude", "claude"],
-      ["agy", "agy"],
+      ["sonnet", "unknown"],
+      ["gpt-5.5", "unknown"],
     ];
     for (const [ref, pool] of cases) {
       expect(poolForModelRef(ref), ref).toBe(pool);
