@@ -1613,6 +1613,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const reask = backend.agentOptions[1]!;
     expect(reask.resumeSession).toBe("sess-coder-reask");
     expect(reask.maxIterations).toBe(1);
+    expect(reask.promptFile).toMatch(/coder_receipt_reask\.md$/);
     expect(reask.output).toMatchObject({ tag: "coder", maxRetries: 2 });
   });
 
