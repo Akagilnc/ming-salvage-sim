@@ -57,6 +57,7 @@ import {
 } from "../../../src/family/realFamilyBackend.js";
 import {
   isReceiptRecoveryFailure,
+  RECEIPT_MAX_RETRIES,
   workerReceiptSchema,
 } from "../../../src/receiptRecovery.js";
 import {
@@ -830,18 +831,23 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
-    const attempts: string[] = [];
+    const attempts: Array<{ readonly sessionId: string; readonly receipt: unknown }> = [];
+    let sandcastleCalls = 0;
     class Backend extends RealFamilyBackend {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-        expect(options.output).toEqual(expect.objectContaining({ tag: "cmr", maxRetries: 2 }));
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "cmr",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
         // Fake Sandcastle consumes the initial receipt plus two same-session
         // retries before reporting the framework's normal exhaustion error.
         for (const receipt of [{ converged: true }, { converged: true }, { converged: true }]) {
-          attempts.push("sess-cmr-exhausted");
+          attempts.push({ sessionId: "sess-cmr-exhausted", receipt });
           expect(workerReceiptSchema("cmr").safeParse(receipt).success).toBe(false);
         }
         throw new sc.StructuredOutputError("bad output", {
@@ -875,10 +881,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         location: "orchestrator/src/family/realFamilyBackend.ts:1606",
       })],
     });
+    expect(sandcastleCalls).toBe(1);
+    expect(attempts).toHaveLength(RECEIPT_MAX_RETRIES + 1);
     expect(attempts).toEqual([
-      "sess-cmr-exhausted",
-      "sess-cmr-exhausted",
-      "sess-cmr-exhausted",
+      { sessionId: "sess-cmr-exhausted", receipt: { converged: true } },
+      { sessionId: "sess-cmr-exhausted", receipt: { converged: true } },
+      { sessionId: "sess-cmr-exhausted", receipt: { converged: true } },
     ]);
   });
 
@@ -889,6 +897,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
     const attempts: Array<{ readonly sessionId: string; readonly receipt: unknown }> = [];
+    let sandcastleCalls = 0;
     const completeVerdict = {
       converged: true,
       findingsCount: 0,
@@ -901,6 +910,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
         // Fake Sandcastle: its retry loop owns the retries. The runner gets one
         // call and supplies only the typed-output policy.
         expect(options.output).toEqual(expect.objectContaining({ tag: "cmr", maxRetries: 2 }));
@@ -928,6 +938,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       { sessionId: "same-cmr-reviewer-session", receipt: { ...completeVerdict, findingsCount: undefined } },
       { sessionId: "same-cmr-reviewer-session", receipt: completeVerdict },
     ]);
+    expect(sandcastleCalls).toBe(1);
+    expect(attempts).toHaveLength(2);
   });
 
   it("lets the independent escalation bell through before malformed bell cargo can suppress it", () => {
