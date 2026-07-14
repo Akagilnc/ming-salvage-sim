@@ -19,7 +19,7 @@ _Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamil
 _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue 建多个并行现场
 
 **家族子工作树（Family Child Worktree）**:
-家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，但 successor agent/session/checkpoint 按选棒结果决定，可变化，不另建替代现场。直接输入子 issue 号时，只有无既有 scene 且 Issue Admission 确认为 open + ready 叶子才走单片模式的独立 worktree 和 PR；closed/open-unready 无 scene 叶子 quiet skip；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
+家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 的 ordinary retry/resume 重入时继续使用原工作树、编排账与当前角色 agent session；relay 保留现场、baton 与旧 session/checkpoint 记录，successor 席位由 Policy 按固定顺序选择，再由 Worker Invocation 为该席位启动新的 agent/session/checkpoint，不另建替代现场。直接输入子 issue 号时，只有无既有 scene 且 Issue Admission 确认为 open + ready 叶子才走单片模式的独立 worktree 和 PR；closed/open-unready 无 scene 叶子 quiet skip；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
 **议题准入（Issue Admission）**:
@@ -35,7 +35,7 @@ _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代�
 _Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
 
 **Worker Invocation 生命周期**:
-Execution Capsule 只持有 live scene identity / handle，Lineage 只保存 locator 与恢复记录，Scene Provisioning / Recovery 单一查询 Lineage 并找回或重连同一 scene。Worker Invocation Action 消费已恢复的 Capsule handle，只拥有该 scene 内的 worker crash/re-entry、内部 worker retry budget、是否重派 worker，以及 worker 进程与当前角色 session 的恢复。Runner 只依据 exit-code 通道，在同一 fixed flow position 执行 #598 的有界进程重试；耗尽即终止 run，不进入下一 Action。ordinary retry/resume 恢复当前角色原 session，relay 则保留 scene、worktree、baton 与旧 session/checkpoint records，successor session 按选棒结果决定。
+Execution Capsule 只持有 live scene identity / handle，Lineage 只保存 locator 与恢复记录，Scene Provisioning / Recovery 单一查询 Lineage 并找回或重连同一 scene。Worker Invocation Action 消费已恢复的 Capsule handle，只拥有该 scene 内的 worker crash/re-entry、内部 worker retry budget、是否重派 worker，以及 worker 进程与当前角色 session 的恢复。Runner 只依据 exit-code 通道，在同一 fixed flow position 执行 #598 的有界进程重试；耗尽即终止 run，不进入下一 Action。ordinary retry/resume 恢复当前角色原 session；relay 保留 scene、worktree、baton 与旧 session/checkpoint records，successor 席位由 Policy 按固定顺序选择，再由 Worker Invocation 启动新 session。
 _Avoid_: 让 Runner 消费 Worker Invocation 内部的 worker retry budget 或选择重派 worker、把有界进程重试变成第四通道、让 Worker Invocation 重建 scene/locator/live handle、把 relay 写成 same-session、把 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
 
 ### Runtime And LLM
