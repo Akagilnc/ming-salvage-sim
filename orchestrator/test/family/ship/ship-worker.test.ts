@@ -653,6 +653,57 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     expect(outcomePathAtRun).toBeDefined();
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
+
+  it("attaches signal-only decision Output.object for family ship without cargo-shape re-ask", async () => {
+    // #899: ship decision gates use Output.object(maxRetries:2); PR/URL cargo stays opaque.
+    class CaptureShipBackend extends RealFamilyBackend {
+      public calls: Parameters<typeof sc.run>[0][] = [];
+      protected override sh(): string {
+        return "";
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok", ghToken: "gho_ok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        this.calls.push(options);
+        return {
+          branch: FAMILY_BASE,
+          stdout: "<ship>{}</ship>",
+          completionSignal: "SHIP_STEP_COMPLETE",
+          commits: [],
+          iterations: [],
+          output: {
+            status: "pr_opened",
+            branch: FAMILY_BASE,
+            pr: "https://example.test/pr/1",
+          },
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const b = new CaptureShipBackend({
+      workingRepo: realRepo(),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-signal-so-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+    });
+
+    const out = await (
+      b as unknown as { runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<ShipWorkerOutcome> }
+    ).runShipWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+
+    expect(out.kind).toBe("shipped");
+    expect(b.calls).toHaveLength(1);
+    expect(b.calls[0]!.output).toMatchObject({
+      tag: "ship",
+      maxRetries: 2,
+    });
+  });
 });
 
 // ═══════════════════ model-id contract (cmr S336 r7 P1) — family ship + cmr workers
