@@ -1581,16 +1581,15 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("attaches signal-only Output.object for single-iter coder without re-asking opaque cargo", async () => {
-    // #899: decision-gate Output.object is attached; ordinary cargo fields stay
-    // opaque (missing committed/commitsAdded does not force a second invocation).
+  it("keeps coder cargo fully opaque without Output.object re-ask", async () => {
+    // #899 / ADR 0131: coder success is exit-code + opaque cargo. Missing or
+    // style-changed cargo must not attach structured-output repair.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: "coder completed implementation but omitted its receipt",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-opaque",
-      output: {},
     });
 
     await expect(
@@ -1608,20 +1607,16 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "coder",
-      maxRetries: 2,
-    });
+    expect(backend.agentOptions[0]!.output).toBeUndefined();
     expect(backend.agentOptions[0]!.resumeSession).toBeUndefined();
   });
 
-  it("does not re-ask coder cargo when the typed receipt omits a cargo field", async () => {
+  it("does not re-ask coder cargo when the receipt omits a cargo field", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: '<coder>{"committed": true}</coder>',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-partial-cargo",
-      output: { committed: true },
     });
 
     await expect(backend.runStep({ ...coderSpec, maxIter: 1 }, {
@@ -1633,10 +1628,24 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "coder",
-      maxRetries: 2,
+    expect(backend.agentOptions[0]!.output).toBeUndefined();
+  });
+
+  it("fails the Action on a malformed coder decision gate without inventing a park", async () => {
+    const backend = makeBackend();
+    backend.agentResult = agentRunResult({
+      stdout: '<coder>{"escalate":{"reason":"","diagnosis":""}}</coder>',
+      commits: [],
+      sessionId: "sess-coder-bad-gate",
     });
+
+    await expect(
+      backend.runStep({ ...coderSpec, maxIter: 1 }, {
+        branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
+      }),
+    ).rejects.toThrow(/malformed decision gate/);
+    expect(backend.agentOptions).toHaveLength(1);
+    expect(backend.agentOptions[0]!.output).toBeUndefined();
   });
 
   it("keeps a single Sandcastle invocation when a missing coder receipt has no session", async () => {
@@ -1698,15 +1707,13 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
-  it("attaches signal-only decision Output.object when resuming a coder seat", async () => {
-    // Resume is maxIterations:1; #899 attaches decision-gate Output.object while
-    // ordinary cargo fields stay opaque inside decisionGateSignalSchema.
+  it("keeps coder cargo opaque when resuming a coder seat", async () => {
+    // Resume is maxIterations:1; coder cargo stays untyped (#899 R9 / ADR 0131).
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "resumed worker completed without a cargo tag",
       commits: [{ sha: "abc123" }],
       sessionId: "prior-coder-session",
-      output: {},
     });
 
     await expect(backend.resumeSession(
@@ -1717,10 +1724,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "prior-coder-session",
     });
-    expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "coder",
-      maxRetries: 2,
-    });
+    expect(backend.lastAgentOptions?.output).toBeUndefined();
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
@@ -1789,6 +1793,15 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(workerReceiptSchema("reviewer").safeParse({
       escalate: "not-an-object",
     }).success).toBe(false);
+    // Legal findingsCount must not mask a present-but-malformed decision gate.
+    expect(workerReceiptSchema("reviewer").safeParse({
+      findingsCount: 1,
+      escalate: { reason: "", diagnosis: "" },
+    }).success).toBe(false);
+    expect(workerReceiptSchema("reviewer").safeParse({
+      findingsCount: 1,
+      escalate: { reason: "owner decision", diagnosis: "design fork" },
+    }).success).toBe(true);
   });
 
   it("prefers typed Output.object over sidecar/stdout for reviewer receipts", () => {

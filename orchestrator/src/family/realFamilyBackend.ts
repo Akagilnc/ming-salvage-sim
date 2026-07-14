@@ -59,7 +59,9 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import {
   decisionGateSignalSchema,
+  isMalformedDecisionGate,
   reaskReceiptOrThrow,
+  wellFormedDecisionBell,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "../receiptRecovery.js";
@@ -882,8 +884,14 @@ export class RealFamilyBackend implements FamilyBackend {
             completionSignal: MERGER_COMPLETION_SIGNAL,
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
+            // #899: signal-only decision gate; resolve cargo stays opaque.
+            output: workerReceiptOutput("merger", decisionGateSignalSchema),
           });
-          const outcome = mergerOutcomeFromResult({ ...result, outcomePath: outcomeLanding.path });
+          const outcome = mergerOutcomeFromResult({
+            ...result,
+            outcomePath: outcomeLanding.path,
+            output: (result as { readonly output?: unknown }).output,
+          });
           telemetry.stampCollect({
             kind: "result",
             result: outcome.resolved
@@ -1686,8 +1694,10 @@ export class RealFamilyBackend implements FamilyBackend {
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
-          // #899: signal-only decision gate Output.object; ordinary cargo stays
-          // opaque (decisionGateSignalSchema does not re-ask committed fields).
+          // #899 / ADR 0131: coder cargo stays opaque — no Output.object so
+          // missing/style-changed cargo never triggers structured-output repair.
+          // Decision gates are classified post-hoc (well-formed → park; malformed
+          // → Action non-zero for #598).
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1704,7 +1714,6 @@ export class RealFamilyBackend implements FamilyBackend {
             completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
-            output: workerReceiptOutput("coder", decisionGateSignalSchema),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -1884,17 +1893,18 @@ export class RealFamilyBackend implements FamilyBackend {
     outcomePath: string,
   ): WorkerResult {
     try {
-      // Prefer typed Output.object for decision gates; sidecar is cargo only (#899).
+      // Sidecar/stdout cargo only (no typed coder Output.object — #899 R9).
       const raw =
         result.output !== undefined
           ? result.output
           : readRequiredWorkerOutcomeSidecar(outcomePath);
-      const decisionBell = probeWorkerDecisionBell(raw);
-      if (
-        decisionBell !== undefined &&
-        decisionBell.reason.trim().length > 0 &&
-        decisionBell.diagnosis.trim().length > 0
-      ) {
+      if (isMalformedDecisionGate(raw)) {
+        throw new Error(
+          "family-coder-fix: malformed decision gate; failing Action for mechanical redispatch",
+        );
+      }
+      const decisionBell = wellFormedDecisionBell(raw);
+      if (decisionBell !== undefined) {
         return {
           kind: "escalated",
           escalation: decisionBell,
@@ -1916,7 +1926,11 @@ export class RealFamilyBackend implements FamilyBackend {
             : { kind: "coder", committed: false, commitsAdded: 0 },
         sessionId: lastSessionId(result),
       };
-    } catch {
+    } catch (err) {
+      // Malformed decision gates must not become empty success cargo.
+      if (err instanceof Error && err.message.includes("malformed decision gate")) {
+        throw err;
+      }
       return {
         kind: "completed",
         output: { kind: "coder", committed: false, commitsAdded: 0 },
@@ -1981,6 +1995,9 @@ export class RealFamilyBackend implements FamilyBackend {
         spec.kind === "fixer" ? this.writeFamilyFixFocusFile(landing) : undefined;
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
+        // #899: signal-only decision-gate Output.object for every gate-capable
+        // review-loop seat. Role tags (verify/fixer/cleanup/docRelease) are always
+        // required by prompts; ordinary cargo fields stay opaque inside the schema.
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1998,6 +2015,7 @@ export class RealFamilyBackend implements FamilyBackend {
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
+          output: workerReceiptOutput(spec.kind, decisionGateSignalSchema),
         });
         return this.familyReviewLoopResultFromRun(result, spec, outcomeLanding.path);
       } finally {
@@ -2143,12 +2161,26 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   protected familyReviewLoopResultFromRun(
-    result: Pick<Awaited<ReturnType<typeof sc.run>>, "completionSignal" | "stdout" | "iterations">,
+    result: Pick<Awaited<ReturnType<typeof sc.run>>, "completionSignal" | "stdout" | "iterations"> & {
+      readonly output?: unknown;
+    },
     spec: WorkerSpec,
     outcomePath?: string,
   ): WorkerResult {
     try {
       const sessionId = lastSessionIdIfPresent(result);
+      // Prefer Sandcastle typed receipt for decision-gate fate (#899).
+      if (result.output !== undefined) {
+        if (isMalformedDecisionGate(result.output)) {
+          throw new Error(
+            `family-${spec.kind}: malformed decision gate; failing Action for mechanical redispatch`,
+          );
+        }
+        const typedBell = wellFormedDecisionBell(result.output);
+        if (typedBell !== undefined) {
+          return { kind: "escalated", escalation: typedBell, sessionId };
+        }
+      }
       if (spec.kind === "verify") {
         const parsed = parseVerifyOutcome(result.stdout, outcomePath);
         if (parsed.kind === "escalate") {
@@ -2792,8 +2824,9 @@ export class RealFamilyBackend implements FamilyBackend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: signal-only decision gate; PR/URL cargo stays opaque.
-      output: workerReceiptOutput("ship", decisionGateSignalSchema),
+      // #899 / ADR 0131: ship cargo (PR URL / branch) stays opaque — no
+      // Output.object so missing tags never trigger structured-output repair.
+      // Decision gates classified post-hoc in shipOutcomeFromResult.
     });
   }
 
@@ -3565,15 +3598,15 @@ function classifyCmrOutcomePayload(
 ): CmrWorkerOutcome {
   if (!isJsonRecord(parsed)) return sparseCmrCargo();
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
-  const decisionBell = probeWorkerDecisionBell(normalizedParsed);
-  // #899: only well-formed bells (non-empty reason+diagnosis) are fate signals.
-  // Malformed escalate is rejected at Output.object for typed seats; cargo paths
-  // must not admit empty bells into the human loop.
-  if (
-    decisionBell !== undefined &&
-    decisionBell.reason.trim().length > 0 &&
-    decisionBell.diagnosis.trim().length > 0
-  ) {
+  // #899: only well-formed bells are fate signals. Present-but-malformed
+  // escalate fails closed for #598 (typed seats also re-ask via schema).
+  if (isMalformedDecisionGate(normalizedParsed)) {
+    throw new Error(
+      "cmr: malformed decision gate; failing Action for mechanical redispatch",
+    );
+  }
+  const decisionBell = wellFormedDecisionBell(normalizedParsed);
+  if (decisionBell !== undefined) {
     return { kind: "escalate", ...decisionBell };
   }
   const findings = Array.isArray(normalizedParsed.findings)
@@ -3639,7 +3672,12 @@ export function mergerOutcomeFromResult(result: {
   completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
+  output?: unknown;
 }): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
+  // Typed Output.object is the sole fate channel when present (#899).
+  if (result.output !== undefined) {
+    return classifyMergerOutcomePayload(result.output, "merger typed receipt");
+  }
   if (result.outcomePath !== undefined) {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
@@ -3699,7 +3737,12 @@ function classifyMergerOutcomePayload(
   if (parsed === null || typeof parsed !== "object") {
     return { resolved: false, reason: `${source} was not a JSON object` };
   }
-  const decisionBell = probeWorkerDecisionBell(parsed);
+  if (isMalformedDecisionGate(parsed)) {
+    throw new Error(
+      "merger: malformed decision gate; failing Action for mechanical redispatch",
+    );
+  }
+  const decisionBell = wellFormedDecisionBell(parsed);
   if (decisionBell !== undefined) {
     return {
       resolved: false,
@@ -3877,7 +3920,12 @@ type ReceiptCargo = { readonly kind: "cargo" };
 const RECEIPT_CARGO: ReceiptCargo = { kind: "cargo" };
 
 function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
-  const escalation = probeWorkerDecisionBell(parsed);
+  if (isMalformedDecisionGate(parsed)) {
+    throw new Error(
+      "review-loop: malformed decision gate; failing Action for mechanical redispatch",
+    );
+  }
+  const escalation = wellFormedDecisionBell(parsed);
   return escalation === undefined ? undefined : { kind: "escalate", escalation };
 }
 

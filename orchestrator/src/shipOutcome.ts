@@ -17,8 +17,11 @@
  */
 
 import { z } from "zod";
+import {
+  isMalformedDecisionGate,
+  wellFormedDecisionBell,
+} from "./receiptRecovery.js";
 import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
-import { probeWorkerDecisionBell } from "./workerReceipt.js";
 import type { Escalation } from "./types.js";
 
 /**
@@ -150,12 +153,15 @@ function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "completed" };
   }
-  const decisionBell = probeWorkerDecisionBell(parsed);
-  if (
-    decisionBell !== undefined &&
-    decisionBell.reason.trim().length > 0 &&
-    decisionBell.diagnosis.trim().length > 0
-  ) {
+  // Malformed decision gates fail the Action for #598 — never enter the human
+  // loop as empty bells and never silently degrade to completed (#899).
+  if (isMalformedDecisionGate(parsed)) {
+    throw new Error(
+      "ship: malformed decision gate (empty or non-string reason/diagnosis); failing Action for mechanical redispatch",
+    );
+  }
+  const decisionBell = wellFormedDecisionBell(parsed);
+  if (decisionBell !== undefined) {
     return {
       kind: "escalate",
       ...decisionBell,

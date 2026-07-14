@@ -65,8 +65,9 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
-  decisionGateSignalSchema,
+  isMalformedDecisionGate,
   reaskReceiptOrThrow,
+  wellFormedDecisionBell,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
@@ -245,7 +246,7 @@ import {
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
-import { probeWorkerDecisionBell } from "./workerReceipt.js";
+
 import type {
   AgentStepRunOptions,
   Backend,
@@ -2787,17 +2788,16 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Typed Sandcastle output for ADR 0131 traffic signals on single-iter seats
-   * (#899): reviewer self-reported open-count, and signal-only decision gates
-   * for seats that may escalate. Ordinary coder cargo fields stay opaque inside
-   * decisionGateSignalSchema (no committed/commitsAdded shape re-ask).
+   * Typed Sandcastle output for ADR 0131 open-count traffic signals (#899).
+   * Reviewer seats attach Output.object(maxRetries:2). Coder ordinary cargo
+   * stays fully opaque (ADR 0131 / #899 R9): missing or style-changed cargo
+   * must never trigger structured-output repair. Coder decision gates are
+   * classified post-hoc via {@link wellFormedDecisionBell} /
+   * {@link isMalformedDecisionGate} (malformed → Action non-zero for #598).
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     if (spec.role === "reviewer") {
       return workerReceiptOutput("review", workerReceiptSchema("reviewer"));
-    }
-    if (spec.role === "coder") {
-      return workerReceiptOutput("coder", decisionGateSignalSchema);
     }
     return undefined;
   }
@@ -2850,15 +2850,16 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     raw: unknown,
   ): StepOutput {
-    // Only well-formed decision bells (non-empty reason+diagnosis) become fate.
-    // Malformed escalate keys are rejected at Output.object schema time for typed
-    // seats; cargo paths that still surface them must not enter the human loop.
-    const decisionBell = probeWorkerDecisionBell(raw);
-    if (
-      decisionBell !== undefined &&
-      decisionBell.reason.trim().length > 0 &&
-      decisionBell.diagnosis.trim().length > 0
-    ) {
+    // Well-formed decision bells enter the human loop. Present-but-malformed
+    // escalate fails the Action for #598 — never swallow as 0 / empty cargo
+    // and never invent a decision park from unvalidated partial bells (#899).
+    if (isMalformedDecisionGate(raw)) {
+      throw new Error(
+        `${spec.id}-${spec.role}: malformed decision gate (empty or non-string reason/diagnosis); failing Action for mechanical redispatch`,
+      );
+    }
+    const decisionBell = wellFormedDecisionBell(raw);
+    if (decisionBell !== undefined) {
       return spec.role === "coder"
         ? {
             kind: "coder",
@@ -2968,10 +2969,9 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: traffic signals attach Output.object(+maxRetries). Coder seats use
-      // signal-only decisionGateSignalSchema so ordinary cargo stays opaque.
-      // Sidecar-mounted runs skip typed output so the machine protocol can land
-      // before Sandcastle validates a tag.
+      // #899: reviewer open-count attaches Output.object(+maxRetries). Coder
+      // seats stay untyped so missing/style-changed opaque cargo never triggers
+      // structured-output repair (ADR 0131 / R9).
       ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.

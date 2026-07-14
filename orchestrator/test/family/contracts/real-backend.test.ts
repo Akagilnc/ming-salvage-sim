@@ -925,23 +925,14 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     ).resolves.toMatchObject({ conflicted: true });
   });
 
-  it("a sparse merger decision bell parks instead of becoming a conflicted retry", async () => {
-    const b = new FakeSeamsBackend(opts(trackRepo()));
-    b.mergerOutcome = mergerOutcomeFromResult({
-      stdout: '<merger>{"resolved":false,"escalate":{}}</merger>',
-    });
-
-    await expect(
-      b.resolveMergeConflict({ childIssue: 111, childBranch: "feat/child-111" }),
-    ).resolves.toMatchObject({
-      escalation: {
-        reason: "",
-        diagnosis: "",
-        escalationKind: "decision",
-        phase: "wave",
-      },
-    });
-    expect(b.mergerCalls).toHaveLength(1);
+  it("a sparse merger decision bell fails the Action instead of inventing a park", () => {
+    // #899: empty escalate is malformed — fail closed for #598, never park with
+    // empty reason/diagnosis and never degrade to a plain conflicted retry.
+    expect(() =>
+      mergerOutcomeFromResult({
+        stdout: '<merger>{"resolved":false,"escalate":{}}</merger>',
+      }),
+    ).toThrow(/malformed decision gate/);
   });
 
   it("agent CLAIMED resolved but left the merge in-progress → still-conflicted result (never looks clean)", async () => {

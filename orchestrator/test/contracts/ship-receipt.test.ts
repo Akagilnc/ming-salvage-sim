@@ -107,25 +107,27 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
   });
 
   // #899: only well-formed bells (non-empty reason+diagnosis) are fate signals.
-  // Malformed escalate must not enter the human loop (Output.object re-asks).
-  describe("malformed decision bells do not enter the human loop", () => {
-    it("escalate:{} (empty) ⇒ completed cargo", () => {
-      expect(parseShipOutcome('<ship>{"escalate": {}}</ship>').kind).toBe("completed");
-    });
-    it("escalate with non-string reason ⇒ completed cargo", () => {
-      expect(
-        parseShipOutcome('<ship>{"escalate": {"reason": 123, "diagnosis": "x"}}</ship>').kind,
-      ).toBe("completed");
-    });
-    it("escalate missing diagnosis ⇒ completed cargo", () => {
-      expect(parseShipOutcome('<ship>{"escalate": {"reason": "stuck"}}</ship>').kind).toBe(
-        "completed",
+  // Malformed escalate fails the Action for #598 — never invents a park.
+  describe("malformed decision bells fail the Action", () => {
+    it("escalate:{} (empty) throws", () => {
+      expect(() => parseShipOutcome('<ship>{"escalate": {}}</ship>')).toThrow(
+        /malformed decision gate/,
       );
     });
-    it("escalate with empty-string fields ⇒ completed cargo", () => {
-      expect(
-        parseShipOutcome('<ship>{"escalate": {"reason": "", "diagnosis": "   "}}</ship>').kind,
-      ).toBe("completed");
+    it("escalate with non-string reason throws", () => {
+      expect(() =>
+        parseShipOutcome('<ship>{"escalate": {"reason": 123, "diagnosis": "x"}}</ship>'),
+      ).toThrow(/malformed decision gate/);
+    });
+    it("escalate missing diagnosis throws", () => {
+      expect(() =>
+        parseShipOutcome('<ship>{"escalate": {"reason": "stuck"}}</ship>'),
+      ).toThrow(/malformed decision gate/);
+    });
+    it("escalate with empty-string fields throws", () => {
+      expect(() =>
+        parseShipOutcome('<ship>{"escalate": {"reason": "", "diagnosis": "   "}}</ship>'),
+      ).toThrow(/malformed decision gate/);
     });
   });
 
@@ -142,12 +144,14 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
         ).kind,
       ).toBe("shipped");
     });
-    it('pr_opened carrying an `escalate` string key remains shipped cargo', () => {
-      expect(
+    it('pr_opened carrying a malformed `escalate` string key fails the Action', () => {
+      // #899: present-but-malformed escalate is never silent cargo — Action fails
+      // for #598 rather than shipping with a half-pressed gate.
+      expect(() =>
         parseShipOutcome(
           '<ship>{"status": "pr_opened", "branch": "b", "pr": "u", "escalate": "stuck"}</ship>',
-        ).kind,
-      ).toBe("shipped");
+        ),
+      ).toThrow(/malformed decision gate/);
     });
     it('pushed carrying a `pr` key remains pushed cargo', () => {
       expect(

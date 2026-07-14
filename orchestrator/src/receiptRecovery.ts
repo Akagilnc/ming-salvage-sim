@@ -19,13 +19,40 @@ const decisionBellSchema = z.object({
 }).passthrough();
 
 /**
+ * When `escalate` is present on an open-count receipt it must be a well-formed
+ * bell — otherwise a legal findingsCount would mask a bad gate via union
+ * short-circuit (#899 S6 finding 1).
+ */
+function rejectMalformedEscalateAlongsideCount(
+  value: unknown,
+  ctx: z.RefinementCtx,
+): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return;
+  }
+  if (!Object.prototype.hasOwnProperty.call(value, "escalate")) {
+    return;
+  }
+  const parsed = decisionEscalateSchema.safeParse(
+    (value as { escalate: unknown }).escalate,
+  );
+  if (!parsed.success) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "malformed decision gate alongside open-count",
+      path: ["escalate"],
+    });
+  }
+}
+
+/**
  * Standalone reviewer open-count (#899 / ADR 0131). Typed boundary only checks
  * the explicit self-reported count + decision gate; findings rows, dispositions,
  * and other prose stay tolerant cargo (passthrough).
  */
 const reviewerReceiptSchema = z.object({
   findingsCount: z.number().int().nonnegative(),
-}).passthrough();
+}).passthrough().superRefine(rejectMalformedEscalateAlongsideCount);
 
 /**
  * CMR open-count only at the typed boundary. Legs, evidence, dispositions,
@@ -34,7 +61,7 @@ const reviewerReceiptSchema = z.object({
  */
 const cmrReceiptSchema = z.object({
   findingsCount: z.number().int().nonnegative(),
-}).passthrough();
+}).passthrough().superRefine(rejectMalformedEscalateAlongsideCount);
 
 /**
  * Signal-level schema for seats that may press a decision gate while ordinary
@@ -42,6 +69,9 @@ const cmrReceiptSchema = z.object({
  * must be a well-formed bell. Single-iteration seats (#899) attach this via
  * Output.object so malformed bells get same-session native re-ask without
  * schema-validating committed/commitsAdded/PR cargo.
+ *
+ * Non-object / null values also pass so optional-tag consumers that land empty
+ * cargo do not force a cargo-shape re-ask (ADR 0131 opaque cargo).
  */
 export const decisionGateSignalSchema: z.ZodType = z.union([
   decisionBellSchema,
@@ -75,6 +105,43 @@ export function workerReceiptOutput(
   return sc.Output.object({ tag, schema, maxRetries: RECEIPT_MAX_RETRIES });
 }
 
+/**
+ * Shared well-formed decision-bell probe for production parsers (#899 seam).
+ * Returns the bell only when reason and diagnosis are both non-empty after trim;
+ * present-but-malformed escalate is {@link isMalformedDecisionGate}.
+ */
+export function wellFormedDecisionBell(
+  receipt: unknown,
+): { reason: string; diagnosis: string } | undefined {
+  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) {
+    return undefined;
+  }
+  if (!Object.prototype.hasOwnProperty.call(receipt, "escalate")) {
+    return undefined;
+  }
+  const parsed = decisionEscalateSchema.safeParse(
+    (receipt as { escalate: unknown }).escalate,
+  );
+  if (!parsed.success) return undefined;
+  return parsed.data;
+}
+
+/**
+ * True when the payload carries an `escalate` key that fails the strict
+ * decision-gate contract (empty reason/diagnosis, wrong shape, etc.).
+ */
+export function isMalformedDecisionGate(receipt: unknown): boolean {
+  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) {
+    return false;
+  }
+  if (!Object.prototype.hasOwnProperty.call(receipt, "escalate")) {
+    return false;
+  }
+  return decisionEscalateSchema.safeParse(
+    (receipt as { escalate: unknown }).escalate,
+  ).success === false;
+}
+
 /** A native receipt retry that must fail the Action for #598 mechanical redispatch. */
 export function isReceiptRecoveryFailure(error: unknown): boolean {
   if (error instanceof sc.StructuredOutputError) return true;
@@ -102,17 +169,4 @@ export async function reaskReceiptOrThrow<T>(
     }
     throw error;
   }
-}
-
-/**
- * @deprecated Prefer {@link reaskReceiptOrThrow}. Kept as a thin alias that
- * ignores `fallback` so call-site renames can land without leaving a success
- * fallback on the typed-signal path.
- */
-export async function reaskReceiptOrFallback<T>(
-  reask: () => Promise<T>,
-  _fallback: () => T,
-  worker: string,
-): Promise<T> {
-  return reaskReceiptOrThrow(reask, worker);
 }
