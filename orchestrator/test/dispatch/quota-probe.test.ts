@@ -278,20 +278,15 @@ describe("#683 buildQuotaWaitForResetLedgerEntry (ledger 外显)", () => {
   });
 });
 
-describe("#683/#884 opencode probe hard clock", () => {
-  it("default runCommand uses execFileAsyncWithTimeout + #879 leg retry", () => {
-    // #884: hard clock on subprocess; #879: withLegTransientRetry for blips.
+describe("#905 opencode-go probe retired", () => {
+  it("has no runOpencodePongProbe / opencode spawn path in source", () => {
     const src = readFileSync(
       new URL("../../src/quotaProbe.ts", import.meta.url),
       "utf8",
     );
-    const block = src.slice(
-      src.indexOf("async function runOpencodePongProbe"),
-      src.indexOf("// ── production idle gate"),
-    );
-    expect(block).toMatch(/execFileAsyncWithTimeout/);
-    expect(block).toMatch(/withLegTransientRetry/);
-    expect(block).toMatch(/probe:opencode-go/);
+    expect(src).not.toMatch(/runOpencodePongProbe/);
+    expect(src).not.toMatch(/\bopencode\s+run\b/);
+    expect(src).not.toMatch(/--dangerously-skip-permissions/);
   });
 });
 
@@ -302,10 +297,10 @@ describe("#683 per-pool probe config (配置随 route / model)", () => {
     expect(cfg.kind).toBe("zai_chat");
   });
 
-  it("opencode-go pool → PONG smoke probe", () => {
+  it("opencode-go pool → none (transport retired #905; no spawn)", () => {
     const cfg = probeConfigForPool("opencode-go");
     expect(cfg.pool).toBe("opencode-go");
-    expect(cfg.kind).toBe("opencode_pong");
+    expect(cfg.kind).toBe("none");
   });
 
   it("grok pool → TBD probe kind (reserved)", () => {
@@ -318,9 +313,11 @@ describe("#683 per-pool probe config (配置随 route / model)", () => {
     const cases: ReadonlyArray<[string, QuotaPoolId]> = [
       ["zai/glm-5.2", "zai"],
       ["glm-5.2", "zai"],
-      ["opencode-go/glm-5.2", "opencode-go"],
-      ["opencode-go/deepseek-v4-flash", "opencode-go"],
-      ["opencode-go/kimi-k2.7-code", "opencode-go"],
+      // #905 r2: opencode-go / kimi refs no longer map to a live probe pool.
+      ["opencode-go/glm-5.2", "unknown"],
+      ["opencode-go/deepseek-v4-flash", "unknown"],
+      ["opencode-go/kimi-k2.7-code", "unknown"],
+      ["kimi-k2", "unknown"],
       ["grok-build", "grok"],
       ["grok-composer-2.5-fast", "grok"],
       ["sonnet", "unknown"],
@@ -427,22 +424,12 @@ describe("#683 quota = status/exit only (ignore body keywords)", () => {
     expect(fetches).toBe(1);
   });
 
-  it("opencode exit≠0 is error even if stdout says 429 (no body court)", async () => {
-    let runs = 0;
-    const result = await runPoolProbe("opencode-go", {
-      runCommand: async () => {
-        runs += 1;
-        return {
-          code: 1,
-          stdout: "HTTP 429 rate limit — wait for reset",
-          stderr: "",
-        };
-      },
-    });
-    // "429" in text may classify as quota class for retry policy — but we no
-    // longer promote body to quota_limited; durable/other → error in one shot.
+  it("#905: opencode-go probe is none — error without any process spawn", async () => {
+    const result = await runPoolProbe("opencode-go", {});
     expect(result.kind).toBe("error");
-    expect(runs).toBe(1);
+    expect(result.kind === "error" ? result.cause : "").toMatch(
+      /no quota probe registered|opencode-go/i,
+    );
   });
 });
 

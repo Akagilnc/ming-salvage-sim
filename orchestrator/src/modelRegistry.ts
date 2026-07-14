@@ -243,16 +243,19 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
 /** #686 / ADR 0124 — billing pool → executable provider channel. */
 export type BillingPoolDispatchId = BillingPoolId;
 
+/**
+ * Billing pool → executable provider rewrite. **Partial on purpose (#905 r2):**
+ * empty/retired pools (e.g. `zai` after opencode eviction) MUST omit a binding
+ * so {@link resolveModelSlugForPool} cannot silently rewrite onto another CLI.
+ */
 export const POOL_DISPATCH_BINDINGS: Readonly<
-  Record<BillingPoolDispatchId, ModelProviderFactory>
+  Partial<Record<BillingPoolDispatchId, ModelProviderFactory>>
 > = {
   // #807: SuperGrok pool runs the real `grok` CLI (custom AgentProvider), not
   // sandcastle's `sc.pi()` (different product / flag contract / auth home).
   "grok-build": "grok",
   cursor: "cursor",
-  // #905: opencode transport evicted; zai has no live registry slug after
-  // glm-5.2 removal. Binding stays for pool-table completeness only.
-  zai: "cursor",
+  // zai intentionally absent — no live registry slug after #905; no rewrite.
   "codex-5h": "codex",
   claude: "claudeCode",
 };
@@ -279,8 +282,10 @@ export function resolveModelSlugForPool(
   if (slug === "grok-4.5") {
     return { provider: "grok", model: base.model } as ModelSlugRegistryEntry;
   }
-  if (pool === undefined || POOL_DISPATCH_BINDINGS[pool] === base.provider) return base;
-  return { provider: POOL_DISPATCH_BINDINGS[pool], model: base.model } as ModelSlugRegistryEntry;
+  // Absent binding (retired/empty pool) → fail-closed: keep registry provider.
+  const binding = pool === undefined ? undefined : POOL_DISPATCH_BINDINGS[pool];
+  if (binding === undefined || binding === base.provider) return base;
+  return { provider: binding, model: base.model } as ModelSlugRegistryEntry;
 }
 
 export function modelFamilyForSlug(slug: string): ModelFamily {
