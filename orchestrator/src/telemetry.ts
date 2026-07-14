@@ -107,11 +107,6 @@ export function clearTelemetryRunEnvironment(): void {
   telemetryRunEnvironment = {};
 }
 
-/** Read the current process-level run environment (tests / diagnostics). */
-export function getTelemetryRunEnvironment(): TelemetryRunEnvironment {
-  return telemetryRunEnvironment;
-}
-
 /**
  * Wire worker-image config into telemetry (called by RealBackend /
  * RealFamilyBackend immediately before an absent environment stamp). Best-effort:

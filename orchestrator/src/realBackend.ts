@@ -232,7 +232,6 @@ import {
   type HandleIdleThresholdResult,
   type QuotaPoolId,
   type QuotaProbeResult,
-  type QuotaWaitForResetLedgerEvent,
 } from "./quotaProbe.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
@@ -241,7 +240,6 @@ import {
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
 import { probeWorkerDecisionBell } from "./workerReceipt.js";
-import { isStepId } from "./types.js";
 import type {
   AgentStepRunOptions,
   Backend,
@@ -3162,40 +3160,6 @@ export class RealBackend implements Backend {
    */
   protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
     return runPoolProbe(pool);
-  }
-
-  /**
-   * Persist a `quota_wait_for_reset` ledger row to the sibling state dir when
-   * known. Tests may override to capture without touching disk.
-   *
-   * Production monitor / Sandcastle-fallback paths no longer call this for the
-   * durable write (#683 R1): runner.parkQuotaWaitForReset owns the single
-   * append-only row with real audit fields. Kept for test overrides / tooling.
-   */
-  protected async recordQuotaWaitLedger(
-    entry: QuotaWaitForResetLedgerEvent,
-    ctx: QuotaProbeRunContext,
-  ): Promise<void> {
-    if (ctx.worktreePath === undefined || ctx.issueNumber === undefined) {
-      // No durable landing spot — still surface via QuotaWaitForResetError.applied
-      return;
-    }
-    const stateDir = this.stateDirFor(ctx.worktreePath, ctx.issueNumber);
-    const step = entry.step ?? ctx.step ?? "S2";
-    if (!isStepId(step)) return;
-    const persistent: PersistentLedgerEntry = {
-      step,
-      event: "quota_wait_for_reset",
-      pool: entry.pool,
-      ...(entry.resetAt !== undefined ? { resetAt: entry.resetAt } : {}),
-      reason: entry.reason,
-      ...(entry.workerPid !== undefined ? { workerPid: entry.workerPid } : {}),
-      ts: entry.ts,
-      sessionId: "quota-wait-for-reset",
-      prompt_hash: "quota-wait-for-reset",
-      branchHEAD: "quota-wait-for-reset",
-    };
-    await this.writeLedger(persistent, stateDir);
   }
 
   /** Child worker dispatch. S7 is a local family handoff and has no worker. */

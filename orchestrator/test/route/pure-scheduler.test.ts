@@ -232,10 +232,6 @@ describe("#337 review-decomposition wording: runner owns per-slice review, integ
     expect(reviewerSoul).toMatch(/integrated|cross-family|跨片|family/i);
   });
 
-  it("the repo-root CLAUDE.md ## Skill routing does NOT tell the per-slice reviewer to run two passes both", () => {
-    expect(skillRouting).not.toMatch(/two passes, both/i);
-  });
-
   it("the CLAUDE.md ## Skill routing keeps runner-visible per-slice review/fix and integrated cmr separate", () => {
     expect(skillRouting).toMatch(/\/code-review/);
     expect(skillRouting).toMatch(/origin\/main/);

@@ -37,15 +37,3 @@ export function shouldReclaimFamilyHost(
 ): boolean {
   return familyCleanupTerminalForReclaim(ledger);
 }
-
-export interface FamilyReclaimBackend {
-  reapFamilyHost(familyBase: string): Promise<void>;
-}
-
-/** Best-effort reclaim of the family host clone at terminal success. */
-export async function reclaimFamilyHostPaths(
-  backend: FamilyReclaimBackend,
-  familyBase: string,
-): Promise<void> {
-  await backend.reapFamilyHost(familyBase);
-}

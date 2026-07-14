@@ -119,7 +119,6 @@ import {
   contractDriftStopSummary,
   decisionGateParkStopSummary,
   infraFailureStopSummary,
-  stopSummaryFromFindingDispositionEvidence,
   successStopSummary,
   type AcceptedSuppressionSummary,
   type StopSummary,
@@ -1547,10 +1546,6 @@ export function coderModel(env: ModelRouteEnv = process.env): string {
 
 export function reviewerModel(env: ModelRouteEnv = process.env): string {
   return modelForSlot("reviewer", env);
-}
-
-export function coderFixModel(env: ModelRouteEnv = process.env): string {
-  return modelForSlot("coderFix", env);
 }
 
 type WorkerStepId = "S2" | "S3" | "S5" | "S6";

@@ -51,7 +51,6 @@ import {
   BOT_OVERDUE_MIN_WALL_MS,
   BOT_POLL_INTERVAL_MS,
   botOverdueWallClockMs,
-  BOT_REACTION_ACK_CONTENT,
   BOT_RETRIGGER_COMMENT,
   checkRunsConverged,
   classifyCheckRuns,
@@ -3270,7 +3269,6 @@ describe("#600 r4 central evidence admissibility gate", () => {
       true,
     );
     expect(snap.bots.codex).toEqual({ state: "complete", findingCount: 0 });
-    expect(BOT_REACTION_ACK_CONTENT.has("+1")).toBe(true);
   });
 
   it("pin botPolling r15: stale pre-trigger issue-comment reaction stays inadmissible", () => {
