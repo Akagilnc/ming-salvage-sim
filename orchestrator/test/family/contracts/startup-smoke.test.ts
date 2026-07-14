@@ -81,7 +81,7 @@ describe("family startup smoke gate (#685)", () => {
         familyBackend: backend,
         singleSliceBackend: singleSliceBackend({
           smokeModelRoute: async (route) => smokeRouteModels(route, async ({ slug }) => {
-            if (slug === "agy") throw new Error("opencode unavailable");
+            if (slug === "agy") throw new Error("agy unavailable");
             return { cliVersion: "test" };
           }),
         }),
@@ -92,9 +92,9 @@ describe("family startup smoke gate (#685)", () => {
         status: "route_degraded",
         event: "route_degraded",
         droppedLeg: "agy",
-        reason: "opencode unavailable",
+        reason: "agy unavailable",
       }));
-      expect(error).toHaveBeenCalledWith(expect.stringMatching(/OPTIONAL CMR LEG DROPPED: agy.*opencode unavailable/));
+      expect(error).toHaveBeenCalledWith(expect.stringMatching(/OPTIONAL CMR LEG DROPPED: agy.*agy unavailable/));
       expect(info).toHaveBeenCalledWith(expect.stringContaining("cmrReview=[codex:gpt-5.6-sol,claude:opus]"));
     } finally {
       info.mockRestore();
@@ -116,7 +116,7 @@ describe("family startup smoke gate (#685)", () => {
       familyBackend: backend,
       singleSliceBackend: singleSliceBackend({
         smokeModelRoute: async (route: ReturnType<typeof resolveActiveModelRoute>) => smokeRouteModels(route, async ({ slug }) => {
-          if (slug === "agy") throw new Error("opencode unavailable");
+          if (slug === "agy") throw new Error("agy unavailable");
           return { cliVersion: "test" };
         }),
       }),

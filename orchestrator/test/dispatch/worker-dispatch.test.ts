@@ -560,7 +560,7 @@ describe("#796 Coder-Rec host dispatch", () => {
         model: entry.slug,
         host:
           entry.slug === "grok-4.5"
-            ? "cursor"
+            ? "grok"
             : entry.pool === "claude"
               ? "claude"
               : "codex",
@@ -571,10 +571,11 @@ describe("#796 Coder-Rec host dispatch", () => {
   it.each([
     ["gpt-5.6-terra", undefined, "codex"],
     ["sonnet", undefined, "claude"],
-    ["grok-4.5", undefined, "cursor"],
-    ["opencode-grok", undefined, "opencode"],
+    ["grok-4.5", undefined, "grok"],
+    ["agy", undefined, "agy"],
     ["grok-4.5", "grok-build", "grok"],
-    ["grok-4.5", "codex-5h", "codex"],
+    // #905: pool rewrite cannot transit grok-4.5 off SuperGrok CLI.
+    ["grok-4.5", "codex-5h", "grok"],
   ] as const)(
     "derives host %s/%s from the registered provider",
     (model, billingPool, host) => {
@@ -602,18 +603,18 @@ describe("#796 Coder-Rec host dispatch", () => {
       ...SMOKED_ROUTE,
       slots: {
         ...SMOKED_ROUTE.slots,
-        ship: "opencode-grok",
+        ship: "agy",
         verify: "gpt-5.6-terra",
         fixer: "sonnet",
         cleanup: "grok-4.5",
-        docRelease: "opencode-grok",
+        docRelease: "agy",
       },
     };
 
-    expect(familyShipWorkerSpec(route).host).toBe("opencode");
+    expect(familyShipWorkerSpec(route).host).toBe("agy");
     expect(verifyWorkerSpec(route).host).toBe("codex");
     expect(fixerWorkerSpec(route).host).toBe("claude");
-    expect(docReleaseWorkerSpec(route).host).toBe("opencode");
+    expect(docReleaseWorkerSpec(route).host).toBe("agy");
   });
 
   it("rebuilds the dispatched S2 spec after a real quota relay", async () => {
@@ -664,7 +665,7 @@ describe("#796 Coder-Rec host dispatch", () => {
     }
 
     try {
-      const backend = new QuotaRelayBackend("Coder-Rec: grok-4.5");
+      const backend = new QuotaRelayBackend("Coder-Rec: grok-4.5 → terra@med");
       const result = await runOrchestrator({
         issueNumber: 796,
         backend,
@@ -681,7 +682,9 @@ describe("#796 Coder-Rec host dispatch", () => {
             id: "codex-5h",
             status: "live",
             parkThresholdMs: 1,
-            models: ["grok-4.5"],
+            // #905: next roster model (terra), not a grok-4.5 换马甲 — SuperGrok
+            // is the only executable channel for that slug.
+            models: ["terra@med", "gpt-5.6-terra"],
           },
         ],
       });
@@ -689,7 +692,12 @@ describe("#796 Coder-Rec host dispatch", () => {
       const coderDispatches = backend.specs.filter((spec) => spec.id === "S2");
       expect(result.status).toBe("success");
       expect(coderDispatches).toHaveLength(2);
-      expect(coderDispatches.map((spec) => spec.host)).toEqual(["cursor", "codex"]);
+      // #905: first baton grok-4.5 → SuperGrok; relay advances roster to terra@med.
+      expect(coderDispatches.map((spec) => spec.host)).toEqual(["grok", "codex"]);
+      expect(coderDispatches.map((spec) => spec.model)).toEqual([
+        "grok-4.5",
+        "gpt-5.6-terra",
+      ]);
       expect(backend.ctxs.filter((ctx) => ctx.billingPool !== undefined)[0]?.billingPool).toBe(
         "codex-5h",
       );

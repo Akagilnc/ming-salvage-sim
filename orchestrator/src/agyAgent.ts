@@ -1,0 +1,98 @@
+/**
+ * #905 — Sandcastle AgentProvider for the real agy (Antigravity / Gemini) CLI.
+ *
+ * Historical mis-wires (opencode → grok under the `agy` slug) are forbidden:
+ * when this leg is dead (Gemini consumer EOL), optional-leg degrade only —
+ * never substitute another vendor's model under the agy name.
+ *
+ * Invocation contract mirrors `ak-cross-m-review/backends/gemini.sh`:
+ *   `agy --sandbox [--model X] --print ''` with the prompt on stdin.
+ * NEVER `--dangerously-skip-permissions` (re-consents a high scope and breaks
+ * headless auth on the next run).
+ */
+
+import type * as sc from "@ai-hero/sandcastle";
+import { shellEscape } from "./grokAgent.js";
+
+/** Options for the in-house agy AgentProvider (not a sandcastle export). */
+export interface AgyAgentOptions {
+  /** Extra env injected by this provider. */
+  readonly env?: Record<string, string>;
+  /**
+   * @deprecated agy sessions are not captured by the orchestrator; ignored.
+   * Accepted for compatibility with provider option plumbing.
+   */
+  readonly captureSessions?: boolean;
+}
+
+/**
+ * Map plain-text agy stdout lines into sandcastle ParsedStreamEvent.
+ * agy print mode is prose, not streaming-json — each non-empty line is text.
+ */
+export function parseAgyStreamLine(line: string): Array<
+  | { type: "text"; text: string }
+  | { type: "result"; result: string }
+> {
+  if (line.length === 0) return [];
+  return [
+    { type: "text", text: line },
+    { type: "result", result: line },
+  ];
+}
+
+/**
+ * Shared headless agy invocation (gemini.sh contract):
+ *   `agy --sandbox [--model X] --print ''` with the prompt on stdin.
+ *
+ * Single source for {@link agyAgent} and bare-ping smoke — never put the
+ * prompt after `--print` (agy 1.0.7 treats the next token as the print value).
+ */
+export function agyPrintInvocation(
+  model: string,
+  prompt: string,
+): { readonly args: readonly string[]; readonly stdin: string } {
+  const trimmedModel = model.trim();
+  return {
+    args: [
+      "--sandbox",
+      ...(trimmedModel !== "" ? (["--model", trimmedModel] as const) : []),
+      "--print",
+      "",
+    ],
+    stdin: prompt,
+  };
+}
+
+/**
+ * Build a sandcastle AgentProvider that runs the real `agy` CLI headless
+ * (`--sandbox --print ''` + stdin prompt).
+ */
+export function agyAgent(
+  model: string,
+  options?: AgyAgentOptions,
+): sc.AgentProvider {
+  return {
+    name: "agy",
+    env: options?.env ?? {},
+    captureSessions: false,
+    buildPrintCommand({ prompt }) {
+      // Ignore dangerouslySkipPermissions: agy hard-forbids that flag.
+      const inv = agyPrintInvocation(model, prompt);
+      return {
+        command: `agy ${inv.args.map(shellEscape).join(" ")}`,
+        stdin: inv.stdin,
+      };
+    },
+    buildInteractiveArgs({ prompt }) {
+      // Interactive path still uses --print <value> (not the headless empty+stdin form).
+      const args = ["agy", "--sandbox"];
+      const trimmed = model.trim();
+      if (trimmed) args.push("--model", trimmed);
+      if (prompt) args.push("--print", prompt);
+      return args;
+    },
+    parseStreamLine(line) {
+      return parseAgyStreamLine(line);
+    },
+  };
+}

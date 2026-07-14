@@ -10,17 +10,16 @@
  *     探针通过  → hang（只杀该实例 pid 树）
  *     网络错误  → fail-safe hang（≠ 429；不无限等待）
  *
- * 探针本身可注入（单测打桩三种结果）；真探针实现（curl / opencode PONG）是
+ * 探针本身可注入（单测打桩三种结果）；真探针实现（curl zai chat）是
  * 可选生产路径，不阻塞状态机验收。#686 在 wait_for_reset 处置点分叉
  * park vs relay（三段式，见 relayDispatch / quotaPoolTable）。
+ *
+ * #905 r2: opencode-go PONG path retired — no process spawn of `opencode`.
+ * Historical pool id may still appear on ledger rows; probe kind is `none`.
  */
 
 import type { StepId } from "./types.js";
-import {
-  ExternalCallTimeoutError,
-  execFileAsyncWithTimeout,
-  withProviderTimeout,
-} from "./externalCall.js";
+import { withProviderTimeout } from "./externalCall.js";
 import { withLegTransientRetry } from "./legTransientRetry.js";
 
 /** Provider quota pool the worker is drawing from. */
@@ -60,11 +59,12 @@ function isBridgeStepId(value: unknown): value is StepId {
 /**
  * Per-pool probe kind (config follows the route/model table companion).
  *   - zai_chat      — minimal chat completions request
- *   - opencode_pong — `opencode run … "Reply with exactly: PONG"`
  *   - grok_tbd      — reserved (SuperGrok probe not yet codified)
  *   - none          — no probe registered → treat as probe error (fail-safe hang)
+ *
+ * #905 r2: former OpenCode PONG kind removed — orchestrator never spawns that CLI.
  */
-export type PoolProbeKind = "zai_chat" | "opencode_pong" | "grok_tbd" | "none";
+export type PoolProbeKind = "zai_chat" | "grok_tbd" | "none";
 
 export interface PoolProbeConfig {
   readonly pool: QuotaPoolId;
@@ -154,9 +154,11 @@ const POOL_PROBE_CONFIG: Readonly<Record<QuotaPoolId, PoolProbeConfig>> = {
   },
   "opencode-go": {
     pool: "opencode-go",
-    kind: "opencode_pong",
+    // #905 r2: transport retired; keep id for ledger/history, probe = none
+    // (fail-safe hang) so idle never spawns the opencode binary.
+    kind: "none",
     description:
-      'opencode run --dangerously-skip-permissions -m opencode-go/<model> "Reply with exactly: PONG"',
+      "opencode-go transport evicted (#905); no live probe — fail-safe hang on idle",
   },
   grok: {
     pool: "grok",
@@ -188,19 +190,20 @@ export function poolForModelRef(modelRef: string): QuotaPoolId {
 
   // Explicit provider prefix wins.
   if (raw.startsWith("zai/") || raw === "zai") return "zai";
-  if (raw.startsWith("opencode-go/") || raw === "opencode-go") return "opencode-go";
+  // #905 r2: opencode-go model refs no longer map to a live probe pool.
+  // Historical strings fall through to unknown (fail-safe hang), not a spawn.
+  if (raw.startsWith("opencode-go/") || raw === "opencode-go") return "unknown";
 
   // Grok CLI family (SuperGrok subscription pool).
   if (raw.startsWith("grok-") || raw === "grok" || raw.startsWith("grok/")) {
     return "grok";
   }
 
-  // Bare GLM ids default to zai (primary free/lite path); long-running GLM can
-  // still be addressed as opencode-go/glm-… via the prefix branch above.
+  // Bare GLM ids default to zai (primary free/lite path).
   if (raw.startsWith("glm-") || raw.includes("glm-5")) return "zai";
 
-  // kimi bare slug is Go-pool only (openrouter path is retired / #440).
-  if (raw.includes("kimi")) return "opencode-go";
+  // #905 r2: kimi bare slug previously Go-pool only — retired with opencode.
+  if (raw.includes("kimi")) return "unknown";
 
   return "unknown";
 }
@@ -340,17 +343,10 @@ export function parseZaiResetAt(body: string): Date | undefined {
 export interface PoolProbeDeps {
   /** HTTP fetch used by the zai probe. Defaults to global fetch. */
   readonly fetch?: typeof fetch;
-  /** Shell runner for opencode PONG. Defaults to a tiny spawn wrapper. */
-  readonly runCommand?: (
-    argv: ReadonlyArray<string>,
-    opts: { readonly timeoutMs: number },
-  ) => Promise<{ readonly code: number; readonly stdout: string; readonly stderr: string }>;
   /** zai API key. Defaults to env ZAI_API_KEY / GLM_KEY. */
   readonly zaiApiKey?: string;
   /** Model id for the zai minimal chat (default glm-5.2). */
   readonly zaiModel?: string;
-  /** Model slug for the opencode-go PONG smoke. */
-  readonly opencodeGoModel?: string;
   /** Wall-clock budget for a single probe. */
   readonly timeoutMs?: number;
 }
@@ -375,8 +371,6 @@ export async function runPoolProbe(
   switch (cfg.kind) {
     case "zai_chat":
       return runZaiChatProbe(deps);
-    case "opencode_pong":
-      return runOpencodePongProbe(deps);
     case "grok_tbd":
       return {
         kind: "error",
@@ -445,72 +439,6 @@ async function runZaiChatProbe(deps: PoolProbeDeps): Promise<QuotaProbeResult> {
         return {
           kind: "error" as const,
           cause: `zai probe HTTP ${status}: ${body.slice(0, 200)}`,
-        };
-      }
-      return { kind: "ok" as const };
-    });
-  } catch (err) {
-    const cause = err instanceof Error ? err.message : String(err);
-    return { kind: "error", cause };
-  }
-}
-
-async function runOpencodePongProbe(
-  deps: PoolProbeDeps,
-): Promise<QuotaProbeResult> {
-  const model = deps.opencodeGoModel ?? "opencode-go/deepseek-v4-flash";
-  const timeoutMs = deps.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
-  const run =
-    deps.runCommand ??
-    (async (argv, opts) => {
-      // #884: hard-clocked subprocess (SIGKILL) with stage name.
-      try {
-        const stdout = await execFileAsyncWithTimeout(argv[0]!, argv.slice(1), {
-          stage: "probe:opencode-go",
-          timeoutMs: opts.timeoutMs,
-        });
-        return { code: 0, stdout, stderr: "" };
-      } catch (err) {
-        if (err instanceof ExternalCallTimeoutError) throw err;
-        // Preserve stdout+stderr from the child (quota text may be stdout-only).
-        const e = err as Error & { stdout?: string; stderr?: string };
-        const stdout = typeof e.stdout === "string" ? e.stdout : "";
-        const stderr =
-          typeof e.stderr === "string" && e.stderr.length > 0
-            ? e.stderr
-            : err instanceof Error
-              ? err.message
-              : String(err);
-        return { code: 1, stdout, stderr };
-      }
-    });
-
-  try {
-    return await withLegTransientRetry(async () => {
-      const result = await run(
-        [
-          "opencode",
-          "run",
-          "--dangerously-skip-permissions",
-          "-m",
-          model,
-          "Reply with exactly: PONG",
-        ],
-        { timeoutMs },
-      );
-      const combined = `${result.stdout}\n${result.stderr}`;
-      // Exit code only for fate: non-zero → error; zero + PONG → ok.
-      // No body/stdout keyword → quota_limited (owner: 只看返回码，无视 body).
-      if (result.code !== 0) {
-        return {
-          kind: "error" as const,
-          cause: `opencode PONG exit ${result.code}: ${combined.slice(0, 200)}`,
-        };
-      }
-      if (!/\bPONG\b/i.test(result.stdout)) {
-        return {
-          kind: "error" as const,
-          cause: "opencode PONG missing from stdout",
         };
       }
       return { kind: "ok" as const };

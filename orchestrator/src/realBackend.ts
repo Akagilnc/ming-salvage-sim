@@ -81,6 +81,7 @@ import {
   sourceAuthFailureStopSummary,
   type StopSummary,
 } from "./stopSummary.js";
+import { agyPrintInvocation } from "./agyAgent.js";
 import {
   agentForSlug,
   CODER_CODEX_SLUG,
@@ -171,11 +172,16 @@ export function barePingArgv(
           "bypassPermissions",
         ],
       };
-    case "opencode":
+    case "agy": {
+      // #905 r2: same shape as agyAgent / gemini.sh — shared helper, no clone.
+      // `--print ''` + stdin; never put the prompt after --print (agy 1.0.7).
+      const inv = agyPrintInvocation(model, prompt);
       return {
-        file: "opencode",
-        args: ["run", "--dangerously-skip-permissions", "-m", model, prompt],
+        file: "agy",
+        args: inv.args,
+        input: inv.stdin,
       };
+    }
     case "grok":
       return {
         file: "grok",
@@ -729,47 +735,6 @@ export const SANDBOX_CODEX_DIR = "/home/agent/.codex";
  * symlink into this tree) so the bind-mount does not hide PATH.
  */
 export const SANDBOX_GROK_DIR = "/home/agent/.grok";
-/** OpenCode Go auth is a single read-only file; SQLite/runtime state stays per-container. */
-export const SANDBOX_OPENCODE_AUTH_FILE = "/home/agent/.local/share/opencode/auth.json";
-
-export function opencodeAuthMount(home: string): {
-  hostPath: string;
-  sandboxPath: string;
-  readonly: true;
-} {
-  return {
-    hostPath: join(home, ".local", "share", "opencode", "auth.json"),
-    sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
-    readonly: true,
-  };
-}
-
-export function hostOpenCodeAuthFile(home: string): string | undefined {
-  const path = opencodeAuthMount(home).hostPath;
-  return existsSync(path) ? path : undefined;
-}
-
-export function appendOpenCodeAuthMount(
-  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[],
-  hostPath: string | undefined,
-): void {
-  if (hostPath !== undefined) {
-    mounts.push({ hostPath, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true });
-  }
-}
-
-/**
- * Provision optional OpenCode credentials identically in every worker sandbox.
- * Credential validity is established only by the live route smoke.
- */
-export function applyUniformCredentialProvisioning(input: {
-  env: Record<string, string>;
-  mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[];
-  opencodeAuthFile?: string;
-}): void {
-  if (process.env.GLM_KEY !== undefined) input.env.GLM_KEY = process.env.GLM_KEY;
-  appendOpenCodeAuthMount(input.mounts, input.opencodeAuthFile);
-}
 /** Where the baked dev skills are mounted inside the container. */
 export const SANDBOX_SKILLS_DIR = "/home/agent/.claude/skills";
 /**
@@ -2501,7 +2466,6 @@ export class RealBackend implements Backend {
     claudeToken?: string;
     /** Per-issue host dir for grok auth, only when host `~/.grok/auth.json` exists. */
     grokAuthDir?: string;
-    opencodeAuthFile?: string;
     providerAuth: ProviderAuthAvailability;
   } {
     // #748: resolve home at this seam so tests can inject a tmpdir via opts.home;
@@ -2560,7 +2524,6 @@ export class RealBackend implements Backend {
       authDir: paths.hostCodexAuthDir,
       claudeToken,
       grokAuthDir,
-      opencodeAuthFile: hostOpenCodeAuthFile(this.opts.home ?? homedir()),
       providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
     };
   }
@@ -2698,7 +2661,6 @@ export class RealBackend implements Backend {
       ghToken?: string;
       /** #807: optional per-issue grok auth dir (omit when host auth absent). */
       grokAuthDir?: string;
-      opencodeAuthFile?: string;
     },
     spec: Pick<StepSpec, "role" | "soul"> & { model?: string },
     issueNumber?: number,
@@ -2747,11 +2709,6 @@ export class RealBackend implements Backend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyUniformCredentialProvisioning({
-      env,
-      mounts,
-      opencodeAuthFile: auth.opencodeAuthFile,
-    });
     // #372: mount souls live (from host source tree) so edits to souls/*.md take
     // effect immediately on next launch/dispatch without baking into image.
     // Uses shared helper which hardcodes sandbox path and forces readonly:true.
