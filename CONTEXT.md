@@ -624,8 +624,12 @@ _Avoid_: step ledger(那是单片的)、状态文件(太泛)
 _Avoid_: 把 answer 当新的需求 brief、由 family ledger 重复持久化、让 runner 解释答案或覆盖固定控制字段、把进程失败当可自动恢复
 
 **路线 / route**:
-一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定模型。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。切路线 = 拨一个总开关、整套翻；任一 seat 可被单独 override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死)，故没有 seat 能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(0031)
+一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定可执行席位。第一版以「接入渠道 + 模型」识别席位，例如 xAI/Grok 与 Cursor/Grok 是两个独立候选，不归并成“同一模型的两个池”。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。切路线 = 拨一个总开关、整套翻；任一 seat 可被单独 override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死)，故没有 seat 能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(0031, 0134)
 _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
+
+**策略解析 / Policy Resolution**:
+需要模型的 Action 交出角色要求与固定有序席位后，机械选择第一个客观可用席位，或回答当前无席位；第一版的席位身份是“接入渠道 + 模型”，指标只记录、不评分。
+_Avoid_: 让 Runner 选模型、按 finding / 评审轮数换模型、跨池同模型归一、另建第二张换棒顺序表
 
 **cheap vs tight**(某家族吃紧的两档):
 **cheap = 额度不足、省着用** = 把吃紧家族从除 cmr 强腿外的所有槽撤掉、只留它在承重闸当一条腿;**tight = 基本耗尽** = 连那条 cmr 腿也撤、全家族清零。cheap↔tight 差且只差吃紧家族的那一条 cmr 腿(其余槽都已撤离、相同)。家族用量梯度:normal(全量)→ cheap(只剩 cmr 一腿)→ tight(零)。

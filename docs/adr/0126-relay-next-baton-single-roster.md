@@ -4,7 +4,7 @@ Date: 2026-07-10
 
 ## Status
 
-Accepted
+Accepted；ADR 0134 拟取代其中“同模型先换活池”与“按质量不收敛自动换棒”
 
 ## Decision
 

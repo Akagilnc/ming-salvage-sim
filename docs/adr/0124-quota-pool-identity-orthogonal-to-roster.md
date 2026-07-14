@@ -4,7 +4,7 @@ Date: 2026-07-10
 
 ## Status
 
-Accepted
+Accepted；拟由 ADR 0134 取代
 
 ## Decision
 
