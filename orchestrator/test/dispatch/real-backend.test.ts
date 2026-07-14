@@ -1701,6 +1701,24 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.agentOptions).toHaveLength(2);
   });
 
+  it("keeps the existing coder fallback when its provider cannot resume", async () => {
+    const backend = makeBackend();
+    backend.agentResults.push(agentRunResult({
+      stdout: "coder omitted its receipt",
+      commits: [{ sha: "abc123" }],
+      sessionId: "sess-coder-non-resumable",
+    }));
+    backend.agentFailures.push(new Error("opencode does not support resumeSession"));
+
+    await expect(backend.runStep(coderSpec, {
+      branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
+    })).resolves.toMatchObject({
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      sessionId: "sess-coder-non-resumable",
+    });
+    expect(backend.agentOptions).toHaveLength(2);
+  });
+
   it("keeps reviewer fallback topology when typed receipt retries are exhausted", async () => {
     const backend = makeBackend();
     backend.agentFailures.push(new StructuredOutputError("bad output", {

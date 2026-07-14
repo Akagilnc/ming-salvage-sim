@@ -805,7 +805,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   });
 
   it("rejects malformed CMR receipts so Sandcastle re-asks the reviewer", () => {
-    expect(workerReceiptSchema("cmr").safeParse({ converged: true }).success).toBe(true);
+    const completeVerdict = {
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      evidencePaths: ["cmr/review-summary.json"],
+    };
+    expect(workerReceiptSchema("cmr").safeParse(completeVerdict).success).toBe(true);
+    expect(workerReceiptSchema("cmr").safeParse({ converged: true }).success).toBe(false);
     expect(workerReceiptSchema("cmr").safeParse({ converged: "yes" }).success).toBe(false);
     expect(workerReceiptSchema("cmr").safeParse({}).success).toBe(false);
     expect(workerReceiptSchema("cmr").safeParse({
