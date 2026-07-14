@@ -287,11 +287,35 @@ async function decideFamilyQuotaWall(opts: {
       ? opts.err.applied.ledgerEntry.step
       : "S7";
   // Family reuses S3/S7 ids but consumes cmr/ship — never single-slice coder map.
-  const wallSlots = familyRelaySlotsForWall({
-    phase: opts.phase,
-    wallStep: step,
-    ...(opts.cmrPass !== undefined ? { cmrPass: opts.cmrPass } : {}),
-  });
+  // N2: prefer explicit opts.cmrPass, else stamp from the QuotaWait error (pass
+  // worker rethrow). S3 without pass must not dual-rewrite both CMR slots.
+  const wallCmrPass =
+    opts.cmrPass ??
+    (opts.err.cmrPass === "completeness" || opts.err.cmrPass === "correctness"
+      ? opts.err.cmrPass
+      : undefined);
+  let wallSlots: ReadonlyArray<ModelRouteSlot>;
+  try {
+    wallSlots = familyRelaySlotsForWall({
+      phase: opts.phase,
+      wallStep: step,
+      ...(wallCmrPass !== undefined ? { cmrPass: wallCmrPass } : {}),
+    });
+  } catch (slotErr) {
+    const diagnosis =
+      slotErr instanceof Error ? slotErr.message : String(slotErr);
+    return buildParkResult(
+      {
+        reason: "provider_degraded",
+        summary: `family ${opts.phase} S3 quota wall missing cmrPass — refuse dual CMR rewrite`,
+        repairHint: diagnosis,
+      },
+      {
+        reason: "family S3 wall requires cmrPass",
+        diagnosis,
+      },
+    );
+  }
   const inMemoryLedger: LedgerEntry[] = [];
   const worktreePath = opts.familyBackend.resolveFamilyWorkingRepo?.();
 
@@ -2558,10 +2582,15 @@ export async function runFamily(
       ? { admissionSkipped: epic.admissionSkipped }
       : {}),
     run: async (route, relayBilling) => {
-      // F1: after recordShipped, online-review quota re-entry must NOT re-run
-      // verify/CMR/ship. Ledger open-shipped checkpoint → only online-review path.
+      // F1 / N1: after recordShipped, online-review quota re-entry must NOT re-run
+      // verify/CMR/ship — only when open shipped matches **this** barrier head.
       const ledgerNow = await familyBackend.readFamilyLedger();
-      const openShipped = familyOpenShippedForOnlineReview(ledgerNow);
+      const barrierHead =
+        (await readCurrentFamilyHead(familyBackend, familyBase)) ?? familyHead;
+      const openShipped = familyOpenShippedForOnlineReview(
+        ledgerNow,
+        barrierHead,
+      );
       if (openShipped !== undefined) {
         const reviewLoop = await runFamilyOnlineReviewLoop({
           familyBackend,

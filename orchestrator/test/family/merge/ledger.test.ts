@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
 import {
   cmrPassAlreadyPassed,
   familyAlreadyShipped,
+  familyOpenShippedForOnlineReview,
   familyShippedRecordForReviewLoopResume,
   familyEscalationState,
   mergedSet,
@@ -274,6 +275,63 @@ describe("family-ledger.recordShipped / familyAlreadyShipped (online review r2/r
         { status: "aborted", event: "aborted", phase: "final", reason: "x" },
       ], "head-1"),
     ).toBe(false);
+  });
+});
+
+describe("familyOpenShippedForOnlineReview (correctness N1 / F1 residual)", () => {
+  const shipped = (
+    pr: string,
+    familyHeadAfter: string,
+  ): FamilyLedgerEntry => ({
+    status: "shipped",
+    event: "shipped",
+    phase: "final",
+    pr,
+    familyHeadAfter,
+  });
+  const converged = (
+    pr: string,
+    familyHeadAfter: string,
+  ): FamilyLedgerEntry => ({
+    status: "review_loop_converged",
+    event: "review_loop_converged",
+    phase: "final",
+    pr,
+    familyHeadAfter,
+  });
+
+  it("returns open shipped only when familyHeadAfter matches the current barrier head", () => {
+    const ledger = [shipped("https://gh/pr/1", "head-old")];
+    expect(familyOpenShippedForOnlineReview(ledger, "head-old")).toEqual({
+      pr: "https://gh/pr/1",
+      familyHeadAfter: "head-old",
+    });
+    // Wrong / advanced head must NOT short-circuit final verify/CMR/ship.
+    expect(familyOpenShippedForOnlineReview(ledger, "head-new")).toBeUndefined();
+    expect(familyOpenShippedForOnlineReview(ledger, undefined)).toBeUndefined();
+    expect(familyOpenShippedForOnlineReview(ledger, "  ")).toBeUndefined();
+  });
+
+  it("historical review_loop_converged on same PR does not wipe a later ship at a new head", () => {
+    const pr = "https://gh/pr/1";
+    const ledger = [
+      shipped(pr, "head-a"),
+      converged(pr, "head-a"),
+      shipped(pr, "head-b"),
+    ];
+    // Open ship for head-b must survive historical converge on head-a (same PR).
+    expect(familyOpenShippedForOnlineReview(ledger, "head-b")).toEqual({
+      pr,
+      familyHeadAfter: "head-b",
+    });
+    // Converged head-a is closed.
+    expect(familyOpenShippedForOnlineReview(ledger, "head-a")).toBeUndefined();
+  });
+
+  it("skips when this barrier head already has review_loop_converged for the same PR", () => {
+    const pr = "https://gh/pr/9";
+    const ledger = [shipped(pr, "head-x"), converged(pr, "head-x")];
+    expect(familyOpenShippedForOnlineReview(ledger, "head-x")).toBeUndefined();
   });
 });
 
