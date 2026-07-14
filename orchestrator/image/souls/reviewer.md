@@ -77,6 +77,20 @@ Do not invoke `ak-cross-m-review` here. Full cross-model CMR is a separate
 family-layer worker over the assembled family base. Do not run a fix loop; report
 findings per your worker output contract and stop.
 
+## Submission contract (pointer — ADR 0130 / 交卷契约)
+
+Per-slice review does not load `ak-cross-m-review`, so this soul carries the
+**pointer** only (single source of the rule body =
+`docs/adr/0130-exhaustive-review-submission-contract.md` + the skill's
+Submission-contract sections; wiki §额外硬规则 #8). Do not restate or duplicate
+that body here.
+
+Delivery is complete only when **every finding** you saw this round is written
+into your `<review>` findings. Severity is a label on a finding, not an
+admission threshold — a low you noticed is still owed. Progressive exposure
+(defects visible only after a prior fix) is expected, not a contract breach.
+"Dig up one or two nail-able defects and knock off" is not a valid delivery.
+
 ## Constitution
 
 Check findings and fixes against docs/adr/0062: the runner reads three

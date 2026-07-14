@@ -19,7 +19,8 @@
  *      `reconcileGit()` resume seam and a live `refetchEpic` rebuild hook — and
  *      calls {@link runFamily}, which fans the children out in dependency waves,
  *      serially merges each reviewed branch into the family base, and (via the
- *      verify-cmr hook) runs the family verify + integrated cmr + STOPS at the PR.
+ *      verify-cmr hook) runs the family verify + integrated cmr, then continues
+ *      through online review, automatic merge, and post-merge cleanup.
  *
  * SEAM BOUNDARY — what the driver does NOT hardcode:
  *   - The integrated cmr is a CONTAINER cmr WORKER (#335): the
@@ -32,10 +33,10 @@
  *     behind the RealFamilyBackend's protected seams; the driver only assembles.
  */
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { shWithClock } from "./externalCall.js";
 import { RealBackend, type RealBackendOptions } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
 import {
@@ -48,6 +49,7 @@ import {
   sourcedModuleDeclaration,
   type SourcedModuleDeclaration,
 } from "./family/moduleDeclaration.js";
+import { logDriverStage } from "./stageLog.js";
 import type { Backend } from "./types.js";
 import type {
   ChildSlice,
@@ -164,28 +166,6 @@ export function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
     }
   }
   return { admitted, skipped };
-}
-
-/**
- * Extract child issue NUMBERS from a native sub-issues payload.
- *
- * Pure compatibility wrapper used by older tests/callers. This preserves the
- * narrow historical behavior: skip CLOSED children, but leave readiness / parent
- * checks to the explicit `parseSubIssueAdmission` interface.
- */
-export function parseSubIssueNumbers(parsed: unknown): number[] {
-  const nodes = subIssueNodes(parsed);
-  const seen = new Set<number>();
-  const childNumbers: number[] = [];
-  for (const n of nodes) {
-    const num = (n as { number?: unknown })?.number;
-    if (typeof num !== "number" || !Number.isFinite(num) || seen.has(num)) continue;
-    seen.add(num);
-    const state = (n as { state?: unknown })?.state;
-    if (typeof state === "string" && state.toUpperCase() === "CLOSED") continue;
-    childNumbers.push(num);
-  }
-  return childNumbers;
 }
 
 /**
@@ -382,10 +362,8 @@ function familyDiffFiles(
 export type Sh = (file: string, args: string[]) => string;
 
 const defaultSh: Sh = (file, args) =>
-  execFileSync(file, args, {
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf8",
-  }).trim();
+  // Host sh with clock only (#884).
+  shWithClock(file, args, { stage: `admission:${file}` });
 
 /**
  * Read the epic's children (native sub-issues + each child's blocked_by) from
@@ -526,11 +504,9 @@ function readFamilyModuleDeclarations(
 }
 
 /**
- * Read the epic's child issues, failing closed if there are NONE (online R2 Codex
- * P2): a leaf issue mis-passed as an epic — or an empty/odd `subIssues` payload —
- * yields zero children, which `runFamily` would treat as already-complete (`every`
- * over `[]` is vacuously true) → a final verify/cmr on a base with no slices → an
- * empty PR. Reject it at admission with a concrete message.
+ * Read native children and normalize a leaf issue to a family-of-one. Existing
+ * families whose children are all non-runnable still fail closed; only the
+ * absence of native sub-issues selects the degenerate one-child family.
  */
 function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssueAdmission {
   const allSubIssueNodes: unknown[] = [];
@@ -548,10 +524,13 @@ function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssu
     console.warn(skipped.message);
   }
   const childNumbers = [...admission.admitted];
+  if (allSubIssueNodes.length === 0) {
+    return { admitted: [epicIssue], skipped: [] };
+  }
   if (childNumbers.length === 0) {
     throw new Error(
       `family admission rejected: epic #${epicIssue} has no runnable child issues ` +
-        `(not an epic, native sub-issues are empty, or all children were skipped) — nothing to orchestrate`,
+        `(all native children were skipped) — nothing to orchestrate`,
     );
   }
   return admission;
@@ -575,7 +554,7 @@ function admissionSkippedChildren(
 export interface FamilyDriverOptions {
   /** Resolved once per run from ORCHESTRATOR_CODEX_FAST (or an explicit option). */
   readonly codexFast?: boolean;
-  /** The PARENT EPIC issue number — the family run key (ADR 0024). */
+  /** A parent epic or leaf issue number — leaf issues become a family-of-one. */
   readonly epicIssue: number;
   /** The SOURCE repo to clone (path or URL) — the family clone is cut from it. */
   readonly sourceRepo: string;
@@ -604,8 +583,6 @@ export interface FamilyDriverOptions {
   readonly ledgerDir: string;
   /** The profile image (toolchain + skills + model CLIs baked in; souls mounted #372). */
   readonly imageName: string;
-  /** Host dir holding the baked dev skills to bind-mount. */
-  readonly skillsMount: string;
   /** Override $HOME (tests / non-default auth root). */
   readonly home?: string;
   /** The `gh` subprocess seam (default `execFileSync gh …`; injected in tests). */
@@ -665,8 +642,8 @@ export function codexFastRunLog(codexFast: boolean): string {
  *
  * Reads the epic's children from live GitHub, constructs the two real seams on the
  * SAME family clone, cuts the local family base from main, and runs the family
- * spine. STOPS at the PR (the family orchestrator's autonomy ends there; online
- * bot cmr + merge to main are the separate pr-review-loop stage).
+ * spine through the final barrier, including online review, automatic merge to
+ * main, and post-merge cleanup.
  *
  * @returns the {@link FamilyRunResult} — the per-child outcomes + the merged
  *   family base HEAD + the honest run status (success / verify_failed / incomplete
@@ -681,6 +658,7 @@ export async function runFamilyDriver(
 
   // 1. Read the already-cut children from live GitHub (the explicit dependency
   //    edges a `to-issues` step wrote — decision 1, no LLM inference).
+  logDriverStage("admission", `epic #${options.epicIssue}`);
   const epic = readFamilyEpic(options.epicIssue, options.repo, sh);
 
   // 2. The single-slice RealBackend: keyed on the PARENT epic so all children
@@ -694,7 +672,6 @@ export async function runFamilyDriver(
     runKey: options.epicIssue,
     repo: options.repo,
     imageName: options.imageName,
-    skillsMount: options.skillsMount,
     promptsDir: options.promptsDir,
     soulsDir: options.soulsDir,
     home: options.home,
@@ -768,6 +745,8 @@ export async function runFamilyDriver(
     new RealFamilyBackend(familyBackendOptions);
 
   // 6. Assemble the run input + the resume seams, and run the spine.
+  // reconcile stage is logged inside runFamily immediately before the real
+  // reconcile work (not here) so a hang after smoke-k is still attributable.
   const input: FamilyRunInput = {
     epic,
     familyBackend,
@@ -778,7 +757,10 @@ export async function runFamilyDriver(
     reconcileGit: familyBackend.reconcileGit(),
     // The escalate-resume rebuild hook (decision 4): a re-entry rebuilds the
     // dependency graph from LIVE GitHub, not the cached epic.
-    refetchEpic: async () => readFamilyEpic(options.epicIssue, options.repo, sh),
+    refetchEpic: async () => {
+      logDriverStage("admission", `refetch epic #${options.epicIssue}`);
+      return readFamilyEpic(options.epicIssue, options.repo, sh);
+    },
   };
   return runFamily(input);
 }

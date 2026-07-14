@@ -21,6 +21,9 @@ gate in this worker.
 
 When the review is complete, emit `findings = x` on its own line, replacing `x`
 with the number of findings. This fragment is required even when the count is 0.
+A converged judgement declares `findings = 0`. A not-converged judgement declares
+at least `findings = 1`; without an itemized finding list, declare `findings = 1`
+and explain the reason in the review body, which the fixer reads.
 
 Converged:
 
@@ -50,6 +53,10 @@ Rules:
 - If a declared leg was unavailable at runtime, omit it from `successfulLegs` and
   include it in `skippedLegs` with a short visible flag reason. Omit
   `skippedLegs` only when no declared leg was skipped.
+- When review-leg coverage is missing because quota exhaustion or provider
+  degradation prevents cross-vendor coverage, report the jury shortfall through
+  your decision gate, or emit `findings = x`, where `x >= 1`, and explain the
+  absent legs in the review body.
 - On any converged verdict, `claimedFixedFindingIdentityKeys` and
   `priorFindingDispositions` are REQUIRED. Use empty arrays only when no
   claimed-fixed findings occurred in the CMR loop. If a prior claimed-fixed

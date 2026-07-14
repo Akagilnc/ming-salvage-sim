@@ -5,18 +5,16 @@
  * (review_loop_converged without pr_merged).
  */
 
-import { execFileSync } from "node:child_process";
-
 import {
   docReleasePathsFromCommit,
   fetchPrMergeLiveState,
-  offlineAutoMergeAllowUnverifiedDocPaths,
   runAutoMergeStage,
   type AutoMergeStageResult,
 } from "../autoMerge.js";
+import { shWithClock } from "../externalCall.js";
 import { isLiveGithubReviewPollEnabled, pollPrReviewState } from "../botPolling.js";
 import { buildRoundTrigger } from "../evidenceAdmissibility.js";
-import { offlinePrReviewSnapshot } from "../onlineReviewLoop.js";
+import { offlinePrReviewSnapshot } from "./onlineReviewLoop.js";
 import { familyPrMergedForHead, recordPrMerged } from "./ledger.js";
 import type { FamilyBackend } from "./types.js";
 
@@ -29,10 +27,7 @@ export interface FamilyAutoMergeInput {
 
 function familyGhSh(): (file: string, args: string[]) => string {
   return (file, args) =>
-    execFileSync(file, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      encoding: "utf8",
-    }).trim();
+    shWithClock(file, args, { stage: `admission:${file}` });
 }
 
 function resolveFamilyRepoDetails(familyBackend: FamilyBackend): {
@@ -42,10 +37,11 @@ function resolveFamilyRepoDetails(familyBackend: FamilyBackend): {
   const repoPath = familyBackend.resolveFamilyWorkingRepo?.();
   if (repoPath === undefined) return {};
   try {
-    const headOid = execFileSync("git", ["-C", repoPath, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    const headOid = shWithClock(
+      "git",
+      ["-C", repoPath, "rev-parse", "HEAD"],
+      { stage: "reconcile:git" },
+    );
     const docReleasePaths = docReleasePathsFromCommit(repoPath, headOid);
     return { headOid, docReleasePaths };
   } catch {
@@ -103,12 +99,6 @@ export async function runFamilyAutoMergeStage(
     repoDetails.headOid ?? input.convergedHeadOid;
   const ghSh = familyGhSh();
   const offlineSynthetic = !isLiveGithubReviewPollEnabled(shipPr, familyRepo);
-  const allowUnverifiedDocPaths = offlineAutoMergeAllowUnverifiedDocPaths(
-    shipPr,
-    familyRepo,
-    offlineSynthetic,
-    docReleasePaths,
-  );
   const autoMerge = await runAutoMergeStage({
     sh: ghSh,
     repo: familyRepo,
@@ -120,7 +110,6 @@ export async function runFamilyAutoMergeStage(
     prMergedMarkerPresent: priorPrMerged !== undefined,
     offlineSynthetic,
     ...(docReleasePaths !== undefined ? { docReleasePaths } : {}),
-    ...(allowUnverifiedDocPaths ? { allowUnverifiedDocReleasePaths: true } : {}),
     poll: async (round) => {
       if (isLiveGithubReviewPollEnabled(shipPr, familyRepo)) {
         return pollPrReviewState(ghSh, {

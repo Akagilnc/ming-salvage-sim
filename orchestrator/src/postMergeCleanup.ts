@@ -7,7 +7,9 @@ import {
   type PrMergedTerminalRecord,
 } from "./autoMerge.js";
 import { isLiveGithubReviewPollEnabled } from "./botPolling.js";
+import { offlineReviewLoopDispatchAdmissible } from "./evidenceAdmissibility.js";
 import type { Sh } from "./familyDriver.js";
+import { stubCleanupResult } from "./reviewLoopOutcome.js";
 import type {
   CleanupBranchOutcome,
   CleanupResult,
@@ -435,7 +437,7 @@ export function buildCleanupLanding(input: {
 /** Deterministic post-merge cleanup dispatch (#603) — verify+act, no LLM judgment. */
 export function dispatchPostMergeCleanup(
   landing: WorkerLandingPayload | undefined,
-  ctx: Pick<DispatchContext, "repo">,
+  ctx: Pick<DispatchContext, "repo" | "prUrl">,
   sh: Sh,
 ): CleanupResult {
   const dispatch = landing?.cleanupDispatch;
@@ -447,6 +449,9 @@ export function dispatchPostMergeCleanup(
   const repo = ctx.repo?.trim() ?? process.env.ORCHESTRATOR_REPO?.trim() ?? "";
   if (repo.length === 0) {
     throw new Error("cleanup dispatch requires repo on DispatchContext");
+  }
+  if (offlineReviewLoopDispatchAdmissible(ctx, repo)) {
+    return stubCleanupResult();
   }
   return runPostMergeCleanup({
     sh,

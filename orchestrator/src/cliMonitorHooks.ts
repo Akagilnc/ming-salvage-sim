@@ -175,7 +175,6 @@ export function workerResultFromMonitorSidecar(
 ): WorkerResult {
   const resultPath = handle.resultPath;
   const legacyPath = monitorResultPath(dirname(handle.logPath), handle.stepId);
-  const expectedPath = resultPath ?? legacyPath;
   const path = resultPath !== undefined
     ? (existsSync(resultPath) ? resultPath : undefined)
     : (existsSync(legacyPath) ? legacyPath : undefined);
@@ -211,10 +210,11 @@ export function workerResultFromMonitorSidecar(
 
   if (exitCode === 0) {
     return markMissingMonitorSidecarResult({
-      kind: "failed",
-      reason:
-        `telemetry: monitored CLI worker ${handle.stepId} exited 0 but wrote no usable ` +
-        `WorkerResult sidecar at ${expectedPath}`,
+      kind: "completed",
+      // Exit status owns process fate. This role-neutral placeholder carries no
+      // worker claim: coder/ship continue, while reviewer-shaped callers hand the
+      // raw log/sidecar pointers to the next fixer.
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
     });
   }
   return markMissingMonitorSidecarResult({

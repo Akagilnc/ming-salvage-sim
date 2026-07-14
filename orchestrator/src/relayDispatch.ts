@@ -8,7 +8,7 @@
  * the next baton via the same roster + ADR 0124 pool-orthogonal lookup.
  */
 
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "./externalCall.js";
 import {
   appendFileSync,
   existsSync,
@@ -35,7 +35,7 @@ import {
   type ParkOrRelayDecision,
 } from "./quotaPoolTable.js";
 
-// ── <relay> tag contract (mirror ship/cmr fail-closed shape) ────────────────
+// ── <relay> tag contract ───────────────────────────────────────────────────
 
 const nonEmpty = z.string().trim().min(1);
 
@@ -68,14 +68,6 @@ const resourceSignalSchema = z
   })
   .strict();
 
-const decisionGateSignalSchema = z
-  .object({
-    decision_gate: z.literal(true),
-    state_summary: nonEmpty,
-    remaining: nonEmpty.optional(),
-  })
-  .strict();
-
 export type RelayTagOutcome =
   | {
       readonly kind: "phase_complete";
@@ -97,9 +89,9 @@ export type RelayTagOutcome =
   | { readonly kind: "malformed"; readonly reason: string };
 
 /**
- * Parse the worker's `<relay>{…}</relay>` terminal. Resource relay and human
- * decision are explicit signal bits; their prose is opaque context. Legacy
- * #686 shapes remain readable during the rollout. Malformed tags are ignored.
+ * Parse the worker's `<relay>{…}</relay>` terminal. A `decision_gate` key is an
+ * independent worker-pressed bell; sibling cargo cannot suppress it. Resource
+ * relay keeps its shape contract. Legacy #686 shapes remain readable.
  */
 export function parseRelayTag(stdout: string): RelayTagOutcome {
   const re = /<relay>([\s\S]*?)<\/relay>/g;
@@ -117,6 +109,22 @@ export function parseRelayTag(stdout: string): RelayTagOutcome {
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "malformed", reason: "relay tag was not a JSON object" };
   }
+  if (Object.prototype.hasOwnProperty.call(parsed, "decision_gate")) {
+    const cargo = parsed as Record<string, unknown>;
+    const stateSummary =
+      typeof cargo.state_summary === "string" && cargo.state_summary.trim().length > 0
+        ? cargo.state_summary
+        : last.trim();
+    const remaining =
+      typeof cargo.remaining === "string" && cargo.remaining.trim().length > 0
+        ? cargo.remaining
+        : undefined;
+    return {
+      kind: "decision_gate",
+      state_summary: stateSummary,
+      ...(remaining !== undefined ? { remaining } : {}),
+    };
+  }
   const resource = resourceSignalSchema.safeParse(parsed);
   if (resource.success) {
     return {
@@ -124,16 +132,6 @@ export function parseRelayTag(stdout: string): RelayTagOutcome {
       phase: resource.data.phase,
       state_summary: resource.data.state_summary,
       remaining: resource.data.remaining,
-    };
-  }
-  const decisionGate = decisionGateSignalSchema.safeParse(parsed);
-  if (decisionGate.success) {
-    return {
-      kind: "decision_gate",
-      state_summary: decisionGate.data.state_summary,
-      ...(decisionGate.data.remaining !== undefined
-        ? { remaining: decisionGate.data.remaining }
-        : {}),
     };
   }
   const blocked = blockedSchema.safeParse(parsed);
@@ -161,41 +159,6 @@ export function parseRelayTag(stdout: string): RelayTagOutcome {
   };
 }
 
-// ── failure-type boundary vs mechanical retry (#598/#661) ───────────────────
-
-export type FailureClassKind =
-  | "quota_wall"
-  | "capacity"
-  | "pool_dead"
-  | "hang_with_live_pool"
-  | "self_reported_blocked"
-  | "process_failed"
-  | "malformed"
-  | "outcome_protocol_failure";
-
-export type RetryOrRelayClass = "resource" | "mechanical_retry";
-
-/**
- * Failure-type boundary: process-level → mechanical retry (may reset);
- * resource failure → relay (NEVER reset — preserves uncommitted drift).
- */
-export function classifyFailureForRetryOrRelay(input: {
-  readonly kind: FailureClassKind;
-}): RetryOrRelayClass {
-  switch (input.kind) {
-    case "quota_wall":
-    case "capacity":
-    case "pool_dead":
-    case "hang_with_live_pool":
-    case "self_reported_blocked":
-      return "resource";
-    case "process_failed":
-    case "malformed":
-    case "outcome_protocol_failure":
-      return "mechanical_retry";
-  }
-}
-
 // ── ledger + parameter file ─────────────────────────────────────────────────
 
 export const RELAY_FOCUS_FILENAME = ".relay-focus.md";
@@ -203,11 +166,11 @@ export const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 /** Keep runner-owned relay focus out of worker commits, like ship focus/snapshots. */
 function excludeRelayFocusFromGit(worktreePath: string): void {
   try {
-    const excludePath = execFileSync(
+    const excludePath = shWithClock(
       "git",
       ["-C", worktreePath, "rev-parse", "--git-path", "info/exclude"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
+      { stage: "dispatch:git-exclude" },
+    );
     if (excludePath.length === 0) return;
     const absolutePath = resolve(worktreePath, excludePath);
     mkdirSync(join(absolutePath, ".."), { recursive: true });
@@ -534,6 +497,7 @@ export function isSelfReportedRelayError(
 /**
  * Inspect worker stdout / log for a voluntary or blocked `<relay>` tag.
  * Returns undefined when no actionable tag is present (malformed / absent).
+ * Decision-gate intent is actionable by key existence even when its cargo is sparse.
  */
 export function tryParseActionableRelayTag(
   stdout: string,

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "./externalCall.js";
 
 import type { ReviewFixRefuseRecord } from "./types.js";
 
@@ -139,7 +139,7 @@ export function reviewFixAssertionSignal(input: {
 }): boolean {
   const diff = (from: string, to: string): string => {
     try {
-      return execFileSync(
+      return shWithClock(
         "git",
         [
           "-C",
@@ -154,8 +154,7 @@ export function reviewFixAssertionSignal(input: {
           ":(glob)**/__tests__/**",
         ],
         {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
+          stage: "dispatch:git-diff",
         },
       );
     } catch (err) {

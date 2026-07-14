@@ -22,7 +22,6 @@ import type {
   EscalationAnswerPayload,
   EscalationKind,
   Finding,
-  FindingDisposition,
   PriorFindingDisposition,
   WorkerLandingPayload,
   WorkerMonitorHandle,
@@ -168,15 +167,6 @@ export interface FamilyLedgerEntry {
    *     that prior row. NOT counted as merged.
    *   - `"admission_skipped"` — production admission skipped a child before wave
    *     scheduling; durable audit only, not an unblock fact.
-   *   - `"ship_dispatch_reserved"` / `"ship_dispatch_attempt"` — the two-phase
-   *     final-barrier launch marker. Reservation is written before launch; attempt
-   *     confirms physical launch. Neither is delivery or unblock truth.
-   *   - `"ship_completed"` — the ship worker reported a PR locator and branch,
-   *     before host observation verified either. This is advisory observation input
-   *     only; it is deliberately not delivery, unblock, or review-loop truth.
-   *   - `"ship_streak_opened"` / `"ship_streak_closed"` — durable boundaries for
-   *     the exactly-once mutating ship budget. CMR rows and HEAD movement do not
-   *     split an open streak.
    */
   readonly status:
     | "merged"
@@ -195,11 +185,6 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "ship_streak_opened"
-    | "ship_streak_closed"
-    | "ship_dispatch_reserved"
-    | "ship_dispatch_attempt"
-    | "ship_completed"
     | "route_degraded";
   /**
    * Event tag.
@@ -235,11 +220,6 @@ export interface FamilyLedgerEntry {
    *     carries a `childIssue` it answers a `child_decision_parked` row (#604 slice 5).
    *   - `"admission_skipped"` — paired with `status:"admission_skipped"`; records
    *     production admission skips before scheduling.
-   *   - `"ship_dispatch_reserved"` — paired with the same status and written
-   *     before launch; `"ship_dispatch_attempt"` confirms successful spawn. Only
-   *     confirmed attempts consume the mutating budget.
-   *   - `"ship_completed"` — paired with `status:"ship_completed"`; a worker-
-   *     reported PR locator plus branch persisted before host observation (#823).
    * Not the unblock truth (that is `status`); the tag is for observability.
    */
   readonly event?:
@@ -259,11 +239,6 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "ship_streak_opened"
-    | "ship_streak_closed"
-    | "ship_dispatch_reserved"
-    | "ship_dispatch_attempt"
-    | "ship_completed"
     | "route_degraded";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
@@ -320,16 +295,6 @@ export interface FamilyLedgerEntry {
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
   /**
-   * The governance side-channel the CMR GATE (not the runner) reads to track
-   * cross-round prior dispositions (#604 slice 3 / ADR 0062). Carries the
-   * accepted-suppression / owning-issue dispositions the classifier
-   * produced this pass, so a later pass can honour a prior accepted suppression
-   * without re-blocking. Split out of the old `cmrFindingClassification` blob so
-   * the runner's control envelope (`blockingFindingIdentityKeys`) and the gate's
-   * governance data live in separate, purpose-scoped fields.
-   */
-  readonly cmrDispositions?: readonly FindingDisposition[];
-  /**
    * Did this child's merge get LLM-resolved (the `resolving-merge-conflicts` soul
    * ran, #295) rather than land as a clean deterministic merge? Forwarded by the
    * merger from {@link MergeResult.conflictResolvedByLlm} onto the DURABLE ledger
@@ -346,18 +311,6 @@ export interface FamilyLedgerEntry {
    * guard's "already delivered" decision is locatable from the ledger alone.
    */
   readonly pr?: string;
-  /** Worker-reported branch on a `ship_completed` observation-input row (#823). */
-  readonly shipBranch?: string;
-  /** Correlates a pre-launch reservation with its confirmed physical launch. */
-  readonly shipDispatchId?: string;
-  /** Stable identity shared by the open/close rows of one ship streak. */
-  readonly shipStreakId?: string;
-  /** Legacy confirmed attempts carried into a newly materialized streak anchor. */
-  readonly shipAttemptsAtOpen?: number;
-  /** Legacy unconfirmed reservations carried into a newly materialized streak anchor. */
-  readonly shipInfraAttemptsAtOpen?: number;
-  /** Why an open ship streak became terminal. */
-  readonly shipStreakOutcome?: "shipped" | "exhausted";
   /** PR number on `status:"pr_merged"` terminal entries (#602). */
   readonly prNumber?: number;
   /** Remote branch name on `status:"pr_merged"` terminal entries (#602). */
@@ -575,8 +528,7 @@ export interface FamilyBackend {
    * THE unified worker-dispatch seam at the FAMILY layer (ADR 0026 / PRD #330
    * #331) — parallel to {@link Backend.dispatchWorker}. The family-LEVEL worker
    * steps (integrated cmr over the merged family base, the family-base ship/PR)
-   * are dispatched through this ONE method instead of the per-method seam
-   * (`runIntegratedCmr` / `openFamilyPr`).
+   * are dispatched through this ONE method.
    *
    * The {@link DispatchContext} for a family worker carries `familyBase` (the
    * caller has only the base string, no single-slice worktree path — PRD #330 R2);
@@ -584,20 +536,26 @@ export interface FamilyBackend {
    * same discriminated union: a cmr `red` verdict is `completed` (with a
    * {@link CmrResult} payload), NOT `failed`.
    *
-   * #331 PREFACTOR: the runner's family verify-cmr hook ALWAYS dispatches through
-   * the free function `dispatchFamilyWorker(familyBackend, spec, ctx)`
-   * (verifyCmr.ts), which calls THIS method when implemented, else forwards to the
-   * legacy `runIntegratedCmr` / `openFamilyPr` — external behaviour unchanged. The
-   * real container cmr worker (#335) and family ship worker land later.
+   * The runner's family verify-cmr hook always dispatches through the free
+   * function `dispatchFamilyWorker(familyBackend, spec, ctx)` (verifyCmr.ts).
+   * Legacy integrated-CMR backends retain only the reviewer fallback.
    *
-   * OPTIONAL during the prefactor so the existing fakes need no change; new tests
-   * inject it to assert the family dispatch sequence + spec.
+   * Optional so verify-only and legacy integrated-CMR test backends remain valid;
+   * the production backend implements it for every family worker role.
    */
   dispatchWorker?(
     spec: WorkerSpec,
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
+  /**
+   * Host-deterministic post-merge cleanup seam (#603). Cleanup is not an agent
+   * worker: no prompt, soul, model route, or reviewer judgment is involved.
+   */
+  runPostMergeCleanup?(
+    landing: WorkerLandingPayload,
+    ctx: DispatchContext,
+  ): Promise<CleanupResult>;
   /**
    * #786: reinstall this backend's image / souls / prompts fingerprints before
    * its first sidecar environment row. Family and single-slice dispatch share
@@ -625,23 +583,6 @@ export interface FamilyBackend {
     ctx: DispatchContext,
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
-  /**
-   * Runner fallback for outcome protocol failures (#552).
-   *
-   * When a worker finished but its outcome control envelope was malformed,
-   * missing, or schema-incompatible, the runner may ask the SAME producing worker
-   * to rewrite only the machine outcome from existing artifacts/local memory.
-   * This is a control-envelope repair path: it must not run semantic review/fix
-   * work, move git truth, leave tracked changes, or infer a route from prose. The
-   * runner owns the bounded retry cap.
-   */
-  rewriteWorkerOutcome?(
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-    protocolFailure: Extract<WorkerResult, { kind: "malformed" }>,
-    attempt: number,
-  ): Promise<WorkerResult>;
-
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
   // ALL OPTIONAL: a #293-era backend (the no-op default, the existing fakes)
   // does NOT implement them, so the verify-cmr hook degrades to the no-op
@@ -661,42 +602,16 @@ export interface FamilyBackend {
    */
   runFamilyVerify?(request: FamilyVerifyRequest): Promise<FamilyVerifyResult>;
   /**
-   * #296 integrated-cmr seam (ADR 0022 decision 3⑥): run the integrated
-   * cross-model cmr 承重闸 over the merged family base AFTER a green full verify,
-   * to catch 跨片接缝 (field-name / type / 阈值口径 / 组合 e2e) that per-slice cmr
-   * cannot see. `{converged:false}` is the load-bearing red — the hook escalates
-   * 续跑 (#298) rather than opening a PR. Mechanically reuses the local
-   * `ak-cross-m-review` pipeline (a薄封装 behind this seam).
+   * Legacy per-method integrated-CMR seam retained for older fake/test backends.
+   * Production dispatches the CMR container worker through `dispatchWorker`; the
+   * default real implementation throws if this bypass seam is reached.
    */
   runIntegratedCmr?(request: IntegratedCmrRequest): Promise<IntegratedCmrResult>;
-  /**
-   * #296 止于 PR seam (ADR 0022 decision 4): after a green verify + converged
-   * cmr, open the family-base PR and STOP — the family orchestrator's autonomy
-   * ends here. Online bot cmr + merge to main are the separate pr-review-loop
-   * stage, NOT this layer (so this seam never merges).
-   */
-  openFamilyPr?(request: OpenFamilyPrRequest): Promise<OpenFamilyPrResult>;
-  /**
-   * Resume-skip trust boundary: before a durable `shipped` marker can skip the
-   * final verify/cmr/ship barrier, re-check that the recorded PR still exists,
-   * is OPEN, targets the expected PR base, uses this family branch as head, and
-   * has `headRefOid === expectedHead`.
-   */
-  verifyFamilyShippedPr?(
-    request: VerifyFamilyShippedPrRequest,
-  ): Promise<VerifyFamilyShippedPrResult>;
-  /** Discover host truth after a ship dispatch throws, before any replacement dispatch. */
-  findFamilyShippedPr?(request: {
-    readonly familyBase: string;
-    readonly expectedHead: string;
-  }): Promise<FindFamilyShippedPrResult>;
   /**
    * Absolute git working directory for the family base clone. Optional — used to
    * compute `docReleasePaths` for diagnostics only (ADR 0123 / #735). Missing
    * working-repo does not block merge: path allowlist is not a merge gate.
-   * `allowUnverifiedDocReleasePaths` is a deprecated no-op retained for caller
-   * type-compat (see autoMerge.ts); merge still requires readiness + doc-release
-   * completed, independent of this field.
+   * Merge still requires readiness + doc-release completed; paths are diagnostics.
    */
   resolveFamilyWorkingRepo?(): string | undefined;
   /**
@@ -776,9 +691,8 @@ export interface IntegratedCmrRequest {
   /** Parsed module context supplied by the runner; the worker must not invent it. */
   readonly moduleContext?: FamilyModuleContext;
   /**
-   * Runner-owned prior finding identity keys that this CMR worker may adjudicate
-   * as claimed-fixed. Claimed-fixed keys outside this set are stale/self-claimed
-   * closure and must fail closed at the family gate.
+   * Prior finding identity keys transported to the CMR worker as review context.
+   * The runner does not adjudicate the worker's closure cargo.
    */
   readonly priorCmrFindingIdentityKeys?: readonly string[];
 }
@@ -787,63 +701,23 @@ export interface IntegratedCmrRequest {
 export interface IntegratedCmrResult {
   /** Converged (all reviewers empty / agreed) ⇒ true; else the gate is red. */
   readonly converged: boolean;
+  /** Reviewer-declared open count; omitted is not equivalent to zero. */
+  readonly findingsCount?: number;
   /** Why it did not converge (handed to the escalate seam) — set when red. */
   readonly reason?: string;
   /** CMR leg slugs that actually produced a usable review this pass. */
   readonly successfulLegs?: readonly string[];
   /** Declared CMR legs skipped at runtime, with the visible degrade flag reason. */
   readonly skippedLegs?: readonly { readonly slug: string; readonly reason: string }[];
-  /** Prior claimed-fixed findings the integrated CMR result asks the runner to adjudicate. */
+  /** Prior claimed-fixed finding cargo reported by the integrated CMR worker. */
   readonly claimedFixedFindingIdentityKeys?: readonly string[];
   /** Explicit disposition for claimed-fixed integrated CMR findings. */
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured findings to classify at the family gate (#449). */
   readonly findings?: readonly Finding[];
-  /** Worker outcome guard evidence artifacts referenced by this CMR verdict. */
+  /** Reviewer-referenced evidence artifact pointers transported as cargo. */
   readonly evidencePaths?: readonly string[];
 }
-
-/** What opening the family PR needs (decision 4, 止于 PR). */
-export interface OpenFamilyPrRequest {
-  /** The family base branch the PR is opened FROM. */
-  readonly familyBase: string;
-}
-
-/** The opened-PR result. */
-export interface OpenFamilyPrResult {
-  /** The opened PR's URL (or a synthetic handle in the fake). */
-  readonly url: string;
-  /** The opened PR's head commit SHA/OID, verified from PR metadata when available. */
-  readonly prHead?: string;
-}
-
-export interface VerifyFamilyShippedPrRequest {
-  /** The shipped marker's PR URL/handle from the family ledger. */
-  readonly pr: string;
-  /** The family base branch the PR must use as its head branch. */
-  readonly familyBase: string;
-  /** The current local family base HEAD the PR must still cover. */
-  readonly expectedHead: string;
-}
-
-export type VerifyFamilyShippedPrResult =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      /** Host truth, not an error-string inference at the caller. */
-      readonly kind: "pr_missing" | "observation_failed" | "mismatch";
-      readonly reason: string;
-    };
-
-/** Host discovery used after a mutating ship dispatch loses its return path. */
-export type FindFamilyShippedPrResult =
-  | { readonly ok: true; readonly pr: string }
-  | {
-      readonly ok: false;
-      /** `pr_missing` is the only result that permits another mutating dispatch. */
-      readonly kind: "pr_missing" | "observation_failed" | "mismatch";
-      readonly reason: string;
-    };
 
 /**
  * An `aborted` event #296 hands to #298's `recordAborted` seam on a red verify
@@ -883,8 +757,8 @@ export interface FamilyEscalation {
   readonly familyHeadAfter?: string;
   /** Unified stop reason summary for this pause, when the caller can classify it. */
   readonly stopSummary?: StopSummary;
-  /** Durable escalation semantic; defaults to the decision-gate meaning. */
-  readonly escalationKind?: "decision" | "failure";
+  /** Durable escalation semantic; every caller must declare the factual source. */
+  readonly escalationKind: "decision" | "failure";
   /** Durable escalation phase; defaults to the final family gate. */
   readonly phase?: "wave" | "final";
 }
@@ -966,7 +840,7 @@ export interface MergeResult {
  * Input to the family entry point {@link runFamily}.
  *
  * `singleSliceBackend` is the {@link Backend} each child fan-out runs the
- * single-slice runner against (family mode: S7 push is a local no-op, base is
+ * single-slice runner against (family mode: S7 is a local child handoff, base is
  * the family base — carried via the runner's family context). `familyBackend`
  * is the family-LEVEL seam (merge + ledger). They are distinct seams so the
  * single-slice runner is reused UNCHANGED for each child (ADR 0022 decision 2).

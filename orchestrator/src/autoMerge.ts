@@ -5,17 +5,13 @@
  * re-queries live GitHub state (mergeStateStatus / threads / CI), never a cache.
  */
 
-import { execFileSync } from "node:child_process";
+import { shWithClock } from "./externalCall.js";
 
-import {
-  offlineSyntheticPollAdmissible,
-} from "./evidenceAdmissibility.js";
 import {
   classifyCheckRuns,
   isLiveGithubReviewPollEnabled,
   parsePrRef,
   unresolvedThreadCount,
-  type CheckRunSnapshot,
   type PrReviewSnapshot,
 } from "./botPolling.js";
 import type { Sh } from "./familyDriver.js";
@@ -58,95 +54,6 @@ export interface PrMergedTerminalRecord {
   readonly convergedHeadOid: string;
 }
 
-export interface OpenPrObservation {
-  readonly present: boolean;
-  readonly prUrl?: string;
-}
-
-export class NoOpenPrForBranchError extends Error {}
-
-function repositoryOwner(repo: string): string {
-  return repo.split("/")[0] ?? "";
-}
-
-function githubFieldEquals(actual: string | undefined, expected: string): boolean {
-  return actual?.trim().toLowerCase() === expected.trim().toLowerCase();
-}
-
-function isOwnOpenBranchPr(
-  live: PrMergeLiveState,
-  repo: string,
-  branch: string,
-): boolean {
-  return githubFieldEquals(live.state, "OPEN") &&
-    live.headRefName === branch &&
-    githubFieldEquals(live.headRepositoryOwnerLogin, repositoryOwner(repo));
-}
-
-/**
- * Resolve the one downstream PR identity from GitHub host truth.
- * Worker output is advisory only: every rejected or unreadable hint is discarded
- * before the branch query, and owner filtering happens over the complete result set.
- */
-export function resolveHostTruthPr(
-  sh: Sh,
-  repo: string,
-  branch: string,
-  reportedPr?: string,
-): PrMergeLiveState {
-  if (reportedPr !== undefined && reportedPr.trim().length > 0) {
-    try {
-      const hinted = fetchPrMergeLiveState(sh, repo, reportedPr);
-      if (isOwnOpenBranchPr(hinted, repo, branch)) return hinted;
-    } catch {
-      // A stale/deleted/mistyped hint is untrusted input, not a routing failure.
-    }
-  }
-
-  const raw = sh("gh", [
-    "pr", "list", "--repo", repo, "--head", branch, "--state", "open",
-    "--json",
-    "number,url,state,baseRefName,headRefName,headRefOid,headRepositoryOwner,mergeStateStatus,mergeable",
-  ]);
-  const parsed: unknown = JSON.parse(raw);
-  if (!Array.isArray(parsed)) {
-    throw new Error(`autoMerge: malformed gh pr list payload for branch ${branch}`);
-  }
-  for (const candidate of parsed) {
-    if (candidate === null || typeof candidate !== "object") {
-      throw new Error(`autoMerge: malformed gh pr list entry for branch ${branch}`);
-    }
-    const owner = (candidate as Record<string, unknown>).headRepositoryOwner;
-    const login = owner !== null && typeof owner === "object"
-      ? (owner as Record<string, unknown>).login
-      : undefined;
-    if (
-      typeof login !== "string" ||
-      !githubFieldEquals(login, repositoryOwner(repo))
-    ) continue;
-    const live = parsePrMergeLivePayload(JSON.stringify(candidate), `branch ${branch}`);
-    if (isOwnOpenBranchPr(live, repo, branch)) return live;
-  }
-  throw new NoOpenPrForBranchError(
-    `autoMerge: no open PR for branch ${branch} owned by repository ${repo}`,
-  );
-}
-
-/** Host truth for the open PR currently associated with a pushed branch. */
-export function observeOpenPrForBranch(
-  sh: Sh,
-  repo: string,
-  branch: string,
-  reportedPr?: string,
-): OpenPrObservation {
-  try {
-    const resolved = resolveHostTruthPr(sh, repo, branch, reportedPr);
-    return { present: true, prUrl: resolved.prUrl };
-  } catch (err) {
-    if (!(err instanceof NoOpenPrForBranchError)) throw err;
-    return { present: false };
-  }
-}
 
 export type AutoMergeTerminalState =
   | "merged"
@@ -154,6 +61,10 @@ export type AutoMergeTerminalState =
   | "decision_gate"
   | "externally_merged_never_converged"
   | "already_recorded";
+
+function githubFieldEquals(actual: string | undefined, expected: string): boolean {
+  return actual?.trim().toLowerCase() === expected.trim().toLowerCase();
+}
 
 export interface AutoMergeStageResult {
   readonly ok: boolean;
@@ -208,7 +119,7 @@ export function docReleasePathsFromCommit(
   const oid = commitOid.trim();
   if (oid.length === 0) return undefined;
   try {
-    const raw = execFileSync(
+    const raw = shWithClock(
       "git",
       [
         "-C",
@@ -220,7 +131,7 @@ export function docReleasePathsFromCommit(
         "-r",
         oid,
       ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      { stage: "reconcile:git-diff-tree" },
     );
     const paths = raw
       .split(/\r?\n/)
@@ -427,40 +338,6 @@ export function isPrMergedMarker(
   );
 }
 
-export interface PrMergedLedgerEntryLike extends PrMergedMarkerLike {
-  readonly prUrl?: string;
-  readonly prNumber?: number;
-  readonly remoteBranchName?: string;
-}
-
-/** Recover the durable pr_merged record written by the host auto-merge stage. */
-export function slicePrMergedRecordFromLedger(
-  ledger: ReadonlyArray<PrMergedLedgerEntryLike>,
-  convergedHeadOid: string,
-): PrMergedTerminalRecord | undefined {
-  for (let i = ledger.length - 1; i >= 0; i--) {
-    const entry = ledger[i]!;
-    if (
-      entry.event !== "pr_merged" ||
-      !isPrMergedMarker(entry, convergedHeadOid) ||
-      typeof entry.prUrl !== "string" ||
-      typeof entry.prNumber !== "number" ||
-      typeof entry.remoteBranchName !== "string" ||
-      typeof entry.mergedHeadOid !== "string"
-    ) {
-      continue;
-    }
-    return {
-      prUrl: entry.prUrl,
-      prNumber: entry.prNumber,
-      remoteBranchName: entry.remoteBranchName,
-      mergedHeadOid: entry.mergedHeadOid,
-      convergedHeadOid,
-    };
-  }
-  return undefined;
-}
-
 export interface AutoMergeStageInput {
   readonly sh: Sh;
   readonly repo: string;
@@ -479,12 +356,6 @@ export interface AutoMergeStageInput {
   readonly mergeConfirmRetryDelayMs?: number;
   /** Offline/test: skip live gh pr view/merge and synthesize MERGED from poll readiness. */
   readonly offlineSynthetic?: boolean;
-  /**
-   * Deprecated no-op under ADR 0123 (path allowlist removed). Retained so callers
-   * that still pass the field keep type-compatible; merge ignores it.
-   * @deprecated Deprecated no-op retained only for caller type compatibility. Do not introduce new usages.
-   */
-  readonly allowUnverifiedDocReleasePaths?: boolean;
 }
 
 function offlineSyntheticLiveState(
@@ -537,24 +408,6 @@ function externallyMergedNeverConvergedSummary(): StopSummary {
     repairHint:
       "confirm whether the PR was merged outside the orchestrator review loop; answer the decision gate before cleanup",
   };
-}
-
-/**
- * Compat helper retained for callers that still compute the pre-ADR-0123
- * "unverified doc paths" hatch. Under ADR 0123 the hatch is not a merge veto;
- * the function remains pure/testable for offline `pr://` admission shape.
- */
-export function offlineAutoMergeAllowUnverifiedDocPaths(
-  prUrl: string,
-  repo: string,
-  offlineSynthetic: boolean,
-  docReleasePaths: readonly string[] | undefined,
-): boolean {
-  return (
-    offlineSynthetic &&
-    (docReleasePaths === undefined || docReleasePaths.length === 0) &&
-    offlineSyntheticPollAdmissible(prUrl, repo)
-  );
 }
 
 function mergeNotConfirmedSummary(): StopSummary {
@@ -633,7 +486,7 @@ export async function runAutoMergeStage(
       stopSummary: {
         reason: "decision_gate_park",
         summary: "auto-merge blocked: doc-release has not completed",
-        repairHint: "complete S12 doc-release before merge",
+        repairHint: "complete family doc-release before merge",
       },
     };
   }
@@ -769,28 +622,4 @@ export async function runAutoMergeStage(
     };
   }
   return { ok: true, terminalState: "merged", record };
-}
-
-/** Offline/test helper: build a minimal snapshot from check-runs only. */
-export function snapshotFromCheckRuns(
-  base: Pick<PrReviewSnapshot, "repo" | "prNumber" | "prUrl" | "headOid">,
-  checkRuns: ReadonlyArray<CheckRunSnapshot>,
-  threads: PrReviewSnapshot["threads"] = [],
-): PrReviewSnapshot {
-  return {
-    ...base,
-    pollCount: 1,
-    bots: {
-      coderabbit: { state: "complete", findingCount: 0 },
-      sourcery: { state: "complete", findingCount: 0 },
-      codex: { state: "complete", findingCount: 0 },
-      gemini: { state: "complete", findingCount: 0 },
-    },
-    threads,
-    checkRuns,
-    totalFindingCount: 0,
-    quiescent: true,
-    roundTriggerUsed: { headOid: base.headOid, triggeredAt: "1970-01-01T00:00:00.000Z" },
-    checkRunsEmptyMeans: "pending",
-  };
 }
