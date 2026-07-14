@@ -1217,6 +1217,19 @@ describe("RealBackend reviewer output contract", () => {
       }
       throw new Error(`unexpected shell call: ${file} ${args.join(" ")}`);
     }
+    /** Typed probe for private-ish receipt decode (no `as unknown as`). */
+    public probeDecodeOutput(spec: StepSpec, raw: unknown): StepOutput {
+      return this.decodeOutput(spec, raw);
+    }
+    /** Typed probe for typed vs cargo channel selection. */
+    public probeRawOutputFor(
+      result: { output?: unknown; stdout: string },
+      spec: StepSpec,
+      typedOutputUsed: boolean,
+      options?: { outcomeLanding?: { path: string; sandboxPath: string } },
+    ): unknown {
+      return this.rawOutputFor(result, spec, typedOutputUsed, options);
+    }
   }
 
   const reviewerSpec: StepSpec = {
@@ -1253,11 +1266,7 @@ describe("RealBackend reviewer output contract", () => {
       home: tempHome("rb-home-coder-bell-"),
     });
 
-    const decoded = (
-      backend as unknown as {
-        decodeOutput(spec: StepSpec, raw: unknown): StepOutput;
-      }
-    ).decodeOutput(coderSpec, {
+    const decoded = backend.probeDecodeOutput(coderSpec, {
       committed: "not-a-boolean",
       unknownCargo: { any: "bytes" },
       escalate: { reason: "owner decision needed", diagnosis: "contract conflict" },
@@ -1282,26 +1291,18 @@ describe("RealBackend reviewer output contract", () => {
     });
 
     expect(() =>
-      (
-        backend as unknown as {
-          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-        }
-      ).decodeOutput(
-        reviewerSpec,
-        {
-          findings: [],
-          priorFindingDispositions: [
-            {
-              identityKey: "correctness|orchestrator/src/x.ts:1|accepted",
-              status: "accepted_suppressed",
-              source: "#445 owner answer",
-              scope: "runner review/fix loop",
-              boundedReopen: "reopen if the same finding recurs in this scope",
-            },
-          ],
-        },
-        undefined,
-      ),
+      backend.probeDecodeOutput(reviewerSpec, {
+        findings: [],
+        priorFindingDispositions: [
+          {
+            identityKey: "correctness|orchestrator/src/x.ts:1|accepted",
+            status: "accepted_suppressed",
+            source: "#445 owner answer",
+            scope: "runner review/fix loop",
+            boundedReopen: "reopen if the same finding recurs in this scope",
+          },
+        ],
+      }),
     ).not.toThrow();
   });
 
@@ -1318,40 +1319,32 @@ describe("RealBackend reviewer output contract", () => {
       home: tempHome("rb-home-reviewer-"),
     });
 
-    const decoded = (
-      backend as unknown as {
-        decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): {
-          findings?: ReadonlyArray<{ disposition_reason?: string }>;
-        };
-      }
-    ).decodeOutput(
-      reviewerSpec,
-      {
-        findingsCount: 1,
-        findings: [
-          {
-            severity: "medium",
-            category: "correctness",
-            claim_quote: "Known accepted gap",
-            location: "orchestrator/src/runner.ts:42",
-            suggested_fix: "keep the bounded suppression",
-            action: "wont_fix",
-            disposition_reason: "legacy fallback should not win",
-            disposition: {
-              kind: "accepted_suppressed",
-              source: "#445 owner answer",
-              scope: "runner review/fix loop",
-              reason: "Owner accepted this bounded risk.",
-              boundedReopen: "reopen if the same finding recurs in this scope",
-            },
+    const decoded = backend.probeDecodeOutput(reviewerSpec, {
+      findingsCount: 1,
+      findings: [
+        {
+          severity: "medium",
+          category: "correctness",
+          claim_quote: "Known accepted gap",
+          location: "orchestrator/src/runner.ts:42",
+          suggested_fix: "keep the bounded suppression",
+          action: "wont_fix",
+          disposition_reason: "legacy fallback should not win",
+          disposition: {
+            kind: "accepted_suppressed",
+            source: "#445 owner answer",
+            scope: "runner review/fix loop",
+            reason: "Owner accepted this bounded risk.",
+            boundedReopen: "reopen if the same finding recurs in this scope",
           },
-        ],
-        priorFindingDispositions: [],
-      },
-      undefined,
-    );
+        },
+      ],
+      priorFindingDispositions: [],
+    });
 
-    expect(decoded.findings?.[0]?.disposition_reason).toBe("legacy fallback should not win");
+    expect(
+      decoded.kind === "reviewer" ? decoded.findings[0]?.disposition_reason : undefined,
+    ).toBe("legacy fallback should not win");
   });
 
   // #604 correctness r2 (C3): the standalone reviewer disposition schema is
@@ -1372,36 +1365,28 @@ describe("RealBackend reviewer output contract", () => {
     });
 
     expect(() =>
-      (
-        backend as unknown as {
-          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-        }
-      ).decodeOutput(
-        reviewerSpec,
-        {
-          findings: [
-            {
-              severity: "medium",
-              category: "correctness",
-              claim_quote: "deleted field must no longer validate",
-              location: "orchestrator/src/runner.ts:42",
-              suggested_fix: "keep the bounded suppression",
-              action: "wont_fix",
-              disposition_reason: "r",
-              disposition: {
-                kind: "accepted_suppressed",
-                source: "#445 owner answer",
-                scope: "runner review/fix loop",
-                reason: "Owner accepted this bounded risk.",
-                boundedReopen: "reopen if the same finding recurs in this scope",
-                targetModule: "some-module",
-              },
+      backend.probeDecodeOutput(reviewerSpec, {
+        findings: [
+          {
+            severity: "medium",
+            category: "correctness",
+            claim_quote: "deleted field must no longer validate",
+            location: "orchestrator/src/runner.ts:42",
+            suggested_fix: "keep the bounded suppression",
+            action: "wont_fix",
+            disposition_reason: "r",
+            disposition: {
+              kind: "accepted_suppressed",
+              source: "#445 owner answer",
+              scope: "runner review/fix loop",
+              reason: "Owner accepted this bounded risk.",
+              boundedReopen: "reopen if the same finding recurs in this scope",
+              targetModule: "some-module",
             },
-          ],
-          priorFindingDispositions: [],
-        },
-        undefined,
-      ),
+          },
+        ],
+        priorFindingDispositions: [],
+      }),
     ).not.toThrow();
   });
 
@@ -1419,19 +1404,11 @@ describe("RealBackend reviewer output contract", () => {
     });
 
     expect(() =>
-      (
-        backend as unknown as {
-          decodeOutput(spec: StepSpec, raw: unknown, gitCommitCount: number | undefined): unknown;
-        }
-      ).decodeOutput(
-        coderSpec,
-        {
-          committed: true,
-          commitsAdded: 1,
-          notes: "worker-authored cargo",
-        },
-        1,
-      ),
+      backend.probeDecodeOutput(coderSpec, {
+        committed: true,
+        commitsAdded: 1,
+        notes: "worker-authored cargo",
+      }),
     ).not.toThrow();
   });
 });
@@ -1511,6 +1488,20 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       if (this.agentResult !== undefined) return this.agentResult;
       throw new Error("agent sandbox should not run during this test");
     }
+
+    /** Typed probe for receipt decode (no `as unknown as`). */
+    public probeDecodeOutput(spec: StepSpec, raw: unknown): StepOutput {
+      return this.decodeOutput(spec, raw);
+    }
+    /** Typed probe for typed vs cargo channel selection. */
+    public probeRawOutputFor(
+      result: { output?: unknown; stdout: string },
+      spec: StepSpec,
+      typedOutputUsed: boolean,
+      options?: { outcomeLanding?: { path: string; sandboxPath: string } },
+    ): unknown {
+      return this.rawOutputFor(result, spec, typedOutputUsed, options);
+    }
   }
 
   function makeBackend(home = tempHome("rb-home-286-")): PreflightBackend {
@@ -1582,16 +1573,15 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("attaches signal-only Output.object for single-iter coder without re-asking opaque cargo", async () => {
-    // #899: decision-gate Output.object is attached; ordinary cargo fields stay
-    // opaque (missing committed/commitsAdded does not force a second invocation).
+  it("does not attach Output.object for single-iter coder so absent cargo never SO-retries", async () => {
+    // #899 / ADR 0131 R9: coder cargo is fully opaque — no Output.object.
+    // Missing tag or style-changed cargo must not trigger structured-output repair.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: "coder completed implementation but omitted its receipt",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-opaque",
-      output: {},
     });
 
     await expect(
@@ -1609,20 +1599,16 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "coder",
-      maxRetries: 2,
-    });
+    expect(backend.agentOptions[0]!.output).toBeUndefined();
     expect(backend.agentOptions[0]!.resumeSession).toBeUndefined();
   });
 
-  it("does not re-ask coder cargo when the typed receipt omits a cargo field", async () => {
+  it("does not re-ask coder cargo when the receipt omits a cargo field", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: '<coder>{"committed": true}</coder>',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-partial-cargo",
-      output: { committed: true },
     });
 
     await expect(backend.runStep({ ...coderSpec, maxIter: 1 }, {
@@ -1634,10 +1620,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "coder",
-      maxRetries: 2,
-    });
+    expect(backend.agentOptions[0]!.output).toBeUndefined();
   });
 
   it("fails the Action on a malformed coder decision gate without inventing a park", async () => {
@@ -1646,7 +1629,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"escalate":{"reason":"","diagnosis":""}}</coder>',
       commits: [],
       sessionId: "sess-coder-bad-gate",
-      output: { escalate: { reason: "", diagnosis: "" } },
     });
 
     await expect(
@@ -1655,10 +1637,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }),
     ).rejects.toThrow(/malformed decision gate/);
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "coder",
-      maxRetries: 2,
-    });
+    // Post-hoc classify — no SO attachment for opaque coder cargo.
+    expect(backend.agentOptions[0]!.output).toBeUndefined();
   });
 
   it("keeps a single Sandcastle invocation when a missing coder receipt has no session", async () => {
@@ -1720,15 +1700,14 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
-  it("attaches signal-only decision Output.object when resuming a coder seat", async () => {
-    // Resume is maxIterations:1; #899 attaches decision-gate Output.object while
-    // ordinary cargo fields stay opaque inside decisionGateSignalSchema.
+  it("does not attach Output.object when resuming a coder seat (opaque cargo)", async () => {
+    // Resume keeps maxIterations:1; #899 R9 still leaves coder cargo opaque so
+    // a missing tag never triggers structured-output repair.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "resumed worker completed without a cargo tag",
       commits: [{ sha: "abc123" }],
       sessionId: "prior-coder-session",
-      output: {},
     });
 
     await expect(backend.resumeSession(
@@ -1739,31 +1718,25 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "prior-coder-session",
     });
-    expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "coder",
-      maxRetries: 2,
-    });
+    expect(backend.lastAgentOptions?.output).toBeUndefined();
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
   it("does not derive open-count from findings-array cargo when findingsCount is missing", () => {
     // #899: missing findingsCount is unusable receipt → fixer path cargo, never
-    // synthesized from findings.length.
+    // synthesized from findings.length. Validated at typed boundary only.
     const backend = makeBackend();
-    const decodeOutput = (backend as unknown as {
-      decodeOutput(spec: StepSpec, raw: unknown): unknown;
-    }).decodeOutput.bind(backend);
 
     expect(
-      decodeOutput(reviewerSpec, {
+      backend.probeDecodeOutput(reviewerSpec, {
         findings: [{ severity: "high", category: "x", claim_quote: "y", location: "z", suggested_fix: "w", action: "fix_now" }],
       }),
     ).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
     expect(
-      decodeOutput(reviewerSpec, { findings: [] }),
+      backend.probeDecodeOutput(reviewerSpec, { findings: [] }),
     ).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
     expect(
-      decodeOutput(reviewerSpec, { findingsCount: 0, findings: [] }),
+      backend.probeDecodeOutput(reviewerSpec, { findingsCount: 0, findings: [] }),
     ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
   });
 
@@ -1845,14 +1818,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
   it("prefers typed Output.object over sidecar/stdout for reviewer receipts", () => {
     const backend = makeBackend();
-    const rawOutputFor = (backend as unknown as {
-      rawOutputFor(
-        result: { output?: unknown; stdout: string },
-        spec: StepSpec,
-        typedOutputUsed: boolean,
-        options?: { outcomeLanding?: { path: string; sandboxPath: string } },
-      ): unknown;
-    }).rawOutputFor.bind(backend);
     const payload = { findingsCount: 0, findings: [] };
     const override = {
       findingsCount: 9,
@@ -1860,9 +1825,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
     };
 
-    expect(rawOutputFor({ output: payload, stdout: "" }, reviewerSpec, true)).toEqual(payload);
+    expect(backend.probeRawOutputFor({ output: payload, stdout: "" }, reviewerSpec, true)).toEqual(payload);
     expect(
-      rawOutputFor({ stdout: '<review>{"findingsCount":0,"findings":[]}</review>' }, reviewerSpec, false),
+      backend.probeRawOutputFor({ stdout: '<review>{"findingsCount":0,"findings":[]}</review>' }, reviewerSpec, false),
     ).toEqual(payload);
 
     const dir = mkdtempSync(join(tmpdir(), "worker-review-sidecar-channel-"));
@@ -1870,7 +1835,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     writeFileSync(outcomePath, JSON.stringify(override), "utf8");
     // Typed receipt wins even when sidecar carries a competing bell.
     expect(
-      rawOutputFor(
+      backend.probeRawOutputFor(
         { output: payload, stdout: "" },
         reviewerSpec,
         true,
@@ -1879,7 +1844,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     ).toEqual(payload);
     // Cargo-only path still reads sidecar when typed output was not used.
     expect(
-      rawOutputFor(
+      backend.probeRawOutputFor(
         { stdout: "" },
         reviewerSpec,
         false,
@@ -1889,7 +1854,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     // Sidecar cargo is preferred over stdout tags when typed output is off.
     expect(
-      rawOutputFor(
+      backend.probeRawOutputFor(
         {
           stdout:
             '<review>{"junk": true, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</review>',
@@ -1903,17 +1868,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
   it("does not label a multi-iteration coder stdout tag as a legacy fallback", () => {
     const backend = makeBackend();
-    const rawOutputFor = (backend as unknown as {
-      rawOutputFor(
-        result: { output?: unknown; stdout: string },
-        spec: StepSpec,
-        typedOutputUsed: boolean,
-      ): unknown;
-    }).rawOutputFor.bind(backend);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     expect(
-      rawOutputFor(
+      backend.probeRawOutputFor(
         { stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>' },
         coderSpec,
         false,
@@ -1924,17 +1882,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
   it("keeps the legacy advisory when stdout substitutes for missing typed output", () => {
     const backend = makeBackend();
-    const rawOutputFor = (backend as unknown as {
-      rawOutputFor(
-        result: { output?: unknown; stdout: string },
-        spec: StepSpec,
-        typedOutputUsed: boolean,
-      ): unknown;
-    }).rawOutputFor.bind(backend);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     expect(
-      rawOutputFor({ stdout: '<review>{"findings": []}</review>' }, reviewerSpec, true),
+      backend.probeRawOutputFor({ stdout: '<review>{"findings": []}</review>' }, reviewerSpec, true),
     ).toEqual({ findings: [] });
     expect(warn).toHaveBeenCalledWith(
       "[orchestrator] telemetry: S3-reviewer used legacy stdout tag compatibility fallback",

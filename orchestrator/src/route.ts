@@ -84,21 +84,14 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S4": {
       if (ctx.output?.kind === "reviewer") {
-        // ADR 0131 / #899: open-count is the self-reported findingsCount only.
-        // Missing count is unusable receipt → fixer path; never derive from
-        // findings-array cargo length.
-        if (
-          typeof ctx.output.findingsCount !== "number" ||
-          !Number.isSafeInteger(ctx.output.findingsCount) ||
-          ctx.output.findingsCount < 0
-        ) {
-          return { kind: "next", step: "S5" };
-        }
+        // ADR 0131 / #899: findingsCount is authenticated at the typed worker
+        // boundary (schema + decode). Runner only compares the count with zero —
+        // never re-validates shape and never reads findings-array cargo length.
         return ctx.output.findingsCount > 0
           ? { kind: "next", step: "S5" }
           : { kind: "next", step: "S7" };
       }
-      // Unusable review cargo goes to the fixer with its raw artifact pointers.
+      // Unusable review cargo (not a typed reviewer receipt) → fixer path.
       return { kind: "next", step: "S5" };
     }
 

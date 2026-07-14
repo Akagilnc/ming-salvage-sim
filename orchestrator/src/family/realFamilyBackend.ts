@@ -1694,8 +1694,10 @@ export class RealFamilyBackend implements FamilyBackend {
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
-          // #899: signal-only decision-gate Output.object; ordinary cargo fields
-          // stay opaque inside decisionGateSignalSchema (no committed shape re-ask).
+          // #899 / ADR 0131: coder cargo stays opaque — no Output.object so
+          // missing/style-changed cargo never triggers structured-output repair.
+          // Decision gates are classified post-hoc (well-formed → park; malformed
+          // → Action non-zero for #598).
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1712,7 +1714,6 @@ export class RealFamilyBackend implements FamilyBackend {
             completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
-            output: workerReceiptOutput("coder", decisionGateSignalSchema),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -1892,9 +1893,9 @@ export class RealFamilyBackend implements FamilyBackend {
     outcomePath: string,
   ): WorkerResult {
     try {
-      // Typed Output.object is the sole fate+cargo channel when present (#899).
-      // Sidecar is only consulted when typed is absent — never overrides a
-      // schema-validated decision signal.
+      // Sidecar/stdout cargo only (no typed coder Output.object — #899 R9).
+      // Prefer an injected result.output when tests supply one; production coder
+      // seats never attach Output.object so ordinary path is the outcome sidecar.
       const raw =
         result.output !== undefined
           ? result.output
@@ -2823,9 +2824,9 @@ export class RealFamilyBackend implements FamilyBackend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: signal-only decision-gate Output.object; PR/URL cargo stays opaque
-      // inside decisionGateSignalSchema (no status/branch/pr shape re-ask).
-      output: workerReceiptOutput("ship", decisionGateSignalSchema),
+      // #899 / ADR 0131: ship cargo (PR URL / branch) stays opaque — no
+      // Output.object so missing tags never trigger structured-output repair.
+      // Decision gates classified post-hoc in shipOutcomeFromResult.
     });
   }
 

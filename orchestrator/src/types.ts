@@ -297,12 +297,14 @@ export interface CoderOutput {
 /**
  * Output of a reviewer step (S3/S6). `findingsCount` is the self-reported open
  * count (ADR 0131 / #899 routing signal); `findings` rows are cargo for the fixer.
+ * Count is required on this envelope — missing/invalid counts never become
+ * `kind: "reviewer"` (typed boundary maps them to unusable cargo).
  */
 export interface ReviewerOutput {
   readonly kind: "reviewer";
   readonly findings: ReadonlyArray<Finding>;
-  /** Reviewer-declared open count; structured rows never supply a missing count. */
-  readonly findingsCount?: number;
+  /** Reviewer-declared open count; validated at the typed worker boundary. */
+  readonly findingsCount: number;
   readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;

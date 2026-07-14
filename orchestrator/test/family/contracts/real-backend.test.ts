@@ -1300,6 +1300,20 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     async (role) => {
       // #899 finding: when typed Output.object exists it is the sole fate channel;
       // sidecar escalate must not enter the human loop for any review-loop role.
+      const reviewLoopSpec = (kind: typeof role): WorkerSpec => ({
+        id: "S9",
+        kind,
+        role: "coder",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "clean",
+        promptFile: "x.md",
+        completionSignal: "X",
+        maxIter: 1,
+        model: "sonnet",
+        soul: "coder",
+        toolchain: [],
+      });
       class Harness extends RealFamilyBackend {
         public classify(
           result: {
@@ -1316,15 +1330,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
               iterations: [...(result.iterations ?? [])],
               ...(result.output !== undefined ? { output: result.output } : {}),
             },
-            {
-              kind,
-              id: "S9",
-              role: "coder",
-              model: "sonnet",
-              maxIter: 1,
-              promptFile: "x.md",
-              completionSignal: "X",
-            } as never,
+            reviewLoopSpec(kind),
             outcomePath,
           );
         }

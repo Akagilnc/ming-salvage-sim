@@ -1020,7 +1020,7 @@ export function workerResultToStep(
             commitsAdded: 0,
             escalate: result.escalation,
           }
-        : { kind: "reviewer", findings: [], escalate: result.escalation };
+        : { kind: "reviewer", findings: [], findingsCount: 0, escalate: result.escalation };
     // PRESERVE the worker's sessionId on the escalate path (codex cmr R4 finding):
     // the human-answer resume (planResume → resumeSession) resumes the recorded
     // ledger sessionId; dropping it here would resume the wrong (run-level UUID)

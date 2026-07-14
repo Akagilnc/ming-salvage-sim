@@ -3374,7 +3374,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     commitsAdded: 0,
                     escalate: escalation,
                   }
-                : { kind: "reviewer", findings: [], escalate: escalation };
+                : { kind: "reviewer", findings: [], findingsCount: 0, escalate: escalation };
             return await escalateTermination(
               step,
               escalation,
