@@ -188,6 +188,7 @@ export {
   serializeQuotaWaitForResetBridge,
   tryParseQuotaWaitForResetBridge,
   isQuotaWaitForResetError,
+  withIdleQuotaProbeDisposition,
 } from "./quotaProbe.js";
 export type {
   ApplyIdleDispositionResult,
