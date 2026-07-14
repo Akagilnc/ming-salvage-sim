@@ -57,7 +57,11 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import { z } from "zod";
-import { isReceiptRecoveryFailure, workerReceiptOutput } from "../receiptRecovery.js";
+import {
+  isReceiptRecoveryFailure,
+  workerReceiptOutput,
+  workerReceiptSchema,
+} from "../receiptRecovery.js";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -1911,7 +1915,9 @@ export class RealFamilyBackend implements FamilyBackend {
 
   /** One official Sandcastle receipt definition for the family coder/reviewer paths. */
   private familyReceiptOutput(spec: WorkerSpec): sc.OutputDefinition {
-    return workerReceiptOutput(spec.kind === "cmr" ? "cmr" : "coder");
+    return spec.kind === "cmr"
+      ? workerReceiptOutput("cmr")
+      : workerReceiptOutput("coder", workerReceiptSchema("coder"));
   }
 
   private familyCoderReceiptIsUnreadable(

@@ -64,7 +64,11 @@ import { isAbsolute, join, resolve } from "node:path";
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
-import { isReceiptRecoveryFailure, workerReceiptOutput } from "./receiptRecovery.js";
+import {
+  isReceiptRecoveryFailure,
+  workerReceiptOutput,
+  workerReceiptSchema,
+} from "./receiptRecovery.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
@@ -1708,10 +1712,6 @@ const coderOutputSchema = z.object({
     .optional(),
 });
 
-// Typed extraction may locate a receipt, but it must not judge the receipt
-// before decodeOutput gets the independent decision-bell probe.
-const workerReceiptSchema = z.unknown();
-
 /** Parse a coder worker self-report with the same schema the single-slice path uses. */
 export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
   return coderOutputSchema.parse(raw);
@@ -2788,7 +2788,11 @@ export class RealBackend implements Backend {
   /** Build the output definition for a step's role. */
   private outputFor(spec: StepSpec): sc.OutputDefinition {
     const tag = spec.role === "reviewer" ? "review" : spec.role;
-    return workerReceiptOutput(tag);
+    const schema =
+      spec.role === "coder" || spec.role === "reviewer"
+        ? workerReceiptSchema(spec.role)
+        : z.unknown();
+    return workerReceiptOutput(tag, schema);
   }
 
   /**
