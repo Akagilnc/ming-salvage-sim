@@ -3,7 +3,7 @@ title: Matt Pocock 开发流程
 description: Matt Pocock skills 整套（想法 → merge）canonical：grill-with-docs → (prototype) → to-spec → to-tickets → 逐片 implement（内联 tdd + code-review），外加 7 标签状态机 + triage 入口匝道 + agent brief 契约 + 「状态活 label、不活散文」。本项目 2026-06-17 起 Matt 纯化、严格按 Matt 试水；2026-06-18 修正三处真错（grill 在 to-spec 前 / to-spec 是完整 PRD 含两层设计 / triage 是匝道不是主线）并补「设计六层阶梯」；2026-07-02 同步 code-review / implement 新口径；2026-07-03 注：本项目〔项目加〕设计评审闸（本地 cmr + 线上 bot → ADR Accepted）位于 to-tickets 之后、逐片 implement 之前（CLAUDE.md §开发流程 步骤 5；#470/#471/#478 实践序）；2026-07-14 上游改名 to-prd→to-spec、to-issues→to-tickets（后者内建原生挂接），全文已随改，历史 ADR/log 旧名不回改。
 type: concept
 created: 2026-06-17
-updated: 2026-07-03
+updated: 2026-07-14
 sources:
   - mattpocock/skills 各 SKILL.md 原文（ask-matt 路由器 / grill-with-docs / grill-me / domain-modeling / prototype / to-spec / to-tickets / triage / implement / tdd / code-review / diagnosing-bugs / improve-codebase-architecture）
   - Ming_LLM 2026-06-17 验证 session（#174 走通全链、标签纯化、triage 36 backlog）
@@ -149,7 +149,7 @@ tags: [workflow, triage, matt-pocock, agent-brief, issue-tracking, slicing]
 ### 切片 & 并行
 
 - **垂直切片（tracer bullet）**：每片穿透所有层、独立可 demo/merge。**禁横切**（先全 schema 再全 UI = 谁也独立不了）。
-- **`Blocked by` = 散文约定**：写子 issue body 里，靠抓 issue 的人读了、看 blocker 关没关、没关就先不开。**GitHub 不强制**（本项目补 native blocked_by，见下）。
+- **`Blocked by` 真源 = native blocked_by**（2026-07-14 起 to-tickets 已内建挂接；GitHub 原生强制可 filter）；子 body 里的 prose `## Blocked by` 降级为可读面包屑/核验信息，不再是唯一契约（核验命令见下节）。
 - **AFK / HITL**：AFK 可甩多 session 真并行；HITL（要人在环）串行在你的注意力上。
 - **context hygiene**：grill → to-spec → to-tickets 留在同一上下文窗口；每个子 issue **开新 session** 走 implement（内联 `/tdd` + 单评；手动流可用 `/code-review`，编排器由 runner 派 `/code-review` reviewer；互相独立才能真并行），别拿上一个 issue 的脏 context 接下一个。
 - **Coder-Rec（设计时标注推荐 coder）**：每个切片 issue body 加一行推荐 + 补位顺序；编排器 S0/resume 只读查表（见 [CODER_ROSTER.md](CODER_ROSTER.md) / [#767](https://github.com/Akagilnc/ming-salvage-sim/issues/767)）。缺省不改 route 预设。复制模板：
@@ -184,7 +184,7 @@ Coder-Rec: grok-4.5 → terra@med → luna@med
 > 看「啥能抓」查 `ready-for-agent` 桶；看「还剩啥」filter open 子 issue。
 
 > [!warning] 几个 GitHub 事实
-> ① **父→子归属** = **native sub-issue**（见上「to-tickets 后补救」）+ 子 body `## Parent #N` 面包屑；父页自动出子列表 + 进度条。② **依赖 = native blocked_by**（GitHub 原生、可 filter 未阻塞），不再只是 prose 约定。③ **父「完成」= 人手动关**（子全关后整体验收再关），GitHub 不自动关父；**关父即解锁 blocked_by 父的下游**。④ ⚠️ 2026-07-14 起 Matt skill（to-tickets）已内建 native sub-issue + blocked_by 挂接；「to-tickets 后核验」章节的命令降级为核验/手补用，撤父标签仍手动。⑤ ⚠️ **`Closes/Fixes/Resolves #N` 在 PR body 与默认分支 commit message 都是子串匹配**——动词后的限定词（含中文）挡不住，合并 `main` 即**自动关整条 issue**。所以「merge → 关子 issue」这步：**想引用而不关**（如设计 PR 解决了某 issue 的*设计*但*实现*未做、或引用一个 tracker 父）**绝不带关闭动词**，写「见 #N」「关联 #N」「#N 的设计」；只在该 PR 真要关整条 issue 时才 `Closes #N`；误关 → `gh issue reopen` + 复原 label + 说明。**实证**：#208 body「`Closes #63` 的设计悬置」误关了 #63（设计已定、实现未做、应留 OPEN + `ready-for-agent`）。详版见 [agents/issue-tracker.md](agents/issue-tracker.md)。
+> ① **父→子归属** = **native sub-issue**（见上「to-tickets 后的原生核验」）+ 子 body `## Parent #N` 面包屑；父页自动出子列表 + 进度条。② **依赖 = native blocked_by**（GitHub 原生、可 filter 未阻塞），不再只是 prose 约定。③ **父「完成」= 人手动关**（子全关后整体验收再关），GitHub 不自动关父；**关父即解锁 blocked_by 父的下游**。④ ⚠️ 2026-07-14 起 Matt skill（to-tickets）已内建 native sub-issue + blocked_by 挂接；「to-tickets 后核验」章节的命令降级为核验/手补用，撤父标签仍手动。⑤ ⚠️ **`Closes/Fixes/Resolves #N` 在 PR body 与默认分支 commit message 都是子串匹配**——动词后的限定词（含中文）挡不住，合并 `main` 即**自动关整条 issue**。所以「merge → 关子 issue」这步：**想引用而不关**（如设计 PR 解决了某 issue 的*设计*但*实现*未做、或引用一个 tracker 父）**绝不带关闭动词**，写「见 #N」「关联 #N」「#N 的设计」；只在该 PR 真要关整条 issue 时才 `Closes #N`；误关 → `gh issue reopen` + 复原 label + 说明。**实证**：#208 body「`Closes #63` 的设计悬置」误关了 #63（设计已定、实现未做、应留 OPEN + `ready-for-agent`）。详版见 [agents/issue-tracker.md](agents/issue-tracker.md)。
 
 > [!warning] ADR 生命周期：「Accepted」≠「已实现」（Matt skills #299）
 > `grill-with-docs` 在 grill 阶段（远早于实现）就把 ADR 写进 `docs/adr/`，而下游 skill 默认 `docs/adr/` 是**现行**架构。于是「已定、未建」的决策和「代码已反映」的决策长得一样，可能让接邻近活的 agent 围着不存在的代码写——Matt 自己仓库 issue #299（radmen 提、Matt 认、未合）正是这个。**本项目对策**：ADR 带 Status 行，但本项目 `Accepted` 语义 = 「设计经评审收敛、可去实现」**不等于**「代码已建」——所以读 ADR 必须交叉看对应 issue 的 open/close 才知道建没建（#63 = ADR 0015 已 Accepted 但实现 OPEN，就是这种「已定未建」态）。
