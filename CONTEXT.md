@@ -18,12 +18,16 @@ _Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamil
 家族模式下一个父 issue 唯一的集成现场。由父流程启动的子 issue 都从它切出自己的工作树，完成后再合回这里；同一个未完成父 issue 重入时继续使用这个现场。直接单独启动某个子 issue 时不要求先建立父工作树。
 _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue 建多个并行现场
 
+**单片现场（Standalone Scene）**:
+无既有 scene、且经 Issue Admission 确认为 open + ready 的叶子 issue 所拥有的唯一隔离 worktree；它不虚构 parent base、child worktree 或 child merge。terminal-success 前，owning Flow 在派每个新 Action 前复用 Issue Admission 只刷新 live open/closed/ready 状态，不重新分类、准入或建立现场。若 issue closed，不杀当前 invocation、不删现场；当前 invocation 结束后停止派下一 Action，保留当前 fixed position 与 Lineage records。closed 状态重入只认回并保持该现场，reopen + ready 后从同一位置继续。
+_Avoid_: 把顶层隔离 worktree 误叫 family-of-one、close 时杀 worker 或删现场、reopen 后另建替代现场
+
 **家族子工作树（Family Child Worktree）**:
 家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 重入时始终继续使用原 worktree 与 Lineage records；当前席位确有已捕获、可恢复 session 时才走 ordinary resume，否则保留同一 scene/worktree 并走明确的新 invocation/relay，不能伪称恢复旧 session。relay 保留现场、baton 与旧 session/checkpoint 记录，successor 席位由 Policy 按 ADR 0134 的固定顺序选择，再由当前专业 Action 通过 Worker Invocation capability 为该席位启动新的 agent/session/checkpoint，不另建替代现场。直接输入子 issue 号时，只有无既有 scene 且 Issue Admission 确认为 open + ready 叶子才走单片模式的独立 worktree 和 PR；closed/open-unready 无 scene 叶子 quiet skip；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
 **议题准入（Issue Admission）**:
-单一负责 live GitHub 准入事实的 Action。目标无保留 scene 时，它读取目标状态、`ready-for-agent` 与 native sub-issues：closed 目标或 open-unready 叶子 quiet skip；open + ready 叶子可走 single；open parent 进入 family。family 首次启动及每次重入时，同一 Action 的 family 分支 refetch membership、状态、标签与依赖，完成过滤和 cycle 处置并产出候选/依赖交通事实。locator 与 scene 所有权只由 Scene Provisioning / Recovery 查询；保留 scene 永远优先重入 owning flow。准确调用位置只读 #869，产品契约见 #871。
+单一负责 live GitHub 准入事实的 Action。目标无保留 scene 时，它读取目标状态、`ready-for-agent` 与 native sub-issues：closed 目标或 open-unready 叶子 quiet skip；open + ready 叶子可走 single；open parent 进入 family。retained standalone 的 owning Flow 在派每个新 Action 前复用它的 direct 分支只刷新 live open/closed/ready 状态，不重新分类、准入或查询 locator。family 首次启动及每次重入时，同一 Action 的 family 分支 refetch membership、状态、标签与依赖，完成过滤和 cycle 处置并产出候选/依赖交通事实。locator 与 scene 所有权只由 Scene Provisioning / Recovery 查询；保留 scene 永远优先重入 owning flow，closed standalone 的停止派工与 reopen 恢复由 owning Flow 按单片现场契约处理。准确调用位置只读 #869，产品契约见 #871。
 _Avoid_: 先创建现场再做无现场准入、用缓存或本地推断代替 live facts、让 Issue Admission 读取 locator、让 Action 与 Runner 各做一遍 admission
 
 **合并工（Merger Worker）**:

@@ -367,11 +367,13 @@ Phases (one JSON object per line):
 | `commit` | each coder commit | worker identity (stepId + modelSlug) / size metrics / escape-hatch counts (code files only) |
 | `verification` | each family typecheck or test command | typecheck / wave-unit / final-full pass-fail, structured count when supplied, monotonic duration |
 
-Join key: `legId` on a dispatch+collect pair. Unobtainable fields are `null`;
-telemetry I/O is fail-open and must never block the worker path — collection is
-fully async (boundaries frozen at schedule time from SHAs the runner already
-holds, per-ledger ordered appends, subprocess timeouts, a failed stamp never
-blocks the next one).
+Join key: `legId` on a dispatch+collect pair. Unobtainable fields are `null`.
+In the current legacy runtime, telemetry I/O is fail-open and fully async;
+boundaries are frozen from SHAs already held by the legacy driver, appends are
+ordered per ledger, and a failed stamp never blocks the next one. This is not
+Generic Runner authority. In the canonical target, the mutating Action or an
+external observation surface supplies commit boundaries; Generic Runner never
+reads commit, HEAD, diff, or PR state for telemetry or routing.
 
 ### `first_output_at` precision (poll granularity — not true TTFB)
 
