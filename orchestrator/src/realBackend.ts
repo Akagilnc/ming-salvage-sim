@@ -65,7 +65,6 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
-  decisionGateSignalSchema,
   isMalformedDecisionGate,
   reaskReceiptOrThrow,
   wellFormedDecisionBell,
@@ -2789,19 +2788,16 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Typed Sandcastle output for ADR 0131 traffic signals (#899):
-   * - reviewer: open-count receipt (`findingsCount` + optional decision bell)
-   * - coder: signal-only decision gate ({@link decisionGateSignalSchema}) so
-   *   malformed bells get same-session native re-ask while ordinary cargo
-   *   fields (committed/commitsAdded) stay untyped and never force cargo-shape
-   *   repair (ADR 0131).
+   * Typed Sandcastle output for ADR 0131 open-count traffic signals (#899).
+   * Reviewer seats attach Output.object(maxRetries:2). Coder ordinary cargo
+   * stays fully opaque (ADR 0131 / #899 R9): missing or style-changed cargo
+   * must never trigger structured-output repair. Coder decision gates are
+   * classified post-hoc via {@link wellFormedDecisionBell} /
+   * {@link isMalformedDecisionGate} (malformed → Action non-zero for #598).
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     if (spec.role === "reviewer") {
       return workerReceiptOutput("review", workerReceiptSchema("reviewer"));
-    }
-    if (spec.role === "coder") {
-      return workerReceiptOutput("coder", decisionGateSignalSchema);
     }
     return undefined;
   }
@@ -2814,7 +2810,8 @@ export class RealBackend implements Backend {
    * - otherwise: extract the role tag from stdout / sidecar as opaque cargo
    *   (no fate-signal derivation from unvalidated transports).
    */
-  private rawOutputFor(
+  /** Protected so test subclasses can probe the typed vs cargo channel without casts. */
+  protected rawOutputFor(
     result: { output?: unknown; stdout: string },
     spec: StepSpec,
     typedOutputUsed: boolean,
@@ -2850,7 +2847,8 @@ export class RealBackend implements Backend {
     return undefined;
   }
 
-  private decodeOutput(
+  /** Protected so test subclasses can probe receipt decode without casts. */
+  protected decodeOutput(
     spec: StepSpec,
     raw: unknown,
   ): StepOutput {
@@ -2972,9 +2970,9 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: traffic signals attach Output.object(+maxRetries). Reviewer uses
-      // open-count schema; coder uses signal-only decisionGateSignalSchema so
-      // ordinary cargo stays opaque (no committed/commitsAdded shape re-ask).
+      // #899: reviewer open-count attaches Output.object(+maxRetries). Coder
+      // seats stay untyped so missing/style-changed opaque cargo never triggers
+      // structured-output repair (ADR 0131 / R9).
       ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.

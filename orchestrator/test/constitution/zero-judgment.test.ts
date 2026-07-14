@@ -31,15 +31,12 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
       from: "S4",
       output: { kind: "reviewer", findings: [], findingsCount: 0 },
     })).toEqual({ kind: "next", step: "S7" });
-    // Missing findingsCount is unusable receipt → fixer, even when cargo rows exist
-    // or are empty (never derive open-count from findings.length).
+    // Count is authenticated at the typed boundary: missing findingsCount never
+    // becomes kind:"reviewer". Unusable receipt cargo is kind:"coder" → fixer
+    // (never derive open-count from findings.length).
     expect(route({
       from: "S4",
-      output: { kind: "reviewer", findings: [opaque] },
-    })).toEqual({ kind: "next", step: "S5" });
-    expect(route({
-      from: "S4",
-      output: { kind: "reviewer", findings: [] },
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
     })).toEqual({ kind: "next", step: "S5" });
   });
 
