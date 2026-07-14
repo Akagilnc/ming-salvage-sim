@@ -82,7 +82,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 
 > **ADR 0030 已落地（#369）**：per-slice 评审/修复收敛 loop 是 runner-visible orchestration boundary，不再藏在 coder worker 的单 session 里。runner 依次派 coder / reviewer / coder-fix / fresh reviewer，直到收敛或 escalate；worker 只做自己角色的活。
 
-> **ADR 0062 摘要**：编排器 runner 只读三信号（exit code / escalate 块 / 自报 count 哨兵），不读卷面散文；runner 侧解析 worker 输出时，DELETE 压过 patch——凡让 runner 在 finding 自由文本上分叉或把富内容 park 在 runner 侧的机制，删掉比补丁优先。
+> **ADR 0062 摘要**：编排器 runner 只读三信号（exit code / escalate 块 / 自报 count 哨兵），**不读卷面散文、不在 finding 自由文本上分叉**。凡会让 runner 解析 worker 输出内容 / 把富内容 park 在 runner 侧的机制——**删掉（DELETE）优先于给 runner 补丁**；DELETE-vs-patch 的裁决在设计/评审侧（cmr / reviewer / fixer），**不是** runner 去读 finding 文本再选型。
 
 > Machine-executable routing for an agent working a slice in a worktree (esp. the orchestrator's in-container worker roles — ADR 0016 「现状缺口」, ADR 0026). The narrative `## 开发流程` above is for humans; THIS section is the in-container agent's routing table. Routing is by the task at hand, not by ceremony.
 

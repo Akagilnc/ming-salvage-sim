@@ -118,6 +118,10 @@ describe("#905 agy AgentProvider + bare-ping", () => {
     const shared = agyPrintInvocation("Gemini 3.5 Flash", prompt);
     expect(built.args).toEqual([...shared.args]);
     expect(built.args).toContain("--print-timeout");
+    // Go duration with unit — bare "900000" is rejected by agy CLI.
+    const timeoutIdx = built.args.indexOf("--print-timeout");
+    expect(built.args[timeoutIdx + 1]).toMatch(/^\d+(ns|us|µs|ms|s|m|h)$/);
+    expect(built.args[timeoutIdx + 1]).not.toMatch(/^\d+$/);
     expect(built.args).toContain("--print");
     expect(built.args[built.args.indexOf("--print") + 1]).toBe("");
     expect(built.input).toBe(prompt);

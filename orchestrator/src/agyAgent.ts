@@ -71,8 +71,11 @@ export function parseAgyStreamLine(line: string): Array<AgyParsedStreamEvent> {
  */
 /**
  * agy default print timeout is 5m — too short for long family/CMR legs.
- * Correctness C10: pin ≥15m to match worker idle / hang thresholds.
+ * Correctness C10: pin ≥15m. Value MUST be a Go duration string (`15m`,
+ * `900000ms`) — bare milliseconds (`"900000"`) are rejected by the CLI.
  */
+export const AGY_PRINT_TIMEOUT = "15m";
+/** @deprecated use AGY_PRINT_TIMEOUT (`"15m"`); bare ms numbers break agy CLI. */
 export const AGY_PRINT_TIMEOUT_MS = 15 * 60 * 1000;
 
 export function agyPrintInvocation(
@@ -84,9 +87,9 @@ export function agyPrintInvocation(
     args: [
       "--sandbox",
       ...(trimmedModel !== "" ? (["--model", trimmedModel] as const) : []),
-      // C10: explicit print-timeout ≥15m (agy default 5m is too short).
+      // C10: Go duration with unit (agy rejects bare "900000").
       "--print-timeout",
-      String(AGY_PRINT_TIMEOUT_MS),
+      AGY_PRINT_TIMEOUT,
       "--print",
       "",
     ],
