@@ -75,3 +75,21 @@ export function isReceiptRecoveryFailure(error: unknown): boolean {
   return error instanceof Error &&
     /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession)/i.test(error.message);
 }
+
+/**
+ * Keep native receipt re-ask failure mapping and the pre-existing fallback
+ * topology in one seam for every runner path.
+ */
+export async function reaskReceiptOrFallback<T>(
+  reask: () => Promise<T>,
+  fallback: () => T,
+  worker: string,
+): Promise<T> {
+  try {
+    return await reask();
+  } catch (error) {
+    if (!isReceiptRecoveryFailure(error)) throw error;
+    console.warn(`[orchestrator] ${worker} receipt recovery exhausted; using existing fallback`);
+    return fallback();
+  }
+}

@@ -58,7 +58,7 @@ import { isAbsolute, join } from "node:path";
 
 import { z } from "zod";
 import {
-  isReceiptRecoveryFailure,
+  reaskReceiptOrFallback,
   workerReceiptOutput,
   workerReceiptIsReadable,
   workerReceiptSchema,
@@ -1598,12 +1598,16 @@ export class RealFamilyBackend implements FamilyBackend {
             // separate family coder-fix worker.
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
-            output: this.familyReceiptOutput(spec),
+            // The mounted outcome sidecar is this worker's canonical receipt.
+            // Do not make Sandcastle validate optional compatibility telemetry
+            // before cmrOutcomeFromResult can consume a valid sidecar.
           });
         } catch (err) {
-          if (!isReceiptRecoveryFailure(err)) throw err;
-          console.warn("[orchestrator] family CMR receipt recovery exhausted; using existing fallback");
-          return cmrOutcomeFromResult({ cmrReviewLegs: frozenReviewLegs, stdout: "" });
+          return await reaskReceiptOrFallback(
+            async () => { throw err; },
+            () => cmrOutcomeFromResult({ cmrReviewLegs: frozenReviewLegs, stdout: "" }),
+            "family CMR",
+          );
         }
         return withCmrSession(
           cmrOutcomeFromResult({
@@ -1701,14 +1705,11 @@ export class RealFamilyBackend implements FamilyBackend {
           if (this.familyCoderReceiptIsUnreadable(
             result as { readonly output?: unknown }, outcomeLanding.path,
           )) {
-            try {
-              receiptResult = await this.reaskFamilyCoderReceipt(
-                spec, ctx, auth, outcomeLanding, result,
-              );
-            } catch (err) {
-              if (!isReceiptRecoveryFailure(err)) throw err;
-              console.warn("[orchestrator] family coder receipt recovery exhausted; using existing fallback");
-            }
+            receiptResult = await reaskReceiptOrFallback(
+              () => this.reaskFamilyCoderReceipt(spec, ctx, auth, outcomeLanding, result),
+              () => result,
+              "family coder",
+            );
           }
           return this.familyCoderResultFromRun(receiptResult, spec, outcomeLanding.path);
         } finally {
@@ -1921,11 +1922,9 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
-  /** One official Sandcastle receipt definition for the family coder/reviewer paths. */
-  private familyReceiptOutput(spec: WorkerSpec): sc.OutputDefinition {
-    return spec.kind === "cmr"
-      ? workerReceiptOutput("cmr", workerReceiptSchema("cmr"))
-      : workerReceiptOutput("coder", workerReceiptSchema("coder"));
+  /** The typed re-ask is only used for a malformed family coder receipt. */
+  private familyCoderReceiptOutput(): sc.OutputDefinition {
+    return workerReceiptOutput("coder", workerReceiptSchema("coder"));
   }
 
   private familyCoderReceiptIsUnreadable(
@@ -1961,7 +1960,7 @@ export class RealFamilyBackend implements FamilyBackend {
       branchStrategy: { type: "head" },
       resumeSession: sessionId,
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      output: this.familyReceiptOutput(spec),
+      output: this.familyCoderReceiptOutput(),
     });
   }
 
