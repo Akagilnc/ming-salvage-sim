@@ -59,6 +59,11 @@ is an owner-accepted risk that the runner did not supply as trusted data, classi
 it as `unable-to-assess` with a short reason instead of inventing a terminal
 suppression. Do not rely on omitting a finding to mean it is closed.
 
+If that fix-findings JSON has `preexistingAssertionTouched: true`, treat it as a
+mandatory ratified-assertion hunt: trace each touched base assertion to an issue
+AC, ADR, or prior ruling. A change that conflicts with still-live authority is a
+blocking `fix_now` finding — never a silent close or suppression.
+
 The same JSON may contain `escalationAnswer` when this is a resumed reviewer
 decision escalation. Apply that human answer before reviewing, and do not repeat
 the same escalation unless the answer leaves a concrete blocker unresolved.

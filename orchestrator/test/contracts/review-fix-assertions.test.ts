@@ -915,6 +915,22 @@ describe("#677/#911 soul wording (Chinese character editions)", () => {
     expect(soul("cmr_correctness.md")).toMatch(/已批断言不容翻|宪法优先/);
     expect(soul("reviewer.md")).toMatch(/测试是圣域|只评审不修复/);
   });
+
+  // B4: standalone reviewer must hunt preexistingAssertionTouched from fix-findings.
+  it("reviewer_review prompt pins preexistingAssertionTouched → AC/ADR trace → blocking fix_now", () => {
+    const prompt = readFileSync(
+      resolve(process.cwd(), "prompts", "reviewer_review.md"),
+      "utf8",
+    );
+    expect(prompt).toMatch(/preexistingAssertionTouched\s*:\s*true/);
+    expect(prompt).toMatch(/AC|ADR|prior (ruling|CMR)/i);
+    expect(prompt).toMatch(/fix_now/);
+    // Collapsed so the full obligation survives rewrites that reflow lines.
+    const collapsed = prompt.replace(/\s+/g, " ");
+    expect(collapsed).toMatch(
+      /preexistingAssertionTouched:\s*true[\s\S]{0,400}?(AC|ADR|prior)[\s\S]{0,400}?fix_now/i,
+    );
+  });
 });
 
 // ── test backend ────────────────────────────────────────────────────────────

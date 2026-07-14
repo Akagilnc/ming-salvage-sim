@@ -309,6 +309,16 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(correctnessSoul).toBe(readSoul("verify.md"));
     expect(completenessSoul).toMatch(/审卷官/);
     expect(completenessSoul).toMatch(/不改码/);
+
+    // B2/B3: thin prompt contracts after symlink-to-verify (not buried only in soul).
+    for (const prompt of [completenessPrompt, correctnessPrompt]) {
+      expect(prompt).toMatch(
+        /read and obey `?\.cmr-focus\.md`? and `?\.cmr-route\.json`? at the repo root FIRST/i,
+      );
+      expect(prompt).toMatch(
+        /when `?\$ORCHESTRATOR_OUTCOME_PATH`? is set,? write/i,
+      );
+    }
   });
 
   it("#549/#911 integrated cmr pass souls (verify) judge only — no repair/commit", () => {
