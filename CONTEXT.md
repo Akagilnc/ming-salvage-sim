@@ -11,8 +11,8 @@
 _Avoid_: 把每个 host 子进程、监控器或桥接层都叫执行面
 
 **开工入口（Ignition Entry）**:
-使用者启动编排任务的唯一公开入口。使用者只提供 issue 号；入口负责更新并构建最新版编排器、重烤 worker image、挂载输入，再请求 Scene Provisioning / Recovery 定位、建立或复用该 issue 的唯一工作现场并把任务交给内部流程。
-_Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamilyDriver`、让使用者拼内部路径和参数
+使用者启动编排任务的唯一公开入口。使用者只提供 issue 号；入口负责更新并构建最新版编排器、重烤 worker image、挂载输入和执行 Policy preflight，再按 #871 调用开工 Actions。Action 产出的 facts 只交给 Canonical / Family Flow，由 Flow 归结 fixed position；无保留 scene 的目标必须先经 Issue Admission，准入前不得建立新 scene。准确接力只读 #869/#871。
+_Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamilyDriver`、让使用者拼内部路径和参数、由入口解释 facts 或在准入前建现场
 
 **父工作树（Family Base Worktree）**:
 家族模式下一个父 issue 唯一的集成现场。由父流程启动的子 issue 都从它切出自己的工作树，完成后再合回这里；同一个未完成父 issue 重入时继续使用这个现场。直接单独启动某个子 issue 时不要求先建立父工作树。
