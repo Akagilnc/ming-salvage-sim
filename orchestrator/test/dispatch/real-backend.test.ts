@@ -1648,17 +1648,17 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.agentOptions).toHaveLength(1);
   });
 
-  it("keeps reviewer fallback topology when typed receipt retries are exhausted", async () => {
+  it("propagates StructuredOutputError when typed receipt retries are exhausted", async () => {
+    // #899: exhaust = Action non-zero for #598; never convert SOE into success cargo.
     const backend = makeBackend();
-    backend.agentFailures.push(new StructuredOutputError("bad output", {
+    const err = new StructuredOutputError("bad output", {
       tag: "review", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "sess-review-exhausted",
-    }));
+    });
+    backend.agentFailures.push(err);
 
     await expect(backend.runStep(reviewerSpec, {
       branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
-    })).resolves.toMatchObject({
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-    });
+    })).rejects.toBe(err);
     expect(backend.agentOptions).toHaveLength(1);
   });
 
@@ -1758,6 +1758,17 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(workerReceiptSchema("reviewer").safeParse({
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
+    // Malformed decision gates must fail schema validation so Sandcastle re-asks.
+    expect(workerReceiptSchema("reviewer").safeParse({ escalate: {} }).success).toBe(false);
+    expect(workerReceiptSchema("reviewer").safeParse({
+      escalate: { reason: "", diagnosis: "x" },
+    }).success).toBe(false);
+    expect(workerReceiptSchema("reviewer").safeParse({
+      escalate: { reason: "need owner", diagnosis: "" },
+    }).success).toBe(false);
+    expect(workerReceiptSchema("reviewer").safeParse({
+      escalate: "not-an-object",
+    }).success).toBe(false);
   });
 
   it("accepts a reviewer verdict from any one supported outcome channel", () => {

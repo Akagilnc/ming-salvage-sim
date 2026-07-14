@@ -1740,10 +1740,6 @@ function latestLedgerStopSummary(
   return undefined;
 }
 
-function isStructuredOutputError(err: unknown): boolean {
-  return err instanceof Error && err.name === "StructuredOutputError";
-}
-
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const { issueNumber, backend } = input;
   const relayNow = (): Date =>
@@ -3091,7 +3087,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
             >["result"];
-            try {
+            {
               const billingPool = relayBillingPoolForDispatch(step);
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
@@ -3159,15 +3155,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     }
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
-              // crash (`failed` / non-structured throw) with a fresh
-              // worker. This loop dispatches the agent worker steps S2/S3/S5/S6.
+              // crash (`failed` / throw, including StructuredOutputError after
+              // Sandcastle maxRetries exhaust) with a fresh worker at the same
+              // fixed position (#899). This loop dispatches agent steps S2/S3/S5/S6.
               // S7 is only the local child handoff handled by the loop below; it
               // dispatches no worker and has no retry predicate.
               //
-              //  - CODER (S2/S5): only process failure enters this retry. Completed
-              //    receipt content never changes routing.
-              //  - REVIEWER (S3/S6): completed receipt cargo goes to the fixer;
-              //    only a non-structured process crash enters this retry layer.
+              //  - CODER (S2/S5): process failure + typed-signal SOE enter retry.
+              //    Completed opaque cargo never changes routing.
+              //  - REVIEWER (S3/S6): completed open-count cargo goes to the fixer;
+              //    SOE exhaust does NOT feed empty findings to the fixer (#899).
               //
               // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
               // current scene — do NOT pass a cleanup hook into withMechanicalRetry.
@@ -3175,17 +3172,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // HEADs is legal, destroying scenes is not. (resetBeforeRetry remains an
               // optional hook for non-runner callers; this site intentionally omits it.)
               //
-              // Structured-output throws are completed receipt failures, so the
-              // reviewer path catches them and forwards raw artifacts to the fixer.
-              const retryOpts: MechanicalRetryOptions =
+              // Reviewer: rethrow on throw-exhaust so S8(error) surfaces process
+              // crashes and SOE exhaust alike — never feed empty cargo to fixer.
+              // Coder keeps default failed→durable abort (existing escalate path).
+              const durableRetryOpts = durableMechanicalRetryOptions(
+                step,
                 expectedKind === "reviewer"
-                  ? {
-                      callerOwns: (outcome) =>
-                        "error" in outcome && isStructuredOutputError(outcome.error),
-                      rethrowOnExhaustion: true,
-                    }
-                  : {};
-              const durableRetryOpts = durableMechanicalRetryOptions(step, retryOpts);
+                  ? { rethrowOnExhaustion: true }
+                  : {},
+              );
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
@@ -3194,40 +3189,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   // dispatchMonitoredCliWorker atomically via
                   // dispatchWorkerWithMonitor; RealBackend hooks make this the
                   // production branch. Handle persisted AT SPAWN (not post-exit).
-                  let outcome: Awaited<ReturnType<typeof dispatchWorkerWithMonitor>>;
-                  try {
-                    outcome = await dispatchWorkerWithMonitor(
-                      backend,
-                      s,
-                      c,
-                      landingPayload,
-                      {
-                        onMonitorHandleSpawned: async (handle) => {
-                          stepMonitorHandle = handle;
-                          try {
-                            if (isValidStepId(s.id)) {
-                              await persistMonitorHandleAtSpawn(s.id, handle);
-                            }
-                          } catch {
-                            // Best-effort: spawn-time ledger write must not abort
-                            // the worker; post-step emitLedger still records it.
+                  const outcome = await dispatchWorkerWithMonitor(
+                    backend,
+                    s,
+                    c,
+                    landingPayload,
+                    {
+                      onMonitorHandleSpawned: async (handle) => {
+                        stepMonitorHandle = handle;
+                        try {
+                          if (isValidStepId(s.id)) {
+                            await persistMonitorHandleAtSpawn(s.id, handle);
                           }
-                        },
+                        } catch {
+                          // Best-effort: spawn-time ledger write must not abort
+                          // the worker; post-step emitLedger still records it.
+                        }
                       },
-                    );
-                  } catch (err) {
-                    if (expectedKind !== "coder" || !isStructuredOutputError(err)) {
-                      throw err;
-                    }
-                    return {
-                      kind: "completed" as const,
-                      output: {
-                        kind: "coder" as const,
-                        committed: false,
-                        commitsAdded: 0,
-                      },
-                    };
-                  }
+                    },
+                  );
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
                   }
@@ -3248,23 +3228,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 durableRetryOpts,
               );
               if (result.kind === "completed") completeMechanicalRetryInvocation(step);
-            } catch (err) {
-              if (expectedKind === "reviewer" && isStructuredOutputError(err)) {
-                pendingBlockingFindings = [];
-                pendingBlockingFindingIdentityKeys = [];
-                pendingRawReviewerArtifacts = {
-                  ...(stepMonitorHandle?.logPath !== undefined
-                    ? { stdoutPath: stepMonitorHandle.logPath }
-                    : {}),
-                  ...(stepMonitorHandle?.resultPath !== undefined
-                    ? { sidecarPath: stepMonitorHandle.resultPath }
-                    : {}),
-                  statement: "the previous reviewer raw artifacts are here",
-                };
-                step = "S5";
-                continue orchestratorStepLoop;
-              }
-              throw err;
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 

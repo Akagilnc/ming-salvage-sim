@@ -65,7 +65,7 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
-  reaskReceiptOrFallback,
+  reaskReceiptOrThrow,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
@@ -2788,7 +2788,8 @@ export class RealBackend implements Backend {
   /**
    * Typed Sandcastle output is only for ADR 0131 traffic signals on single-iter
    * seats (#899): reviewer open-count / findings envelope (+ decision bell).
-   * Coder cargo stays opaque — no Output.object, no homemade re-ask loop.
+   * Coder/ship ordinary cargo stays opaque — no Output.object (missing tag would
+   * force SOE re-ask; multi-iter seats also cannot use Output.object).
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     if (spec.role !== "reviewer") return undefined;
@@ -2964,12 +2965,11 @@ export class RealBackend implements Backend {
       },
       });
     } catch (err) {
-      // Typed reviewer seats only: map Sandcastle exhaust / non-resumable to the
-      // pre-existing empty-cargo fallback topology. Coder never enters here via
-      // Output.object (#899 opaque cargo).
-      return await reaskReceiptOrFallback(
+      // Typed traffic-signal seats: exhaust / non-resumable must exit non-zero
+      // so #598 re-dispatches at this fixed position (#899). Never convert SOE
+      // into a success empty-cargo fallback that would feed the fixer.
+      return await reaskReceiptOrThrow(
         async () => { throw err; },
-        () => ({ output: this.decodeOutput(spec, undefined), sessionId: undefined }),
         `${spec.id}-${spec.role}`,
       );
     }
@@ -3040,9 +3040,13 @@ export class RealBackend implements Backend {
       );
       return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
+      // Typed receipt exhaust on resume: propagate SOE for #598 (same class as
+      // fresh-run typed seats). Dead-session only falls back to a fresh run.
       if (err instanceof sc.StructuredOutputError) {
-        console.warn(`[orchestrator] ${spec.id}-${spec.role} resumed receipt recovery exhausted; using existing fallback`);
-        return { output: this.decodeOutput(spec, undefined), sessionId };
+        console.warn(
+          `[orchestrator] ${spec.id}-${spec.role} resumed receipt recovery exhausted; propagating for mechanical redispatch`,
+        );
+        throw err;
       }
       // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
       // session falls back to a fresh run() (keep committed worktree progress,

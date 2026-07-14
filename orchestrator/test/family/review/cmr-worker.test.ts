@@ -856,7 +856,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     ))).toBe(true);
   });
 
-  it("preserves StructuredOutputError receipt cargo when native retries are exhausted", async () => {
+  it("propagates StructuredOutputError when native CMR receipt retries are exhausted", async () => {
+    // #899: exhaust exits non-zero for #598; never preserve bad cargo as success.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -866,6 +867,25 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       | ReturnType<typeof fakeNativeReceiptReask>
       | undefined;
     let sandcastleCalls = 0;
+    const exhausted = new sc.StructuredOutputError("bad output", {
+      tag: "cmr",
+      rawMatched: JSON.stringify({
+        converged: false,
+        reason: "review finding survives malformed receipt",
+        findingsCount: 1,
+        successfulLegs: [...DEFAULT_CMR_LEGS],
+        ...VALID_CMR_VERDICT_FIELDS,
+        findings: [{
+          severity: "high",
+          category: "correctness",
+          claim_quote: "reviewer cargo survives",
+          location: "orchestrator/src/family/realFamilyBackend.ts:1606",
+          suggested_fix: "preserve the landing cargo",
+          action: "fix_now",
+        }],
+      }),
+      commits: [], branch: "fb", sessionId: "sess-cmr-exhausted",
+    });
     class Backend extends RealFamilyBackend {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
@@ -886,37 +906,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           "sess-cmr-exhausted",
         );
         expect(nativeReask.result).toBeUndefined();
-        throw new sc.StructuredOutputError("bad output", {
-          tag: "cmr",
-          rawMatched: JSON.stringify({
-            converged: false,
-            reason: "review finding survives malformed receipt",
-            findingsCount: 1,
-            successfulLegs: [...DEFAULT_CMR_LEGS],
-            ...VALID_CMR_VERDICT_FIELDS,
-            findings: [{
-              severity: "high",
-              category: "correctness",
-              claim_quote: "reviewer cargo survives",
-              location: "orchestrator/src/family/realFamilyBackend.ts:1606",
-              suggested_fix: "preserve the landing cargo",
-              action: "fix_now",
-            }],
-          }),
-          commits: [], branch: "fb", sessionId: "sess-cmr-exhausted",
-        });
+        throw exhausted;
       }
     }
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-exhausted-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
 
-    await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).resolves.toMatchObject({
-      kind: "verdict",
-      converged: false,
-      reason: "review finding survives malformed receipt",
-      findings: [expect.objectContaining({
-        location: "orchestrator/src/family/realFamilyBackend.ts:1606",
-      })],
-    });
+    await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).rejects.toBe(exhausted);
     expect(sandcastleCalls).toBe(1);
     expect(nativeReask?.attempts).toHaveLength(RECEIPT_MAX_RETRIES + 1);
     expect(nativeReask?.attempts).toEqual([
@@ -984,8 +979,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(nativeReask?.attempts).toHaveLength(2);
   });
 
-  it("lets the independent escalation bell through before malformed bell cargo can suppress it", () => {
-    expect(workerReceiptSchema("cmr").safeParse({ escalate: {} }).success).toBe(true);
+  it("rejects malformed decision gates so Sandcastle re-asks the CMR author", () => {
+    // #899: empty/missing reason+diagnosis must fail the typed boundary.
+    expect(workerReceiptSchema("cmr").safeParse({ escalate: {} }).success).toBe(false);
+    expect(workerReceiptSchema("cmr").safeParse({
+      escalate: { reason: "owner decision", diagnosis: "design fork" },
+    }).success).toBe(true);
   });
 
   it("keeps approved finding-family cargo on an otherwise typed CMR verdict", () => {

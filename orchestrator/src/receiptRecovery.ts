@@ -4,11 +4,18 @@ import { z } from "zod";
 /** The bounded native Sandcastle retry budget ratified by #899. */
 export const RECEIPT_MAX_RETRIES = 2;
 
+/** Strict decision-gate payload: reason/diagnosis must be non-empty strings. */
+const decisionEscalateSchema = z.object({
+  reason: z.string().trim().min(1),
+  diagnosis: z.string().trim().min(1),
+});
+
+/**
+ * Worker-pressed decision gate. Malformed bells fail Sandcastle schema
+ * validation so the same session re-asks (#899); exhaust rethrows for #598.
+ */
 const decisionBellSchema = z.object({
-  // The runner's decision-bell probe owns the payload validation.  A bell must
-  // never be rejected by typed receipt validation merely because its cargo is
-  // malformed: that would turn a human-stop signal into a retryable receipt.
-  escalate: z.unknown(),
+  escalate: decisionEscalateSchema,
 }).passthrough();
 
 const reviewerReceiptSchema = z.object({
@@ -47,6 +54,26 @@ const cmrReceiptSchema = z.union([
   }).passthrough(),
 ]);
 
+/**
+ * Signal-level schema for seats that may press a decision gate while ordinary
+ * cargo stays opaque: any object without `escalate` passes; present `escalate`
+ * must be a well-formed bell. Missing tags still cannot use Output.object
+ * (Sandcastle treats absence as SOE) — multi-iter coder/ship therefore keep
+ * Output.object undefined per #899 opaque-cargo AC.
+ */
+export const decisionGateSignalSchema: z.ZodType = z.union([
+  decisionBellSchema,
+  z.custom(
+    (value) => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return true;
+      }
+      return !Object.prototype.hasOwnProperty.call(value, "escalate");
+    },
+    { message: "opaque cargo must not carry a malformed decision gate" },
+  ),
+]);
+
 /** Typed traffic-signal seats only (#899): reviewer open-count + CMR open-count. */
 type WorkerReceiptRole = "reviewer" | "cmr";
 
@@ -66,7 +93,7 @@ export function workerReceiptOutput(
   return sc.Output.object({ tag, schema, maxRetries: RECEIPT_MAX_RETRIES });
 }
 
-/** A native receipt retry that must fall back to the caller's existing topology. */
+/** A native receipt retry that must fail the Action for #598 mechanical redispatch. */
 export function isReceiptRecoveryFailure(error: unknown): boolean {
   if (error instanceof sc.StructuredOutputError) return true;
   return error instanceof Error &&
@@ -74,20 +101,36 @@ export function isReceiptRecoveryFailure(error: unknown): boolean {
 }
 
 /**
- * Keep native receipt re-ask failure mapping and the pre-existing fallback
- * topology in one seam for every typed traffic-signal path (reviewer / CMR).
- * Coder cargo never uses this seam (#899 Out of Scope).
+ * Run a typed-output seat. StructuredOutputError and other recovery failures
+ * propagate so the Action exits non-zero and #598 re-dispatches at the same
+ * fixed position (#899). Never convert exhaust into a success fallback that
+ * would feed empty/cargo signals to the fixer or advance as 0.
  */
-export async function reaskReceiptOrFallback<T>(
+export async function reaskReceiptOrThrow<T>(
   reask: () => Promise<T>,
-  fallback: () => T,
   worker: string,
 ): Promise<T> {
   try {
     return await reask();
   } catch (error) {
-    if (!isReceiptRecoveryFailure(error)) throw error;
-    console.warn(`[orchestrator] ${worker} receipt recovery exhausted; using existing fallback`);
-    return fallback();
+    if (isReceiptRecoveryFailure(error)) {
+      console.warn(
+        `[orchestrator] ${worker} receipt recovery exhausted; propagating for mechanical redispatch`,
+      );
+    }
+    throw error;
   }
+}
+
+/**
+ * @deprecated Prefer {@link reaskReceiptOrThrow}. Kept as a thin alias that
+ * ignores `fallback` so call-site renames can land without leaving a success
+ * fallback on the typed-signal path.
+ */
+export async function reaskReceiptOrFallback<T>(
+  reask: () => Promise<T>,
+  _fallback: () => T,
+  worker: string,
+): Promise<T> {
+  return reaskReceiptOrThrow(reask, worker);
 }

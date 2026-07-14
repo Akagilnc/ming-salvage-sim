@@ -58,7 +58,7 @@ import { isAbsolute, join } from "node:path";
 
 import { z } from "zod";
 import {
-  reaskReceiptOrFallback,
+  reaskReceiptOrThrow,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "../receiptRecovery.js";
@@ -1603,17 +1603,10 @@ export class RealFamilyBackend implements FamilyBackend {
             output: workerReceiptOutput("cmr", workerReceiptSchema("cmr")),
           });
         } catch (err) {
-          return await reaskReceiptOrFallback(
+          // #899: typed traffic-signal exhaust exits non-zero for #598; do not
+          // convert SOE into a sparse success verdict that feeds the fixer.
+          return await reaskReceiptOrThrow(
             async () => { throw err; },
-            // Retain every already-landed receipt channel for the established
-            // reviewer→fixer fallback.  A retry exhaustion changes transport
-            // status only; it must not manufacture a sparse verdict and discard
-            // the reviewer's findings cargo.
-            () => cmrOutcomeFromResult({
-              cmrReviewLegs: frozenReviewLegs,
-              outcomePath: outcomeLanding.path,
-              stdout: cmrRawMatchedAsStdout((err as { rawMatched?: unknown }).rawMatched),
-            }),
             "family CMR",
           );
         }
@@ -3367,18 +3360,6 @@ export function cmrOutcomeFromResult(result: {
     ...fromStdout,
     ...(findingsCount !== undefined ? { findingsCount } : {}),
   };
-}
-
-/**
- * Sandcastle's StructuredOutputError exposes the raw matched tag contents, not
- * necessarily complete stdout.  Restore the compatibility envelope only for
- * raw JSON cargo so the existing CMR parser receives its real transport shape.
- */
-function cmrRawMatchedAsStdout(rawMatched: unknown): string {
-  if (typeof rawMatched !== "string") return "";
-  const raw = rawMatched.trim();
-  if (raw === "") return "";
-  return /<cmr>[\s\S]*<\/cmr>/.test(raw) ? raw : `<cmr>${raw}</cmr>`;
 }
 
 /** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
