@@ -10,8 +10,9 @@ entry or terminal-delivery topology.
 
 This is the current legacy runtime. #863 tracks its replacement by one
 Canonical Delivery Flow; #896 replaces family-of-one normalization with a true
-standalone scene. Exact target delivery order has one design source (#869) and
-executable flow tests; this README does not define a second copy.
+standalone scene. Read live #869 for the exact target delivery order; executable
+pins land through the implementation tickets identified by #869 Testing Decisions.
+This README does not define a second copy.
 
 ## Constitution (ADR 0131 — three channels, zero judgment; lineage ADR 0062)
 
@@ -33,8 +34,9 @@ Commits, HEAD, diffs, PRs, tests, findings, report shape and external-effect
 evidence are never runner inputs. Each Action performs and verifies its own
 side effects; the next professional worker judges empty work or a false fix.
 Detailed operational rules live in `orchestrator/CLAUDE.md`; professional
-methods live in versioned souls/skills/actions; delivery topology lives in
-#869 and executable flow tests.
+methods live in versioned souls/skills/actions. Read live #869 for the target
+delivery topology; its Testing Decisions identify the implementation tickets
+that will land the executable pins.
 
 ## Igniting a family run (cold start — everything a fresh session needs)
 
