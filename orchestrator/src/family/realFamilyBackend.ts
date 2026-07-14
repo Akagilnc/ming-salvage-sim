@@ -60,6 +60,7 @@ import { z } from "zod";
 import {
   isReceiptRecoveryFailure,
   workerReceiptOutput,
+  workerReceiptIsReadable,
   workerReceiptSchema,
 } from "../receiptRecovery.js";
 
@@ -1575,28 +1576,35 @@ export class RealFamilyBackend implements FamilyBackend {
       this.writeCmrRouteFile(ctx, frozenReviewLegs);
       const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
       try {
-        const result = await this.runAgentSandbox({
-          name: "family-cmr",
-          idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
-          cwd: this.opts.workingRepo,
-          sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
-          // Derive the model from the spec via the shared validated seam (cmr S336 r7
-          // symmetry): resolve the worker's slug through the shared family registry —
-          // no constant that could silently drift
-          // from the spec the runner declares.
-          agent: this.agentForSpec(spec, ctx),
-          // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
-          // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
-          // sequencing and accounting.
-          maxIterations: spec.maxIter,
-          completionSignal: spec.completionSignal,
-          // On the resident family base so the clean CMR reviewer audits the
-          // current full family diff. Persistent repairs are made only by the
-          // separate family coder-fix worker.
-          branchStrategy: { type: "head" },
-          promptFile: join(this.opts.promptsDir, spec.promptFile),
-          output: this.familyReceiptOutput(spec),
-        });
+        let result: Awaited<ReturnType<typeof sc.run>>;
+        try {
+          result = await this.runAgentSandbox({
+            name: "family-cmr",
+            idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
+            cwd: this.opts.workingRepo,
+            sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
+            // Derive the model from the spec via the shared validated seam (cmr S336 r7
+            // symmetry): resolve the worker's slug through the shared family registry —
+            // no constant that could silently drift
+            // from the spec the runner declares.
+            agent: this.agentForSpec(spec, ctx),
+            // `maxIter` is the sandbox iteration budget for this single ADR 0030 cmr
+            // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
+            // sequencing and accounting.
+            maxIterations: spec.maxIter,
+            completionSignal: spec.completionSignal,
+            // On the resident family base so the clean CMR reviewer audits the
+            // current full family diff. Persistent repairs are made only by the
+            // separate family coder-fix worker.
+            branchStrategy: { type: "head" },
+            promptFile: join(this.opts.promptsDir, spec.promptFile),
+            output: this.familyReceiptOutput(spec),
+          });
+        } catch (err) {
+          if (!isReceiptRecoveryFailure(err)) throw err;
+          console.warn("[orchestrator] family CMR receipt recovery exhausted; using existing fallback");
+          return cmrOutcomeFromResult({ cmrReviewLegs: frozenReviewLegs, stdout: "" });
+        }
         return withCmrSession(
           cmrOutcomeFromResult({
             ...result,
@@ -1916,7 +1924,7 @@ export class RealFamilyBackend implements FamilyBackend {
   /** One official Sandcastle receipt definition for the family coder/reviewer paths. */
   private familyReceiptOutput(spec: WorkerSpec): sc.OutputDefinition {
     return spec.kind === "cmr"
-      ? workerReceiptOutput("cmr")
+      ? workerReceiptOutput("cmr", workerReceiptSchema("cmr"))
       : workerReceiptOutput("coder", workerReceiptSchema("coder"));
   }
 
@@ -1924,12 +1932,10 @@ export class RealFamilyBackend implements FamilyBackend {
     result: { readonly output?: unknown },
     outcomePath: string,
   ): boolean {
-    if (result.output !== undefined) return false;
+    if (workerReceiptIsReadable("coder", result.output)) return false;
     try {
       const raw = readRequiredWorkerOutcomeSidecar(outcomePath);
-      if (probeWorkerDecisionBell(raw) !== undefined) return false;
-      parseCoderSelfReport(raw);
-      return false;
+      return !workerReceiptIsReadable("coder", raw);
     } catch {
       return true;
     }
