@@ -96,15 +96,17 @@ describe("ADR 0131 / #899 reviewer self-declared count", () => {
   });
 
   it("does not admit a malformed decision bell into the human loop", () => {
-    const outcome = cmrOutcomeFromResult({
-      output: {
-        ...base,
-        findingsCount: 0,
-        escalate: {},
-      },
-    });
-    // Malformed escalate is ignored as fate; payload remains a verdict cargo path.
-    expect(outcome).toMatchObject({ kind: "verdict", findingsCount: 0 });
+    // #899: present-but-malformed escalate fails the Action for #598 rather
+    // than inventing a park or silently degrading to a zero open-count.
+    expect(() =>
+      cmrOutcomeFromResult({
+        output: {
+          ...base,
+          findingsCount: 0,
+          escalate: {},
+        },
+      }),
+    ).toThrow(/malformed decision gate/);
   });
 
 });
