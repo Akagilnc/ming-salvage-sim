@@ -738,8 +738,11 @@ async function askContinue(message: string): Promise<boolean> {
 /**
  * Apply design-time Coder-Rec selection onto a resolved route (#767).
  *
- * Ops env `ORCHESTRATOR_CODER_MODEL` still wins (explicit override). An explicit
- * `ORCHESTRATOR_CODER_FIX_MODEL` remains authoritative for just coderFix.
+ * Ops env `ORCHESTRATOR_CODER_MODEL` still wins *slot selection* (explicit
+ * override). An explicit `ORCHESTRATOR_CODER_FIX_MODEL` remains authoritative
+ * for just coderFix. Env does **not** skip validation of a present Coder-Rec
+ * mark (#906 S1): broken / unregistered marks fail closed at admission so
+ * mid-run relay `resolveCoderRecOrder` cannot be the first throw.
  * Otherwise,
  * only an explicit `Coder-Rec:` marking in the issue body overrides the active
  * route's coder slot — unmarked issues keep the route preset. A present but
@@ -761,6 +764,13 @@ export function applyCoderRecToRoute(
   /** True when no Coder-Rec line was present — route coder left untouched. */
   readonly skippedForMissingMarking: boolean;
 } {
+  // #906 S1: always admit/validate a present mark before any env short-circuit.
+  // resolveCoderRecOrder: absent → default order (no throw); present broken /
+  // unknown → throws CoderRecError. Env may still own the *slot* below.
+  if (issueBody !== undefined && issueBody.length > 0) {
+    void resolveCoderRecOrder(issueBody);
+  }
+
   const coderEnvOverride = env.ORCHESTRATOR_CODER_MODEL?.trim();
   if (coderEnvOverride !== undefined && coderEnvOverride !== "") {
     return {
