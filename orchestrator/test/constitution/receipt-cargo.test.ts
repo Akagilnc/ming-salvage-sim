@@ -95,8 +95,7 @@ class ScriptedReviewBackend implements Backend {
     this.dispatched.push(`${spec.id}:${spec.role}`);
     if (spec.role === "reviewer") {
       const output = this.reviewerOutputs[this.reviewerIndex] ?? {
-        kind: "reviewer",
-        findings: [],
+        kind: "reviewer", findings: [], findingsCount: 0,
       };
       this.reviewerIndex += 1;
       return output;
@@ -120,8 +119,7 @@ class ScriptedReviewBackend implements Backend {
     }
     if (spec.kind === "reviewer") {
       const output = this.reviewerOutputs[this.reviewerIndex] ?? {
-        kind: "reviewer",
-        findings: [],
+        kind: "reviewer", findings: [], findingsCount: 0,
       };
       this.reviewerIndex += 1;
       return { kind: "completed", output };
@@ -139,8 +137,8 @@ describe("#877 residual read-word fate forks — survival", () => {
   it("R1: S6 empty findings without priorFindingDispositions ships (disposition court demolished)", async () => {
     // Findings count=0 is the only channel; disposition prose is not required.
     const backend = new ScriptedReviewBackend([
-      { kind: "reviewer", findings: [BLOCKING] },
-      { kind: "reviewer", findings: [] },
+      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1 },
+      { kind: "reviewer", findings: [], findingsCount: 0 },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 877, backend });
@@ -157,10 +155,9 @@ describe("#877 residual read-word fate forks — survival", () => {
     // empty rounds escalated as "review/fix loop made no progress". Post-#877:
     // findings=[] closes via findings-count channel.
     const backend = new ScriptedReviewBackend([
-      { kind: "reviewer", findings: [BLOCKING] },
+      { kind: "reviewer", findings: [BLOCKING], findingsCount: 1 },
       {
-        kind: "reviewer",
-        findings: [],
+        kind: "reviewer", findings: [], findingsCount: 0,
         priorFindingDispositions: [
           { identityKey: BLOCKING_KEY, status: "still-active" },
         ],

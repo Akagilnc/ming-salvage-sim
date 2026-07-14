@@ -84,11 +84,17 @@ export function route(ctx: RouteContext): RouteDecision {
 
     case "S4": {
       if (ctx.output?.kind === "reviewer") {
-        // ADR 0131 / #899: route on the self-reported open-count when present;
-        // process-internal seams may still declare via the findings array.
-        const blockingCount =
-          ctx.output.findingsCount ?? ctx.output.findings.length;
-        return blockingCount > 0
+        // ADR 0131 / #899: open-count is the self-reported findingsCount only.
+        // Missing count is unusable receipt → fixer path; never derive from
+        // findings-array cargo length.
+        if (
+          typeof ctx.output.findingsCount !== "number" ||
+          !Number.isSafeInteger(ctx.output.findingsCount) ||
+          ctx.output.findingsCount < 0
+        ) {
+          return { kind: "next", step: "S5" };
+        }
+        return ctx.output.findingsCount > 0
           ? { kind: "next", step: "S5" }
           : { kind: "next", step: "S7" };
       }

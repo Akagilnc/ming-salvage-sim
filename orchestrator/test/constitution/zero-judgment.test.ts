@@ -20,12 +20,27 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     ).toEqual({ reason: "", diagnosis: "" });
   });
 
-  it("routes S4 solely by reviewer-declared findings count", () => {
+  it("routes S4 solely by reviewer-declared findingsCount (never findings.length)", () => {
     const opaque = { severity: "nonsense", action: "ignore", title: "opaque" } as any;
-    expect(route({ from: "S4", output: { kind: "reviewer", findings: [opaque] } }))
-      .toEqual({ kind: "next", step: "S5" });
-    expect(route({ from: "S4", output: { kind: "reviewer", findings: [] } }))
-      .toEqual({ kind: "next", step: "S7" });
+    // Self-reported open-count owns the edge; cargo rows cannot invent 0-vs-positive.
+    expect(route({
+      from: "S4",
+      output: { kind: "reviewer", findings: [opaque], findingsCount: 1 },
+    })).toEqual({ kind: "next", step: "S5" });
+    expect(route({
+      from: "S4",
+      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+    })).toEqual({ kind: "next", step: "S7" });
+    // Missing findingsCount is unusable receipt → fixer, even when cargo rows exist
+    // or are empty (never derive open-count from findings.length).
+    expect(route({
+      from: "S4",
+      output: { kind: "reviewer", findings: [opaque] },
+    })).toEqual({ kind: "next", step: "S5" });
+    expect(route({
+      from: "S4",
+      output: { kind: "reviewer", findings: [] },
+    })).toEqual({ kind: "next", step: "S5" });
   });
 
   it("routes every completed coder report directly to the next reviewer", () => {

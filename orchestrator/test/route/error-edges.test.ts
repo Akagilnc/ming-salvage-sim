@@ -69,7 +69,7 @@ class ErrorEdgeBackend implements Backend {
     if (spec.role === "coder") {
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    return { kind: "reviewer", findings: [] };
+    return { kind: "reviewer", findings: [], findingsCount: 0 };
   }
   // #249 integration: writeLedger is part of the Backend seam; this suite
   // asserts error edges, not ledger persistence, so it is a no-op.
@@ -90,7 +90,7 @@ describe("S2 coder completed 0-commit report", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     };
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
@@ -107,7 +107,7 @@ describe("S2 coder completed 0-commit report", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     };
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
@@ -122,7 +122,7 @@ describe("S2 coder completed 0-commit report", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     };
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
@@ -143,7 +143,7 @@ describe("error edge: any backend call throws → S8(error), not silently swallo
       if (spec.role === "coder") {
         throw new Error("sandbox.run crashed: OOM");
       }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     };
 
     const result = await runOrchestrator({ issueNumber: 252, backend });
@@ -208,7 +208,7 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
       if (spec.role === "coder") {
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     };
     const result = await runOrchestrator({ issueNumber: 252, backend });
     expect(result.status).toBe("success");
@@ -234,7 +234,7 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
           },
         };
       }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     };
     const result = await runOrchestrator({ issueNumber: 252, backend });
     expect(result.status).toBe("escalate");
@@ -258,7 +258,7 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
       if (spec.role === "coder") {
         throw new Error("coder process crashed");
       }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     };
     const errorResult = await runOrchestrator({
       issueNumber: 252,
@@ -282,7 +282,7 @@ describe("S8 tri-state: success / escalate / error are all distinct and caller-d
           },
         };
       }
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     };
     const escalateResult = await runOrchestrator({
       issueNumber: 252,

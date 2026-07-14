@@ -1295,6 +1295,72 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     });
   });
 
+  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+    "does not let sidecar bells override a schema-validated typed %s decision signal",
+    async (role) => {
+      // #899 finding: when typed Output.object exists it is the sole fate channel;
+      // sidecar escalate must not enter the human loop for any review-loop role.
+      class Harness extends RealFamilyBackend {
+        public classify(
+          result: { output?: unknown; stdout: string; iterations?: unknown[] },
+          kind: typeof role,
+          outcomePath: string,
+        ) {
+          return this.familyReviewLoopResultFromRun(
+            { ...result, iterations: result.iterations ?? [] },
+            {
+              kind,
+              id: "S9",
+              role: "coder",
+              model: "sonnet",
+              maxIter: 1,
+              promptFile: "x.md",
+              completionSignal: "X",
+            } as never,
+            outcomePath,
+          );
+        }
+      }
+      const dir = trackTempDir(`review-loop-typed-vs-sidecar-${role}-`);
+      const outcomePath = join(dir, "outcome.json");
+      writeFileSync(
+        outcomePath,
+        JSON.stringify({
+          escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+        }),
+        "utf8",
+      );
+      const cargo: Record<string, unknown> =
+        role === "verify"
+          ? { converged: true }
+          : role === "fixer"
+            ? { committed: true }
+            : role === "cleanup"
+              ? { terminal: true, ok: true }
+              : { released: true };
+      const be = new Harness({
+        workingRepo: dir,
+        familyBase: "fb",
+        ledgerDir: dir,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc",
+      });
+      const out = be.classify(
+        { output: cargo, stdout: "" },
+        role,
+        outcomePath,
+      );
+      expect(out.kind).toBe("completed");
+      if (out.kind === "completed") {
+        expect(out.output.kind).toBe(role);
+      }
+    },
+  );
+
   it("keeps fixer completion even when fixCommitSha cargo is absent", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const out = mod.parseFixerOutcome(`<fixer>{"committed": true}</fixer>`);

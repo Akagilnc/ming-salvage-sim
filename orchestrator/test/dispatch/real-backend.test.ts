@@ -1327,6 +1327,7 @@ describe("RealBackend reviewer output contract", () => {
     ).decodeOutput(
       reviewerSpec,
       {
+        findingsCount: 1,
         findings: [
           {
             severity: "medium",
@@ -1581,15 +1582,16 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("keeps coder cargo fully opaque without Output.object re-ask", async () => {
-    // #899 / ADR 0131: coder success is exit-code + opaque cargo. Missing or
-    // style-changed cargo must not attach structured-output repair.
+  it("attaches signal-only Output.object for single-iter coder without re-asking opaque cargo", async () => {
+    // #899: decision-gate Output.object is attached; ordinary cargo fields stay
+    // opaque (missing committed/commitsAdded does not force a second invocation).
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
       stdout: "coder completed implementation but omitted its receipt",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-opaque",
+      output: {},
     });
 
     await expect(
@@ -1607,16 +1609,20 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toBeUndefined();
+    expect(backend.agentOptions[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
     expect(backend.agentOptions[0]!.resumeSession).toBeUndefined();
   });
 
-  it("does not re-ask coder cargo when the receipt omits a cargo field", async () => {
+  it("does not re-ask coder cargo when the typed receipt omits a cargo field", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: '<coder>{"committed": true}</coder>',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-partial-cargo",
+      output: { committed: true },
     });
 
     await expect(backend.runStep({ ...coderSpec, maxIter: 1 }, {
@@ -1628,7 +1634,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
 
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toBeUndefined();
+    expect(backend.agentOptions[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
   });
 
   it("fails the Action on a malformed coder decision gate without inventing a park", async () => {
@@ -1637,6 +1646,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"escalate":{"reason":"","diagnosis":""}}</coder>',
       commits: [],
       sessionId: "sess-coder-bad-gate",
+      output: { escalate: { reason: "", diagnosis: "" } },
     });
 
     await expect(
@@ -1645,7 +1655,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }),
     ).rejects.toThrow(/malformed decision gate/);
     expect(backend.agentOptions).toHaveLength(1);
-    expect(backend.agentOptions[0]!.output).toBeUndefined();
+    expect(backend.agentOptions[0]!.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
   });
 
   it("keeps a single Sandcastle invocation when a missing coder receipt has no session", async () => {
@@ -1707,13 +1720,15 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
-  it("keeps coder cargo opaque when resuming a coder seat", async () => {
-    // Resume is maxIterations:1; coder cargo stays untyped (#899 R9 / ADR 0131).
+  it("attaches signal-only decision Output.object when resuming a coder seat", async () => {
+    // Resume is maxIterations:1; #899 attaches decision-gate Output.object while
+    // ordinary cargo fields stay opaque inside decisionGateSignalSchema.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "resumed worker completed without a cargo tag",
       commits: [{ sha: "abc123" }],
       sessionId: "prior-coder-session",
+      output: {},
     });
 
     await expect(backend.resumeSession(
@@ -1724,8 +1739,32 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId: "prior-coder-session",
     });
-    expect(backend.lastAgentOptions?.output).toBeUndefined();
+    expect(backend.lastAgentOptions?.output).toMatchObject({
+      tag: "coder",
+      maxRetries: 2,
+    });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
+  });
+
+  it("does not derive open-count from findings-array cargo when findingsCount is missing", () => {
+    // #899: missing findingsCount is unusable receipt → fixer path cargo, never
+    // synthesized from findings.length.
+    const backend = makeBackend();
+    const decodeOutput = (backend as unknown as {
+      decodeOutput(spec: StepSpec, raw: unknown): unknown;
+    }).decodeOutput.bind(backend);
+
+    expect(
+      decodeOutput(reviewerSpec, {
+        findings: [{ severity: "high", category: "x", claim_quote: "y", location: "z", suggested_fix: "w", action: "fix_now" }],
+      }),
+    ).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
+    expect(
+      decodeOutput(reviewerSpec, { findings: [] }),
+    ).toEqual({ kind: "coder", committed: false, commitsAdded: 0 });
+    expect(
+      decodeOutput(reviewerSpec, { findingsCount: 0, findings: [] }),
+    ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
   });
 
   it("preserves a missing reviewer count as unusable cargo for the fixer", async () => {
@@ -2033,7 +2072,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
-      JSON.stringify({ findings: [] }) + "\n",
+      JSON.stringify({ findingsCount: 0, findings: [] }) + "\n",
       "utf8",
     );
     backend.agentResult = agentRunResult({
@@ -2072,7 +2111,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
-      JSON.stringify({ findings: [] }) + "\n",
+      JSON.stringify({ findingsCount: 0, findings: [] }) + "\n",
       "utf8",
     );
     backend.agentResult = agentRunResult({
@@ -2148,7 +2187,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     writeFileSync(outcomePath, "{not json", "utf8");
     backend.agentResult = agentRunResult({
       completionSignal: "REVIEWER_STEP_COMPLETE",
-      stdout: '<review>{"findings": []}</review>',
+      stdout: '<review>{"findingsCount":0,"findings":[]}</review>',
       commits: [],
       sessionId: "sess-review-bad-sidecar",
     });

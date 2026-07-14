@@ -514,6 +514,7 @@ class ReviewWorkerBackend implements Backend {
         output: {
           kind: "reviewer",
           findings,
+          findingsCount: findings.length,
           ...(this.reviewCount > 1
             ? {
                 priorFindingDispositions: [

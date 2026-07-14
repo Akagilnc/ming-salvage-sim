@@ -128,7 +128,7 @@ class RetryReviewBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
-    if (spec.role === "reviewer") return { kind: "reviewer", findings: [] };
+    if (spec.role === "reviewer") return { kind: "reviewer", findings: [], findingsCount: 0 };
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
   async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
@@ -162,7 +162,7 @@ class RetryReviewBackend implements Backend {
     if (spec.kind === "reviewer") {
       const result = this.reviewerResults[this.reviewerAttempts];
       this.reviewerAttempts += 1;
-      return result ?? { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      return result ?? { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
     if (skeleton !== undefined) {
@@ -186,12 +186,11 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       action: "fix_now",
     };
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [finding] } },
+      { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             {
               identityKey:
@@ -236,13 +235,12 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [blocking, followUpFinding] },
+        output: { kind: "reviewer", findings: [blocking, followUpFinding], findingsCount: 2 },
       },
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             {
               identityKey: "correctness|src/runner.ts:10|must fix before shipping",
@@ -275,13 +273,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   };
   const blockingKey = "correctness|src/runner.ts:427|absence is not closure";
 
-  it("routes S4 only from the reviewer-declared findings count", () => {
+  it("routes S4 only from the reviewer-declared findingsCount", () => {
     expect(
       route({
         from: "S4",
         output: {
           kind: "reviewer",
           findings: [],
+          findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -301,8 +300,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("#877: S6 empty findings without disposition ships (disposition court demolished)", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
-      { kind: "completed", output: { kind: "reviewer", findings: [] } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+      { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
@@ -321,12 +320,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("ships only after the fresh re-review explicitly verifies a claimed-fixed finding closed", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
           ],
@@ -348,12 +346,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
 
   it("passes prior claimed-fixed findings and identity keys to the S6 fresh reviewer", async () => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
           ],
@@ -396,7 +393,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [blocking, acceptedRisk] },
+        output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2 },
       },
       {
         kind: "completed",
@@ -416,6 +413,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
               action: "fix_now",
             },
           ],
+          findingsCount: 1,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
             {
@@ -429,8 +427,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: acceptedRiskKey, status: "verified-closed" },
           ],
@@ -459,12 +456,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     // Post-#877: no-progress court demolished; loop follows findings count until
     // the scripted backend falls through to empty findings and ships.
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+      { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [blocking],
+          kind: "reviewer", findings: [blocking], findingsCount: 1,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -473,8 +469,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [blocking],
+          kind: "reviewer", findings: [blocking], findingsCount: 1,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -507,12 +502,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -521,8 +515,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -531,8 +524,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
             ],
@@ -590,8 +582,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
-        { kind: "completed", output: { kind: "reviewer", findings: [] } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
+        { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } },
       ],
       undefined,
       [{ kind: "coder", committed: true, commitsAdded: 1 }],
@@ -621,12 +613,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -635,8 +626,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -645,8 +635,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
             ],
@@ -709,12 +698,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const worktree = makeGitWorktree();
     const backend = new RetryReviewBackend(
       [
-        { kind: "completed", output: { kind: "reviewer", findings: [blocking] } },
+        { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -723,8 +711,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -733,8 +720,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
             ],
@@ -798,7 +784,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
         { step: "S4" },
         {
           step: "S5",
@@ -807,8 +793,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -830,8 +815,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -865,12 +849,20 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     },
   ])("counts reviewer-observed progress when $name", async (sample) => {
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: sample.initial } },
+      {
+        kind: "completed",
+        output: {
+          kind: "reviewer",
+          findings: sample.initial,
+          findingsCount: sample.initial.length,
+        },
+      },
       {
         kind: "completed",
         output: {
           kind: "reviewer",
           findings: sample.firstAfterFix,
+          findingsCount: sample.firstAfterFix.length,
           priorFindingDispositions: sample.firstDispositions,
         },
       },
@@ -879,14 +871,14 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         output: {
           kind: "reviewer",
           findings: sample.secondAfterFix,
+          findingsCount: sample.secondAfterFix.length,
           priorFindingDispositions: sample.secondDispositions,
         },
       },
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: sample.finalDispositions,
         },
       },
@@ -926,12 +918,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const firstNarrowedKey = findingIdentityKey(firstNarrowedFinding);
 
     const backend = new RetryReviewBackend([
-      { kind: "completed", output: { kind: "reviewer", findings: [originalFinding] } },
+      { kind: "completed", output: { kind: "reviewer", findings: [originalFinding], findingsCount: 1 } },
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [firstNarrowedFinding],
+          kind: "reviewer", findings: [firstNarrowedFinding], findingsCount: 1,
           priorFindingDispositions: [
             { identityKey: originalKey, status: "still-active" },
           ],
@@ -940,8 +931,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [secondNarrowedFinding],
+          kind: "reviewer", findings: [secondNarrowedFinding], findingsCount: 1,
           priorFindingDispositions: [
             { identityKey: originalKey, status: "still-active" },
             { identityKey: firstNarrowedKey, status: "still-active" },
@@ -983,13 +973,12 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const backend = new RetryReviewBackend([
       {
         kind: "completed",
-        output: { kind: "reviewer", findings: [primaryFinding, secondaryFinding] },
+        output: { kind: "reviewer", findings: [primaryFinding, secondaryFinding], findingsCount: 2 },
       },
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [{ ...secondaryFinding, severity: "medium" }],
+          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "medium" }], findingsCount: 1,
           priorFindingDispositions: [
             { identityKey: primaryKey, status: "still-active" },
             { identityKey: secondaryKey, status: "still-active" },
@@ -999,8 +988,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [{ ...secondaryFinding, severity: "low" }],
+          kind: "reviewer", findings: [{ ...secondaryFinding, severity: "low" }], findingsCount: 1,
           priorFindingDispositions: [
             { identityKey: primaryKey, status: "still-active" },
             { identityKey: secondaryKey, status: "still-active" },
@@ -1010,8 +998,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         kind: "completed",
         output: {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: primaryKey, status: "verified-closed" },
             { identityKey: secondaryKey, status: "verified-closed" },
@@ -1059,14 +1046,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1077,8 +1063,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1094,8 +1079,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1104,8 +1088,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
             ],
@@ -1135,14 +1118,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1153,8 +1135,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1169,8 +1150,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
             ],
@@ -1208,14 +1188,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1226,8 +1205,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1261,14 +1239,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1279,8 +1256,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1312,14 +1288,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       { step: "S0" },
       { step: "S1" },
       { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-      { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+      { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
       { step: "S4" },
       { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
       {
         step: "S6",
         output: {
-          kind: "reviewer",
-          findings: [blocking],
+          kind: "reviewer", findings: [blocking], findingsCount: 1,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -1330,8 +1305,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       {
         step: "S6",
         output: {
-          kind: "reviewer",
-          findings: [blocking],
+          kind: "reviewer", findings: [blocking], findingsCount: 1,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "still-active" },
           ],
@@ -1374,14 +1348,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+        { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1392,8 +1365,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [blocking],
+            kind: "reviewer", findings: [blocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -1458,14 +1430,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           { step: "S0" },
           { step: "S1" },
           { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-          { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
           { step: "S4" },
           { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
           {
             step: "S6",
             output: {
-              kind: "reviewer",
-              findings: [blocking],
+              kind: "reviewer", findings: [blocking], findingsCount: 1,
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "still-active" },
               ],
@@ -1476,8 +1447,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           {
             step: "S6",
             output: {
-              kind: "reviewer",
-              findings: [blocking],
+              kind: "reviewer", findings: [blocking], findingsCount: 1,
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "still-active" },
               ],
@@ -1500,8 +1470,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           {
             kind: "completed",
             output: {
-              kind: "reviewer",
-              findings: [],
+              kind: "reviewer", findings: [], findingsCount: 0,
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "verified-closed" },
               ],
@@ -1527,14 +1496,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           { step: "S0" },
           { step: "S1" },
           { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-          { step: "S3", output: { kind: "reviewer", findings: [blocking] } },
+          { step: "S3", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
           { step: "S4" },
           { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
           {
             step: "S6",
             output: {
-              kind: "reviewer",
-              findings: [blocking],
+              kind: "reviewer", findings: [blocking], findingsCount: 1,
               priorFindingDispositions: [
                 { identityKey: blockingKey, status: "still-active" },
               ],
@@ -1595,7 +1563,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         {
           step: "S3",
-          output: { kind: "reviewer", findings: [runnerFinding, siblingFinding] },
+          output: { kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1 },
         },
         { step: "S4" },
         {
@@ -1605,8 +1573,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [runnerFinding, siblingFinding],
+            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: runnerFindingKey, status: "still-active" },
               { identityKey: siblingFindingKey, status: "still-active" },
@@ -1621,8 +1588,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [runnerFinding, siblingFinding],
+            kind: "reviewer", findings: [runnerFinding, siblingFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: runnerFindingKey, status: "still-active" },
               { identityKey: siblingFindingKey, status: "still-active" },
@@ -1669,7 +1635,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           step: "S2",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
-        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding] } },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1 } },
         { step: "S4" },
         {
           step: "S5",
@@ -1678,8 +1644,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [fileScopedFinding],
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1693,8 +1658,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [fileScopedFinding],
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1717,8 +1681,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "verified-closed" },
             ],
@@ -1755,7 +1718,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           step: "S2",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
-        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding] } },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1 } },
         { step: "S4" },
         {
           step: "S5",
@@ -1764,8 +1727,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [fileScopedFinding],
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1779,8 +1741,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [fileScopedFinding],
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1803,8 +1764,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "verified-closed" },
             ],
@@ -1841,7 +1801,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           step: "S2",
           output: { kind: "coder", committed: true, commitsAdded: 1 },
         },
-        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding] } },
+        { step: "S3", output: { kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1 } },
         { step: "S4" },
         {
           step: "S5",
@@ -1850,8 +1810,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [fileScopedFinding],
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1865,8 +1824,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [fileScopedFinding],
+            kind: "reviewer", findings: [fileScopedFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "still-active" },
             ],
@@ -1889,8 +1847,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: fileScopedFindingKey, status: "verified-closed" },
             ],
@@ -1924,7 +1881,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding] } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
         { step: "S4" },
       ],
     };
@@ -1933,8 +1890,7 @@ describe("#369 runner resume/retry review fixes", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               {
                 identityKey:
@@ -1975,7 +1931,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding] } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
         { step: "S4" },
         {
           step: "S5",
@@ -2005,8 +1961,7 @@ describe("#369 runner resume/retry review fixes", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               {
                 identityKey:
@@ -2048,10 +2003,10 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding] } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S6", output: { kind: "reviewer", findings: [] } },
+        { step: "S6", output: { kind: "reviewer", findings: [], findingsCount: 0 } },
       ],
     };
     const backend = new RetryReviewBackend([], resumeState);
@@ -2082,14 +2037,13 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [finding] } },
+        { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
         { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: key, status: "still-active" },
             ],
@@ -2153,7 +2107,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S3",
-          output: { kind: "reviewer", findings: [blocking, acceptedRisk] },
+          output: { kind: "reviewer", findings: [blocking, acceptedRisk], findingsCount: 2 },
         },
         { step: "S4", findingDispositions: [acceptedRiskDisposition] },
       ],
@@ -2177,6 +2131,7 @@ describe("#369 runner resume/retry review fixes", () => {
                 action: "fix_now",
               },
             ],
+            findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "verified-closed" },
               {
@@ -2190,8 +2145,7 @@ describe("#369 runner resume/retry review fixes", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: acceptedRiskKey, status: "verified-closed" },
             ],
@@ -2231,7 +2185,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S0" },
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
-        { step: "S3", output: { kind: "reviewer", findings: [followUpFinding] } },
+        { step: "S3", output: { kind: "reviewer", findings: [followUpFinding], findingsCount: 1 } },
         { step: "S4" },
         { step: "S7" },
         { step: "S8", handoffStatus: "success" },
@@ -2600,8 +2554,7 @@ describe("#369 legacy S5 landing file", () => {
           readFileSync(join(stateDir, "fix-findings.json"), "utf8"),
         );
         return {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             {
               identityKey: "correctness|src/x.ts:3|verify me",

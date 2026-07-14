@@ -564,7 +564,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         this.events.push(`dispatch:${spec.model}`);
       }
       if (spec.role === "reviewer") {
-        return { kind: "reviewer", findings: [] };
+        return { kind: "reviewer", findings: [], findingsCount: 0 };
       }
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
@@ -593,12 +593,11 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         // (reviewer-observed progress) so the no-progress bound does not fire
         // before the post-threshold S5 advance. S6#3: close.
         if (attempt === 0) {
-          return { kind: "reviewer", findings: [blockingFinding] };
+          return { kind: "reviewer", findings: [blockingFinding], findingsCount: 1 };
         }
         if (attempt === 1) {
           return {
-            kind: "reviewer",
-            findings: [blockingFinding],
+            kind: "reviewer", findings: [blockingFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -606,16 +605,14 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         }
         if (attempt === 2) {
           return {
-            kind: "reviewer",
-            findings: [{ ...blockingFinding, severity: "medium" }],
+            kind: "reviewer", findings: [{ ...blockingFinding, severity: "medium" }], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
           };
         }
         return {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
           ],
@@ -645,8 +642,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             commitsAdded: 1,
           }),
           ledgerEntry("S3", {
-            kind: "reviewer",
-            findings: [blockingFinding],
+            kind: "reviewer", findings: [blockingFinding], findingsCount: 1,
           }),
           ledgerEntry("S4"),
           ledgerEntry("S5", {
@@ -655,8 +651,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             commitsAdded: 1,
           }),
           ledgerEntry("S6", {
-            kind: "reviewer",
-            findings: [blockingFinding],
+            kind: "reviewer", findings: [blockingFinding], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -668,8 +663,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
             commitsAdded: 1,
           }),
           ledgerEntry("S6", {
-            kind: "reviewer",
-            findings: [mediumBlocking],
+            kind: "reviewer", findings: [mediumBlocking], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: blockingKey, status: "still-active" },
             ],
@@ -689,8 +683,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
       }
       if (spec.role === "reviewer") {
         return {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: blockingKey, status: "verified-closed" },
           ],

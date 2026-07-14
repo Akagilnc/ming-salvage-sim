@@ -1694,10 +1694,8 @@ export class RealFamilyBackend implements FamilyBackend {
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
-          // #899 / ADR 0131: coder cargo stays opaque — no Output.object so
-          // missing/style-changed cargo never triggers structured-output repair.
-          // Decision gates are classified post-hoc (well-formed → park; malformed
-          // → Action non-zero for #598).
+          // #899: signal-only decision-gate Output.object; ordinary cargo fields
+          // stay opaque inside decisionGateSignalSchema (no committed shape re-ask).
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1714,6 +1712,7 @@ export class RealFamilyBackend implements FamilyBackend {
             completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
+            output: workerReceiptOutput("coder", decisionGateSignalSchema),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -1893,7 +1892,9 @@ export class RealFamilyBackend implements FamilyBackend {
     outcomePath: string,
   ): WorkerResult {
     try {
-      // Sidecar/stdout cargo only (no typed coder Output.object — #899 R9).
+      // Typed Output.object is the sole fate+cargo channel when present (#899).
+      // Sidecar is only consulted when typed is absent — never overrides a
+      // schema-validated decision signal.
       const raw =
         result.output !== undefined
           ? result.output
@@ -2169,17 +2170,11 @@ export class RealFamilyBackend implements FamilyBackend {
   ): WorkerResult {
     try {
       const sessionId = lastSessionIdIfPresent(result);
-      // Prefer Sandcastle typed receipt for decision-gate fate (#899).
+      // Typed Output.object is the sole fate channel when present (#899).
+      // Sidecar/stdout become cargo-only and must never override a validated
+      // typed decision signal (including typed "no escalate").
       if (result.output !== undefined) {
-        if (isMalformedDecisionGate(result.output)) {
-          throw new Error(
-            `family-${spec.kind}: malformed decision gate; failing Action for mechanical redispatch`,
-          );
-        }
-        const typedBell = wellFormedDecisionBell(result.output);
-        if (typedBell !== undefined) {
-          return { kind: "escalated", escalation: typedBell, sessionId };
-        }
+        return reviewLoopResultFromTypedPayload(result.output, spec.kind, sessionId);
       }
       if (spec.kind === "verify") {
         const parsed = parseVerifyOutcome(result.stdout, outcomePath);
@@ -2235,7 +2230,11 @@ export class RealFamilyBackend implements FamilyBackend {
         };
       }
       return { kind: "completed", output: parsed, sessionId };
-    } catch {
+    } catch (err) {
+      // Malformed decision gates must not become empty success cargo.
+      if (err instanceof Error && err.message.includes("malformed decision gate")) {
+        throw err;
+      }
       return {
         kind: "completed",
         output: { kind: "coder", committed: false, commitsAdded: 0 },
@@ -2824,9 +2823,9 @@ export class RealFamilyBackend implements FamilyBackend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899 / ADR 0131: ship cargo (PR URL / branch) stays opaque — no
-      // Output.object so missing tags never trigger structured-output repair.
-      // Decision gates classified post-hoc in shipOutcomeFromResult.
+      // #899: signal-only decision-gate Output.object; PR/URL cargo stays opaque
+      // inside decisionGateSignalSchema (no status/branch/pr shape re-ask).
+      output: workerReceiptOutput("ship", decisionGateSignalSchema),
     });
   }
 
@@ -3927,6 +3926,63 @@ function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
   }
   const escalation = wellFormedDecisionBell(parsed);
   return escalation === undefined ? undefined : { kind: "escalate", escalation };
+}
+
+/**
+ * Classify a review-loop seat from a schema-validated typed Output.object only.
+ * Sidecar/stdout are never consulted — they cannot override a validated decision
+ * signal (including typed "no escalate") (#899).
+ */
+function reviewLoopResultFromTypedPayload(
+  payload: unknown,
+  kind: string,
+  sessionId: string | undefined,
+): WorkerResult {
+  if (isMalformedDecisionGate(payload)) {
+    throw new Error(
+      `family-${kind}: malformed decision gate; failing Action for mechanical redispatch`,
+    );
+  }
+  const typedBell = wellFormedDecisionBell(payload);
+  if (typedBell !== undefined) {
+    return { kind: "escalated", escalation: typedBell, sessionId };
+  }
+  const tag =
+    kind === "verify" ||
+    kind === "fixer" ||
+    kind === "cleanup" ||
+    kind === "docRelease"
+      ? kind
+      : "verify";
+  let body: string;
+  try {
+    body = JSON.stringify(payload ?? null);
+  } catch {
+    return {
+      kind: "completed",
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      sessionId,
+    };
+  }
+  // Cargo-only decode from the typed payload (no outcomePath → no sidecar).
+  const stdout = `<${tag}>${body}</${tag}>`;
+  const parsed =
+    kind === "verify"
+      ? parseVerifyOutcome(stdout)
+      : kind === "fixer"
+        ? parseFixerOutcome(stdout)
+        : kind === "cleanup"
+          ? parseCleanupOutcome(stdout)
+          : parseDocReleaseOutcome(stdout);
+  // Typed already ruled out escalate; refuse any re-derived bell from cargo parse.
+  if (parsed.kind === "escalate" || parsed.kind === "cargo") {
+    return {
+      kind: "completed",
+      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      sessionId,
+    };
+  }
+  return { kind: "completed", output: parsed, sessionId };
 }
 
 export function parseVerifyOutcome(

@@ -288,6 +288,31 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     expect(o.kind).toBe("completed");
   });
 
+  it("does not let sidecar bells override a schema-validated typed ship receipt", () => {
+    // #899: when typed Output.object exists it is the sole fate channel.
+    const dir = mkdtempSync(join(tmpdir(), "ship-typed-vs-sidecar-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+      }),
+      "utf8",
+    );
+
+    expect(
+      shipOutcomeFromResult({
+        output: { status: "pushed", branch: "feat/typed-wins" },
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({
+      kind: "shipped",
+      status: "pushed",
+      branch: "feat/typed-wins",
+    });
+  });
+
   it("rejects a blank guarded ship sidecar instead of falling back to stdout", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-blank-"));
     const outcomePath = join(dir, "outcome.json");
