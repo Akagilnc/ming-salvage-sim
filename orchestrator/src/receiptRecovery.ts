@@ -83,23 +83,17 @@ const openCountReceiptSchema = z.object({
 
 /**
  * Signal-level schema for the always-emitted {@link DECISION_GATE_TAG} tag.
- * Present `escalate` must be a well-formed bell; any object without `escalate`
- * (typically `{}`) is a no-gate signal. Ordinary cargo never lands in this tag.
+ * Present `escalate` must be a well-formed bell; the only no-gate form is a
+ * strict empty object `{}`. Unknown / misspelled keys (e.g. `escalte`) fail so
+ * Sandcastle same-session re-asks rather than treating them as no-gate (#899).
+ * Ordinary cargo never lands in this tag.
  *
  * Non-object / null values fail so Sandcastle re-asks the signal itself rather
  * than silently accepting a missing protocol emission as "no gate".
  */
 export const decisionGateSignalSchema: z.ZodType = z.union([
   decisionBellSchema,
-  z.custom(
-    (value) => {
-      if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return false;
-      }
-      return !Object.prototype.hasOwnProperty.call(value, "escalate");
-    },
-    { message: "decision signal must be an object without a malformed escalate" },
-  ),
+  z.object({}).strict(),
 ]);
 
 /**

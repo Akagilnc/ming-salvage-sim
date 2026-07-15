@@ -1203,6 +1203,11 @@ interface S4FindingsCountReplay {
   /** Reviewer-declared open-count (ADR 0131), not findings-array length. */
   readonly blockingFindingCount: number;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
+  /**
+   * Rebuilt raw artifact pointers for the positive-count → S5 edge after an S4
+   * resume boundary (host paths; materialised into the fixer sandbox at landing).
+   */
+  readonly rawReviewerArtifacts?: WorkerLandingPayload["rawReviewerArtifacts"];
 }
 
 /**
@@ -1230,6 +1235,9 @@ function replayS4FindingsCountState(
   let pendingBlockingFindingCount = 0;
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerOutputForS4: StepOutput | undefined;
+  let lastReviewerSessionId: string | undefined;
+  let lastReviewerMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
+  let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
 
   for (const entry of ledger) {
     if (isBookkeepingEntry(entry)) {
@@ -1238,6 +1246,9 @@ function replayS4FindingsCountState(
     if (entry.output?.kind === "reviewer") {
       if (!isStepId(entry.step)) continue;
       lastReviewerOutputForS4 = entry.output;
+      lastReviewerSessionId =
+        typeof entry.sessionId === "string" ? entry.sessionId : undefined;
+      lastReviewerMonitorHandle = entry.monitorHandle;
       continue;
     }
     if (entry.step !== "S4" || lastReviewerOutputForS4?.kind !== "reviewer") {
@@ -1256,6 +1267,16 @@ function replayS4FindingsCountState(
     pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
     // Count is the typed open-count, never cargo-array length.
     pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
+    // Live path attaches raw pointers on every positive open-count → S5 edge;
+    // resume after the persisted S4 boundary must rebuild them from the
+    // preceding reviewer ledger row (sessionId + monitor handle paths).
+    pendingRawReviewerArtifacts =
+      lastReviewerOutputForS4.findingsCount > 0
+        ? reviewerRawArtifactPointers(
+            lastReviewerMonitorHandle,
+            lastReviewerSessionId,
+          )
+        : undefined;
   }
 
   return {
@@ -1263,6 +1284,9 @@ function replayS4FindingsCountState(
     blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
     blockingFindingCount: pendingBlockingFindingCount,
     findingDispositions,
+    ...(pendingRawReviewerArtifacts !== undefined
+      ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
+      : {}),
   };
 }
 
@@ -2728,11 +2752,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #877: persisted S4 boundaries are replayed from reviewer findings-count
     // only. Each S4 replaces the pending blocker set with that reviewer's
     // `findings[]`; prose dispositions do not preserve or reopen findings.
+    // #899: also rebuild raw reviewer artifact pointers so a crash/resume after
+    // S4 still hands the fixer host paths (materialised at landing).
     const replayedS4 = replayS4FindingsCountState(plan.priorLedger);
     pendingBlockingFindings = [...replayedS4.blocking];
     pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
     pendingBlockingFindingCount = replayedS4.blockingFindingCount;
     findingDispositions = [...replayedS4.findingDispositions];
+    pendingRawReviewerArtifacts = replayedS4.rawReviewerArtifacts;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;
