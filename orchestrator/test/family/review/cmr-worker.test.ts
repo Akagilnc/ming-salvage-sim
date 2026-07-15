@@ -909,7 +909,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         nativeReask = fakeNativeReceiptReask(
           options.output!,
           [{ converged: true }, { converged: true }, { converged: true }],
-          workerReceiptSchema("cmr"),
+          workerReceiptSchema(),
           "sess-cmr-exhausted",
         );
         expect(nativeReask.result).toBeUndefined();
@@ -961,7 +961,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         nativeReask = fakeNativeReceiptReask<typeof completeVerdict>(
           options.output!,
           [{ ...completeVerdict, findingsCount: undefined }, completeVerdict],
-          workerReceiptSchema("cmr"),
+          workerReceiptSchema(),
           "same-cmr-reviewer-session",
         );
         if (nativeReask.result === undefined) throw new Error("fake Sandcastle should recover the second receipt");
@@ -988,16 +988,16 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
   it("rejects malformed decision gates so Sandcastle re-asks the CMR author", () => {
     // #899: empty/missing reason+diagnosis must fail the typed boundary.
-    expect(workerReceiptSchema("cmr").safeParse({ escalate: {} }).success).toBe(false);
-    expect(workerReceiptSchema("cmr").safeParse({
+    expect(workerReceiptSchema().safeParse({ escalate: {} }).success).toBe(false);
+    expect(workerReceiptSchema().safeParse({
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
     // Legal findingsCount must not mask a present-but-malformed decision gate.
-    expect(workerReceiptSchema("cmr").safeParse({
+    expect(workerReceiptSchema().safeParse({
       findingsCount: 2,
       escalate: { reason: "", diagnosis: "x" },
     }).success).toBe(false);
-    expect(workerReceiptSchema("cmr").safeParse({
+    expect(workerReceiptSchema().safeParse({
       findingsCount: 2,
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
@@ -1005,14 +1005,14 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
   it("keeps approved finding-family cargo on an otherwise typed CMR verdict", () => {
     // #899: only findingsCount is typed; legs/evidence/families are cargo passthrough.
-    expect(workerReceiptSchema("cmr").safeParse({
+    expect(workerReceiptSchema().safeParse({
       findingsCount: 0,
       findingFamilies: [{ identityKeys: ["correctness|x|y"] }],
     }).success).toBe(true);
-    expect(workerReceiptSchema("cmr").safeParse({
+    expect(workerReceiptSchema().safeParse({
       findingsCount: 0,
     }).success).toBe(true);
-    expect(workerReceiptSchema("cmr").safeParse({
+    expect(workerReceiptSchema().safeParse({
       converged: true,
       successfulLegs: [...DEFAULT_CMR_LEGS],
     }).success).toBe(false);

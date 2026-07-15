@@ -65,10 +65,9 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
+  classifyDecisionGate,
   decisionGateOutput,
-  isMalformedDecisionGate,
   logAndRethrowReceiptFailure,
-  wellFormedDecisionBell,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
@@ -2792,7 +2791,7 @@ export class RealBackend implements Backend {
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     if (spec.role === "reviewer") {
-      return workerReceiptOutput("review", workerReceiptSchema("reviewer"));
+      return workerReceiptOutput("review", workerReceiptSchema());
     }
     if (spec.role === "coder") {
       return decisionGateOutput();
@@ -2831,7 +2830,9 @@ export class RealBackend implements Backend {
    *
    * - Reviewer: typed open-count is the sole fate channel when present.
    * - Coder: typed decision signal is the sole fate channel; cargo is separate.
-   * - Sidecar/stdout never supply escalate / findingsCount fate (#899).
+   * - When typed Output.object was configured, missing `result.output` fails
+   *   the Action for #598 — sidecar/stdout never supply escalate / findingsCount
+   *   as a fourth channel (#899).
    */
   /** Protected so test subclasses can probe the typed vs cargo channel without casts. */
   protected rawOutputFor(
@@ -2840,18 +2841,17 @@ export class RealBackend implements Backend {
     typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown | undefined {
-    // Typed receipt owns fate signals. Do not let sidecar/stdout bells override
-    // a schema-validated Output.object (#899).
-    if (typedOutputUsed && result.output !== undefined) {
+    // Typed receipt owns fate signals. Missing typed output is not a cargo
+    // fallback — that would re-open escalate / findingsCount as a fourth channel.
+    if (typedOutputUsed) {
+      if (result.output === undefined) {
+        throw new Error(
+          `${spec.id}-${spec.role}: typed traffic signal missing; failing Action for mechanical redispatch`,
+        );
+      }
       return result.output;
     }
-    const cargo = this.cargoRawFor(result, spec, options);
-    if (typedOutputUsed && cargo !== undefined) {
-      console.warn(
-        `[orchestrator] telemetry: ${spec.id}-${spec.role} used legacy stdout tag compatibility fallback`,
-      );
-    }
-    return cargo;
+    return this.cargoRawFor(result, spec, options);
   }
 
   /** Protected so test subclasses can probe receipt decode without casts. */
@@ -2862,21 +2862,21 @@ export class RealBackend implements Backend {
   ): StepOutput {
     // Fate from typed signal only. Cargo may ride along for enrichment but
     // never supplies escalate / findingsCount when typed was the seat policy.
-    if (isMalformedDecisionGate(raw)) {
-      throw new Error(
-        `${spec.id}-${spec.role}: malformed decision gate (empty or non-string reason/diagnosis); failing Action for mechanical redispatch`,
-      );
-    }
-    const decisionBell = wellFormedDecisionBell(raw);
-    if (decisionBell !== undefined) {
+    const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
+    if (gate.kind === "bell") {
       return spec.role === "coder"
         ? {
             kind: "coder",
             committed: false,
             commitsAdded: 0,
-            escalate: decisionBell,
+            escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
           }
-        : { kind: "reviewer", findings: [], findingsCount: 0, escalate: decisionBell };
+        : {
+            kind: "reviewer",
+            findings: [],
+            findingsCount: 0,
+            escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
+          };
     }
     if (spec.role === "reviewer") {
       // Open-count fate only from the typed/raw channel — never from a separate

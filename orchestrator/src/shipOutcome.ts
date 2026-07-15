@@ -17,10 +17,7 @@
  */
 
 import { z } from "zod";
-import {
-  isMalformedDecisionGate,
-  wellFormedDecisionBell,
-} from "./receiptRecovery.js";
+import { classifyDecisionGate } from "./receiptRecovery.js";
 import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
 import type { Escalation } from "./types.js";
 
@@ -104,14 +101,13 @@ export function shipOutcomeFromResult(result: {
 }): ShipWorkerOutcome {
   // Typed Output.object is the sole fate channel for decision gates.
   if (result.output !== undefined) {
-    if (isMalformedDecisionGate(result.output)) {
-      throw new Error(
-        "ship: malformed decision gate (empty or non-string reason/diagnosis); failing Action for mechanical redispatch",
-      );
-    }
-    const decisionBell = wellFormedDecisionBell(result.output);
-    if (decisionBell !== undefined) {
-      return { kind: "escalate", ...decisionBell };
+    const gate = classifyDecisionGate(result.output, "ship");
+    if (gate.kind === "bell") {
+      return {
+        kind: "escalate",
+        reason: gate.reason,
+        diagnosis: gate.diagnosis,
+      };
     }
     // Signal present with no gate (`{}`): enrich delivery cargo from sidecar only.
     // Do not re-parse escalate from cargo (fourth channel).
@@ -174,16 +170,12 @@ function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
   }
   // Malformed decision gates fail the Action for #598 — never enter the human
   // loop as empty bells and never silently degrade to completed (#899).
-  if (isMalformedDecisionGate(parsed)) {
-    throw new Error(
-      "ship: malformed decision gate (empty or non-string reason/diagnosis); failing Action for mechanical redispatch",
-    );
-  }
-  const decisionBell = wellFormedDecisionBell(parsed);
-  if (decisionBell !== undefined) {
+  const gate = classifyDecisionGate(parsed, "ship");
+  if (gate.kind === "bell") {
     return {
       kind: "escalate",
-      ...decisionBell,
+      reason: gate.reason,
+      diagnosis: gate.diagnosis,
     };
   }
   return classifyShipCargoPayload(parsed);

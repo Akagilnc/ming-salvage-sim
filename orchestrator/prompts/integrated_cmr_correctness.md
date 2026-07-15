@@ -110,7 +110,10 @@ Rules:
   MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
   `action:"fix_now"` (that would silently turn the governance suppression into a
   blocker).
-- Without `$ORCHESTRATOR_OUTCOME_PATH`, emit the `<cmr>` tag as the last typed tag;
-  if you iterate, the last typed `<cmr>` tag is the one that counts. The optional
+- Always emit the typed `<cmr>` tag (even when `$ORCHESTRATOR_OUTCOME_PATH` is
+  set and you write the same JSON object to the sidecar). Production CMR seats
+  bind Sandcastle `Output.object` to the `cmr` tag with `maxRetries`; the tag is
+  the traffic-signal channel, not an optional compatibility fallback. If you
+  iterate, the last typed `<cmr>` tag is the one that counts. The optional
   telemetry line below may follow it.
 - For optional telemetry, you may print CMR_STEP_COMPLETE on its own final line.

@@ -365,6 +365,23 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     }
   });
 
+  it("production CMR prompts always require the configured <cmr> Output.object tag", () => {
+    // #899: production CMR mounts outcome sidecar AND Output.object({tag:"cmr"}).
+    // The prompt must require the cmr tag even when ORCHESTRATOR_OUTCOME_PATH is set,
+    // otherwise Sandcastle has nothing to validate / re-ask.
+    for (const promptName of [
+      "integrated_cmr_completeness.md",
+      "integrated_cmr_correctness.md",
+    ] as const) {
+      const prompt = read(promptName);
+      expect(prompt).toMatch(/Always emit the typed `<cmr>` tag/);
+      expect(prompt).toMatch(/Output\.object/);
+      expect(prompt).not.toMatch(
+        /Without \$ORCHESTRATOR_OUTCOME_PATH.*emit the `<cmr>` tag/,
+      );
+    }
+  });
+
   it("the baked shared output protocol owns sidecar parser validation", () => {
     const protocol = readSoul("output_protocol.md");
     expect(protocol).toMatch(/ORCHESTRATOR_OUTCOME_PATH/);

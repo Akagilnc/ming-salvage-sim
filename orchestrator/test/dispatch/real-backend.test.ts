@@ -1714,7 +1714,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("continues a resumed clean-exit coder when receipt cargo is absent", async () => {
+  it("fails a resumed typed coder seat when Output.object is absent", async () => {
+    // #899: resume attaches decision-gate SO; missing typed signal must not fall
+    // through to opaque cargo / empty success (fourth channel / soft pass).
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "resumed worker completed its changes",
@@ -1732,10 +1734,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         },
         "prior-coder-session",
       ),
-    ).resolves.toMatchObject({
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-    });
+    ).rejects.toThrow(/typed traffic signal missing/);
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
+    expect(backend.lastAgentOptions?.output).toMatchObject({
+      tag: "decision",
+      maxRetries: 2,
+    });
   });
 
   it("attaches signal-only decision Output.object when resuming a coder seat", async () => {
@@ -1782,10 +1786,13 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
   });
 
-  it("preserves a missing reviewer count as unusable cargo for the fixer", async () => {
+  it("fails a typed reviewer seat when Output.object is absent", async () => {
+    // #899: maxIter:1 reviewer attaches open-count SO. Absent typed output fails
+    // for #598 — stdout cargo (even with findingsCount) is not a fate channel.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      stdout: "reviewer finished without a machine verdict",
+      stdout:
+        '<review>{"findingsCount":0,"findings":[]}</review>\nREVIEWER_STEP_COMPLETE',
       commits: [],
       sessionId: "sess-missing-review-outcome",
     });
@@ -1796,8 +1803,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         base: "main",
         path: "/tmp/worktree/issue-824",
       }),
-    ).resolves.toMatchObject({
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
+    ).rejects.toThrow(/typed traffic signal missing/);
+    expect(backend.lastAgentOptions?.output).toMatchObject({
+      tag: "review",
+      maxRetries: 2,
     });
   });
 
@@ -1852,30 +1861,31 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
   it("rejects malformed reviewer receipts so Sandcastle re-asks the author", () => {
     // #899: typed boundary requires explicit findingsCount; findings rows are cargo.
-    expect(workerReceiptSchema("reviewer").safeParse({ findingsCount: 0 }).success).toBe(true);
-    expect(workerReceiptSchema("reviewer").safeParse({ findingsCount: 0, findings: [] }).success).toBe(true);
-    expect(workerReceiptSchema("reviewer").safeParse({ findings: [] }).success).toBe(false);
-    expect(workerReceiptSchema("reviewer").safeParse({}).success).toBe(false);
-    expect(workerReceiptSchema("reviewer").safeParse({
+    const receipt = workerReceiptSchema();
+    expect(receipt.safeParse({ findingsCount: 0 }).success).toBe(true);
+    expect(receipt.safeParse({ findingsCount: 0, findings: [] }).success).toBe(true);
+    expect(receipt.safeParse({ findings: [] }).success).toBe(false);
+    expect(receipt.safeParse({}).success).toBe(false);
+    expect(receipt.safeParse({
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
     // Malformed decision gates must fail schema validation so Sandcastle re-asks.
-    expect(workerReceiptSchema("reviewer").safeParse({ escalate: {} }).success).toBe(false);
-    expect(workerReceiptSchema("reviewer").safeParse({
+    expect(receipt.safeParse({ escalate: {} }).success).toBe(false);
+    expect(receipt.safeParse({
       escalate: { reason: "", diagnosis: "x" },
     }).success).toBe(false);
-    expect(workerReceiptSchema("reviewer").safeParse({
+    expect(receipt.safeParse({
       escalate: { reason: "need owner", diagnosis: "" },
     }).success).toBe(false);
-    expect(workerReceiptSchema("reviewer").safeParse({
+    expect(receipt.safeParse({
       escalate: "not-an-object",
     }).success).toBe(false);
     // Legal findingsCount must not mask a present-but-malformed decision gate.
-    expect(workerReceiptSchema("reviewer").safeParse({
+    expect(receipt.safeParse({
       findingsCount: 1,
       escalate: { reason: "", diagnosis: "" },
     }).success).toBe(false);
-    expect(workerReceiptSchema("reviewer").safeParse({
+    expect(receipt.safeParse({
       findingsCount: 1,
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
@@ -1945,16 +1955,30 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("keeps the legacy advisory when stdout substitutes for missing typed output", () => {
+  it("rejects missing typed output so sidecar/stdout cannot reintroduce fate signals", () => {
+    // #899: when Output.object was configured, absent typed output fails closed
+    // for #598 — cargo must not supply escalate / findingsCount as a fourth channel.
     const backend = makeBackend();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    expect(
-      backend.probeRawOutputFor({ stdout: '<review>{"findings": []}</review>' }, reviewerSpec, true),
-    ).toEqual({ findings: [] });
-    expect(warn).toHaveBeenCalledWith(
-      "[orchestrator] telemetry: S3-reviewer used legacy stdout tag compatibility fallback",
-    );
+    expect(() =>
+      backend.probeRawOutputFor(
+        {
+          stdout:
+            '<review>{"findingsCount":9,"findings":[],"escalate":{"reason":"spoof","diagnosis":"must not win"}}</review>',
+        },
+        reviewerSpec,
+        true,
+      ),
+    ).toThrow(/typed traffic signal missing/);
+    expect(() =>
+      backend.probeRawOutputFor(
+        {
+          stdout:
+            '<coder>{"committed":false,"commitsAdded":0,"escalate":{"reason":"spoof","diagnosis":"must not win"}}</coder>',
+        },
+        coderSpec,
+        true,
+      ),
+    ).toThrow(/typed traffic signal missing/);
   });
 
   it("reclaims the temporary Grok OAuth copy after a worker container exits", async () => {
