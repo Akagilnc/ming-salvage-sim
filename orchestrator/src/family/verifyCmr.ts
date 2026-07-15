@@ -1971,8 +1971,9 @@ async function runIntegratedCmrPass(input: {
       cmrResult.sessionId,
     );
   }
-  // ADR 0131: only the reviewer declaration routes. Structured findings are
-  // cargo and cannot supply a missing count.
+  // Family CMR still routes by reviewer-declared open count until #930 unifies
+  // on judge tri-state. ADR 0131/0132 single-slice channel (b) is separate.
+  // Structured findings are cargo and cannot supply a missing count.
   const openFindingsCount = cmrResult.output.findingsCount;
   if (openFindingsCount === undefined) {
     return await routeRawReviewerArtifactsToFix(
@@ -1980,7 +1981,7 @@ async function runIntegratedCmrPass(input: {
       cmrResult.sessionId,
     );
   }
-  // ADR 0131: the reviewer-declared count is the complete routing signal.
+  // Declared count is the complete family-CMR routing signal (pre-#930).
   // Positive always enters coder-fix. Structured findings are optional cargo;
   // when absent, the fixer receives the raw reviewer artifact pointers instead.
   if (openFindingsCount > 0) {
