@@ -923,14 +923,14 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     ).resolves.toMatchObject({ conflicted: true });
   });
 
-  it("a sparse merger decision bell fails the Action instead of inventing a park", () => {
-    // #899: empty escalate on the typed decision signal fails closed for #598.
+  it("a sparse merger T2 escalate fails the Action instead of inventing a park", () => {
+    // #899 / #919 CR T2: empty escalate on the thin merger envelope fails closed.
     expect(() =>
       mergerOutcomeFromResult({
-        output: { escalate: {} },
+        output: { station: "merger", status: "escalate" },
         stdout: "",
       }),
-    ).toThrow(/malformed decision gate/);
+    ).toThrow(/illegal merger station receipt/);
   });
 
   it("agent CLAIMED resolved but left the merge in-progress → still-conflicted result (never looks clean)", async () => {
@@ -1622,7 +1622,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       }
       const dir = trackTempDir(`review-loop-typed-vs-sidecar-${role}-`);
       const outcomePath = join(dir, "outcome.json");
-      // Typed decision signal is no-gate (`{}`). Role cargo + a spoof escalate
+      // Typed T2 onlineReview completed. Role cargo + a spoof escalate
       // ride on the sidecar; only cargo is admitted (escalate cannot override).
       const cargo: Record<string, unknown> =
         role === "verify"
@@ -1652,7 +1652,10 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         familyBaseStartHead: "abc",
       });
       const out = be.classify(
-        { output: {}, stdout: "" },
+        {
+          output: { station: "onlineReview", status: "completed" },
+          stdout: "",
+        },
         role,
         outcomePath,
       );
@@ -1660,6 +1663,77 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       if (out.kind === "completed") {
         expect(out.output.kind).toBe(role);
       }
+    },
+  );
+
+  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+    "family %s T2 onlineReview escalate still parks decision",
+    async (role) => {
+      const reviewLoopSpec = (kind: typeof role): WorkerSpec => ({
+        id: "S9",
+        kind,
+        role: "coder",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "clean",
+        promptFile: "x.md",
+        maxIter: 1,
+        model: "sonnet",
+        soul: "coder",
+        toolchain: [],
+      });
+      class Harness extends RealFamilyBackend {
+        public classify(
+          result: {
+            output?: unknown;
+            stdout: string;
+            iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+          },
+          kind: typeof role,
+          outcomePath: string,
+        ) {
+          return this.familyReviewLoopResultFromRun(
+            {
+              stdout: result.stdout,
+              iterations: [...(result.iterations ?? [])],
+              ...(result.output !== undefined ? { output: result.output } : {}),
+            },
+            reviewLoopSpec(kind),
+            outcomePath,
+          );
+        }
+      }
+      const dir = trackTempDir(`review-loop-t2-escalate-${role}-`);
+      const outcomePath = join(dir, "outcome.json");
+      writeFileSync(outcomePath, JSON.stringify({}), "utf8");
+      const be = new Harness({
+        workingRepo: dir,
+        familyBase: "fb",
+        ledgerDir: dir,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc",
+      });
+      const out = be.classify(
+        {
+          output: {
+            station: "onlineReview",
+            status: "escalate",
+            reason: "owner choice",
+            diagnosis: "review fork",
+          },
+          stdout: "",
+        },
+        role,
+        outcomePath,
+      );
+      expect(out).toMatchObject({
+        kind: "escalated",
+        escalation: { reason: "owner choice", diagnosis: "review fork" },
+      });
     },
   );
 
@@ -2383,6 +2457,85 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
       }).resolved,
     ).toBe(true);
   });
+
+  it("T2 merger completed enriches resolve cargo; escalate parks decision", () => {
+    // #919 CR T2: production typed channel is station:merger completed|escalate.
+    const dir = trackTempDir("merger-t2-completed-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ resolved: true, tradeoffs: "kept both" }) + "\n",
+      "utf8",
+    );
+    expect(
+      mergerOutcomeFromResult({
+        output: { station: "merger", status: "completed" },
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({ resolved: true });
+
+    expect(
+      mergerOutcomeFromResult({
+        output: {
+          station: "merger",
+          status: "escalate",
+          reason: "product fork",
+          diagnosis: "need owner",
+        },
+        stdout: "",
+      }),
+    ).toMatchObject({
+      resolved: false,
+      reason: "product fork",
+      escalation: {
+        reason: "product fork",
+        diagnosis: "need owner",
+        escalationKind: "decision",
+      },
+    });
+
+    // Legacy decision-gate dual is fail-closed after T2.
+    expect(() =>
+      mergerOutcomeFromResult({
+        output: { escalate: { reason: "legacy", diagnosis: "dual" } },
+        stdout: "",
+      }),
+    ).toThrow(/illegal merger station receipt/);
+  });
+
+  it("production merger attaches T2 merger station receipt (not decision-gate dual)", async () => {
+    // #919 CR S2: SO tag is merger + thin completed|escalate schema.
+    const repo = trackRepo();
+    const ledgerDir = mkdtempSync(join(tmpdir(), "merger-t2-attach-"));
+    ledgerDirs.push(ledgerDir);
+    const calls: Parameters<typeof sc.run>[0][] = [];
+    class AttachBackend extends RealFamilyBackend {
+      public run(req: ConflictResolveRequest) {
+        return this.runMergerAgent(req);
+      }
+      protected override mountMergerAuth(): MergerAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        calls.push(options);
+        return {
+          branch: "family/293-base",
+          stdout: "<merger>{}</merger>",
+          commits: [],
+          iterations: [],
+          output: { station: "merger", status: "completed" },
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const b = new AttachBackend(opts(repo, { ledgerDir }));
+    await b.run({ childIssue: 496, childBranch: "feat/child" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.output).toMatchObject({ tag: "merger" });
+    expect(calls[0]!.output).not.toMatchObject({ tag: "decision" });
+  });
 });
 
 describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
@@ -2413,8 +2566,8 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
           stdout: "<merger>{}</merger>",
           commits: [],
           iterations: [],
-          // Typed no-gate decision signal (SO was attached on this seat).
-          output: {},
+          // Typed T2 merger completed (SO was attached on this seat).
+          output: { station: "merger", status: "completed" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }

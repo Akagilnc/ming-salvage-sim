@@ -16,10 +16,10 @@ import {
   priorFamilyJudgeVerdictRowsFromLedger,
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
+  unusableResidualOpenCountPaper,
 } from "../../../src/judgeStation.js";
 import { findingIdentityKey } from "../../../src/findings.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
-import { residualIntegratedCmrToJudgeOutput } from "../../../src/family/dispatchFamilyWorker.js";
 import { cmrOutcomeFromResult } from "../../../src/family/realFamilyBackend.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type {
@@ -286,51 +286,35 @@ describe("#930 pure family judge closure", () => {
     expect(outcome.findingFamilies?.[0]?.family).toBe("open-pattern");
   });
 
-  it("residual open-count: any findingsCount → undefined (never mint continue from count)", () => {
-    // #919 E / ADR 0131: family residual never projects open-count → continue.
-    // Official continue is typed kind:judge with live identity keys only.
+  it("shared unusable residual paper is the sole family residual fail-loud shape", () => {
+    // #919 CR S1/N2: one helper both paths call — kind:reviewer+findingsCount:0.
+    // Dead dual residualIntegratedCmrToJudgeOutput DELETED; court fail-louds
+    // any non-judge (including legacy kind:cmr fixtures) as unusable.
+    const paper = unusableResidualOpenCountPaper();
+    expect(paper).toEqual({
+      kind: "reviewer",
+      findingsCount: 0,
+      findings: [],
+    });
+    expect(closeFamilyCourtFromJudgeOutput(paper).action).toBe("unusable");
     expect(
-      residualIntegratedCmrToJudgeOutput({
+      closeFamilyCourtFromJudgeOutput({
+        kind: "cmr",
         findingsCount: 2,
         findings: [FINDING],
-      }),
-    ).toBeUndefined();
-    expect(
-      residualIntegratedCmrToJudgeOutput({
-        findingsCount: 0,
-        findings: [],
-        converged: true,
-      }),
-    ).toBeUndefined();
-    // legacy converged:true without open-count is NOT silent clean —
-    // official green is typed kind:"judge" status:"converged" only.
-    expect(
-      residualIntegratedCmrToJudgeOutput({ converged: true }),
-    ).toBeUndefined();
-    expect(
-      residualIntegratedCmrToJudgeOutput({
-        converged: false,
-        findings: [FINDING],
-      }),
-    ).toBeUndefined();
+      } as never).action,
+    ).toBe("unusable");
   });
 
-  it("residual kind:cmr positive findingsCount is unusable — no coder-fix on count-minted continue", async () => {
-    // #919 E: residual paper with positive open-count must fail-loud, not
-    // dispatch family coder-fix as an open-count second closer.
+  it("residual unusable paper (shared shape) is unusable — no coder-fix on count-minted continue", async () => {
+    // #919 E / CR S1: residual fail-loud uses unusableResidualOpenCountPaper only.
     let opens = 0;
     const backend = new FamilyJudgeBackend({
       completeness: () => {
         opens += 1;
         return {
           kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: false,
-            findingsCount: 2,
-            findings: [FINDING],
-            successfulLegs: ["opus"],
-          },
+          output: unusableResidualOpenCountPaper(),
         };
       },
     });
@@ -609,22 +593,17 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(reopen?.landing?.refuseRecords?.[0]?.reason).toBe("unconstitutional");
   });
 
-  it("residual kind:cmr+findingsCount:0 is unusable fail-loud (never silent clean, never coder-fix)", async () => {
-    // #919 M1/M2: 0 open-count residual → unusable. Official typed re-furnace is
-    // seat-side SO maxRetries — runner must NOT dispatch family coder-fix as a
-    // schema court, and must NOT invent a clean pass.
+  it("residual unusable paper (shared shape) is fail-loud (never silent clean, never coder-fix)", async () => {
+    // #919 M1/M2 / CR S1: residual open-count 0 → shared unusable paper only.
+    // Official typed re-furnace is seat-side SO maxRetries — runner must NOT
+    // dispatch family coder-fix as a schema court, and must NOT invent clean.
     let opens = 0;
     const backend = new FamilyJudgeBackend({
       completeness: () => {
         opens += 1;
         return {
           kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
-            successfulLegs: ["opus"],
-          },
+          output: unusableResidualOpenCountPaper(),
         };
       },
     });

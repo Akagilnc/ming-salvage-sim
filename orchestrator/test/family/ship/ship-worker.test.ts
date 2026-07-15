@@ -660,8 +660,8 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
           stdout: "<ship>{}</ship>",
           commits: [],
           iterations: [],
-          // Typed no-gate decision signal (SO was attached on this seat).
-          output: {},
+          // Typed T2 ship completed (SO was attached on this seat).
+          output: { station: "ship", status: "completed" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }

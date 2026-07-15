@@ -60,8 +60,9 @@ import { z } from "zod";
 import {
   classifyDecisionGate,
   coderReceiptOutput,
-  decisionGateOutput,
   logAndRethrowReceiptFailure,
+  mergerReceiptOutput,
+  onlineReviewReceiptOutput,
   requireTypedTrafficSignal,
   shipReceiptOutput,
   workerReceiptOutput,
@@ -69,14 +70,23 @@ import {
 import {
   CODER_RECEIPT_TAG,
   JUDGE_RECEIPT_TAG,
+  MERGER_RECEIPT_TAG,
+  ONLINE_REVIEW_RECEIPT_TAG,
   SHIP_RECEIPT_TAG,
   coderStationReceiptSchema,
   decodeJudgeVerdict,
+  decodeMergerEnvelope,
+  decodeOnlineReviewEnvelope,
   judgeStationReceiptSchema,
+  mergerStationReceiptSchema,
+  onlineReviewStationReceiptSchema,
   shipStationReceiptSchema,
   type JudgeVerdict,
 } from "../stationReceiptContracts.js";
-import { judgeResultFromVerdict } from "../judgeStation.js";
+import {
+  judgeResultFromVerdict,
+  unusableResidualOpenCountPaper,
+} from "../judgeStation.js";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -943,8 +953,12 @@ export class RealFamilyBackend implements FamilyBackend {
             maxIterations: 1,
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
-            // #899: dedicated decision-gate tag; resolve cargo stays opaque.
-            output: decisionGateOutput(),
+            // #919 CR T2 / ADR 0132: thin merger station receipt (completed|escalate).
+            // Resolve cargo stays opaque sidecar outside SO.
+            output: mergerReceiptOutput(
+              mergerStationReceiptSchema(),
+              MERGER_RECEIPT_TAG,
+            ),
             // #909: same quota-probe context as single-slice runAgentSandbox.
             // C3: step S1 maps to merger consume slot in familyRelaySlotsForWall.
             quotaProbe: {
@@ -1509,9 +1523,10 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
       };
     }
-    // #930 / #919 E: live typed path is kind:"judge" only. Residual open-count
-    // / kind:verdict never mints continue — always non-judge unusable paper
-    // (court fail-loud; never open-count second closer).
+    // #930 / #919 E / CR S1: live typed path is kind:"judge" only. Residual
+    // open-count / kind:verdict never mints continue — one shared unusable
+    // paper ({@link unusableResidualOpenCountPaper}, same as single-slice).
+    // Court fail-louds non-judge; never open-count second closer / dual shapes.
     void ctx;
     if (outcome.kind === "judge") {
       const verdict: JudgeVerdict =
@@ -1541,41 +1556,11 @@ export class RealFamilyBackend implements FamilyBackend {
           : {}),
       };
     }
-    // Residual (incl. positive findingsCount): never project to judge continue.
+    // Residual (incl. positive findingsCount / kind:verdict cargo): one unusable
+    // paper only — never kind:cmr+findingsCount dual shape.
     return {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        ...(outcome.converged !== undefined
-          ? { converged: outcome.converged }
-          : {}),
-        ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
-        ...(outcome.findingsCount !== undefined
-          ? { findingsCount: outcome.findingsCount }
-          : {}),
-        ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
-        ...(outcome.successfulLegs !== undefined
-          ? { successfulLegs: outcome.successfulLegs }
-          : {}),
-        ...(outcome.skippedLegs !== undefined
-          ? { skippedLegs: outcome.skippedLegs }
-          : {}),
-        ...(outcome.claimedFixedFindingIdentityKeys !== undefined
-          ? {
-              claimedFixedFindingIdentityKeys:
-                outcome.claimedFixedFindingIdentityKeys,
-            }
-          : {}),
-        ...(outcome.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: outcome.priorFindingDispositions }
-          : {}),
-        ...(outcome.findingFamilies !== undefined
-          ? { findingFamilies: outcome.findingFamilies }
-          : {}),
-        ...(outcome.evidencePaths !== undefined
-          ? { evidencePaths: outcome.evidencePaths }
-          : { evidencePaths: [] }),
-      },
+      output: unusableResidualOpenCountPaper(),
       ...(outcome.sessionId !== undefined
         ? { sessionId: outcome.sessionId }
         : {}),
@@ -2280,8 +2265,9 @@ export class RealFamilyBackend implements FamilyBackend {
         spec.kind === "fixer" ? this.writeFamilyFixFocusFile(landing) : undefined;
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
-        // #899: dedicated decision-gate tag for every gate-capable review-loop
-        // seat. Role tags (verify/fixer/cleanup/docRelease) carry opaque cargo only.
+        // #919 CR T2 / ADR 0132: thin onlineReview station receipt
+        // (completed|escalate). Role cargo (verify/fixer/cleanup/docRelease)
+        // rides opaque sidecar only — never dual decision-gate tag.
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2298,7 +2284,10 @@ export class RealFamilyBackend implements FamilyBackend {
           maxIterations: spec.maxIter,
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
-          output: decisionGateOutput(),
+          output: onlineReviewReceiptOutput(
+            onlineReviewStationReceiptSchema(),
+            ONLINE_REVIEW_RECEIPT_TAG,
+          ),
           // #909: shared sandbox quota-probe.
           quotaProbe: this.familyQuotaProbeContext(spec, ctx),
         });
@@ -2457,15 +2446,24 @@ export class RealFamilyBackend implements FamilyBackend {
       result.output,
       `family-${spec.kind}`,
     );
-    const gate = classifyDecisionGate(typed, `family-${spec.kind}`);
-    if (gate.kind === "bell") {
+    // #919 CR T2: thin onlineReview envelope is sole fate channel.
+    const decoded = decodeOnlineReviewEnvelope(typed);
+    if (!decoded.ok) {
+      throw new Error(
+        `family-${spec.kind}: illegal onlineReview station receipt: ${decoded.reason}`,
+      );
+    }
+    if (decoded.value.status === "escalate") {
       return {
         kind: "escalated",
-        escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
+        escalation: {
+          reason: decoded.value.reason,
+          diagnosis: decoded.value.diagnosis,
+        },
         sessionId,
       };
     }
-    // No-gate typed signal: sidecar/stdout enrich cargo only — never escalate.
+    // completed: sidecar/stdout enrich role cargo only — never escalate.
     // Sparse / unusable cargo completes as role-native opaque miss (ship-aligned);
     // cargo shape is never a #598 process failure (#899 / ADR 0131).
     return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
@@ -4057,31 +4055,37 @@ function parseCmrStdoutCargo(stdout: string): unknown {
  * this self-report as proof of a landed merge: the post-run git state must show
  * a two-parent merge commit with no in-progress conflict.
  *
- * #899: typed Output.object is decision-gate only. Resolve cargo rides on
- * sidecar/stdout and never reintroduces escalate when the typed signal is
- * no-gate `{}` (same class as shipOutcomeFromResult).
+ * #919 CR T2 / ADR 0132: typed Output.object is the thin merger station receipt
+ * (completed | escalate). Resolve cargo rides on sidecar/stdout and never
+ * reintroduces escalate when the typed signal is completed (same class as
+ * shipOutcomeFromResult).
  */
 export function mergerOutcomeFromResult(result: {
   outcomePath?: string;
   stdout: string;
   output?: unknown;
 }): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
-  // Typed decision signal is the sole fate channel for gates.
+  // Typed T2 merger envelope is the sole fate channel for gates.
   if (result.output !== undefined) {
-    const gate = classifyDecisionGate(result.output, "merger");
-    if (gate.kind === "bell") {
+    const decoded = decodeMergerEnvelope(result.output);
+    if (!decoded.ok) {
+      throw new Error(
+        `merger: illegal merger station receipt: ${decoded.reason}`,
+      );
+    }
+    if (decoded.value.status === "escalate") {
       return {
         resolved: false,
-        reason: gate.reason,
+        reason: decoded.value.reason,
         escalation: {
-          reason: gate.reason,
-          diagnosis: gate.diagnosis,
+          reason: decoded.value.reason,
+          diagnosis: decoded.value.diagnosis,
           escalationKind: "decision",
           phase: "wave",
         },
       };
     }
-    // No-gate typed signal: resolve status from cargo only (never escalate).
+    // completed: resolve status from cargo only (never escalate).
     return mergerResolveCargoFromResult(result);
   }
   // No typed signal (pure unit-test cargo path): resolve may enrich, escalate must not.
