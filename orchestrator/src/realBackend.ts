@@ -65,9 +65,9 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
-  decisionGateSignalSchema,
+  decisionGateOutput,
   isMalformedDecisionGate,
-  reaskReceiptOrThrow,
+  logAndRethrowReceiptFailure,
   wellFormedDecisionBell,
   workerReceiptOutput,
   workerReceiptSchema,
@@ -2785,42 +2785,31 @@ export class RealBackend implements Backend {
 
   /**
    * Typed Sandcastle output for ADR 0131 traffic signals (#899):
-   * - reviewer: open-count receipt (`findingsCount` + optional decision bell)
-   * - coder: signal-only decision gate ({@link decisionGateSignalSchema}) so
-   *   malformed bells get same-session native re-ask while ordinary cargo
-   *   fields (committed/commitsAdded) stay untyped and never force cargo-shape
-   *   repair (ADR 0131).
+   * - reviewer: open-count receipt on the `review` tag (`findingsCount` + optional bell)
+   * - coder: always-emitted {@link decisionGateOutput} on the dedicated `decision`
+   *   tag so ordinary `<coder>` cargo stays outside Output.object (missing /
+   *   malformed cargo never forces SO re-ask; ADR 0131).
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     if (spec.role === "reviewer") {
       return workerReceiptOutput("review", workerReceiptSchema("reviewer"));
     }
     if (spec.role === "coder") {
-      return workerReceiptOutput("coder", decisionGateSignalSchema);
+      return decisionGateOutput();
     }
     return undefined;
   }
 
   /**
-   * Resolve the raw structured payload to decode for a step.
-   *
-   * - `typedOutputUsed`: Sandcastle validated the tag into `result.output` —
-   *   that is the only fate channel for decision gates and open-count (#899).
-   * - otherwise: extract the role tag from stdout / sidecar as opaque cargo
-   *   (no fate-signal derivation from unvalidated transports).
+   * Opaque cargo channel (stdout role tag / sidecar). Never a fate source for
+   * decision gates or open-count (#899) — sidecar/stdout only enrich cargo fields.
    */
-  /** Protected so test subclasses can probe the typed vs cargo channel without casts. */
-  protected rawOutputFor(
-    result: { output?: unknown; stdout: string },
+  /** Protected so test subclasses can probe the cargo channel without casts. */
+  protected cargoRawFor(
+    result: { stdout: string },
     spec: StepSpec,
-    typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown | undefined {
-    // Typed receipt owns fate signals. Do not let sidecar/stdout bells override
-    // a schema-validated Output.object (#899 findings 4–5).
-    if (typedOutputUsed && result.output !== undefined) {
-      return result.output;
-    }
     const compatibility = extractRoleReceipt(result.stdout, spec.role);
     try {
       if (options?.outcomeLanding?.path !== undefined) {
@@ -2834,26 +2823,45 @@ export class RealBackend implements Backend {
       );
       return compatibility;
     }
-    if (compatibility !== undefined) {
-      if (typedOutputUsed) {
-        console.warn(
-          `[orchestrator] telemetry: ${spec.id}-${spec.role} used legacy stdout tag compatibility fallback`,
-        );
-      }
-      return compatibility;
+    return compatibility;
+  }
+
+  /**
+   * Resolve the raw structured payload to decode for a step.
+   *
+   * - Reviewer: typed open-count is the sole fate channel when present.
+   * - Coder: typed decision signal is the sole fate channel; cargo is separate.
+   * - Sidecar/stdout never supply escalate / findingsCount fate (#899).
+   */
+  /** Protected so test subclasses can probe the typed vs cargo channel without casts. */
+  protected rawOutputFor(
+    result: { output?: unknown; stdout: string },
+    spec: StepSpec,
+    typedOutputUsed: boolean,
+    options?: AgentStepRunOptions,
+  ): unknown | undefined {
+    // Typed receipt owns fate signals. Do not let sidecar/stdout bells override
+    // a schema-validated Output.object (#899).
+    if (typedOutputUsed && result.output !== undefined) {
+      return result.output;
     }
-    // No receipt channel means no cargo. Do not synthesize worker output from Git.
-    return undefined;
+    const cargo = this.cargoRawFor(result, spec, options);
+    if (typedOutputUsed && cargo !== undefined) {
+      console.warn(
+        `[orchestrator] telemetry: ${spec.id}-${spec.role} used legacy stdout tag compatibility fallback`,
+      );
+    }
+    return cargo;
   }
 
   /** Protected so test subclasses can probe receipt decode without casts. */
   protected decodeOutput(
     spec: StepSpec,
     raw: unknown,
+    cargo?: unknown,
   ): StepOutput {
-    // Well-formed decision bells enter the human loop. Present-but-malformed
-    // escalate fails the Action for #598 — never swallow as 0 / empty cargo
-    // and never invent a decision park from unvalidated partial bells (#899).
+    // Fate from typed signal only. Cargo may ride along for enrichment but
+    // never supplies escalate / findingsCount when typed was the seat policy.
     if (isMalformedDecisionGate(raw)) {
       throw new Error(
         `${spec.id}-${spec.role}: malformed decision gate (empty or non-string reason/diagnosis); failing Action for mechanical redispatch`,
@@ -2871,6 +2879,8 @@ export class RealBackend implements Backend {
         : { kind: "reviewer", findings: [], findingsCount: 0, escalate: decisionBell };
     }
     if (spec.role === "reviewer") {
+      // Open-count fate only from the typed/raw channel — never from a separate
+      // cargo fallback that could reintroduce findingsCount as a fourth channel.
       if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
         // Unusable review cargo — not a zero open-count (ADR 0131).
         return { kind: "coder", committed: false, commitsAdded: 0 };
@@ -2903,12 +2913,14 @@ export class RealBackend implements Backend {
           : {}),
       };
     }
-    // Coder completion is worker-authored opaque cargo. The next reviewer judges.
+    // Coder: decision signal may be `{}` (no gate). Cargo comes from the
+    // ordinary `<coder>` tag / sidecar — never re-read escalate from cargo.
     if (spec.role === "coder") {
-      if (raw === null || typeof raw !== "object") {
+      const cargoBody = cargo !== undefined ? cargo : raw;
+      if (cargoBody === null || typeof cargoBody !== "object" || Array.isArray(cargoBody)) {
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
-      const receipt = raw as Record<string, unknown>;
+      const receipt = cargoBody as Record<string, unknown>;
       return {
         kind: "coder",
         committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
@@ -2969,8 +2981,8 @@ export class RealBackend implements Backend {
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
       // #899: traffic signals attach Output.object(+maxRetries). Reviewer uses
-      // open-count schema; coder uses signal-only decisionGateSignalSchema so
-      // ordinary cargo stays opaque (no committed/commitsAdded shape re-ask).
+      // open-count schema; coder uses dedicated decision-gate tag so ordinary
+      // `<coder>` cargo stays outside SO (no cargo-shape re-ask).
       ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.
@@ -2985,13 +2997,14 @@ export class RealBackend implements Backend {
       // Typed traffic-signal seats: exhaust / non-resumable must exit non-zero
       // so #598 re-dispatches at this fixed position (#899). Never convert SOE
       // into a success empty-cargo fallback that would feed the fixer.
-      return await reaskReceiptOrThrow(
-        async () => { throw err; },
-        `${spec.id}-${spec.role}`,
-      );
+      logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}`);
     }
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-    const output = this.decodeOutput(spec, raw);
+    const cargo =
+      typedOutputUsed && spec.role === "coder"
+        ? this.cargoRawFor(result, spec, options)
+        : undefined;
+    const output = this.decodeOutput(spec, raw, cargo);
     return { output, sessionId: lastSessionId(result) };
     } finally {
       box.cleanup();
@@ -3051,10 +3064,12 @@ export class RealBackend implements Backend {
           issueNumber,
         },
       });
-      const output = this.decodeOutput(
-        spec,
-        this.rawOutputFor(result, spec, typedOutputUsed, options),
-      );
+      const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
+      const cargo =
+        typedOutputUsed && spec.role === "coder"
+          ? this.cargoRawFor(result, spec, options)
+          : undefined;
+      const output = this.decodeOutput(spec, raw, cargo);
       return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
       // Typed receipt exhaust on resume: propagate SOE for #598 (same class as

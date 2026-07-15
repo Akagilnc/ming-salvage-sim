@@ -18,14 +18,15 @@ rule, and the escalate-don't-guess policy all live in the soul + the
 
 When you are done (or are escalating), the real completion evidence is the
 single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
-set, the typed `<merger>` outcome, and the actual merge/git state. For
-compatibility with older runners, emit a single `<merger>` tag on its own line
-containing the same single JSON object. The completion signal is optional
-telemetry and may be printed as an extra line.
+set, the always-emitted typed `<decision>` signal, the opaque `<merger>` cargo
+tag, and the actual merge/git state.
 
-Success / resolved:
+**Always emit both tags** (order: decision, then cargo):
+
+Success / resolved (no gate):
 
 ```text
+<decision>{}</decision>
 <merger>{"resolved": true, "tradeoffs": "<one line: any side picked / note, or empty>"}</merger>
 ```
 
@@ -36,13 +37,13 @@ Success / resolved:
 Escalation (a conflict you must NOT guess at — surface it to a human):
 
 ```text
-<merger>{"resolved": false, "escalate": {"reason": "<short>", "diagnosis": "<why this conflict cannot be resolved without a decision>"}}</merger>
+<decision>{"escalate": {"reason": "<short>", "diagnosis": "<why this conflict cannot be resolved without a decision>"}}</decision>
+<merger>{"resolved": false}</merger>
 ```
 
 Rules:
 
-- The JSON must be valid and match one of the shapes above exactly.
-- Emit the `<merger>` tag as the last typed tag. The optional telemetry line below
-  may follow it.
+- Always emit `<decision>` (even `{}`) — typed gate only.
+- Emit `<merger>` as the last cargo tag. The optional telemetry line below may follow it.
 - For optional telemetry, you may print MERGER_STEP_COMPLETE on its own final line.
 - Never `git merge --abort`. Never invent behaviour. Resolve or escalate.

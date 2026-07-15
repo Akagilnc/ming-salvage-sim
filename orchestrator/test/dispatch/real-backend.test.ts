@@ -1604,7 +1604,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     expect(backend.agentOptions).toHaveLength(1);
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "coder",
+      tag: "decision",
       maxRetries: 2,
     });
     expect(backend.agentOptions[0]!.resumeSession).toBeUndefined();
@@ -1629,7 +1629,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     expect(backend.agentOptions).toHaveLength(1);
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "coder",
+      tag: "decision",
       maxRetries: 2,
     });
   });
@@ -1649,10 +1649,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }),
     ).rejects.toThrow(/malformed decision gate/);
     expect(backend.agentOptions).toHaveLength(1);
-    // Signal-only SO is attached so Sandcastle can re-ask; post-decode still
+    // Dedicated decision-tag SO is attached so Sandcastle can re-ask; post-decode still
     // fails closed when a malformed bell somehow lands past the schema.
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "coder",
+      tag: "decision",
       maxRetries: 2,
     });
   });
@@ -1696,7 +1696,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     // #899: coder signal-only SO exhaust → Action non-zero for #598 redispatch.
     const backend = makeBackend();
     const err = new StructuredOutputError("bad output", {
-      tag: "coder",
+      tag: "decision",
       rawMatched: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }),
       commits: [],
       branch: "feat/x",
@@ -1709,7 +1709,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     })).rejects.toBe(err);
     expect(backend.agentOptions).toHaveLength(1);
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "coder",
+      tag: "decision",
       maxRetries: 2,
     });
   });
@@ -1758,7 +1758,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       sessionId: "prior-coder-session",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "coder",
+      tag: "decision",
       maxRetries: 2,
     });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
@@ -1828,13 +1828,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   });
 
   it("rejects malformed coder decision gates so Sandcastle re-asks while opaque cargo passes", () => {
-    // #899: signal-only decisionGateSignalSchema — ordinary cargo never SO-retries;
-    // present-but-malformed escalate fails schema so Sandcastle same-session re-asks.
+    // #899: dedicated decision-tag schema — objects only; present-but-malformed
+    // escalate fails so Sandcastle same-session re-asks. Ordinary cargo is not SO.
     expect(decisionGateSignalSchema.safeParse({}).success).toBe(true);
-    expect(decisionGateSignalSchema.safeParse({ committed: true }).success).toBe(true);
-    expect(decisionGateSignalSchema.safeParse({ committed: "not-bool" }).success).toBe(true);
-    expect(decisionGateSignalSchema.safeParse(null).success).toBe(true);
-    expect(decisionGateSignalSchema.safeParse("not-object").success).toBe(true);
+    expect(decisionGateSignalSchema.safeParse({ note: "no-gate" }).success).toBe(true);
+    expect(decisionGateSignalSchema.safeParse(null).success).toBe(false);
+    expect(decisionGateSignalSchema.safeParse("not-object").success).toBe(false);
     expect(decisionGateSignalSchema.safeParse({
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
@@ -1846,7 +1845,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       escalate: { reason: "need owner", diagnosis: "" },
     }).success).toBe(false);
     expect(decisionGateSignalSchema.safeParse({
-      committed: true,
+      note: true,
       escalate: { reason: "", diagnosis: "" },
     }).success).toBe(false);
   });

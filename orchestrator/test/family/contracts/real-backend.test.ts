@@ -926,11 +926,11 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
   });
 
   it("a sparse merger decision bell fails the Action instead of inventing a park", () => {
-    // #899: empty escalate is malformed — fail closed for #598, never park with
-    // empty reason/diagnosis and never degrade to a plain conflicted retry.
+    // #899: empty escalate on the typed decision signal fails closed for #598.
     expect(() =>
       mergerOutcomeFromResult({
-        stdout: '<merger>{"resolved":false,"escalate":{}}</merger>',
+        output: { escalate: {} },
+        stdout: "",
       }),
     ).toThrow(/malformed decision gate/);
   });
@@ -1337,13 +1337,8 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       }
       const dir = trackTempDir(`review-loop-typed-vs-sidecar-${role}-`);
       const outcomePath = join(dir, "outcome.json");
-      writeFileSync(
-        outcomePath,
-        JSON.stringify({
-          escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
-        }),
-        "utf8",
-      );
+      // Typed decision signal is no-gate (`{}`). Role cargo + a spoof escalate
+      // ride on the sidecar; only cargo is admitted (escalate cannot override).
       const cargo: Record<string, unknown> =
         role === "verify"
           ? { converged: true }
@@ -1352,6 +1347,14 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
             : role === "cleanup"
               ? { terminal: true, ok: true }
               : { released: true };
+      writeFileSync(
+        outcomePath,
+        JSON.stringify({
+          ...cargo,
+          escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+        }),
+        "utf8",
+      );
       const be = new Harness({
         workingRepo: dir,
         familyBase: "fb",
@@ -1364,7 +1367,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         familyBaseStartHead: "abc",
       });
       const out = be.classify(
-        { output: cargo, stdout: "" },
+        { output: {}, stdout: "" },
         role,
         outcomePath,
       );
@@ -1483,18 +1486,19 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   });
 
   it("preserves cmr verdict and findingsCount after trimming CRLF stdout", () => {
-    // #899: open-count is the receipt's findingsCount field, not a stdout sentinel.
+    // #899: open-count is the typed receipt's findingsCount field only.
+    const receipt = {
+      converged: false,
+      reason: "two findings remain",
+      findingsCount: 2,
+      successfulLegs: ["gpt-5.6-sol"],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      evidencePaths: ["cmr/review.json"],
+    };
     const outcome = cmrOutcomeFromResult({
-      stdout:
-        "\r\n  <cmr>" + JSON.stringify({
-          converged: false,
-          reason: "two findings remain",
-          findingsCount: 2,
-          successfulLegs: ["gpt-5.6-sol"],
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
-          evidencePaths: ["cmr/review.json"],
-        }) + "</cmr>\r\n  ",
+      output: receipt,
+      stdout: "\r\n  <cmr>" + JSON.stringify(receipt) + "</cmr>\r\n  ",
     });
 
     expect(outcome).toMatchObject({
@@ -1594,24 +1598,17 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   });
 
   it("parses cmr sidecar payloads directly when free-form text contains a cmr tag delimiter", () => {
-    const dir = trackTempDir("cmr-outcome-delimiter-");
-    const outcomePath = join(dir, "outcome.json");
-    writeFileSync(
-      outcomePath,
-      JSON.stringify({
-        escalate: {
-          reason: "review unavailable",
-          diagnosis: "diagnosis quoted the literal </cmr> delimiter",
-          escalationKind: "decision",
-        },
-      }) + "\n",
-      "utf8",
-    );
-
+    // #899: decision bells enter fate only via typed Output.object; sidecar is
+    // cargo. Typed escalate still works when free-form text quotes </cmr>.
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
-      outcomePath,
+      output: {
+        escalate: {
+          reason: "review unavailable",
+          diagnosis: "diagnosis quoted the literal </cmr> delimiter",
+        },
+      },
     });
 
     expect(outcome).toEqual({

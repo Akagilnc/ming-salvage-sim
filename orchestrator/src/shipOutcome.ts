@@ -90,11 +90,11 @@ const prOpenedSchema = z
     pr: nonEmpty,
   })
   .passthrough();
+
 /**
- * Prefer Sandcastle typed receipt for decision gates (#899). Machine sidecar is
- * the cargo delivery channel when typed output is absent (#820). Stdout is
- * telemetry only — never promotes delivery reports or unvalidated bells into
- * fate (#820 / #899).
+ * Prefer Sandcastle typed decision signal for gates (#899). Machine sidecar is
+ * the opaque delivery-cargo channel only — never promotes escalation into fate
+ * when typed output is absent (#899). Stdout is telemetry only.
  */
 export function shipOutcomeFromResult(result: {
   completionSignal?: string | string[];
@@ -102,23 +102,38 @@ export function shipOutcomeFromResult(result: {
   stdout: string;
   output?: unknown;
 }): ShipWorkerOutcome {
+  // Typed Output.object is the sole fate channel for decision gates.
   if (result.output !== undefined) {
-    return classifyShipOutcomePayload(result.output);
+    if (isMalformedDecisionGate(result.output)) {
+      throw new Error(
+        "ship: malformed decision gate (empty or non-string reason/diagnosis); failing Action for mechanical redispatch",
+      );
+    }
+    const decisionBell = wellFormedDecisionBell(result.output);
+    if (decisionBell !== undefined) {
+      return { kind: "escalate", ...decisionBell };
+    }
+    // Signal present with no gate (`{}`): enrich delivery cargo from sidecar only.
+    // Do not re-parse escalate from cargo (fourth channel).
+    return shipCargoFromSidecar(result.outcomePath);
   }
+  // No typed signal: exit code is enough for process success. Sidecar may still
+  // enrich delivery cargo (status/pr) but MUST NOT supply escalate (#899).
+  return shipCargoFromSidecar(result.outcomePath);
+}
+
+function shipCargoFromSidecar(outcomePath: string | undefined): ShipWorkerOutcome {
   try {
-    if (result.outcomePath !== undefined) {
-      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+    if (outcomePath !== undefined) {
+      const sidecar = readWorkerOutcomeSidecar(outcomePath);
       if (sidecar !== undefined) {
-        const classified = classifyShipOutcomePayload(sidecar);
-        if (classified.kind === "escalate") return classified;
-        return classified.kind === "shipped" ? classified : { kind: "completed" };
+        return classifyShipCargoPayload(sidecar);
       }
     }
   } catch {
     // Unreadable sidecar: do not promote stdout delivery or bells into fate.
     return { kind: "completed" };
   }
-  // No typed receipt and no readable sidecar → clean exit is enough (ADR 0131).
   return { kind: "completed" };
 }
 
@@ -132,6 +147,9 @@ export function shipOutcomeFromResult(result: {
  * The escalation block is probed before cargo parsing and accepts unknown sibling
  * fields. A cargo parse miss cannot override the clean exit or suppress a bell.
  * Only the LAST `<ship>` tag is read (the worker may iterate / self-rerun).
+ *
+ * @deprecated Prefer {@link shipOutcomeFromResult}. Stdout is not a fate channel
+ * for production ship seats (#820 / #899); kept for unit tests of tag shapes.
  */
 export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
   const re = /<ship>([\s\S]*?)<\/ship>/g;
@@ -149,6 +167,7 @@ export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
   return classifyShipOutcomePayload(parsed);
 }
 
+/** Full classify including decision-gate fate (typed channel / unit tests). */
 function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "completed" };
@@ -167,8 +186,17 @@ function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
       ...decisionBell,
     };
   }
-  // Best-effort cargo enrichment after the independent bell probe. A parse miss
-  // may reduce cargo richness, but shipOutcomeFromResult never lets it change fate.
+  return classifyShipCargoPayload(parsed);
+}
+
+/**
+ * Delivery-cargo only: status/pr enrichment. Never promotes escalate into fate
+ * (sidecar/stdout fourth-channel ban, #899).
+ */
+function classifyShipCargoPayload(parsed: unknown): ShipWorkerOutcome {
+  if (parsed === null || typeof parsed !== "object") {
+    return { kind: "completed" };
+  }
   const pushed = pushedSchema.safeParse(parsed);
   if (pushed.success) {
     return {

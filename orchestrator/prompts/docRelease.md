@@ -29,6 +29,9 @@ push failure → `released: false` (or no valid tag). Auto-merge must not procee
 
 ## Output
 
+Always emit `<decision>{}</decision>` (or with `escalate`) before the role cargo tag.
+
+
 Emit `<docRelease>` JSON. Thin schema only:
 
 ```json
