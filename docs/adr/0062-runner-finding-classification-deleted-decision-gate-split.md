@@ -1,18 +1,16 @@
-Status: Accepted（2026-07-06：源于 #497/#498 实证与 #604；本地 kill-axis cmr + 线上 4-bot 收敛，PR #605 合入）
+Status: Proposed
 
-Revised by: ADR 0129（findings 状态机与三态取数改由状态库定义；runner 纯调度边界不变）
-
-> **前向废止（ADR 0131，2026-07-13 owner 裁决）**：通道 (b) 语义改为「reviewer 自报 open-count，说几条就是几条，不派生不对账」（状态库时代：复审员写的行即申报）；runner 零卷面校验、**永不自己按决策门**（通道 (c) 只转运 worker 按的门）；评审类卷面原料递 fixer，coder/ship completed（exit 0）照常进下一棒，cargo 只透传，runner 永不查询 git/host 裁命运。本 ADR 旧「缺覆盖 = malformed → 机械重试重派 reviewer」与「typed 治理住 runner 层」两段已随 #890 收口从正文移除，其残余授权由 0131 正式废止。见 ADR 0131。
+Current authority: ADR 0131 完整定义 Runner 三通道，ADR 0129 定义 findings 状态，#869 定义现行接力拓扑。本 ADR 只保留“删除 finding 内容分类”与“进程失败和 worker 主动决策门分家”两项决定。
 
 # 0062: 删除 runner 侧 finding 分类，失败 escalate 与人类决策门分家（回归 0026/0050，supersede #448/#449 路线）
 
 ## 决定
 
-runner 回归纯调度三功能——(a) worker exit 0/1 → 异常重试/正常继续，不看工作内容；(b) 查询 findings 状态库未决数：0 过、非 0 退给 coder/fixer（仅 review loop）；(c) worker 发「需人类拍板」→ 挂起 park → 决策走 durable 通道 → 答案注回原 session 原地 resume，driver 不退。据此删除按 finding 内容分类路由的整套 apparatus（`cmrClassification.ts` / `cmrFixableFindings.ts` 及 reviewer 输出中的 disposition/route 字段），任何 finding 不得由 runner 依内容终止 run；「真失败退出（escalate：infra 挂/重试耗尽）」与「人类决策门（挂起待裁后续跑）」拆为两个独立概念，不共用 escalation 一词。#448/#449 的 classify-defers 路线被 supersede——其要防的「defer 当免修后门」由「非 0 findings 必进 fix loop」这条机械规则天然堵死，不需要内容分类。
+删除按 finding 内容分类路由的整套 apparatus（`cmrClassification.ts` / `cmrFixableFindings.ts` 及 reviewer 输出中的 disposition / route 字段）。reviewer 自报 open-count，Runner 只把它当作 ADR 0131 的交通信号；现行接力只读 live #869。Runner 不查询状态库、不读取 finding 内容。进程非零退出的机械重试与 worker 主动提交的人类决策门拆成两个概念；Runner 只转运后者，不得自己合成或按下决策门。#448/#449 的 classify-defers 路线被 supersede。
 
-**澄清「driver 不退」（2026-07-06，随 #604 slice 5 落）**：(c) 的「driver 不退」是 **run 语义级**——run 不落终态、不被当失败关掉、上下文不丢、始终可续；**不是 OS 进程生命周期**。实现取「退出-重入 + durable ledger 挂起」：撞决策题时进程可退出、把待答状态持久化进 ledger，人 append 答案行后重入、用原 sessionId 在原 session 原地 resume，绝不从头重跑。**长活阻塞 / 进程驻留轮询模型否**。三个内证：拍板句里「决策走 durable 通道」本身排除内存阻塞（要阻塞在内存等，就不需要 durable）；「不退」的对举对象是同段「真失败退出」而非进程退出；全项目无一处靠「进程驻留」保状态（同 ADR 0008 delta ready=1、崩溃断点续跑、从不依赖进程活着）。
+**澄清「driver 不退」（2026-07-06，随 #604 slice 5 落）**：worker 主动提交 decision gate 后，run / scene / fixed position 保持可续，且不依赖 OS 进程驻留。回答后，当前席位确有已捕获、可恢复 session 时才 ordinary resume；否则保留同一 scene 并进入新的 invocation / relay。恢复与选座契约只读 #868 / #902、ADR 0128 / 0134。
 
-**三态宪法（ADR 0129 收口）**：runner 只看未决 findings 为 0、未决 findings 大于 0、需要人类决定。finding 富内容在专业 worker 间直达；状态合法性由状态库写入点校验。runner 不接 worker outcome JSON，不核 finding id/disposition、commit/head、测试或证据一致性。
+**现行边界（ADR 0131）**：Runner 只读进程 exit code、reviewer 自报的 open-count，或转运 worker 主动提交的 decision gate。finding 富内容在专业 worker 间直达；Runner 不接 worker outcome JSON，不查询状态库，不核 finding id / disposition、commit / HEAD、测试或证据一致性。
 
 ## 后果
 

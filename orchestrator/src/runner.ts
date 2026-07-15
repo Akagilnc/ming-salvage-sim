@@ -62,8 +62,11 @@ import {
   isQuotaWaitForResetError,
   QuotaWaitForResetError,
   poolForModelRef,
-  type QuotaWaitForResetLedgerEvent,
 } from "./quotaProbe.js";
+import {
+  parkOrRelayQuotaWall,
+  parkQuotaWaitForReset,
+} from "./quotaParkRelay.js";
 import {
   applyCoderRecToRoute,
   applyRuntimeTightRoutePolicy,
@@ -72,6 +75,7 @@ import {
   degradeOptionalRouteSmokeFailures,
   routeConflictSlugsExcluding,
   resolveActiveModelRoute,
+  knownLiveBillingPoolsFromRoute,
   withCoderSlot,
   type ModelRouteEnv,
   type ResolvedModelRoute,
@@ -79,6 +83,7 @@ import {
 import {
   resolveCoderRecOrder,
   lookupCoderRosterEntry,
+  completedS6RoundsFromLedger,
   CODER_REC_FALLBACK_AFTER_ROUNDS,
   type CoderRosterEntry,
 } from "./coderRoster.js";
@@ -86,15 +91,14 @@ import {
   DEFAULT_PARK_THRESHOLD_MS,
   billingPoolForModelRef,
   billingPoolFromQuotaPool,
-  buildDefaultBillingPools,
   findLiveBillingPoolForModel,
+  resolveRelayPools as resolveRelayPoolsFromTable,
   type BillingPoolEntry,
   type BillingPoolId,
   type NextRelayBaton,
 } from "./quotaPoolTable.js";
 import {
   canRelayHandoff,
-  forkQuotaWallAt683Point,
   isRelayCandidateExhaustion,
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
@@ -471,260 +475,6 @@ function sliceQuotaWaitPending(
     }
   }
   return undefined;
-}
-
-/**
- * #683 park / #686 relay fork at the quota-wall disposition point.
- * Within T or no live baton → existing park family (escalate + quota_wait marker).
- * Beyond T + live baton → write relay_baton_handoff + .relay-focus.md and return
- * the next baton for the caller to apply + re-dispatch.
- */
-async function parkOrRelayQuotaWall(opts: {
-  readonly step: SliceStepId;
-  readonly err: QuotaWaitForResetError;
-  readonly ledger: LedgerEntry[];
-  readonly stateDir: string | undefined;
-  readonly sessionId: string;
-  readonly backend: Backend;
-  readonly resolveBranchHEAD: () => Promise<string>;
-  readonly hashPrompt: (
-    promptFile: string | undefined,
-    step: SliceStepId,
-  ) => Promise<string>;
-  readonly worktreePath: string | undefined;
-  readonly currentModelId: string;
-  readonly currentPool: BillingPoolId;
-  readonly rosterOrder: ReadonlyArray<
-    import("./coderRoster.js").CoderRosterEntry
-  >;
-  readonly pools: ReadonlyArray<BillingPoolEntry>;
-  readonly reviewerSlugs?: ReadonlyArray<string>;
-  readonly reviewerSlugsForCandidate?: (
-    candidate: CoderRosterEntry,
-  ) => ReadonlyArray<string>;
-  readonly parkThresholdMs?: number;
-  readonly now: Date;
-  readonly state_summary?: string;
-}): Promise<
-  | { readonly kind: "park"; readonly result: RunResult }
-  | {
-      readonly kind: "relay";
-      readonly nextBaton: NextRelayBaton;
-      readonly ledgerEntry: RelayHandoffLedgerEvent;
-      readonly focusPath: string | undefined;
-    }
-> {
-  const {
-    err,
-    step,
-    ledger,
-    stateDir,
-    sessionId,
-    backend,
-  } = opts;
-  const disposition = err.disposition;
-  if (disposition.kind !== "wait_for_reset") {
-    // Defensive: QuotaWaitForResetError constructor already requires this.
-    return {
-      kind: "park",
-      result: await parkQuotaWaitForResetLegacy({
-        step,
-        err,
-        ledger,
-        stateDir,
-        sessionId,
-        backend,
-        resolveBranchHEAD: opts.resolveBranchHEAD,
-        hashPrompt: opts.hashPrompt,
-      }),
-    };
-  }
-
-  const forked = forkQuotaWallAt683Point({
-    disposition,
-    now: opts.now,
-    parkThresholdMs: opts.parkThresholdMs ?? DEFAULT_PARK_THRESHOLD_MS,
-    currentModelId: opts.currentModelId,
-    currentPool: opts.currentPool,
-    rosterOrder: opts.rosterOrder,
-    pools: opts.pools,
-    reviewerSlugs: opts.reviewerSlugs,
-    reviewerSlugsForCandidate: opts.reviewerSlugsForCandidate,
-    state_summary:
-      opts.state_summary ??
-      `quota wall on ${opts.currentPool}; uncommitted drift preserved`,
-    step,
-  });
-
-  if (forked.tier === "relay" && forked.nextBaton && forked.ledgerEntry) {
-    const entry = forked.ledgerEntry;
-    // Stage the new brief while the previous durable baton remains consumable.
-    // Promote only after the matching ledger row commits.
-    const staged = tryStageRelayFocusFile(opts.worktreePath, entry);
-    if (!staged.ok) {
-      return {
-        kind: "park",
-        result: await parkQuotaWaitForResetLegacy({
-          step,
-          err,
-          ledger,
-          stateDir,
-          sessionId,
-          backend,
-          resolveBranchHEAD: opts.resolveBranchHEAD,
-          hashPrompt: opts.hashPrompt,
-        }),
-      };
-    }
-    const marker: LedgerEntry = {
-      step: isValidStepId(entry.step) ? entry.step : step,
-      event: "relay_baton_handoff",
-      trigger: entry.trigger,
-      state_summary: entry.state_summary,
-      ...(entry.remaining !== undefined ? { remaining: entry.remaining } : {}),
-      ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-      fromModelId: entry.fromModelId,
-      fromPool: entry.fromPool,
-      toModelId: entry.toModelId,
-      toPool: entry.toPool,
-      ts: entry.ts,
-    };
-    if (stateDir !== undefined) {
-      try {
-        await backend.writeLedger(
-          {
-            ...marker,
-            sessionId,
-            prompt_hash: await opts.hashPrompt(undefined, step),
-            branchHEAD: await opts.resolveBranchHEAD(),
-            ts: entry.ts,
-          },
-          stateDir,
-        );
-      } catch {
-        staged.focus.discard();
-        return {
-          kind: "park",
-          result: await parkQuotaWaitForResetLegacy({
-            step,
-            err,
-            ledger,
-            stateDir,
-            sessionId,
-            backend,
-            resolveBranchHEAD: opts.resolveBranchHEAD,
-            hashPrompt: opts.hashPrompt,
-          }),
-        };
-      }
-    }
-    try {
-      staged.focus.commit();
-    } catch {
-      return {
-        kind: "park",
-        result: await parkQuotaWaitForResetLegacy({
-          step, err, ledger, stateDir, sessionId, backend,
-          resolveBranchHEAD: opts.resolveBranchHEAD, hashPrompt: opts.hashPrompt,
-        }),
-      };
-    }
-    ledger.push(marker);
-    return {
-      kind: "relay",
-      nextBaton: forked.nextBaton,
-      ledgerEntry: entry,
-      focusPath: staged.focus.path,
-    };
-  }
-
-  // park / park_fallback — identical to #683 park family.
-  return {
-    kind: "park",
-    result: await parkQuotaWaitForResetLegacy({
-      step,
-      err,
-      ledger,
-      stateDir,
-      sessionId,
-      backend,
-      resolveBranchHEAD: opts.resolveBranchHEAD,
-      hashPrompt: opts.hashPrompt,
-    }),
-  };
-}
-
-/**
- * #683 park: 429/quota wall → status escalate (resumable), not S8(error).
- * Mirror CI-pending park: ledger marker + stopSummary, no sticky failure.
- */
-async function parkQuotaWaitForResetLegacy(opts: {
-  readonly step: SliceStepId;
-  readonly err: QuotaWaitForResetError;
-  readonly ledger: LedgerEntry[];
-  readonly stateDir: string | undefined;
-  readonly sessionId: string;
-  readonly backend: Backend;
-  readonly resolveBranchHEAD: () => Promise<string>;
-  readonly hashPrompt: (
-    promptFile: string | undefined,
-    step: SliceStepId,
-  ) => Promise<string>;
-}): Promise<RunResult> {
-  const { err, step, ledger, stateDir, sessionId, backend } = opts;
-  const ledgerEntry: QuotaWaitForResetLedgerEvent =
-    err.applied.ledgerEntry ?? {
-      event: "quota_wait_for_reset",
-      pool: err.pool,
-      reason: err.disposition.reason,
-      step,
-      ts: new Date().toISOString(),
-      ...(err.disposition.resetAt !== undefined
-        ? { resetAt: err.disposition.resetAt.toISOString() }
-        : {}),
-    };
-  const marker: LedgerEntry = {
-    step: isValidStepId(ledgerEntry.step) ? ledgerEntry.step : step,
-    event: "quota_wait_for_reset",
-    pool: ledgerEntry.pool,
-    reason: ledgerEntry.reason,
-    ts: ledgerEntry.ts,
-    ...(ledgerEntry.resetAt !== undefined ? { resetAt: ledgerEntry.resetAt } : {}),
-    ...(ledgerEntry.workerPid !== undefined
-      ? { workerPid: ledgerEntry.workerPid }
-      : {}),
-  };
-  ledger.push(marker);
-  if (stateDir !== undefined) {
-    try {
-      await backend.writeLedger(
-        {
-          ...marker,
-          sessionId,
-          prompt_hash: await opts.hashPrompt(undefined, step),
-          branchHEAD: await opts.resolveBranchHEAD(),
-          ts: ledgerEntry.ts,
-        },
-        stateDir,
-      );
-    } catch {
-      // Best-effort durable park marker — in-memory ledger still holds it.
-    }
-  }
-  const resetHint =
-    ledgerEntry.resetAt !== undefined
-      ? ` (resetAt ${ledgerEntry.resetAt})`
-      : "";
-  return {
-    status: "escalate",
-    stepLedger: ledger,
-    stopSummary: {
-      reason: "provider_degraded",
-      summary: `quota wait for reset on pool ${ledgerEntry.pool}${resetHint}`,
-      repairHint:
-        "wait for the provider quota to reset, then re-feed — resume re-enters the parked step (auto re-dispatch is #686)",
-    },
-  };
 }
 
 function executableLedgerEntries(
@@ -1767,6 +1517,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   /** #686 — last applied relay baton's billing pool (drives next exhaustion lookup). */
   let currentBillingPool: BillingPoolId | undefined;
   /**
+   * Correctness B3 — run-scoped pools that already hit a quota wall this run.
+   * Excluded from route-smoke knownLive promotion so a smoke-passed pool cannot
+   * re-enter as a live baton and ping-pong until the handoff cap.
+   */
+  const wallHitBillingPools = new Set<BillingPoolId>();
+  /**
    * #686 — sticky resource-relay baton slug. Scopes stickiness to resource
    * handoffs only: blocks Coder-Rec snap-back while nonConvergingRounds === 0,
    * but clears so #767 quality advance (S6 rounds) still runs.
@@ -1816,11 +1572,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (stickyRelayCoderFixSlug !== undefined) {
       stickyRelayCoderFixSlug = undefined;
     }
-    const applied = applyCoderRecToRoute(
-      modelRoute,
-      coderRecIssueBody,
-      nonConvergingRounds,
-    );
+    let applied: ReturnType<typeof applyCoderRecToRoute>;
+    try {
+      applied = applyCoderRecToRoute(
+        modelRoute,
+        coderRecIssueBody,
+        nonConvergingRounds,
+      );
+    } catch (err) {
+      // #906: broken Coder-Rec mark / unregistered model → admission fail-closed
+      // (same family as route smoke failure): escalate, zero dispatch.
+      const diagnosis = err instanceof Error ? err.message : String(err);
+      return {
+        kind: "stop",
+        escalation: {
+          reason: "Coder-Rec admission failure",
+          diagnosis,
+        },
+      };
+    }
     if (applied.skippedForEnvOverride) {
       coderRecEnvSkipped = true;
       return undefined;
@@ -1850,18 +1620,37 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     });
   };
 
-  const stopForCoderRecTightRoutePolicy = (escalation: {
+  const stopForCoderRecTightRoutePolicy = async (escalation: {
     readonly reason: string;
     readonly diagnosis: string;
-  }): RunResult => {
+  }): Promise<RunResult> => {
     const stopSummary = stopSummaryForStartupRouteFailure(escalation);
+    // #899: this stop can fire MID-RUN (the S2/S5 advance path), not only at
+    // startup. It used to return an inline RunResult with an in-memory-only
+    // S8 — no disk row, no output — so the family saw a bare "failed", resume
+    // could not classify the breakpoint, and every re-ignition replayed the
+    // whole run from scratch. Terminal returns must speak and persist.
+    console.error(
+      `[orchestrator] ${escalation.reason}: ${escalation.diagnosis}`,
+    );
+    ledger.push({ step: "S8", stopSummary });
+    await persistBestEffort(
+      "S8",
+      undefined,
+      undefined,
+      "escalate",
+      undefined,
+      undefined,
+      "failure",
+      stopSummary,
+    );
     return {
       status: "escalate",
       errorPackage: {
         failedStep: "S0",
         reason: `${escalation.reason}: ${escalation.diagnosis}`,
       },
-      stepLedger: [{ step: "S8", stopSummary }],
+      stepLedger: ledger,
       stopSummary,
     };
   };
@@ -1980,17 +1769,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const resolveRelayPools = (
     limitedPool: BillingPoolId,
     resetAt: Date | undefined,
+    /**
+     * Quota-wall path only: promote route-smoke-passed pools to live so a 429
+     * beyond T can apply a real baton without test-only `relayPools` injection.
+     * Resource / mechanical-retry paths leave this false — their live evidence
+     * is first-leg proof / hang probe, not smoke of unrelated route slots.
+     */
+    forQuotaWall = false,
   ): ReadonlyArray<BillingPoolEntry> => {
-    if (input.relayPools !== undefined) {
-      return input.relayPools.map((p) => ({
-        id: p.id as BillingPoolId,
-        status: p.status,
-        ...(p.resetAt !== undefined ? { resetAt: p.resetAt } : {}),
-        parkThresholdMs: p.parkThresholdMs,
-        models: p.models,
-      }));
-    }
-    return buildDefaultBillingPools({ limitedPool, resetAt });
+    if (forQuotaWall) wallHitBillingPools.add(limitedPool);
+    return resolveRelayPoolsFromTable(
+      limitedPool,
+      resetAt,
+      input.relayPools,
+      forQuotaWall
+        ? knownLiveBillingPoolsFromRoute(modelRoute)
+        : undefined,
+      forQuotaWall ? wallHitBillingPools : undefined,
+    );
   };
 
   const hasExplicitRelayPools = input.relayPools !== undefined;
@@ -2055,9 +1851,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     activeRelayStep = undefined;
   };
 
+  // #899: count COMPLETED S6 rounds only — monitor-spawn / bookkeeping event
+  // rows share the S6 step id and were doubling one round into two (see
+  // completedS6RoundsFromLedger).
   const coderRecRoundsFromLedger = (
     entries: ReadonlyArray<LedgerEntry>,
-  ): number => entries.reduce((n, e) => (e.step === "S6" ? n + 1 : n), 0);
+  ): number => completedS6RoundsFromLedger(entries);
   // Family-run context (ADR 0022 decision 2). Production always supplies this
   // for a child. Focused skeleton tests may omit it and cut from the test base;
   // S7 remains a local handoff in either case.
@@ -2792,7 +2591,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       coderRecRoundsFromLedger(ledger.filter((entry) => isStepId(entry.step))),
     );
     if (coderRecPolicy?.kind === "stop") {
-      return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+      return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
     const relayResume = resumeRelayFromLedger(
       resumeLedger.filter(
@@ -2935,7 +2734,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         coderRecIssueBody = meta.body;
         const coderRecPolicy = await applyCoderRecSelection(0);
         if (coderRecPolicy?.kind === "stop") {
-          return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+          return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
         }
 
         const smokeResult = await ensureRouteSmoke();
@@ -2995,7 +2794,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             coderRecRoundsFromLedger(ledger),
           );
           if (coderRecPolicy?.kind === "stop") {
-            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+            return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
           }
         }
         break;
@@ -3027,7 +2826,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             coderRecRoundsFromLedger(ledger),
           );
           if (coderRecPolicy?.kind === "stop") {
-            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+            return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
           }
           if (!routeSmokeChecked) {
             const smokeResult = await ensureRouteSmoke();
@@ -3378,7 +3177,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             const currentPool =
               currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
             if (!canRelayInProcess()) {
-              return await parkQuotaWaitForResetLegacy({
+              return await parkQuotaWaitForReset({
                 step,
                 err,
                 ledger,
@@ -3403,7 +3202,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentModelId: modelIdForWallStep(step),
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-              pools: resolveRelayPools(currentPool, err.disposition.resetAt),
+              // #909 production live path: route-smoke knownLive for quota walls.
+              pools: resolveRelayPools(
+                currentPool,
+                err.disposition.resetAt,
+                true,
+              ),
               reviewerSlugsForCandidate: (candidate) =>
                 reviewerSlugsForRelayCandidate(candidate, step),
               now: relayNow(),

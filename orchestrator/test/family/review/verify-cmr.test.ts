@@ -26,6 +26,7 @@ import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
+import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import { runnerSynthesizedFailureEscalation } from "../../../src/runnerEscalation.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type {
@@ -1636,6 +1637,136 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     });
     expect(cmrResult).toEqual({ ok: false, ran: true });
     expect(cmrBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
+  });
+
+  it("#909: QuotaWaitForResetError from family cmr is rethrown — not swallowed as failed leg-kill", async () => {
+    // dispatchOrAbort's outer catch used to map ANY throw into
+    // `{kind:"failed", reason:"…threw on startup"}`, collapsing a 429 park signal
+    // into generic leg failure. Quota wait must surface as QuotaWaitForResetError
+    // so upper family/runner park/relay can consume it (same as single-slice).
+    const resetAt = new Date("2026-07-08T16:10:00.000Z");
+    class QuotaWaitCmrBackend extends BareFamilyBackend {
+      readonly aborted: FamilyAbortedEvent[] = [];
+      dispatches = 0;
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+        this.aborted.push(event);
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "cmr") {
+          this.dispatches += 1;
+          throw new QuotaWaitForResetError({
+            disposition: {
+              kind: "wait_for_reset",
+              pool: "zai",
+              resetAt,
+              reason: "quota limited (429); wait for reset",
+            },
+            applied: {
+              killed: false,
+              ledgerEntry: {
+                event: "quota_wait_for_reset",
+                pool: "zai",
+                resetAt: resetAt.toISOString(),
+                reason: "quota limited (429); wait for reset",
+                step: "S3",
+                workerPid: 0,
+                ts: "2026-07-08T12:00:00.000Z",
+              },
+            },
+            pool: "zai",
+            probe: { kind: "quota_limited", resetAt, detail: "429" },
+          });
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: true,
+            findingsCount: 0,
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+            ...CMR_EVIDENCE,
+          },
+        };
+      }
+    }
+
+    const backend = new QuotaWaitCmrBackend();
+    await expect(
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/291-base",
+        familyBackend: backend,
+      }),
+    ).rejects.toBeInstanceOf(QuotaWaitForResetError);
+    // Not mechanical-retried either (withMechanicalRetry already rethrows).
+    expect(backend.dispatches).toBe(1);
+    // Must NOT look like generic startup failed / INCOMPLETE_GATE abort.
+    expect(backend.aborted).toHaveLength(0);
+  });
+
+  it("#909: QuotaWaitForResetError from family ship is rethrown — not failed ship leg", async () => {
+    const resetAt = new Date("2026-07-08T16:10:00.000Z");
+    class QuotaWaitShipBackend extends BareFamilyBackend {
+      readonly aborted: FamilyAbortedEvent[] = [];
+      shipDispatches = 0;
+      async runFamilyVerify(): Promise<FamilyVerifyResult> {
+        return { ok: true };
+      }
+      async recordAborted(event: FamilyAbortedEvent): Promise<void> {
+        this.aborted.push(event);
+      }
+      async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+        if (spec.kind === "ship") {
+          this.shipDispatches += 1;
+          throw new QuotaWaitForResetError({
+            disposition: {
+              kind: "wait_for_reset",
+              pool: "zai",
+              resetAt,
+              reason: "quota limited (429); wait for reset",
+            },
+            applied: {
+              killed: false,
+              ledgerEntry: {
+                event: "quota_wait_for_reset",
+                pool: "zai",
+                resetAt: resetAt.toISOString(),
+                reason: "quota limited (429); wait for reset",
+                step: "S7",
+                workerPid: 0,
+                ts: "2026-07-08T12:00:00.000Z",
+              },
+            },
+            pool: "zai",
+            probe: { kind: "quota_limited", resetAt, detail: "429" },
+          });
+        }
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: true,
+            findingsCount: 0,
+            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+            ...CMR_EVIDENCE,
+          },
+        };
+      }
+    }
+
+    const backend = new QuotaWaitShipBackend();
+    await expect(
+      runVerifyCmr({
+        phase: "final",
+        familyBase: "family/291-base",
+        familyBackend: backend,
+      }),
+    ).rejects.toBeInstanceOf(QuotaWaitForResetError);
+    expect(backend.shipDispatches).toBe(1);
+    expect(backend.aborted).toHaveLength(0);
   });
 
   it("a cmr worker failed result for missing dependencies is recorded as infra_failure", async () => {

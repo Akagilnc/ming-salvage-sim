@@ -118,9 +118,10 @@ export function billingPoolFromQuotaPool(pool: string): BillingPoolId {
 export const DEFAULT_POOL_MODELS: Readonly<
   Record<BillingPoolId, ReadonlyArray<string>>
 > = {
+  // #905: grok-4.5 only on SuperGrok / grok-build — no cursor/zai transit.
   "grok-build": ["grok-4.5"],
-  cursor: ["grok-4.5"],
-  zai: ["grok-4.5"],
+  cursor: [],
+  zai: [],
   "codex-5h": [
     "terra@med",
     "luna@med",
@@ -157,8 +158,8 @@ export function billingPoolForModelRef(
  * Build a route pool table for a quota-wall disposition: the wall-hit pool is
  * `limited` (with resetAt). Every other billing pool defaults to **not-live**
  * (`dead`) unless the caller supplies a probed/override table via
- * `RunInput.relayPools` — unknown pool state must not fabricate live batons
- * (#686 R2 / iron rule: park when unprobed).
+ * `RunInput.relayPools` / `FamilyRunInput.relayPools` — unknown pool state must
+ * not fabricate live batons (#686 R2 / iron rule: park when unprobed).
  */
 export function buildDefaultBillingPools(input: {
   readonly limitedPool: BillingPoolId;
@@ -189,6 +190,66 @@ export function buildDefaultBillingPools(input: {
       parkThresholdMs: t,
       models: DEFAULT_POOL_MODELS[id],
     };
+  });
+}
+
+/**
+ * Loose pool-table row accepted on {@link RunInput.relayPools} /
+ * {@link FamilyRunInput.relayPools} (tests + probed production tables).
+ */
+export type RelayPoolOverride = {
+  readonly id: string;
+  readonly status: BillingPoolStatus;
+  readonly resetAt?: Date;
+  readonly parkThresholdMs: number;
+  readonly models: ReadonlyArray<string>;
+};
+
+/**
+ * Shared single-slice + family seam: use an explicit probed/override table when
+ * present; otherwise {@link buildDefaultBillingPools} (wall-hit limited, rest
+ * dead) then promote any {@link knownLivePools} (route-smoke / probe evidence)
+ * to `live`. Explicit override is authoritative — tests and production probes
+ * that pass a full table are not rewritten. Never invents live batons from
+ * empty/unprobed state when no known-live evidence is supplied.
+ *
+ * Correctness B3: {@link wallHitPools} is a run-scoped set of pools that already
+ * hit a quota wall this run. They stay excluded from knownLive promotion so a
+ * smoke-passed pool that already walled cannot re-appear as a live baton and
+ * ping-pong until the handoff cap.
+ */
+export function resolveRelayPools(
+  limitedPool: BillingPoolId,
+  resetAt: Date | undefined,
+  override?: ReadonlyArray<RelayPoolOverride>,
+  knownLivePools?: ReadonlyArray<BillingPoolId> | ReadonlySet<BillingPoolId>,
+  wallHitPools?: ReadonlyArray<BillingPoolId> | ReadonlySet<BillingPoolId>,
+): ReadonlyArray<BillingPoolEntry> {
+  if (override !== undefined) {
+    return override.map((p) => ({
+      id: p.id as BillingPoolId,
+      status: p.status,
+      ...(p.resetAt !== undefined ? { resetAt: p.resetAt } : {}),
+      parkThresholdMs: p.parkThresholdMs,
+      models: p.models,
+    }));
+  }
+  const base = buildDefaultBillingPools({ limitedPool, resetAt });
+  if (knownLivePools === undefined) return base;
+  const live = new Set<BillingPoolId>(knownLivePools);
+  // Copy so callers' run-scoped sets are not mutated by this resolution.
+  const wallHit = new Set<BillingPoolId>(wallHitPools ?? []);
+  // Current wall always counts as hit for this resolution.
+  wallHit.add(limitedPool);
+  // Never re-promote a wall-hit pool from smoke knownLive.
+  for (const id of wallHit) live.delete(id);
+  if (live.size === 0) return base;
+  return base.map((pool) => {
+    // Wall-hit pool stays limited (reset clock); do not promote it to live.
+    if (pool.id === limitedPool) return pool;
+    if (wallHit.has(pool.id)) return pool;
+    if (!live.has(pool.id)) return pool;
+    return { ...pool, status: "live" as const };
   });
 }
 

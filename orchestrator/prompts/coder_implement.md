@@ -87,6 +87,8 @@ Rules:
   if you already made a baseline / fix commit and THEN hit an escalating blocker in
   the second review, report `committed:true` with the real count on `<coder>` and
   press the gate on `<decision>` — NOT `committed:false, commitsAdded:0`.
+  `escalate` is orthogonal to the commit count.
 - `escalate`, when present on `<decision>`, contains non-empty `reason` and `diagnosis`.
 - Emit `<coder>` as the last cargo tag; if you iterate, the last pair counts.
-- For optional telemetry, you may print CODER_STEP_COMPLETE on its own final line.
+- On the final multi-iter step you MUST print CODER_STEP_COMPLETE on its own
+  final line (sandcastle iteration terminator — not optional telemetry).

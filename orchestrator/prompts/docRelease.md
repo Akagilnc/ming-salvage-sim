@@ -30,9 +30,9 @@ push failure → `released: false` (or no valid tag). Auto-merge must not procee
 ## Output
 
 Always emit `<decision>{}</decision>` (or with `escalate`) before the role cargo tag.
-
-
-Emit `<docRelease>` JSON. Thin schema only:
+When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same cargo JSON object
+directly to that path (sidecar is cargo transport for the runner). Also emit
+`<docRelease>` cargo JSON. Thin schema only:
 
 ```json
 {"released": true}
@@ -48,4 +48,5 @@ Rules:
 
 - `kind` is implied by the tag; JSON body is `{ "released": boolean }` only.
 - No path-allowlist self-check is a success criterion (ADR 0123).
-- For optional telemetry, you may print DOCRELEASE_STEP_COMPLETE on its own final line.
+- On the final multi-iter step you MUST print DOCRELEASE_STEP_COMPLETE on its
+  own final line (sandcastle iteration terminator — not optional telemetry).

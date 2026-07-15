@@ -74,7 +74,6 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
   SANDBOX_GROK_DIR,
-  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_REPO_ENV,
   SANDBOX_SOUL_ENV,
   SPAWNED_WORKER_ENV,
@@ -2051,60 +2050,42 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
     }
   }
 
-  function authFile(contents: Record<string, unknown>): string {
-    const dir = mkDir("cmr-opencode-auth-");
-    const path = join(dir, "auth.json");
-    writeFileSync(path, JSON.stringify(contents));
-    return path;
-  }
-
-  async function dispatch(pool: DispatchContext["billingPool"], contents: Record<string, unknown>) {
+  async function dispatch(pool: DispatchContext["billingPool"]) {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
-    const path = authFile(contents);
-    const backend = new AuthDispatchBackend({ opencodeAuthFile: path }, repo);
+    const backend = new AuthDispatchBackend({}, repo);
     await backend.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb", billingPool: pool });
-    return { backend, path };
+    return { backend };
   }
 
-  it("production CMR dispatch carries uniform GLM_KEY + readonly auth mount", async () => {
+  it("#905: production CMR dispatch does not inject GLM_KEY or mount opencode auth", async () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
-    const { backend, path } = await dispatch("zai", {
-      "opencode-go": { type: "api", key: "secret" },
-    });
-    expect(backend.config?.env.GLM_KEY).toBe("glm-secret");
-    expect(backend.config?.mounts).toContainEqual({
-      hostPath: path,
-      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
-      readonly: true,
-    });
+    const { backend } = await dispatch("zai");
+    expect(backend.config?.env.GLM_KEY).toBeUndefined();
+    expect(
+      backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
+    ).toBe(false);
   });
 
-  it("non-zai production dispatch receives the same credentials", async () => {
+  it("#905: non-zai production dispatch also has no opencode transport", async () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
-    const { backend, path } = await dispatch(undefined, {
-      "grok-4.5": { type: "api", key: "secret" },
-    });
-    expect(backend.config?.env.GLM_KEY).toBe("glm-secret");
-    expect(backend.config?.mounts).toContainEqual({
-      hostPath: path,
-      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
-      readonly: true,
-    });
+    const { backend } = await dispatch(undefined);
+    expect(backend.config?.env.GLM_KEY).toBeUndefined();
+    expect(
+      backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
+    ).toBe(false);
   });
 
-  it("codex-pool production CMR dispatch receives the same credentials without metadata inspection", async () => {
+  it("#905: codex-pool production CMR dispatch has no opencode mount", async () => {
     vi.stubEnv("GLM_KEY", "glm-secret");
-    const { backend } = await dispatch("codex-5h", {
-      "opencode-go": { type: "oauth", refresh: "secret" },
-    });
-    expect(backend.config?.env.GLM_KEY).toBe("glm-secret");
-    expect(backend.config?.mounts).toContainEqual(
-      expect.objectContaining({ sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true }),
-    );
+    const { backend } = await dispatch("codex-5h");
+    expect(backend.config?.env.GLM_KEY).toBeUndefined();
+    expect(
+      backend.config?.mounts.some((m) => m.sandboxPath.includes("opencode")),
+    ).toBe(false);
   });
 });
 
@@ -2210,12 +2191,13 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("cmr");
 
-    // ALL auth absent ⇒ souls mount is still present (souls always mounted #372),
-    // no other mounts, only the soul env — still no throw (the skill runs and will
-    // degrade/escalate in-container, never a host crash).
+    // ALL auth absent ⇒ souls + home env mounts still present (#372 / #911),
+    // no credential mounts, only the soul env — still no throw (the skill runs and
+    // will degrade/escalate in-container, never a host crash).
     const none = cfgBackend().config({});
-    expect(none.mounts.length).toBe(1);
+    expect(none.mounts.length).toBe(2);
     expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.orchestrator/souls")).toBe(true);
+    expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.claude/CLAUDE.md")).toBe(true);
     expect(none.env[SANDBOX_SOUL_ENV]).toBe("cmr");
   });
 
@@ -2393,7 +2375,7 @@ describe("#335 mountCmrAuth — a missing host credential degrades, never throws
       grokAuthDir: undefined,
       claudeToken: undefined,
       ghToken: undefined,
-      providerAuth: { claude: false, grok: false },
+      providerAuth: { claude: false, grok: false, agy: false },
     });
   });
 

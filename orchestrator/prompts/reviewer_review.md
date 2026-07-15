@@ -7,8 +7,11 @@ Read the role soul first (live-mounted):
 ```
 
 Then follow that soul and the worktree's `CLAUDE.md`. The runner only schedules
-you; review method and input handling belong to the role soul (live-mounted) plus runner
-parameters.
+you; review character belongs to the role soul (live-mounted). Method is Matt
+`/code-review` over the **current full slice diff** (not a leftover checklist).
+Fixed point: `origin/main` if available, otherwise `main`. This worker is
+read-only on the reviewed tree — do not commit review drafts. Snapshot files
+such as `.orchestrator-snapshot.json` are not execution input.
 
 ## Required output
 
@@ -16,8 +19,8 @@ When you are done (or are escalating), the real completion evidence is the
 single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
 set and the typed `<review>` outcome. For compatibility with older runners,
 emit EXACTLY ONE `<review>` tag on its own containing the same single JSON
-object. The completion signal is optional telemetry and may be printed as an
-extra line.
+object. On the final multi-iter step you MUST print REVIEWER_STEP_COMPLETE on
+its own final line (sandcastle iteration terminator — not optional telemetry).
 
 Success:
 
@@ -73,4 +76,4 @@ Escalation:
 <review>{"findingsCount":0,"findings":[],"escalate":{"reason":"<short>","diagnosis":"<what blocks review>"}}</review>
 ```
 
-For optional telemetry, you may print REVIEWER_STEP_COMPLETE on its own final line.
+

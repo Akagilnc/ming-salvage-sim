@@ -31,6 +31,7 @@ import {
   buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
+  resolveRelayPools,
   selectCapacityRelayBaton,
   selectNextRelayBaton,
   type BillingPoolEntry,
@@ -2078,7 +2079,7 @@ describe("#686 R2 production seams", () => {
     }
   });
 
-  it("P1-3: same-model pool switch changes execution provider channel", async () => {
+  it("P1-3: #905 pins grok-4.5 to SuperGrok CLI regardless of pool 换马甲", async () => {
     const {
       resolveModelSlugForPool,
       POOL_DISPATCH_BINDINGS,
@@ -2088,11 +2089,11 @@ describe("#686 R2 production seams", () => {
     expect(resolveModelSlugForPool("grok-4.5", "grok-build").provider).toBe(
       "grok",
     );
+    // cursor pool no longer rewrites grok-4.5 onto the cursor channel.
     expect(resolveModelSlugForPool("grok-4.5", "cursor").provider).toBe(
-      "cursor",
+      "grok",
     );
-    // Default registry alone is cursor — pool override is what makes 换马甲 real.
-    expect(resolveModelSlugForPool("grok-4.5").provider).toBe("cursor");
+    expect(resolveModelSlugForPool("grok-4.5").provider).toBe("grok");
   });
 
   it("P1: monitor attribution follows the active billing pool after a relay", () => {
@@ -2182,6 +2183,42 @@ describe("#686 R2 production seams", () => {
         pools,
       }),
     ).toBe(false);
+  });
+
+  it("B3: after wall on A, A is not re-offered as live baton via knownLive smoke", () => {
+    // Smoke still marks grok-build as passed; after it walls, the next wall on
+    // codex-5h must not promote grok-build back to live (ping-pong until cap).
+    const wallHits = new Set<BillingPoolId>(["grok-build"]);
+    const pools = resolveRelayPools(
+      "codex-5h",
+      new Date(NOW.getTime() + 45 * 60 * 1000),
+      undefined,
+      ["grok-build", "codex-5h"],
+      wallHits,
+    );
+    expect(pools.find((p) => p.id === "codex-5h")?.status).toBe("limited");
+    expect(pools.find((p) => p.id === "grok-build")?.status).not.toBe("live");
+    const next = selectNextRelayBaton({
+      currentModelId: "terra@med",
+      currentPool: "codex-5h",
+      rosterOrder: resolveCoderRecOrder(
+        "Coder-Rec: terra@med → grok-4.5 → luna@med",
+      ),
+      pools,
+    });
+    // grok-4.5 only served by wall-hit grok-build; luna also on limited codex-5h.
+    expect(next).toBeUndefined();
+
+    // Positive: first wall on A still promotes other smoke-live pools.
+    const afterFirst = resolveRelayPools(
+      "grok-build",
+      new Date(NOW.getTime() + 45 * 60 * 1000),
+      undefined,
+      ["grok-build", "codex-5h"],
+      new Set<BillingPoolId>(["grok-build"]),
+    );
+    expect(afterFirst.find((p) => p.id === "grok-build")?.status).toBe("limited");
+    expect(afterFirst.find((p) => p.id === "codex-5h")?.status).toBe("live");
   });
 
   it("P2: MAX_RELAY_HANDOFFS counts chain from ledger history", () => {

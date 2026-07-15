@@ -47,4 +47,5 @@ Rules:
 - Always emit `<decision>` (even `{}`) — typed gate only; never bind cargo shape to SO.
 - `status` is `pr_opened` and must include `pr` on successful delivery cargo.
 - Emit `<ship>` as the last cargo tag; if you iterate, the last pair counts.
-- For optional telemetry, you may print SHIP_STEP_COMPLETE on its own final line.
+- On the final multi-iter step you MUST print SHIP_STEP_COMPLETE on its own
+  final line (sandcastle iteration terminator — not optional telemetry).
