@@ -37,7 +37,9 @@ execFileSync("rm", ["-rf", "dist.old"], { cwd: ORCH, stdio: "inherit" });
 // Dynamic import AFTER recompile so this process gets fresh dist (static top
 // import would have loaded stale compiled code even after disk rebuild).
 // Import resolver too so launcher + driver share the exact same tag resolution.
-const { runFamilyDriver, resolveImageTag } = await import("./dist/familyDriver.js");
+const { runFamilyDriver, resolveImageTag, familyDriverExitCode } = await import(
+  "./dist/familyDriver.js"
+);
 const imageTag = resolveImageTag(process.env.IMAGE_TAG);
 
 execFileSync("bash", [join(ORCH, "image", "build.sh")], {
@@ -65,3 +67,8 @@ const result = await runFamilyDriver({
 
 console.log("\n===== FAMILY RUN RESULT =====");
 console.log(JSON.stringify(result, null, 2));
+// #929 — business failures exit non-zero so drivers/cron classify without
+// parsing logs. success / already_done → 0; every other terminal → unique code.
+const exitCode = familyDriverExitCode(result);
+console.log(`[launcher] exit ${exitCode} (terminal=${result.status})`);
+process.exit(exitCode);
