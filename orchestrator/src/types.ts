@@ -16,6 +16,13 @@ import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
 import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
+// Single source of truth for judge disposition / verdict status tokens (#919 CR P3).
+import type {
+  JudgeFindingDisposition,
+  JudgeVerdictStatus,
+} from "./stationReceiptContracts.js";
+
+export type { JudgeFindingDisposition, JudgeVerdictStatus };
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
@@ -267,26 +274,6 @@ export interface FindingDisposition {
   readonly boundedReopen?: string;
 }
 
-/**
- * Judge finding disposition row (T2 / #921 schema mirror on StepOutput).
- * Kill = `refute` + four-reason token + evidence; live = open for S5 fix.
- */
-export type JudgeFindingDisposition =
-  | {
-      readonly identityKey: string;
-      readonly action: "refute";
-      readonly reason:
-        | "unconstitutional"
-        | "over_defense"
-        | "not_established"
-        | "scope_creep";
-      readonly evidence: string;
-    }
-  | {
-      readonly identityKey: string;
-      readonly action: "live";
-    };
-
 /** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
 export interface PriorFindingDisposition {
   /** Stable key produced by `findingIdentityKey` for the prior claimed-fixed finding. */
@@ -367,7 +354,7 @@ export interface Escalation {
  */
 export interface JudgeResult {
   readonly kind: "judge";
-  readonly status: "converged" | "continue" | "escalate";
+  readonly status: JudgeVerdictStatus;
   /** Present on continue: kill + live rows (schema-fixed). */
   readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
   /** Optional continue suggestion to switch coder roster entry (#926 consumes). */
@@ -380,8 +367,6 @@ export interface JudgeResult {
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
-
-export type JudgeVerdictStatus = JudgeResult["status"];
 
 /** Escalation bucket recorded on a terminal S8 entry (#439). */
 export type EscalationKind = "decision" | "failure";

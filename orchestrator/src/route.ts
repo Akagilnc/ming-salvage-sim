@@ -61,19 +61,14 @@ function judgeStatusOf(output: StepOutput | undefined):
   }
   if (output.kind === "reviewer") {
     if (output.escalate != null) return "escalate";
+    // Positive residual open-count only → continue. Zero / missing / non-integer
+    // count is unusable residual paper (#925 AC / #919 CR P1): never silent clean.
     if (
       typeof output.findingsCount === "number" &&
       Number.isSafeInteger(output.findingsCount) &&
       output.findingsCount > 0
     ) {
       return "continue";
-    }
-    if (
-      typeof output.findingsCount === "number" &&
-      Number.isSafeInteger(output.findingsCount) &&
-      output.findingsCount === 0
-    ) {
-      return "converged";
     }
     return "unusable";
   }

@@ -144,22 +144,19 @@ class PersistCoderBackend implements Backend {
               },
             ]
           : [];
+      if (findingsCount === 0) {
+        return {
+          kind: "completed",
+          output: { kind: "judge", status: "converged" },
+          sessionId: `sess-review-${this.reviewCount}`,
+        };
+      }
       return {
         kind: "completed",
         output: {
           kind: "reviewer",
           findings,
           findingsCount,
-          ...(this.reviewCount > 1
-            ? {
-                priorFindingDispositions: [
-                  {
-                    identityKey: "correctness|f.ts:1|x",
-                    status: "verified-closed",
-                  },
-                ],
-              }
-            : {}),
         },
         sessionId: `sess-review-${this.reviewCount}`,
       };
@@ -219,24 +216,27 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
           this.specs.push(spec);
           this.ctxs.push(ctx);
           this.reviews += 1;
-          // r1 and r2 still open; r3 clean.
-          const findingsCount = this.reviews <= 2 ? 1 : 0;
-          const findings: Finding[] =
-            findingsCount === 1
-              ? [
-                  {
-                    severity: "high",
-                    category: "correctness",
-                    claim_quote: `round-${this.reviews}`,
-                    location: `f.ts:${this.reviews}`,
-                    suggested_fix: "fix",
-                    action: "fix_now",
-                  },
-                ]
-              : [];
+          // r1 and r2 still open; r3 clean via explicit judge converged.
+          if (this.reviews <= 2) {
+            const findings: Finding[] = [
+              {
+                severity: "high",
+                category: "correctness",
+                claim_quote: `round-${this.reviews}`,
+                location: `f.ts:${this.reviews}`,
+                suggested_fix: "fix",
+                action: "fix_now",
+              },
+            ];
+            return {
+              kind: "completed",
+              output: { kind: "reviewer", findings, findingsCount: 1 },
+              sessionId: `sess-review-${this.reviews}`,
+            };
+          }
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings, findingsCount },
+            output: { kind: "judge", status: "converged" },
             sessionId: `sess-review-${this.reviews}`,
           };
         }

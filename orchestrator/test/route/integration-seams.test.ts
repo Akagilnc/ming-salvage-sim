@@ -109,7 +109,7 @@ class SpyBackend implements Backend {
     if (spec.role === "coder") {
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(
     entry: PersistentLedgerEntry,
@@ -130,7 +130,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
       backend.runStepIds.push(spec.id);
       return spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 0 }
-        : { kind: "reviewer", findings: [], findingsCount: 0 };
+        : { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -145,7 +145,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: false, commitsAdded: 2 };
       }
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -159,7 +159,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: true } as unknown as StepOutput;
       }
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -173,7 +173,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: true, commitsAdded: 1.5 };
       }
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -187,7 +187,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: false, commitsAdded: -1 } as unknown as StepOutput;
       }
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -201,7 +201,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: true, commitsAdded: "1" } as unknown as StepOutput;
       }
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -222,7 +222,7 @@ describe("B: coder commitsAdded advisory telemetry", () => {
       backend.runStepIds.push(spec.id);
       return spec.role === "coder"
         ? { kind: "coder", committed: false, commitsAdded: 0 }
-        : { kind: "reviewer", findings: [], findingsCount: 0 };
+        : { kind: "judge", status: "converged" };
     };
     const result = await runOrchestrator({ issueNumber: 244, backend });
     expect(result.status).toBe("success");
@@ -355,7 +355,7 @@ describe("E: S8 ledger-write failure attributes the real failing step", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
     backend.writeLedger = async (entry, stateDir) => {
       if (entry.step === "S8") {

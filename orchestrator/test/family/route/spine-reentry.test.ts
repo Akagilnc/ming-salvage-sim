@@ -66,7 +66,7 @@ class ChildBackend implements Backend {
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(): Promise<void> {}
 }

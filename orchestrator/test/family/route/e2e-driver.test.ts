@@ -181,7 +181,7 @@ class RealGitChildBackend implements Backend {
       execFileSync("git", ["commit", "-q", "-m", `child ${num}`], { cwd: wt });
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }

@@ -128,7 +128,7 @@ class RetryReviewBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
-    if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "reviewer", findings: [], findingsCount: 0 };
+    if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
   async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
@@ -162,7 +162,7 @@ class RetryReviewBackend implements Backend {
     if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       const result = this.reviewerResults[this.reviewerAttempts];
       this.reviewerAttempts += 1;
-      return result ?? { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+      return result ?? { kind: "completed", output: { kind: "judge", status: "converged" } };
     }
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
     if (skeleton !== undefined) {
@@ -189,16 +189,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
       {
         kind: "completed",
-        output: {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            {
-              identityKey:
-                "correctness|src/runner.ts:1|fix worker needs structured finding data",
-              status: "verified-closed",
-            },
-          ],
-        },
+        output: { kind: "judge", status: "converged" },
       },
     ]);
 
@@ -241,19 +232,7 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
       },
       {
         kind: "completed",
-        output: {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            {
-              identityKey: "correctness|src/runner.ts:10|must fix before shipping",
-              status: "verified-closed",
-            },
-            {
-              identityKey: "follow-up|src/runner.ts:11|track this later",
-              status: "verified-closed",
-            },
-          ],
-        },
+        output: { kind: "judge", status: "converged" },
       },
     ]);
 
@@ -275,9 +254,9 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   };
   const blockingKey = "correctness|src/runner.ts:427|absence is not closure";
 
-  it("routes S3/S6 from judge/open-count projection (findingsCount=0 → converged)", () => {
-    // #925: topology reads judge status; residual open-count paper with
-    // findingsCount=0 projects to converged → S7 (disposition prose is ignored).
+  it("routes S3/S6 from judge status; residual open-count 0 is unusable not clean", () => {
+    // #919 CR P1 / #925: residual findingsCount=0 is unusable → S5 (never S7).
+    // Disposition prose is ignored either way; only explicit judge converged cleans.
     expect(
       route({
         from: "S3",
@@ -290,7 +269,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
           ],
         },
       }),
-    ).toEqual({ kind: "next", step: "S7" });
+    ).toEqual({ kind: "next", step: "S5" });
     expect(
       route({
         from: "S6",
@@ -311,7 +290,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   it("#877: S6 empty findings without disposition ships (disposition court demolished)", async () => {
     const backend = new RetryReviewBackend([
       { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
-      { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } },
+      { kind: "completed", output: { kind: "judge", status: "converged" } },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 427, backend });
@@ -333,12 +312,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
       {
         kind: "completed",
-        output: {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: blockingKey, status: "verified-closed" },
-          ],
-        },
+        output: { kind: "judge", status: "converged" },
       },
     ]);
 
@@ -359,12 +333,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
       {
         kind: "completed",
-        output: {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: blockingKey, status: "verified-closed" },
-          ],
-        },
+        output: { kind: "judge", status: "converged" },
       },
     ]);
 
@@ -437,12 +406,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       },
       {
         kind: "completed",
-        output: {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: acceptedRiskKey, status: "verified-closed" },
-          ],
-        },
+        output: { kind: "judge", status: "converged" },
       },
     ]);
 
@@ -537,12 +501,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       undefined,
@@ -597,7 +556,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const backend = new RetryReviewBackend(
       [
         { kind: "completed", output: { kind: "reviewer", findings: [blocking], findingsCount: 1 } },
-        { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } },
+        { kind: "completed", output: { kind: "judge", status: "converged" } },
       ],
       undefined,
       [{ kind: "coder", committed: true, commitsAdded: 1 }],
@@ -648,12 +607,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       undefined,
@@ -733,12 +687,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       undefined,
@@ -806,12 +755,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         {
           step: "S6",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "still-active" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
         { step: "S4" },
         {
@@ -828,12 +772,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "still-active" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -891,10 +830,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       },
       {
         kind: "completed",
-        output: {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: sample.finalDispositions,
-        },
+        output: { kind: "judge", status: "converged" },
       },
     ]);
 
@@ -1011,13 +947,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       },
       {
         kind: "completed",
-        output: {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: primaryKey, status: "verified-closed" },
-            { identityKey: secondaryKey, status: "verified-closed" },
-          ],
-        },
+        output: { kind: "judge", status: "converged" },
       },
     ]);
 
@@ -1101,12 +1031,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -1163,12 +1088,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: blockingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -1483,12 +1403,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         [
           {
             kind: "completed",
-            output: {
-              kind: "reviewer", findings: [], findingsCount: 0,
-              priorFindingDispositions: [
-                { identityKey: blockingKey, status: "verified-closed" },
-              ],
-            },
+            output: { kind: "judge", status: "converged" },
           },
         ],
         resumeState,
@@ -1628,15 +1543,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer",
-            findings: [],
-            findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: runnerFindingKey, status: "verified-closed" },
-              { identityKey: siblingFindingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -1713,12 +1620,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: fileScopedFindingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -1796,12 +1698,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: fileScopedFindingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -1879,12 +1776,7 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: fileScopedFindingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -1922,16 +1814,7 @@ describe("#369 runner resume/retry review fixes", () => {
       [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              {
-                identityKey:
-                  "correctness|src/runner.ts:1116|s5 needs the persisted blocker after resume",
-                status: "verified-closed",
-              },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -1992,16 +1875,7 @@ describe("#369 runner resume/retry review fixes", () => {
       [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              {
-                identityKey:
-                  "correctness|src/runner.ts:902|s5 fallback still needs the blocker",
-                status: "verified-closed",
-              },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -2038,7 +1912,7 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         // #925: empty open-count / converged projects to S7 without S4.
-        { step: "S6", output: { kind: "reviewer", findings: [], findingsCount: 0 } },
+        { step: "S6", output: { kind: "judge", status: "converged" } },
       ],
     };
     const backend = new RetryReviewBackend([], resumeState);
@@ -2073,13 +1947,9 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
-          output: {
-            // findingsCount=0 is the topology signal; still-active prose is ignored.
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: key, status: "still-active" },
-            ],
-          },
+          // #925: clean resume requires explicit judge converged (residual
+          // findingsCount=0 is unusable, not silent clean).
+          output: { kind: "judge", status: "converged" },
         },
       ],
     };
@@ -2175,12 +2045,7 @@ describe("#369 runner resume/retry review fixes", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: acceptedRiskKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       resumeState,
@@ -2584,15 +2449,7 @@ describe("#369 legacy S5 landing file", () => {
         observedLanding = JSON.parse(
           readFileSync(join(stateDir, "fix-findings.json"), "utf8"),
         );
-        return {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            {
-              identityKey: "correctness|src/x.ts:3|verify me",
-              status: "verified-closed",
-            },
-          ],
-        };
+        return { kind: "judge", status: "converged" };
       },
       async writeLedger() {},
     };

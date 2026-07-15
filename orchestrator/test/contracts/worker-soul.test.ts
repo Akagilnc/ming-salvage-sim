@@ -424,24 +424,19 @@ class ReviewWorkerBackend implements Backend {
               },
             ]
           : [];
-      // Legacy compatibility shape: a reviewer worker returns findings, not a
-      // bare verdict. The active runner path no longer dispatches it normally.
+      // Residual open-count 0 is unusable after #925 — emit explicit judge clean.
+      if (findingsCount === 0) {
+        return {
+          kind: "completed",
+          output: { kind: "judge", status: "converged" },
+        };
+      }
       return {
         kind: "completed",
         output: {
           kind: "reviewer",
           findings,
           findingsCount,
-          ...(this.reviewCount > 1
-            ? {
-                priorFindingDispositions: [
-                  {
-                    identityKey: "correctness|f.ts:1|x",
-                    status: "verified-closed",
-                  },
-                ],
-              }
-             : {}),
         },
       };
     }

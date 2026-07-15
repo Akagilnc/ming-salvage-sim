@@ -414,7 +414,7 @@ describe("#824 durable mechanical redispatch budget", () => {
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       if (spec.role === "coder") throw new Error("coder process crashed");
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
@@ -482,20 +482,10 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
-          ],
-        }),
+        entry("S6", { kind: "judge", status: "converged" }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
-          ],
-        }),
+        entry("S6", { kind: "judge", status: "converged" }),
       ],
     };
   }

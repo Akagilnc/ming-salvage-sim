@@ -3145,7 +3145,8 @@ export class RealBackend implements Backend {
       if (projected !== undefined) {
         return projected;
       }
-      return { kind: "judge", status: "converged" };
+      // Residual open-count present but not positive continue (0 / non-routeable)
+      // → unusable, never silent converged (#925 AC / #919 CR P1).
     }
 
     // Missing/unusable residual paper → same non-judge unusable envelope the

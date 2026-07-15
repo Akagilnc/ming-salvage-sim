@@ -290,6 +290,50 @@ describe("#925 pure: route tri-state", () => {
       }),
     ).toEqual({ kind: "next", step: "S5" });
   });
+
+  it("residual open-count 0 / missing count never silent-clean to S7", () => {
+    // #919 CR P1 / #925 AC: mechanical zero→converged demolished. Residual
+    // paper that is not a positive open-count continue is unusable → S5.
+    // Build residual open-count zero paper (must stay kind:reviewer for this pin).
+    const residualZero = {
+      kind: "reviewer" as const,
+      findings: [] as const,
+      findingsCount: 0,
+    };
+    expect(route({ from: "S3", output: residualZero })).toEqual({
+      kind: "next",
+      step: "S5",
+    });
+    expect(route({ from: "S6", output: residualZero })).toEqual({
+      kind: "next",
+      step: "S5",
+    });
+    expect(
+      route({
+        from: "S3",
+        output: {
+          kind: "reviewer",
+          findings: [],
+        } as unknown as StepOutput,
+      }),
+    ).toEqual({ kind: "next", step: "S5" });
+    // Positive residual open-count still projects continue → S5 (not S7).
+    expect(
+      route({
+        from: "S3",
+        output: {
+          kind: "reviewer",
+          findings: [sampleFinding()],
+          findingsCount: 1,
+        },
+      }),
+    ).toEqual({ kind: "next", step: "S5" });
+    // Explicit judge converged remains the only clean path.
+    expect(route({ from: "S3", output: judgeConverged() })).toEqual({
+      kind: "next",
+      step: "S7",
+    });
+  });
 });
 
 describe("#925 S3/S6 maxIterations=1 + seat identity", () => {

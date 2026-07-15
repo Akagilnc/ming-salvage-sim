@@ -51,7 +51,7 @@ class RecordingBackend implements Backend {
     if (spec.role === "coder") {
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
 
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
@@ -89,7 +89,7 @@ class RecordingBackend implements Backend {
     if (spec.role === "coder") {
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
 
   // #249 integration: writeLedger is part of the Backend seam; this fake only
