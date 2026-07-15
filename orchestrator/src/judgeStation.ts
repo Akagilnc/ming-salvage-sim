@@ -211,3 +211,77 @@ export function liveDispositionsForFindings(
     action: "live" as const,
   }));
 }
+
+/**
+ * Residual open-count → sole continue dispositions (F3).
+ * One projection for runner normalize + realBackend decode — mint opaque
+ * `__open_N` live keys when cargo is sparse so count still routes to S5.
+ */
+export function liveDispositionsForOpenCount(
+  findingsCount: number,
+  findings: ReadonlyArray<Finding> = [],
+): JudgeFindingDisposition[] {
+  if (findings.length > 0) {
+    return liveDispositionsForFindings(findings);
+  }
+  return Array.from({ length: findingsCount }, (_, i) => ({
+    identityKey: `__open_${i + 1}`,
+    action: "live" as const,
+  }));
+}
+
+/**
+ * Residual open-count paper → sole judge continue form.
+ * Returns undefined when count is not a positive open-count (caller maps
+ * zero / escalate / unusable separately).
+ */
+export function judgeContinueFromOpenCount(
+  findingsCount: number,
+  findings: ReadonlyArray<Finding> = [],
+): JudgeResult | undefined {
+  if (
+    typeof findingsCount !== "number" ||
+    !Number.isSafeInteger(findingsCount) ||
+    findingsCount <= 0
+  ) {
+    return undefined;
+  }
+  const cargo = [...findings];
+  return {
+    kind: "judge",
+    status: "continue",
+    findingDispositions: liveDispositionsForOpenCount(findingsCount, cargo),
+    findings: cargo,
+  };
+}
+
+/**
+ * Live-path projection of a judge `continue` verdict into the S5 open set
+ * (kills → refuted flips; live keys only). Shared by the in-process continue
+ * edge and crash/resume ledger rebuild (F2).
+ */
+export function projectJudgeContinueBlocking(output: {
+  readonly status: string;
+  readonly findingDispositions?: ReadonlyArray<
+    JudgeFindingDisposition | ContractDisposition
+  >;
+  readonly findings?: ReadonlyArray<Finding>;
+}): {
+  readonly blocking: Finding[];
+  readonly blockingIdentityKeys: string[];
+  readonly blockingFindingCount: number;
+  readonly killDispositions: FindingDisposition[];
+} | undefined {
+  if (output.status !== "continue") return undefined;
+  const dispositions = output.findingDispositions ?? [];
+  const kills = judgeKillsToLedgerDispositions(dispositions);
+  const cargo = output.findings ?? [];
+  const blocking = openFindingsForFixer(cargo, dispositions);
+  const blockingIdentityKeys = liveFindingIdentityKeys(dispositions);
+  return {
+    blocking,
+    blockingIdentityKeys,
+    blockingFindingCount: blockingIdentityKeys.length,
+    killDispositions: kills,
+  };
+}

@@ -913,8 +913,10 @@ export interface DispatchContext {
   readonly resumeSessionId?: string;
   /**
    * #925 — prior judge verdict ledger rows for a new judge after session loss
-   * (or any S6 opening). Runner transports rows as-is; never synthesises a
-   * narrative summary. The judge self-reads trajectory from these rows.
+   * (or any S6 opening). Runner transports rows as-is into the fix-findings
+   * landing file (`priorJudgeVerdicts` field) so the worker can read them;
+   * never synthesises a narrative summary. Trajectory is reconstructed by the
+   * judge from those structured rows only.
    */
   readonly priorJudgeVerdicts?: ReadonlyArray<{
     readonly step: string;

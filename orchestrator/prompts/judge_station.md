@@ -85,8 +85,11 @@ resumes in place. Do not invent a second escalate path.
 ## Session loss
 
 If you are a fresh judge after a dead prior session, read prior verdict rows
-from the ledger / `priorJudgeVerdicts` dispatch field yourself. Reconstruct
-trajectory from those rows — the runner does not generate a narrative summary.
+from the fix-findings landing file (`$ORCHESTRATOR_FIX_FINDINGS_PATH` when set,
+else `.orchestrator-fix-findings.json` in the worktree). The JSON field is
+`priorJudgeVerdicts` — structured ledger rows only (step / status /
+findingDispositions / advanceCoder / sessionId). Reconstruct trajectory from
+those rows yourself — the runner never synthesises a narrative summary.
 
 ## maxIterations
 

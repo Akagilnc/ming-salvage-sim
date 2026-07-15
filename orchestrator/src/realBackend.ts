@@ -84,7 +84,10 @@ import {
   decodeJudgeVerdict,
   judgeStationReceiptSchema,
 } from "./stationReceiptContracts.js";
-import { judgeResultFromVerdict, liveDispositionsForFindings } from "./judgeStation.js";
+import {
+  judgeContinueFromOpenCount,
+  judgeResultFromVerdict,
+} from "./judgeStation.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
@@ -3122,7 +3125,8 @@ export class RealBackend implements Backend {
     }
 
     // Residual open-count paper (legacy fixtures / pre-#925 ledger replay):
-    // project to the sole judge form — never re-open a second routing path.
+    // project to the sole judge form via the shared F3 helper — never re-open
+    // a second open-count routing path.
     const openCount = decodeReviewerOpenCountReceipt(raw);
     if (openCount !== undefined) {
       if (openCount.escalate !== undefined) {
@@ -3134,21 +3138,12 @@ export class RealBackend implements Backend {
           escalate: openCount.escalate,
         };
       }
-      if (openCount.findingsCount > 0) {
-        const findings = [...openCount.findings];
-        const dispositions =
-          findings.length > 0
-            ? liveDispositionsForFindings(findings)
-            : Array.from({ length: openCount.findingsCount }, (_, i) => ({
-                identityKey: `__open_${i + 1}`,
-                action: "live" as const,
-              }));
-        return {
-          kind: "judge",
-          status: "continue",
-          findingDispositions: dispositions,
-          findings,
-        };
+      const projected = judgeContinueFromOpenCount(
+        openCount.findingsCount,
+        openCount.findings,
+      );
+      if (projected !== undefined) {
+        return projected;
       }
       return { kind: "judge", status: "converged" };
     }
