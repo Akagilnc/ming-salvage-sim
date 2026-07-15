@@ -80,8 +80,8 @@ import {
   type ModelRouteEnv,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
 import {
-  resolveAdvanceCoderSuggestion,
   resolveCoderRecOrder,
   lookupCoderRosterEntry,
   type CoderRosterEntry,
@@ -1664,66 +1664,51 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   };
 
   /**
-   * #926 — execute a judge `advanceCoder` suggestion (or stay-put + audit).
-   * Never terminals the run for roster unusability — continue path stays open.
-   * Roster-legal but unassignable (smoke fail) stays put the same way.
+   * #926 / #919 — execute a judge `advanceCoder` suggestion (or stay-put + audit).
+   * Shared topology via {@link executeAdvanceCoderSuggestion}; this court only
+   * owns bookkeeping + sticky state. Never terminals for roster unusability.
    */
   const applyJudgeAdvanceCoder = async (
     suggestion: string,
     forStep: "S3" | "S6",
   ): Promise<void> => {
     const currentSlug = modelRoute.slots.coder;
-    const decision = resolveAdvanceCoderSuggestion(suggestion, currentSlug);
-    const ts = new Date().toISOString();
+    const preserveCoderFix =
+      process.env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
+      process.env.ORCHESTRATOR_CODER_FIX_MODEL.trim() !== "";
 
-    if (decision.kind === "noop") {
+    const effect = await executeAdvanceCoderSuggestion({
+      suggestion,
+      currentSlug,
+      route: modelRoute,
+      applySlug: (route, slug) =>
+        withCoderSlot(route, slug, { preserveCoderFix }),
+      probe: probeRouteSmoke,
+    });
+
+    if (effect.kind === "noop") {
       return;
     }
 
-    const recordStayPut = async (
-      reason: string,
-      suggestionToken: string,
-    ): Promise<void> => {
+    if (effect.kind === "stay_put") {
       await persistAdvanceBookkeeping(
         {
           step: forStep,
-          event: "coder_advance_stay_put",
-          reason,
-          fromModelId: currentSlug,
-          toModelId: currentSlug,
-          state_summary: suggestionToken,
-          ts,
+          ...effect.audit,
         },
         forStep,
         "stay-put",
       );
       console.info(
-        `[orchestrator] #926 advanceCoder stay-put (${reason}): ` +
-          `kept ${currentSlug}; suggestion=${suggestionToken}`,
+        `[orchestrator] #926 advanceCoder stay-put (${effect.reason}): ` +
+          `kept ${currentSlug}; suggestion=${effect.suggestion}`,
       );
-    };
-
-    if (decision.kind === "stay_put") {
-      await recordStayPut(decision.reason, decision.suggestion);
       return;
     }
 
-    // advanced — probe assignability before committing the seat switch.
-    const preserveCoderFix =
-      process.env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
-      process.env.ORCHESTRATOR_CODER_FIX_MODEL.trim() !== "";
-    const candidate = withCoderSlot(modelRoute, decision.entry.slug, {
-      preserveCoderFix,
-    });
-    const probe = await probeRouteSmoke(candidate);
-    if (!probe.ok) {
-      // AC 不可派: roster-legal but unusable → stay put, never terminal.
-      await recordStayPut("unassignable_target", suggestion.trim());
-      return;
-    }
-
-    modelRoute = probe.route;
-    stickyJudgeAdvanceCoderSlug = decision.entry.slug;
+    // advanced — hold sticky seat; retire prior coder session; follow billing pool.
+    modelRoute = effect.route;
+    stickyJudgeAdvanceCoderSlug = effect.toSlug;
     stepSpecs = stepSpecsForRoute(modelRoute);
     // Candidate already smoked — skip the next ensureRouteSmoke gate.
     routeSmokeChecked = true;
@@ -1738,18 +1723,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     await persistAdvanceBookkeeping(
       {
         step: forStep,
-        event: "coder_advance",
-        fromModelId: decision.fromSlug,
-        toModelId: decision.entry.slug,
-        state_summary: suggestion.trim(),
-        ts,
+        ...effect.audit,
       },
       forStep,
       "advance",
     );
     console.info(
-      `[orchestrator] #926 advanceCoder → ${decision.entry.id} (${decision.entry.slug}) ` +
-        `from ${decision.fromSlug}; prior coder session retired`,
+      `[orchestrator] #926 advanceCoder → ${effect.entry.id} (${effect.entry.slug}) ` +
+        `from ${effect.fromSlug}; prior coder session retired`,
     );
   };
 
