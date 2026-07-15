@@ -203,11 +203,12 @@ export function classifyDecisionGate(
 }
 
 /**
- * Decode an untyped open-count receipt into a typed {@link ReviewerOutput}.
+ * Decode residual untyped open-count paper into a typed {@link ReviewerOutput}.
  *
+ * Not the S3/S6 main path (that is judge tri-state / ADR 0131 channel (b)).
  * Production Sandcastle / sidecar payloads enter here as `unknown`. Findings
  * rows are opaque cargo: non-array shapes become empty cargo, never rewrite
- * the declared findingsCount (ADR 0131 / #899). Missing or unusable count is
+ * the declared findingsCount (#899 cargo rule). Missing or unusable count is
  * not a zero open-count — callers map that to the unusable-receipt path.
  *
  * Returns `undefined` when the receipt cannot supply a non-negative integer

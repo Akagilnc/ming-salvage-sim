@@ -1234,11 +1234,12 @@ export function lastSessionId(
  * Extract + JSON-parse the LAST `<tag>…</tag>` from a worker step's stdout.
  *
  * #899 / ADR 0131: production single-slice seats attach Sandcastle
- * `Output.object` (maxRetries:2) for typed traffic signals — reviewer
- * open-count and optional decision gate. Ordinary cargo stays opaque inside
- * those schemas. This stdout extractor is the **compatibility cargo channel**
- * when typed output is absent (legacy prompts, telemetry, non-typed seats);
- * it is never a second fate-signal parser and never triggers cargo-shape re-ask.
+ * `Output.object` (maxRetries:2) for typed traffic signals — S3/S6 judge
+ * tri-state (channel (b) / #925), residual reviewer open-count, coder
+ * decision gate. Ordinary cargo stays opaque inside those schemas. This
+ * stdout extractor is the **compatibility cargo channel** when typed output
+ * is absent (legacy prompts, telemetry, non-typed seats); it is never a
+ * second fate-signal parser and never triggers cargo-shape re-ask.
  *
  * The LAST tag wins so a worker that emits multiple tags reports its FINAL
  * payload. Pure: parses a string only — unit-tested without a container.
@@ -2980,7 +2981,9 @@ export class RealBackend implements Backend {
   /**
    * Resolve the raw structured payload to decode for a step.
    *
-   * - Reviewer: typed open-count is the sole fate channel when present.
+   * - S3/S6 judge: typed tri-state verdict is the sole fate channel (ADR 0131
+   *   channel (b) / #925).
+   * - Residual reviewer seats: typed open-count when present (not main path).
    * - Coder: typed decision signal is the sole fate channel; cargo is separate.
    * - When typed Output.object was configured, missing `result.output` fails
    *   the Action for #598 — sidecar/stdout never supply escalate / findingsCount

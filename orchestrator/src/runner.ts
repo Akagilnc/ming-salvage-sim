@@ -835,7 +835,7 @@ function lastReviewerStep(
 interface BlockingFromLedgerRebuild {
   readonly blocking: ReadonlyArray<Finding>;
   readonly blockingIdentityKeys: ReadonlyArray<string>;
-  /** Reviewer-declared open-count (ADR 0131), not findings-array length. */
+  /** Declared open-count (residual/rebuild bookkeeping), not findings-array length. */
   readonly blockingFindingCount: number;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
   /**
@@ -1984,13 +1984,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     _afterFix: boolean,
   ): string[] {
     if (reviewerOutput?.kind !== "reviewer") return [];
-    // Opaque cargo copy only — not a decode/validation boundary. Runner routes
-    // by findingsCount and transports findings rows as-is; identity-key
-    // derivation is the landing writer's job (dispatchWorker → fixer), not a
-    // runner court (ADR 0131 / #899).
+    // Residual kind:"reviewer" paper only — not the S3/S6 main path.
+    // Main single-slice topology reads judge status enum (ADR 0131 channel (b)
+    // / #925). Opaque cargo copy: findings rows pass through as-is; identity-key
+    // derivation is the landing writer's job (dispatchWorker → fixer).
     pendingBlockingFindings = [...reviewerOutput.findings];
     pendingBlockingFindingIdentityKeys = [];
-    // ADR 0131: declared count is the control signal; findings rows are cargo.
+    // Residual open-count bookkeeping for rebuild/landing — not channel (b).
     pendingBlockingFindingCount = reviewerOutput.findingsCount;
     return [];
   }
