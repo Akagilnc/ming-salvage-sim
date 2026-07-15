@@ -2001,7 +2001,7 @@ async function routeEnvMismatchReplay(): Promise<SeamReplay> {
   const failure = abort?.reason ?? "";
   if (
     result.ok ||
-    abort?.stopSummary?.reason !== "infra_failure" ||
+    abort?.stopSummary?.reason !== "cmr_failed" ||
     !failure.includes("must be comma-separated CMR leg slugs") ||
     !abort.stopSummary.repairHint?.includes("route environment")
   ) {
@@ -2197,7 +2197,7 @@ async function familyShipFailedAfterCmrReplay(): Promise<SeamReplay> {
     familyHeadAfter: "verified-head",
   });
   const abort = backend.ledger.find((entry) => entry.status === "aborted");
-  if (result.ok || abort?.stopSummary?.reason !== "infra_failure") {
+  if (result.ok || abort?.stopSummary?.reason !== "ship_failed") {
     throw new Error("dogfood family ship-failed replay did not exhaust durable retries");
   }
   return {
@@ -2232,15 +2232,17 @@ async function familyFinalVerifyModuleNotFoundReplay(): Promise<SeamReplay> {
     familyHeadAfter: "family-head",
   });
   const abort = backend.ledger.find((entry) => entry.status === "aborted");
-  if (result.ok || abort?.stopSummary?.reason !== "infra_failure") {
-    throw new Error("dogfood family verify MODULE_NOT_FOUND replay did not abort as infra failure");
+  if (result.ok || abort?.stopSummary?.reason !== "verify_failed") {
+    throw new Error(
+      "dogfood family verify MODULE_NOT_FOUND replay did not abort as verify_failed",
+    );
   }
   return {
     stopSummary: abort.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr",
       mechanism: "verify_dependency_failure",
-      classification: "infra_failure",
+      classification: "verify_failed",
       errorCode: "MODULE_NOT_FOUND",
       repairHint: abort.stopSummary.repairHint,
     },

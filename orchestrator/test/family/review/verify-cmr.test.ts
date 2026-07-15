@@ -228,7 +228,7 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
       familyHeadAfter: "head-before-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({
         status: "aborted",
@@ -237,7 +237,7 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
         reason: "Error: Cannot find module 'tsx'",
         familyHeadAfter: "head-before-final-verify",
         stopSummary: expect.objectContaining({
-          reason: "infra_failure",
+          reason: "verify_failed",
           repairHint: expect.stringContaining("install or restore"),
         }),
       }),
@@ -311,7 +311,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.prCalls).toEqual([]);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
@@ -1243,7 +1243,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]).toMatchObject({
       reason: "completeness cmr needs human review",
@@ -1291,11 +1291,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.escalations).toContainEqual(expect.objectContaining({
       escalationKind: "failure",
       reason: "cmr worker auth missing",
-      stopSummary: expect.objectContaining({ reason: "infra_failure" }),
+      stopSummary: expect.objectContaining({ reason: "cmr_failed" }),
     }));
   });
 
@@ -1342,11 +1342,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.escalations).toContainEqual(expect.objectContaining({
       escalationKind: "failure",
       reason: "coder-fix worker auth missing",
-      stopSummary: expect.objectContaining({ reason: "infra_failure" }),
+      stopSummary: expect.objectContaining({ reason: "cmr_failed" }),
     }));
   });
 
@@ -1385,11 +1385,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.escalations).toContainEqual(expect.objectContaining({
       escalationKind: "failure",
       reason: "ship worker auth missing",
-      stopSummary: expect.objectContaining({ reason: "infra_failure" }),
+      stopSummary: expect.objectContaining({ reason: "ship_failed" }),
     }));
   });
 
@@ -1441,7 +1441,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]).toMatchObject({
       reason: "ship needs human review",
@@ -1488,7 +1488,7 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
     // Verify ran (ran:true), but with no cmr capability the hook reports a red
     // final barrier (ok:false) — NOT a false success.
     expect(backend.verifyCalls).toHaveLength(1);
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
   });
 
   it("a backend with verify + cmr but WITHOUT dispatchWorker (final phase) FAILS-SAFE to ok:false — the terminal 止于-PR step could not run", async () => {
@@ -1509,7 +1509,7 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
   });
 });
 
@@ -1568,7 +1568,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
@@ -1625,7 +1625,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: shipBackend,
     });
-    expect(shipResult).toEqual({ ok: false, ran: true });
+    expect(shipResult).toMatchObject({ ok: false, ran: true });
     expect(shipBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(shipBackend.aborted[0]?.errorPackage.reason).toMatch(/git checkout/i);
 
@@ -1635,7 +1635,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: cmrBackend,
     });
-    expect(cmrResult).toEqual({ ok: false, ran: true });
+    expect(cmrResult).toMatchObject({ ok: false, ran: true });
     expect(cmrBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 
@@ -1769,7 +1769,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     expect(backend.aborted).toHaveLength(0);
   });
 
-  it("a cmr worker failed result for missing dependencies is recorded as infra_failure", async () => {
+  it("a cmr worker failed result for missing dependencies is recorded as cmr_failed", async () => {
     class FailedCmrBackend extends ThrowingDispatchBackend {
       constructor() {
         super("ship");
@@ -1794,7 +1794,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
@@ -1803,7 +1803,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       reason: expect.stringContaining("Cannot find module 'missing-cmr-runtime'"),
       familyHeadAfter: "head-before-worker",
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "cmr_failed",
         repairHint: expect.stringContaining("install or restore"),
       }),
     }));
@@ -1816,12 +1816,12 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/git checkout/i);
   });
 
-  it("a ship worker failed result for push/auth infra is recorded as infra_failure", async () => {
+  it("a ship worker failed result for push/auth infra is recorded as ship_failed", async () => {
     class FailedShipBackend extends ThrowingDispatchBackend {
       constructor() {
         super("cmr");
@@ -1851,14 +1851,14 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
       phase: "final",
       reason: expect.stringContaining("git push authentication failed"),
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "ship_failed",
         repairHint: expect.stringContaining("ship worker infrastructure"),
       }),
     }));

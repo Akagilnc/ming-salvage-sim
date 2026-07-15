@@ -99,7 +99,7 @@ describe("#604 r2 C2 / #875 — unaccounted prior no longer blocks coder-fix", (
       priorCmrFindingIdentityKeys: [PROTECTED_PRIOR_KEY],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     // Findings-count channel → coder-fix; no coverage-court abort.
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(
@@ -123,7 +123,7 @@ describe("#604 r2 C2 / #875 — unaccounted prior no longer blocks coder-fix", (
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(
       backend.ledger.some(

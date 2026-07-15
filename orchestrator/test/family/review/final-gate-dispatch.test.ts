@@ -457,7 +457,7 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
       familyBase: "feat/330",
       familyBackend: be,
     });
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toMatchObject({ ok: false, ran: true });
   });
 });
 
@@ -540,7 +540,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pushed" },
     });
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toMatchObject({ ok: false, ran: true });
   });
 
   it("a completed ship missing its pr URL ⇒ INCOMPLETE_GATE", async () => {
@@ -548,7 +548,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pr_opened" },
     });
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toMatchObject({ ok: false, ran: true });
   });
 
   it("a completed ship with a blank pr URL ⇒ INCOMPLETE_GATE", async () => {
@@ -556,7 +556,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "   " },
     });
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toMatchObject({ ok: false, ran: true });
   });
 
   it("a completed ship that reports the wrong branch follows host-verified PR truth", async () => {
@@ -745,13 +745,13 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
       familyBackend: backend,
     });
 
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toMatchObject({ ok: false, ran: true });
     expect(backend.ledger.filter((e) => e.status === "cmr_passed")).toHaveLength(2);
     const latest = backend.ledger.at(-1);
     expect(latest?.status).toBe("aborted");
     expect(latest?.phase).toBe("final");
     expect(latest?.reason).toMatch(/family ship worker unavailable/i);
-    expect(latest?.stopSummary?.reason).toBe("infra_failure");
+    expect(latest?.stopSummary?.reason).toBe("ship_failed");
     expect(latest?.stopSummary?.summary).toMatch(/PR/i);
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
@@ -768,7 +768,7 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     // This minimal backend returns a ship payload to the later online-review
     // worker too, so that unrelated stage remains incomplete. The ship gate itself
     // must nevertheless have persisted host HEAD truth before reaching it.
-    expect(res).toEqual({ ok: false, ran: true });
+    expect(res).toMatchObject({ ok: false, ran: true });
     const shipped = backend.ledger.find((e) => e.status === "shipped");
     expect(shipped?.familyHeadAfter).toBe("post-ship-head");
     expect(shipped).toMatchObject({ status: "shipped" });

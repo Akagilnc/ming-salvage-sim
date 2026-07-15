@@ -653,7 +653,7 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
   });
 
 describe("#296 spine integration — fail-safe: verify-green but a required final-barrier capability missing must NOT be success", () => {
-  it("a real backend that verifies green but lacks runIntegratedCmr leaves the run verify_failed (NOT a false success)", async () => {
+  it("a real backend that verifies green but lacks runIntegratedCmr leaves the run cmr_failed (NOT a false success)", async () => {
     // The 承重闸 (integrated cmr, decision 3⑥) cannot run, so the run must NOT report
     // success — that would ship code the integrated cmr never reviewed. The spine
     // ignores the hook's `ran` flag and acts on `ok`, so the hook must fail-safe to
@@ -685,9 +685,10 @@ describe("#296 spine integration — fail-safe: verify-green but a required fina
       // NO verifyCmr injection → the spine uses #296's real runVerifyCmr.
     });
     // Both verify barriers ran green; the child merged; but the final barrier is red
-    // because the 承重闸 cmr could not run — observably verify_failed, never success.
+    // because the 承重闸 cmr could not run — observably cmr_failed (#922), never success.
     expect(backend.verifyCalls.map((v) => v.phase)).toEqual(["wave", "final"]);
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("cmr_failed");
+    expect(result.stopSummary.reason).toBe("cmr_failed");
     expect(result.failedPhase).toBe("final");
   });
 });
