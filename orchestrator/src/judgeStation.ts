@@ -622,13 +622,19 @@ export function judgeStatusFromOutput(
 }
 
 /**
- * #919 S2 — single judge-seat predicate for topology / decision_gate / soul
- * selection / receipt extract. S3/S6 step ids and role/kind/soul `"verify"`
- * all count. Residual `role:"reviewer"+soul:"verify"` still matches for
- * older ledger / fixture rows; production S3/S6 specs use role+soul verify.
- * (`#923` only merged the model-route *slot* into verify — not a forever pin
- * that seat role must remain `"reviewer"`. Leg soul `"reviewer"` is multi-model
- * review-leg vocabulary only.)
+ * #919 S2 / R7 — single judge-seat predicate for topology / decision_gate /
+ * soul selection / receipt extract.
+ *
+ * Only S3/S6 are judge seats. Family online-review S9 (`verifyWorkerSpec`:
+ * kind/role/soul `"verify"`) is **not** a judge — it keeps the verify receipt
+ * channel, never the judge receipt tag.
+ *
+ * Seat identity is the step/id only. Never treat `kind|role|soul === "verify"`
+ * alone as judge (that falsely claimed S9). Production S3/S6 specs use
+ * role+soul `"verify"`; residual dual-spell `role:"reviewer"+soul:"verify"` on
+ * S3/S6 still matches via the step/id arm. (`#923` only merged the model-route
+ * *slot* into verify — not a forever pin that seat role must remain
+ * `"reviewer"`. Leg soul `"reviewer"` is multi-model review-leg vocabulary only.)
  */
 export function isJudgeSeat(input: {
   readonly step?: string;
@@ -638,11 +644,5 @@ export function isJudgeSeat(input: {
   readonly soul?: string;
 }): boolean {
   const seat = input.step ?? input.id;
-  if (seat === "S3" || seat === "S6") return true;
-  if (input.kind === "verify") return true;
-  if (input.role === "verify") return true;
-  if (input.soul === "verify") return true;
-  // Residual dual-spell rows only (pre-#919 role spelling).
-  if (input.role === "reviewer" && input.soul === "verify") return true;
-  return false;
+  return seat === "S3" || seat === "S6";
 }

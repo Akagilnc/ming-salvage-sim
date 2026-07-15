@@ -149,9 +149,9 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    // Default green is boolean converged without open-count — dispatchWorker
-    // promotes to kind:judge (live seat). findingsCount:0 stays residual unusable
-    // (#919 M2 never silent clean).
+    // Default green is boolean converged without open-count — fake dispatch
+    // emits live kind:judge (happy 直出). findingsCount:0 stays residual unusable
+    // (#919 M2/R7 never silent clean).
     const result = this.script.cmr?.(req) ?? {
       converged: true,
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],

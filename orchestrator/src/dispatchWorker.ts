@@ -148,9 +148,9 @@ function workerKindForRole(role: StepSpec["role"]): WorkerKind {
  * NOT the crash/escalate resume path).
  *
  * #925 S3/S6 judge continuity is `resumeSessionId` only (same agent session).
- * #919 S2: judge seats force clean via {@link stepSpecToWorkerSpec} (isJudgeSeat),
- * independent of WorkerKind spelling. Family online-review S9 also pins clean
- * explicitly on its WorkerSpec.
+ * #919 S2/R7: judge seats (S3/S6 only via isJudgeSeat) force clean via
+ * {@link stepSpecToWorkerSpec}. Family online-review S9 is not a judge seat
+ * and pins clean explicitly on its WorkerSpec.
  */
 function retentionForKind(kind: WorkerKind): WorkerContextRetention {
   // Production workers (coder + post-review fixer) retain context across rounds.
@@ -366,9 +366,9 @@ export function stepSpecToWorkerSpec(
   billingPool?: BillingPoolId,
 ): WorkerSpec {
   const kind = workerKindForRole(spec.role);
-  // #919 S2: judge seats are clean-eyes verify via sole isJudgeSeat predicate
-  // (promptFile is the station contract). Skill for kind:verify is online-review
-  // /verify and is unused by RealBackend.runStep (promptFile+soul drive the seat).
+  // #919 S2/R7: S3/S6 judge seats are clean-eyes via sole isJudgeSeat predicate
+  // (promptFile is the station contract). S9 kind:verify is online-review, not
+  // judge — skill /verify is unused by RealBackend.runStep for S3/S6.
   const judgeSeat = isJudgeSeat({
     id: spec.id,
     kind,
