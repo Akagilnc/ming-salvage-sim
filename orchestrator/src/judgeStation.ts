@@ -641,10 +641,9 @@ export function judgeStatusFromOutput(
 export function isJudgeSeat(input: {
   readonly step?: string;
   readonly id?: string;
-  readonly kind?: string;
-  readonly role?: string;
-  readonly soul?: string;
 }): boolean {
+  // Seat identity is step/id only (#919 R4) — kind/role/soul are not consulted
+  // (S9 online-review carries kind/role/soul "verify" and is NOT a judge seat).
   const seat = input.step ?? input.id;
   return seat === "S3" || seat === "S6";
 }

@@ -133,6 +133,7 @@ import type {
   FindingFamily,
   ShipResult,
   VerifyResult,
+  ReviewFixRefuseRecord,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -144,7 +145,7 @@ import {
   priorFamilyJudgeVerdictRowsFromLedger,
 } from "../judgeStation.js";
 import { residualIntegratedCmrToJudgeOutput } from "./dispatchFamilyWorker.js";
-import { coderRefuseTrafficKeys } from "../coderRefuseExit.js";
+import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
 import {
   buildReviewRoundStamp,
   readTelemetryRecords,
@@ -588,9 +589,16 @@ interface IntegratedCmrPassOutcome {
     >;
     /** #930 — per-pass family judge session for resume across fix rounds. */
     readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
-    /** #930 — refuse keys blind-routed back to the family judge. */
+    /** #930 / #919 R2 — refuse keys blind-routed back to the family judge. */
     readonly refusedFindingIdentityKeysByPass?: Partial<
       Record<IntegratedCmrPass, readonly string[]>
+    >;
+    /**
+     * #919 R2 / #927 isomorphic — opaque refuseRecords cargo for family judge
+     * re-open (landing only; never on thin DispatchContext).
+     */
+    readonly refuseRecordsByPass?: Partial<
+      Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
     >;
   };
 }
@@ -832,10 +840,12 @@ async function runCmrCoderFix(input: {
     return { result: { ok: false, ran: true }, familyHeadAfter };
   }
 
-  // #930 / #919 M1: legal refuse is a completion, not a terminal / idle death —
-  // blind-route keys back to the family judge (same contract as single-slice
-  // {@link coderRefuseTrafficKeys}: envelope keys first, refuseRecords fallback).
-  const refusedFindingIdentityKeys = coderRefuseTrafficKeys(fixResult.output);
+  // #930 / #919 M1+R2: legal refuse is a completion, not a terminal / idle death —
+  // blind-route keys + opaque refuseRecords cargo back to the family judge
+  // (same contract as single-slice {@link coderRefuseReverifyLanding}).
+  const refuseLanding = coderRefuseReverifyLanding(fixResult.output);
+  const refusedFindingIdentityKeys = refuseLanding.refusedFindingIdentityKeys;
+  const refuseRecords = refuseLanding.refuseRecords;
 
   await recordCmrFixCommitted(familyBackend, {
     cmrPass: pass,
@@ -868,6 +878,14 @@ async function runCmrCoderFix(input: {
         ? {
             refusedFindingIdentityKeysByPass: {
               [pass]: refusedFindingIdentityKeys,
+            },
+          }
+        : {}),
+      // #919 R2 / #927: opaque refuseRecords cargo (landing-only on re-open).
+      ...(refuseRecords !== undefined && refuseRecords.length > 0
+        ? {
+            refuseRecordsByPass: {
+              [pass]: refuseRecords,
             },
           }
         : {}),
@@ -1747,6 +1765,11 @@ async function runIntegratedCmrPass(input: {
   readonly judgeSessionId?: string;
   /** #930 — refuse keys from prior coder-fix for judge re-ruling. */
   readonly refusedFindingIdentityKeys?: readonly string[];
+  /**
+   * #919 R2 / #927 — opaque refuseRecords cargo for judge re-open landing
+   * (信封宪法: keys on thin ctx; cargo on landing only).
+   */
+  readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
   readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
@@ -1767,6 +1790,7 @@ async function runIntegratedCmrPass(input: {
     allowCoderFix,
     judgeSessionId,
     refusedFindingIdentityKeys,
+    refuseRecords,
     judgeSessionIdByPass,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
@@ -1838,6 +1862,23 @@ async function runIntegratedCmrPass(input: {
       ? { refusedFindingIdentityKeys }
       : {}),
   };
+  // #919 R2 / #927 isomorphic: refuseRecords cargo is landing-only (信封宪法).
+  // Keys already ride on thin dispatchCtx; mirror keys onto landing for parity
+  // with single-slice S6 reverify landing shape.
+  const refuseReopenLanding: WorkerLandingPayload | undefined =
+    (refusedFindingIdentityKeys !== undefined &&
+      refusedFindingIdentityKeys.length > 0) ||
+    (refuseRecords !== undefined && refuseRecords.length > 0)
+      ? {
+          ...(refusedFindingIdentityKeys !== undefined &&
+          refusedFindingIdentityKeys.length > 0
+            ? { refusedFindingIdentityKeys }
+            : {}),
+          ...(refuseRecords !== undefined && refuseRecords.length > 0
+            ? { refuseRecords }
+            : {}),
+        }
+      : undefined;
   const stampReviewRound = (
     result: WorkerResult,
     finalDisposition: "accepted" | "rejected" | "unknown",
@@ -1866,7 +1907,12 @@ async function runIntegratedCmrPass(input: {
   };
   try {
     let reviewerMonitorHandle: WorkerMonitorHandle | undefined;
-    const cmrResult = await dispatchOrAbort(familyBackend, spec, dispatchCtx, undefined, {
+    const cmrResult = await dispatchOrAbort(
+      familyBackend,
+      spec,
+      dispatchCtx,
+      refuseReopenLanding,
+      {
       onMonitorHandle: (handle) => {
         reviewerMonitorHandle = handle;
       },
@@ -2207,6 +2253,9 @@ async function runIntegratedCmrPass(input: {
                 fromFix.refusedFindingIdentityKeysByPass,
             }
           : {}),
+        ...(fromFix?.refuseRecordsByPass !== undefined
+          ? { refuseRecordsByPass: fromFix.refuseRecordsByPass }
+          : {}),
         ...(fromFix?.judgeSessionIdByPass !== undefined
           ? { judgeSessionIdByPass: fromFix.judgeSessionIdByPass }
           : {}),
@@ -2368,6 +2417,10 @@ export async function runVerifyCmr(
   let refusedFindingIdentityKeysByPass: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   > = {};
+  // #919 R2: opaque refuseRecords cargo pairs with keys for the next re-open.
+  let refuseRecordsByPass: Partial<
+    Record<IntegratedCmrPass, readonly ReviewFixRefuseRecord[]>
+  > = {};
 
   // Completeness court: loop continue → fix → resume judge until pass.
   // Unusable is fail-loud (seat SO re-ask owns typed re-furnace; no coder-fix).
@@ -2400,6 +2453,9 @@ export async function runVerifyCmr(
               refusedFindingIdentityKeysByPass.completeness,
           }
         : {}),
+      ...(refuseRecordsByPass.completeness !== undefined
+        ? { refuseRecords: refuseRecordsByPass.completeness }
+        : {}),
       judgeSessionIdByPass,
     });
     if (!completeness.result.ok) return completeness.result;
@@ -2427,7 +2483,7 @@ export async function runVerifyCmr(
       ...judgeSessionIdByPass,
       ...(completeness.restartFinalBarrier.judgeSessionIdByPass ?? {}),
     };
-    // Keep refuse keys only for the immediate next judge open.
+    // Keep refuse keys + cargo only for the immediate next judge open.
     const nextRefuse =
       completeness.restartFinalBarrier.refusedFindingIdentityKeysByPass
         ?.completeness;
@@ -2435,8 +2491,15 @@ export async function runVerifyCmr(
       nextRefuse !== undefined
         ? { completeness: nextRefuse }
         : {};
+    const nextRefuseRecords =
+      completeness.restartFinalBarrier.refuseRecordsByPass?.completeness;
+    refuseRecordsByPass =
+      nextRefuseRecords !== undefined
+        ? { completeness: nextRefuseRecords }
+        : {};
   }
   refusedFindingIdentityKeysByPass = {};
+  refuseRecordsByPass = {};
 
   let correctnessFamilyHeadAfter = completenessFamilyHeadAfter;
   let correctnessPriorKeysByPass = completenessPriorKeysByPass;
@@ -2464,6 +2527,9 @@ export async function runVerifyCmr(
             refusedFindingIdentityKeys:
               refusedFindingIdentityKeysByPass.correctness,
           }
+        : {}),
+      ...(refuseRecordsByPass.correctness !== undefined
+        ? { refuseRecords: refuseRecordsByPass.correctness }
         : {}),
       judgeSessionIdByPass,
     });
@@ -2495,6 +2561,12 @@ export async function runVerifyCmr(
       nextRefuse !== undefined
         ? { ...refusedFindingIdentityKeysByPass, correctness: nextRefuse }
         : { ...refusedFindingIdentityKeysByPass, correctness: undefined };
+    const nextRefuseRecords =
+      correctness.restartFinalBarrier.refuseRecordsByPass?.correctness;
+    refuseRecordsByPass =
+      nextRefuseRecords !== undefined
+        ? { ...refuseRecordsByPass, correctness: nextRefuseRecords }
+        : { ...refuseRecordsByPass, correctness: undefined };
   }
   const cmrPassedFamilyHeadAfter = correctnessFamilyHeadAfter;
   // Both CMR passes converged. Continue through ship, online review, auto-merge,

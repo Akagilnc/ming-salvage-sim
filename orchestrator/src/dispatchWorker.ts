@@ -229,12 +229,7 @@ function writeFixFindingsLandingFile(
     ctx.priorJudgeVerdicts !== undefined && ctx.priorJudgeVerdicts.length > 0
       ? ctx.priorJudgeVerdicts
       : undefined;
-  const judgeSeat = isJudgeSeat({
-    id: spec.id,
-    kind: spec.kind,
-    role: spec.role,
-    soul: spec.soul,
-  });
+  const judgeSeat = isJudgeSeat({ id: spec.id });
   const needsFindingsLanding =
     (spec.id === "S5" && spec.kind === "coder") ||
     // #925 / #919 S2: S6 judge seat still needs fix-findings landing for
@@ -369,12 +364,7 @@ export function stepSpecToWorkerSpec(
   // #919 S2/R7: S3/S6 judge seats are clean-eyes via sole isJudgeSeat predicate
   // (promptFile is the station contract). S9 kind:verify is online-review, not
   // judge — skill /verify is unused by RealBackend.runStep for S3/S6.
-  const judgeSeat = isJudgeSeat({
-    id: spec.id,
-    kind,
-    role: spec.role,
-    soul: spec.soul,
-  });
+  const judgeSeat = isJudgeSeat({ id: spec.id });
   return {
     id: spec.id,
     kind,

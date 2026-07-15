@@ -430,7 +430,7 @@ class DogfoodSingleSliceBackend implements Backend {
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.runStepCalls.push(spec.id);
     // #919 S2: sole isJudgeSeat predicate (not role reviewer|verify OR).
-    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
+    if (isJudgeSeat({ id: spec.id })) {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
       return scripted ?? { kind: "judge", status: "converged" };
@@ -451,14 +451,7 @@ class DogfoodSingleSliceBackend implements Backend {
     this.dispatchedModels.push(`${spec.id}:${spec.model}`);
     // #919 R7: sole isJudgeSeat (S3/S6) — not dual kind reviewer|verify OR.
     // S9 online-review verify is not a judge seat.
-    if (
-      isJudgeSeat({
-        id: spec.id,
-        kind: spec.kind,
-        role: spec.role,
-        soul: spec.soul,
-      })
-    ) {
+    if (isJudgeSeat({ id: spec.id })) {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
       return {
