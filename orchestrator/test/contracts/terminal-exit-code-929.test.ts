@@ -37,10 +37,14 @@ import {
 import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
+  CoderOutput,
+  Escalation,
   IssueMeta,
   IssueSnapshot,
   PersistentLedgerEntry,
+  ResumeState,
   StepOutput,
+  StepResult,
   StepSpec,
   WorktreeHandle,
 } from "../../src/types.js";
@@ -266,6 +270,83 @@ describe("#929 family driver exit codes (representative terminals)", () => {
 
 // ── fresh / resume same name AND code ──────────────────────────────────────
 
+/**
+ * Child whose coder parks on a product/design decision (escalationKind decision).
+ * Fresh path → family `escalated` + `child_decision_parked`; unanswered re-entry
+ * early-exits the same terminal (no inventing new names).
+ */
+class DecisionEscalateChildBackend extends ChildBackend {
+  readonly childLedgers = new Map<number, PersistentLedgerEntry[]>();
+  constructor(
+    private readonly escalateIssue: number,
+    private readonly sessionId = "child-decision-gate-session",
+  ) {
+    super();
+  }
+
+  override async findResumeState(
+    issueNumber: number,
+  ): Promise<ResumeState | undefined> {
+    const ledger = this.childLedgers.get(issueNumber);
+    if (ledger === undefined || ledger.length === 0) return undefined;
+    return {
+      worktree: {
+        branch: `feat/child-${issueNumber}`,
+        base: "family/929-base",
+        path: `/wt/${issueNumber}`,
+      },
+      stateDir: `/wt/.ledger-${issueNumber}`,
+      ledger,
+    };
+  }
+
+  override async runStep(
+    spec: StepSpec,
+    worktree?: WorktreeHandle,
+  ): Promise<StepOutput | StepResult> {
+    const issue =
+      worktree !== undefined
+        ? Number(worktree.branch.match(/child-(\d+)/)?.[1] ?? -1)
+        : -1;
+    if (spec.id === "S2" && issue === this.escalateIssue) {
+      const stuck: Escalation = {
+        reason: "Design-level ambiguity on optional field X",
+        diagnosis:
+          "Product decision required before implementation can proceed.",
+      };
+      const out: CoderOutput = {
+        kind: "coder",
+        committed: false,
+        commitsAdded: 0,
+        escalate: stuck,
+      };
+      return { output: out, sessionId: this.sessionId };
+    }
+    return super.runStep(spec);
+  }
+
+  override async writeLedger(
+    entry: PersistentLedgerEntry,
+    stateDir: string,
+  ): Promise<void> {
+    const m = stateDir.match(/\.ledger-(\d+)/);
+    const issue = m ? Number(m[1]) : -1;
+    const ledger = this.childLedgers.get(issue) ?? [];
+    ledger.push(entry);
+    this.childLedgers.set(issue, ledger);
+  }
+}
+
+/** Child whose coder always crashes — family completeness gate → incomplete. */
+class FailSliceBackend extends ChildBackend {
+  override async runStep(spec: StepSpec): Promise<StepOutput> {
+    if (spec.role === "coder") {
+      throw new Error("simulated child slice crash");
+    }
+    return super.runStep(spec);
+  }
+}
+
 describe("#929 fresh / resume → same terminal name and exit code", () => {
   it.each([
     "cmr_failed",
@@ -350,6 +431,98 @@ describe("#929 fresh / resume → same terminal name and exit code", () => {
       expect(familyDriverExitCode(resume)).toBe(TERMINAL_EXIT_CODES[status]);
     },
   );
+
+  it("incomplete: fresh child failure and resume re-entry both yield incomplete + exit 11", async () => {
+    // Fresh: child crashes before merge → completeness gate → incomplete.
+    const freshBackend = new FakeFamilyBackend();
+    const fresh = await runFamily({
+      epic: epicWith(10),
+      familyBackend: freshBackend,
+      singleSliceBackend: new FailSliceBackend(),
+      familyBase: "family/929-base",
+      verifyCmr: async () => ({ ok: true, ran: true }),
+    });
+    expect(fresh.status).toBe("incomplete");
+    const freshCode = familyDriverExitCode(fresh);
+    expect(freshCode).toBe(TERMINAL_EXIT_CODES.incomplete);
+    expect(freshCode).toBe(11);
+    // Child never merged — durable residue for incomplete resume is empty merge set.
+    expect(freshBackend.ledger.some((e) => e.status === "merged")).toBe(false);
+
+    // Resume: same accident (child still fails, still unmerged) → same terminal + code.
+    // Ledger is the prior incomplete residue (no merges); re-entry re-runs the child.
+    class IncompleteResumeBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [...freshBackend.ledger];
+      async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
+        throw new Error("incomplete resume must not merge a failed child");
+      }
+      async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(e);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+    }
+    const resume = await runFamily({
+      epic: epicWith(10),
+      familyBackend: new IncompleteResumeBackend(),
+      singleSliceBackend: new FailSliceBackend(),
+      familyBase: "family/929-base",
+      verifyCmr: async () => ({ ok: true, ran: true }),
+    });
+    expect(resume.status).toBe(fresh.status);
+    expect(resume.status).toBe("incomplete");
+    expect(familyDriverExitCode(resume)).toBe(freshCode);
+    expect(familyDriverExitCode(resume)).toBe(TERMINAL_EXIT_CODES.incomplete);
+    expect(familyDriverExitCode(resume)).toBe(11);
+  });
+
+  it("escalated: fresh decision park and unanswered resume re-entry both yield escalated + exit 10", async () => {
+    // Fresh: child decision escalate parks the family (not incomplete / stage fail).
+    const freshBackend = new FakeFamilyBackend();
+    const freshSlice = new DecisionEscalateChildBackend(10);
+    const fresh = await runFamily({
+      epic: epicWith(10),
+      familyBackend: freshBackend,
+      singleSliceBackend: freshSlice,
+      familyBase: "family/929-base",
+      verifyCmr: async () => ({ ok: true, ran: true }),
+    });
+    expect(fresh.status).toBe("escalated");
+    const freshCode = familyDriverExitCode(fresh);
+    expect(freshCode).toBe(TERMINAL_EXIT_CODES.escalated);
+    expect(freshCode).toBe(10);
+    expect(
+      freshBackend.ledger.some((e) => e.event === "child_decision_parked"),
+    ).toBe(true);
+
+    // Resume: unanswered child_decision_parked early-exits before the wave loop
+    // with the same escalated terminal (production #604 F8 path).
+    class EscalatedResumeBackend implements FamilyBackend {
+      readonly ledger: FamilyLedgerEntry[] = [...freshBackend.ledger];
+      async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
+        throw new Error("unanswered escalated resume must not merge");
+      }
+      async appendFamilyLedger(e: FamilyLedgerEntry): Promise<void> {
+        this.ledger.push(e);
+      }
+      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+        return this.ledger;
+      }
+    }
+    const resume = await runFamily({
+      epic: epicWith(10),
+      familyBackend: new EscalatedResumeBackend(),
+      singleSliceBackend: new DecisionEscalateChildBackend(10),
+      familyBase: "family/929-base",
+      verifyCmr: async () => ({ ok: true, ran: true }),
+    });
+    expect(resume.status).toBe(fresh.status);
+    expect(resume.status).toBe("escalated");
+    expect(familyDriverExitCode(resume)).toBe(freshCode);
+    expect(familyDriverExitCode(resume)).toBe(TERMINAL_EXIT_CODES.escalated);
+    expect(familyDriverExitCode(resume)).toBe(10);
+  });
 });
 
 // ── non-success must speak + persist tagged S8 (stopForCoderRec) ───────────
