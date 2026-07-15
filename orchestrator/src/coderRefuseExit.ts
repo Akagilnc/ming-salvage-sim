@@ -5,6 +5,10 @@
  * only routing signal. Four legal refuse reasons + evidence live in opaque
  * cargo for the judge; the runner never reads reason prose for topology.
  *
+ * Production projection is a single helper: {@link coderRefuseReverifyLanding}.
+ * Decode-side cargo siblings stay in realBackend (`coderRefuseCargoFields`);
+ * this module only projects typed coder output onto S6 reverify signals.
+ *
  * Reuses {@link LEGAL_REFUSE_REASONS} / refused* vocabulary from
  * stationReceiptContracts (T2). Re-dispatch governance (#902) is out of scope.
  */
@@ -27,7 +31,7 @@ export interface CoderRefuseCapableOutput {
 }
 
 /**
- * Traffic keys for S5→S6 reverify landing.
+ * Traffic keys for S5→S6 reverify.
  *
  * Prefer envelope `refusedFindingIdentityKeys` (canonical T2 traffic). Fall
  * back to well-shaped #677 refuseRecords via the decision gate. Never parses
@@ -47,80 +51,23 @@ export function coderRefuseTrafficKeys(
 }
 
 /**
- * True when the coder output is a legal refuse receipt (traffic keys present
- * and no escalate bell). Escalate is a different exit — never dual-classified.
- */
-export function isCoderRefuseReceipt(
-  output: CoderRefuseCapableOutput,
-): boolean {
-  if (output.escalate != null) return false;
-  return coderRefuseTrafficKeys(output).length > 0;
-}
-
-/**
- * Opaque refuse cargo for judge re-adjudication. Runner transports as-is —
- * does not validate reason tokens, evidence, or AC conflict prose.
- */
-export function coderRefuseOpaqueCargo(
-  output: CoderRefuseCapableOutput,
-): readonly ReviewFixRefuseRecord[] | undefined {
-  const records = output.refuseRecords;
-  if (records === undefined || records.length === 0) return undefined;
-  return records;
-}
-
-/**
  * S6 reverify signals derived from a completed S5 coder output.
- * Pure projection — same shape the runner threads into DispatchContext /
- * WorkerLandingPayload (keys = traffic; refuseRecords = opaque cargo).
+ *
+ * Sole production projection for refuse reverify: keys = envelope traffic;
+ * refuseRecords = opaque cargo (pass-through, no reason validation).
+ * Runner threads keys onto thin DispatchContext and cargo onto landing only
+ * (信封宪法 — cargo prose never lives on the thin ctx).
  */
 export function coderRefuseReverifyLanding(output: CoderRefuseCapableOutput): {
   readonly refusedFindingIdentityKeys: readonly string[];
   readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
 } {
   const keys = coderRefuseTrafficKeys(output);
-  const cargo = coderRefuseOpaqueCargo(output);
+  const records = output.refuseRecords;
+  const cargo =
+    records !== undefined && records.length > 0 ? records : undefined;
   return {
     refusedFindingIdentityKeys: keys,
     ...(cargo !== undefined ? { refuseRecords: cargo } : {}),
-  };
-}
-
-/**
- * Build a four-reason refuse cargo row for tests / workers.
- * Tokens must be one of {@link LEGAL_REFUSE_REASONS}; invents are rejected.
- * Runner topology never calls this — it is a cargo factory, not a router.
- */
-export function mintFourReasonRefuseRecord(input: {
-  readonly identityKey: string;
-  readonly reason: LegalRefuseReason;
-  readonly evidence: string;
-  readonly finding?: string;
-  readonly acceptanceCriterion?: string;
-}): ReviewFixRefuseRecord {
-  if (
-    !(LEGAL_REFUSE_REASONS as readonly string[]).includes(input.reason)
-  ) {
-    throw new Error(
-      `mintFourReasonRefuseRecord: illegal reason ${String(input.reason)}`,
-    );
-  }
-  const evidence = input.evidence.trim();
-  if (evidence.length === 0) {
-    throw new Error("mintFourReasonRefuseRecord: evidence must be non-empty");
-  }
-  const identityKey = input.identityKey.trim();
-  if (identityKey.length === 0) {
-    throw new Error("mintFourReasonRefuseRecord: identityKey must be non-empty");
-  }
-  return {
-    identityKey,
-    finding: input.finding ?? identityKey,
-    acceptanceCriterion:
-      input.acceptanceCriterion ??
-      "four-reason refuse (judge re-adjudicates; not an AC-pin overturn)",
-    conflictReason: evidence,
-    reason: input.reason,
-    evidence,
   };
 }

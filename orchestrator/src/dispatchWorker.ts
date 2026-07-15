@@ -296,12 +296,10 @@ function writeFixFindingsLandingFile(
           ? { refusedFindingIdentityKeys: ctx.refusedFindingIdentityKeys }
           : {}),
         // #927: opaque refuse cargo (four reasons + evidence) for judge
-        // re-adjudication. Prefer landing payload; fall back to thin ctx.
-        ...((landing?.refuseRecords ?? ctx.refuseRecords) !== undefined &&
-        (landing?.refuseRecords ?? ctx.refuseRecords)!.length > 0
-          ? {
-              refuseRecords: landing?.refuseRecords ?? ctx.refuseRecords,
-            }
+        // re-adjudication — landing only (信封宪法); never from thin ctx.
+        ...(landing?.refuseRecords !== undefined &&
+        landing.refuseRecords.length > 0
+          ? { refuseRecords: landing.refuseRecords }
           : {}),
         ...(ctx.escalationAnswer !== undefined
           ? { escalationAnswer: ctx.escalationAnswer }

@@ -3298,13 +3298,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                               refusedFindingIdentityKeysForReverify,
                           }
                         : {}),
-                      // #927: opaque refuse cargo on thin ctx only as fallback;
-                      // rich cargo rides on landingPayload below.
-                      ...(step === "S6" &&
-                      refuseRecordsForReverify !== undefined &&
-                      refuseRecordsForReverify.length > 0
-                        ? { refuseRecords: refuseRecordsForReverify }
-                        : {}),
+                      // #927: refuseRecords cargo is landing-only (信封宪法).
                     }
                   : {}),
               };
@@ -3329,7 +3323,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                               refusedFindingIdentityKeysForReverify,
                           }
                         : {}),
-                      // #927: four-reason + evidence cargo for judge re-adjudicate.
+                      // #927: four-reason + evidence cargo for judge re-adjudicate
+                      // (landing only — never mirrored onto thin DispatchContext).
                       ...(step === "S6" &&
                       refuseRecordsForReverify !== undefined &&
                       refuseRecordsForReverify.length > 0
