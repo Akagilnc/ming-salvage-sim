@@ -104,6 +104,7 @@ import {
   type StopSummary,
 } from "../stopSummary.js";
 import {
+  familyTerminalFromStopSummary,
   isFamilyStageFailureStatus,
   resolveFamilyStageTerminal,
   stageFailureStopSummary,
@@ -127,46 +128,6 @@ function filled(value: string | undefined): string | undefined {
   if (value == null) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-/** #922 — map auto-merge incomplete stop to park vs merge_failed real name. */
-function familyMergeTerminalFromStop(stopSummary: StopSummary): {
-  readonly status: "escalated" | "merge_failed";
-  readonly stopSummary: StopSummary;
-} {
-  if (stopSummary.reason === "decision_gate_park") {
-    return { status: "escalated", stopSummary };
-  }
-  return {
-    status: "merge_failed",
-    stopSummary: stageFailureStopSummary({
-      status: "merge_failed",
-      summary: stopSummary.summary,
-      repairHint:
-        stopSummary.repairHint ??
-        "resolve merge blockers, then re-feed the family run",
-      ...(stopSummary.metadata !== undefined
-        ? { metadata: stopSummary.metadata }
-        : {}),
-    }),
-  };
-}
-
-/** #922 — map online-review incomplete stop to park vs online_review_failed. */
-function familyOnlineReviewTerminalFromStop(stopSummary: StopSummary): {
-  readonly status: "escalated" | "online_review_failed";
-  readonly stopSummary: StopSummary;
-} {
-  if (stopSummary.reason === "decision_gate_park") {
-    return { status: "escalated", stopSummary };
-  }
-  return {
-    status: "online_review_failed",
-    stopSummary: {
-      ...stopSummary,
-      reason: "online_review_failed",
-    },
-  };
 }
 
 /**
@@ -2485,7 +2446,7 @@ export async function runFamily(
           repairHint:
             "resolve merge blockers or answer the decision gate, then re-feed the family run",
         });
-      const terminal = familyMergeTerminalFromStop(rawStop);
+      const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
       if (terminal.status === "escalated") {
         await recordFamilyEscalated(familyBackend, {
           escalationKind: "decision",
@@ -2531,7 +2492,7 @@ export async function runFamily(
           repairHint:
             "resolve merge blockers or answer the decision gate, then re-feed the family run",
         });
-      const terminal = familyMergeTerminalFromStop(rawStop);
+      const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
       if (terminal.status === "escalated") {
         await recordFamilyEscalated(familyBackend, {
           escalationKind: "decision",
@@ -2687,7 +2648,10 @@ export async function runFamily(
           summary: "family online review loop did not converge during shipped resume",
           repairHint: "repair or answer the worker-reported stop, then re-feed the family run",
         });
-      const terminal = familyOnlineReviewTerminalFromStop(rawStop);
+      const terminal = familyTerminalFromStopSummary({
+        stage: "online_review_failed",
+        stopSummary: rawStop,
+      });
       if (terminal.status === "escalated") {
         await recordFamilyEscalated(familyBackend, {
           escalationKind: "decision",
@@ -2742,7 +2706,7 @@ export async function runFamily(
           summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
           repairHint: "resolve the worker-reported merge stop, then re-feed the family run",
         });
-      const terminal = familyMergeTerminalFromStop(rawStop);
+      const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
       if (terminal.status === "escalated") {
         await recordFamilyEscalated(familyBackend, {
           escalationKind: "decision",
@@ -2887,7 +2851,10 @@ export async function runFamily(
               repairHint:
                 "repair or answer the worker-reported stop, then re-feed the family run",
             });
-          const terminal = familyOnlineReviewTerminalFromStop(rawStop);
+          const terminal = familyTerminalFromStopSummary({
+            stage: "online_review_failed",
+            stopSummary: rawStop,
+          });
           if (terminal.status === "escalated") {
             await recordFamilyEscalated(familyBackend, {
               escalationKind: "decision",
@@ -2947,7 +2914,7 @@ export async function runFamily(
               repairHint:
                 "resolve the worker-reported merge stop, then re-feed the family run",
             });
-          const terminal = familyMergeTerminalFromStop(rawStop);
+          const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
           if (terminal.status === "escalated") {
             await recordFamilyEscalated(familyBackend, {
               escalationKind: "decision",

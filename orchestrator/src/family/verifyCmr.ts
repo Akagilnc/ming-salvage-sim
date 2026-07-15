@@ -159,7 +159,6 @@ import { isFilledString } from "../shipOutcome.js";
 import {
   contractDriftStopSummary,
   decisionGateParkStopSummary,
-  infraFailureStopSummary,
   successStopSummary,
   type StopSummary,
 } from "../stopSummary.js";
@@ -1049,14 +1048,19 @@ function familyOnlineReviewLoopFailureStopSummary(
   reviewLoop: OnlineReviewLoopStageResult,
 ): StopSummary {
   if (reviewLoop.stopSummary !== undefined) {
-    // Keep decision parks answerable; hard fails re-stamp to the stage token.
+    // Keep decision parks answerable. Hard fails already carry the stage token
+    // at source (#922); stageFailureStopSummary is idempotent restamp + defaults.
     if (reviewLoop.stopSummary.reason === "decision_gate_park") {
       return reviewLoop.stopSummary;
     }
-    return {
-      ...reviewLoop.stopSummary,
-      reason: "online_review_failed",
-    };
+    return stageFailureStopSummary({
+      status: "online_review_failed",
+      summary: reviewLoop.stopSummary.summary,
+      repairHint: reviewLoop.stopSummary.repairHint,
+      ...(reviewLoop.stopSummary.metadata !== undefined
+        ? { metadata: reviewLoop.stopSummary.metadata }
+        : {}),
+    });
   }
   const reason =
     reviewLoop.terminalState === "round_budget_exhausted"
@@ -1119,11 +1123,12 @@ export async function runFamilyOnlineReviewLoop(input: {
       ok: false,
       terminalState: "decision_gate_raised",
       round: 1,
-      stopSummary: {
-        reason: "infra_failure",
+      stopSummary: stageFailureStopSummary({
+        status: "online_review_failed",
         summary: `family online-review route smoke failed: ${err instanceof Error ? err.message : String(err)}`,
-        repairHint: "provide the family startup-smoked model route before dispatching online review workers",
-      },
+        repairHint:
+          "provide the family startup-smoked model route before dispatching online review workers",
+      }),
     };
   }
   // F2: do not put sticky baton pool on baseCtx — each dispatch scopes by slot.
@@ -1203,12 +1208,12 @@ export async function runFamilyOnlineReviewLoop(input: {
       ok: false,
       terminalState: "decision_gate_raised",
       round: loopState.round,
-      stopSummary: {
-        reason: "infra_failure",
+      stopSummary: stageFailureStopSummary({
+        status: "online_review_failed",
         summary: `family online review round-trigger setup failed: ${err instanceof Error ? err.message : String(err)}`,
         repairHint:
           "repair ledger round-trigger / fix-gap anchors and re-feed the family run",
-      },
+      }),
     };
   }
   let familyLastFixCommitSha: string | undefined = loopState.lastFixSha;
@@ -1272,7 +1277,8 @@ export async function runFamilyOnlineReviewLoop(input: {
       if (result.kind === "escalated") {
         const escalationSummary = `family verify worker escalated: ${result.escalation.reason} — ${result.escalation.diagnosis}`;
         const stopSummary = isRunnerSynthesizedFailureEscalation(result.escalation)
-          ? infraFailureStopSummary({
+          ? stageFailureStopSummary({
+              status: "online_review_failed",
               summary: escalationSummary,
               repairHint:
                 "repair the family verify worker startup/authentication failure, then re-feed the family online review loop",
@@ -1295,7 +1301,8 @@ export async function runFamilyOnlineReviewLoop(input: {
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: infraFailureStopSummary({
+          stopSummary: stageFailureStopSummary({
+            status: "online_review_failed",
             summary: `family verify worker returned ${result.kind}${detail}`,
             repairHint:
               "inspect the verify worker envelope and re-feed the family online review loop",
@@ -1343,7 +1350,8 @@ export async function runFamilyOnlineReviewLoop(input: {
           terminalState: "decision_gate_raised",
           round,
           stopSummary: isRunnerSynthesizedFailureEscalation(result.escalation)
-            ? infraFailureStopSummary({
+            ? stageFailureStopSummary({
+                status: "online_review_failed",
                 summary: escalationSummary,
                 repairHint:
                   "repair the family fixer worker startup/authentication failure, then re-feed the family online review loop",
@@ -1364,7 +1372,8 @@ export async function runFamilyOnlineReviewLoop(input: {
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: infraFailureStopSummary({
+          stopSummary: stageFailureStopSummary({
+            status: "online_review_failed",
             summary: `family fixer worker returned ${result.kind}${detail}`,
             repairHint:
               "inspect the fixer worker envelope and re-feed the family online review loop",

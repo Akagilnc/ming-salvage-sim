@@ -126,3 +126,34 @@ export function resolveFamilyStageTerminal(input: {
     status: input.defaultStatus ?? "verify_failed",
   };
 }
+
+/**
+ * Single seam: raw stopSummary + stage context → FamilyRunResult terminal
+ * `{ status, stopSummary }` used by merge / online-review resume tails (and any
+ * same-class incomplete stage that already owns a stopSummary).
+ *
+ * - decision_gate_park → escalated (park preserved; no stage restamp)
+ * - otherwise → stage token with status === stopSummary.reason (no infra_failure stand-in)
+ */
+export function familyTerminalFromStopSummary(input: {
+  readonly stage: FamilyStageFailureStatus;
+  readonly stopSummary: StopSummary;
+}): {
+  readonly status: "escalated" | FamilyStageFailureStatus;
+  readonly stopSummary: StopSummary;
+} {
+  if (input.stopSummary.reason === "decision_gate_park") {
+    return { status: "escalated", stopSummary: input.stopSummary };
+  }
+  return {
+    status: input.stage,
+    stopSummary: stageFailureStopSummary({
+      status: input.stage,
+      summary: input.stopSummary.summary,
+      repairHint: input.stopSummary.repairHint,
+      ...(input.stopSummary.metadata !== undefined
+        ? { metadata: input.stopSummary.metadata }
+        : {}),
+    }),
+  };
+}
