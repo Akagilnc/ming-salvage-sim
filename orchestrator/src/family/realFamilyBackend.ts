@@ -117,6 +117,7 @@ import {
   type QuotaPoolId,
   type QuotaProbeResult,
 } from "../quotaProbe.js";
+import { withMonitorStreamHeartbeat } from "../sandboxStreamHeartbeat.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   attachSanitizedFindingFamilies,
@@ -1707,7 +1708,9 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    return await sc.run(options);
+    // #899 hotfix: same monitored-bridge liveness forwarding as the
+    // single-slice seam (see sandboxStreamHeartbeat.ts).
+    return await sc.run(withMonitorStreamHeartbeat(options));
   }
 
   /**
