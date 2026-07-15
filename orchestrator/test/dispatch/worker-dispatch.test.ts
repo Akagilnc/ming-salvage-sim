@@ -421,6 +421,128 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
   });
 
+  it.each([
+    ["missing findings cargo", undefined],
+    ["empty findings cargo", [] as const],
+  ])(
+    "positive findingsCount with %s still hands raw reviewer artifacts to S5",
+    async (_label, findings) => {
+      class PositiveCountMissingCargoBackend extends DispatchBackend {
+        readonly landings: Array<WorkerLandingPayload | undefined> = [];
+        reviewerCalls = 0;
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          this.landings.push(landing);
+          if (spec.kind === "reviewer") {
+            this.reviewerCalls += 1;
+            if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
+            this.specs.push(spec);
+            this.ctxs.push(ctx);
+            return {
+              kind: "completed",
+              // Legal open-count with sparse/missing findings rows — fixer must
+              // still receive raw artifact pointers (not an empty no-op landing).
+              output: {
+                kind: "reviewer",
+                findingsCount: 2,
+                ...(findings !== undefined ? { findings: [...findings] } : { findings: [] }),
+              },
+              sessionId: "reviewer-session-positive-missing-cargo",
+            };
+          }
+          if (spec.id === "S5") {
+            this.specs.push(spec);
+            this.ctxs.push(ctx);
+            return {
+              kind: "completed",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            };
+          }
+          return super.dispatchWorker(spec, ctx);
+        }
+      }
+
+      const backend = new PositiveCountMissingCargoBackend();
+      const result = await runOrchestrator({ issueNumber: 899, backend });
+
+      expect(result.status).toBe("success");
+      const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+      expect(s5Index).toBeGreaterThan(-1);
+      expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);
+      expect(backend.landings[s5Index]).toMatchObject({
+        blockingFindings: [],
+        rawReviewerArtifacts: {
+          reviewerSessionId: "reviewer-session-positive-missing-cargo",
+          statement: "the previous reviewer raw artifacts are here",
+        },
+      });
+    },
+  );
+
+  it("positive findingsCount with structured cargo still preserves raw reviewer artifacts", async () => {
+    const finding = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "structured row survives",
+      location: "src/a.ts:1",
+      suggested_fix: "keep raw pointers too",
+      action: "fix_now" as const,
+    };
+    class PositiveCountWithCargoBackend extends DispatchBackend {
+      readonly landings: Array<WorkerLandingPayload | undefined> = [];
+      reviewerCalls = 0;
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        this.landings.push(landing);
+        if (spec.kind === "reviewer") {
+          this.reviewerCalls += 1;
+          if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: {
+              kind: "reviewer",
+              findingsCount: 1,
+              findings: [finding],
+            },
+            sessionId: "reviewer-session-positive-with-cargo",
+          };
+        }
+        if (spec.id === "S5") {
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    const backend = new PositiveCountWithCargoBackend();
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+
+    expect(result.status).toBe("success");
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThan(-1);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
+    expect(backend.landings[s5Index]).toMatchObject({
+      blockingFindings: [finding],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "reviewer-session-positive-with-cargo",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
+  });
+
   it("dispatches S5 when the reviewer returns the wrong role kind", async () => {
     class WrongReviewerKindBackend extends DispatchBackend {
       reviewerCalls = 0;

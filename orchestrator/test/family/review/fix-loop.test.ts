@@ -2775,9 +2775,10 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
   it.each([
     ["missing findings", undefined],
     ["empty findings", [] as const],
-  ])("routes reviewer-declared count 3 with %s through coder-fix", async (_label, findings) => {
+  ])("routes reviewer-declared count 3 with %s through coder-fix with raw artifacts", async (_label, findings) => {
     const backend = new CountChannelFixBackend({
       kind: "completed",
+      sessionId: "cmr-reviewer-count-3-sparse-cargo",
       output: {
         kind: "cmr",
         converged: false,
@@ -2798,6 +2799,14 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.dispatches[0]?.kind).toBe("cmr");
     expect(backend.dispatches[1]?.kind).toBe("coder");
+    const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
+    expect(backend.landings[coderIndex]).toMatchObject({
+      blockingFindings: [],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "cmr-reviewer-count-3-sparse-cargo",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
     expect(backend.ledger.some((entry) => entry.status === "cmr_passed")).toBe(true);
   });
 
