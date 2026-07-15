@@ -97,34 +97,6 @@ export const DEFAULT_CODER_REC_ORDER: ReadonlyArray<string> = [
   "luna@med",
 ];
 
-/**
- * Historical round-threshold for mechanical Coder-Rec advance (pre-ADR 0132).
- * Kept as a named constant for tests that prove the live path no longer
- * rotates models when this many (or more) non-converging rounds elapse.
- * Live selection ignores it — judge `advanceCoder` is the sole advance signal
- * once #926 wires roster policy.
- */
-export const CODER_REC_FALLBACK_AFTER_ROUNDS = 2;
-
-/**
- * Completed S6 (fresh full-diff re-review) rounds in a run ledger.
- *
- * #899 (2026-07-15): the ledger carries a `worker_monitor_spawned` EVENT row
- * AND a completion row per S6 round (plus other bookkeeping event rows with
- * step ids). Counting raw `step === "S6"` rows doubled one real round into
- * two. Only event-less rows are completed rounds. (#920 removed the follow-on
- * pool-separation exhaust path; ADR 0132 also abolishes round-threshold
- * Coder-Rec model rotation — this counter is ledger telemetry / resume aid.)
- */
-export function completedS6RoundsFromLedger(
-  entries: ReadonlyArray<{ readonly step?: string; readonly event?: string }>,
-): number {
-  return entries.reduce(
-    (n, e) => (e.step === "S6" && e.event === undefined ? n + 1 : n),
-    0,
-  );
-}
-
 /** Allow optional Markdown bullet markers (`- `, `* `, `+ `) before the label. */
 const CODER_REC_LINE =
   /^\s*(?:[-*+]\s+)?Coder-Rec\s*:\s*(.+?)\s*$/im;
@@ -282,27 +254,16 @@ export function resolveCoderRecOrder(
   return entriesForTokens(parsed);
 }
 
-export interface SelectCoderRecOptions {
-  /**
-   * @deprecated ADR 0132 abolished round-threshold advance. Kept for call-site
-   * signature stability; ignored.
-   */
-  readonly fallbackAfterRounds?: number;
-}
-
 /**
  * Select the active Coder-Rec entry.
  *
- * ADR 0132 / #919 CR P2: mechanical round-threshold advance
- * (`CODER_REC_FALLBACK_AFTER_ROUNDS`) is abolished. The first roster-valid
- * marked entry stays put for the run. Judge `advanceCoder` roster wiring is
- * #926 — until then, rounds never rotate the coder model. Stay-put forever
- * on empty order still throws (misconfigured roster).
+ * ADR 0132 / #919 CR: first roster-valid marked entry only (sticky stay-put).
+ * Round-threshold mechanical advance is deleted — no rounds argument, no
+ * fallback-after-N constant. Judge `advanceCoder` roster policy is #926.
+ * Empty order still throws (misconfigured roster).
  */
 export function selectCoderRecEntry(
   order: ReadonlyArray<CoderRosterEntry>,
-  _nonConvergingRounds: number = 0,
-  _opts: SelectCoderRecOptions = {},
 ): CoderRosterEntry {
   if (order.length === 0) {
     throw new Error(
