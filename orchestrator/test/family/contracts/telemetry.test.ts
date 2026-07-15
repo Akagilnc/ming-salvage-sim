@@ -443,23 +443,31 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
       ): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
           this.ctxs.push(ctx);
+          // #919 CR: stamp only reads live kind:"judge". Residual kind:"cmr"
+          // is not a live verdict signal (maps not_converged). Blocking
+          // fixture must mint continue + live dispositions.
+          const findings = [
+            {
+              severity: "medium" as const,
+              category: "correctness" as const,
+              claim_quote: "runner must preserve the blocker",
+              location: "orchestrator/src/family/verifyCmr.ts:2680",
+              suggested_fix: "route it through coder-fix",
+              action: "fix_now" as const,
+            },
+          ];
           return {
             kind: "completed",
             output: {
-              kind: "cmr",
-              converged: false,
+              kind: "judge",
+              status: "continue",
               successfulLegs: [...COMPLETE_CMR_LEGS],
               evidencePaths: ["cmr/blocking.json"],
-              findings: [
-                {
-                  severity: "medium",
-                  category: "correctness",
-                  claim_quote: "runner must preserve the blocker",
-                  location: "orchestrator/src/family/verifyCmr.ts:2680",
-                  suggested_fix: "route it through coder-fix",
-                  action: "fix_now",
-                },
-              ],
+              findings,
+              findingDispositions: findings.map((f) => ({
+                identityKey: `${f.category}|${f.location}|${f.claim_quote}`,
+                action: "live" as const,
+              })),
             },
           };
         }
