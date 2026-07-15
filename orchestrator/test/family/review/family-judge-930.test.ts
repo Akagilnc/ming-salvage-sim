@@ -537,7 +537,8 @@ describe("#930 runVerifyCmr family judge courts", () => {
         expect(ctx.refusedFindingIdentityKeys).toEqual([FINDING_KEY]);
         // #919 M3 / #927: opaque refuseRecords land on re-open; keys not dual-written.
         expect(landing?.refuseRecords).toEqual([refuseRecord]);
-        expect(landing?.refusedFindingIdentityKeys).toBeUndefined();
+        // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+        expect(landing).not.toHaveProperty("refusedFindingIdentityKeys");
         return completedJudge(judgeConverged(), "judge-refuse");
       },
       coder: () => ({

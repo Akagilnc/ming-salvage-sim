@@ -103,6 +103,11 @@ export function judgeKillsToLedgerDispositions(
  * disposition table. Dead/refuted keys never enter S5 dispatch.
  *
  * Filtering is by schema identity keys — not by prose parsing.
+ *
+ * Empty live set is a cargo filter result only — NOT topology authorization.
+ * Family (#919 M1) and single-slice (#919 M6) both fail-loud when
+ * status:continue projects zero live identity keys; callers must gate empty
+ * continue before dispatching coder-fix / S5.
  */
 export function openFindingsForFixer(
   findings: ReadonlyArray<Finding>,
@@ -111,8 +116,8 @@ export function openFindingsForFixer(
   const liveKeys = new Set(
     dispositions.filter((d) => d.action === "live").map((d) => d.identityKey),
   );
-  // When the judge supplied an explicit disposition table, only live keys pass.
-  // Empty table with continue is legal (zero open) — yield empty.
+  // Cargo filter only: empty table / zero live keys → yield []. Topology
+  // authorization for empty continue is the caller's fail-loud gate (M1/M6).
   if (dispositions.length > 0 || liveKeys.size > 0) {
     return findings.filter((f) => liveKeys.has(findingIdentityKey(f)));
   }

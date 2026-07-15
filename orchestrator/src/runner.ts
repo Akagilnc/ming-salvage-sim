@@ -3124,11 +3124,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // Reviewer: rethrow on throw-exhaust so S8(error) surfaces process
               // crashes and SOE exhaust alike — never feed empty cargo to fixer.
               // Coder keeps default failed→durable abort (existing escalate path).
-              // #919 M4: live judge seats are role:"verify" (isJudgeSeat S3/S6);
-              // residual role:"reviewer" is not a live seat in this loop.
+              // #919 M4/M7: live judge seats are isJudgeSeat S3/S6 only
+              // (role is always "verify" on those seats; dual-OR deleted).
               const durableRetryOpts = durableMechanicalRetryOptions(
                 step,
-                isJudgeSeat({ step }) || expectedKind === "verify"
+                isJudgeSeat({ step })
                   ? { rethrowOnExhaustion: true }
                   : {},
               );
@@ -3540,9 +3540,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
         if (!carriesEscalate) {
-          // #919 M4: live open-set projection is isJudgeSeat / role:"verify"
-          // only (production S3/S6). Residual role:"reviewer" is not live here.
-          if (isJudgeSeat({ step }) || expectedKind === "verify") {
+          // #919 M4/M7: live open-set projection is sole isJudgeSeat (S3/S6).
+          // Production role is always "verify" on those seats; expectedKind OR
+          // was redundant. Residual role:"reviewer" is not live here.
+          if (isJudgeSeat({ step })) {
             // #925: judge typed verdict is the sole routing signal. Unusable
             // envelope → fixer path with raw artifact pointers (never silent clean).
             if (output?.kind !== "judge") {
@@ -3562,6 +3563,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (output.status === "continue") {
               const projected = projectJudgeContinueBlocking(output);
               if (projected !== undefined) {
+                // Apply kill flips first, then gate empty live set (#919 M6).
                 if (projected.killDispositions.length > 0) {
                   findingDispositions = [
                     ...findingDispositions,
@@ -3577,6 +3579,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     stepMonitorHandle,
                     stepSessionId,
                   );
+                } else if (projected.blockingIdentityKeys.length === 0) {
+                  // #919 M6 / family M1 isomorphic: empty continue is court
+                  // contract drift — never empty-spin S5. Unusable (non-judge)
+                  // still routes to S5 above; route() continue→S5 stays for
+                  // non-empty live sets only.
+                  const reason =
+                    `judge ${step} continue with 0 live findings ` +
+                    `(court contract drift; empty continue must not spin coder-fix)`;
+                  return await errorTermination(step, new Error(reason), {
+                    output,
+                    findingDispositions,
+                    stopSummary: contractDriftStopSummary({
+                      summary: reason,
+                      repairHint:
+                        "judge status:continue requires non-empty live identity keys; " +
+                        "re-open the same judge seat or repair the seat envelope — " +
+                        "do not empty-spin S5 coder-fix",
+                    }),
+                  });
                 }
               }
             } else {

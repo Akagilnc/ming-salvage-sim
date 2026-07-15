@@ -655,7 +655,10 @@ describe("#677 real S5 fix-commit path wiring", () => {
     expect(backend.ctxs[s6Index]?.refusedFindingIdentityKeys).toEqual([
       refuseKey,
     ]);
-    expect(backend.landings[s6Index]?.refusedFindingIdentityKeys).toBeUndefined();
+    // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(backend.landings[s6Index]).not.toHaveProperty(
+      "refusedFindingIdentityKeys",
+    );
     expect(backend.landings[s6Index]?.refuseRecords?.[0]?.identityKey).toBe(
       refuseKey,
     );
@@ -817,7 +820,10 @@ describe("#677 real S5 fix-commit path wiring", () => {
     expect(backend.ctxs[s6Index]?.refusedFindingIdentityKeys).toEqual([
       refuseKey,
     ]);
-    expect(backend.landings[s6Index]?.refusedFindingIdentityKeys).toBeUndefined();
+    // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(backend.landings[s6Index]).not.toHaveProperty(
+      "refusedFindingIdentityKeys",
+    );
     expect(backend.landings[s6Index]?.refuseRecords?.[0]?.identityKey).toBe(
       refuseKey,
     );
