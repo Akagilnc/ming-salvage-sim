@@ -385,18 +385,10 @@ describe("#925 S3/S6 maxIterations=1 + seat identity", () => {
   it("#919 R7: isJudgeSeat is S3/S6 only — S9 online-review is not a judge", () => {
     const specs = stepSpecsForEnv();
     expect(
-      isJudgeSeat({
-        id: specs.S3.id,
-        role: specs.S3.role,
-        soul: specs.S3.soul,
-      }),
+      isJudgeSeat({ id: specs.S3.id }),
     ).toBe(true);
     expect(
-      isJudgeSeat({
-        id: specs.S6.id,
-        role: specs.S6.role,
-        soul: specs.S6.soul,
-      }),
+      isJudgeSeat({ id: specs.S6.id }),
     ).toBe(true);
     // step/id aliases
     expect(isJudgeSeat({ step: "S3" })).toBe(true);
@@ -410,18 +402,14 @@ describe("#925 S3/S6 maxIterations=1 + seat identity", () => {
     expect(s9.role).toBe("verify");
     expect(s9.soul).toBe("verify");
     expect(
-      isJudgeSeat({
-        id: s9.id,
-        kind: s9.kind,
-        role: s9.role,
-        soul: s9.soul,
-      }),
+      isJudgeSeat({ id: s9.id }),
     ).toBe(false);
-    // kind|role|soul "verify" alone never claims judge.
-    expect(isJudgeSeat({ kind: "verify" })).toBe(false);
-    expect(isJudgeSeat({ role: "verify" })).toBe(false);
-    expect(isJudgeSeat({ soul: "verify" })).toBe(false);
-    expect(isJudgeSeat({ role: "verify", soul: "verify" })).toBe(false);
+    // #919 R4: seat identity is step/id only — non-S3/S6 ids never claim judge
+    // (S9 online-review carries role/soul "verify" but is not a judge seat).
+    expect(isJudgeSeat({})).toBe(false);
+    expect(isJudgeSeat({ id: "S9" })).toBe(false);
+    expect(isJudgeSeat({ step: "S5" })).toBe(false);
+    expect(isJudgeSeat({ step: "S2" })).toBe(false);
   });
 });
 

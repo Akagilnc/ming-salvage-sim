@@ -1351,42 +1351,57 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     },
   );
 
-  it("does not let family coder-fix cargo escalate after a no-gate typed decision", async () => {
-    // #899: opaque sidecar cargo must not reintroduce escalate after a validated
-    // no-gate typed decision (fourth routing channel ban).
-    class Harness extends RealFamilyBackend {
-      public classify(
-        result: {
-          output?: unknown;
-          stdout: string;
-          iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+  class FamilyCoderDecodeHarness extends RealFamilyBackend {
+    public classify(
+      result: {
+        output?: unknown;
+        stdout: string;
+        iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+      },
+      outcomePath: string,
+    ) {
+      return this.familyCoderResultFromRun(
+        {
+          stdout: result.stdout,
+          commits: [],
+          iterations: [...(result.iterations ?? [])],
+          ...(result.output !== undefined ? { output: result.output } : {}),
         },
-        outcomePath: string,
-      ) {
-        return this.familyCoderResultFromRun(
-          {
-            stdout: result.stdout,
-            commits: [],
-            iterations: [...(result.iterations ?? [])],
-            ...(result.output !== undefined ? { output: result.output } : {}),
-          },
-          {
-            id: "S5",
-            kind: "coder",
-            role: "coder",
-            host: "claude",
-            session: "fresh",
-            contextRetention: "clean",
-            promptFile: "x.md",
-            maxIter: 1,
-            model: "sonnet",
-            soul: "coder",
-            toolchain: [],
-          },
-          outcomePath,
-        );
-      }
+        {
+          id: "S5",
+          kind: "coder",
+          role: "coder",
+          host: "claude",
+          session: "fresh",
+          contextRetention: "clean",
+          promptFile: "x.md",
+          maxIter: 1,
+          model: "sonnet",
+          soul: "coder",
+          toolchain: [],
+        },
+        outcomePath,
+      );
     }
+  }
+
+  function familyCoderDecodeHarness(dir: string): FamilyCoderDecodeHarness {
+    return new FamilyCoderDecodeHarness({
+      workingRepo: dir,
+      familyBase: "fb",
+      ledgerDir: dir,
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc",
+    });
+  }
+
+  it("does not let family coder-fix cargo escalate after a T2 completed receipt", async () => {
+    // #899 / #919 M1: opaque sidecar cargo must not reintroduce escalate after
+    // a validated T2 completed station receipt (fourth routing channel ban).
     const dir = trackTempDir(`family-coder-spoof-escalate-`);
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -1398,18 +1413,14 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       }),
       "utf8",
     );
-    const be = new Harness({
-      workingRepo: dir,
-      familyBase: "fb",
-      ledgerDir: dir,
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir: realPromptsDir,
-      soulsDir: realSoulsDir,
-      imageName: "img",
-      familyBaseStartHead: "abc",
-    });
-    const out = be.classify({ output: {}, stdout: "" }, outcomePath);
+    const be = familyCoderDecodeHarness(dir);
+    const out = be.classify(
+      {
+        output: { station: "familyCoderFix", status: "completed" },
+        stdout: "",
+      },
+      outcomePath,
+    );
     expect(out.kind).toBe("completed");
     if (out.kind === "completed") {
       expect(out.output).toEqual({
@@ -1418,44 +1429,12 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         commitsAdded: 1,
       });
       expect("escalate" in out.output).toBe(false);
+      expect(out.output).not.toHaveProperty("refusedFindingIdentityKeys");
     }
   });
 
-  it("preserves family coder-fix commit cargo when the typed decision gate escalates", async () => {
-    // #899: typed escalate is fate; committed/commitsAdded stay real cargo.
-    class Harness extends RealFamilyBackend {
-      public classify(
-        result: {
-          output?: unknown;
-          stdout: string;
-          iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
-        },
-        outcomePath: string,
-      ) {
-        return this.familyCoderResultFromRun(
-          {
-            stdout: result.stdout,
-            commits: [],
-            iterations: [...(result.iterations ?? [])],
-            ...(result.output !== undefined ? { output: result.output } : {}),
-          },
-          {
-            id: "S5",
-            kind: "coder",
-            role: "coder",
-            host: "claude",
-            session: "fresh",
-            contextRetention: "clean",
-            promptFile: "x.md",
-            maxIter: 1,
-            model: "sonnet",
-            soul: "coder",
-            toolchain: [],
-          },
-          outcomePath,
-        );
-      }
-    }
+  it("preserves family coder-fix commit cargo when the T2 receipt escalates", async () => {
+    // #899 / #919 M1: T2 escalate is fate; committed/commitsAdded stay real cargo.
     const dir = trackTempDir(`family-coder-bell-cargo-`);
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -1463,24 +1442,14 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       JSON.stringify({ committed: true, commitsAdded: 3 }),
       "utf8",
     );
-    const be = new Harness({
-      workingRepo: dir,
-      familyBase: "fb",
-      ledgerDir: dir,
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir: realPromptsDir,
-      soulsDir: realSoulsDir,
-      imageName: "img",
-      familyBaseStartHead: "abc",
-    });
+    const be = familyCoderDecodeHarness(dir);
     const out = be.classify(
       {
         output: {
-          escalate: {
-            reason: "design fork",
-            diagnosis: "owner must choose the contract",
-          },
+          station: "familyCoderFix",
+          status: "escalate",
+          reason: "design fork",
+          diagnosis: "owner must choose the contract",
         },
         stdout: "",
       },
@@ -1498,6 +1467,118 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         },
       });
     }
+  });
+
+  it("#919 M1: RealFamilyBackend T2 refuse preserves envelope keys + cargo refuseRecords", () => {
+    // Production decode path (familyCoderResultFromRun) must emit refuse traffic
+    // isomorphic with single-slice projectCoderStationReceipt — not fake-only.
+    const dir = trackTempDir(`family-coder-refuse-`);
+    const outcomePath = join(dir, "outcome.json");
+    const refuseKey = "correctness|src/a.ts:1|claim";
+    const refuseRecord = {
+      identityKey: refuseKey,
+      finding: "claim",
+      acceptanceCriterion: "AC-1",
+      conflictReason: "unconstitutional",
+    };
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        committed: true,
+        commitsAdded: 1,
+        // Hostile cargo: different key set must not win over envelope traffic.
+        refusedFindingIdentityKeys: ["wrong|cargo|key"],
+        refuseRecords: [refuseRecord],
+      }),
+      "utf8",
+    );
+    const be = familyCoderDecodeHarness(dir);
+    const out = be.classify(
+      {
+        output: {
+          station: "familyCoderFix",
+          status: "refused",
+          refusedFindingIdentityKeys: [refuseKey],
+        },
+        stdout: "",
+      },
+      outcomePath,
+    );
+    expect(out.kind).toBe("completed");
+    if (out.kind === "completed") {
+      expect(out.output).toEqual({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        refusedFindingIdentityKeys: [refuseKey],
+        refuseRecords: [refuseRecord],
+      });
+    }
+  });
+
+  it("#919 M1 negative: completed T2 receipt cannot smuggle refuse keys from cargo", () => {
+    const dir = trackTempDir(`family-coder-no-smuggle-refuse-`);
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        committed: true,
+        commitsAdded: 1,
+        refusedFindingIdentityKeys: ["smuggled|from|cargo"],
+        refuseRecords: [
+          {
+            identityKey: "smuggled|from|cargo",
+            finding: "x",
+            acceptanceCriterion: "AC",
+            conflictReason: "not_established",
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const be = familyCoderDecodeHarness(dir);
+    const out = be.classify(
+      {
+        output: { station: "familyCoderFix", status: "completed" },
+        stdout: "",
+      },
+      outcomePath,
+    );
+    expect(out.kind).toBe("completed");
+    if (out.kind === "completed") {
+      expect(out.output).toEqual({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+      });
+      expect(out.output).not.toHaveProperty("refusedFindingIdentityKeys");
+      expect(out.output).not.toHaveProperty("refuseRecords");
+    }
+  });
+
+  it("#919 M1 negative: empty/illegal typed envelope fails closed (no fake refuse ring)", () => {
+    const dir = trackTempDir(`family-coder-illegal-`);
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ committed: true, commitsAdded: 1 }),
+      "utf8",
+    );
+    const be = familyCoderDecodeHarness(dir);
+    // Empty no-gate `{}` is not a legal T2 receipt (same as single-slice).
+    expect(() => be.classify({ output: {}, stdout: "" }, outcomePath)).toThrow(
+      /illegal coder station receipt/i,
+    );
+    // status:refused without keys is illegal — cannot open a refuse re-open.
+    expect(() =>
+      be.classify(
+        {
+          output: { station: "familyCoderFix", status: "refused" },
+          stdout: "",
+        },
+        outcomePath,
+      ),
+    ).toThrow(/illegal coder station receipt|refusedFindingIdentityKeys/i);
   });
 
   it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(

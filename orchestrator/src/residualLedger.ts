@@ -7,6 +7,7 @@
  */
 
 import {
+  isJudgeSeat,
   projectJudgeContinueBlocking,
   projectResidualReviewerToJudge,
 } from "./judgeStation.js";
@@ -122,9 +123,9 @@ export function rebuildBlockingFromLedger(
       continue;
     }
 
-    // #925: judge continue rebuilds open set the same way as the live edge.
+    // #925 / #919 S1: judge continue rebuilds open set the same way as the live edge.
     if (
-      (entry.step === "S3" || entry.step === "S6") &&
+      isJudgeSeat({ step: entry.step }) &&
       entry.output?.kind === "judge" &&
       entry.output.status === "continue"
     ) {
