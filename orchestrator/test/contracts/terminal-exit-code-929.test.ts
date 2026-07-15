@@ -196,12 +196,10 @@ describe("#929 family driver exit codes (representative terminals)", () => {
       familyBase: "family/929-base",
       verifyCmr: async () => ({ ok: true, ran: true }),
     });
-    // Without ship/merge capability the final barrier may not be pure success;
-    // map whatever status arrived through the pure table + driver shell.
-    expect(familyDriverExitCode(result)).toBe(exitCodeForTerminal(result.status));
-    if (result.status === "success") {
-      expect(familyDriverExitCode(result)).toBe(0);
-    }
+    // Child merge + green final barrier must yield success with exit 0.
+    expect(result.status).toBe("success");
+    expect(familyDriverExitCode(result)).toBe(0);
+    expect(familyDriverExitCode(result)).toBe(TERMINAL_EXIT_CODES.success);
   });
 
   it("incomplete child failure → nonzero incomplete code", async () => {
@@ -221,10 +219,9 @@ describe("#929 family driver exit codes (representative terminals)", () => {
       familyBase: "family/929-base",
       verifyCmr: async () => ({ ok: true, ran: true }),
     });
-    // Child crash may surface incomplete or a stage failure depending on when
-    // the barrier runs; either way the driver shell maps the real status.
-    expect(result.status).not.toBe("success");
-    expect(familyDriverExitCode(result)).toBe(exitCodeForTerminal(result.status));
+    // Child crash before merge surfaces incomplete (not stage-barrier failure).
+    expect(result.status).toBe("incomplete");
+    expect(familyDriverExitCode(result)).toBe(TERMINAL_EXIT_CODES.incomplete);
     expect(familyDriverExitCode(result)).toBeGreaterThan(0);
   });
 
@@ -450,7 +447,7 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
     expect(terminal.stopSummary).toBeDefined();
   });
 
-  it("error path (S1 writeSnapshot throw) persists tagged S8 error + nonzero exit", async () => {
+  it("error path (S1 writeSnapshot throw) persists tagged S8 error + console.error + nonzero exit", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     class SpyBackend implements Backend {
       readonly ledgerCalls: PersistentLedgerEntry[] = [];
@@ -501,8 +498,11 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
     const s8 = backend.ledgerCalls.filter((e) => e.step === "S8");
     expect(s8.length).toBeGreaterThanOrEqual(1);
     expect(s8[s8.length - 1]!.handoffStatus).toBe("error");
-    // errorTermination also speaks on some paths; allow either prior log or package.
     expect(result.errorPackage?.reason).toMatch(/ENOSPC|no space/i);
-    void errorSpy;
+
+    // #929 invariant: non-success must speak externally (not package-only).
+    expect(errorSpy).toHaveBeenCalled();
+    const loud = errorSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(loud).toMatch(/ENOSPC|no space|S1 failed/i);
   });
 });
