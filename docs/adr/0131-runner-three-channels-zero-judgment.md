@@ -7,8 +7,11 @@
 > 描、prompt 口令、`*_STEP_COMPLETE`）废止；无信号 ≠ 失败的双轨表述删除。
 > Monitor 判活仅存输出活跃度心跳（PR #917）；exit 0 且 sidecar 缺失不得伪装
 > `completed`。全工位 `maxIter=1`，不得靠多迭代烧信号。
+>
+> **修订（2026-07-15，#930 落地）**：family 后段 completeness / correctness 双闸
+> 同样只消费判词三态（两庭一机）；family 路径上的 open-count 第二台数数机删除。
 
-Status: Accepted（#925 + #928 落地后）
+Status: Accepted（#925 + #928 + #930 落地后）
 
 # 0131: runner 三通道零判断权
 
