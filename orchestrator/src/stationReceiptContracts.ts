@@ -455,6 +455,89 @@ const coderEscalateSchema = z
   .strict();
 
 /**
+ * Sandcastle `Output.object` tag for coder-family station receipts (#924).
+ * Same tag name as the historical cargo tag: traffic fields are schema-validated;
+ * ordinary cargo siblings ride as passthrough (committed / commitsAdded / refuse
+ * prose) so cargo shape never forces a native re-ask — only illegal traffic does.
+ */
+export const CODER_RECEIPT_TAG = "coder";
+
+function rejectBannedRefutedKeysInSo(
+  value: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+): void {
+  for (const key of Object.keys(value)) {
+    if (BANNED_REFUTED_KEY.test(key)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `canonical envelope vocabulary is refused* only; banned field: ${key}`,
+        path: [key],
+      });
+    }
+  }
+}
+
+/**
+ * Production SO schema for coder / coderFix / familyCoderFix station receipts.
+ *
+ * Used by Sandcastle `Output.object({ tag: CODER_RECEIPT_TAG, schema, maxRetries })`.
+ * Traffic shape is strict enough to re-ask bad envelopes; cargo siblings pass
+ * through. Decode still runs {@link decodeCoderEnvelope} for the traffic view.
+ *
+ * Single source of field vocabulary with the pure decode path above — do not
+ * invent a parallel SO-only field set.
+ */
+export function coderStationReceiptSchema(): z.ZodType {
+  const completed = z
+    .object({
+      station: coderStationSchema,
+      status: z.literal("completed"),
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough()
+    .superRefine((value, ctx) => {
+      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
+      if (
+        Object.prototype.hasOwnProperty.call(value, "refusedFindingIdentityKeys")
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            'completed coder envelope must not carry refusedFindingIdentityKeys (use status:"refused")',
+          path: ["refusedFindingIdentityKeys"],
+        });
+      }
+    });
+
+  const refused = z
+    .object({
+      station: coderStationSchema,
+      status: z.literal("refused"),
+      refusedFindingIdentityKeys: z.array(nonEmptyString).min(1),
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough()
+    .superRefine((value, ctx) => {
+      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
+    });
+
+  const escalate = z
+    .object({
+      station: coderStationSchema,
+      status: z.literal("escalate"),
+      reason: nonEmptyString,
+      diagnosis: nonEmptyString,
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough()
+    .superRefine((value, ctx) => {
+      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
+    });
+
+  return z.union([completed, refused, escalate]);
+}
+
+/**
  * Strip unknown keys before schema parse so opaque cargo body siblings
  * (refuseRecords prose, essays, …) are ignored rather than rejected.
  * Traffic fields + banned-vocabulary check still apply.

@@ -85,9 +85,37 @@ import {
   workerReceiptSchema,
 } from "../../src/receiptRecovery.js";
 import {
+  CODER_RECEIPT_TAG,
+  coderStationReceiptSchema,
+} from "../../src/stationReceiptContracts.js";
+import {
   runScriptedStructuredOutput,
   type ScriptedAgent,
 } from "../helpers/scripted-sandcastle-run.js";
+
+/** #924 production coder no-gate / completed envelope (traffic + cargo siblings). */
+const CODER_COMPLETED_ENVELOPE = {
+  station: "coder" as const,
+  status: "completed" as const,
+  committed: true,
+  commitsAdded: 1,
+};
+
+const CODER_NO_COMMIT_ENVELOPE = {
+  station: "coder" as const,
+  status: "completed" as const,
+  committed: false,
+  commitsAdded: 0,
+};
+
+const CODER_ESCALATE_ENVELOPE = {
+  station: "coder" as const,
+  status: "escalate" as const,
+  reason: "owner choice",
+  diagnosis: "contract fork",
+  committed: false,
+  commitsAdded: 0,
+};
 
 type AgentRunResult = Awaited<ReturnType<typeof sc.run>>;
 
@@ -1406,13 +1434,21 @@ describe("RealBackend reviewer output contract", () => {
       home: tempHome("rb-home-reviewer-"),
     });
 
-    expect(() =>
+    // #924: traffic fields are required; unknown cargo siblings must not alter
+    // completed fate or force a throw after a legal envelope.
+    expect(
       backend.probeDecodeOutput(coderSpec, {
+        station: "coder",
+        status: "completed",
         committed: true,
         commitsAdded: 1,
         notes: "worker-authored cargo",
       }),
-    ).not.toThrow();
+    ).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
   });
 });
 
@@ -1580,16 +1616,17 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("attaches signal-only Output.object for single-iter coder without re-asking opaque cargo", async () => {
-    // #899: decision-gate Output.object is attached; ordinary cargo fields stay
-    // opaque (missing committed/commitsAdded does not force a second invocation).
+  it("attaches station-receipt Output.object for single-iter coder without re-asking opaque cargo", async () => {
+    // #924: T2 station-receipt Output.object is attached; cargo siblings
+    // (committed/commitsAdded) are passthrough — missing cargo does not force
+    // a second invocation.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       completionSignal: "CODER_STEP_COMPLETE",
-      stdout: "coder completed implementation but omitted its receipt",
+      stdout: "coder completed implementation but omitted cargo siblings",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-opaque",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     await expect(
@@ -1608,7 +1645,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     expect(backend.agentOptions).toHaveLength(1);
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
     expect(backend.agentOptions[0]!.resumeSession).toBeUndefined();
@@ -1617,10 +1654,11 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   it("does not re-ask coder cargo when the typed receipt omits a cargo field", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      stdout: '<coder>{"committed": true}</coder>',
+      stdout:
+        '<coder>{"station":"coder","status":"completed","committed":true}</coder>',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-partial-cargo",
-      output: { committed: true },
+      output: { station: "coder", status: "completed", committed: true },
     });
 
     await expect(backend.runStep({ ...coderSpec, maxIter: 1 }, {
@@ -1633,43 +1671,43 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     expect(backend.agentOptions).toHaveLength(1);
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
   });
 
-  it("fails the Action on a malformed coder decision gate without inventing a park", async () => {
+  it("fails the Action on an illegal coder envelope without inventing a park", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      stdout: '<coder>{"escalate":{"reason":"","diagnosis":""}}</coder>',
+      stdout: '<coder>{"status":"escalate","reason":"","diagnosis":""}</coder>',
       commits: [],
       sessionId: "sess-coder-bad-gate",
-      output: { escalate: { reason: "", diagnosis: "" } },
+      // Missing station + empty reason/diagnosis — illegal T2 traffic.
+      output: { status: "escalate", reason: "", diagnosis: "" },
     });
 
     await expect(
       backend.runStep({ ...coderSpec, maxIter: 1 }, {
         branch: "feat/issue-899", base: "main", path: "/tmp/worktree/issue-899",
       }),
-    ).rejects.toThrow(/malformed decision gate/);
+    ).rejects.toThrow(/illegal coder station receipt|coder envelope/i);
     expect(backend.agentOptions).toHaveLength(1);
-    // Dedicated decision-tag SO is attached so Sandcastle can re-ask; post-decode still
-    // fails closed when a malformed bell somehow lands past the schema.
+    // T2 station-receipt SO is attached so Sandcastle can re-ask; post-decode
+    // still fails closed when illegal traffic somehow lands past the schema.
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
   });
 
-  it("keeps a single Sandcastle invocation when a missing coder receipt has no session", async () => {
+  it("keeps a single Sandcastle invocation when a completed envelope has no cargo siblings", async () => {
     const backend = makeBackend();
     backend.agentResult = {
       branch: "test-agent-branch",
-      stdout: "coder completed implementation but omitted its receipt",
+      stdout: "coder completed without cargo siblings",
       commits: [{ sha: "abc123" }],
       iterations: [{}],
-      // Typed no-gate decision signal present; ordinary cargo may be absent.
-      output: {},
+      output: { station: "coder", status: "completed" },
     } as AgentRunResult;
 
     await expect(
@@ -1698,12 +1736,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.agentOptions).toHaveLength(1);
   });
 
-  it("propagates StructuredOutputError when coder decision-gate retries are exhausted", async () => {
-    // #899: coder signal-only SO exhaust → Action non-zero for #598 redispatch.
+  it("propagates StructuredOutputError when coder station-receipt retries are exhausted", async () => {
+    // #924: coder station-receipt SO exhaust → Action non-zero for #598 redispatch.
     const backend = makeBackend();
     const err = new StructuredOutputError("bad output", {
-      tag: "decision",
-      rawMatched: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }),
+      tag: CODER_RECEIPT_TAG,
+      rawMatched: JSON.stringify({ status: "maybe" }),
       commits: [],
       branch: "feat/x",
       sessionId: "sess-coder-exhausted",
@@ -1715,13 +1753,13 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     })).rejects.toBe(err);
     expect(backend.agentOptions).toHaveLength(1);
     expect(backend.agentOptions[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
   });
 
   it("fails a resumed typed coder seat when Output.object is absent", async () => {
-    // #899: resume attaches decision-gate SO; missing typed signal must not fall
+    // #924: resume attaches station-receipt SO; missing typed signal must not fall
     // through to opaque cargo / empty success (fourth channel / soft pass).
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
@@ -1744,20 +1782,20 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     ).rejects.toThrow(/typed traffic signal missing/);
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
   });
 
-  it("attaches signal-only decision Output.object when resuming a coder seat", async () => {
-    // Resume is maxIterations:1; #899 attaches decision-gate Output.object while
-    // ordinary cargo fields stay opaque inside decisionGateSignalSchema.
+  it("attaches station-receipt Output.object when resuming a coder seat", async () => {
+    // Resume is maxIterations:1; #924 attaches T2 station-receipt Output.object
+    // with cargo siblings passthrough.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      stdout: "resumed worker completed without a cargo tag",
+      stdout: "resumed worker completed without cargo siblings",
       commits: [{ sha: "abc123" }],
       sessionId: "prior-coder-session",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     await expect(backend.resumeSession(
@@ -1769,7 +1807,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       sessionId: "prior-coder-session",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
@@ -1781,7 +1819,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     // as fresh-run and mask the receipt exhaust.
     const backend = makeBackend();
     const soe = new StructuredOutputError("bad output", {
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       rawMatched: undefined,
       commits: [],
       branch: "feat/x",
@@ -1941,19 +1979,22 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
     });
 
-    it("accepts initial-good decision-gate via real sc.run (no same-session resume)", async () => {
-      const good = {
-        escalate: { reason: "owner choice", diagnosis: "contract fork" },
-      };
+    it("accepts initial-good coder station receipt via real sc.run (no same-session resume)", async () => {
+      const good = CODER_ESCALATE_ENVELOPE;
       const { agent, result } = await runScriptedStructuredOutput({
-        tag: DECISION_GATE_TAG,
-        schema: decisionGateSignalSchema,
+        tag: CODER_RECEIPT_TAG,
+        schema: coderStationReceiptSchema(),
         emissions: [{ body: JSON.stringify(good) }],
         maxRetries: RECEIPT_MAX_RETRIES,
-        sessionId: "sess-ss-decision-initial-good",
+        sessionId: "sess-ss-coder-initial-good",
         cleanups,
       });
-      expect(result.output).toEqual(good);
+      expect(result.output).toMatchObject({
+        station: "coder",
+        status: "escalate",
+        reason: "owner choice",
+        diagnosis: "contract fork",
+      });
       expect(agent.callCount).toBe(1);
 
       const backend = makeBackend();
@@ -1993,26 +2034,29 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       ).toMatchObject({ kind: "reviewer", findingsCount: 2 });
     });
 
-    it("recovers decision-gate bad→good same-session via real sc.run", async () => {
+    it("recovers coder station-receipt bad→good same-session via real sc.run", async () => {
       const good = {
-        escalate: { reason: "owner", diagnosis: "needs human" },
+        station: "coder",
+        status: "escalate",
+        reason: "owner",
+        diagnosis: "needs human",
       };
       const { agent, result } = await runScriptedStructuredOutput({
-        tag: DECISION_GATE_TAG,
-        schema: decisionGateSignalSchema,
+        tag: CODER_RECEIPT_TAG,
+        schema: coderStationReceiptSchema(),
         emissions: [
-          { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+          { body: JSON.stringify({ committed: true }) },
           { body: JSON.stringify(good) },
         ],
         maxRetries: RECEIPT_MAX_RETRIES,
-        sessionId: "sess-ss-decision-recover",
+        sessionId: "sess-ss-coder-recover",
         cleanups,
       });
-      expect(result.output).toEqual(good);
+      expect(result.output).toMatchObject(good);
       expect(agent.callCount).toBe(2);
       expect(agent.resumedSessions).toEqual([
         undefined,
-        "sess-ss-decision-recover",
+        "sess-ss-coder-recover",
       ]);
     });
 
@@ -2042,26 +2086,26 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }
     });
 
-    it("propagates StructuredOutputError when decision-gate maxRetries are exhausted", async () => {
+    it("propagates StructuredOutputError when coder station-receipt maxRetries are exhausted", async () => {
       const agentOut: { agent?: ScriptedAgent } = {};
       try {
         await runScriptedStructuredOutput({
-          tag: DECISION_GATE_TAG,
-          schema: decisionGateSignalSchema,
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
           emissions: [
-            { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
-            { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
-            { body: JSON.stringify({ escalate: { reason: "x", diagnosis: "" } }) },
+            { body: JSON.stringify({ status: "maybe" }) },
+            { body: JSON.stringify({ station: "coder" }) },
+            { body: JSON.stringify({ station: "coder", status: "refused" }) },
           ],
           maxRetries: RECEIPT_MAX_RETRIES,
-          sessionId: "sess-ss-decision-exhausted",
+          sessionId: "sess-ss-coder-exhausted",
           cleanups,
           agentOut,
         });
         expect.unreachable("expected StructuredOutputError after maxRetries exhaust");
       } catch (err) {
         expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
-        expect((err as scRuntime.StructuredOutputError).tag).toBe(DECISION_GATE_TAG);
+        expect((err as scRuntime.StructuredOutputError).tag).toBe(CODER_RECEIPT_TAG);
         expect(isReceiptRecoveryFailure(err)).toBe(true);
         expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
       }
@@ -2088,12 +2132,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       });
     });
 
-    it("classifies non-resumable decision-gate maxRetries as recovery failure", async () => {
+    it("classifies non-resumable coder station-receipt maxRetries as recovery failure", async () => {
       await expect(
         runScriptedStructuredOutput({
-          tag: DECISION_GATE_TAG,
-          schema: decisionGateSignalSchema,
-          emissions: [{ body: JSON.stringify({}) }],
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
+          emissions: [{ body: JSON.stringify(CODER_COMPLETED_ENVELOPE) }],
           maxRetries: RECEIPT_MAX_RETRIES,
           resumable: false,
           name: "grok",
@@ -2156,7 +2200,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       expect(agentOut.agent?.callCount).toBe(1);
     });
 
-    it("production RealBackend coder seat: decision-gate SOE exhaust → #598, zero fixer", async () => {
+    it("production RealBackend coder seat: station-receipt SOE exhaust → #598, zero fixer", async () => {
       let sandcastleCalls = 0;
       class ProductionSeatBackend extends PreflightBackend {
         protected override async runAgentSandbox(
@@ -2167,21 +2211,21 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           this.agentOptions.push(options);
           expect(options.output).toEqual(
             expect.objectContaining({
-              tag: DECISION_GATE_TAG,
+              tag: CODER_RECEIPT_TAG,
               maxRetries: RECEIPT_MAX_RETRIES,
             }),
           );
           return (
             await runScriptedStructuredOutput({
-              tag: DECISION_GATE_TAG,
-              schema: decisionGateSignalSchema,
+              tag: CODER_RECEIPT_TAG,
+              schema: coderStationReceiptSchema(),
               emissions: [
-                { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
-                { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
-                { body: JSON.stringify({ escalate: { reason: "x", diagnosis: "" } }) },
+                { body: JSON.stringify({ status: "maybe" }) },
+                { body: JSON.stringify({ station: "coder" }) },
+                { body: JSON.stringify({ station: "coder", status: "refused" }) },
               ],
               maxRetries: RECEIPT_MAX_RETRIES,
-              sessionId: "prod-ss-decision-exhausted",
+              sessionId: "prod-ss-coder-exhausted",
               cleanups,
             })
           ).result;

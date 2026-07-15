@@ -37,37 +37,68 @@ not only when `.fix-focus.md` is present):
    typecheck that cover touched seams before commit.
 
 Legal refuse (coder-fix): never flip/delete base assertions or contradict written
-AC to close a finding. Fix the rest, commit, and include
-`refusedFindingIdentityKeys` + `refuseRecords` on a normal completion (runner
-sends fresh re-review). Do not amend; new commit only.
+AC to close a finding. Fix the rest, commit, and emit a `status:"refused"`
+envelope with `refusedFindingIdentityKeys` (traffic) plus 四理由 + evidence in
+cargo for the judge (see below). Do not amend; new commit only.
 
 ## Required output
 
-When you are done (or are escalating), the real completion evidence is the
-single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
-set, the always-emitted typed `<decision>` signal, the opaque `<coder>` cargo
-tag, and the worker's actual git state.
+When you are done (or are escalating / refusing), the real completion evidence
+is the single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env
+var is set (same payload as the typed tag), the always-emitted typed `<coder>`
+station-receipt envelope, and the worker's actual git state.
 
-**Always emit both tags** (order: decision, then cargo):
+Emit **one** typed `<coder>` station-receipt envelope. Sandcastle validates
+traffic via `Output.object` against the T2 contract in
+`orchestrator/src/stationReceiptContracts.ts` (`coderStationReceiptSchema` /
+`decodeCoderEnvelope`) — **do not hand-copy a second schema**.
 
-Success (no gate):
+### Envelope traffic fields (schema-validated)
+
+| field | meaning |
+| --- | --- |
+| `station` | `"coderFix"` for this fix seat (`"coder"` only on implement) |
+| `status` | `"completed"` \| `"refused"` \| `"escalate"` |
+| `refusedFindingIdentityKeys` | required non-empty string[] when `status:"refused"` |
+| `cargoPointer` | optional non-empty path/URI to opaque cargo body |
+| `reason` / `diagnosis` | required non-empty when `status:"escalate"` |
+
+Canonical refuse vocabulary is **`refused*` only** — never `refuted*` envelope keys.
+
+### Cargo body (opaque; not SO-validated)
+
+- `committed` / `commitsAdded` — real git state for this worker run.
+- On refuse: 四理由 (违宪 / 过度防御 / 事实不成立 / 越权加戏 — tokens
+  `unconstitutional` / `over_defense` / `not_established` / `scope_creep` from
+  the same T2 module) + evidence prose for the judge live in cargo /
+  `cargoPointer` body, **not** as invent-envelope fields. Optional
+  `refuseRecords` detail array may ride as cargo siblings.
+- Cargo siblings on the same `<coder>` object are allowed; only illegal
+  **traffic** re-asks.
+
+### Examples
+
+Completed:
 
 ```text
-<decision>{}</decision>
-<coder>{"committed": true, "commitsAdded": 1}</coder>
+<coder>{"station":"coderFix","status":"completed","committed":true,"commitsAdded":1}</coder>
 ```
 
-`commitsAdded` must equal the number of actual `git commit` commands you made in
-this worker run; if you made multiple commits, report the full count.
+Refused (keys on envelope; reasons+evidence in cargo for the judge):
+
+```text
+<coder>{"station":"coderFix","status":"refused","refusedFindingIdentityKeys":["correctness|src/x.ts:1|claim"],"cargoPointer":"artifacts/refuse-cargo.json","committed":true,"commitsAdded":1}</coder>
+```
 
 Escalation:
 
 ```text
-<decision>{"escalate": {"reason": "<short>", "diagnosis": "<what blocks the fix>"}}</decision>
-<coder>{"committed": false, "commitsAdded": 0}</coder>
+<coder>{"station":"coderFix","status":"escalate","reason":"<short>","diagnosis":"<what blocks the fix>","committed":false,"commitsAdded":0}</coder>
 ```
 
-Always emit `<decision>` (even `{}`) so the optional gate uses a dedicated
-typed tag; keep ordinary cargo outside that tag. On the final multi-iter step
-you MUST print CODER_STEP_COMPLETE on its own final line (sandcastle iteration
-terminator — not optional telemetry).
+Rules:
+
+- Emit exactly one final `<coder>` envelope (last wins if you iterate).
+- `commitsAdded` equals the number of `git commit` commands in this worker run.
+- On the final step print `CODER_STEP_COMPLETE` on its own final line
+  (sandcastle iteration terminator — not optional telemetry).

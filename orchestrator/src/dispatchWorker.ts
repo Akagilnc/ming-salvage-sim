@@ -320,9 +320,9 @@ function writeWorkerOutcomeLandingFile(
  * runner call".
  *
  * `session` is supplied by the runner per-invocation: `"resume"` ONLY when it is
- * threading a `resumeSessionId` (the crash/escalate-resume path); `"fresh"`
- * otherwise (the normal S2/S5 path). The default is `"fresh"` — a worker is never
- * marked `resume` by work type alone (ADR 0026; codex cmr R3 finding).
+ * threading a `resumeSessionId` (crash/escalate resume OR #924 S5 continuity of
+ * the S2 coder session); `"fresh"` otherwise. The default is `"fresh"` — a
+ * worker is never marked `resume` by work type alone.
  */
 export function stepSpecToWorkerSpec(
   spec: StepSpec,
