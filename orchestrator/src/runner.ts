@@ -138,6 +138,7 @@ import type {
   EscalationKind,
   Finding,
   FindingDisposition,
+  FindingRepairScope,
   HandoffStatus,
   IssueMeta,
   IssueSnapshot,
@@ -946,12 +947,12 @@ function replayS4FindingsCountState(
         : undefined;
   }
 
-  // Pre-S4 crash window (codex R3): positive-count reviewer row persisted, S4
-  // bookkeeping row not yet written → planResume resumes at S4 with that
-  // reviewer as lastOutput, but the loop above never fired. Seed count + cargo
-  // + raw artifact pointers from the last reviewer so S5 still gets logs.
+  // Pre-S4 crash window (codex R3 / C-R4-1): last reviewer has positive open-
+  // count but either no S4 row yet, or an earlier S4 left stale raw pointers
+  // from a prior round (S3 r1 → S4 → S5 → S6 r2, crash before the second S4).
+  // Always rebind findings/count/raw from the last reviewer so S5 does not
+  // inherit r1 artifacts when r2 is the open review.
   if (
-    pendingRawReviewerArtifacts === undefined &&
     lastReviewerOutputForS4?.kind === "reviewer" &&
     typeof lastReviewerOutputForS4.findingsCount === "number" &&
     Number.isSafeInteger(lastReviewerOutputForS4.findingsCount) &&
@@ -1896,6 +1897,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   /** Reviewer-declared open-count for S5/S6 (not findings-array length). */
   let pendingBlockingFindingCount = 0;
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
+  /** Opaque continue_fixing scope for S5 landing (C-R4-2A); never filters cargo. */
+  let pendingFixerFindingScope: FindingRepairScope | undefined;
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
   let preexistingAssertionTouchedForReverify = false;
@@ -2575,6 +2578,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
     }
     resumedEscalationAnswer = plan.escalationAnswer;
+    // C-R4-2A / #899: consume plan.continueFixingRepair — opaque findingScope
+    // into S5 landing only. Runner still does not filter blockingFindings.
+    const repairScope = plan.continueFixingRepair?.event.findingScope;
+    if (repairScope !== undefined) {
+      pendingFixerFindingScope = repairScope;
+    }
 
     // #767: resume skips S0/S1, so re-fetch the issue body and apply Coder-Rec
     // (including the S6-count advance position from the restored ledger) before
@@ -2944,9 +2953,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const landingPayload =
                 step === "S5" || step === "S6"
                   ? {
+                      // Full findings cargo always — never scope-filtered (#899).
                       blockingFindings: pendingBlockingFindings,
                       ...(step === "S5" && pendingRawReviewerArtifacts !== undefined
                         ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
+                        : {}),
+                      ...(step === "S5" && pendingFixerFindingScope !== undefined
+                        ? { findingScope: pendingFixerFindingScope }
                         : {}),
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
@@ -3436,7 +3449,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
-        if (step === "S5") pendingRawReviewerArtifacts = undefined;
+        if (step === "S5") {
+          pendingRawReviewerArtifacts = undefined;
+          pendingFixerFindingScope = undefined;
+        }
         break;
       }
 

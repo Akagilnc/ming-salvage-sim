@@ -752,6 +752,12 @@ export interface WorkerLandingPayload {
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
   /**
+   * S5 only: opaque human/coordinator finding scope from continue_fixing /
+   * repair intent. Runner transports only — never filters blockingFindings by
+   * scope (#899 / ADR 0131). Fixer owns scope taste (C-R4-2B).
+   */
+  readonly findingScope?: FindingRepairScope;
+  /**
    * S5 only: opaque pointers to the preceding reviewer's raw products. Attached
    * on every positive open-count → S5 edge (and on unusable review shapes),
    * independently of whether structured findings cargo is present. The runner
