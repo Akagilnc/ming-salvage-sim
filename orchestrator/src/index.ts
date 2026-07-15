@@ -278,10 +278,15 @@ export {
   DEFAULT_CODER_REC_ORDER,
   lookupCoderRosterEntry,
   parseCoderRec,
+  resolveAdvanceCoderSuggestion,
   resolveCoderRecOrder,
   selectCoderRecEntry,
 } from "./coderRoster.js";
-export type { CoderPoolId, CoderRosterEntry } from "./coderRoster.js";
+export type {
+  AdvanceCoderDecision,
+  CoderPoolId,
+  CoderRosterEntry,
+} from "./coderRoster.js";
 export {
   applyCoderRecToRoute,
   applyRelayBatonToRoute,
