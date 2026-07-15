@@ -167,9 +167,15 @@ import type {
   FamilyVerifyResult,
   IntegratedCmrPass,
 } from "./types.js";
+import {
+  stageFailureStopSummary,
+  type FamilyStageFailureStatus,
+} from "./familyTerminal.js";
 
 /** Which of the two ADR 0022 decision-3 verify points is running. */
 export type VerifyCmrPhase = "wave" | "final";
+
+export type { FamilyStageFailureStatus };
 
 /**
  * The context the verify-cmr hook needs to do its (eventual #296) work.
@@ -253,8 +259,8 @@ export interface VerifyCmrInput {
 export interface VerifyCmrResult {
   /**
    * Whether the verify + cmr passed. The spine fails-fast when this is `false` at
-   * the wave barrier (decision 3④) / returns `verify_failed` at the final barrier,
-   * so #296 only RETURNS the verdict — it does not touch the spine.
+   * the wave barrier (decision 3④) / returns the stage-named terminal at the final
+   * barrier (#922), so #296 only RETURNS the verdict — it does not touch the spine.
    */
   readonly ok: boolean;
   /**
@@ -263,24 +269,32 @@ export interface VerifyCmrResult {
    * is honestly "nothing verified", NOT a claimed pass.
    */
   readonly ran: boolean;
+  /**
+   * #922 — which post-child stage died when `ok===false`. The family spine maps
+   * this onto FamilyRunResult.status + stopSummary.reason (same token). Omitted
+   * for decision-gate parks (barrier stopSummary.reason === decision_gate_park
+   * → status escalated) and for bare test inject hooks (default verify_failed).
+   */
+  readonly failedStatus?: FamilyStageFailureStatus;
 }
 
 /** The no-op verdict: the backend has no verify capability (the #293 default). */
 const NOOP: VerifyCmrResult = { ok: true, ran: false };
 
+/** Stage-tagged red barrier result (#922 — no umbrella verify_failed mash). */
+function stageGate(status: FamilyStageFailureStatus): VerifyCmrResult {
+  return { ok: false, ran: true, failedStatus: status };
+}
+
 /**
  * The fail-safe verdict for a backend that DID verify (green) but is missing a
- * REQUIRED downstream final-barrier capability (the integrated cmr 承重闸, or the
- * 止于-PR step after a converged cmr). It is NOT the #293 no-op: a real verify
- * already ran, so reporting `{ok:true}` would make the spine's `finalize()` treat
- * the final barrier as PASSED and the run as `"success"` — shipping code the
- * load-bearing integrated cmr never reviewed (decision 3⑥) / a run whose terminal
- * PR (decision 4) never opened. The spine ignores `ran` and acts on `ok` alone, so
- * the only fail-safe is `ok:false` (the run surfaces `verify_failed`/`failedPhase:
- * "final"`, never a false `success` — decision 3⑤ "不静默吞"). `ran:true` records
- * that real verify work DID happen (this is not the nothing-ran no-op).
+ * REQUIRED downstream final-barrier capability. Prefer {@link stageGate} with an
+ * explicit stage; this constant is the historical incomplete-gate shape and is
+ * only retained as a last-resort default (tagged verify_failed).
+ *
+ * Prefer stageGate("cmr_failed") / stageGate("ship_failed") at call sites.
  */
-const INCOMPLETE_GATE: VerifyCmrResult = { ok: false, ran: true };
+const INCOMPLETE_GATE: VerifyCmrResult = stageGate("verify_failed");
 
 /**
  * Map a family worker kind (+ optional cmr pass) to the route slot it consumes.
@@ -359,7 +373,7 @@ async function runFamilyVerifyOrAbort(input: {
     familyHeadAfter,
     stopSummary: familyVerifyFailureStopSummary(reason),
   });
-  return { ok: false, ran: true };
+  return stageGate("verify_failed");
 }
 
 interface CmrRouteLegEvidence {
@@ -470,7 +484,8 @@ function cmrWorkerFailedStopSummary(input: {
       input.reason,
     )
   ) {
-    return infraFailureStopSummary({
+    return stageFailureStopSummary({
+      status: "cmr_failed",
       summary: input.reason,
       repairHint:
         "install or restore the missing CMR worker dependency/runtime, rebuild if needed, then rerun the CMR gate",
@@ -511,10 +526,12 @@ function shipWorkerFailedStopSummary(input: {
   readonly reportedFamilyHead?: string;
   readonly shipPrState: string;
 }): StopSummary {
-  return infraFailureStopSummary({
-      summary: input.reason,
-      repairHint:
-        "repair the family ship worker infrastructure/auth/toolchain failure and rerun the final family barrier",
+  return stageFailureStopSummary({
+    status: "ship_failed",
+    summary: input.reason,
+    repairHint:
+      "repair the family ship worker infrastructure/auth/toolchain failure and rerun the final family barrier",
+    metadata: {
       ship: {
         ...(input.latestVerifiedCmrHead !== undefined
           ? { latestVerifiedCmrHead: input.latestVerifiedCmrHead }
@@ -539,6 +556,7 @@ function shipWorkerFailedStopSummary(input: {
           verifiedCmrHead: "latest cmr_passed ledger row",
         },
       },
+    },
   });
 }
 
@@ -586,13 +604,15 @@ function isMaterialCmrStopSummary(stopSummary: StopSummary): boolean {
 
 function familyVerifyFailureStopSummary(reason: string): StopSummary {
   if (/MODULE_NOT_FOUND|Cannot find module/i.test(reason)) {
-    return infraFailureStopSummary({
+    return stageFailureStopSummary({
+      status: "verify_failed",
       summary: reason,
       repairHint:
         "install or restore the missing verification dependency, rebuild if needed, then rerun family verify",
     });
   }
-  return infraFailureStopSummary({
+  return stageFailureStopSummary({
+    status: "verify_failed",
     summary: reason,
     repairHint:
       "inspect the family verify failure, repair the failing toolchain command, and rerun",
@@ -744,11 +764,12 @@ async function runCmrCoderFix(input: {
         : {}),
     };
     const stopSummary = synthesizedFailure
-      ? infraFailureStopSummary({
+      ? stageFailureStopSummary({
+          status: "cmr_failed",
           summary: `${reason} — ${diagnosis}`,
           repairHint:
             "repair the coder-fix worker startup/authentication failure, then re-feed the family run",
-          heads,
+          ...(Object.keys(heads).length > 0 ? { metadata: { heads } } : {}),
         })
       : decisionGateParkStopSummary({
           summary: `${reason} — ${diagnosis}`,
@@ -769,7 +790,13 @@ async function runCmrCoderFix(input: {
       familyHeadAfter,
       stopSummary,
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    // Decision park → no failedStatus (spine → escalated); hard fail → cmr_failed.
+    return {
+      result: synthesizedFailure
+        ? stageGate("cmr_failed")
+        : { ok: false, ran: true },
+      familyHeadAfter,
+    };
   }
 
   if (fixResult.kind !== "completed") {
@@ -786,7 +813,7 @@ async function runCmrCoderFix(input: {
         familyHeadAfter,
       }),
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter };
+    return { result: stageGate("cmr_failed"), familyHeadAfter };
   }
 
   if (fixResult.output.kind !== "coder") {
@@ -827,6 +854,7 @@ async function runCmrCoderFix(input: {
       familyHeadAfter,
       stopSummary,
     });
+    // Decision gate park — leave failedStatus unset so the spine escalates.
     return { result: { ok: false, ran: true }, familyHeadAfter };
   }
 
@@ -1029,13 +1057,21 @@ function familyOnlineReviewLoopFailureStopSummary(
   reviewLoop: OnlineReviewLoopStageResult,
 ): StopSummary {
   if (reviewLoop.stopSummary !== undefined) {
-    return reviewLoop.stopSummary;
+    // Keep decision parks answerable; hard fails re-stamp to the stage token.
+    if (reviewLoop.stopSummary.reason === "decision_gate_park") {
+      return reviewLoop.stopSummary;
+    }
+    return {
+      ...reviewLoop.stopSummary,
+      reason: "online_review_failed",
+    };
   }
   const reason =
     reviewLoop.terminalState === "round_budget_exhausted"
       ? "family online review loop exhausted the 3-round budget"
       : "family online review loop did not converge";
-  return infraFailureStopSummary({
+  return stageFailureStopSummary({
+    status: "online_review_failed",
     summary: `${reason} (terminal: ${reviewLoop.terminalState})`,
     repairHint: "resolve remaining online review findings or answer the decision gate",
   });
@@ -1844,13 +1880,14 @@ async function runIntegratedCmrPass(input: {
       cmrResult.escalation,
     );
     const stopSummary = synthesizedFailure
-      ? infraFailureStopSummary({
+      ? stageFailureStopSummary({
+          status: "cmr_failed",
           summary: `${reason} — ${diagnosis}`,
           repairHint:
             "repair the integrated CMR worker startup/configuration failure, then re-feed the family run",
-          heads: postWorkerFamilyHead !== undefined
-            ? { actualFamilyHead: postWorkerFamilyHead }
-            : undefined,
+          ...(postWorkerFamilyHead !== undefined
+            ? { metadata: { heads: { actualFamilyHead: postWorkerFamilyHead } } }
+            : {}),
         })
       : decisionGateParkStopSummary({
           summary: `${reason} — ${diagnosis}`,
@@ -1875,7 +1912,12 @@ async function runIntegratedCmrPass(input: {
         escalationKind: synthesizedFailure ? "failure" : "decision",
       });
     });
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+    return {
+      result: synthesizedFailure
+        ? stageGate("cmr_failed")
+        : { ok: false, ran: true },
+      familyHeadAfter: postWorkerFamilyHead,
+    };
   }
   if (cmrResult.kind !== "completed") {
     const reason = `family integrated cmr ${pass} worker failed: ${cmrResult.reason}`;
@@ -1898,10 +1940,29 @@ async function runIntegratedCmrPass(input: {
         cmrPass: pass,
         reason,
         familyHeadAfter: postWorkerFamilyHead,
-        ...(stopSummary !== undefined ? { stopSummary } : {}),
+        ...(stopSummary !== undefined
+          ? {
+              // Keep provider_degraded / other special reasons; only re-stamp
+              // generic infra-shaped summaries to the stage token.
+              stopSummary:
+                stopSummary.reason === "provider_degraded" ||
+                stopSummary.reason === "decision_gate_park"
+                  ? stopSummary
+                  : { ...stopSummary, reason: "cmr_failed" as const },
+            }
+          : {
+              stopSummary: stageFailureStopSummary({
+                status: "cmr_failed",
+                summary: reason,
+              }),
+            }),
       });
     });
-    return { result: INCOMPLETE_GATE, familyHeadAfter: postWorkerFamilyHead };
+    return {
+      // provider_degraded is still a stage death for the family barrier.
+      result: stageGate("cmr_failed"),
+      familyHeadAfter: postWorkerFamilyHead,
+    };
   }
   if (cmrResult.output.kind !== "cmr") {
     return await routeRawReviewerArtifactsToFix(
@@ -1928,11 +1989,11 @@ async function runIntegratedCmrPass(input: {
     ];
     const reason =
       `integrated cmr ${pass} reviewer declared ${openFindingsCount} open findings`;
-    const stopSummary: StopSummary = {
-      reason: "same_module_still_red",
+    const stopSummary: StopSummary = stageFailureStopSummary({
+      status: "cmr_failed",
       summary: reason,
       repairHint: "send the reviewer artifacts to coder-fix, then run a fresh review",
-    };
+    });
     // The runner schedules from count only; finding content is cargo.
     if (allowCoderFix) {
       await persistFinalReviewRound("accepted", () =>
@@ -1993,7 +2054,10 @@ async function runIntegratedCmrPass(input: {
         stopSummary,
       }),
     );
-    return { result: { ok: false, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+    return {
+      result: stageGate("cmr_failed"),
+      familyHeadAfter: postWorkerFamilyHead,
+    };
   }
   // A zero declaration converges; the runner does not inspect finding content.
   const skippedLegs = cmrResult.output.skippedLegs;
@@ -2071,10 +2135,10 @@ export async function runVerifyCmr(
   //    capability ⇒ the hook CANNOT run the load-bearing review, so it must NOT
   //    report a pass: a real verify already ran, and `{ok:true}` here would make
   //    the spine's finalize() call the run `"success"` with the 承重闸 never run.
-  //    Fail-safe to `ok:false` (verify_failed) — NOT the #293 nothing-ran no-op. ──
+  //    Fail-safe to ok:false + cmr_failed (#922) — NOT the #293 nothing-ran no-op. ──
   // ADR 0026 / #331: the integrated cmr is dispatched as a FAMILY cmr WORKER
   // through the unified seam (no longer the inline `runIntegratedCmr`). The
-  // capability check stays: NO cmr capability ⇒ INCOMPLETE_GATE (the load-bearing
+  // capability check stays: NO cmr capability ⇒ cmr_failed (the load-bearing
   // review cannot run; never a false pass). The capability is satisfied by EITHER
   // the new unified `dispatchWorker` seam OR the legacy `runIntegratedCmr` (the
   // dispatch helper prefers the former, forwards to the latter) — gating on the
@@ -2084,7 +2148,7 @@ export async function runVerifyCmr(
     familyBackend.dispatchWorker === undefined &&
     familyBackend.runIntegratedCmr === undefined
   ) {
-    return INCOMPLETE_GATE;
+    return stageGate("cmr_failed");
   }
   let resolvedRoute: ResolvedModelRoute;
   try {
@@ -2102,7 +2166,8 @@ export async function runVerifyCmr(
   } catch (err) {
     const reason =
       err instanceof Error ? err.message : `failed to resolve active model route: ${String(err)}`;
-    const stopSummary = infraFailureStopSummary({
+    const stopSummary = stageFailureStopSummary({
+      status: "cmr_failed",
       summary: `startup route failure: ${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}, ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS=${process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS ?? "(unset)"}`,
       repairHint: "repair the CMR route environment and rerun the family barrier",
     });
@@ -2118,7 +2183,7 @@ export async function runVerifyCmr(
       familyHeadAfter,
       stopSummary,
     });
-    return { ok: false, ran: true };
+    return stageGate("cmr_failed");
   }
 
   // #419: Step5 completeness and Step6 correctness are two runner-dispatched
@@ -2240,30 +2305,33 @@ export async function runVerifyCmr(
       phase,
       reason,
       familyHeadAfter: postCmrFamilyHead,
-      stopSummary: infraFailureStopSummary({
+      stopSummary: stageFailureStopSummary({
+        status: "ship_failed",
         summary: `${reason}; the terminal PR gate cannot open a PR`,
         repairHint:
           "provide the family ship worker dispatch seam, then rerun the final family barrier",
-        ship: {
-          latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
-          currentFamilyHead: postCmrFamilyHead,
-          shipPrState: "ship-capability-missing",
-        },
-        heads: {
-          ...(postCmrFamilyHead !== undefined
-            ? { actualFamilyHead: postCmrFamilyHead }
-            : {}),
-          ...(cmrPassedFamilyHeadAfter !== undefined
-            ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
-            : {}),
-          sources: {
-            actualFamilyHead: "family head after CMR before missing ship capability",
-            verifiedCmrHead: "latest cmr_passed ledger row",
+        metadata: {
+          ship: {
+            latestVerifiedCmrHead: cmrPassedFamilyHeadAfter,
+            currentFamilyHead: postCmrFamilyHead,
+            shipPrState: "ship-capability-missing",
+          },
+          heads: {
+            ...(postCmrFamilyHead !== undefined
+              ? { actualFamilyHead: postCmrFamilyHead }
+              : {}),
+            ...(cmrPassedFamilyHeadAfter !== undefined
+              ? { verifiedCmrHead: cmrPassedFamilyHeadAfter }
+              : {}),
+            sources: {
+              actualFamilyHead: "family head after CMR before missing ship capability",
+              verifiedCmrHead: "latest cmr_passed ledger row",
+            },
           },
         },
       }),
     });
-    return INCOMPLETE_GATE;
+    return stageGate("ship_failed");
   }
   const shipSpec = familyShipWorkerSpec(resolvedRoute);
   const shipPool = billingPoolForFamilyWorker({
@@ -2302,11 +2370,12 @@ export async function runVerifyCmr(
         ? { actualFamilyHead: postShipFamilyHead }
         : undefined;
     const stopSummary = synthesizedFailure
-      ? infraFailureStopSummary({
+      ? stageFailureStopSummary({
+          status: "ship_failed",
           summary: `${escalationReason} — ${escalationDiagnosis}`,
           repairHint:
             "repair the family ship worker startup/authentication failure, then re-feed the family run",
-          heads,
+          ...(heads !== undefined ? { metadata: { heads } } : {}),
         })
       : decisionGateParkStopSummary({
           summary: `${escalationReason} — ${escalationDiagnosis}`,
@@ -2328,7 +2397,7 @@ export async function runVerifyCmr(
       familyHeadAfter: postShipFamilyHead,
       stopSummary,
     });
-    return { ok: false, ran: true };
+    return synthesizedFailure ? stageGate("ship_failed") : { ok: false, ran: true };
   }
   if (shipResult.kind === "failed") {
     const reason = `family ship worker failed: ${shipResult.reason}`;
@@ -2363,7 +2432,7 @@ export async function runVerifyCmr(
       familyHeadAfter: postShipFamilyHead,
       stopSummary,
     });
-    return INCOMPLETE_GATE;
+    return stageGate("ship_failed");
   }
   const ship: ShipResult =
     shipResult.kind === "completed" && shipResult.output?.kind === "ship"
@@ -2478,7 +2547,10 @@ export async function runVerifyCmr(
       familyHeadAfter: abortFamilyHead,
       stopSummary,
     });
-    return INCOMPLETE_GATE;
+    // Decision park leaves failedStatus unset; hard fail → online_review_failed.
+    return stopSummary.reason === "decision_gate_park"
+      ? { ok: false, ran: true }
+      : stageGate("online_review_failed");
   }
 
   const convergedFamilyHead = await familyConvergenceMarkerHead(
@@ -2502,13 +2574,26 @@ export async function runVerifyCmr(
     prUrl: shipPr,
   });
   if (familyAutoMergeIncomplete(autoMerge)) {
-    const stopSummary =
+    const baseStop =
       autoMerge.stopSummary ??
       decisionGateParkStopSummary({
         summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
         repairHint:
           "resolve merge blockers or answer the decision gate, then re-run the family final barrier",
       });
+    const isPark = baseStop.reason === "decision_gate_park";
+    const stopSummary = isPark
+      ? baseStop
+      : stageFailureStopSummary({
+          status: "merge_failed",
+          summary: baseStop.summary,
+          repairHint:
+            baseStop.repairHint ??
+            "resolve merge blockers, then re-run the family final barrier",
+          ...(baseStop.metadata !== undefined
+            ? { metadata: baseStop.metadata }
+            : {}),
+        });
     await familyBackend.recordAborted?.({
       phase,
       familyBase,
@@ -2521,7 +2606,7 @@ export async function runVerifyCmr(
       familyHeadAfter: convergedFamilyHead,
       stopSummary,
     });
-    return INCOMPLETE_GATE;
+    return isPark ? { ok: false, ran: true } : stageGate("merge_failed");
   }
 
   const cleanupGate = await ensureFamilyPostMergeCleanup({
@@ -2534,7 +2619,7 @@ export async function runVerifyCmr(
     phase,
     recordAbortOnFailure: true,
   });
-  if (!cleanupGate.ok) return INCOMPLETE_GATE;
+  if (!cleanupGate.ok) return stageGate("cleanup_failed");
   return { ok: true, ran: true };
 }
 
@@ -2622,7 +2707,8 @@ export async function ensureFamilyPostMergeCleanup(input: {
         phase,
         reason,
         familyHeadAfter,
-        stopSummary: infraFailureStopSummary({
+        stopSummary: stageFailureStopSummary({
+          status: "cleanup_failed",
           summary: reason,
           repairHint:
             "verify PR is MERGED with matching head, then re-run the family final barrier",
@@ -2644,7 +2730,8 @@ export async function ensureFamilyPostMergeCleanup(input: {
         phase,
         reason,
         familyHeadAfter,
-        stopSummary: infraFailureStopSummary({
+        stopSummary: stageFailureStopSummary({
+          status: "cleanup_failed",
           summary: reason,
           repairHint:
             "verify PR is MERGED with matching head, then re-run the family final barrier",

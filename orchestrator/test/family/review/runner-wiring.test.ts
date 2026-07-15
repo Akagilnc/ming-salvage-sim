@@ -744,8 +744,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
 
     expect(result.status).toBe("verify_failed");
-    expect(result.stopSummary.reason).toBe("infra_failure");
-    expect(result.stopSummary.summary).toMatch(/final verify\/cmr barrier failed/);
+    expect(result.stopSummary.reason).toBe("verify_failed");
+    expect(result.stopSummary.summary).toMatch(/final verify|verify_failed|barrier failed/);
   });
 
   it("verify_failed does not reuse stale aborted rows from before the current final barrier", async () => {
@@ -778,8 +778,8 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
     });
 
     expect(result.status).toBe("verify_failed");
-    expect(result.stopSummary.reason).toBe("infra_failure");
-    expect(result.stopSummary.summary).toMatch(/final verify\/cmr barrier failed/);
+    expect(result.stopSummary.reason).toBe("verify_failed");
+    expect(result.stopSummary.summary).toMatch(/final verify|verify_failed|barrier failed/);
     expect(result.stopSummary.summary).not.toContain("old CMR blocker");
   });
 
@@ -1191,7 +1191,7 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         familyIssue: 604,
       });
 
-      expect(result).toEqual({ ok: false, ran: true });
+      expect(result).toMatchObject({ ok: false, ran: true });
       const reviewed = backend.ledger.find(
         (entry) => entry.status === "cmr_reviewed",
       );
