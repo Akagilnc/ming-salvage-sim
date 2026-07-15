@@ -7,8 +7,9 @@
  *
  * Designers mark each slice with a `Coder-Rec: X → Y → Z` fallback order.
  * The orchestrator only READS that marking: markdown-strip → parse → filter to
- * this versioned roster → dispatch the first valid entry → advance after N
- * non-converging review/fix rounds. No runtime adaptive state machine.
+ * this versioned roster → dispatch the first valid entry (sticky stay-put;
+ * ADR 0132 / #919 CR). No round-threshold mechanical advance; judge
+ * `advanceCoder` roster policy is #926. No runtime adaptive state machine.
  */
 
 import type { Content, Root } from "mdast";

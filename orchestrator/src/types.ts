@@ -1382,9 +1382,10 @@ export interface LedgerEntry {
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
   /**
-   * #925 — optional advance_coder suggestion from a continue verdict, mirrored
-   * onto the ledger row for audit / later #926 stay-put policy. Topology does
-   * not act on this field in #925.
+   * Historical dual-write slot for advanceCoder (#919 CR U7 deleted the
+   * in-memory mirror). Sole source of truth is `output.advanceCoder` on a
+   * continue judge verdict (recovery / prior-verdict rows read it there).
+   * Topology does not act on this field; #926 owns roster consumption.
    */
   readonly advanceCoder?: string;
   /** Runner-owned terminal stop reason summary (#450). */

@@ -26,11 +26,16 @@ import {
   openFindingsForFixer,
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
+  projectResidualReviewerToJudge,
 } from "../../src/judgeStation.js";
 import { findingIdentityKey } from "../../src/findings.js";
-import { legacyDispatchWorker } from "../../src/dispatchWorker.js";
+import {
+  legacyDispatchWorker,
+  workerResultToStep,
+} from "../../src/dispatchWorker.js";
 import { route } from "../../src/route.js";
 import { runOrchestrator, stepSpecsForEnv } from "../../src/runner.js";
+import { SelfReportedRelayError } from "../../src/relayDispatch.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   AgentStepRunOptions,
@@ -414,7 +419,7 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     );
   });
 
-  it("advanceCoder lands on the S3 ledger row", async () => {
+  it("advanceCoder lands on the S3 ledger output (single source of truth)", async () => {
     const backend = new JudgeBackend([
       {
         kind: "continue",
@@ -426,7 +431,14 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     const result = await runOrchestrator({ issueNumber: 9252, backend });
     expect(result.status).toBe("success");
     const s3 = result.stepLedger.find((e) => e.step === "S3");
-    expect(s3?.advanceCoder).toBe("claude-opus");
+    // U7: sole source = output.advanceCoder (recovery/prior-verdict rows agree);
+    // no dual-write onto the ledger row top-level.
+    expect(
+      s3?.output?.kind === "judge" && s3.output.status === "continue"
+        ? s3.output.advanceCoder
+        : undefined,
+    ).toBe("claude-opus");
+    expect(s3?.advanceCoder).toBeUndefined();
   });
 
   it("escalate parks via decision-kind (status escalate), does not success-terminal", async () => {
@@ -438,6 +450,51 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     expect(result.status).not.toBe("success");
     // Must not invent a brand-new terminal — still the escalate park family.
     expect(backend.specs.some((s) => s.id === "S7")).toBe(false);
+  });
+
+  it("U2: typed S3 escalate park stop reason matches decision_gate park family", async () => {
+    const backend = new JudgeBackend([
+      { kind: "escalate", reason: "stalled", diagnosis: "same bug 3 rounds" },
+    ]);
+    const result = await runOrchestrator({ issueNumber: 9253, backend });
+    expect(result.status).toBe("escalate");
+    // #925 / ADR 0132: judge escalate = existing decision-kind park (not a third token).
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+    expect(result.stepLedger.find((e) => e.step === "S8")?.stopSummary?.reason).toBe(
+      "decision_gate_park",
+    );
+  });
+
+  it("U1: decision_gate on S3 mints T2 kind:judge escalate (not residual reviewer paper)", async () => {
+    const GATE_SUMMARY = "need owner ruling on AC conflict";
+    class GateOnS3Backend extends JudgeBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.id === "S3") {
+          throw new SelfReportedRelayError(
+            { kind: "decision_gate", state_summary: GATE_SUMMARY },
+            "S3",
+            "sess-s3-gate",
+          );
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+    const backend = new GateOnS3Backend([{ kind: "converged" }]);
+    const result = await runOrchestrator({ issueNumber: 9191, backend });
+    expect(result.status).toBe("escalate");
+    const s3 = result.stepLedger.find((e) => e.step === "S3");
+    expect(s3?.output).toMatchObject({
+      kind: "judge",
+      status: "escalate",
+      reason: expect.stringContaining("decision gate"),
+      diagnosis: GATE_SUMMARY,
+    });
+    expect(s3?.output?.kind).not.toBe("reviewer");
+    // Same park family as typed escalate (U2).
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
   });
 
   it("dead resume → fresh S6 consumes prior continue via fix-findings landing", async () => {
@@ -808,6 +865,52 @@ describe("#925 priorJudgeVerdictRowsFromLedger pure", () => {
     expect(rows[0]!.status).toBe("continue");
     expect(rows[0]!.advanceCoder).toBe("x");
     expect(rows[1]!.status).toBe("converged");
+  });
+});
+
+describe("#919 CR U1/U3: residual→judge projection + reviewer-role escalate mint", () => {
+  it("workerResultToStep for expectedKind reviewer mints kind:judge escalate (not residual paper)", () => {
+    const { unwrapped } = workerResultToStep(
+      {
+        kind: "escalated",
+        escalation: { reason: "gate", diagnosis: "need decision" },
+      },
+      "reviewer",
+    );
+    expect(unwrapped).toMatchObject({
+      kind: "judge",
+      status: "escalate",
+      reason: "gate",
+      diagnosis: "need decision",
+      escalate: { reason: "gate", diagnosis: "need decision" },
+    });
+    expect((unwrapped as StepOutput).kind).not.toBe("reviewer");
+  });
+
+  it("projectResidualReviewerToJudge: escalate arm / positive continue / non-positive unusable", () => {
+    const esc = projectResidualReviewerToJudge({
+      findingsCount: 2,
+      findings: [sampleFinding()],
+      escalate: { reason: "r", diagnosis: "d" },
+    });
+    expect(esc).toMatchObject({
+      kind: "judge",
+      status: "escalate",
+      reason: "r",
+      diagnosis: "d",
+    });
+    const cont = projectResidualReviewerToJudge({
+      findingsCount: 1,
+      findings: [sampleFinding("a", "a.ts:1")],
+    });
+    expect(cont?.status).toBe("continue");
+    expect(projectResidualReviewerToJudge({ findingsCount: 0, findings: [] })).toBeUndefined();
+    expect(
+      projectResidualReviewerToJudge({
+        findingsCount: Number.NaN,
+        findings: [],
+      }),
+    ).toBeUndefined();
   });
 });
 

@@ -70,8 +70,11 @@ describe("#451 dogfood replay fixture", () => {
         expect.objectContaining({
           id: "440-agent-brief-spec-conflict",
           issue: 440,
+          // Dogfood sample still classifies the accident as a product-level
+          // spec conflict; #919 CR U2 parks the judge escalate as decision_gate_park
+          // (same family as decision_gate — not a third stop token).
           classification: "spec_conflict",
-          stopReason: "spec_conflict",
+          stopReason: "decision_gate_park",
         }),
         expect.objectContaining({
           id: "440-module-not-found",
@@ -176,15 +179,20 @@ describe("#451 dogfood replay fixture", () => {
     expect(replay.coveredStopReasons).toEqual([
       "already_done",
       "cmr_failed",
+      "decision_gate_park",
       "infra_failure",
       "provider_degraded",
       "ship_failed",
+      // Residual invalid-answer / prior-park paths may still surface
+      // stopReason "spec_conflict"; live typed judge escalate is decision_gate_park.
       "spec_conflict",
       "success",
       "verify_failed",
     ]);
     // #877: contract_drift no longer covered by dogfood scenarios.
-    expect(replay.summary).toContain("8 stop reasons");
+    // #919 CR U2: judge escalate parks as decision_gate_park; classification
+    // may still say "spec_conflict".
+    expect(replay.summary).toContain("9 stop reasons");
   });
 
   it("keeps scripted family CMR finding fixtures valid for the real worker parser", async () => {
