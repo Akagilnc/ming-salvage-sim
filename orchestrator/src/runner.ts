@@ -1200,7 +1200,26 @@ function lastReviewerStep(
 interface S4FindingsCountReplay {
   readonly blocking: ReadonlyArray<Finding>;
   readonly blockingIdentityKeys: ReadonlyArray<string>;
+  /** Reviewer-declared open-count (ADR 0131), not findings-array length. */
+  readonly blockingFindingCount: number;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
+}
+
+/**
+ * Opaque pointers to the preceding reviewer's raw products. Always attached on
+ * the positive-count → S5 edge so sparse/missing findings cargo cannot produce
+ * a no-op fixer landing (ADR 0131 / #899).
+ */
+function reviewerRawArtifactPointers(
+  handle: import("./types.js").WorkerMonitorHandle | undefined,
+  sessionId: string | undefined,
+): NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]> {
+  return {
+    ...(handle?.logPath !== undefined ? { stdoutPath: handle.logPath } : {}),
+    ...(handle?.resultPath !== undefined ? { sidecarPath: handle.resultPath } : {}),
+    ...(sessionId !== undefined ? { reviewerSessionId: sessionId } : {}),
+    statement: "the previous reviewer raw artifacts are here",
+  };
 }
 
 function replayS4FindingsCountState(
@@ -1208,6 +1227,7 @@ function replayS4FindingsCountState(
 ): S4FindingsCountReplay {
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  let pendingBlockingFindingCount = 0;
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerOutputForS4: StepOutput | undefined;
 
@@ -1234,11 +1254,14 @@ function replayS4FindingsCountState(
     ];
     pendingBlockingFindings = blocking;
     pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
+    // Count is the typed open-count, never cargo-array length.
+    pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
   }
 
   return {
     blocking: pendingBlockingFindings,
     blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
+    blockingFindingCount: pendingBlockingFindingCount,
     findingDispositions,
   };
 }
@@ -2103,6 +2126,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastOutput: StepOutput | undefined;
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  /** Reviewer-declared open-count for S5/S6 (not findings-array length). */
+  let pendingBlockingFindingCount = 0;
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
@@ -2120,6 +2145,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const blockingIdentityKeys = blocking.map(findingIdentityKey);
     pendingBlockingFindings = blocking;
     pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
+    // ADR 0131: declared count is the control signal; findings rows are cargo.
+    pendingBlockingFindingCount = reviewerOutput.findingsCount;
     return [];
   }
 
@@ -2704,6 +2731,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     const replayedS4 = replayS4FindingsCountState(plan.priorLedger);
     pendingBlockingFindings = [...replayedS4.blocking];
     pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
+    pendingBlockingFindingCount = replayedS4.blockingFindingCount;
     findingDispositions = [...replayedS4.findingDispositions];
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
@@ -3125,7 +3153,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ? {
                       blockingFindingIdentityKeys:
                         pendingBlockingFindingIdentityKeys,
-                      blockingFindingCount: pendingBlockingFindings.length,
+                      // Declared open-count, never cargo-array length (sparse
+                      // findings[] must not zero out the control envelope).
+                      blockingFindingCount: pendingBlockingFindingCount,
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
                         : {}),
@@ -3575,38 +3605,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (output?.kind !== "reviewer") {
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
-              pendingRawReviewerArtifacts = {
-                ...(stepMonitorHandle?.logPath !== undefined
-                  ? { stdoutPath: stepMonitorHandle.logPath }
-                  : {}),
-                ...(stepMonitorHandle?.resultPath !== undefined
-                  ? { sidecarPath: stepMonitorHandle.resultPath }
-                  : {}),
-                ...(stepSessionId !== undefined
-                  ? { reviewerSessionId: stepSessionId }
-                  : {}),
-                statement: "the previous reviewer raw artifacts are here",
-              };
+              pendingBlockingFindingCount = 0;
+              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                stepMonitorHandle,
+                stepSessionId,
+              );
               step = "S5";
               continue orchestratorStepLoop;
             }
             if (!Array.isArray(output.findings)) {
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
-              pendingRawReviewerArtifacts = {
-                ...(stepMonitorHandle?.logPath !== undefined
-                  ? { stdoutPath: stepMonitorHandle.logPath }
-                  : {}),
-                ...(stepMonitorHandle?.resultPath !== undefined
-                  ? { sidecarPath: stepMonitorHandle.resultPath }
-                  : {}),
-                ...(stepSessionId !== undefined
-                  ? { reviewerSessionId: stepSessionId }
-                  : {}),
-                statement: "the previous reviewer raw artifacts are here",
-              };
+              pendingBlockingFindingCount = 0;
+              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                stepMonitorHandle,
+                stepSessionId,
+              );
               step = "S5";
               continue orchestratorStepLoop;
+            }
+            // Positive open-count always preserves raw artifact pointers for S5,
+            // independently of whether structured findings cargo is present.
+            // Sparse/empty findings[] must not become a no-op fix landing.
+            if (output.findingsCount > 0) {
+              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                stepMonitorHandle,
+                stepSessionId,
+              );
             }
           }
         }

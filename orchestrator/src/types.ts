@@ -730,9 +730,11 @@ export interface WorkerLandingPayload {
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
   /**
-   * S5 only: opaque pointers to the preceding reviewer's raw products when no
-   * countable findings envelope was available. The runner transports these
-   * facts; the fixer reads the artifacts and decides what they mean.
+   * S5 only: opaque pointers to the preceding reviewer's raw products. Attached
+   * on every positive open-count → S5 edge (and on unusable review shapes),
+   * independently of whether structured findings cargo is present. The runner
+   * transports these facts; the fixer reads the artifacts and decides what
+   * they mean (ADR 0131 / #899 — no empty no-op fix landing).
    */
   readonly rawReviewerArtifacts?: {
     readonly stdoutPath?: string;
