@@ -338,3 +338,178 @@ export function projectJudgeContinueBlocking(output: {
     killDispositions: kills,
   };
 }
+
+/**
+ * #930 — family CMR court closure from the shared T2 judge tri-state only.
+ *
+ * One judgment function, two ordered courts (completeness / correctness). The
+ * family path must NOT read open-count / findingsCount as a second closer.
+ * Unusable / non-judge envelopes route to typed re-furnace (fixer with raw
+ * artifacts) — runner does not invent a clean pass.
+ *
+ * Live+converged is an envelope-consistency negative for seats/tests
+ * ({@link liveFindingsBlockConverged}); topology still trusts the status enum
+ * and does not re-judge prose.
+ */
+export type FamilyJudgeClosure =
+  | { readonly action: "pass" }
+  | {
+      readonly action: "continue";
+      readonly blocking: Finding[];
+      readonly blockingIdentityKeys: string[];
+      readonly blockingFindingCount: number;
+      readonly killDispositions: FindingDisposition[];
+    }
+  | {
+      readonly action: "escalate";
+      readonly reason: string;
+      readonly diagnosis: string;
+    }
+  | { readonly action: "unusable"; readonly reason: string };
+
+export function closeFamilyCourtFromJudgeOutput(
+  // Accept any worker / fixture shape; only kind:"judge" is a family closer.
+  // `unknown` keeps callers free of WorkerOutput index-signature fights.
+  output: unknown,
+): FamilyJudgeClosure {
+  if (
+    output === null ||
+    typeof output !== "object" ||
+    !("kind" in output) ||
+    typeof (output as { kind?: unknown }).kind !== "string"
+  ) {
+    return {
+      action: "unusable",
+      reason:
+        "family court requires kind:judge tri-state verdict; residual non-judge envelope is not a closer",
+    };
+  }
+  const rec = output as {
+    readonly kind: string;
+    readonly status?: unknown;
+    readonly findingDispositions?: unknown;
+    readonly findings?: unknown;
+    readonly reason?: unknown;
+    readonly diagnosis?: unknown;
+    readonly escalate?: unknown;
+  };
+  if (rec.kind === "judge") {
+    const status = typeof rec.status === "string" ? rec.status : undefined;
+    if (status === "converged") {
+      return { action: "pass" };
+    }
+    if (status === "continue") {
+      const dispositions = Array.isArray(rec.findingDispositions)
+        ? (rec.findingDispositions as ReadonlyArray<JudgeFindingDisposition>)
+        : undefined;
+      const findings = Array.isArray(rec.findings)
+        ? (rec.findings as ReadonlyArray<Finding>)
+        : undefined;
+      const projected = projectJudgeContinueBlocking({
+        status: "continue",
+        findingDispositions: dispositions,
+        findings,
+      });
+      return {
+        action: "continue",
+        blocking: projected?.blocking ?? [],
+        blockingIdentityKeys: projected?.blockingIdentityKeys ?? [],
+        blockingFindingCount: projected?.blockingFindingCount ?? 0,
+        killDispositions: projected?.killDispositions ?? [],
+      };
+    }
+    if (status === "escalate") {
+      const escalate =
+        rec.escalate !== undefined &&
+        typeof rec.escalate === "object" &&
+        rec.escalate !== null
+          ? (rec.escalate as Escalation)
+          : undefined;
+      const reason =
+        (typeof rec.reason === "string" ? rec.reason : undefined) ??
+        escalate?.reason ??
+        "family judge escalate";
+      const diagnosis =
+        (typeof rec.diagnosis === "string" ? rec.diagnosis : undefined) ??
+        escalate?.diagnosis ??
+        "judge declared escalate";
+      return { action: "escalate", reason, diagnosis };
+    }
+    return {
+      action: "unusable",
+      reason: "family judge envelope missing legal status tri-state",
+    };
+  }
+  // Residual non-judge paper (incl. historical kind:"cmr"+findingsCount):
+  // not a family closer. Typed re-furnace, never silent pass via open-count.
+  return {
+    action: "unusable",
+    reason:
+      "family court requires kind:judge tri-state verdict; residual non-judge envelope is not a closer",
+  };
+}
+
+/**
+ * #930 — prior family-court judge rows for session-loss recovery.
+ * Runner transports ledger rows as-is; never synthesises a narrative summary.
+ * Shape matches single-slice {@link priorJudgeVerdictRowsFromLedger} so the
+ * family court reuses the same priorJudgeVerdicts landing field.
+ */
+export function priorFamilyJudgeVerdictRowsFromLedger(
+  ledger: ReadonlyArray<{
+    readonly status?: string;
+    readonly event?: string;
+    readonly cmrPass?: string;
+    readonly sessionId?: string;
+    readonly judgeStatus?: JudgeVerdictStatus;
+    readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+    readonly advanceCoder?: string;
+  }>,
+  pass?: string,
+): ReadonlyArray<{
+  readonly step: string;
+  readonly status: JudgeVerdictStatus;
+  readonly advanceCoder?: string;
+  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+  readonly sessionId?: string;
+}> {
+  const rows: Array<{
+    readonly step: string;
+    readonly status: JudgeVerdictStatus;
+    readonly advanceCoder?: string;
+    readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+    readonly sessionId?: string;
+  }> = [];
+  for (const entry of ledger) {
+    if (
+      entry.status !== "cmr_reviewed" &&
+      entry.status !== "cmr_passed" &&
+      entry.event !== "cmr_reviewed" &&
+      entry.event !== "cmr_passed"
+    ) {
+      continue;
+    }
+    if (pass !== undefined && entry.cmrPass !== pass) continue;
+    if (
+      entry.judgeStatus !== "converged" &&
+      entry.judgeStatus !== "continue" &&
+      entry.judgeStatus !== "escalate"
+    ) {
+      continue;
+    }
+    rows.push({
+      step: `family-cmr:${entry.cmrPass ?? "unknown"}`,
+      status: entry.judgeStatus,
+      ...(entry.advanceCoder !== undefined
+        ? { advanceCoder: entry.advanceCoder }
+        : {}),
+      ...(entry.findingDispositions !== undefined
+        ? { findingDispositions: entry.findingDispositions }
+        : {}),
+      ...(typeof entry.sessionId === "string"
+        ? { sessionId: entry.sessionId }
+        : {}),
+    });
+  }
+  return rows;
+}

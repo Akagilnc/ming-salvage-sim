@@ -139,6 +139,15 @@ export interface CmrPassedRecord {
   readonly routeFingerprint?: string;
   /** Unified stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
+  /** #930 — family judge session id for resume / prior-verdict rows. */
+  readonly sessionId?: string;
+  /** #930 — T2 judge status (converged on green pass). */
+  readonly judgeStatus?: "converged" | "continue" | "escalate";
+  /** #930 — disposition table (usually empty on green pass). */
+  readonly findingDispositions?: ReadonlyArray<
+    import("../types.js").JudgeFindingDisposition
+  >;
+  readonly advanceCoder?: string;
 }
 
 /** A red integrated CMR review outcome handed back to the runner before fix (#550). */
@@ -153,6 +162,15 @@ export interface CmrReviewedRecord {
    */
   readonly blockingFindingIdentityKeys?: readonly string[];
   readonly stopSummary?: StopSummary;
+  /** #930 — family judge session id for resume / prior-verdict rows. */
+  readonly sessionId?: string;
+  /** #930 — T2 judge status (continue / escalate / unusable-re-furnace). */
+  readonly judgeStatus?: "converged" | "continue" | "escalate";
+  /** #930 — disposition table carried for session-loss prior rows. */
+  readonly findingDispositions?: ReadonlyArray<
+    import("../types.js").JudgeFindingDisposition
+  >;
+  readonly advanceCoder?: string;
 }
 
 /** A separate coder-fix commit produced for a red integrated CMR finding (#550). */
@@ -315,6 +333,10 @@ export async function recordCmrPassed(
       cmrPass: record.cmrPass,
       familyHeadAfter: record.familyHeadAfter,
       routeFingerprint: record.routeFingerprint,
+      sessionId: record.sessionId,
+      judgeStatus: record.judgeStatus ?? "converged",
+      findingDispositions: record.findingDispositions,
+      advanceCoder: record.advanceCoder,
       stopSummary:
         record.stopSummary ??
         successStopSummary(
@@ -345,6 +367,10 @@ export async function recordCmrReviewed(
       reason: record.reason,
       familyHeadAfter: record.familyHeadAfter,
       blockingFindingIdentityKeys: record.blockingFindingIdentityKeys,
+      sessionId: record.sessionId,
+      judgeStatus: record.judgeStatus,
+      findingDispositions: record.findingDispositions,
+      advanceCoder: record.advanceCoder,
       stopSummary:
         record.stopSummary ??
         infraFailureStopSummary({

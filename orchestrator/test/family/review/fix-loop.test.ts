@@ -2538,7 +2538,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
     const reviewed = backend.ledger.find((entry) => entry.status === "cmr_reviewed");
     expect(reviewed).not.toHaveProperty("cmrFindingClassification");
     expect(reviewed?.reason).toBe(
-      "integrated cmr completeness reviewer declared 2 open findings",
+      "integrated cmr completeness judge continue with 2 live finding(s)",
     );
   });
 
@@ -2975,7 +2975,10 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     expect(backend.ledger.some((entry) => entry.status === "aborted")).toBe(false);
   });
 
-  it("routes a completed reviewer missing its declared count to raw artifacts even with finding cargo", async () => {
+  it("residual cmr missing findingsCount with finding cargo projects to judge continue (live findings to fix)", async () => {
+    // #930: residual kind:cmr without findingsCount is projected once into
+    // judge form. Findings cargo becomes live dispositions — not a second
+    // open-count closer, and not silent empty re-furnace.
     const backend = new CountChannelFixBackend({
       kind: "completed",
       sessionId: "cmr-reviewer-missing-count",
@@ -2999,7 +3002,7 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
     expect(coderIndex).toBeGreaterThan(0);
     expect(backend.landings[coderIndex]).toMatchObject({
-      blockingFindings: [],
+      blockingFindings: [BLOCKING_FAMILY_CMR_FINDING],
       rawReviewerArtifacts: {
         reviewerSessionId: "cmr-reviewer-missing-count",
         statement: "the previous reviewer raw artifacts are here",

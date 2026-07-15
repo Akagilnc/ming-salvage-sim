@@ -160,7 +160,10 @@ import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
 } from "../cliMonitorHooks.js";
-import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
+import {
+  legacyDispatchFamilyWorker,
+  legacyIntegratedCmrToJudgeOutput,
+} from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
 import {
   DOCRELEASE_PROMPT_FILE,
@@ -1503,33 +1506,38 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
       };
     }
+    // #930: family court traffic is T2 judge tri-state. Residual open-count
+    // cargo is projected once at this boundary; verifyCmr never reads count.
+    void ctx;
+    const judge = legacyIntegratedCmrToJudgeOutput({
+      converged: outcome.converged ?? false,
+      ...(outcome.findingsCount !== undefined
+        ? { findingsCount: outcome.findingsCount }
+        : {}),
+      ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+      ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
+      ...(outcome.successfulLegs !== undefined
+        ? { successfulLegs: outcome.successfulLegs }
+        : {}),
+      ...(outcome.skippedLegs !== undefined
+        ? { skippedLegs: outcome.skippedLegs }
+        : {}),
+      ...(outcome.claimedFixedFindingIdentityKeys !== undefined
+        ? {
+            claimedFixedFindingIdentityKeys:
+              outcome.claimedFixedFindingIdentityKeys,
+          }
+        : {}),
+      ...(outcome.priorFindingDispositions !== undefined
+        ? { priorFindingDispositions: outcome.priorFindingDispositions }
+        : {}),
+      ...(outcome.evidencePaths !== undefined
+        ? { evidencePaths: outcome.evidencePaths }
+        : {}),
+    });
     return {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-        ...(outcome.converged !== undefined ? { converged: outcome.converged } : {}),
-        ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
-        successfulLegs: outcome.successfulLegs,
-        ...(outcome.skippedLegs !== undefined ? { skippedLegs: outcome.skippedLegs } : {}),
-        ...(outcome.claimedFixedFindingIdentityKeys !== undefined
-          ? {
-              claimedFixedFindingIdentityKeys:
-                outcome.claimedFixedFindingIdentityKeys,
-            }
-          : {}),
-        ...(outcome.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: outcome.priorFindingDispositions }
-          : {}),
-        ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
-        ...(outcome.findingsCount !== undefined
-          ? { findingsCount: outcome.findingsCount }
-          : {}),
-        ...(outcome.findingFamilies !== undefined
-          ? { findingFamilies: outcome.findingFamilies }
-          : {}),
-        evidencePaths: outcome.evidencePaths,
-      },
+      output: judge,
       ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
     };
   }
