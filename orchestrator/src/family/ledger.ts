@@ -995,6 +995,49 @@ export function familyShippedRecordForReviewLoopResume(
   return undefined;
 }
 
+/**
+ * Latest valid `shipped` marker for **this** barrier head that has not yet
+ * reached `review_loop_converged` for the same PR+head. Used for in-process
+ * online-review re-entry after `recordShipped` (quota wall must not re-ship).
+ *
+ * Correctness N1 / F1 residual:
+ * - Open shipped must match the **current family head / PR tip** — any-head open
+ *   shipped must not hijack final verify/CMR/ship.
+ * - Historical `review_loop_converged` on the same PR at an older head must not
+ *   wipe a later ship at a new head (converge is head-scoped).
+ */
+export function familyOpenShippedForOnlineReview(
+  entries: ReadonlyArray<FamilyLedgerEntry>,
+  familyHeadAfter: string | undefined,
+): ShippedRecord | undefined {
+  if (familyHeadAfter == null || familyHeadAfter.trim().length === 0) {
+    return undefined;
+  }
+  const head = familyHeadAfter.trim();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (!isValidFamilyShipped(entry)) continue;
+    // Only the ship for THIS barrier head may skip re-ship.
+    if (entry.familyHeadAfter !== head) continue;
+    const pr = entry.pr.trim();
+    const alreadyConverged = entries.some(
+      (e) =>
+        isValidReviewLoopConverged(e) &&
+        e.pr.trim() === pr &&
+        e.familyHeadAfter === head,
+    );
+    if (alreadyConverged) continue;
+    return {
+      pr,
+      familyHeadAfter: entry.familyHeadAfter,
+      ...(entry.stopSummary !== undefined
+        ? { stopSummary: entry.stopSummary }
+        : {}),
+    };
+  }
+  return undefined;
+}
+
 export function familyShippedRecordForHead(
   entries: ReadonlyArray<FamilyLedgerEntry>,
   familyHeadAfter: string | undefined,

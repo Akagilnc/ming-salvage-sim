@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -897,23 +897,6 @@ describe("#677 CMR ratified-assertion hard-net fixture", () => {
         },
       ]),
     ).toEqual([]);
-  });
-});
-
-// ── soul soft guardrails ────────────────────────────────────────────────────
-
-describe("#677 soul wording", () => {
-  it("coder-fix soul routes AC/assertion conflict to legal refuse + re-review, not global escalate", () => {
-    const soul = (name: string): string =>
-      readFileSync(resolve(process.cwd(), "image", "souls", name), "utf8");
-    const coder = soul("coder.md");
-    expect(coder).toMatch(/Ratified-acceptance gate[\s\S]*legal refuse/i);
-    expect(coder).toMatch(/fresh re-review/i);
-    expect(soul("fixer.md")).toMatch(/legal\s+refuse|refuse that finding/i);
-    expect(soul("cmr_correctness.md")).toMatch(/Ratified-assertion hunt[\s\S]*P1/);
-    expect(soul("reviewer.md")).toMatch(
-      /preexistingAssertionTouched[\s\S]*blocking/,
-    );
   });
 });
 

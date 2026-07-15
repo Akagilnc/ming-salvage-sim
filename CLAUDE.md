@@ -73,18 +73,16 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 **学框架学精神、非照搬（2026-06-18 立）**：跑流程框架（如严格按 Matt 试水）是学它的**精神/原理**（为何这么设计、解决什么真问题），不是邯郸学步照搬条文；最终大概率**魔改成适合本项目的形态**。照搬到「不合理/难受」处先问「这条原理在解决什么、我这场景还成立吗」——成立就守，不成立就改 + 记下为什么，别因「Matt 这么写」就硬套。
 
 ## 规则
-- 所有 user-facing 输出用中文。
-- 改仓库内容前要明确授权（沿用全局 `~/.claude/CLAUDE.md`）。
-- **PR 合并默认 merge commit，尽量不 squash**（用户 2026-06-10 明示：没有「干净历史」洁癖，逐 commit 过程史比 main 整洁重要；squash 唯一一次是 #72，导致 22 轮评审迭代史只活在 probe/tianmu-fiscal 分支上——该分支因此保留勿删）。
-- **PR 标题冠平台前缀（2026-06-20 立）**：标明 PR 出自哪个 agent/后端——`claude:`/`codex:`/`hermes:`，置于原有 conventional-commit / 版本前缀之前（如 `claude: feat(fiscal): …`、`codex: v0.12.5.0 fix: …`）。
-- **评审轮 = 独立 commit，禁止 amend 折叠多轮（对所有 agent：Claude / codex / 其它，2026-06-13 立）**：每一轮 cmr/评审 fix **各提一个新 commit**（如 PR2 的 `cmr S3 r5: …`），**严禁 `git commit --amend` 把多轮压进同一个 commit**。理由同「不 squash」：过程史 > 干净历史，评审迭代必须进**永久 git 历史**、PR 上评审者看得见每轮抓了什么改了什么。**reflog 不算数**（本地、默认 90 天 gc、不推远端、PR 不可见——amend 比 squash 还脆，轮次叙事一次 gc/清 worktree 就蒸发）。切片级「一 slice 一 commit」仍可，但 **slice 内每轮必须新 commit**。实证教训：codex 跑 ADR 0009 时把 travel 切片 ~18 轮全 amend 进一个 commit，git log 一行照不到（2026-06-13 reflog 挖出）。
-- **设计文档（ADR/契约/spec）与代码同等评审**：产出后必须跑完整评审闭环（本地 cmr 收敛 + 线上三 bot 收敛），不因「只是文档」跳步；用户出此类文档时**主动提醒走评审**。实证：ADR 0008 单文档 8 轮（本地 12→11→3→0 + 线上 4 轮），抓出毒 payload 软死锁、simulator-fallback 事务后门等设计级真洞（2026-06-10）。
-- **进 ship-pre / CMR 评审循环前必须确认 feature 全闭环完成，不是「核心写路径接通」就进（对所有 agent：Claude / codex / 其它，2026-06-13 立）**：Definition of Done = 所有闭环面都齐——**写入端 + 读取端 + 恢复端 + 真实 extractor 输出 + UI/呈现端 + 文档契约**，缺一面都不算 ship-ready。把「核心写路径接通 + 单元测试绿 + 前几轮 CMR 收敛」误当成「全闭环完成」两头亏：(1) 在不完整目标上启动昂贵的 ship-pre 评审循环，(2) CMR 一轮轮真抓闭环缺口、滚到离谱轮数才被外人判出「功能不足」。**判据**：进 ship-pre 前对着 plan 逐面点检 DoD，任一面（尤其读取/恢复/呈现这些最容易被「写路径接了」盖过的隐性面）未落 = 早了，先补完再进。注意这是 **ship-gate / DoD 判断**，不是编码能力——写路径接了、测试绿都可能为真，错在把「核心接通」当「全闭环完成」。实证：codex 跑 ADR 0009 person，写路径已接 + 25 单测绿、前几轮 CMR 收敛，但读取端（`offstage_ministers` 人才池）/恢复端/extractor/UI/文档闭环未齐，误进 ship-pre CMR 滚到 **r20** 才被旁路 session 判出「功能不足」（2026-06-13）。**且即便 DoD 齐、进了 ship-pre，装起来跑的整体 cmr 仍是独立一道闸——别当走过场**：per-slice cmr 各自全绿 ≠ feature 完成，整体闸基本仍会抓出 per-slice 照不到的**跨片接缝**（字段名/类型对不对、阈值口径一不一致、组合后才出现的 e2e 行为），要预期它有料、按真闸认真跑。实证：#187 三子片（#201 读 → #202 写 → #203 判）同一数据路径，「已安抚 → 不触发」的 e2e 行为只在三片拼上后才出现，per-slice 各自全绿照不到（见 memory `per-slice-cmr-not-integrated-cmr`）。
-- **任何代码工作先开分支再动手**，main 工作区保持干净（多 session 并行，脏 main 影响别人）；**纯文档工作除外，可直接在 main 改并提交**（TODOS/README/docs 叙事类；用户 2026-06-11 明示。注意：ADR/契约/spec 类设计文档虽可在 main 直改，评审要求见上条不豁免）；常驻例外 = `content/buildings.json` 金手指。
+
+- **金手指例外**：`content/buildings.json` 金手指为常驻例外（见上文「金手指改动」节）。
+- 全局 agent 纪律（授权词 / 中文输出 / 先开分支 / 评审轮禁 amend / 设计文档同评 / merge 不 squash / PR 平台前缀）见 owner 全局 `~/.claude/CLAUDE.md` / `~/.codex/AGENTS.md`，本文件不重复。
+- ship-pre DoD 全闭环点检见 [`docs/DEV_WORKFLOW.md`](docs/DEV_WORKFLOW.md)（#911 从本文件迁出）。
 
 ## Skill routing
 
 > **ADR 0030 已落地（#369）**：per-slice reviewer 与 fixer 必须角色分离，worker 只做自己的角色、不在单 session 内跨棒。编排器的准确接力顺序只读 #869。
+
+> **ADR 0062 摘要**：编排器 runner 只读三信号（exit code / escalate 块 / 自报 count 哨兵），不读卷面散文；runner 侧解析 worker 输出时，DELETE 压过 patch——凡让 runner 在 finding 自由文本上分叉或把富内容 park 在 runner 侧的机制，删掉比补丁优先。
 
 > Machine-executable routing for an agent working a slice in a worktree (esp. the orchestrator's in-container worker roles — ADR 0016 「现状缺口」, ADR 0026). The narrative `## 开发流程` above is for humans; THIS section is the in-container agent's routing table. Routing is by the task at hand, not by ceremony.
 

@@ -20,8 +20,8 @@ When you are done (or are escalating), the real completion evidence is the
 single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
 set, the typed `<merger>` outcome, and the actual merge/git state. For
 compatibility with older runners, emit a single `<merger>` tag on its own line
-containing the same single JSON object. The completion signal is optional
-telemetry and may be printed as an extra line.
+containing the same single JSON object. The multi-iter completion signal is a
+required sandcastle terminator on the final step (not optional telemetry).
 
 Success / resolved:
 
@@ -42,7 +42,7 @@ Escalation (a conflict you must NOT guess at — surface it to a human):
 Rules:
 
 - The JSON must be valid and match one of the shapes above exactly.
-- Emit the `<merger>` tag as the last typed tag. The optional telemetry line below
-  may follow it.
-- For optional telemetry, you may print MERGER_STEP_COMPLETE on its own final line.
+- Emit the `<merger>` tag as the last typed tag. On the final multi-iter step
+  you MUST print MERGER_STEP_COMPLETE on its own final line (sandcastle
+  iteration terminator — not optional telemetry).
 - Never `git merge --abort`. Never invent behaviour. Resolve or escalate.

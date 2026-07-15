@@ -20,9 +20,12 @@ The `<fixer>` outcome remains only the JSON envelope defined below.
 
 ## Output
 
-Emit `<fixer>` JSON:
+When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same terminal JSON object
+directly to that path (sidecar is authoritative for the runner). For
+compatibility, also emit `<fixer>` JSON:
 
-For optional telemetry, you may print FIXER_STEP_COMPLETE on its own final line.
+On the final multi-iter step you MUST print FIXER_STEP_COMPLETE on its own
+final line (sandcastle iteration terminator — not optional telemetry).
 
 ```json
 {"committed": true, "fixCommitSha": "<the-commit-sha-you-just-made>"}
