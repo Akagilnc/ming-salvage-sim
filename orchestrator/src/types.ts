@@ -1381,12 +1381,6 @@ export interface LedgerEntry {
    * governance data. Not a runner content-classification (信封宪法, ADR 0062).
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
-  /**
-   * #925 — optional advance_coder suggestion from a continue verdict, mirrored
-   * onto the ledger row for audit / later #926 stay-put policy. Topology does
-   * not act on this field in #925.
-   */
-  readonly advanceCoder?: string;
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
   /**

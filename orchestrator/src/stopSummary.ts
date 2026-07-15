@@ -1,3 +1,5 @@
+import type { FamilyStageFailureStatus } from "./family/familyTerminal.js";
+
 export type StopReason =
   | "success"
   | "same_module_still_red"
@@ -15,14 +17,9 @@ export type StopReason =
   | "already_done"
   | "resumed"
   // #922 — per-stage family terminal real names (also FamilyRunStatus tokens).
-  // Replaces the umbrella `verify_failed`/`infra_failure` mash for post-wave
-  // stages. Family aggregation status and stopSummary.reason use the same word.
-  | "verify_failed"
-  | "cmr_failed"
-  | "ship_failed"
-  | "online_review_failed"
-  | "merge_failed"
-  | "cleanup_failed";
+  // Derived from canonical FAMILY_STAGE_FAILURE_STATUSES — do not re-list.
+  // Family aggregation status and stopSummary.reason use the same word.
+  | FamilyStageFailureStatus;
 
 export interface StopSummary {
   readonly reason: StopReason;

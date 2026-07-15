@@ -893,7 +893,9 @@ async function runnerReviewerEscalationReplay(input: {
       `dogfood runner disposition replay ${input.mechanism} ended ${result.status}`,
     );
   }
-  if (result.stopSummary.reason !== "spec_conflict") {
+  // #919 CR U2 / ADR 0132: judge escalate parks as decision_gate_park
+  // (same family as decision_gate — not a third stop token / not spec_conflict).
+  if (result.stopSummary.reason !== "decision_gate_park") {
     throw new Error(
       `dogfood runner disposition replay ${input.mechanism} stopped with ${result.stopSummary.reason}`,
     );

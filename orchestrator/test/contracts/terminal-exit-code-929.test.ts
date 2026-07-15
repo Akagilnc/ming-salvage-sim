@@ -73,6 +73,17 @@ describe("#929 pure exit-code map", () => {
     }
   });
 
+  it("stage-failure tokens derive from FAMILY_STAGE_FAILURE_STATUSES (single source)", () => {
+    // S-B: no hand-copied stage list in TERMINAL_EXIT_STATUSES — spread only.
+    const stageFromTerminal = TERMINAL_EXIT_STATUSES.filter((s) =>
+      (FAMILY_STAGE_FAILURE_STATUSES as readonly string[]).includes(s),
+    );
+    expect(stageFromTerminal).toEqual([...FAMILY_STAGE_FAILURE_STATUSES]);
+    expect(TERMINAL_EXIT_STATUSES.slice(-FAMILY_STAGE_FAILURE_STATUSES.length)).toEqual(
+      [...FAMILY_STAGE_FAILURE_STATUSES],
+    );
+  });
+
   it("success class exits 0 (success + already_done)", () => {
     expect(exitCodeForTerminal("success")).toBe(0);
     expect(exitCodeForTerminal("already_done")).toBe(0);

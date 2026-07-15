@@ -19,6 +19,7 @@
  */
 
 import type { SliceStepId, StepOutput } from "./types.js";
+import { projectResidualReviewerToJudge } from "./judgeStation.js";
 import { escalateOf } from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
@@ -47,6 +48,12 @@ export interface RouteContext {
  * into the sole judge-status form used by topology. Production decode already
  * emits `kind:"judge"`; this keeps resume of pre-#925 ledger rows and test
  * fixtures on one routing path (no parallel open-count station).
+ *
+ * Live topology invariant: after runner normalize, S3/S6 seats carry
+ * `kind:"judge"` (or unusable non-judge envelopes). Route never reads raw
+ * reviewer open-count fate for edge choice — residual paper here only goes
+ * through {@link projectResidualReviewerToJudge} (shared with normalize /
+ * decode). No second count predicate, no prose parsing.
  */
 function judgeStatusOf(output: StepOutput | undefined):
   | "converged"
@@ -59,23 +66,31 @@ function judgeStatusOf(output: StepOutput | undefined):
     if (output.status === "continue") return "continue";
     return "escalate";
   }
+  // Residual historical / fixture paper only — sole projection, no parallel predicate.
   if (output.kind === "reviewer") {
-    if (output.escalate != null) return "escalate";
-    // Positive residual open-count only → continue. Zero / missing / non-integer
-    // count is unusable residual paper (#925 AC / #919 CR P1): never silent clean.
-    if (
-      typeof output.findingsCount === "number" &&
-      Number.isSafeInteger(output.findingsCount) &&
-      output.findingsCount > 0
-    ) {
-      return "continue";
-    }
-    return "unusable";
+    const projected = projectResidualReviewerToJudge(output);
+    if (projected === undefined) return "unusable";
+    if (projected.status === "continue") return "continue";
+    return "escalate";
   }
   if (output.kind === "verify" && typeof output.converged === "boolean") {
     return output.converged ? "converged" : "continue";
   }
   return "unusable";
+}
+
+/**
+ * S3 / S6 / residual-S4 status → edge table (single copy).
+ * Unusable and continue both go to S5 (never silent clean / S7).
+ */
+function routeEdgesFromJudgeStatus(
+  status: "converged" | "continue" | "escalate" | "unusable",
+): RouteDecision {
+  if (status === "converged") return { kind: "next", step: "S7" };
+  if (status === "continue") return { kind: "next", step: "S5" };
+  if (status === "escalate") return { kind: "handoff", status: "escalate" };
+  // Unusable envelope → fixer path (never silent clean / S7).
+  return { kind: "next", step: "S5" };
 }
 
 /**
@@ -108,26 +123,12 @@ export function route(ctx: RouteContext): RouteDecision {
     }
 
     case "S3":
-    case "S6": {
-      // #925: judge verdict tri-state is the sole convergence signal.
-      // Residual open-count paper is projected to the same three statuses
-      // (no second S4 station, no prose parsing).
-      const status = judgeStatusOf(ctx.output);
-      if (status === "converged") return { kind: "next", step: "S7" };
-      if (status === "continue") return { kind: "next", step: "S5" };
-      if (status === "escalate") return { kind: "handoff", status: "escalate" };
-      // Unusable envelope → fixer path (never silent clean / S7).
-      return { kind: "next", step: "S5" };
-    }
-
+    case "S6":
     case "S4": {
-      // #925: S4 mechanical open-count station is dissolved. Residual path for
-      // legacy ledgers that still land on S4 — same status projection as S3/S6.
-      const status = judgeStatusOf(ctx.output);
-      if (status === "converged") return { kind: "next", step: "S7" };
-      if (status === "continue") return { kind: "next", step: "S5" };
-      if (status === "escalate") return { kind: "handoff", status: "escalate" };
-      return { kind: "next", step: "S5" };
+      // #925: judge verdict tri-state is the sole convergence signal.
+      // S4 is dissolved open-count station — residual historical ledgers only;
+      // same edge helper as live S3/S6 (no second status→edge table).
+      return routeEdgesFromJudgeStatus(judgeStatusOf(ctx.output));
     }
 
     case "S5": {
