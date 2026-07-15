@@ -1554,7 +1554,7 @@ export class RealFamilyBackend implements FamilyBackend {
           : {}),
       };
     }
-    // Residual zero/missing open-count → non-judge unusable paper (re-furnace).
+    // Residual zero/missing open-count → non-judge unusable paper (court fail-loud).
     return {
       kind: "completed",
       output: {

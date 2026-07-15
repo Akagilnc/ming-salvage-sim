@@ -60,18 +60,15 @@ import type {
 import type { CmrResult } from "../types.js";
 
 /**
- * #930 — residual IntegratedCmrResult / kind:cmr paper → sole judge form once.
+ * #930 / #919 M2 — residual IntegratedCmrResult / kind:cmr paper → sole judge
+ * form once, aligned with {@link projectResidualReviewerToJudge}:
  *
- * Open-count residual (findingsCount is a safe integer):
- *   same as single-slice {@link projectResidualReviewerToJudge} —
- *   positive → continue; **zero → undefined (never silent converged)**.
+ *   - positive open-count → continue
+ *   - zero / missing / non-integer / legacy-only `converged:true` → undefined
+ *     (caller maps unusable; **never silent clean**)
  *
- * Legacy IntegratedCmrResult without an open-count field may still carry the
- * explicit `converged` boolean green (pre-judge residual API). That is NOT
- * open-count zero inventing a pass.
- *
- * Live production traffic is typed `station:judge` (see realFamilyBackend);
- * this helper is residual boundary only.
+ * Live production green is typed `station:judge` / `kind:"judge"` only
+ * (seat-side SO). This helper is residual boundary only — not a second closer.
  */
 export function residualIntegratedCmrToJudgeOutput(
   cmr:
@@ -82,16 +79,14 @@ export function residualIntegratedCmrToJudgeOutput(
     typeof cmr.findingsCount === "number" &&
     Number.isSafeInteger(cmr.findingsCount)
   ) {
-    // Open-count residual paper — 0/non-positive never becomes converged.
+    // Open-count residual paper — same predicate as single-slice residual.
     return projectResidualReviewerToJudge({
       findingsCount: cmr.findingsCount,
       findings: cmr.findings,
     });
   }
-  // No open-count field: honor explicit legacy boolean green only.
-  if (cmr.converged === true) {
-    return { kind: "judge", status: "converged" };
-  }
+  // Missing open-count (incl. legacy converged boolean alone): never silent clean.
+  void cmr.converged;
   return undefined;
 }
 
@@ -474,9 +469,9 @@ export async function legacyDispatchFamilyWorker(
         ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
         : {}),
     });
-    // #930: residual IntegratedCmrResult open-count projects once (shared
-    // residual semantics). Zero/missing count → residual kind:cmr unusable
-    // paper (re-furnace), never silent converged.
+    // #930 / #919 M2: residual IntegratedCmrResult open-count projects once
+    // (shared residual semantics). Zero/missing count → residual kind:cmr
+    // unusable paper (family court fail-loud; seat SO owns typed re-furnace).
     const projected = residualIntegratedCmrToJudgeOutput(cmr);
     if (projected !== undefined) {
       return { kind: "completed", output: projected };

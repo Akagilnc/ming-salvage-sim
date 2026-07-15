@@ -19,7 +19,10 @@
  */
 
 import type { SliceStepId, StepOutput } from "./types.js";
-import { projectResidualReviewerToJudge } from "./judgeStation.js";
+import {
+  projectResidualReviewerToJudge,
+  projectVerifyConvergedBooleanToJudge,
+} from "./judgeStation.js";
 import { escalateOf } from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
@@ -74,7 +77,8 @@ function judgeStatusOf(output: StepOutput | undefined):
     return "escalate";
   }
   if (output.kind === "verify" && typeof output.converged === "boolean") {
-    return output.converged ? "converged" : "continue";
+    // #919 S1: shared boolean→judge helper (same as runner normalize).
+    return projectVerifyConvergedBooleanToJudge(output.converged).status;
   }
   return "unusable";
 }

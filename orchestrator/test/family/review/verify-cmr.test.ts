@@ -23,7 +23,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
-import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
+import {
+  legacyDispatchFamilyWorker,
+  residualIntegratedCmrToJudgeOutput,
+} from "../../../src/family/dispatchFamilyWorker.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
@@ -40,7 +43,90 @@ import type {
   FamilyEscalation,
   MergeRequest,
 } from "../../../src/family/types.js";
-import type { DispatchContext, Finding, WorkerResult, WorkerSpec } from "../../../src/types.js";
+import type {
+  DispatchContext,
+  Finding,
+  JudgeResult,
+  WorkerResult,
+  WorkerSpec,
+} from "../../../src/types.js";
+
+/**
+ * Test-fake only: map scripted IntegratedCmrResult onto the post-#930 seat.
+ * Production residual never invents green from boolean alone (#919 M2).
+ */
+function cmrScriptToWorkerOutput(cmr: IntegratedCmrResult): JudgeResult | {
+  readonly kind: "cmr";
+  readonly converged: boolean;
+  readonly findingsCount?: number;
+  readonly reason?: string;
+  readonly findings?: ReadonlyArray<Finding>;
+  readonly successfulLegs?: ReadonlyArray<string>;
+  readonly skippedLegs?: IntegratedCmrResult["skippedLegs"];
+  readonly claimedFixedFindingIdentityKeys?: ReadonlyArray<string>;
+  readonly priorFindingDispositions?: IntegratedCmrResult["priorFindingDispositions"];
+  readonly findingFamilies?: IntegratedCmrResult["findingFamilies"];
+  readonly evidencePaths?: ReadonlyArray<string>;
+} {
+  const projected = residualIntegratedCmrToJudgeOutput(cmr);
+  if (projected !== undefined) {
+    return {
+      ...projected,
+      ...(cmr.successfulLegs !== undefined
+        ? { successfulLegs: cmr.successfulLegs }
+        : {}),
+      ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
+      ...(cmr.findingFamilies !== undefined
+        ? { findingFamilies: cmr.findingFamilies }
+        : {}),
+      ...(cmr.evidencePaths !== undefined
+        ? { evidencePaths: cmr.evidencePaths }
+        : {}),
+    } as JudgeResult;
+  }
+  // Legacy scripts that only declare boolean green (no open-count field) mean
+  // the live judge seat in fixtures. findingsCount:0 stays unusable residual.
+  if (cmr.converged === true && typeof cmr.findingsCount !== "number") {
+    return {
+      kind: "judge",
+      status: "converged",
+      ...(cmr.successfulLegs !== undefined
+        ? { successfulLegs: cmr.successfulLegs }
+        : {}),
+      ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
+      ...(cmr.evidencePaths !== undefined
+        ? { evidencePaths: cmr.evidencePaths }
+        : {}),
+    } as JudgeResult;
+  }
+  return {
+    kind: "cmr",
+    converged: cmr.converged,
+    ...(cmr.findingsCount !== undefined
+      ? { findingsCount: cmr.findingsCount }
+      : {}),
+    ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
+    ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
+    ...(cmr.successfulLegs !== undefined
+      ? { successfulLegs: cmr.successfulLegs }
+      : {}),
+    ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
+    ...(cmr.claimedFixedFindingIdentityKeys !== undefined
+      ? {
+          claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys,
+        }
+      : {}),
+    ...(cmr.priorFindingDispositions !== undefined
+      ? { priorFindingDispositions: cmr.priorFindingDispositions }
+      : {}),
+    ...(cmr.findingFamilies !== undefined
+      ? { findingFamilies: cmr.findingFamilies }
+      : {}),
+    ...(cmr.evidencePaths !== undefined
+      ? { evidencePaths: cmr.evidencePaths }
+      : {}),
+  };
+}
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -105,8 +191,9 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    // Default green is the explicit converged boolean — never findingsCount:0
-    // (open-count zero is residual unusable after #930, not a silent pass).
+    // Default green is boolean converged without open-count — the dispatchWorker
+    // fake promotes that to kind:judge (live seat). findingsCount:0 stays
+    // residual unusable (never silent pass; #919 M2).
     const result =
       this.script.cmr?.(req) ?? {
         converged: true,
@@ -119,9 +206,17 @@ class CapableFamilyBackend implements FamilyBackend {
       return this.script.worker(spec, ctx);
     }
     if (spec.kind === "cmr") {
-      // Prefer explicit kind:judge when the script speaks the live seat.
-      // Residual IntegratedCmrResult still routes via legacyDispatch once.
-      return legacyDispatchFamilyWorker(this, spec, ctx);
+      const cmr = await this.runIntegratedCmr({
+        familyBase: ctx.familyBase!,
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+        ...(ctx.priorCmrFindingIdentityKeys !== undefined
+          ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+          : {}),
+      });
+      return {
+        kind: "completed",
+        output: cmrScriptToWorkerOutput(cmr),
+      };
     }
     if (spec.kind === "ship") {
       const request = { familyBase: ctx.familyBase! };
@@ -1075,26 +1170,7 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           });
           return {
             kind: "completed",
-            output: {
-              kind: "cmr",
-              ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-              converged: cmr.converged,
-              ...(cmr.findingsCount !== undefined
-                ? { findingsCount: cmr.findingsCount }
-                : {}),
-              ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-              ...(cmr.successfulLegs !== undefined
-                ? { successfulLegs: cmr.successfulLegs }
-                : {}),
-              ...(cmr.claimedFixedFindingIdentityKeys !== undefined
-                ? { claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys }
-                : {}),
-              ...(cmr.priorFindingDispositions !== undefined
-                ? { priorFindingDispositions: cmr.priorFindingDispositions }
-                : {}),
-              ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
-              ...(cmr.evidencePaths !== undefined ? { evidencePaths: cmr.evidencePaths } : {}),
-            },
+            output: cmrScriptToWorkerOutput(cmr),
           };
         }
         if (spec.kind === "coder") {
@@ -1376,8 +1452,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           return {
             kind: "completed",
             output: {
-              kind: "cmr",
-              converged: true,
+              kind: "judge",
+              status: "converged",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               ...CMR_EVIDENCE,
             },
@@ -1433,8 +1509,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
           return {
             kind: "completed",
             output: {
-              kind: "cmr",
-              converged: true,
+              kind: "judge",
+              status: "converged",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               ...CMR_EVIDENCE,
             },
@@ -1518,13 +1594,11 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
     });
   });
 
-  it("a backend with verify + cmr but WITHOUT dispatchWorker (final phase) FAILS-SAFE to ok:false — the terminal 止于-PR step could not run", async () => {
-    // verify green + cmr judge-converged, but the PR capability is missing → the
-    // terminal action (decision 4, 止于 PR) cannot run. {ok:true} would report
-    // "success" for a run whose PR never opened; fail-safe to {ok:false, ran:true}.
-    // #930: residual IntegratedCmrResult {converged:true} projects to judge
-    // converged at the boundary, so the stage token is ship_failed (CMR court
-    // passed; ship capability missing).
+  it("a backend with verify + cmr but WITHOUT dispatchWorker (final phase) FAILS-SAFE to ok:false — residual boolean green is not a court pass", async () => {
+    // No dispatchWorker → legacy residual IntegratedCmrResult only.
+    // #919 M2: residual never silent-cleans from converged:true alone; official
+    // green is kind:judge from the live seat. Fail-safe is cmr_failed (not a
+    // false ship success). Production RealFamilyBackend always has dispatchWorker.
     class VerifyAndCmrBackend extends BareFamilyBackend {
       async runFamilyVerify(): Promise<FamilyVerifyResult> {
         return { ok: true };
@@ -1542,7 +1616,7 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
     expect(result).toMatchObject({
       ok: false,
       ran: true,
-      failedStatus: "ship_failed",
+      failedStatus: "cmr_failed",
     });
   });
 });
@@ -1585,8 +1659,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
+              kind: "judge",
+              status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
@@ -1646,8 +1720,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         return {
           kind: "completed",
           output: {
-            kind: "cmr",
-            converged: true,
+              kind: "judge",
+              status: "converged",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
@@ -1727,8 +1801,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         return {
           kind: "completed",
           output: {
-            kind: "cmr",
-            converged: true,
+              kind: "judge",
+              status: "converged",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
@@ -1790,8 +1864,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
         return {
           kind: "completed",
           output: {
-            kind: "cmr",
-            converged: true,
+              kind: "judge",
+              status: "converged",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
@@ -1881,8 +1955,8 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
           return {
             kind: "completed",
             output: {
-              kind: "cmr",
-              converged: true,
+              kind: "judge",
+              status: "converged",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               ...CMR_EVIDENCE,
             },
