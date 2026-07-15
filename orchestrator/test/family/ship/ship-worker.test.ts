@@ -629,8 +629,11 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
           "utf8",
         );
         return {
+          branch: FAMILY_BASE,
           stdout: "<ship>{}</ship>",
           completionSignal: "SHIP_STEP_COMPLETE",
+          commits: [],
+          iterations: [],
           // Typed no-gate decision signal (SO was attached on this seat).
           output: {},
         } as Awaited<ReturnType<typeof sc.run>>;
@@ -688,8 +691,11 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
           );
         }
         return {
+          branch: FAMILY_BASE,
           stdout: "<ship>{}</ship>",
           completionSignal: "SHIP_STEP_COMPLETE",
+          commits: [],
+          iterations: [],
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
