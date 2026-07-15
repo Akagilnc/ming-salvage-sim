@@ -1,7 +1,7 @@
 /**
  * Legacy domain validators retained for non-runner consumers and compatibility
- * parsing. ADR 0131 forbids runner/route from using them as fate courts: reviewer
- * routing reads only the worker-declared open count.
+ * parsing. ADR 0131 / #925: runner/route fate courts read only typed traffic
+ * signals (judge verdict status tri-state; coder escalate field) — never cargo.
  */
 
 import type {
@@ -24,19 +24,23 @@ export function isValidEscalation(e: unknown): e is Escalation | null | undefine
 
 /**
  * Read the `escalate` field off a {@link StepOutput}, narrowing safely across the
- * widened union. Only the AGENT outputs ({@link CoderOutput}/{@link ReviewerOutput})
- * carry an `escalate` field — the new worker payloads (ship / cmr / merge) DELIBERATELY
- * do NOT (a stuck worker is the WorkerResult-level `{kind:"escalated"}` case; codex
- * cmr R3b). So this returns the escalate only for coder/reviewer outputs and
- * `undefined` for every other kind, letting route()/runner read it uniformly without
- * a kind switch — and guaranteeing a ship/cmr/merge output can never smuggle an
- * ignored escalate through the step path.
+ * widened union. Agent outputs that carry an `escalate` field:
+ *   - {@link CoderOutput}
+ *   - {@link ReviewerOutput} (legacy open-count seats; residual)
+ *   - {@link JudgeResult} (#925 — escalate status + doorbell cargo)
+ *
+ * Ship / cmr / merge deliberately do NOT (stuck worker is WorkerResult-level
+ * `{kind:"escalated"}`; codex cmr R3b).
  */
 export function escalateOf(
   output: StepOutput | undefined,
 ): Escalation | null | undefined {
   if (output == null) return undefined;
-  if (output.kind === "coder" || output.kind === "reviewer") {
+  if (
+    output.kind === "coder" ||
+    output.kind === "reviewer" ||
+    output.kind === "judge"
+  ) {
     return output.escalate;
   }
   return undefined;

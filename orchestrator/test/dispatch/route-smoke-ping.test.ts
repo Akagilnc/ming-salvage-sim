@@ -437,7 +437,7 @@ describe("#884 driver stage line logs", () => {
         if (spec.role === "coder") {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
-        if (spec.role === "reviewer") {
+        if ((spec.role === "reviewer" || spec.role === "verify")) {
           // #877: no-progress court demolished — only S3 emits a blocker; later
           // re-reviews return empty so the run ships (findings-count channel).
           this.reviewerCalls += 1;

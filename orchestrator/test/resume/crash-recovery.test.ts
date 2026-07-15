@@ -104,7 +104,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     const steps = result.stepLedger.map((e) => e.step);
     // Prior S0/S1/S2 + resumed fixed topology.
     expect(steps).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S7", "S8",
     ]);
     // The preserved S2 entry still carries its committed output.
     const s2 = result.stepLedger.find((e) => e.step === "S2");
@@ -536,7 +536,7 @@ describe("recovery reads the ledger to decide next step (#255 AC4, ADR 0030)", (
     // Resumed to local handoff purely from ledger truth.
     expect(result.status).toBe("success");
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S7", "S8",
     ]);
   });
 

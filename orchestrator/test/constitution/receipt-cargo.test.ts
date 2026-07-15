@@ -93,7 +93,7 @@ class ScriptedReviewBackend implements Backend {
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.dispatched.push(`${spec.id}:${spec.role}`);
-    if (spec.role === "reviewer") {
+    if ((spec.role === "reviewer" || spec.role === "verify")) {
       const output = this.reviewerOutputs[this.reviewerIndex] ?? {
         kind: "reviewer", findings: [], findingsCount: 0,
       };
@@ -117,7 +117,7 @@ class ScriptedReviewBackend implements Backend {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       const output = this.reviewerOutputs[this.reviewerIndex] ?? {
         kind: "reviewer", findings: [], findingsCount: 0,
       };

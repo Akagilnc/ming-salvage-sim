@@ -128,7 +128,7 @@ class RetryReviewBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
-    if (spec.role === "reviewer") return { kind: "reviewer", findings: [], findingsCount: 0 };
+    if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "reviewer", findings: [], findingsCount: 0 };
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
   async writeLedger(entry: PersistentLedgerEntry, _stateDir: string): Promise<void> {
@@ -159,7 +159,7 @@ class RetryReviewBackend implements Backend {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       const result = this.reviewerResults[this.reviewerAttempts];
       this.reviewerAttempts += 1;
       return result ?? { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
@@ -208,9 +208,11 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
-    // #899: runner transports opaque findings cargo only; identity keys are
-    // derived at the fixer landing writer, not as a runner envelope court.
-    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
+    // #925: live identity keys from the judge disposition table are the S5
+    // control envelope (schema-fixed fields — not prose parsing).
+    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([
+      "correctness|src/runner.ts:1|fix worker needs structured finding data",
+    ]);
   });
 
   // #604 slice 4 (ADR 0062): there is no cross-module deferral pass, so every
@@ -273,10 +275,12 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
   };
   const blockingKey = "correctness|src/runner.ts:427|absence is not closure";
 
-  it("routes S4 only from the reviewer-declared findingsCount", () => {
+  it("routes S3/S6 from judge/open-count projection (findingsCount=0 → converged)", () => {
+    // #925: topology reads judge status; residual open-count paper with
+    // findingsCount=0 projects to converged → S7 (disposition prose is ignored).
     expect(
       route({
-        from: "S4",
+        from: "S3",
         output: {
           kind: "reviewer",
           findings: [],
@@ -285,6 +289,12 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
             { identityKey: blockingKey, status: "still-active" },
           ],
         },
+      }),
+    ).toEqual({ kind: "next", step: "S7" });
+    expect(
+      route({
+        from: "S6",
+        output: { kind: "judge", status: "converged" },
       }),
     ).toEqual({ kind: "next", step: "S7" });
   });
@@ -364,11 +374,13 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
     expect(backend.landings[s6Index]?.blockingFindings).toEqual([blocking]);
-    // #899: identity-key derivation is landing-writer work, not runner envelope.
-    expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
+    // #925: live keys from the continue disposition table are control envelope.
+    expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys ?? []).toEqual([
+      blockingKey,
+    ]);
   });
 
-  it("threads S4 finding dispositions through live re-review classification and persists them", async () => {
+  it("threads judge finding dispositions through live re-review and persists them", async () => {
     const acceptedRisk: Finding = {
       severity: "medium",
       category: "Correctness",
@@ -446,8 +458,11 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
       "S6:reviewer",
 
     ]);
-    const firstS4Write = backend.ledgerWrites.find((entry) => entry.step === "S4");
-    expect(firstS4Write?.findingDispositions).toEqual([]);
+    // #925: dispositions land on S3/S6 judge rows (S4 dissolved).
+    const firstJudgeWrite = backend.ledgerWrites.find(
+      (entry) => entry.step === "S3" || entry.step === "S6",
+    );
+    expect(firstJudgeWrite).toBeDefined();
   });
 
   it("#877: repeated still-active disposition prose no longer no-progress-kills; findings-count continues", async () => {
@@ -1999,11 +2014,12 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.specs[s5Index]?.session).toBe("resume");
     expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
-    // #899: resume pass-through findings cargo; keys land at the writer.
-    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
+    // Resume rebuild may leave identity keys empty when replaying pre-#925
+    // ledger rows (keys derived at landing writer); cargo must still land.
+    expect(backend.landings[s5Index]?.blockingFindings?.length).toBe(1);
   });
 
-  it("#877: resume into S4 after empty S6 ships without disposition court", async () => {
+  it("#877/#925: resume after empty S6 (findingsCount=0) ships without re-dispatch", async () => {
     const finding: Finding = {
       severity: "high",
       category: "Correctness",
@@ -2020,8 +2036,8 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
-        { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
+        // #925: empty open-count / converged projects to S7 without S4.
         { step: "S6", output: { kind: "reviewer", findings: [], findingsCount: 0 } },
       ],
     };
@@ -2036,7 +2052,7 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(backend.dispatched).toEqual([]);
   });
 
-  it("#877: persisted S4 after empty still-active S6 ships (no disposition reopen)", async () => {
+  it("#877/#925: resume after converged S6 with still-active prose ships (no reopen)", async () => {
     const finding: Finding = {
       severity: "high",
       category: "Correctness",
@@ -2054,18 +2070,17 @@ describe("#369 runner resume/retry review fixes", () => {
         { step: "S1" },
         { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         { step: "S3", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
-        { step: "S4" },
         { step: "S5", output: { kind: "coder", committed: true, commitsAdded: 1 } },
         {
           step: "S6",
           output: {
+            // findingsCount=0 is the topology signal; still-active prose is ignored.
             kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: key, status: "still-active" },
             ],
           },
         },
-        { step: "S4" },
       ],
     };
     const backend = new RetryReviewBackend([], resumeState);
@@ -2246,7 +2261,7 @@ describe("#369 runner resume/retry review fixes", () => {
       async writeSnapshot(): Promise<void> {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
-        if (spec.role === "reviewer") {
+        if ((spec.role === "reviewer" || spec.role === "verify")) {
           this.reviewerAttempts += 1;
           throw new Error("container failed to start");
         }
@@ -2292,7 +2307,7 @@ describe("#369 runner resume/retry review fixes", () => {
       }
       async writeSnapshot(): Promise<void> {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
-        if (spec.role === "reviewer") {
+        if ((spec.role === "reviewer" || spec.role === "verify")) {
           this.reviewerAttempts += 1;
           throw new Error("container failed to start");
         }
@@ -2589,7 +2604,7 @@ describe("#369 legacy S5 landing file", () => {
       session: "fresh",
       contextRetention: "clean",
       skill: "/code-review",
-      promptFile: "reviewer_review.md",
+      promptFile: "judge_station.md",
       completionSignal: "REVIEWER_STEP_COMPLETE",
       maxIter: 1,
       model: "gpt-5.6-sol",

@@ -250,13 +250,42 @@ export interface FindingDispositionEvidence {
 
 export interface FindingDisposition {
   readonly identityKey: string;
-  readonly status: "unrepaired" | "wont_fix" | "rejected" | "accepted_suppressed";
+  /**
+   * Terminal / open ledger statuses. `#925` judge kill rows flip to `refuted`
+   * (legal terminal flip alongside fresh-review final flips — ADR 0129).
+   */
+  readonly status:
+    | "unrepaired"
+    | "wont_fix"
+    | "rejected"
+    | "accepted_suppressed"
+    | "refuted";
   readonly reason: string;
   readonly severity: Finding["severity"];
   readonly source?: string;
   readonly scope?: string;
   readonly boundedReopen?: string;
 }
+
+/**
+ * Judge finding disposition row (T2 / #921 schema mirror on StepOutput).
+ * Kill = `refute` + four-reason token + evidence; live = open for S5 fix.
+ */
+export type JudgeFindingDisposition =
+  | {
+      readonly identityKey: string;
+      readonly action: "refute";
+      readonly reason:
+        | "unconstitutional"
+        | "over_defense"
+        | "not_established"
+        | "scope_creep";
+      readonly evidence: string;
+    }
+  | {
+      readonly identityKey: string;
+      readonly action: "live";
+    };
 
 /** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
 export interface PriorFindingDisposition {
@@ -330,6 +359,29 @@ export interface Escalation {
   readonly reason: string;
   readonly diagnosis: string;
 }
+
+/**
+ * #925 S3/S6 judge station output. Topology reads only `status` (+ escalate
+ * fields on the escalate branch). Dispositions / advanceCoder / findings are
+ * fixed-schema or cargo — never prose-parsed for routing.
+ */
+export interface JudgeResult {
+  readonly kind: "judge";
+  readonly status: "converged" | "continue" | "escalate";
+  /** Present on continue: kill + live rows (schema-fixed). */
+  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+  /** Optional continue suggestion to switch coder roster entry (#926 consumes). */
+  readonly advanceCoder?: string;
+  /** Opaque findings cargo for S5 landing (filtered to live keys by runner). */
+  readonly findings?: ReadonlyArray<Finding>;
+  /** Escalate doorbell cargo (also mirrored on {@link escalate}). */
+  readonly reason?: string;
+  readonly diagnosis?: string;
+  /** Any agent step may signal it is stuck (route() reads this first). */
+  readonly escalate?: Escalation;
+}
+
+export type JudgeVerdictStatus = JudgeResult["status"];
 
 /** Escalation bucket recorded on a terminal S8 entry (#439). */
 export type EscalationKind = "decision" | "failure";
@@ -854,10 +906,25 @@ export interface DispatchContext {
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
    * dispatch. #924 / ADR 0132: single-slice coder seats thread this for normal
    * S5 continuity of the S2-established session (same model), as well as the
-   * crash/escalate reopen path. Reviewer seats (S3/S6) stay fresh and do not
-   * carry this. A worker is `resume` only when the runner supplies a real id.
+   * crash/escalate reopen path. #925: S3 establishes the judge session; S6
+   * rounds resume it (same model). A worker is `resume` only when the runner
+   * supplies a real id.
    */
   readonly resumeSessionId?: string;
+  /**
+   * #925 — prior judge verdict ledger rows for a new judge after session loss
+   * (or any S6 opening). Runner transports rows as-is into the fix-findings
+   * landing file (`priorJudgeVerdicts` field) so the worker can read them;
+   * never synthesises a narrative summary. Trajectory is reconstructed by the
+   * judge from those structured rows only.
+   */
+  readonly priorJudgeVerdicts?: ReadonlyArray<{
+    readonly step: string;
+    readonly status: JudgeVerdictStatus;
+    readonly advanceCoder?: string;
+    readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+    readonly sessionId?: string;
+  }>;
   /**
    * Host-written issue snapshot for audit/resume compatibility. Current workers
    * live-fetch issue truth via gh using runner-injected issue/repo env; this is
@@ -1146,6 +1213,7 @@ export interface DocReleaseResult {
 export type WorkerOutput =
   | CoderResult
   | ReviewerResult
+  | JudgeResult
   | CmrResult
   | ShipResult
   | MergeWorkerResult
@@ -1318,14 +1386,19 @@ export interface LedgerEntry {
   /** Optional CMR route leg removed after smoke failure. */
   readonly droppedLeg?: string;
   /**
-   * ADR0030 finding dispositions persisted at the S4 review/fix boundary.
+   * Finding dispositions persisted at the judge verdict boundary (#925).
    *
-   * S4 is the durable review/fix boundary. Persisting dispositions here lets a
-   * resumed run replay accepted suppressions and bounded severity reopens instead
-   * of re-deriving them from only the last reviewer payload. Governance data
-   * (accepted suppression), not a runner content-classification (信封宪法, ADR 0062).
+   * Formerly the S4 review/fix boundary (open-count mechanical station). S4 is
+   * dissolved: S3/S6 judge ledger rows now carry kill→`refuted` flips and
+   * governance data. Not a runner content-classification (信封宪法, ADR 0062).
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
+  /**
+   * #925 — optional advance_coder suggestion from a continue verdict, mirrored
+   * onto the ledger row for audit / later #926 stay-put policy. Topology does
+   * not act on this field in #925.
+   */
+  readonly advanceCoder?: string;
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
   /**

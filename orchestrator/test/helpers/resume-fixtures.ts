@@ -186,7 +186,7 @@ export class ResumeBackend implements Backend {
     this.calls.push(`resumeSession(${spec.id}, ${sessionId})`);
     this.resumeSessionCalls.push([spec.id, sessionId]);
     this.runStepIds.push(spec.id);
-    if (spec.role === "reviewer") {
+    if ((spec.role === "reviewer" || spec.role === "verify")) {
       return { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -235,7 +235,7 @@ export class ResumeBackend implements Backend {
   ): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
     this.runStepIds.push(spec.id);
-    if (spec.role === "reviewer") {
+    if ((spec.role === "reviewer" || spec.role === "verify")) {
       return { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
