@@ -268,7 +268,7 @@ import {
   type QuotaPoolId,
   type QuotaProbeResult,
 } from "./quotaProbe.js";
-import { withMonitorStreamHeartbeat } from "./sandboxStreamHeartbeat.js";
+import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   readRequiredWorkerOutcomeSidecar as readRequiredOutcomeSidecar,
@@ -3420,21 +3420,8 @@ export class RealBackend implements Backend {
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    // #899 hotfix: the #684 monitor only sees the bridge's stdout; forward
-    // agent-stream liveness as a throttled heartbeat so healthy long steps
-    // are not idle-killed (see sandboxStreamHeartbeat.ts).
-    //
-    // #928: sandcastle defaults `completionSignal` to
-    // `"<promise>COMPLETE</promise>"` when the option is omitted
-    // (`DEFAULT_COMPLETION_SIGNAL` in @ai-hero/sandcastle). Empty array is the
-    // only API-supported disable — omit is NOT off. Production completion is
-    // clean process exit + legal sidecar / typed envelope, never a password.
-    return await sc.run(
-      withMonitorStreamHeartbeat({
-        ...options,
-        completionSignal: [],
-      }),
-    );
+    // #899 / #928 / #919 F2: shared wrap — completionSignal:[] + monitor heartbeat.
+    return await sc.run(withSandcastleInvokeDefaults(options));
   }
 
   /**

@@ -17,6 +17,7 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
+import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
 import type {
   FamilyBackend,
   FamilyEscalation,
@@ -30,6 +31,22 @@ import type {
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
 } as const;
+
+/** #919 live green fixture — residual findingsCount:0 is unusable, never ship. */
+function completedJudgeGreen(
+  cargo: Record<string, unknown> = {},
+): WorkerResult {
+  return {
+    kind: "completed",
+    output: {
+      kind: "judge",
+      status: "converged",
+      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+      ...CMR_EVIDENCE,
+      ...cargo,
+    },
+  } as WorkerResult;
+}
 
 /**
  * #331 — the FAMILY worker-dispatch seam. The verify-cmr hook dispatches the
@@ -61,10 +78,11 @@ class CapableFamilyBackend implements FamilyBackend {
     req: IntegratedCmrRequest,
   ): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
+    // #919 M2: residual findingsCount:0 is unusable. Boolean green without
+    // open-count is promoted by legacyCmrScriptToWorkerOutput (test-fake only).
     return this.cmrConverged
       ? {
           converged: true,
-          findingsCount: 0,
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           findings: [],
         }
@@ -87,7 +105,33 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     if (spec.kind === "cmr") {
-      return legacyDispatchFamilyWorker(this, spec, ctx);
+      // Test-fake: promote boolean green → kind:judge; residual positive → continue.
+      const res = await legacyDispatchFamilyWorker(this, spec, ctx);
+      if (res.kind !== "completed") return res;
+      // Re-map residual kind:cmr paper through the shared test helper so green
+      // boolean scripts become live judge traffic (production never does this).
+      if (res.output.kind === "cmr") {
+        const { kind: _k, ...rest } = res.output as {
+          kind: "cmr";
+          converged?: boolean;
+          findingsCount?: number;
+          reason?: string;
+          findings?: IntegratedCmrResult["findings"];
+          successfulLegs?: readonly string[];
+          skippedLegs?: IntegratedCmrResult["skippedLegs"];
+          claimedFixedFindingIdentityKeys?: readonly string[];
+          priorFindingDispositions?: IntegratedCmrResult["priorFindingDispositions"];
+          evidencePaths?: readonly string[];
+        };
+        return {
+          kind: "completed",
+          output: legacyCmrScriptToWorkerOutput({
+            converged: rest.converged ?? false,
+            ...rest,
+          }),
+        };
+      }
+      return res;
     }
     if (spec.kind === "ship") {
       const familyBase = ctx.familyBase!;
@@ -143,7 +187,7 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
           events.push("awaited");
           return {
             kind: "completed",
-            output: { kind: "cmr", converged: true, findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           } as WorkerResult;
         },
       } as unknown as FamilyBackend;
@@ -174,7 +218,7 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
         events.push("launched");
         return {
           kind: "completed",
-          output: { kind: "cmr", converged: true, findingsCount: 0 },
+          output: { kind: "judge", status: "converged" },
         };
       },
     } as unknown as FamilyBackend;
@@ -296,18 +340,21 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
           : {}),
       });
       if (spec.kind === "cmr") {
+        const passGreen =
+          ctx.cmrPass === "completeness" ? this.completenessConverged : true;
+        if (passGreen) {
+          return completedJudgeGreen();
+        }
+        // Residual positive open-count → judge continue (coder-fix path).
         return {
           kind: "completed",
           output: {
             kind: "cmr",
-            converged:
-              ctx.cmrPass === "completeness" ? this.completenessConverged : true,
-            findingsCount: this.completenessConverged ? 0 : 1,
+            converged: false,
+            findingsCount: 1,
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+            reason: "family base is incomplete",
             ...CMR_EVIDENCE,
-            ...(ctx.cmrPass === "completeness" && !this.completenessConverged
-              ? { reason: "family base is incomplete" }
-              : {}),
           },
         };
       }
@@ -424,16 +471,7 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind === "cmr") {
-        return {
-          kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
-            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-            ...CMR_EVIDENCE,
-          },
-        };
+        return completedJudgeGreen();
       }
       // ship: a mis-wired backend returns a non-ship completed payload.
       return {
@@ -495,16 +533,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind === "cmr") {
-        return {
-          kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
-            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-            ...CMR_EVIDENCE,
-          },
-        };
+        return completedJudgeGreen();
       }
       if (
         spec.kind === "verify" ||
@@ -699,12 +728,18 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     async runFamilyVerify(): Promise<FamilyVerifyResult> {
       return { ok: true };
     }
-    async runIntegratedCmr(): Promise<IntegratedCmrResult> {
+    // #919: live green needs kind:judge. Ship remains unavailable — dispatchWorker
+    // returns failed for non-cmr so the final barrier still dies as ship_failed
+    // (the pre-#919 backend had no dispatchWorker at all; residual unusable now
+    // fails earlier as cmr_failed, so this keeps the ship-unavailability intent).
+    async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
+      if (spec.kind === "cmr") {
+        return completedJudgeGreen();
+      }
       return {
-        converged: true,
-        findingsCount: 0,
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-        findings: [],
+        kind: "failed",
+        reason:
+          "family ship worker unavailable after converged CMR: backend has no ship capability",
       };
     }
   }
@@ -729,16 +764,7 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind === "cmr") {
-        return {
-          kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
-            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-            ...CMR_EVIDENCE,
-          },
-        };
+        return completedJudgeGreen();
       }
       this.shipDispatched = true;
       return {
@@ -772,9 +798,13 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     const latest = backend.ledger.at(-1);
     expect(latest?.status).toBe("aborted");
     expect(latest?.phase).toBe("final");
-    expect(latest?.reason).toMatch(/family ship worker unavailable/i);
+    // #919: CMR is live judge-green; ship dies via dispatchWorker failed
+    // (pre-#919 used dispatchWorker===undefined after residual silent-clean).
+    expect(latest?.reason).toMatch(/family ship worker (failed|unavailable)/i);
     expect(latest?.stopSummary?.reason).toBe("ship_failed");
-    expect(latest?.stopSummary?.summary).toMatch(/PR/i);
+    expect(latest?.stopSummary?.summary).toMatch(
+      /family ship worker (failed|unavailable)|PR/i,
+    );
     expect(backend.ledger.some((e) => e.status === "shipped")).toBe(false);
   });
 
@@ -832,16 +862,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
         };
       }
       if (spec.kind === "cmr") {
-        return {
-          kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
-            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-            ...CMR_EVIDENCE,
-          },
-        };
+        return completedJudgeGreen();
       }
       return {
         kind: "completed",
@@ -866,16 +887,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     }
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind === "cmr") {
-        return {
-          kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
-            successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-            ...CMR_EVIDENCE,
-          },
-        };
+        return completedJudgeGreen();
       }
       return {
         kind: "escalated",
@@ -971,16 +983,7 @@ describe("#331 legacyDispatchFamilyWorker — wraps the legacy CMR return as Wor
     };
     be.dispatchWorker = async (): Promise<WorkerResult> => {
       used = true;
-      return {
-        kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
-          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-          ...CMR_EVIDENCE,
-        },
-      };
+      return completedJudgeGreen();
     };
     const route = await smokeRouteModels(
       resolveActiveModelRoute(),
