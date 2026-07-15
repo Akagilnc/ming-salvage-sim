@@ -328,33 +328,49 @@ export type JudgeVerdict =
   | JudgeVerdictContinue
   | JudgeVerdictEscalate;
 
-const judgeConvergedSchema = z
-  .object({
-    station: z.literal("judge"),
-    status: z.literal("converged"),
-    cargoPointer: cargoPointerSchema,
-  })
-  .strict();
+/**
+ * Single field vocabulary for judge envelopes. Decode uses `.strict()`;
+ * Sandcastle SO uses `.passthrough()` + banned-key superRefine — never two
+ * independent field tables that can drift.
+ */
+const judgeConvergedFields = {
+  station: z.literal("judge"),
+  status: z.literal("converged"),
+  cargoPointer: cargoPointerSchema,
+} as const;
 
-const judgeContinueSchema = z
-  .object({
-    station: z.literal("judge"),
-    status: z.literal("continue"),
-    findingDispositions: z.array(findingDispositionSchema),
-    advanceCoder: nonEmptyString.optional(),
-    cargoPointer: cargoPointerSchema,
-  })
-  .strict();
+const judgeContinueFields = {
+  station: z.literal("judge"),
+  status: z.literal("continue"),
+  findingDispositions: z.array(findingDispositionSchema),
+  advanceCoder: nonEmptyString.optional(),
+  cargoPointer: cargoPointerSchema,
+} as const;
 
-const judgeEscalateSchema = z
-  .object({
-    station: z.literal("judge"),
-    status: z.literal("escalate"),
-    reason: nonEmptyString,
-    diagnosis: nonEmptyString,
-    cargoPointer: cargoPointerSchema,
-  })
-  .strict();
+const judgeEscalateFields = {
+  station: z.literal("judge"),
+  status: z.literal("escalate"),
+  reason: nonEmptyString,
+  diagnosis: nonEmptyString,
+  cargoPointer: cargoPointerSchema,
+} as const;
+
+function judgeDecodeObject<T extends z.ZodRawShape>(shape: T) {
+  return z.object(shape).strict();
+}
+
+function judgeSoObject<T extends z.ZodRawShape>(shape: T) {
+  return z
+    .object(shape)
+    .passthrough()
+    .superRefine((value, ctx) => {
+      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
+    });
+}
+
+const judgeConvergedSchema = judgeDecodeObject(judgeConvergedFields);
+const judgeContinueSchema = judgeDecodeObject(judgeContinueFields);
+const judgeEscalateSchema = judgeDecodeObject(judgeEscalateFields);
 
 const judgeVerdictSchema = z.discriminatedUnion("status", [
   judgeConvergedSchema,
@@ -390,48 +406,16 @@ export const JUDGE_RECEIPT_TAG = "judge";
 /**
  * Production SO schema for the S3/S6 judge station receipt.
  *
- * Same source of field vocabulary as {@link decodeJudgeVerdict}. Cargo
- * siblings (findings rows, essays) pass through — only illegal traffic re-asks.
+ * Field vocabulary is shared with {@link decodeJudgeVerdict} via the judge*
+ * field tables above. Cargo siblings (findings rows, essays) pass through —
+ * only illegal traffic re-asks.
  */
 export function judgeStationReceiptSchema(): z.ZodType {
-  const converged = z
-    .object({
-      station: z.literal("judge"),
-      status: z.literal("converged"),
-      cargoPointer: cargoPointerSchema,
-    })
-    .passthrough()
-    .superRefine((value, ctx) => {
-      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
-    });
-
-  const continueSchema = z
-    .object({
-      station: z.literal("judge"),
-      status: z.literal("continue"),
-      findingDispositions: z.array(findingDispositionSchema),
-      advanceCoder: nonEmptyString.optional(),
-      cargoPointer: cargoPointerSchema,
-    })
-    .passthrough()
-    .superRefine((value, ctx) => {
-      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
-    });
-
-  const escalate = z
-    .object({
-      station: z.literal("judge"),
-      status: z.literal("escalate"),
-      reason: nonEmptyString,
-      diagnosis: nonEmptyString,
-      cargoPointer: cargoPointerSchema,
-    })
-    .passthrough()
-    .superRefine((value, ctx) => {
-      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
-    });
-
-  return z.union([converged, continueSchema, escalate]);
+  return z.union([
+    judgeSoObject(judgeConvergedFields),
+    judgeSoObject(judgeContinueFields),
+    judgeSoObject(judgeEscalateFields),
+  ]);
 }
 
 // ─── Coder-family envelopes ──────────────────────────────────────────────────

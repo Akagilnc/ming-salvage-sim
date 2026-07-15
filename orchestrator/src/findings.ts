@@ -30,9 +30,10 @@ export function findingIdentityKey(finding: Finding): string {
 }
 
 /**
- * Identity keys for a findings cargo list. Landing / fixer materialization
- * derives keys here — the runner only pass-through findings rows and routes
- * by findingsCount (ADR 0131 / #899).
+ * Identity keys for a findings cargo list. Derived at landing
+ * (`dispatchWorker` / fixer materialization) — not by the single-slice runner
+ * court. Main S3/S6 topology reads judge status enum only (ADR 0131 channel (b)
+ * / #925); findings rows remain opaque cargo.
  */
 export function findingIdentityKeys(
   findings: ReadonlyArray<Finding>,
