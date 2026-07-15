@@ -787,6 +787,19 @@ export function resolveImageTag(envTag: string | undefined): string {
   return envTag && envTag.length > 0 ? envTag : DEFAULT_IMAGE_TAG;
 }
 
+// #929 — re-export the pure exit-code map so launchers that only import
+// familyDriver can shell process.exit(map(result.status)) without a second import.
+export {
+  TERMINAL_EXIT_CODES,
+  TERMINAL_EXIT_STATUSES,
+  exitCodeForTerminal,
+  exitProcessForFamilyRun,
+  familyDriverExitCode,
+  isTerminalExitStatus,
+  runResultExitCode,
+} from "./terminalExitCode.js";
+export type { TerminalExitStatus } from "./terminalExitCode.js";
+
 /**
  * Cut the LOCAL family base branch from the just-fetched `origin/<base>` on the
  * family clone and return its START HEAD (the reconcile baseline). `base` is the

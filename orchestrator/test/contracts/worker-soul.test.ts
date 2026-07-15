@@ -494,12 +494,22 @@ describe("launch-362.mjs bootstrap smoke (#372 unconditional)", () => {
     mkdirSync(join(orchTmp, "dist"), { recursive: true });
     writeFileSync(
       join(orchTmp, "dist", "familyDriver.js"),
-      'export const runFamilyDriver = async () => ({});\nexport const resolveImageTag = (t) => t || "tag";\n',
+      // #929: launcher shells process.exit(familyDriverExitCode(result)).
+      'export const runFamilyDriver = async () => ({ status: "success" });\n' +
+        'export const resolveImageTag = (t) => t || "tag";\n' +
+        "export const familyDriverExitCode = (r) =>\n" +
+        '  (typeof r === "string" ? r : r?.status) === "success" ? 0 : 1;\n',
       "utf8",
     );
 
+    // #929: launcher ends with process.exit — keep the vitest worker alive.
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as never);
+
     try {
       await import(pathToFileURL(launcherCopy).href);
+      expect(exitSpy).toHaveBeenCalledWith(0);
 
       const calls = execMock.mock.calls as any[][];
       // side-build clean targets dist.new/dist.old, never the serving dist
@@ -534,6 +544,7 @@ describe("launch-362.mjs bootstrap smoke (#372 unconditional)", () => {
         calls.some((c) => c[0] === "bash" && String(c[1]?.[0] || "").includes("build.sh")),
       ).toBe(true);
     } finally {
+      exitSpy.mockRestore();
       try {
         rmSync(orchTmp, { recursive: true, force: true });
       } catch {}
