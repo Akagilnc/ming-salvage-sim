@@ -195,15 +195,17 @@ export function priorJudgeVerdictRowsFromSources(
   for (const entry of ledger) {
     if (wantSlice) {
       // Slice steps never carry family event markers.
+      const seatStep = entry.step;
       if (
         entry.event === undefined &&
-        (entry.step === "S3" || entry.step === "S6") &&
+        seatStep !== undefined &&
+        isJudgeSeat({ step: seatStep }) &&
         entry.output?.kind === "judge" &&
         isJudgeVerdictStatus(entry.output.status)
       ) {
         const out = entry.output;
         pushPriorJudgeRow(rows, {
-          step: entry.step,
+          step: seatStep,
           status: out.status as JudgeVerdictStatus,
           ...(out.advanceCoder !== undefined
             ? { advanceCoder: out.advanceCoder }
@@ -639,10 +641,9 @@ export function judgeStatusFromOutput(
 export function isJudgeSeat(input: {
   readonly step?: string;
   readonly id?: string;
-  readonly kind?: string;
-  readonly role?: string;
-  readonly soul?: string;
 }): boolean {
+  // Seat identity is step/id only (#919 R4) — kind/role/soul are not consulted
+  // (S9 online-review carries kind/role/soul "verify" and is NOT a judge seat).
   const seat = input.step ?? input.id;
   return seat === "S3" || seat === "S6";
 }

@@ -133,9 +133,10 @@ export function workerReceiptOutput(
  * Optional decision-gate Output.object on the dedicated {@link DECISION_GATE_TAG}.
  * Cargo tags stay untyped (ADR 0131 / #899).
  *
- * Single-slice coder seats no longer use this (#924) — they attach the T2
- * station receipt schema via {@link coderReceiptOutput}. Family seats that still
- * speak the decision-gate dual-channel keep calling this until their own slices.
+ * Single-slice coder seats and family coder-fix no longer use this (#924 /
+ * #919 M1) — they attach the T2 station receipt schema via
+ * {@link coderReceiptOutput}. Residual dual-channel seats (merger / review-loop
+ * / ship) still call this.
  */
 export function decisionGateOutput(): sc.OutputDefinition {
   return workerReceiptOutput(DECISION_GATE_TAG, decisionGateSignalSchema);

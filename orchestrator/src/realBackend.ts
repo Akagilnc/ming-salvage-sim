@@ -280,6 +280,7 @@ import type {
   AgentStepRunOptions,
   Backend,
   CliMonitorSpawnSpec,
+  CoderOutput,
   DispatchContext,
   Finding,
   IssueMeta,
@@ -1172,7 +1173,7 @@ export function soulForStep(
   // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
   if (
     spec.soul === "verify" &&
-    isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })
+    isJudgeSeat({ id: spec.id })
   ) {
     return "verify";
   }
@@ -1333,7 +1334,7 @@ function extractRoleReceipt(
   spec: Pick<StepSpec, "role" | "id" | "soul">,
 ): unknown | undefined {
   try {
-    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
+    if (isJudgeSeat({ id: spec.id })) {
       return extractJudgeTag(stdout);
     }
     return spec.role === "coder"
@@ -1394,32 +1395,82 @@ export function coderCargoFields(body: unknown): {
 }
 
 /**
- * Opaque refuse cargo siblings (#677 / #924). Traffic `refusedFindingIdentityKeys`
- * live on the T2 envelope; detail records stay cargo and are never SO-validated.
+ * Opaque refuse cargo siblings (#677 / #924 / #919 R5).
+ * Traffic `refusedFindingIdentityKeys` live only on the T2 envelope
+ * ({@link projectCoderStationReceipt} reads them via decode, never from cargo).
+ * This helper extracts cargo-only `refuseRecords` — never invents traffic keys.
  */
 export function coderRefuseCargoFields(body: unknown): {
-  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
 } {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return {};
   }
   const receipt = body as Record<string, unknown>;
-  const keys = Array.isArray(receipt.refusedFindingIdentityKeys)
-    ? receipt.refusedFindingIdentityKeys.filter(
-        (k): k is string => typeof k === "string" && k.trim().length > 0,
-      )
-    : undefined;
   const records = Array.isArray(receipt.refuseRecords)
     ? (receipt.refuseRecords as ReviewFixRefuseRecord[])
     : undefined;
   return {
-    ...(keys !== undefined && keys.length > 0
-      ? { refusedFindingIdentityKeys: keys }
-      : {}),
     ...(records !== undefined && records.length > 0
       ? { refuseRecords: records }
       : {}),
+  };
+}
+
+/**
+ * #924 / #919 post-R8 M1 — pure T2 coder station receipt → {@link CoderOutput}.
+ *
+ * Shared by single-slice {@link RealBackend} and family coder-fix
+ * ({@link RealFamilyBackend.familyCoderResultFromRun}). Traffic (status /
+ * refuse keys / escalate) comes from the envelope only; committed /
+ * commitsAdded / refuseRecords are cargo siblings. Cargo never invents or
+ * overrides traffic refuse keys.
+ */
+export function projectCoderStationReceipt(
+  raw: unknown,
+  cargo?: unknown,
+): CoderOutput {
+  const body = cargo !== undefined ? cargo : raw;
+  const fields = coderCargoFields(body);
+  // Opaque refuseRecords may live on cargo or as SO passthrough siblings on raw.
+  const refuseRecords =
+    coderRefuseCargoFields(body).refuseRecords ??
+    coderRefuseCargoFields(raw).refuseRecords;
+  const refuseRecordsExtra =
+    refuseRecords !== undefined ? { refuseRecords } : {};
+
+  const envelope = decodeCoderEnvelope(raw);
+  if (!envelope.ok) {
+    throw new Error(`illegal coder station receipt: ${envelope.reason}`);
+  }
+  if (envelope.value.status === "escalate") {
+    // Escalate is orthogonal to commit cargo; refuse traffic is a different
+    // status — do not smuggle refusedFindingIdentityKeys onto a bell.
+    return {
+      kind: "coder",
+      committed: fields.committed,
+      commitsAdded: fields.commitsAdded,
+      escalate: {
+        reason: envelope.value.reason,
+        diagnosis: envelope.value.diagnosis,
+      },
+    };
+  }
+  if (envelope.value.status === "refused") {
+    // Envelope keys are the sole traffic source (never overwritten by cargo).
+    return {
+      kind: "coder",
+      committed: fields.committed,
+      commitsAdded: fields.commitsAdded,
+      refusedFindingIdentityKeys: envelope.value.refusedFindingIdentityKeys,
+      ...refuseRecordsExtra,
+    };
+  }
+  // completed — refuse keys are traffic for status:"refused" only.
+  return {
+    kind: "coder",
+    committed: fields.committed,
+    commitsAdded: fields.commitsAdded,
   };
 }
 
@@ -2960,7 +3011,7 @@ export class RealBackend implements Backend {
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
     // S9 online-review must not take JUDGE_RECEIPT.
-    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
+    if (isJudgeSeat({ id: spec.id })) {
       return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
     }
     if (spec.role === "reviewer") {
@@ -3064,7 +3115,7 @@ export class RealBackend implements Backend {
     const cargo =
       typedOutputUsed &&
       (spec.role === "coder" ||
-        isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul }))
+        isJudgeSeat({ id: spec.id }))
         ? this.cargoRawFor(result, spec, options)
         : undefined;
     const output = this.decodeOutput(spec, raw, cargo);
@@ -3088,7 +3139,7 @@ export class RealBackend implements Backend {
     // #925 / #919 S2/R7: S3/S6 judge seats — T2 verdict is the sole topology signal.
     // S9 online-review is not a judge seat (isJudgeSeat false) and never lands
     // here on RealBackend (family review-loop owns verify decode).
-    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
+    if (isJudgeSeat({ id: spec.id })) {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
     // #919 CR: decision_gate bell must not mint residual open-count paper
@@ -3175,9 +3226,7 @@ export class RealBackend implements Backend {
 
   /**
    * #924 — decode a T2 coder station receipt into {@link CoderOutput}.
-   * Traffic (status / refuse keys / escalate reason) from the envelope only;
-   * committed / commitsAdded / refuseRecords from cargo siblings or the cargo
-   * channel. Cargo must never invent or override traffic refuse keys.
+   * Shared pure projection: {@link projectCoderStationReceipt} (family M1 too).
    *
    * Production attaches coderStationReceiptSchema (SO). There is no legacy
    * decision-gate / empty-`{}` second accept shape — illegal envelope after SO
@@ -3188,51 +3237,17 @@ export class RealBackend implements Backend {
     raw: unknown,
     cargo?: unknown,
   ): StepOutput {
-    const body = cargo !== undefined ? cargo : raw;
-    const fields = coderCargoFields(body);
-    // Opaque refuseRecords may live on cargo or as SO passthrough siblings on raw.
-    const refuseRecords =
-      coderRefuseCargoFields(body).refuseRecords ??
-      coderRefuseCargoFields(raw).refuseRecords;
-    const refuseRecordsExtra =
-      refuseRecords !== undefined ? { refuseRecords } : {};
-
-    const envelope = decodeCoderEnvelope(raw);
-    if (!envelope.ok) {
+    try {
+      return projectCoderStationReceipt(raw, cargo);
+    } catch (err) {
       // Fail closed: no #899 dual-channel fallthrough to classifyDecisionGate / {}.
+      const reason = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `${spec.id}-coder: illegal coder station receipt: ${envelope.reason}`,
+        reason.startsWith("illegal coder station receipt")
+          ? `${spec.id}-coder: ${reason}`
+          : `${spec.id}-coder: illegal coder station receipt: ${reason}`,
       );
     }
-    if (envelope.value.status === "escalate") {
-      // Escalate is orthogonal to commit cargo; refuse traffic is a different
-      // status — do not smuggle refusedFindingIdentityKeys onto a bell.
-      return {
-        kind: "coder",
-        committed: fields.committed,
-        commitsAdded: fields.commitsAdded,
-        escalate: {
-          reason: envelope.value.reason,
-          diagnosis: envelope.value.diagnosis,
-        },
-      };
-    }
-    if (envelope.value.status === "refused") {
-      // Envelope keys are the sole traffic source (never overwritten by cargo).
-      return {
-        kind: "coder",
-        committed: fields.committed,
-        commitsAdded: fields.commitsAdded,
-        refusedFindingIdentityKeys: envelope.value.refusedFindingIdentityKeys,
-        ...refuseRecordsExtra,
-      };
-    }
-    // completed — refuse keys are traffic for status:"refused" only.
-    return {
-      kind: "coder",
-      committed: fields.committed,
-      commitsAdded: fields.commitsAdded,
-    };
   }
 
   // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns

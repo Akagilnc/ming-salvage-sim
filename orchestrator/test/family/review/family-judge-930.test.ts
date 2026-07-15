@@ -34,6 +34,7 @@ import type {
   DispatchContext,
   JudgeResult,
   LedgerEntry,
+  WorkerLandingPayload,
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
@@ -68,6 +69,8 @@ class FamilyJudgeBackend implements FamilyBackend {
     readonly priorJudgeVerdicts?: DispatchContext["priorJudgeVerdicts"];
     readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
     readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
+    /** #919 R2 — landing payload on re-open (refuseRecords cargo). */
+    readonly landing?: WorkerLandingPayload;
   }> = [];
   readonly escalations: FamilyEscalation[] = [];
   readonly prCalls: string[] = [];
@@ -79,8 +82,16 @@ class FamilyJudgeBackend implements FamilyBackend {
 
   constructor(
     private readonly script: {
-      completeness?: (round: number, ctx: DispatchContext) => WorkerResult;
-      correctness?: (round: number, ctx: DispatchContext) => WorkerResult;
+      completeness?: (
+        round: number,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ) => WorkerResult;
+      correctness?: (
+        round: number,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ) => WorkerResult;
       coder?: (round: number, ctx: DispatchContext) => WorkerResult;
     } = {},
   ) {}
@@ -104,7 +115,11 @@ class FamilyJudgeBackend implements FamilyBackend {
     this.escalations.push(esc);
   }
 
-  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+  async dispatchWorker(
+    spec: WorkerSpec,
+    ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
+  ): Promise<WorkerResult> {
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
@@ -121,19 +136,20 @@ class FamilyJudgeBackend implements FamilyBackend {
       ...(ctx.blockingFindingIdentityKeys !== undefined
         ? { blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys }
         : {}),
+      ...(landing !== undefined ? { landing } : {}),
     });
 
     if (spec.kind === "cmr") {
       if (ctx.cmrPass === "completeness") {
         const round = this.completenessRound++;
         if (this.script.completeness !== undefined) {
-          return this.script.completeness(round, ctx);
+          return this.script.completeness(round, ctx, landing);
         }
         return completedJudge(judgeConverged(), "judge-sess-completeness");
       }
       const round = this.correctnessRound++;
       if (this.script.correctness !== undefined) {
-        return this.script.correctness(round, ctx);
+        return this.script.correctness(round, ctx, landing);
       }
       return completedJudge(judgeConverged(), "judge-sess-correctness");
     }
@@ -504,13 +520,24 @@ describe("#930 runVerifyCmr family judge courts", () => {
   });
 
   it("refuse envelope blind-routes back to family judge (not terminal / not idle)", async () => {
+    const refuseRecord = {
+      identityKey: FINDING_KEY,
+      finding: FINDING.claim_quote,
+      acceptanceCriterion: "AC-1",
+      conflictReason: "unconstitutional: contradicts accepted ADR",
+      reason: "unconstitutional",
+      evidence: "contradicts accepted ADR 0132",
+    };
     const backend = new FamilyJudgeBackend({
-      completeness: (round, ctx) => {
+      completeness: (round, ctx, landing) => {
         if (round === 0) {
           return completedJudge(judgeContinue([FINDING]), "judge-refuse");
         }
         // Second open must see refused keys for re-ruling.
         expect(ctx.refusedFindingIdentityKeys).toEqual([FINDING_KEY]);
+        // #919 R2 / #927 isomorphic: opaque refuseRecords land on re-open.
+        expect(landing?.refuseRecords).toEqual([refuseRecord]);
+        expect(landing?.refusedFindingIdentityKeys).toEqual([FINDING_KEY]);
         return completedJudge(judgeConverged(), "judge-refuse");
       },
       coder: () => ({
@@ -520,14 +547,7 @@ describe("#930 runVerifyCmr family judge courts", () => {
           committed: true,
           commitsAdded: 1,
           refusedFindingIdentityKeys: [FINDING_KEY],
-          refuseRecords: [
-            {
-              identityKey: FINDING_KEY,
-              finding: FINDING.claim_quote,
-              acceptanceCriterion: "AC-1",
-              conflictReason: "unconstitutional: contradicts accepted ADR",
-            },
-          ],
+          refuseRecords: [refuseRecord],
         },
       }),
     });
@@ -544,6 +564,14 @@ describe("#930 runVerifyCmr family judge courts", () => {
         (d) => d.kind === "cmr" && d.cmrPass === "completeness",
       ).length,
     ).toBeGreaterThanOrEqual(2);
+    // Dispatch record also surfaces landing cargo for audit.
+    const reopen = backend.dispatches.find(
+      (d) =>
+        d.kind === "cmr" &&
+        d.cmrPass === "completeness" &&
+        d.refusedFindingIdentityKeys !== undefined,
+    );
+    expect(reopen?.landing?.refuseRecords?.[0]?.reason).toBe("unconstitutional");
   });
 
   it("residual kind:cmr+findingsCount:0 is unusable fail-loud (never silent clean, never coder-fix)", async () => {

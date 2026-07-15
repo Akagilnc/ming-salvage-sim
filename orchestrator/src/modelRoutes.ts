@@ -20,6 +20,7 @@ import {
   type BillingPoolId,
   type NextRelayBaton,
 } from "./quotaPoolTable.js";
+import { isJudgeSeat } from "./judgeStation.js";
 import type { StepId } from "./types.js";
 
 export type RouteSmokeStatus =
@@ -506,7 +507,8 @@ export function withCoderSlot(
 export function relaySlotForSingleSliceWallStep(
   wallStep: StepId,
 ): ModelRouteSlot {
-  if (wallStep === "S3" || wallStep === "S6") return "verify";
+  // #919 S1: sole isJudgeSeat for S3/S6 seat membership (not hand-written OR).
+  if (isJudgeSeat({ step: wallStep })) return "verify";
   if (wallStep === "S5") return "coderFix";
   return "coder";
 }
