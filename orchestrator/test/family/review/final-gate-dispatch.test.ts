@@ -258,7 +258,7 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
    * A backend that implements the UNIFIED `dispatchWorker` seam but NONE of the
    * legacy per-method hooks. The verify-cmr gate must
    * accept it (codex cmr finding: gating on the legacy method alone wrongly
-   * fail-safed a new-seam-only backend to INCOMPLETE_GATE).
+   * fail-safed a new-seam-only backend to a stage fail-safe gate).
    */
   class NewSeamFamilyBackend implements FamilyBackend {
     dispatched: Array<{
@@ -450,7 +450,7 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
     }
   }
 
-  it("a completed-but-non-ship family ship result → INCOMPLETE_GATE (ok:false)", async () => {
+  it("a completed-but-non-ship family ship result → ship_failed gate (ok:false)", async () => {
     const be = new WrongShipFamilyBackend();
     const res = await runVerifyCmr({
       phase: "final",
@@ -535,7 +535,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     });
   }
 
-  it("a completed ship with status 'pushed' (not pr_opened) ⇒ INCOMPLETE_GATE", async () => {
+  it("a completed ship with status 'pushed' (not pr_opened) ⇒ ship_failed gate", async () => {
     const res = await gate({
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pushed" },
@@ -543,7 +543,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     expect(res).toMatchObject({ ok: false, ran: true });
   });
 
-  it("a completed ship missing its pr URL ⇒ INCOMPLETE_GATE", async () => {
+  it("a completed ship missing its pr URL ⇒ ship_failed gate", async () => {
     const res = await gate({
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pr_opened" },
@@ -551,7 +551,7 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     expect(res).toMatchObject({ ok: false, ran: true });
   });
 
-  it("a completed ship with a blank pr URL ⇒ INCOMPLETE_GATE", async () => {
+  it("a completed ship with a blank pr URL ⇒ ship_failed gate", async () => {
     const res = await gate({
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "   " },
@@ -634,7 +634,7 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
    * A new-seam backend that RECORDS the ledger, with the cmr + ship worker outputs
    * configurable. A `completed` worker whose output kind is WRONG (cmr worker
    * returning a ship-shaped payload, or vice-versa) is the wrong-kind case the
-   * verify-cmr hook fail-safes to INCOMPLETE_GATE — and (r3) must leave a durable
+   * verify-cmr hook fail-safes with a stage-named gate — and (r3) must leave a durable
    * `aborted` event so the failed FINAL barrier survives to the ledger for resume.
    */
   class RecordingFamilyBackend implements FamilyBackend {
@@ -858,7 +858,7 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
     }
   }
 
-  it("an escalated cmr worker → escalateFamily + ok:false (not a bare INCOMPLETE_GATE)", async () => {
+  it("an escalated cmr worker → escalateFamily + ok:false (not a bare stage fail-safe)", async () => {
     const be = new EscalatingFamilyBackend("cmr");
     const res = await runVerifyCmr({
       phase: "final",

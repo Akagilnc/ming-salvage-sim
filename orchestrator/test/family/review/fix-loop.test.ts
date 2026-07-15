@@ -2691,7 +2691,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       "docRelease",
     ]);
   });
-it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", async () => {
+it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", async () => {
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({ kind: "failed", reason: "sandbox exited 1" }),
     });

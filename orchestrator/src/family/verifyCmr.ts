@@ -46,8 +46,9 @@
  * the nothing-ran no-op `{ok:true, ran:false}` and the spine's existing default
  * path stays untouched (zero regression). A backend that CAN verify but is missing
  * a required downstream final-barrier capability (cmr / PR) is the DIFFERENT case:
- * a real verify ran, so the hook fails-safe to `{ok:false, ran:true}` rather than a
- * false `success` — see `INCOMPLETE_GATE` below. The `aborted`/escalate SCHEMA
+ * a real verify ran, so the hook fails-safe to `{ok:false, ran:true}` with a
+ * stage-named gate (`stageGate("cmr_failed"|"ship_failed"|…)` per #922) rather
+ * than a false `success`. The `aborted`/escalate SCHEMA
  * (`FamilyLedgerEntry` widening + the escalate/resume machine) is #298's (decision
  * 5 "字段级 JSON 留 TDD"); #296 only CALLS those seams. THAT is the seam boundary.
  */
@@ -196,7 +197,8 @@ export interface VerifyCmrInput {
    * / escalate capabilities through (all OPTIONAL `FamilyBackend` methods). A
    * backend with NO `runFamilyVerify` yields the nothing-ran no-op `{ok:true,
    * ran:false}`; one that verifies green but lacks a required downstream capability
-   * fails-safe to `{ok:false, ran:true}` (see `INCOMPLETE_GATE`). The CONCRETE
+   * fails-safe to `{ok:false, ran:true}` with a stage-named gate
+   * (`cmr_failed` / `ship_failed` / … per #922). The CONCRETE
    * `aborted`/escalate schema (`FamilyLedgerEntry` widening + the escalate/resume
    * machine) is #298's (ADR 0022 decision 5, "字段级 JSON 留 TDD"); #296 only CALLS
    * `recordAborted` / `escalateFamily`.
@@ -285,16 +287,6 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
 function stageGate(status: FamilyStageFailureStatus): VerifyCmrResult {
   return { ok: false, ran: true, failedStatus: status };
 }
-
-/**
- * The fail-safe verdict for a backend that DID verify (green) but is missing a
- * REQUIRED downstream final-barrier capability. Prefer {@link stageGate} with an
- * explicit stage; this constant is the historical incomplete-gate shape and is
- * only retained as a last-resort default (tagged verify_failed).
- *
- * Prefer stageGate("cmr_failed") / stageGate("ship_failed") at call sites.
- */
-const INCOMPLETE_GATE: VerifyCmrResult = stageGate("verify_failed");
 
 /**
  * Map a family worker kind (+ optional cmr pass) to the route slot it consumes.
@@ -1046,7 +1038,7 @@ async function familyConvergenceMarkerHead(
  * startup — a missing-auth `sc.run` start failure (now preflighted to a structured
  * escalate, but the worker ALSO `git checkout`s the family base + writes the focus
  * file + spins docker, any of which can still throw) — would propagate out of
- * `runVerifyCmr` and reject the WHOLE family run, bypassing the INCOMPLETE_GATE
+ * `runVerifyCmr` and reject the WHOLE family run, bypassing the stage-named
  * fail-safe the malformed / non-completed paths already use. So catch it and hand
  * back the discriminated `failed` WorkerResult; the caller records the abort after
  * re-reading the live family head, because a write-capable worker may have committed
@@ -2083,9 +2075,10 @@ async function runIntegratedCmrPass(input: {
  * Reaches verify / cmr / PR / abort / escalate as OPTIONAL `FamilyBackend`
  * methods: a backend with NO verify capability degrades to the nothing-ran `NOOP`
  * (the spine's #293 default path stays green); one that verifies green but lacks a
- * required downstream capability fails-safe to `INCOMPLETE_GATE` (never a false
- * success). Surfaces a red barrier purely via the returned
- * `ok`; the spine acts on it (it is never rewritten here).
+ * required downstream capability fails-safe via stage-named `stageGate(...)`
+ * (`cmr_failed` / `ship_failed` / … — never a false success). Surfaces a red
+ * barrier purely via the returned `ok`; the spine acts on it (it is never
+ * rewritten here).
  */
 export async function runVerifyCmr(
   input: VerifyCmrInput,
