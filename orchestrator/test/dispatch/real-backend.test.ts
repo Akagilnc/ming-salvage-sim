@@ -1250,7 +1250,9 @@ describe("RealBackend reviewer output contract", () => {
     toolchain: ["node", "typescript"],
   };
 
-  it("rings a coder decision bell even when the rest of the receipt is unusable cargo", () => {
+  it("rings a coder decision bell from T2 escalate envelope even when cargo is unusable", () => {
+    // #924: traffic comes only from the station envelope — legacy {escalate}
+    // without station/status is fail-closed, not a second accept shape.
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
       sourceRepo: "/tmp/source",
@@ -1264,9 +1266,12 @@ describe("RealBackend reviewer output contract", () => {
     });
 
     const decoded = backend.probeDecodeOutput(coderSpec, {
+      station: "coder",
+      status: "escalate",
+      reason: "owner decision needed",
+      diagnosis: "contract conflict",
       committed: "not-a-boolean",
       unknownCargo: { any: "bytes" },
-      escalate: { reason: "owner decision needed", diagnosis: "contract conflict" },
     });
 
     expect(decoded).toMatchObject({
@@ -1274,8 +1279,8 @@ describe("RealBackend reviewer output contract", () => {
     });
   });
 
-  it("preserves real coder commit cargo when the typed decision gate escalates", () => {
-    // #899 / #384: escalate is orthogonal to committed/commitsAdded — a baseline
+  it("preserves real coder commit cargo when the T2 escalate envelope rings", () => {
+    // #924 / #384: escalate is orthogonal to committed/commitsAdded — a baseline
     // commit that already landed must not be rewritten as zero by the gate path.
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
@@ -1291,7 +1296,12 @@ describe("RealBackend reviewer output contract", () => {
 
     const decoded = backend.probeDecodeOutput(
       coderSpec,
-      { escalate: { reason: "design fork", diagnosis: "owner must choose the contract" } },
+      {
+        station: "coder",
+        status: "escalate",
+        reason: "design fork",
+        diagnosis: "owner must choose the contract",
+      },
       { committed: true, commitsAdded: 2 },
     );
 
@@ -1304,6 +1314,32 @@ describe("RealBackend reviewer output contract", () => {
         diagnosis: "owner must choose the contract",
       },
     });
+  });
+
+  it("fails closed on legacy decision-gate / empty-{} coder paper (no dual channel)", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 924,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-coder-no-dual-"),
+    });
+
+    expect(() => backend.probeDecodeOutput(coderSpec, {})).toThrow(
+      /illegal coder station receipt/i,
+    );
+    expect(() =>
+      backend.probeDecodeOutput(coderSpec, {
+        escalate: {
+          reason: "legacy dual-channel shape",
+          diagnosis: "must not accept without station envelope",
+        },
+      }),
+    ).toThrow(/illegal coder station receipt/i);
   });
 
   it("transports reviewer rows without adjudicating disposition fields", () => {
@@ -1674,7 +1710,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-286",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     const result = await backend.runStep(coderSpec, {
@@ -1690,7 +1726,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     });
   });
 
-  it("continues a clean-exit coder when receipt cargo is absent", async () => {
+  it("fails closed when coder typed output is empty {} (no legacy dual-channel accept)", async () => {
+    // #924: production SO schema rejects {}; residual #899 empty-{} completed
+    // path is deleted. Decode must not invent a completed seat from {}.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
       stdout: "worker completed its changes",
@@ -1705,9 +1743,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         base: "main",
         path: "/tmp/worktree/issue-286",
       }),
-    ).resolves.toMatchObject({
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-    });
+    ).rejects.toThrow(/illegal coder station receipt/i);
   });
 
   it("attaches station-receipt Output.object for single-iter coder without re-asking opaque cargo", async () => {
@@ -2530,7 +2566,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-grok-auth-cleanup",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     await backend.runStep(coderSpec, {
@@ -2561,7 +2597,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: "<coder>not json</coder>\nCODER_STEP_COMPLETE",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-496",
-      output: {},
+      // T2 traffic only; cargo siblings come from the outcome sidecar.
+      output: { station: "coder", status: "completed" },
     });
 
     const result = await backend.runStep(
@@ -2595,7 +2632,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed":true,"commitsAdded":1}</coder>',
       commits: [{ sha: "unreachable-after-reset" }],
       sessionId: "sess-final-graph-truth",
-      output: {},
+      output: CODER_COMPLETED_ENVELOPE,
     });
 
     await expect(
@@ -2625,7 +2662,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>\nCODER_STEP_COMPLETE',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-dir-sidecar",
-      output: {},
+      // Traffic from T2 envelope; cargo fields from stdout when sidecar is unusable.
+      output: { station: "coder", status: "completed" },
     });
 
     const result = await backend.runStep(
@@ -2746,7 +2784,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-bad-sidecar",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
 
     await expect(
@@ -2861,7 +2899,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-286",
-      output: {},
+      output: CODER_NO_COMMIT_ENVELOPE,
     });
     const worktree = {
       branch: "feat/issue-286",
