@@ -132,9 +132,25 @@ export function workerReceiptOutput(
 /**
  * Optional decision-gate Output.object on the dedicated {@link DECISION_GATE_TAG}.
  * Cargo tags stay untyped (ADR 0131 / #899).
+ *
+ * Single-slice coder seats no longer use this (#924) — they attach the T2
+ * station receipt schema via {@link coderReceiptOutput}. Family seats that still
+ * speak the decision-gate dual-channel keep calling this until their own slices.
  */
 export function decisionGateOutput(): sc.OutputDefinition {
   return workerReceiptOutput(DECISION_GATE_TAG, decisionGateSignalSchema);
+}
+
+/**
+ * #924 — single-slice coder station receipt Output.object.
+ * Schema lives in {@link coderStationReceiptSchema} (T2 / stationReceiptContracts);
+ * this is only the Sandcastle attach helper (tag + maxRetries).
+ */
+export function coderReceiptOutput(
+  schema: z.ZodType,
+  tag: string = "coder",
+): sc.OutputDefinition {
+  return workerReceiptOutput(tag, schema);
 }
 
 /**

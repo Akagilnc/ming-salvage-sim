@@ -1529,6 +1529,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let activeRelayFocusPath: string | undefined;
   /** The only step allowed to consume the current relay pool and focus baton. */
   let activeRelayStep: StepId | undefined;
+  // #924: coder persistent session across S2 → S5 rounds (declared early so
+  // Coder-Rec model advances can invalidate it before the next dispatch).
+  let coderSessionId: string | undefined;
+  let coderSessionModel: string | undefined;
 
   const applyCoderRecSelection = async (
     nonConvergingRounds: number,
@@ -1544,6 +1548,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         modelRoute = withCoderSlot(modelRoute, stickyRelayCoderSlug);
         stepSpecs = stepSpecsForRoute(modelRoute);
         routeSmokeChecked = false;
+        // #924: relay model change drops the prior coder session.
+        if (
+          coderSessionModel !== undefined &&
+          stepSpecs.S2.model !== coderSessionModel &&
+          stepSpecs.S5.model !== coderSessionModel
+        ) {
+          coderSessionId = undefined;
+          coderSessionModel = undefined;
+        }
       }
       return undefined;
     }
@@ -1558,6 +1571,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         };
         stepSpecs = stepSpecsForRoute(modelRoute);
         routeSmokeChecked = false;
+        if (
+          coderSessionModel !== undefined &&
+          stepSpecs.S2.model !== coderSessionModel &&
+          stepSpecs.S5.model !== coderSessionModel
+        ) {
+          coderSessionId = undefined;
+          coderSessionModel = undefined;
+        }
       }
       return undefined;
     }
@@ -1598,6 +1619,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       poolForModelRef(modelRoute.slots.coder),
     );
     stepSpecs = stepSpecsForRoute(modelRoute);
+    // #924: model change invalidates the prior Sandcastle session — next
+    // coder seat establishes a new session (cannot resume across providers).
+    if (
+      coderSessionModel !== undefined &&
+      stepSpecs.S2.model !== coderSessionModel &&
+      stepSpecs.S5.model !== coderSessionModel
+    ) {
+      coderSessionId = undefined;
+      coderSessionModel = undefined;
+    }
     // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
     // before its first dispatch (top-of-loop OR the S2/S5 advance path).
     routeSmokeChecked = false;
@@ -2489,6 +2520,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     refusedFindingIdentityKeysForReverify =
       rebuilt.refusedFindingIdentityKeys;
 
+    // #924: rebuild coder session continuity from the last S2/S5 ledger row so
+    // crash/re-feed still resumes the same agent session when models match.
+    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+      const entry = plan.priorLedger[i]!;
+      if (
+        (entry.step === "S2" || entry.step === "S5") &&
+        typeof entry.sessionId === "string"
+      ) {
+        coderSessionId = entry.sessionId;
+        coderSessionModel =
+          entry.step === "S5" ? stepSpecs.S5.model : stepSpecs.S2.model;
+        break;
+      }
+    }
+
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
       // re-opened. Re-feeding is a pure status report — no worktree mutation,
@@ -2804,9 +2850,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         // ADR 0030 productive steps:
         //   S2 coder implement, S3 fresh read-only review, S5 coder fix,
         //   S6 fresh read-only full-diff re-review.
-        // Normal fix rounds are fresh runStep dispatches,
-        // never resumeSession. resumeSession is only the crash/escalate resume
-        // path when `resumeFor` carries a recorded session id.
+        // #924: S2 establishes a coder session; S5 rounds resume it (same
+        // model). Crash/escalate `resumeFor` still wins when set. Reviewer
+        // seats (S3/S6) stay fresh every round.
         if (!dispatchStageLogged) {
           logDriverStage("dispatch", `step=${step}`);
           dispatchStageLogged = true;
@@ -2853,6 +2899,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
             resumeSessionId = resumeFor.sessionId;
             resumeFor = undefined;
+          } else if (
+            // #924: normal S2→S5 continuity (and multi-round S5) resumes the
+            // retained coder session when the seat model still matches.
+            (step === "S2" || step === "S5") &&
+            typeof coderSessionId === "string" &&
+            coderSessionModel !== undefined &&
+            stepSpecs[step].model === coderSessionModel
+          ) {
+            resumeSessionId = coderSessionId;
           }
           const escalationAnswerForStep =
             resumedEscalationAnswer !== undefined &&
@@ -3140,6 +3195,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 : { output: unwrapped as StepOutput, sessionId: undefined };
             output = normalized.output;
             stepSessionId = normalized.sessionId;
+            // #924: retain coder session for S5 continuity (and multi-round S5).
+            if (
+              (step === "S2" || step === "S5") &&
+              typeof stepSessionId === "string"
+            ) {
+              coderSessionId = stepSessionId;
+              coderSessionModel = stepSpecs[step].model;
+            }
             break;
           }
         } catch (err) {
