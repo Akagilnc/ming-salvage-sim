@@ -114,7 +114,7 @@ describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
       priorCmrFindingIdentityKeys: [PROTECTED_PRIOR_KEY],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(
       backend.ledger.some(
@@ -147,7 +147,7 @@ describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
       priorCmrFindingIdentityKeys: [PROTECTED_PRIOR_KEY],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(
       backend.ledger.some(
@@ -183,7 +183,7 @@ describe("#604 r4 D3 / #861/#875 — first-pass self-report is not court death",
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(backend.ledger).not.toContainEqual(
       expect.objectContaining({
@@ -212,7 +212,7 @@ describe("#604 r4 D3 / #861/#875 — first-pass self-report is not court death",
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
   });
 });

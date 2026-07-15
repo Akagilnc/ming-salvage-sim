@@ -646,8 +646,8 @@ export function codexFastRunLog(codexFast: boolean): string {
  * main, and post-merge cleanup.
  *
  * @returns the {@link FamilyRunResult} — the per-child outcomes + the merged
- *   family base HEAD + the honest run status (success / verify_failed / incomplete
- *   / escalated).
+ *   family base HEAD + the honest run status (success / stage failures /
+ *   incomplete / escalated — #922 real names, not the old verify_failed mash).
  */
 export async function runFamilyDriver(
   options: FamilyDriverOptions,

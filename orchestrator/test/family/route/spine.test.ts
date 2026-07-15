@@ -372,7 +372,9 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
       familyBase: "family/293-base",
     });
 
-    expect(result.status).toBe("escalated");
+    // #922: cleanup stage death is cleanup_failed (not the escalated umbrella).
+    expect(result.status).toBe("cleanup_failed");
+    expect(result.stopSummary.reason).toBe("cleanup_failed");
     const reason =
       result.stopSummary?.summary ??
       result.stopSummary?.repairHint ??
@@ -639,7 +641,7 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     expect(result.stopSummary.summary).toContain("#11:failed");
   });
 
-  it("verify_failed family result preserves the barrier stop summary from the ledger", async () => {
+  it("stage-failed family result preserves barrier summary text and syncs reason to the stage token (#922)", async () => {
     const singleSliceBackend = new ChildBackend();
     const familyBackend = new FakeFamilyBackend();
     const result = await runFamily({
@@ -655,18 +657,18 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
           reason: "same-module CMR finding still red",
           familyHeadAfter: "head-after-cmr",
           stopSummary: {
-            reason: "same_module_still_red",
+            reason: "cmr_failed",
             summary: "same-module CMR finding still red",
             repairHint: "continue the family CMR fix loop",
           },
         });
-        return { ok: false, ran: true };
+        return { ok: false, ran: true, failedStatus: "cmr_failed" };
       },
     });
 
-    expect(result.status).toBe("verify_failed");
+    expect(result.status).toBe("cmr_failed");
     expect(result.stopSummary).toMatchObject({
-      reason: "same_module_still_red",
+      reason: "cmr_failed",
       summary: "same-module CMR finding still red",
       repairHint: "continue the family CMR fix loop",
     });

@@ -705,7 +705,9 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       },
     });
 
-    expect(result.status).toBe("escalated");
+    // #922: open-shipped online-review hard fail is online_review_failed (real name).
+    expect(result.status).toBe("online_review_failed");
+    expect(result.stopSummary.reason).toBe("online_review_failed");
     expect(result.stopSummary).toBeDefined();
     expect(result.stopSummary?.summary).toMatch(
       /online review|inadmissible|open-shipped|did not converge/i,
