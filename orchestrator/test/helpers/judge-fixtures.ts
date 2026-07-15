@@ -6,7 +6,10 @@
 import { residualIntegratedCmrToJudgeOutput } from "../../src/family/dispatchFamilyWorker.js";
 import type { IntegratedCmrResult } from "../../src/family/types.js";
 import { findingIdentityKey } from "../../src/findings.js";
-import { liveDispositionsForFindings } from "../../src/judgeStation.js";
+import {
+  liveDispositionsForFindings,
+  liveDispositionsForOpenCount,
+} from "../../src/judgeStation.js";
 import type {
   Finding,
   JudgeFindingDisposition,
@@ -84,72 +87,6 @@ export function sampleFinding(
 export { isJudgeSeat } from "../../src/judgeStation.js";
 
 /**
- * Test-fake boundary only (#919 M2 / R7).
- *
- * - residual positive open-count → project to kind:judge continue
- * - boolean green WITHOUT findingsCount → live kind:judge converged
- *   (happy-path scripts 直出 judge at the fake boundary — not production)
- * - findingsCount:0 / residual unusable paper stays kind:cmr (**never** silent clean)
- *
- * Production residual path never invents green from boolean alone. Prefer
- * {@link judgeConverged} / {@link liveCmrJudgeGreen} for new fixtures.
- */
-export function legacyCmrScriptToWorkerOutput(
-  cmr: IntegratedCmrResult,
-): JudgeResult | (IntegratedCmrResult & { readonly kind: "cmr" }) {
-  const projected = residualIntegratedCmrToJudgeOutput(cmr);
-  if (projected !== undefined) {
-    return {
-      ...projected,
-      ...(cmr.successfulLegs !== undefined
-        ? { successfulLegs: cmr.successfulLegs }
-        : {}),
-      ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
-      ...(cmr.evidencePaths !== undefined
-        ? { evidencePaths: cmr.evidencePaths }
-        : {}),
-    } as JudgeResult;
-  }
-  // Happy path 直出 judge — only when open-count is absent. findingsCount:0
-  // falls through as residual unusable (never silent clean).
-  if (cmr.converged === true && typeof cmr.findingsCount !== "number") {
-    return liveCmrJudgeGreen({
-      ...(cmr.successfulLegs !== undefined
-        ? { successfulLegs: cmr.successfulLegs }
-        : {}),
-      ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
-      ...(cmr.evidencePaths !== undefined
-        ? { evidencePaths: cmr.evidencePaths }
-        : {}),
-    });
-  }
-  return {
-    kind: "cmr",
-    converged: cmr.converged,
-    ...(cmr.findingsCount !== undefined
-      ? { findingsCount: cmr.findingsCount }
-      : {}),
-    ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-    ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
-    ...(cmr.successfulLegs !== undefined
-      ? { successfulLegs: cmr.successfulLegs }
-      : {}),
-    ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
-    ...(cmr.claimedFixedFindingIdentityKeys !== undefined
-      ? {
-          claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys,
-        }
-      : {}),
-    ...(cmr.priorFindingDispositions !== undefined
-      ? { priorFindingDispositions: cmr.priorFindingDispositions }
-      : {}),
-    ...(cmr.evidencePaths !== undefined
-      ? { evidencePaths: cmr.evidencePaths }
-      : {}),
-  };
-}
-
-/**
  * Test-fake live green for family CMR happy path (#919 R7).
  * Prefer this over residual `kind:cmr` + `findingsCount:0` scripts.
  */
@@ -169,4 +106,153 @@ export function liveCmrJudgeGreen(opts?: {
       ? { evidencePaths: opts.evidencePaths }
       : {}),
   } as JudgeResult;
+}
+
+/**
+ * Test-fake live continue for family CMR fix-loop scripts (#919 E).
+ *
+ * Prefer this over residual `kind:cmr` + positive `findingsCount` — production
+ * never mints continue from open-count. When findings cargo is sparse but a
+ * positive count is intended, dispositions use synthetic live keys (fixture
+ * 直出 live judge envelope; not residual projection).
+ */
+export function liveCmrJudgeContinue(
+  findings: ReadonlyArray<Finding>,
+  opts?: {
+    readonly findingsCount?: number;
+    readonly successfulLegs?: ReadonlyArray<string>;
+    readonly skippedLegs?: IntegratedCmrResult["skippedLegs"];
+    readonly evidencePaths?: ReadonlyArray<string>;
+    readonly reason?: string;
+    readonly claimedFixedFindingIdentityKeys?: ReadonlyArray<string>;
+    readonly priorFindingDispositions?: IntegratedCmrResult["priorFindingDispositions"];
+    readonly findingFamilies?: IntegratedCmrResult["findingFamilies"];
+  },
+): JudgeResult {
+  const count = opts?.findingsCount;
+  const base =
+    findings.length > 0
+      ? judgeContinue(findings)
+      : count !== undefined && count > 0
+        ? ({
+            kind: "judge",
+            status: "continue",
+            findingDispositions: liveDispositionsForOpenCount(count, []),
+            findings: [],
+          } as JudgeResult)
+        : judgeContinue([]);
+  return {
+    ...base,
+    ...(opts?.successfulLegs !== undefined
+      ? { successfulLegs: opts.successfulLegs }
+      : {}),
+    ...(opts?.skippedLegs !== undefined ? { skippedLegs: opts.skippedLegs } : {}),
+    ...(opts?.evidencePaths !== undefined
+      ? { evidencePaths: opts.evidencePaths }
+      : {}),
+    ...(opts?.reason !== undefined ? { reason: opts.reason } : {}),
+    ...(opts?.claimedFixedFindingIdentityKeys !== undefined
+      ? {
+          claimedFixedFindingIdentityKeys: opts.claimedFixedFindingIdentityKeys,
+        }
+      : {}),
+    ...(opts?.priorFindingDispositions !== undefined
+      ? { priorFindingDispositions: opts.priorFindingDispositions }
+      : {}),
+    ...(opts?.findingFamilies !== undefined
+      ? { findingFamilies: opts.findingFamilies }
+      : {}),
+  } as JudgeResult;
+}
+
+/**
+ * Test-fake boundary only (#919 E / R7).
+ *
+ * Scripts may still *declare* positive findingsCount as an intent to continue;
+ * this helper mints **live** `kind:judge` continue at the fake boundary
+ * (not production residual projection — {@link residualIntegratedCmrToJudgeOutput}
+ * always returns undefined).
+ *
+ * - findingsCount > 0 → live kind:judge continue (from findings cargo / synthetic)
+ * - findingsCount === 0 → residual kind:cmr unusable (never silent clean)
+ * - boolean green WITHOUT findingsCount → live kind:judge converged
+ *
+ * Prefer {@link judgeContinue} / {@link liveCmrJudgeGreen} for new fixtures.
+ * Production residual path never invents green/continue from count or boolean.
+ */
+export function legacyCmrScriptToWorkerOutput(
+  cmr: IntegratedCmrResult,
+): JudgeResult | (IntegratedCmrResult & { readonly kind: "cmr" }) {
+  // Production residual projector is a no-op for family (never mint continue).
+  void residualIntegratedCmrToJudgeOutput(cmr);
+
+  // Script intent: positive open-count → live judge continue (fake boundary only).
+  if (
+    typeof cmr.findingsCount === "number" &&
+    Number.isSafeInteger(cmr.findingsCount) &&
+    cmr.findingsCount > 0
+  ) {
+    return liveCmrJudgeContinue(cmr.findings ?? [], {
+      findingsCount: cmr.findingsCount,
+      ...(cmr.successfulLegs !== undefined
+        ? { successfulLegs: cmr.successfulLegs }
+        : {}),
+      ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
+      ...(cmr.evidencePaths !== undefined
+        ? { evidencePaths: cmr.evidencePaths }
+        : {}),
+      ...(cmr.claimedFixedFindingIdentityKeys !== undefined
+        ? {
+            claimedFixedFindingIdentityKeys:
+              cmr.claimedFixedFindingIdentityKeys,
+          }
+        : {}),
+      ...(cmr.priorFindingDispositions !== undefined
+        ? { priorFindingDispositions: cmr.priorFindingDispositions }
+        : {}),
+      ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
+      ...(cmr.findingFamilies !== undefined
+        ? { findingFamilies: cmr.findingFamilies }
+        : {}),
+    });
+  }
+
+  // Happy path 直出 judge — only when open-count is absent.
+  if (cmr.converged === true && typeof cmr.findingsCount !== "number") {
+    return liveCmrJudgeGreen({
+      ...(cmr.successfulLegs !== undefined
+        ? { successfulLegs: cmr.successfulLegs }
+        : {}),
+      ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
+      ...(cmr.evidencePaths !== undefined
+        ? { evidencePaths: cmr.evidencePaths }
+        : {}),
+    });
+  }
+
+  // findingsCount:0 / missing-non-green residual stays kind:cmr unusable.
+  return {
+    kind: "cmr",
+    converged: cmr.converged,
+    ...(cmr.findingsCount !== undefined
+      ? { findingsCount: cmr.findingsCount }
+      : {}),
+    ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
+    ...(cmr.successfulLegs !== undefined
+      ? { successfulLegs: cmr.successfulLegs }
+      : {}),
+    ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
+    ...(cmr.evidencePaths !== undefined
+      ? { evidencePaths: cmr.evidencePaths }
+      : {}),
+    ...(cmr.claimedFixedFindingIdentityKeys !== undefined
+      ? {
+          claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys,
+        }
+      : {}),
+    ...(cmr.priorFindingDispositions !== undefined
+      ? { priorFindingDispositions: cmr.priorFindingDispositions }
+      : {}),
+    ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
+  };
 }

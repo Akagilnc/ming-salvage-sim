@@ -35,6 +35,7 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
+import { judgeContinue, liveCmrJudgeContinue } from "../../helpers/judge-fixtures.js";
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -378,17 +379,13 @@ class ReviewFixRereviewBackend implements FamilyBackend {
       if (ctx.cmrPass === "completeness" && this.completenessReviewRound++ === 0) {
         return {
           kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: false,
-            findingsCount: 1,
+          output: liveCmrJudgeContinue([BLOCKING_FAMILY_CMR_FINDING], {
             reason: "blocking family CMR finding requires coder-fix",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [],
             priorFindingDispositions: [],
             ...CMR_EVIDENCE,
-            findings: [BLOCKING_FAMILY_CMR_FINDING],
-          },
+          }),
         };
       }
       return {
@@ -575,18 +572,14 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
       if (ctx.cmrPass === "completeness" && this.completenessReviewRound++ === 0) {
         return {
           kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: false,
-            findingsCount: 1,
+          output: liveCmrJudgeContinue([this.blockingFinding], {
             reason:
               "reviewer content-labels the blocker as owning-issue-still-red",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [],
             priorFindingDispositions: [],
             ...CMR_EVIDENCE,
-            findings: [this.blockingFinding],
-          },
+          }),
         };
       }
       return {
@@ -689,17 +682,13 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
       if (ctx.cmrPass === "correctness" && this.correctnessReviewRound++ === 0) {
         return {
           kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: false,
-            findingsCount: 1,
+          output: liveCmrJudgeContinue([BLOCKING_FAMILY_CMR_FINDING], {
             reason: "correctness pass found a fixable family CMR finding",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [],
             priorFindingDispositions: [],
             ...CMR_EVIDENCE,
-            findings: [BLOCKING_FAMILY_CMR_FINDING],
-          },
+          }),
         };
       }
       return {
@@ -795,26 +784,19 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
         if (reviewRound === 0) {
           return {
             kind: "completed",
-            output: {
-              kind: "cmr",
-              converged: false,
-              findingsCount: 1,
+            output: liveCmrJudgeContinue([BLOCKING_FAMILY_CMR_FINDING], {
               reason: "first blocking family CMR finding requires coder-fix",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: [],
               priorFindingDispositions: [],
               ...CMR_EVIDENCE,
-              findings: [BLOCKING_FAMILY_CMR_FINDING],
-            },
+            }),
           };
         }
         if (reviewRound === 1) {
           return {
             kind: "completed",
-            output: {
-              kind: "cmr",
-              converged: false,
-              findingsCount: 1,
+            output: liveCmrJudgeContinue([SECOND_BLOCKING_FAMILY_CMR_FINDING], {
               reason:
                 "fresh full-diff re-review found a new same-module blocker",
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
@@ -827,8 +809,7 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
                 },
               ],
               ...CMR_EVIDENCE,
-              findings: [SECOND_BLOCKING_FAMILY_CMR_FINDING],
-            },
+            }),
           };
         }
         return {
@@ -939,10 +920,7 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
           const closedPriorKeys = EXCESSIVE_CMR_FIX_KEYS.slice(0, reviewRound);
           return {
             kind: "completed",
-            output: {
-              kind: "cmr",
-              converged: false,
-              findingsCount: 1,
+            output: liveCmrJudgeContinue([EXCESSIVE_CMR_FIX_FINDINGS[reviewRound]!], {
               reason: `fresh full-diff re-review found blocker ${reviewRound + 1}`,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: closedPriorKeys,
@@ -952,8 +930,7 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
                 reason: "prior coder-fix stayed closed",
               })),
               ...CMR_EVIDENCE,
-              findings: [EXCESSIVE_CMR_FIX_FINDINGS[reviewRound]!],
-            },
+            }),
           };
         }
       }
@@ -1079,10 +1056,7 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
           const closedPriorKeys = DOGFOOD_272_KEYS.slice(0, reviewRound);
           return {
             kind: "completed",
-            output: {
-              kind: "cmr",
-              converged: false,
-              findingsCount: 1,
+            output: liveCmrJudgeContinue([DOGFOOD_272_FINDINGS[reviewRound]!], {
               reason: `dogfood #272 fresh re-review still has blocker round ${reviewRound + 1}`,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: closedPriorKeys,
@@ -1092,8 +1066,7 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
                 reason: "prior coder-fix stayed closed",
               })),
               ...CMR_EVIDENCE,
-              findings: [DOGFOOD_272_FINDINGS[reviewRound]!],
-            },
+            }),
           };
         }
       }
@@ -1214,10 +1187,7 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
           const closedPriorKeys = ESCALATE_NONCONV_KEYS.slice(0, reviewRound);
           return {
             kind: "completed",
-            output: {
-              kind: "cmr",
-              converged: false,
-              findingsCount: 1,
+            output: liveCmrJudgeContinue([ESCALATE_NONCONV_FINDINGS[reviewRound]!], {
               reason: `non-converging blocker round ${reviewRound + 1}`,
               successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
               claimedFixedFindingIdentityKeys: closedPriorKeys,
@@ -1227,8 +1197,7 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
                 reason: "prior coder-fix committed",
               })),
               ...CMR_EVIDENCE,
-              findings: [ESCALATE_NONCONV_FINDINGS[reviewRound]!],
-            },
+            }),
           };
         }
         // The fresh reviewer has now seen the loop fail to converge across the
@@ -2456,17 +2425,13 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
     const backend = new SchedulerFamilyBackend({
       cmr: () => ({
         kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: false,
-          findingsCount: 2,
+        output: liveCmrJudgeContinue([suppressed, blocker], {
           reason: "has blocking findings",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           ...CMR_EVIDENCE,
-          findings: [suppressed, blocker],
-        },
+        }),
       }),
     });
 
@@ -2769,19 +2734,19 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
   it.each([
     ["missing findings", undefined],
     ["empty findings", [] as const],
-  ])("routes reviewer-declared count 3 with %s through coder-fix with raw artifacts", async (_label, findings) => {
+  ])("routes live judge continue (synthetic open keys) with %s through coder-fix with raw artifacts", async (_label, findings) => {
     const backend = new CountChannelFixBackend({
       kind: "completed",
       sessionId: "cmr-reviewer-count-3-sparse-cargo",
-      output: {
-        kind: "cmr",
-        converged: false,
-        reason: "reviewer declared three open findings",
-        findingsCount: 3,
-        ...(findings !== undefined ? { findings } : {}),
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-        ...CMR_EVIDENCE,
-      },
+      output: liveCmrJudgeContinue(
+        findings !== undefined ? [...findings] : [],
+        {
+          findingsCount: 3,
+          reason: "reviewer declared three open findings",
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          ...CMR_EVIDENCE,
+        },
+      ),
     });
 
     const result = await runVerifyCmr({
@@ -2842,15 +2807,14 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     const backend = new CountChannelFixBackend({
       kind: "completed",
       sessionId: "cmr-partial-cargo-session",
-      output: {
-        kind: "cmr",
-        converged: false,
-        reason: "reviewer reports two structured findings",
-        findingsCount: 2,
-        findings: [BLOCKING_FAMILY_CMR_FINDING, secondFinding],
-        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-        ...CMR_EVIDENCE,
-      },
+      output: liveCmrJudgeContinue(
+        [BLOCKING_FAMILY_CMR_FINDING, secondFinding],
+        {
+          reason: "reviewer reports two structured findings",
+          successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+          ...CMR_EVIDENCE,
+        },
+      ),
     });
 
     const result = await runVerifyCmr({
@@ -2928,14 +2892,10 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     const backend = new CountChannelFixBackend(
       {
         kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: false,
-          findingsCount: 1,
-          findings: [BLOCKING_FAMILY_CMR_FINDING],
+        output: liveCmrJudgeContinue([BLOCKING_FAMILY_CMR_FINDING], {
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
-        },
+        }),
       },
       {
         kind: "completed",

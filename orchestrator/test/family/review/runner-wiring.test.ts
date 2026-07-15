@@ -17,6 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { liveCmrJudgeContinue } from "../../helpers/judge-fixtures.js";
 import {
   pendingPriorCmrFindingIdentityKeysByPass,
   runFamily,
@@ -1169,17 +1170,13 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
 
     const blockingCmrOutput: WorkerResult = {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: false,
-        findingsCount: 1,
+      output: liveCmrJudgeContinue([blocker], {
         reason: "family CMR found a blocking finding",
         successfulLegs: [...CMR_LEGS],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         evidencePaths: ["cmr/review-summary.json"],
-        findings: [blocker],
-      },
+      }),
     };
 
     it("persists only finding identity keys, never content-derived dispositions or the fat classification", async () => {

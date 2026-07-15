@@ -286,13 +286,15 @@ describe("#930 pure family judge closure", () => {
     expect(outcome.findingFamilies?.[0]?.family).toBe("open-pattern");
   });
 
-  it("residual open-count: positive → continue; 0/missing/legacy-green → undefined (never silent clean)", () => {
+  it("residual open-count: any findingsCount → undefined (never mint continue from count)", () => {
+    // #919 E / ADR 0131: family residual never projects open-count → continue.
+    // Official continue is typed kind:judge with live identity keys only.
     expect(
       residualIntegratedCmrToJudgeOutput({
         findingsCount: 2,
         findings: [FINDING],
-      })?.status,
-    ).toBe("continue");
+      }),
+    ).toBeUndefined();
     expect(
       residualIntegratedCmrToJudgeOutput({
         findingsCount: 0,
@@ -300,7 +302,7 @@ describe("#930 pure family judge closure", () => {
         converged: true,
       }),
     ).toBeUndefined();
-    // #919 M2: legacy converged:true without open-count is NOT silent clean —
+    // legacy converged:true without open-count is NOT silent clean —
     // official green is typed kind:"judge" status:"converged" only.
     expect(
       residualIntegratedCmrToJudgeOutput({ converged: true }),
@@ -311,6 +313,36 @@ describe("#930 pure family judge closure", () => {
         findings: [FINDING],
       }),
     ).toBeUndefined();
+  });
+
+  it("residual kind:cmr positive findingsCount is unusable — no coder-fix on count-minted continue", async () => {
+    // #919 E: residual paper with positive open-count must fail-loud, not
+    // dispatch family coder-fix as an open-count second closer.
+    let opens = 0;
+    const backend = new FamilyJudgeBackend({
+      completeness: () => {
+        opens += 1;
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: false,
+            findingsCount: 2,
+            findings: [FINDING],
+            successfulLegs: ["opus"],
+          },
+        };
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-residual-positive",
+      familyBackend: backend,
+    });
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ failedStatus: "cmr_failed" });
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
+    expect(opens).toBe(1);
   });
 
   it("S2: prior ledger row shape matches single-slice priorJudgeVerdicts", () => {

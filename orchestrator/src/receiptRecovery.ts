@@ -133,10 +133,9 @@ export function workerReceiptOutput(
  * Optional decision-gate Output.object on the dedicated {@link DECISION_GATE_TAG}.
  * Cargo tags stay untyped (ADR 0131 / #899).
  *
- * Single-slice coder seats and family coder-fix no longer use this (#924 /
- * #919 M1) — they attach the T2 station receipt schema via
- * {@link coderReceiptOutput}. Residual dual-channel seats (merger / review-loop
- * / ship) still call this.
+ * Coder / judge / family ship no longer use this (#924 / #919 M1 / #919 D) —
+ * they attach T2 station receipt schemas. Residual dual-channel seats
+ * (merger / review-loop) still call this.
  */
 export function decisionGateOutput(): sc.OutputDefinition {
   return workerReceiptOutput(DECISION_GATE_TAG, decisionGateSignalSchema);
@@ -150,6 +149,18 @@ export function decisionGateOutput(): sc.OutputDefinition {
 export function coderReceiptOutput(
   schema: z.ZodType,
   tag: string = "coder",
+): sc.OutputDefinition {
+  return workerReceiptOutput(tag, schema);
+}
+
+/**
+ * #919 D — family ship station receipt Output.object.
+ * Schema lives in {@link shipStationReceiptSchema} (T2 / stationReceiptContracts);
+ * this is only the Sandcastle attach helper (tag + maxRetries).
+ */
+export function shipReceiptOutput(
+  schema: z.ZodType,
+  tag: string = "ship",
 ): sc.OutputDefinition {
   return workerReceiptOutput(tag, schema);
 }
