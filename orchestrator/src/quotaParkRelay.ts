@@ -138,10 +138,6 @@ export async function parkOrRelayQuotaWall(opts: {
   readonly currentPool: BillingPoolId;
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
-  readonly reviewerSlugs?: ReadonlyArray<string>;
-  readonly reviewerSlugsForCandidate?: (
-    candidate: CoderRosterEntry,
-  ) => ReadonlyArray<string>;
   readonly parkThresholdMs?: number;
   readonly now: Date;
   readonly state_summary?: string;
@@ -180,8 +176,6 @@ export async function parkOrRelayQuotaWall(opts: {
     currentPool: opts.currentPool,
     rosterOrder: opts.rosterOrder,
     pools: opts.pools,
-    reviewerSlugs: opts.reviewerSlugs,
-    reviewerSlugsForCandidate: opts.reviewerSlugsForCandidate,
     state_summary:
       opts.state_summary ??
       `quota wall on ${opts.currentPool}; uncommitted drift preserved`,

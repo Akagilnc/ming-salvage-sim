@@ -2,14 +2,13 @@
  * #767 — design-time Coder-Rec roster (查表制).
  * #906 — parse issue body via real markdown AST first; unknown models / broken
  * marks fail closed (no silent default fallthrough).
+ * #920 — pool isolation removed (ADR 0132 D5): same model may occupy coder and
+ * review / cmrReview seats; only remaining isolation is fresh context + role prompt.
  *
  * Designers mark each slice with a `Coder-Rec: X → Y → Z` fallback order.
  * The orchestrator only READS that marking: markdown-strip → parse → filter to
  * this versioned roster → dispatch the first valid entry → advance after N
  * non-converging review/fix rounds. No runtime adaptive state machine.
- *
- * Pool-separation hard rule: a coder roster entry must not also appear as an
- * active reviewer leg (same slug). Prefer the next roster-valid entry instead.
  */
 
 import type { Content, Root } from "mdast";
@@ -50,8 +49,8 @@ export const CODER_ROSTER_VERSION = "2026-07-11.1";
  * `docs/CODER_ROSTER.md` and #424 bench updates.
  *
  * #789 — Claude pool entries (`sonnet-5` / `haiku-4.5`) are grok-exhaustion
- * backups. Their runnable slugs (`sonnet` / `haiku`) differ from the cmrReview
- * Claude leg (`opus`), so they do not trip pool-separation against normal CMR.
+ * backups (runnable slugs `sonnet` / `haiku`). #920: same-model cross-role is
+ * legal, so slug overlap with cmrReview / reviewer seats is not filtered.
  */
 export const CODER_ROSTER: ReadonlyArray<CoderRosterEntry> = [
   {
@@ -110,9 +109,9 @@ export const CODER_REC_FALLBACK_AFTER_ROUNDS = 2;
  * #899 (2026-07-15): the ledger carries a `worker_monitor_spawned` EVENT row
  * AND a completion row per S6 round (plus other bookkeeping event rows with
  * step ids). Counting raw `step === "S6"` rows doubled one real round into
- * two, prematurely hit {@link CODER_REC_FALLBACK_AFTER_ROUNDS}, advanced the
- * roster onto the run's own reviewer slug, and pool separation then exhausted
- * the roster — killing the run. Only event-less rows are completed rounds.
+ * two and prematurely hit {@link CODER_REC_FALLBACK_AFTER_ROUNDS}. Only
+ * event-less rows are completed rounds. (#920 removed the follow-on
+ * pool-separation exhaust path that turned that miscount into a hard kill.)
  */
 export function completedS6RoundsFromLedger(
   entries: ReadonlyArray<{ readonly step?: string; readonly event?: string }>,
@@ -281,27 +280,8 @@ export function resolveCoderRecOrder(
 }
 
 export interface SelectCoderRecOptions {
-  /** Active reviewer / CMR leg slugs — used for pool-separation filtering. */
-  readonly reviewerSlugs?: ReadonlyArray<string> | ReadonlySet<string>;
-  /**
-   * Reviewer / CMR slugs on the route that would result from this candidate.
-   * A candidate may intentionally replace the per-slice reviewer before the
-   * pool-separation invariant is checked.
-   */
-  readonly reviewerSlugsForCandidate?: (
-    candidate: CoderRosterEntry,
-  ) => ReadonlyArray<string> | ReadonlySet<string>;
   /** Override the default fallback threshold (tests). */
   readonly fallbackAfterRounds?: number;
-}
-
-/**
- * Owner-ratified exception: a sol-produced slice is reviewed by Opus. This
- * preserves a fresh reviewer at the same checkpoint while allowing sol to win
- * its Coder-Rec position.
- */
-export function reviewerOverrideForCoderSlug(coderSlug: string): string | undefined {
-  return lookupCoderRosterEntry(coderSlug)?.id === "sol@med" ? "opus" : undefined;
 }
 
 function indexForRounds(
@@ -314,36 +294,16 @@ function indexForRounds(
   const steps = Math.floor(
     Math.max(0, nonConvergingRounds) / fallbackAfterRounds,
   );
+  // Clamp to the last seat — single-entry and exhausted multi-entry rosters
+  // stay put forever (#920: never throw a "roster exhausted" kill path).
   return Math.min(steps, orderLength - 1);
-}
-
-/**
- * Hard rule: a coder roster entry must not double as an active reviewer leg
- * (same runnable slug). Returns a human-readable violation, or undefined if ok.
- */
-export function poolSeparationViolation(
-  coder: CoderRosterEntry,
-  reviewerSlugs: ReadonlyArray<string> | ReadonlySet<string>,
-): string | undefined {
-  const reviewer: ReadonlySet<string> = reviewerSlugs instanceof Set
-    ? reviewerSlugs
-    : new Set(
-        (reviewerSlugs as ReadonlyArray<string>)
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0),
-      );
-  if (!reviewer.has(coder.slug)) return undefined;
-  return (
-    `coder roster entry "${coder.id}" (slug=${coder.slug}) must not double as ` +
-    `a reviewer leg; pick a different Coder-Rec entry or change the reviewer route`
-  );
 }
 
 /**
  * Select the coder for the current non-converging-round count.
  * Advances one roster step every {@link CODER_REC_FALLBACK_AFTER_ROUNDS} rounds.
- * Skips entries that violate pool separation. If every remaining entry
- * collides, fails closed rather than dispatching a self-reviewing pair.
+ * Past the end of the order (or on a single-entry roster) the last/top seat
+ * stays in place — never exhausts (#920 / ADR 0132 D5).
  */
 export function selectCoderRecEntry(
   order: ReadonlyArray<CoderRosterEntry>,
@@ -357,49 +317,6 @@ export function selectCoderRecEntry(
   }
   const threshold =
     opts.fallbackAfterRounds ?? CODER_REC_FALLBACK_AFTER_ROUNDS;
-  const start = indexForRounds(nonConvergingRounds, order.length, threshold);
-  const reviewerSlugs = new Set(
-    [...(opts.reviewerSlugs ?? [])]
-      .map((slug) => slug.trim())
-      .filter((slug) => slug.length > 0),
-  );
-
-  for (let i = start; i < order.length; i++) {
-    const candidate = order[i]!;
-    const candidateReviewerSlugs =
-      opts.reviewerSlugsForCandidate?.(candidate) ?? reviewerSlugs;
-    if (poolSeparationViolation(candidate, candidateReviewerSlugs) === undefined) {
-      return candidate;
-    }
-  }
-  throw new Error(
-    "no pool-separated coder roster entry available; every remaining candidate " +
-      "would share an active reviewer checkpoint",
-  );
-}
-
-/**
- * Active reviewer / CMR-leg slugs from a resolved model route.
- * Includes per-slice reviewer, CMR gate slots (completeness / correctness /
- * verify), and cmrReview collection legs — coder roster entries must not
- * double as any of these (pool-separation hard rule).
- */
-export function reviewerSlugsFromRoute(route: {
-  readonly slots: {
-    readonly reviewer: string;
-    readonly cmrCompleteness: string;
-    readonly cmrCorrectness: string;
-    readonly verify: string;
-  };
-  readonly legCollections: {
-    readonly cmrReview: ReadonlyArray<{ readonly slug: string }>;
-  };
-}): string[] {
-  return [
-    route.slots.reviewer,
-    route.slots.cmrCompleteness,
-    route.slots.cmrCorrectness,
-    route.slots.verify,
-    ...route.legCollections.cmrReview.map((leg) => leg.slug),
-  ];
+  const index = indexForRounds(nonConvergingRounds, order.length, threshold);
+  return order[index]!;
 }

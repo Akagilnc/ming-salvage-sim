@@ -19,8 +19,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CODER_ROSTER,
   lookupCoderRosterEntry,
-  poolSeparationViolation,
   resolveCoderRecOrder,
+  selectCoderRecEntry,
 } from "../../src/coderRoster.js";
 import { modelIdForSlug } from "../../src/modelRegistry.js";
 import { resolveRouteModels } from "../../src/modelRoutes.js";
@@ -325,7 +325,7 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
     });
   });
 
-  it("preserves pool-separation filter (skip reviewer-colliding slug)", () => {
+  it("#920: roster relay no longer skips a slug that also sits on review seats", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
     );
@@ -337,10 +337,10 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
         deadPool("grok-build", ["grok-4.5"]),
         livePool("codex-5h", ["terra@med", "luna@med"]),
       ],
-      reviewerSlugs: ["gpt-5.6-terra"],
     });
-    expect(next?.modelId).toBe("luna@med");
-    expect(next?.slug).toBe("gpt-5.6-luna");
+    // Pre-#920 reviewerSlugs: ["gpt-5.6-terra"] would skip terra → luna.
+    expect(next?.modelId).toBe("terra@med");
+    expect(next?.slug).toBe("gpt-5.6-terra");
   });
 
   it("returns undefined when no live baton exists anywhere", () => {
@@ -393,8 +393,6 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
         deadPool("codex-5h", DEFAULT_POOL_MODELS["codex-5h"]),
         livePool("claude", DEFAULT_POOL_MODELS.claude),
       ],
-      // normal CMR Claude leg is opus — distinct slug from sonnet/haiku.
-      reviewerSlugs: ["opus", "gpt-5.6-sol", "agy"],
     });
     expect(next).toEqual({
       modelId: "haiku-4.5",
@@ -429,8 +427,6 @@ describe("#686 next baton = #767 roster + pool-orthogonal lookup (ADR 0126)", ()
         deadPool("codex-5h", DEFAULT_POOL_MODELS["codex-5h"]),
         livePool("claude", DEFAULT_POOL_MODELS.claude),
       ],
-      // normal CMR Claude leg is opus — distinct slug from sonnet/haiku.
-      reviewerSlugs: ["opus", "gpt-5.6-sol", "agy"],
     });
     expect(next).toEqual({
       modelId: "sonnet-5",
@@ -526,7 +522,7 @@ describe("#787 capacity relay", () => {
     expect(handoff.ledgerEntry?.trigger).toBe("capacity");
   });
 
-  it("uses each capacity candidate's landed-route conflict set", () => {
+  it("#920: capacity relay picks the next same-pool roster entry without conflict filter", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: terra@med → luna@med",
     );
@@ -539,16 +535,15 @@ describe("#787 capacity relay", () => {
       },
     ];
 
+    // Pre-#920 a reviewerSlugsForCandidate collision could veto luna entirely.
     expect(
       selectCapacityRelayBaton({
         currentModelId: "terra@med",
         currentPool: "codex-5h",
         rosterOrder: order,
         pools,
-        reviewerSlugsForCandidate: (candidate) =>
-          candidate.id === "luna@med" ? ["gpt-5.6-luna"] : [],
       }),
-    ).toBeUndefined();
+    ).toMatchObject({ modelId: "luna@med", pool: "codex-5h" });
   });
 
   it("recognizes only model-capacity fingerprints and leaves quota plus ordinary 5xx to retry", () => {
@@ -1622,7 +1617,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     }
   });
 
-  it("S3 reviewer quota relay rejects Terra when Terra already owns the coder slot", async () => {
+  it("#920: S3 reviewer quota relay admits Terra even when Terra already owns the coder slot", async () => {
     tmp = mkdtempSync(join(tmpdir(), "relay-686-sol-reviewer-wall-"));
     const worktree: WorktreeHandle = {
       branch: "feat/686-sol-reviewer-wall",
@@ -1681,7 +1676,14 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
         }
         if (spec.kind === "reviewer" && spec.id === "S3") {
           reviewerModels.push(spec.model);
-          throw quotaWaitError("S3", resetAt);
+          // First S3 attempt (sol) walls; after baton→terra, terra completes.
+          if (spec.model === "gpt-5.6-sol") {
+            throw quotaWaitError("S3", resetAt);
+          }
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          };
         }
         const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
         if (skeleton !== undefined) return skeleton;
@@ -1720,16 +1722,16 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
         now: () => NOW,
       });
 
-      expect(result.status).toBe("escalate");
+      // Pre-#920 pool separation vetoed Terra as reviewer while it owned coder;
+      // #920 same-model cross-role is legal → S3 baton handoff lands Terra.
       expect(result.stepLedger).toContainEqual(expect.objectContaining({
-        event: "quota_wait_for_reset",
-        step: "S3",
-      }));
-      expect(result.stepLedger).not.toContainEqual(expect.objectContaining({
         event: "relay_baton_handoff",
         step: "S3",
+        toModelId: "terra@med",
       }));
-      expect(reviewerModels).toEqual(["gpt-5.6-sol"]);
+      expect(reviewerModels).toEqual(
+        expect.arrayContaining(["gpt-5.6-sol", "gpt-5.6-terra"]),
+      );
     } finally {
       if (previousRoute === undefined) delete process.env.ORCHESTRATOR_ROUTE;
       else process.env.ORCHESTRATOR_ROUTE = previousRoute;
@@ -1872,11 +1874,11 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
   });
 });
 
-describe("#686 reviewer relay candidate conflict set", () => {
+describe("#920 same-model cross-role is legal (ex-#686 conflict filter)", () => {
   const sol = lookupCoderRosterEntry("sol@med")!;
 
   it.each(["S3", "S6"] as const)(
-    "%s rejects sol when any complete-route CMR or verify leg shares its checkpoint",
+    "%s still reports peer slots for telemetry, but selection is not gated on them",
     (wallStep) => {
       const route = resolveRouteModels("normal", {
         cmrCompleteness: sol.slug,
@@ -1886,9 +1888,9 @@ describe("#686 reviewer relay candidate conflict set", () => {
         cmrReview: ["opus", "gpt-5.6-sol", "agy"],
       });
 
-      const conflicts = relayCandidateConflictSlugs(route, sol, wallStep);
+      const peers = relayCandidateConflictSlugs(route, sol, wallStep);
 
-      expect(conflicts).toEqual(
+      expect(peers).toEqual(
         expect.arrayContaining([
           route.slots.coder,
           route.slots.cmrCompleteness,
@@ -1897,9 +1899,22 @@ describe("#686 reviewer relay candidate conflict set", () => {
           ...route.legCollections.cmrReview.map((leg) => leg.slug),
         ]),
       );
-      expect(poolSeparationViolation(sol, conflicts)).toMatch(
-        /must not double as.*reviewer/i,
-      );
+      // #920: peer overlap is informational only — roster selection must still
+      // admit sol even when every judging seat shares its slug.
+      expect(selectCoderRecEntry([sol], 0).id).toBe("sol@med");
+      expect(
+        selectNextRelayBaton({
+          currentModelId: "grok-4.5",
+          currentPool: "grok-build",
+          rosterOrder: resolveCoderRecOrder(
+            "Coder-Rec: grok-4.5 → sol@med",
+          ),
+          pools: [
+            { id: "grok-build", status: "dead", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["grok-4.5"] },
+            { id: "codex-5h", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["sol@med"] },
+          ],
+        })?.modelId,
+      ).toBe("sol@med");
     },
   );
 
@@ -1907,7 +1922,7 @@ describe("#686 reviewer relay candidate conflict set", () => {
     "sol@med",
     "grok-4.5",
   ] as const)(
-    "allows %s when its only matching slug is the reviewer slot it replaces",
+    "peer-slug list excludes only the slot %s is replacing (S3/S6 reviewer)",
     (candidateId) => {
       const candidate = lookupCoderRosterEntry(candidateId)!;
       const route = resolveRouteModels("normal", {
@@ -1920,9 +1935,8 @@ describe("#686 reviewer relay candidate conflict set", () => {
       });
 
       for (const wallStep of ["S3", "S6"] as const) {
-        const conflicts = relayCandidateConflictSlugs(route, candidate, wallStep);
-        expect(conflicts).not.toContain(candidate.slug);
-        expect(poolSeparationViolation(candidate, conflicts)).toBeUndefined();
+        const peers = relayCandidateConflictSlugs(route, candidate, wallStep);
+        expect(peers).not.toContain(candidate.slug);
       }
     },
   );
