@@ -644,7 +644,7 @@ _Avoid_: 第二套 durable store、scene locator 真源、step ledger(那是单�
 _Avoid_: 把 answer 当新的需求 brief、由 family ledger 重复持久化、让 runner 解释答案或覆盖固定控制字段、把进程失败当可自动恢复
 
 **路线 / route**:
-一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定可执行席位。第一版以「接入渠道 + 模型」识别席位，例如 xAI/Grok 与 Cursor/Grok 是两个独立候选，不归并成“同一模型的两个池”。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。切路线 = 拨一个总开关、整套翻；任一 seat 可被单独 override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死)，故没有 seat 能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(0031, 0134)
+一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定可执行席位。第一版以「接入渠道 + 模型」识别席位，例如 xAI/Grok 与 Cursor/Grok 是两个独立候选，不归并成“同一模型的两个池”。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。operator 手动选择 base route，并可单独 override 任一 seat；runtime preflight、quota 与 candidate traversal 只读紧邻的 Policy Resolution、#870 与 ADR 0134。(0031, 0134)
 _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
 
 **策略解析 / Policy Resolution**:

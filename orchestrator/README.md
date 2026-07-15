@@ -38,31 +38,21 @@ methods live in versioned souls/skills/actions. Read live #869 for the target
 delivery topology; its Testing Decisions identify the implementation tickets
 that will land the executable pins.
 
-Corollaries are locked by positive routing tests under `test/constitution/`,
-not by forbidden-source-text sweeps. In particular see
+The canonical Action contract will be landed by #899: typed traffic signals use
+Sandcastle structured-output retry inside the owning Action, and retry
+exhaustion makes that Action exit non-zero. The Runner sees only the exit code;
+it neither judges the bad envelope nor hands raw artifacts to a fixer.
+
+**Current legacy exception, not constitution:** until #899 and #898 remove the
+old path, `verifyCmr` and the review fix loops can still hand raw reviewer
+artifact pointers to a fixer. This records current operator truth only; it is
+not an ADR 0131 corollary or a basis for future implementation, and must not be
+copied or expanded.
+
+Canonical corollaries are locked by positive routing tests under
+`test/constitution/`, not by forbidden-source-text sweeps. In particular see
 `reviewer-open-count.test.ts`, `review-closure-behavior.test.ts`, and
 `worker-reporting.test.ts`:
-
-- A worker whose **envelope cannot be extracted** (no kind, no count,
-  undecodable output) is never judged, never mechanically redispatched, and
-  never dressed up as a process failure — and the runner never presses the
-  decision gate for it either. Deeming a paper "unusable" is itself a judgment
-  the runner has no authority to make; the decision gate only relays a gate a
-  worker itself pressed, and a runner pressing it is a forged doorbell.
-  Disposition splits by the worker's source of truth. **Reviewer/verify**
-  (their output IS the paper): the runner makes zero judgment and zero park and
-  hands the raw artifact pointers down the fixed topology to the fixer, who
-  reads what it can, bounces the rest back to the reviewer, or raises.
-  **Coder/ship**: exit-zero completion proceeds to the next worker; the runner
-  neither reads the receipt nor queries git/host to adjudicate it. The next
-  reviewer judges an empty or incorrect delivery (bounce or raise).
-  Only repeated process crashes (#598 — no work, no paper to judge) still take
-  the infra park. A readable-but-wrong submission is likewise the next wisdom's
-  problem (the fixer bounces it back to the reviewer or raises).
-  `synthesizedFailure` may only ever be derived from channel-1 process facts
-  (the git/host external-truth source was revoked 2026-07-13: three channels,
-  no exceptions), and a missing reviewer result is never synthesized into
-  success (`findings: []` / `converged: true`) — nor into failure.
 - **The worker's OK is OK — no git verdicts.** A coder or ship worker's
   exit-zero completion routes forward as-is; self-verification (real commit /
   PR exists) and idempotency live in the worker soul, an empty diff is judged
