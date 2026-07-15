@@ -2362,7 +2362,9 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
+    // #919 R8: pass id so isJudgeSeat (S3/S6 step/id only) is correct for family seats.
     const soul = soulForStep({
+      id: spec.id,
       role: spec.role,
       soul: spec.soul,
     });

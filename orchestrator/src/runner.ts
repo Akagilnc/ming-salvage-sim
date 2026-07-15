@@ -1170,9 +1170,10 @@ export function stepSpecsForRoute(
     },
     S3: {
       id: "S3",
-      // #925 / #919 S2: persistent verify judge. Seat identity is role+soul
-      // `"verify"`; `#923` model-route slot is already verify. Leg-soul
-      // `"reviewer"` remains only inside multi-model review legs.
+      // #925 / #919 S2/R8: persistent verify judge. Seat identity is step/id
+      // S3 only (isJudgeSeat); production role+soul are `"verify"` cargo.
+      // `#923` model-route slot is already verify. Leg-soul `"reviewer"` remains
+      // only inside multi-model review legs.
       role: "verify",
       promptFile: "judge_station.md",
       model: route.slots.verify,
@@ -1192,7 +1193,8 @@ export function stepSpecsForRoute(
     },
     S6: {
       id: "S6",
-      // #925 / #919 S2: same judge seat as S3 — resume S3 session; role+soul verify.
+      // #925 / #919 S2/R8: same judge seat as S3 — resume S3 session.
+      // Seat identity is step/id S6 (isJudgeSeat); role+soul `"verify"` cargo.
       role: "verify",
       promptFile: "judge_station.md",
       model: route.slots.verify,
@@ -3332,8 +3334,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               reason: `${step} worker raised a decision gate`,
               diagnosis: err.tag.state_summary,
             };
-            // #919 CR U1 + residual R1 / S2: single-slice agent seats are only
-            // coder (S2/S5) or judge (S3/S6 — role+soul verify). Always mint
+            // #919 CR U1 + residual R1 / S2/R8: single-slice agent seats are only
+            // coder (S2/S5) or judge (S3/S6 via isJudgeSeat step/id). Always mint
             // T2 kind:"judge" escalate on the judge seat; never residual
             // open-count kind:"reviewer" paper (deleted dead arm).
             const seatIsJudge = isJudgeSeat({
