@@ -1521,9 +1521,9 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
    * verifyCmr did NOT wrap its cmr / ship dispatch. The token preflight (cmr S336 r8)
    * removes the missing-auth throw, but the worker ALSO `git checkout`s the family
    * base + writes the focus file + spins docker — any of which can still throw out of
-   * `dispatchWorker` and reject the WHOLE family run, bypassing the INCOMPLETE_GATE
+   * `dispatchWorker` and reject the WHOLE family run, bypassing the stage-named
    * fail-safe. So verifyCmr must catch a thrown startup error, record it (observable),
-   * and fail-safe to {ok:false, ran:true}.
+   * and fail-safe to {ok:false, ran:true} with the matching stage status.
    */
   class ThrowingDispatchBackend extends BareFamilyBackend {
     readonly aborted: FamilyAbortedEvent[] = [];
@@ -1561,7 +1561,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }
   }
 
-  it("a cmr worker that throws on startup ⇒ INCOMPLETE_GATE (ok:false, ran:true), abort recorded — never an escaped throw", async () => {
+  it("a cmr worker that throws on startup ⇒ cmr_failed gate (ok:false, ran:true), abort recorded — never an escaped throw", async () => {
     const backend = new ThrowingDispatchBackend("cmr");
     const result = await runVerifyCmr({
       phase: "final",
@@ -1703,7 +1703,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     ).rejects.toBeInstanceOf(QuotaWaitForResetError);
     // Not mechanical-retried either (withMechanicalRetry already rethrows).
     expect(backend.dispatches).toBe(1);
-    // Must NOT look like generic startup failed / INCOMPLETE_GATE abort.
+    // Must NOT look like generic startup failed / stage fail-safe abort.
     expect(backend.aborted).toHaveLength(0);
   });
 
@@ -1809,7 +1809,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
     }));
   });
 
-  it("a ship worker that throws on startup (after a converged cmr) ⇒ INCOMPLETE_GATE, abort recorded — never an escaped throw", async () => {
+  it("a ship worker that throws on startup (after a converged cmr) ⇒ ship_failed gate, abort recorded — never an escaped throw", async () => {
     const backend = new ThrowingDispatchBackend("ship");
     const result = await runVerifyCmr({
       phase: "final",
