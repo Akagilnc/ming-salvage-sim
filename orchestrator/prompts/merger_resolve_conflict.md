@@ -45,7 +45,6 @@ Rules:
 
 - Always emit `<decision>` (even `{}`) — typed gate only.
 - The cargo JSON must be valid and match one of the shapes above exactly.
-- Emit `<merger>` as the last cargo tag. On the final multi-iter step you MUST
-  print MERGER_STEP_COMPLETE on its own final line (sandcastle iteration
-  terminator — not optional telemetry).
+- Emit `<merger>` as the last cargo tag. This seat is single-iteration;
+  completion is clean exit + legal sidecar / typed gate — no STEP_COMPLETE password.
 - Never `git merge --abort`. Never invent behaviour. Resolve or escalate.

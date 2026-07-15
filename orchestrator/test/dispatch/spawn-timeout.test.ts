@@ -42,7 +42,6 @@ describe("PR #891 r12 spawn acknowledgement timeout", () => {
         args: [],
         logDir,
         poolId: "test/fake",
-        completionSignal: "DONE",
         stepId: "spawn-timeout",
       });
       const rejected = expect(dispatch).rejects.toMatchObject({

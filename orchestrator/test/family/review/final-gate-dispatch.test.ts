@@ -137,7 +137,6 @@ describe("#331 family verify-cmr routes cmr + PR through dispatchFamilyWorker", 
           args: process.platform === "win32" ? ["/c", "exit", "0"] : [],
           logDir: dir,
           poolId: `claude/${spec.model}`,
-          completionSignal: spec.completionSignal,
           stepId: spec.id,
         }),
         awaitMonitoredCliWorker: async () => {

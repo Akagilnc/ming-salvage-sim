@@ -237,7 +237,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     );
 
     const o = shipOutcomeFromResult({
-      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: "<ship>not json</ship>\nSHIP_STEP_COMPLETE",
       outcomePath,
     });
@@ -264,7 +263,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     );
 
     const o = shipOutcomeFromResult({
-      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: "<ship>not json</ship>\nSHIP_STEP_COMPLETE",
       outcomePath,
     });
@@ -278,7 +276,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     writeFileSync(outcomePath, "{not json", "utf8");
 
     const o = shipOutcomeFromResult({
-      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
       outcomePath,
     });
@@ -335,7 +332,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     writeFileSync(outcomePath, "   \n", "utf8");
 
     const o = shipOutcomeFromResult({
-      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
       outcomePath,
     });
@@ -345,20 +341,18 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
   it("never falls back to signaled ship stdout when no outcome sidecar path exists", () => {
     const o = shipOutcomeFromResult({
-      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
     });
 
     expect(o.kind).toBe("completed");
   });
 
-  it("ignores non-bell sidecar parse failure independently of the obsolete completion signal", () => {
+  it("ignores non-bell sidecar parse failure; completion is exit + legal envelope", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-unsignaled-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
 
     const o = shipOutcomeFromResult({
-      completionSignal: undefined,
       stdout: '<ship>{"status": "pushed", "branch": "feat/fallback"}</ship>',
       outcomePath,
     });
@@ -368,7 +362,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
   it("a signaled stdout-only delivery report remains untrusted cargo", () => {
     const o = shipOutcomeFromResult({
-      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
     expect(o.kind).toBe("completed");
@@ -376,7 +369,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
   it("an unsignaled stdout-only delivery report is cargo, not a decision bell", () => {
     const o = shipOutcomeFromResult({
-      completionSignal: undefined,
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
     expect(o.kind).toBe("completed");
@@ -384,7 +376,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
   it("a wrong-signal stdout-only delivery report is cargo, not a decision bell", () => {
     const o = shipOutcomeFromResult({
-      completionSignal: "SOME_OTHER_SIGNAL",
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
     expect(o.kind).toBe("completed");
@@ -487,7 +478,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
   it("a signal alone is not a machine outcome", () => {
     const o = shipOutcomeFromResult({
-      completionSignal: "SHIP_STEP_COMPLETE",
       stdout: "no tag here",
     });
     expect(o.kind).toBe("completed");

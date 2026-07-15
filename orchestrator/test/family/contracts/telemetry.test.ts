@@ -83,7 +83,6 @@ function familySpec(kind: WorkerSpec["kind"]): WorkerSpec {
     session: "fresh",
     contextRetention: "clean",
     promptFile: `${kind}.md`,
-    completionSignal: `<${kind}>`,
     maxIter: 1,
     model: "gpt-5.6-terra",
     soul: kind === "cmr" ? "cmr" : "verify",
@@ -603,7 +602,6 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
         writeFileSync(outcomePath, JSON.stringify({ resolved: true }), "utf8");
         return {
           branch: "family/786",
-          completionSignal: "MERGER_STEP_COMPLETE",
           stdout: "<merger>{}</merger>",
           commits: [],
           iterations: [],
@@ -650,7 +648,6 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
         args: ["-e", "setTimeout(() => process.exit(0), 50)"],
         logDir: ledgerDir,
         poolId: `codex/${spec.model}`,
-        completionSignal: spec.completionSignal,
         stepId: spec.id,
       }),
       awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
@@ -689,7 +686,6 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
         args: ["-e", "process.stdout.write('family worker output\\n')"],
         logDir: ledgerDir,
         poolId: `codex/${spec.model}`,
-        completionSignal: spec.completionSignal,
         stepId: spec.id,
       }),
       awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({

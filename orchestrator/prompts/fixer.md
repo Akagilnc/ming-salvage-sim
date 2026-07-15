@@ -25,9 +25,6 @@ When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same cargo JSON object
 directly to that path (sidecar is cargo transport for the runner). Also emit
 `<fixer>` cargo JSON:
 
-On the final multi-iter step you MUST print FIXER_STEP_COMPLETE on its own
-final line (sandcastle iteration terminator — not optional telemetry).
-
 ```json
 {"committed": true, "fixCommitSha": "<the-commit-sha-you-just-made>"}
 ```
@@ -45,3 +42,5 @@ not a park;
 
 or `{"committed": false}` when the assigned finding(s) are **genuinely still
 present** and you made no new commit (decision gate).
+
+This seat is single-iteration. Completion is clean exit + legal sidecar / typed receipt — no STEP_COMPLETE password.
