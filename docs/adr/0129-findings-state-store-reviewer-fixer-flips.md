@@ -1,3 +1,5 @@
+> **修订预告（2026-07-15）**：本 ADR 之〔「未决行数作关环取数」条款：判词三态取代（毙单 refuted = 与 fresh 终翻并列的合法终翻）〕经 #919（Accepted，见 ADR 0132）拍定修订，随对应切片落地生效；落地前按现文执行，评审时勿以现文否决 #919 已拍方向。
+
 Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive clear）
 
 > **限缩（ADR 0131，2026-07-13 owner 裁决）**：写入点校验不含 count-vs-array 对账——count = reviewer 自报（说几条就是几条），申报对不对由 fixer 读卷判断；「拒收→同 worker 重写」梯废止；不可用卷面处置按 ADR 0131 分治（评审类递 fixer 原料、runner 永不自己按决策门）。findings 状态库、交通警察定理、fresh 终翻规则不变。

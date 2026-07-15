@@ -1,3 +1,5 @@
+> **修订预告（2026-07-15）**：本 ADR 之〔驳回词表 canonical 化（refused* 单一字段族，信封字段级）〕经 #919（Accepted，见 ADR 0132）拍定修订，随对应切片落地生效；落地前按现文执行，评审时勿以现文否决 #919 已拍方向。
+
 Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive clear）
 
 # 0130: 评审交卷契约——看见的都写行，fixer 首务验真翻状态，一切评审模式统一
