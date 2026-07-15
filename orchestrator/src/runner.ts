@@ -1258,7 +1258,11 @@ function replayS4FindingsCountState(
     // #877: findings-count channel only — disposition prose / still-active
     // reopen / no-progress courts demolished. Prior keys absent from findings[]
     // are closed by the three-channel envelope; the runner does not inspect prose.
-    const blocking = [...lastReviewerOutputForS4.findings];
+    // Findings rows are cargo: non-array shapes transport as empty cargo, never
+    // alter findingsCount routing (ADR 0131 / #899).
+    const blocking = Array.isArray(lastReviewerOutputForS4.findings)
+      ? [...lastReviewerOutputForS4.findings]
+      : [];
     const blockingIdentityKeys = blocking.map(findingIdentityKey);
     findingDispositions = [
       ...(entry.findingDispositions ?? []),
@@ -2165,7 +2169,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     _afterFix: boolean,
   ): string[] {
     if (reviewerOutput?.kind !== "reviewer") return [];
-    const blocking = [...reviewerOutput.findings];
+    // Cargo tolerance only — non-array findings never rewrite the open-count.
+    const blocking = Array.isArray(reviewerOutput.findings)
+      ? [...reviewerOutput.findings]
+      : [];
     const blockingIdentityKeys = blocking.map(findingIdentityKey);
     pendingBlockingFindings = blocking;
     pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
@@ -3630,6 +3637,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             // Control envelope only: role kind so findings-count channel can run.
             // Do not inspect individual finding fields (findings schema court).
             if (output?.kind !== "reviewer") {
+              // Unusable review envelope (not a typed open-count receipt) →
+              // fixer path with raw artifact pointers. Do NOT inspect findings
+              // cargo shape here (ADR 0131 / #899).
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
               pendingBlockingFindingCount = 0;
@@ -3640,20 +3650,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               step = "S5";
               continue orchestratorStepLoop;
             }
-            if (!Array.isArray(output.findings)) {
-              pendingBlockingFindings = [];
-              pendingBlockingFindingIdentityKeys = [];
-              pendingBlockingFindingCount = 0;
-              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-                stepMonitorHandle,
-                stepSessionId,
-              );
-              step = "S5";
-              continue orchestratorStepLoop;
-            }
-            // Positive open-count always preserves raw artifact pointers for S5,
-            // independently of whether structured findings cargo is present.
-            // Sparse/empty findings[] must not become a no-op fix landing.
+            // Typed findingsCount only: positive open-count always preserves
+            // raw artifact pointers for S5. Findings rows are opaque cargo —
+            // never re-dispatch or zero the count based on array shape.
             if (output.findingsCount > 0) {
               pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
                 stepMonitorHandle,
