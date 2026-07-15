@@ -28,6 +28,7 @@ import { findingIdentityKey } from "../../../src/findings.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { recordFamilyEscalated } from "../../../src/family/ledger.js";
 import { runFamily } from "../../../src/family/runner.js";
+import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
 import type {
   Backend,
   DispatchContext,
@@ -148,16 +149,28 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
+    // Default green is boolean converged without open-count — dispatchWorker
+    // promotes to kind:judge (live seat). findingsCount:0 stays residual unusable
+    // (#919 M2 never silent clean).
     const result = this.script.cmr?.(req) ?? {
       converged: true,
-      findingsCount: 0,
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
     };
     return result.findings === undefined ? { ...result, findings: [] } : result;
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     if (spec.kind === "cmr") {
-      return legacyDispatchFamilyWorker(this, spec, ctx);
+      const cmr = await this.runIntegratedCmr({
+        familyBase: ctx.familyBase!,
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+        ...(ctx.priorCmrFindingIdentityKeys !== undefined
+          ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+          : {}),
+      });
+      return {
+        kind: "completed",
+        output: legacyCmrScriptToWorkerOutput(cmr),
+      };
     }
     if (spec.kind === "ship") {
       const familyBase = ctx.familyBase!;
@@ -273,7 +286,6 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: (req) => ({
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         ...(req.priorCmrFindingIdentityKeys !== undefined
           ? {
@@ -343,7 +355,6 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: (req) => ({
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         ...(req.priorCmrFindingIdentityKeys !== undefined
           ? {
@@ -446,7 +457,6 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: (req) => ({
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         ...(req.priorCmrFindingIdentityKeys !== undefined
           ? {
@@ -517,7 +527,6 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: () => ({
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       }),
     });
@@ -581,7 +590,6 @@ describe("#296 spine integration — acceptance 2: integrated cmr gate → escal
       verify: () => ({ ok: true }),
       cmr: () => ({
         converged: true,
-        findingsCount: 0,
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       }),
     });
@@ -697,7 +705,7 @@ describe("#296 spine integration — acceptance 3: all green → open PR, stop, 
   it("green verify + converged cmr ⇒ the family PR is opened and the run is success (止于 PR)", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     const result = await runFamily({
       epic: epicWith(294, 295, 298),
@@ -740,7 +748,7 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
   it("a child that fails its single-slice run ⇒ NO final verify / cmr / PR, status incomplete", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     const result = await runFamily({
       epic: epicWith(294, 295),
@@ -764,7 +772,7 @@ describe("#330 spine — shipped resume continues after the delivery checkpoint"
   it("does not rerun final verify/cmr/ship", async () => {
     const backend = new CapableFamilyBackend({
       verify: () => ({ ok: true }),
-      cmr: () => ({ converged: true, findingsCount: 0, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
+      cmr: () => ({ converged: true, successfulLegs: ["opus", "gpt-5.6-sol", "agy"] }),
     });
     backend.ledger.push(
       { childIssue: 294, status: "merged" },
