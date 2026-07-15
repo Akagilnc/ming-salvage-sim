@@ -73,6 +73,27 @@ function judgeGreenOutput(
   } as WorkerOutput;
 }
 
+/**
+ * #919 CR N3: live judge continue for dogfood blocking scripts.
+ * Prefer this over residual kind:"cmr"+findingsCount (production residual is
+ * unusableResidualOpenCountPaper only; court never continues from open-count).
+ */
+function judgeContinueOutput(
+  findings: ReadonlyArray<Finding>,
+  cargo: Record<string, unknown> = {},
+): WorkerOutput {
+  return {
+    kind: "judge",
+    status: "continue",
+    findings,
+    findingDispositions: findings.map((f) => ({
+      identityKey: findingIdentityKey(f),
+      action: "live" as const,
+    })),
+    ...cargo,
+  } as WorkerOutput;
+}
+
 export type DogfoodReplayClassification =
   | "blocking"
   | "accepted_suppressed"
@@ -173,23 +194,24 @@ function finding(overrides: Partial<Finding>): Finding {
 }
 
 function cmrWorkerParserEvidence(result: WorkerResult): { cmrWorkerParserValid: true } {
-  // #930 / #919: live seat is kind:judge; residual kind:cmr open-count paper still
-  // parses through the same tagged decode (positive → continue; 0/missing unusable).
+  // #930 / #919 CR N3: live seat is kind:judge only. Residual unusable is
+  // kind:reviewer (unusableResidualOpenCountPaper); fixtures must not mint
+  // kind:cmr as a court closer.
   if (
     result.kind !== "completed" ||
-    (result.output.kind !== "cmr" && result.output.kind !== "judge")
+    (result.output.kind !== "judge" && result.output.kind !== "reviewer")
   ) {
     throw new Error(
-      "dogfood CMR parser evidence requires a completed kind:cmr or kind:judge output",
+      "dogfood CMR parser evidence requires a completed kind:judge or kind:reviewer output",
     );
   }
-  // The parser sees the worker payload; residual findingsCount is attached later
-  // from the stdout sentinel channel (or its structured-row fallback).
-  const { kind: _kind, findingsCount: _findingsCount, ...payload } = result.output as {
+  // The parser sees the worker payload; live judge rides the T2 traffic fields.
+  const raw = result.output as unknown as {
     readonly kind: string;
     readonly findingsCount?: number;
     readonly [key: string]: unknown;
   };
+  const { kind: _kind, findingsCount: _findingsCount, ...payload } = raw;
   parseCmrOutcome(`<cmr>${JSON.stringify(payload)}</cmr>`);
   return { cmrWorkerParserValid: true };
 }
@@ -214,9 +236,8 @@ async function familyClassificationScenario(input: {
    */
   readonly blockingCoderFixFails?: boolean;
 }): Promise<DogfoodReplayScenario> {
-  // #875 / #919: suppressions-only success is typed kind:judge converged.
-  // Residual findingsCount:0 is unusable (never silent clean). Blocking
-  // fix_now uses residual positive open-count → judge continue (or live continue).
+  // #875 / #919 CR N3: suppressions-only success is typed kind:judge converged.
+  // Blocking fix_now uses live kind:judge continue (never residual kind:cmr).
   const isSuppressionOnly =
     input.finding.action === "wont_fix" || input.finding.action === "rejected";
   const cmrOutput: WorkerResult = {
@@ -229,18 +250,15 @@ async function familyClassificationScenario(input: {
           ...CMR_EVIDENCE,
           findings: [input.finding],
         })
-      : {
-          kind: "cmr",
-          converged: false,
+      : judgeContinueOutput([input.finding], {
           reason: "dogfood family CMR classification replay",
           successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           ...CMR_EVIDENCE,
-          findings: [input.finding],
-          findingsCount: input.findingsCount,
-        },
+        }),
   };
+  void input.findingsCount;
   // #604 slice 2 / ADR 0062: a BLOCKING family finding no longer terminates the
   // family on its content classification — the runner counts it and routes it
   // through coder-fix (recording a `cmr_reviewed` row that carries the
@@ -1115,20 +1133,17 @@ async function familyAttributionReplay(
     location: "orchestrator/src/runner.ts:307",
     action: "fix_now",
   });
+  const attributedContinue = judgeContinueOutput([attributedFinding], {
+    reason: "child attribution must stay local",
+    successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+    claimedFixedFindingIdentityKeys: [],
+    priorFindingDispositions: [],
+    ...CMR_EVIDENCE,
+  });
   const backend = new DogfoodCmrFamilyBackend("attribution-head", [], [
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: false,
-        findingsCount: 1,
-        reason: "child attribution must stay local",
-        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
-        claimedFixedFindingIdentityKeys: [],
-        priorFindingDispositions: [],
-        ...CMR_EVIDENCE,
-        findings: [attributedFinding],
-      },
+      output: attributedContinue,
     },
   ]);
   const run = await runVerifyCmr({
@@ -1161,17 +1176,7 @@ async function familyAttributionReplay(
       reviewFixRereviewVisible: true,
       ...cmrWorkerParserEvidence({
         kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: false,
-          findingsCount: 1,
-          reason: "child attribution must stay local",
-          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
-          ...CMR_EVIDENCE,
-          findings: [attributedFinding],
-        },
+        output: attributedContinue,
       }),
     },
   };
@@ -1187,18 +1192,14 @@ async function cmrReviewerSelfFixAttemptReplay(): Promise<SeamReplay> {
   });
   const cmrOutput: WorkerResult = {
     kind: "completed",
-    output: {
-      kind: "cmr",
-      converged: false,
-      findingsCount: 1,
+    output: judgeContinueOutput([selfFixFinding], {
       reason:
         "blocking findings remain; reviewer says it is moving into the fix loop before all review legs completed",
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       ...CMR_EVIDENCE,
-      findings: [selfFixFinding],
-    },
+    }),
   };
 
   class ReviewerSelfFixBackend extends DogfoodCmrFamilyBackend {
