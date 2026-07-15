@@ -14,7 +14,7 @@
 
 **从不读字。** 卷面（findings 数组、散文、任何内容）只给下一个智慧体读：fixer 读卷，数对不上 / 读不懂 → 打回 reviewer 或 raise（走决策门）。**存在即违宪、发现即砍**：runner 对 worker 输出做任何格式 / schema / 合法性校验（处置再温柔也算，「写入点对账」也算）；runner 复核或覆写 worker 自报的计数（count-vs-array 一致性闸、按数组长度改写自报数）；runner 读出 malformed / protocol-failure 后计次机械重派；runner 用 git/host 查询裁 worker 成败（commit 判庭 / 交付观测庭）；runner 替 worker 编造 failure（synthesizedFailure = 伪造信封签名——仅通道①进程事实派生的 infra 包除外）。
 
-**卷面不可用（信封提取不出）一律零判断——决策门准入原则：人环只接真决策；「认定不可用」本身就是判断，runner 无权下；runner 更无权自己按决策门（通道③只转运 worker 按的门，替按=伪造门铃）。** Canonical target 由 #899 落地：专业 Action 在自身内部使用 Sandcastle typed-output retry；当前 legacy 尚未具备这项能力，不得写成当前专业 Action 已如此。当前 Action 无法完成交卷时非零退出，Runner 只按通道①在同一 fixed position 走 #598，不得把原料递 fixer、不得当作 0 放行下一棒。只有 worker 自己提交的有效 decision gate 才走通道③。Action 已成功退出时，coder/ship 的空 diff / 缺 cargo 仍由下一棒智慧体判断。卷面质量归交卷契约（ADR 0130，住 worker 侧 soul / skill）；有效 findings 的搬运走 artifact pointer（ADR 0129 findings 状态库）。
+**卷面不可用（信封提取不出）一律零判断——决策门准入原则：人环只接真决策；「认定不可用」本身就是判断，runner 无权下；runner 更无权自己按决策门（通道③只转运 worker 按的门，替按=伪造门铃）。** Canonical target 由 #899 落地：专业 Action 在自身内部使用 Sandcastle typed-output retry；重试耗尽时该 Action 非零退出，Runner 只按通道①在同一 fixed position 走 #598，不得把原料递 fixer、不得当作 0 放行下一棒。#899/#898 落地前仍有 current legacy raw-artifact fallback；它只按 README 记录为待删除的操作事实，禁止复制或扩张为 canonical 依据。只有 worker 自己提交的有效 decision gate 才走通道③。Action 已成功退出时，coder/ship 的空 diff / 缺 cargo 仍由下一棒智慧体判断。卷面质量归交卷契约（ADR 0130，住 worker 侧 soul / skill）；有效 findings 的搬运走 artifact pointer（ADR 0129 findings 状态库）。
 
 ## 其余铁律
 
