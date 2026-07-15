@@ -2830,8 +2830,9 @@ export class RealBackend implements Backend {
 
   /**
    * Shared typed-output attach policy for fresh and resumed agent seats (#899).
-   * Reviewer/coder traffic signals only attach when the seat is single-iter and
-   * not outcome-sidecar-gated.
+   * Traffic-signal Output.object attaches whenever {@link outputFor} supplies a
+   * definition for a single-iter seat. Cargo sidecars (`outcomeLanding`) stay
+   * cargo-only and never suppress typed fate signals.
    */
   private typedOutputPolicy(
     spec: StepSpec,
@@ -2841,13 +2842,11 @@ export class RealBackend implements Backend {
     readonly typedOutput: sc.OutputDefinition | undefined;
     readonly typedOutputUsed: boolean;
   } {
+    void options;
     const typedOutput = this.outputFor(spec);
     const singleIterOk =
       opts?.requireSingleIter !== true || spec.maxIter === 1;
-    const typedOutputUsed =
-      typedOutput !== undefined &&
-      singleIterOk &&
-      options?.outcomeLanding === undefined;
+    const typedOutputUsed = typedOutput !== undefined && singleIterOk;
     return { typedOutput, typedOutputUsed };
   }
 
@@ -2909,8 +2908,11 @@ export class RealBackend implements Backend {
       // (ADR 0131 / #899) — not a second court in the runner.
       const decoded = decodeReviewerOpenCountReceipt(raw);
       if (decoded === undefined) {
-        // Unusable review cargo — not a zero open-count (ADR 0131).
-        return { kind: "coder", committed: false, commitsAdded: 0 };
+        // Unusable open-count is not zero and not a successful coder completion
+        // (#899 / ADR 0131). Fail the Action for #598 mechanical redispatch.
+        throw new Error(
+          `${spec.id}-${spec.role}: unusable open-count receipt (missing findingsCount); failing Action for mechanical redispatch`,
+        );
       }
       return decoded;
     }

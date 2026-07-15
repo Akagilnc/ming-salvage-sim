@@ -141,7 +141,6 @@ import {
   extractLastTagBody,
   parseLastTaggedJsonSoft,
 } from "../lastTaggedJson.js";
-import { probeWorkerDecisionBell } from "../workerReceipt.js";
 import { modelForSlot } from "../modelRoutes.js";
 import {
   buildCliMonitorSpawnSpec,
@@ -2216,15 +2215,8 @@ export class RealFamilyBackend implements FamilyBackend {
       };
     }
     // No-gate typed signal: sidecar/stdout enrich cargo only — never escalate.
-    try {
-      return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
-    } catch {
-      return {
-        kind: "completed",
-        output: { kind: "coder", committed: false, commitsAdded: 0 },
-        sessionId,
-      };
-    }
+    // Unusable / malformed cargo fails the Action (no fake coder seat).
+    return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
   }
 
   /**
@@ -3858,31 +3850,51 @@ function gitExitStatus(err: unknown): number | undefined {
 // Single-slice uses RealBackend outputFor/decodeOutput + extract*Tag; this is family eqv.
 // ════════════════════════════════════════════════════════════════════════════
 
+function isMalformedDecisionGateError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes("malformed decision gate");
+}
+
 function parseOutcomePayload(
   stdout: string,
   tag: string,
   outcomePath?: string,
 ): { parsed: unknown; source: string } | { error: string } {
   if (outcomePath !== undefined) {
+    let sidecar: unknown | undefined;
+    let sidecarReadError: unknown | undefined;
     try {
-      const sidecar = readWorkerOutcomeSidecar(outcomePath);
-      if (sidecar !== undefined) {
-        if (probeWorkerDecisionBell(sidecar) === undefined) {
-          const last = extractLastTagBody(stdout, tag);
-          if (last !== undefined) {
-            try {
-              const compatibility = JSON.parse(last.trim());
-              if (probeWorkerDecisionBell(compatibility) !== undefined) {
-                return { parsed: compatibility, source: `${tag} worker <${tag}> tag` };
-              }
-            } catch {
-              // Compatibility cargo is unreadable and carries no extractable bell.
+      sidecar = readWorkerOutcomeSidecar(outcomePath);
+    } catch (err) {
+      sidecarReadError = err;
+    }
+    if (sidecar !== undefined) {
+      // One decision-gate court: classifyDecisionGate (throws on malformed).
+      // Prefer stdout only when sidecar has no gate and stdout carries a
+      // well-formed bell — never soft-accept empty escalate fields (#899).
+      const sidecarGate = classifyDecisionGate(sidecar, `${tag} outcome sidecar`);
+      if (sidecarGate.kind === "none") {
+        const last = extractLastTagBody(stdout, tag);
+        if (last !== undefined) {
+          try {
+            const compatibility = JSON.parse(last.trim());
+            if (
+              classifyDecisionGate(compatibility, `${tag} worker <${tag}> tag`)
+                .kind === "bell"
+            ) {
+              return {
+                parsed: compatibility,
+                source: `${tag} worker <${tag}> tag`,
+              };
             }
+          } catch (err) {
+            if (isMalformedDecisionGateError(err)) throw err;
+            // Compatibility cargo is unreadable and carries no extractable bell.
           }
         }
-        return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
       }
-    } catch (err) {
+      return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
+    }
+    if (sidecarReadError !== undefined) {
       const last = extractLastTagBody(stdout, tag);
       if (last !== undefined) {
         try {
@@ -3893,7 +3905,7 @@ function parseOutcomePayload(
         }
       }
       return {
-        error: `${tag} worker outcome sidecar protocol failure: ${err instanceof Error ? err.message : String(err)}`,
+        error: `${tag} worker outcome sidecar protocol failure: ${sidecarReadError instanceof Error ? sidecarReadError.message : String(sidecarReadError)}`,
       };
     }
   }
@@ -3952,41 +3964,29 @@ function reviewLoopCargoResult(
   // sidecar bell cannot mask legitimate delivery cargo.
   const raw = parseOutcomePayload(stdout, tag, outcomePath);
   if ("error" in raw || !isJsonRecord(raw.parsed)) {
-    return {
-      kind: "completed",
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-      sessionId,
-    };
+    // Unusable review-loop paper is not a successful coder seat (#899).
+    throw new Error(
+      `family-${kind}: unusable review-loop cargo; failing Action for mechanical redispatch`,
+    );
   }
   const cargo: Record<string, unknown> = { ...raw.parsed };
   delete cargo.escalate;
   const cargoStdout = `<${tag}>${JSON.stringify(cargo)}</${tag}>`;
-  let parsed: VerifyResult | FixerResult | CleanupResult | DocReleaseResult | ReceiptDecisionBell | ReceiptCargo;
-  try {
-    parsed =
-      kind === "verify"
-        ? parseVerifyOutcome(cargoStdout)
-        : kind === "fixer"
-          ? parseFixerOutcome(cargoStdout)
-          : kind === "cleanup"
-            ? parseCleanupOutcome(cargoStdout)
-            : parseDocReleaseOutcome(cargoStdout);
-  } catch (err) {
-    if (err instanceof Error && err.message.includes("malformed decision gate")) {
-      return {
-        kind: "completed",
-        output: { kind: "coder", committed: false, commitsAdded: 0 },
-        sessionId,
-      };
-    }
-    throw err;
-  }
+  // Malformed decision gates must rethrow for #598 — never mint a fake coder.
+  const parsed =
+    kind === "verify"
+      ? parseVerifyOutcome(cargoStdout)
+      : kind === "fixer"
+        ? parseFixerOutcome(cargoStdout)
+        : kind === "cleanup"
+          ? parseCleanupOutcome(cargoStdout)
+          : parseDocReleaseOutcome(cargoStdout);
   if (parsed.kind === "escalate" || parsed.kind === "cargo") {
-    return {
-      kind: "completed",
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-      sessionId,
-    };
+    // After escalate strip, cargo/escalate shapes mean unusable delivery paper —
+    // not a completed coder report.
+    throw new Error(
+      `family-${kind}: unusable review-loop cargo; failing Action for mechanical redispatch`,
+    );
   }
   return { kind: "completed", output: parsed, sessionId };
 }
