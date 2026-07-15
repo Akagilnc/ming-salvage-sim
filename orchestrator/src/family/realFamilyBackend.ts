@@ -1749,14 +1749,12 @@ export class RealFamilyBackend implements FamilyBackend {
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
       this.writeCmrRouteFile(ctx, frozenReviewLegs);
-      // #919 R2 / #927 isomorphic: when refuse cargo or prior judge rows are
-      // present, land them via the same fix-findings file the judge soul reads
-      // (single-slice S6 shape — keys + refuseRecords + priorJudgeVerdicts).
+      // #919 M3/M7 / #927 isomorphic: refuse keys sole on thin ctx; landing
+      // carries refuseRecords cargo only (WorkerLandingPayload has no key field).
+      // Trigger on ctx keys OR landing refuseRecords OR priorJudgeVerdicts.
       const needsFixFindingsLanding =
         (landing?.refuseRecords !== undefined &&
           landing.refuseRecords.length > 0) ||
-        (landing?.refusedFindingIdentityKeys !== undefined &&
-          landing.refusedFindingIdentityKeys.length > 0) ||
         (ctx.refusedFindingIdentityKeys !== undefined &&
           ctx.refusedFindingIdentityKeys.length > 0) ||
         (ctx.priorJudgeVerdicts !== undefined &&

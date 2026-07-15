@@ -852,13 +852,12 @@ export interface WorkerLandingPayload {
   /** #677 mechanical signal; reviewer must trace the assertion to authority. */
   readonly preexistingAssertionTouched?: boolean;
   /**
-   * #677 / #927 legal refuse keys from the prior S5 coder-fix commit —
-   * still-active findings the fixer declined; S6 judge re-adjudicates them.
-   */
-  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
-  /**
    * #927 opaque refuse cargo (four reasons + evidence / #677 AC detail) for
    * the judge. Runner transports only — never validates reason tokens.
+   *
+   * #919 M7: refuse *traffic keys* live only on thin {@link DispatchContext}
+   * (`refusedFindingIdentityKeys`); landing never dual-writes keys (信封宪法).
+   * On-disk fix-findings JSON may still mirror ctx keys via dispatchWorker.
    */
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Family online review workers: paginated bot/thread snapshot. */
