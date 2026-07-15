@@ -604,6 +604,8 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
         return {
           completionSignal: "MERGER_STEP_COMPLETE",
           stdout: "<merger>{}</merger>",
+          // Typed no-gate decision signal (SO was attached on this seat).
+          output: {},
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
