@@ -29,6 +29,7 @@ export {
 export type {
   DispatchWorkerWithMonitorOptions,
   DispatchWorkerWithMonitorOutcome,
+  LegacyDispatchBackend,
 } from "./dispatchWorker.js";
 // ── #786 telemetry sidecar (append-only JSONL; stats deferred) ──────────────
 export {
