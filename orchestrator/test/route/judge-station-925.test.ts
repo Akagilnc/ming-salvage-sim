@@ -431,14 +431,13 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     const result = await runOrchestrator({ issueNumber: 9252, backend });
     expect(result.status).toBe("success");
     const s3 = result.stepLedger.find((e) => e.step === "S3");
-    // U7: sole source = output.advanceCoder (recovery/prior-verdict rows agree);
-    // no dual-write onto the ledger row top-level.
+    // U7/R2: sole source = output.advanceCoder (recovery/prior-verdict rows);
+    // LedgerEntry.advanceCoder top-level field deleted (zero readers).
     expect(
       s3?.output?.kind === "judge" && s3.output.status === "continue"
         ? s3.output.advanceCoder
         : undefined,
     ).toBe("claude-opus");
-    expect(s3?.advanceCoder).toBeUndefined();
   });
 
   it("escalate parks via decision-kind (status escalate), does not success-terminal", async () => {
@@ -494,6 +493,40 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     });
     expect(s3?.output?.kind).not.toBe("reviewer");
     // Same park family as typed escalate (U2).
+    expect(result.stopSummary?.reason).toBe("decision_gate_park");
+  });
+
+  it("R3: decision_gate on S6 mints T2 kind:judge escalate + decision_gate_park", async () => {
+    const GATE_SUMMARY = "need owner ruling on residual AC split";
+    class GateOnS6Backend extends JudgeBackend {
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        if (spec.id === "S6") {
+          throw new SelfReportedRelayError(
+            { kind: "decision_gate", state_summary: GATE_SUMMARY },
+            "S6",
+            "sess-s6-gate",
+          );
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+    // S3 continue → S5 → S6 decision_gate (symmetric to U1 S3 gate).
+    const backend = new GateOnS6Backend([
+      { kind: "continue", findings: [sampleFinding()] },
+    ]);
+    const result = await runOrchestrator({ issueNumber: 9196, backend });
+    expect(result.status).toBe("escalate");
+    const s6 = result.stepLedger.find((e) => e.step === "S6");
+    expect(s6?.output).toMatchObject({
+      kind: "judge",
+      status: "escalate",
+      reason: expect.stringContaining("decision gate"),
+      diagnosis: GATE_SUMMARY,
+    });
+    expect(s6?.output?.kind).not.toBe("reviewer");
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
   });
 

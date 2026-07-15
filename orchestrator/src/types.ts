@@ -1381,13 +1381,6 @@ export interface LedgerEntry {
    * governance data. Not a runner content-classification (信封宪法, ADR 0062).
    */
   readonly findingDispositions?: ReadonlyArray<FindingDisposition>;
-  /**
-   * Historical dual-write slot for advanceCoder (#919 CR U7 deleted the
-   * in-memory mirror). Sole source of truth is `output.advanceCoder` on a
-   * continue judge verdict (recovery / prior-verdict rows read it there).
-   * Topology does not act on this field; #926 owns roster consumption.
-   */
-  readonly advanceCoder?: string;
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
   /**
