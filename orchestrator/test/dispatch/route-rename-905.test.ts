@@ -73,59 +73,22 @@ describe("#905 modelRegistry route rename", () => {
 });
 
 describe("#905 agy AgentProvider + bare-ping", () => {
-  it("builds headless agy with --sandbox and stdin prompt (never opencode, never skip-permissions)", () => {
+  it("builds headless agy with --sandbox and --print <prompt> (never opencode, never skip-permissions)", () => {
     const agent = agyAgent("");
     expect(agent.name).toBe("agy");
+    const prompt = "Reply with exactly: nonce";
     const cmd = agent.buildPrintCommand({
-      prompt: "Reply with exactly: nonce",
+      prompt,
       dangerouslySkipPermissions: true,
     });
     expect(cmd.command).toMatch(/\bagy\b/);
     expect(cmd.command).toContain("--sandbox");
     expect(cmd.command).toContain("--print");
+    // #915: agy 1.1.2 rejects empty --print; prompt is the --print value.
+    expect(cmd.command).toContain(prompt);
+    expect(cmd.command).not.toContain("--print ''");
     expect(cmd.command).not.toContain("opencode");
     expect(cmd.command).not.toContain("--dangerously-skip-permissions");
-    expect(cmd.stdin).toBe("Reply with exactly: nonce");
-  });
-
-  it("bare-ping argv matches agyAgent / gemini.sh (--print '' + stdin, never argv prompt)", () => {
-    const prompt = "Reply with exactly: nonce-905";
-    const built = barePingArgv("agy", "", prompt);
-    const shared = agyPrintInvocation("", prompt);
-    const agent = agyAgent("").buildPrintCommand({
-      prompt,
-      dangerouslySkipPermissions: true,
-    });
-
-    expect(built).toEqual({
-      file: "agy",
-      args: shared.args,
-      input: prompt,
-    });
-    // gemini.sh: --print takes empty string; prompt rides stdin (no ARG_MAX).
-    expect(built.args).toContain("--print");
-    expect(built.args[built.args.indexOf("--print") + 1]).toBe("");
-    expect(built.args).not.toContain(prompt);
-    expect(built.input).toBe(prompt);
-    // Same shape as production AgentProvider (shared helper, no second clone).
-    expect(agent.stdin).toBe(prompt);
-    expect(agent.command).toContain("--print ''");
-    expect(agent.command).not.toContain(prompt);
-  });
-
-  it("bare-ping with an explicit model still uses empty --print + stdin", () => {
-    const prompt = "nonce-model";
-    const built = barePingArgv("agy", "Gemini 3.5 Flash", prompt);
-    const shared = agyPrintInvocation("Gemini 3.5 Flash", prompt);
-    expect(built.args).toEqual([...shared.args]);
-    expect(built.args).toContain("--print-timeout");
-    // Go duration with unit — bare "900000" is rejected by agy CLI.
-    const timeoutIdx = built.args.indexOf("--print-timeout");
-    expect(built.args[timeoutIdx + 1]).toMatch(/^\d+(ns|us|µs|ms|s|m|h)$/);
-    expect(built.args[timeoutIdx + 1]).not.toMatch(/^\d+$/);
-    expect(built.args).toContain("--print");
-    expect(built.args[built.args.indexOf("--print") + 1]).toBe("");
-    expect(built.input).toBe(prompt);
   });
 
   it("B1: multi-line <merger> + STEP_COMPLETE keeps full body under last-wins result", () => {
@@ -156,39 +119,6 @@ describe("#905 agy AgentProvider + bare-ping", () => {
       }
     }
     expect(agentResult).toBe(lines.join("\n"));
-  });
-
-  it("#905 class: print mode always --print ''; interactive never uses --print", () => {
-    const seed = "seed-prompt-body";
-    const print = agyPrintInvocation("Gemini 3.5 Flash", seed);
-    expect(print.args[print.args.indexOf("--print") + 1]).toBe("");
-    expect(print.stdin).toBe(seed);
-    // Prompt is only on stdin — never an argv token after --print.
-    expect(print.args).not.toContain(seed);
-
-    const interactive = agyInteractiveArgs("Gemini 3.5 Flash", seed);
-    expect(interactive[0]).toBe("agy");
-    expect(interactive).toContain("--prompt-interactive");
-    expect(interactive).not.toContain("--print");
-    expect(interactive[interactive.indexOf("--prompt-interactive") + 1]).toBe(
-      seed,
-    );
-
-    // Agent surfaces are the same class seam (no second shape).
-    const agent = agyAgent("Gemini 3.5 Flash");
-    const agentPrint = agent.buildPrintCommand({
-      prompt: seed,
-      dangerouslySkipPermissions: false,
-    });
-    expect(agentPrint.stdin).toBe(seed);
-    expect(agentPrint.command).toContain("--print ''");
-    expect(agentPrint.command).not.toContain(seed);
-
-    const agentInteractive = agent.buildInteractiveArgs!({
-      prompt: seed,
-      dangerouslySkipPermissions: false,
-    });
-    expect(agentInteractive).toEqual([...interactive]);
   });
 
   it("R5-1 class: print and interactive build* both reset stream body across maxIter", () => {
@@ -229,6 +159,101 @@ describe("#905 agy AgentProvider + bare-ping", () => {
     }
     expect(last).toBe("ROUND3_INTERACTIVE");
     expect(last).not.toMatch(/ROUND1|ROUND2/);
+  });
+});
+
+/**
+ * #915 — agy 1.1.2 rejects empty `--print` (no stdin fallthrough).
+ * Shared seam: bare-ping + AgentProvider both put the prompt as the
+ * `--print` value; interactive uses `--prompt-interactive` only.
+ */
+describe("#915 agy print prompt delivery (real CLI form)", () => {
+  it("print mode: --print value is the non-empty prompt (not empty placeholder)", () => {
+    const prompt = "Reply with exactly: nonce-915";
+    const print = agyPrintInvocation("", prompt);
+
+    expect(print.args).toContain("--sandbox");
+    expect(print.args).toContain("--print-timeout");
+    expect(print.args).toContain("--print");
+    const printIdx = print.args.indexOf("--print");
+    expect(print.args[printIdx + 1]).toBe(prompt);
+    expect(print.args[printIdx + 1]).not.toBe("");
+    // Real CLI form: prompt is an argv token after --print (agy 1.1.2).
+    expect(print.args).toContain(prompt);
+  });
+
+  it("bare-ping argv matches shared print helper (prompt on --print, not empty)", () => {
+    const prompt = "Reply with exactly: nonce-915-bare";
+    const built = barePingArgv("agy", "", prompt);
+    const shared = agyPrintInvocation("", prompt);
+    const agent = agyAgent("").buildPrintCommand({
+      prompt,
+      dangerouslySkipPermissions: true,
+    });
+
+    expect(built.file).toBe("agy");
+    expect(built.args).toEqual([...shared.args]);
+    expect(built.args[built.args.indexOf("--print") + 1]).toBe(prompt);
+    expect(built.args).toContain(prompt);
+    // Same shape as production AgentProvider (shared helper, no second clone).
+    expect(agent.command).toContain("--print");
+    expect(agent.command).toContain(prompt);
+    expect(agent.command).not.toContain("--print ''");
+  });
+
+  it("bare-ping with explicit model keeps --print <prompt> + Go-duration timeout", () => {
+    const prompt = "nonce-model-915";
+    const built = barePingArgv("agy", "Gemini 3.5 Flash", prompt);
+    const shared = agyPrintInvocation("Gemini 3.5 Flash", prompt);
+    expect(built.args).toEqual([...shared.args]);
+    expect(built.args).toContain("--model");
+    expect(built.args).toContain("Gemini 3.5 Flash");
+    expect(built.args).toContain("--print-timeout");
+    // Go duration with unit — bare "900000" is rejected by agy CLI.
+    const timeoutIdx = built.args.indexOf("--print-timeout");
+    expect(built.args[timeoutIdx + 1]).toMatch(/^\d+(ns|us|µs|ms|s|m|h)$/);
+    expect(built.args[timeoutIdx + 1]).not.toMatch(/^\d+$/);
+    expect(built.args[built.args.indexOf("--print") + 1]).toBe(prompt);
+  });
+
+  it("interactive mode never uses --print; seed rides --prompt-interactive", () => {
+    const seed = "seed-prompt-body-915";
+    const interactive = agyInteractiveArgs("Gemini 3.5 Flash", seed);
+    expect(interactive[0]).toBe("agy");
+    expect(interactive).toContain("--sandbox");
+    expect(interactive).toContain("--prompt-interactive");
+    expect(interactive).not.toContain("--print");
+    expect(interactive[interactive.indexOf("--prompt-interactive") + 1]).toBe(
+      seed,
+    );
+
+    const agent = agyAgent("Gemini 3.5 Flash");
+    const agentInteractive = agent.buildInteractiveArgs!({
+      prompt: seed,
+      dangerouslySkipPermissions: false,
+    });
+    expect(agentInteractive).toEqual([...interactive]);
+
+    // Class seam: print surface still puts seed after --print (not interactive).
+    const agentPrint = agent.buildPrintCommand({
+      prompt: seed,
+      dangerouslySkipPermissions: false,
+    });
+    expect(agentPrint.command).toContain(seed);
+    expect(agentPrint.command).toContain("--print");
+    expect(agentPrint.command).not.toContain("--prompt-interactive");
+  });
+
+  it("never ends print argv with empty --print token (the #915 accident shape)", () => {
+    const prompt = "must-not-be-dropped";
+    for (const model of ["", "Gemini 3.5 Flash"] as const) {
+      const inv = agyPrintInvocation(model, prompt);
+      const lastPrintIdx = inv.args.lastIndexOf("--print");
+      expect(lastPrintIdx).toBeGreaterThanOrEqual(0);
+      expect(inv.args[lastPrintIdx + 1]).toBe(prompt);
+      // The fatal production shape was: ... --print-timeout 15m --print <empty>
+      expect(inv.args[lastPrintIdx + 1]?.length ?? 0).toBeGreaterThan(0);
+    }
   });
 });
 
