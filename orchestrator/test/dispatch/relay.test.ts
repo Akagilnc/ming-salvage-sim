@@ -739,10 +739,10 @@ describe("#787 capacity relay", () => {
 
     const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
     const previousCoderFix = process.env.ORCHESTRATOR_CODER_FIX_MODEL;
-    const previousReviewer = process.env.ORCHESTRATOR_REVIEWER_MODEL;
+    const previousVerify = process.env.ORCHESTRATOR_VERIFY_MODEL;
     process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
     process.env.ORCHESTRATOR_CODER_FIX_MODEL = "gpt-5.6-terra";
-    process.env.ORCHESTRATOR_REVIEWER_MODEL = "opus";
+    process.env.ORCHESTRATOR_VERIFY_MODEL = "opus";
     try {
       const result = await runOrchestrator({
         issueNumber: 873,
@@ -770,8 +770,8 @@ describe("#787 capacity relay", () => {
       else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
       if (previousCoderFix === undefined) delete process.env.ORCHESTRATOR_CODER_FIX_MODEL;
       else process.env.ORCHESTRATOR_CODER_FIX_MODEL = previousCoderFix;
-      if (previousReviewer === undefined) delete process.env.ORCHESTRATOR_REVIEWER_MODEL;
-      else process.env.ORCHESTRATOR_REVIEWER_MODEL = previousReviewer;
+      if (previousVerify === undefined) delete process.env.ORCHESTRATOR_VERIFY_MODEL;
+      else process.env.ORCHESTRATOR_VERIFY_MODEL = previousVerify;
       rmSync(worktree.path, { recursive: true, force: true });
     }
   });
@@ -876,9 +876,9 @@ describe("#787 capacity relay", () => {
       }
 
       const previousCoder = process.env.ORCHESTRATOR_CODER_MODEL;
-      const previousReviewer = process.env.ORCHESTRATOR_REVIEWER_MODEL;
+      const previousVerify = process.env.ORCHESTRATOR_VERIFY_MODEL;
       process.env.ORCHESTRATOR_CODER_MODEL = "grok-4.5";
-      process.env.ORCHESTRATOR_REVIEWER_MODEL = "gpt-5.6-terra";
+      process.env.ORCHESTRATOR_VERIFY_MODEL = "gpt-5.6-terra";
       try {
         const result = await runOrchestrator({
           issueNumber: 787,
@@ -908,8 +908,8 @@ describe("#787 capacity relay", () => {
       } finally {
         if (previousCoder === undefined) delete process.env.ORCHESTRATOR_CODER_MODEL;
         else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
-        if (previousReviewer === undefined) delete process.env.ORCHESTRATOR_REVIEWER_MODEL;
-        else process.env.ORCHESTRATOR_REVIEWER_MODEL = previousReviewer;
+        if (previousVerify === undefined) delete process.env.ORCHESTRATOR_VERIFY_MODEL;
+        else process.env.ORCHESTRATOR_VERIFY_MODEL = previousVerify;
         rmSync(worktree.path, { recursive: true, force: true });
       }
     },
@@ -1750,8 +1750,8 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
     };
     const resetAt = new Date(NOW.getTime() + 45 * 60 * 1000);
     const reviewerModels: string[] = [];
-    const previousReviewer = process.env.ORCHESTRATOR_REVIEWER_MODEL;
-    process.env.ORCHESTRATOR_REVIEWER_MODEL = "opus";
+    const previousVerify = process.env.ORCHESTRATOR_VERIFY_MODEL;
+    process.env.ORCHESTRATOR_VERIFY_MODEL = "opus";
 
     class SolReviewerWallPositiveBackend implements Backend {
       async smokeModelRoute(route: any): Promise<any> {
@@ -1867,8 +1867,8 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
       else process.env.ORCHESTRATOR_CODER_MODEL = previousCoder;
       if (previousCmrReview === undefined) delete process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS;
       else process.env.ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS = previousCmrReview;
-      if (previousReviewer === undefined) delete process.env.ORCHESTRATOR_REVIEWER_MODEL;
-      else process.env.ORCHESTRATOR_REVIEWER_MODEL = previousReviewer;
+      if (previousVerify === undefined) delete process.env.ORCHESTRATOR_VERIFY_MODEL;
+      else process.env.ORCHESTRATOR_VERIFY_MODEL = previousVerify;
     }
   });
 });

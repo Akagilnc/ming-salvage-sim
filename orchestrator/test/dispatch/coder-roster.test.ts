@@ -436,8 +436,8 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     expect(applied.entry?.id).toBe("grok-4.5");
     expect(applied.route.slots.coder).toBe("grok-4.5");
     expect(applied.route.slots.coderFix).toBe("grok-4.5");
-    // Reviewer legs untouched.
-    expect(applied.route.slots.reviewer).toBe(base.slots.reviewer);
+    // Judge (verify) + CMR legs untouched.
+    expect(applied.route.slots.verify).toBe(base.slots.verify);
   });
 
   it("advances the route coder after the fallback threshold of non-converging rounds", () => {

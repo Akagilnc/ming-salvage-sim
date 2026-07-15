@@ -5,12 +5,14 @@ import { beforeEach, vi } from "vitest";
 // normal route and opt into route variants explicitly with vi.stubEnv.
 const ROUTE_ENV_KEYS = [
   "ORCHESTRATOR_CODER_MODEL",
+  // #923: retired — still cleared so host env cannot fail-loud every suite.
   "ORCHESTRATOR_REVIEWER_MODEL",
   "ORCHESTRATOR_CODER_FIX_MODEL",
   "ORCHESTRATOR_SHIP_MODEL",
   "ORCHESTRATOR_MERGER_MODEL",
   "ORCHESTRATOR_CMR_COMPLETENESS_MODEL",
   "ORCHESTRATOR_CMR_CORRECTNESS_MODEL",
+  "ORCHESTRATOR_VERIFY_MODEL",
   "ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS",
 ] as const;
 
