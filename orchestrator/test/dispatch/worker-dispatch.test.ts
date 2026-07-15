@@ -182,7 +182,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     expect(result.status).toBe("success");
     expect(backend.dispatched.slice(0, 2)).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
-      "S3:reviewer:reviewer:fresh:clean:/code-review",
+      "S3:verify:verify:fresh:clean:/verify",
     ]);
   });
 
@@ -205,7 +205,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     // S7 is not a worker: the family merger consumes the local child commit.
     expect(backend.dispatched).toEqual([
       "S2:coder:coder:fresh:retain:/tdd",
-      "S3:reviewer:reviewer:fresh:clean:/code-review",
+      "S3:verify:verify:fresh:clean:/verify",
     ]);
   });
 

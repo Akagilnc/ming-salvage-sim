@@ -78,7 +78,7 @@ function familySpec(kind: WorkerSpec["kind"]): WorkerSpec {
   return {
     id: kind === "cmr" ? "S3" : "S9",
     kind,
-    role: kind === "cmr" ? "reviewer" : "verify",
+    role: "verify",
     host: "codex",
     session: "fresh",
     contextRetention: "clean",

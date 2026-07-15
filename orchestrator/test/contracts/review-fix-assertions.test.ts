@@ -373,9 +373,9 @@ describe("#677 legal refuse one finding, fix the others", () => {
     expect(result.status).not.toBe("escalate");
     // Fresh re-review after the partial-refuse fix commit
     expect(backend.dispatched).toEqual(
-      expect.arrayContaining(["S5:coder", "S6:reviewer"]),
+      expect.arrayContaining(["S5:coder", "S6:verify"]),
     );
-    const firstS6 = backend.dispatched.indexOf("S6:reviewer");
+    const firstS6 = backend.dispatched.indexOf("S6:verify");
     expect(firstS6).toBeGreaterThan(backend.dispatched.indexOf("S5:coder"));
     // Must not park at S5 refuse
     expect(result.status).toBe("success");

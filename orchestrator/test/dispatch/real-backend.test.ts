@@ -1229,11 +1229,12 @@ describe("RealBackend reviewer output contract", () => {
 
   const reviewerSpec: StepSpec = {
     id: "S6",
-    role: "reviewer",
+    // #919 S2: judge seat identity is verify (residual role:reviewer spelling retired).
+    role: "verify",
     promptFile: "judge_station.md",
     model: "gpt-5.6-sol",
     maxIter: 1,
-    soul: "READ-ONLY",
+    soul: "verify",
     toolchain: ["node", "typescript"],
   };
   const coderSpec: StepSpec = {
@@ -1641,11 +1642,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   };
   const reviewerSpec: StepSpec = {
     id: "S3",
-    role: "reviewer",
+    // #919 S2: judge seat identity is verify.
+    role: "verify",
     promptFile: "judge_station.md",
     model: "gpt-5.6-sol",
     maxIter: 1,
-    soul: "READ-ONLY",
+    soul: "verify",
     toolchain: ["node", "typescript"],
   };
 
@@ -2040,27 +2042,24 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
   it("does not derive open-count from findings-array cargo when findingsCount is missing", () => {
     // #899 / ADR 0131: missing findingsCount is unusable review paper — never
-    // synthesize findings.length, never invent findingsCount:0, never mint a
-    // fake kind:"coder" seat, and never throw for abolished #598 shape lane.
-    // Non-reviewer envelope → runner unusable path (S5 + raw artifacts).
-    //
-    // TOPOLOGY PIN: decode returns `{kind:"fixer", committed:false}` as the
-    // existing non-reviewer envelope that S4→S5 already routes — not "this
-    // worker was a fixer". Do not "fix" it to kind:"coder" or a throw.
+    // synthesize findings.length, never invent a fake kind:"coder" seat, and
+    // never throw for abolished #598 shape lane.
+    // #919 AS4: unusable residual open-count paper (kind:reviewer findingsCount:0)
+    // → route S5 + raw artifacts; never kind:fixer placeholder.
     const backend = makeBackend();
 
     expect(
       backend.probeDecodeOutput(reviewerSpec, {
         findings: [{ severity: "high", category: "x", claim_quote: "y", location: "z", suggested_fix: "w", action: "fix_now" }],
       }),
-    ).toEqual({ kind: "fixer", committed: false });
+    ).toEqual({ kind: "reviewer", findingsCount: 0, findings: [] });
     expect(
       backend.probeDecodeOutput(reviewerSpec, { findings: [] }),
-    ).toEqual({ kind: "fixer", committed: false });
+    ).toEqual({ kind: "reviewer", findingsCount: 0, findings: [] });
     // #919 CR P1 / #925: residual findingsCount:0 is unusable, never silent clean.
     expect(
       backend.probeDecodeOutput(reviewerSpec, { findingsCount: 0, findings: [] }),
-    ).toEqual({ kind: "fixer", committed: false });
+    ).toEqual({ kind: "reviewer", findingsCount: 0, findings: [] });
   });
 
   it("fails a typed reviewer seat when Output.object is absent", async () => {
@@ -2104,7 +2103,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         path: "/tmp/worktree/issue-899",
       }),
     ).resolves.toMatchObject({
-      output: { kind: "fixer", committed: false },
+      output: { kind: "reviewer", findingsCount: 0, findings: [] },
     });
 
     expect(backend.lastAgentOptions?.output).toMatchObject({
@@ -2513,7 +2512,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     }).success).toBe(true);
   });
 
-  it("prefers typed Output.object over sidecar/stdout for reviewer receipts", () => {
+  it("prefers typed Output.object over sidecar/stdout for judge seat receipts", () => {
+    // #919 S2: S3/S6 cargo extract uses the judge tag only — not residual
+    // open-count `<review>` dual channel.
     const backend = makeBackend();
     const payload = { findingsCount: 0, findings: [] };
     const override = {
@@ -2524,8 +2525,20 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     expect(backend.probeRawOutputFor({ output: payload, stdout: "" }, reviewerSpec, true)).toEqual(payload);
     expect(
-      backend.probeRawOutputFor({ stdout: '<review>{"findingsCount":0,"findings":[]}</review>' }, reviewerSpec, false),
+      backend.probeRawOutputFor(
+        { stdout: `<${JUDGE_RECEIPT_TAG}>{"findingsCount":0,"findings":[]}</${JUDGE_RECEIPT_TAG}>` },
+        reviewerSpec,
+        false,
+      ),
     ).toEqual(payload);
+    // Residual open-count dual channel is closed on judge seats.
+    expect(
+      backend.probeRawOutputFor(
+        { stdout: '<review>{"findingsCount":0,"findings":[]}</review>' },
+        reviewerSpec,
+        false,
+      ),
+    ).toBeUndefined();
 
     const dir = mkdtempSync(join(tmpdir(), "worker-review-sidecar-channel-"));
     const outcomePath = join(dir, "outcome.json");
@@ -2554,7 +2567,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       backend.probeRawOutputFor(
         {
           stdout:
-            '<review>{"junk": true, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</review>',
+            `<${JUDGE_RECEIPT_TAG}>{"junk": true, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</${JUDGE_RECEIPT_TAG}>`,
         },
         reviewerSpec,
         false,
@@ -2764,7 +2777,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
 
     expect(result).toEqual({
       // Residual typed findingsCount:0 is unusable (not silent clean); cargo cannot flip fate.
-      output: { kind: "fixer", committed: false },
+      output: { kind: "reviewer", findingsCount: 0, findings: [] },
       sessionId: "sess-review-sidecar",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({
@@ -2806,7 +2819,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     );
 
     expect(result).toEqual({
-      output: { kind: "fixer", committed: false },
+      output: { kind: "reviewer", findingsCount: 0, findings: [] },
       sessionId: "sess-review-resume-sidecar",
     });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-review-session");
@@ -2882,7 +2895,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         },
       ),
     ).resolves.toMatchObject({
-      output: { kind: "fixer", committed: false },
+      output: { kind: "reviewer", findingsCount: 0, findings: [] },
       sessionId: "sess-review-so-landing",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({

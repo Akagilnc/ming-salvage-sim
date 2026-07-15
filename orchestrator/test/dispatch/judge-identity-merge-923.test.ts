@@ -78,10 +78,12 @@ describe("#923 judge identity merge — model-route slot", () => {
     const specs = stepSpecsForEnv();
     expect(specs.S3.model).toBe("opus");
     expect(specs.S6.model).toBe("opus");
-    // Worker role / cargo kind stays reviewer for now (leg soul + receipt shape);
-    // only the model-route *slot* identity merged into verify.
-    expect(specs.S3.role).toBe("reviewer");
-    expect(specs.S6.role).toBe("reviewer");
+    // #919 S2 / #923: model-route slot + seat role/soul are all verify.
+    // "reviewer" remains multi-model leg-soul vocabulary only.
+    expect(specs.S3.role).toBe("verify");
+    expect(specs.S6.role).toBe("verify");
+    expect(specs.S3.soul).toBe("verify");
+    expect(specs.S6.soul).toBe("verify");
   });
 
   it("ORCHESTRATOR_VERIFY_MODEL is the sole override for the judge seat", () => {

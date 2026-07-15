@@ -457,9 +457,9 @@ describe("#334 ADR 0030 worker routing", () => {
     expect(result.status).toBe("success");
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
-      "S3:reviewer:/code-review",
+      "S3:verify:/verify",
       "S5:coder:/tdd",
-      "S6:reviewer:/code-review",
+      "S6:verify:/verify",
     ]);
   });
 

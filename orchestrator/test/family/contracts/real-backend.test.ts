@@ -124,7 +124,7 @@ describe("RealFamilyBackend live officer effort", () => {
   const liveSpec = (overrides: Partial<WorkerSpec>): WorkerSpec => ({
     id: "S3",
     kind: "cmr",
-    role: "reviewer",
+    role: "verify",
     host: "claude",
     session: "fresh",
     contextRetention: "clean",

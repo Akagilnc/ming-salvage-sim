@@ -623,10 +623,12 @@ export function judgeStatusFromOutput(
 
 /**
  * #919 S2 — single judge-seat predicate for topology / decision_gate / soul
- * selection. S3/S6 step ids and role/kind/soul `"verify"` all count.
- * `#923`: `reviewer` remains leg-soul + WorkerKind vocabulary (cannot be
- * role:verify without colliding with online-review S9 kind:verify); seat
- * identity is soul:"verify" + isJudgeSeat.
+ * selection / receipt extract. S3/S6 step ids and role/kind/soul `"verify"`
+ * all count. Residual `role:"reviewer"+soul:"verify"` still matches for
+ * older ledger / fixture rows; production S3/S6 specs use role+soul verify.
+ * (`#923` only merged the model-route *slot* into verify — not a forever pin
+ * that seat role must remain `"reviewer"`. Leg soul `"reviewer"` is multi-model
+ * review-leg vocabulary only.)
  */
 export function isJudgeSeat(input: {
   readonly step?: string;
@@ -640,6 +642,7 @@ export function isJudgeSeat(input: {
   if (input.kind === "verify") return true;
   if (input.role === "verify") return true;
   if (input.soul === "verify") return true;
+  // Residual dual-spell rows only (pre-#919 role spelling).
   if (input.role === "reviewer" && input.soul === "verify") return true;
   return false;
 }

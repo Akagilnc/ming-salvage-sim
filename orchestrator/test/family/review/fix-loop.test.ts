@@ -1611,7 +1611,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches).toEqual([
       expect.objectContaining({
         kind: "cmr",
-        role: "reviewer",
+        role: "verify",
         session: "fresh",
         contextRetention: "clean",
         promptFile: "integrated_cmr_completeness.md",
@@ -1627,7 +1627,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       }),
       expect.objectContaining({
         kind: "cmr",
-        role: "reviewer",
+        role: "verify",
         session: "fresh",
         contextRetention: "clean",
         promptFile: "integrated_cmr_completeness.md",
@@ -1636,7 +1636,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       }),
       expect.objectContaining({
         kind: "cmr",
-        role: "reviewer",
+        role: "verify",
         session: "fresh",
         contextRetention: "clean",
         promptFile: "integrated_cmr_correctness.md",

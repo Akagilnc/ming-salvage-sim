@@ -215,7 +215,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       "prepareWorktree(247, main)", // S1 resident worktree, base=main
       "writeSnapshot(feat/orchestrator/issue-247, #247)", // S1 clean-room snapshot
       "runStep(S2:coder:coder_implement.md)", // S2 implementation
-      "runStep(S3:reviewer:judge_station.md)", // S3 fresh full-diff review
+      "runStep(S3:verify:judge_station.md)", // S3 fresh full-diff review
       // S4 classify, S7 local handoff, S8 success are pure TS.
     ]);
   });
@@ -243,7 +243,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     const runCalls = backend.calls.filter((c) => c.startsWith("runStep("));
     expect(runCalls).toEqual([
       "runStep(S2:coder:coder_implement.md)",
-      "runStep(S3:reviewer:judge_station.md)",
+      "runStep(S3:verify:judge_station.md)",
     ]);
   });
 

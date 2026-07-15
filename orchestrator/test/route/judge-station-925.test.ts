@@ -293,7 +293,7 @@ describe("#925 pure: route tri-state", () => {
         status: "escalate",
       });
       expect(
-        route({ from, output: { kind: "fixer", committed: false } }),
+        route({ from, output: { kind: "reviewer", findingsCount: 0, findings: [] } }),
       ).toEqual({ kind: "next", step: "S5" });
     }
   });
@@ -307,11 +307,16 @@ describe("#925 pure: route tri-state", () => {
     expect(decision).toEqual({ kind: "next", step: "S5" });
   });
 
+  it("AS5: kind:verify+converged on judge seat is unusable (no third channel)", () => {
+    expect(route({ from: "S3", output: { kind: "verify", converged: true } })).toEqual({ kind: "next", step: "S5" });
+    expect(route({ from: "S6", output: { kind: "verify", converged: false } })).toEqual({ kind: "next", step: "S5" });
+  });
+
   it("unusable (non-judge) envelope → S5, never silent clean", () => {
     expect(
       route({
         from: "S3",
-        output: { kind: "fixer", committed: false },
+        output: { kind: "reviewer", findingsCount: 0, findings: [] },
       }),
     ).toEqual({ kind: "next", step: "S5" });
   });
@@ -362,13 +367,13 @@ describe("#925 pure: route tri-state", () => {
 });
 
 describe("#925 S3/S6 maxIterations=1 + seat identity", () => {
-  it("stepSpecs pin verify soul, maxIter 1, judge prompt", () => {
+  it("stepSpecs pin verify role+soul, maxIter 1, judge prompt", () => {
     const specs = stepSpecsForEnv();
     expect(specs.S3.maxIter).toBe(1);
     expect(specs.S6.maxIter).toBe(1);
-    // WorkerKind stays reviewer for the child dispatch seam; soul is verify.
-    expect(specs.S3.role).toBe("reviewer");
-    expect(specs.S6.role).toBe("reviewer");
+    // #919 S2: seat identity is verify; leg soul "reviewer" is multi-model legs only.
+    expect(specs.S3.role).toBe("verify");
+    expect(specs.S6.role).toBe("verify");
     expect(specs.S3.soul).toBe("verify");
     expect(specs.S6.soul).toBe("verify");
     expect(specs.S3.promptFile).toBe("judge_station.md");
@@ -752,12 +757,12 @@ describe("#925 F1: priorJudgeVerdicts land in fix-findings file", () => {
       backend,
       {
         id: "S6",
-        kind: "reviewer",
-        role: "reviewer",
+        kind: "verify",
+        role: "verify",
         host: "codex",
         session: "fresh",
         contextRetention: "clean",
-        skill: "/code-review",
+        skill: "/verify",
         promptFile: "judge_station.md",
         maxIter: 1,
         model: "gpt-5.4",
