@@ -336,8 +336,26 @@ export interface FamilyLedgerEntry {
    * The escalated child's single-slice worker session id on a `child_decision_parked`
    * row (#604 slice 5), forwarded so a later resume re-enters the SAME session
    * (原地 resume, ADR 0062 退出-重入). Absent when the child provider surfaced no id.
+   *
+   * Also: #930 family judge session id on `cmr_reviewed` / `cmr_passed` rows so
+   * the same court can resume across fix rounds (or seed priorJudgeVerdicts
+   * after session loss — same shape as single-slice #925).
    */
   readonly sessionId?: string;
+  /**
+   * #930 — T2 judge status on family court rows (`cmr_reviewed` / `cmr_passed`).
+   * Same enum as single-slice; family does not invent a second closer.
+   */
+  readonly judgeStatus?: import("../types.js").JudgeVerdictStatus;
+  /**
+   * #930 — judge finding disposition table on family court rows (kill + live).
+   * Schema-fixed; runner never parses prose for routing.
+   */
+  readonly findingDispositions?: ReadonlyArray<
+    import("../types.js").JudgeFindingDisposition
+  >;
+  /** #930 — optional advance_coder suggestion on family court continue rows. */
+  readonly advanceCoder?: string;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Required executable source for answer rows. */

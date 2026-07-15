@@ -635,16 +635,21 @@ describe("integrated CMR pass prompt closure contract", () => {
   ]) {
     it(`${promptName} routes same-module still-red examples into the runner coder-fix path`, () => {
       const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
-      const examples = [...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g)];
+      // #930: family court examples use <judge> continue envelopes (not <cmr>).
+      const examples = [
+        ...prompt.matchAll(/<judge>(\{[^\n]*"status"\s*:\s*"continue"[^\n]*\})<\/judge>/g),
+      ];
 
       expect(examples.length).toBeGreaterThan(0);
       for (const [, rawJson] of examples) {
         const output = JSON.parse(rawJson) as {
+          readonly status?: string;
           readonly findings?: readonly {
             readonly action: string;
             readonly disposition?: { readonly kind?: string };
           }[];
         };
+        expect(output.status).toBe("continue");
         for (const finding of output.findings ?? []) {
           if (finding.disposition?.kind === "same_module") {
             expect(finding.action).toBe("fix_now");
@@ -792,7 +797,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(spec.contextRetention).toBe("clean");
     expect(spec.role).toBe("reviewer");
     expect(spec.maxIter).toBe(1);
-    expect(spec.soul).toBe("cmr");
+    expect(spec.soul).toBe("verify");
   });
 
   it("lets Sandcastle validate the CMR receipt with its native retry budget", async () => {
@@ -821,7 +826,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
     await be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" });
     expect(runs[0]).toMatchObject({
-      output: expect.objectContaining({ tag: "cmr", maxRetries: 2 }),
+      output: expect.objectContaining({ tag: "judge", maxRetries: 2 }),
     });
   });
 
@@ -835,7 +840,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ...VALID_CMR_VERDICT_FIELDS,
     };
     const { agent, result } = await runScriptedStructuredOutput({
-      tag: "cmr",
+      tag: "judge",
       schema: workerReceiptSchema(),
       emissions: [{ body: JSON.stringify(good) }],
       maxRetries: RECEIPT_MAX_RETRIES,
@@ -868,7 +873,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     // #899: real sc.run rejects maxRetries>0 on providers without sessionStorage.
     await expect(
       runScriptedStructuredOutput({
-        tag: "cmr",
+        tag: "judge",
         schema: workerReceiptSchema(),
         emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
         maxRetries: RECEIPT_MAX_RETRIES,
@@ -918,7 +923,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     const agentOut: { agent?: ScriptedAgent } = {};
     try {
       await runScriptedStructuredOutput({
-        tag: "cmr",
+        tag: "judge",
         schema: workerReceiptSchema(),
         emissions: [
           { body: JSON.stringify({ findingsCount: -1 }) },
@@ -934,7 +939,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(sc.StructuredOutputError);
       const soe = err as sc.StructuredOutputError;
-      expect(soe.tag).toBe("cmr");
+      expect(soe.tag).toBe("judge");
       expect(soe.sessionId).toBe("sess-cmr-exhausted");
       expect(isReceiptRecoveryFailure(err)).toBe(true);
       // initial attempt + RECEIPT_MAX_RETRIES same-session resumes
@@ -954,7 +959,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
     let sandcastleCalls = 0;
     const exhausted = new sc.StructuredOutputError("bad output", {
-      tag: "cmr",
+      tag: "judge",
       rawMatched: JSON.stringify({
         converged: false,
         reason: "review finding survives malformed receipt",
@@ -980,7 +985,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         throw exhausted;
@@ -1005,7 +1010,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ...VALID_CMR_VERDICT_FIELDS,
     };
     const { agent, result } = await runScriptedStructuredOutput({
-      tag: "cmr",
+      tag: "judge",
       schema: workerReceiptSchema(),
       emissions: [
         { body: JSON.stringify({ findingsCount: undefined }) },
@@ -1055,7 +1060,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ...VALID_CMR_VERDICT_FIELDS,
     };
     const { agent, result } = await runScriptedStructuredOutput({
-      tag: "cmr",
+      tag: "judge",
       schema: workerReceiptSchema(),
       emissions: [{ body: JSON.stringify(payload) }],
       maxRetries: RECEIPT_MAX_RETRIES,
@@ -1123,11 +1128,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         sandcastleCalls += 1;
         // Production seat must bind open-count SO + maxRetries.
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         const run = await runScriptedStructuredOutput({
-          tag: "cmr",
+          tag: "judge",
           schema: workerReceiptSchema(),
           emissions: [
             { body: JSON.stringify({ findingsCount: -1 }) },
@@ -1181,12 +1186,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         return (
           await runScriptedStructuredOutput({
-            tag: "cmr",
+            tag: "judge",
             schema: workerReceiptSchema(),
             emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
             maxRetries: RECEIPT_MAX_RETRIES,
@@ -1248,11 +1253,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         const run = await runScriptedStructuredOutput({
-          tag: "cmr",
+          tag: "judge",
           schema: workerReceiptSchema(),
           emissions: [{ body: JSON.stringify(good) }],
           maxRetries: RECEIPT_MAX_RETRIES,
@@ -1303,12 +1308,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: "cmr",
+          tag: "judge",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         try {
           await runScriptedStructuredOutput({
-            tag: "cmr",
+            tag: "judge",
             schema: workerReceiptSchema(),
             emissions: [
               { body: JSON.stringify({ findingsCount: -1 }) },
@@ -1864,7 +1869,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     },
   );
 
-  it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {
+  it("a converged verdict ⇒ WorkerResult.completed with T2 judge converged (#930)", async () => {
     const be = fixtured();
     be.outcome = {
       kind: "verdict",
@@ -1874,56 +1879,62 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "cmr") {
-      expect(res.output.converged).toBe(true);
-      expect(res.output.successfulLegs).toEqual(STRONG_LEGS);
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      expect(res.output.status).toBe("converged");
     } else {
-      throw new Error("expected completed cmr payload");
+      throw new Error("expected completed judge payload");
     }
   });
 
-  it("a red verdict ⇒ WorkerResult.completed (NOT failed), carrying the reason", async () => {
+  it("a red verdict ⇒ WorkerResult.completed judge continue (NOT failed) (#930)", async () => {
     const be = fixtured();
     be.outcome = {
       kind: "verdict",
       converged: false,
       reason: "seam mismatch",
+      findingsCount: 1,
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "cmr") {
-      expect(res.output.converged).toBe(false);
-      expect(res.output.reason).toBe("seam mismatch");
-      expect(res.output.successfulLegs).toEqual(STRONG_LEGS);
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      expect(res.output.status).toBe("continue");
     } else {
-      throw new Error("expected completed cmr payload");
+      throw new Error("expected completed judge payload");
     }
   });
 
-  it("preserves evidencePaths on the runner-facing cmr output", async () => {
+  it("projects residual red outcome to judge continue traffic (#930)", async () => {
     const be = fixtured();
     be.outcome = {
       kind: "verdict",
       converged: false,
       reason: "blocking findings remain",
+      findingsCount: 1,
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
 
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
 
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       kind: "completed",
       output: {
-        kind: "cmr",
-        converged: false,
-        reason: "blocking findings remain",
-        successfulLegs: STRONG_LEGS,
-        ...CMR_EVIDENCE,
+        kind: "judge",
+        status: "continue",
+        findingDispositions: [
+          { identityKey: "__open_1", action: "live" },
+        ],
+        findings: [],
       },
     });
+    // Cargo siblings (legs / evidence) may ride on the judge envelope (S3).
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      expect(
+        (res.output as { successfulLegs?: string[] }).successfulLegs,
+      ).toEqual(STRONG_LEGS);
+    }
   });
 
   it("an escalate outcome ⇒ WorkerResult.escalated (model-stuck, not a verdict)", async () => {
@@ -2119,7 +2130,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     const cfg = cfgBackend().config(auth);
     expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(true);
     expect(cfg.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-xyz");
-    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+    expect(cfg.env[SANDBOX_SOUL_ENV]).toBe("verify");
     // ORCHESTRATOR_REPO so the cmr worker's `gh issue view` / `gh issue create
     // --repo "$ORCHESTRATOR_REPO"` target the right repo in a clone-from-local run
     // (codex #384).
@@ -2170,7 +2181,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     // claude token absent ⇒ no env var (the Claude Agent leg degrades).
     const noClaude = cfgBackend().config({ codexAuthDir: "/tmp/c", agyDir: "/tmp/a" });
     expect(noClaude.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+    expect(noClaude.env[SANDBOX_SOUL_ENV]).toBe("verify");
 
     // ALL auth absent ⇒ souls + home env mounts still present (#372 / #911),
     // no credential mounts, only the soul env — still no throw (the skill runs and
@@ -2179,7 +2190,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(none.mounts.length).toBe(2);
     expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.orchestrator/souls")).toBe(true);
     expect(none.mounts.some((m) => m.sandboxPath === "/home/agent/.claude/CLAUDE.md")).toBe(true);
-    expect(none.env[SANDBOX_SOUL_ENV]).toBe("cmr");
+    expect(none.env[SANDBOX_SOUL_ENV]).toBe("verify");
   });
 
   it("marks the cmr container as an orchestrator-spawned, non-interactive session", () => {
@@ -2991,7 +3002,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         this.calls += 1;
-        expect(options.output).toEqual(expect.objectContaining({ tag: "cmr", maxRetries: 2 }));
+        expect(options.output).toEqual(expect.objectContaining({ tag: "judge", maxRetries: 2 }));
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(
           outcomePathAtRun,

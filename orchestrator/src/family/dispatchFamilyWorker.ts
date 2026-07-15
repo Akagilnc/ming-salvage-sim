@@ -36,6 +36,7 @@ import {
 } from "../workerMonitor.js";
 import type {
   DispatchContext,
+  JudgeResult,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -49,12 +50,50 @@ import {
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
+import { projectResidualReviewerToJudge } from "../judgeStation.js";
 import { skeletonReviewLoopWorkerResult } from "../reviewLoopOutcome.js";
 import type {
   FamilyBackend,
   IntegratedCmrPass,
   IntegratedCmrResult,
 } from "./types.js";
+import type { CmrResult } from "../types.js";
+
+/**
+ * #930 — residual IntegratedCmrResult / kind:cmr paper → sole judge form once.
+ *
+ * Open-count residual (findingsCount is a safe integer):
+ *   same as single-slice {@link projectResidualReviewerToJudge} —
+ *   positive → continue; **zero → undefined (never silent converged)**.
+ *
+ * Legacy IntegratedCmrResult without an open-count field may still carry the
+ * explicit `converged` boolean green (pre-judge residual API). That is NOT
+ * open-count zero inventing a pass.
+ *
+ * Live production traffic is typed `station:judge` (see realFamilyBackend);
+ * this helper is residual boundary only.
+ */
+export function residualIntegratedCmrToJudgeOutput(
+  cmr:
+    | Pick<IntegratedCmrResult, "findingsCount" | "findings" | "converged">
+    | Pick<CmrResult, "findingsCount" | "findings" | "converged">,
+): JudgeResult | undefined {
+  if (
+    typeof cmr.findingsCount === "number" &&
+    Number.isSafeInteger(cmr.findingsCount)
+  ) {
+    // Open-count residual paper — 0/non-positive never becomes converged.
+    return projectResidualReviewerToJudge({
+      findingsCount: cmr.findingsCount,
+      findings: cmr.findings,
+    });
+  }
+  // No open-count field: honor explicit legacy boolean green only.
+  if (cmr.converged === true) {
+    return { kind: "judge", status: "converged" };
+  }
+  return undefined;
+}
 
 const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
   "python",
@@ -101,7 +140,9 @@ export function cmrWorkerSpec(
     maxIter: 1,
     model,
     cmrReviewLegs: route?.legCollections.cmrReview ?? activeCmrReviewLegs(),
-    soul: "cmr",
+    // #930: family court is verify-judge traffic (same soul as single-slice S3/S6).
+    // kind stays "cmr" for dispatch/routing; soul is the judge traffic identity.
+    soul: "verify",
     toolchain: [],
   };
 }
@@ -433,19 +474,26 @@ export async function legacyDispatchFamilyWorker(
         ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
         : {}),
     });
-    // A `red` (non-converged) verdict is `completed` with payload — NOT `failed`
-    // (PRD #330 R2). The verify-cmr hook reads `converged` off the payload.
+    // #930: residual IntegratedCmrResult open-count projects once (shared
+    // residual semantics). Zero/missing count → residual kind:cmr unusable
+    // paper (re-furnace), never silent converged.
+    const projected = residualIntegratedCmrToJudgeOutput(cmr);
+    if (projected !== undefined) {
+      return { kind: "completed", output: projected };
+    }
     return {
       kind: "completed",
       output: {
         kind: "cmr",
-        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
         converged: cmr.converged,
         ...(cmr.findingsCount !== undefined
           ? { findingsCount: cmr.findingsCount }
           : {}),
         ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-        ...(cmr.successfulLegs !== undefined ? { successfulLegs: cmr.successfulLegs } : {}),
+        ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
+        ...(cmr.successfulLegs !== undefined
+          ? { successfulLegs: cmr.successfulLegs }
+          : {}),
         ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
         ...(cmr.claimedFixedFindingIdentityKeys !== undefined
           ? {
@@ -456,8 +504,9 @@ export async function legacyDispatchFamilyWorker(
         ...(cmr.priorFindingDispositions !== undefined
           ? { priorFindingDispositions: cmr.priorFindingDispositions }
           : {}),
-        ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
-        ...(cmr.evidencePaths !== undefined ? { evidencePaths: cmr.evidencePaths } : {}),
+        ...(cmr.evidencePaths !== undefined
+          ? { evidencePaths: cmr.evidencePaths }
+          : {}),
       },
     };
   }

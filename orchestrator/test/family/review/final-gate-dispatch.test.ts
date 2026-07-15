@@ -949,18 +949,18 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
 });
 
 describe("#331 legacyDispatchFamilyWorker — wraps the legacy CMR return as WorkerResult", () => {
-  it("cmr worker: a red verdict is `completed` (with payload), NOT `failed`", async () => {
+  it("cmr worker: a red verdict is `completed` judge continue (NOT `failed`) (#930)", async () => {
     const be = new CapableFamilyBackend();
     be.cmrConverged = false;
     const res = await legacyDispatchFamilyWorker(be, cmrWorkerSpec(), {
       familyBase: "fb",
     });
     expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "cmr") {
-      expect(res.output.converged).toBe(false);
-      expect(res.output.reason).toBe("cross-slice seam mismatch");
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      // Residual red IntegratedCmrResult projects to judge continue at boundary.
+      expect(res.output.status).toBe("continue");
     } else {
-      throw new Error("expected completed cmr payload");
+      throw new Error("expected completed judge payload");
     }
   });
 

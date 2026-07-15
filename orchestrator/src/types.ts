@@ -1073,15 +1073,16 @@ export type CoderResult = CoderOutput;
 export type ReviewerResult = ReviewerOutput;
 
 /**
- * A family integrated-cmr worker's output (#335/#449). Family CMR still routes
- * by declared findingsCount until #930; single-slice ADR 0131/0132 judge
- * tri-state is a separate channel. Other reviewer fields are cargo.
+ * Residual family integrated-cmr cargo envelope (#335/#449).
+ * #930: family court **traffic** is {@link JudgeResult} tri-state only;
+ * this shape is residual cargo / legacy fixtures. Topology must not close
+ * a court by reading findingsCount (second open-count closer deleted).
  */
 export interface CmrResult {
   readonly kind: "cmr";
   /** Which integrated CMR pass produced this verdict, when known. */
   readonly cmrPass?: "completeness" | "correctness";
-  /** Optional reviewer cargo; family CMR routes by findingsCount until #930. */
+  /** Residual cargo flag; not a family closer after #930. */
   readonly converged?: boolean;
   /** Why it did not converge — set when red (handed to escalate). */
   readonly reason?: string;
@@ -1095,7 +1096,10 @@ export interface CmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured CMR findings passed through as worker cargo. */
   readonly findings?: readonly Finding[];
-  /** Family-CMR declared count (until #930). Structured rows never supply it. */
+  /**
+   * Residual open-count cargo only. Not a family closer (#930) — production
+   * projects count→judge once at the backend boundary.
+   */
   readonly findingsCount?: number;
   /** Cross-round grouped findings + recurring-class markers (#711). */
   readonly findingFamilies?: readonly FindingFamily[];

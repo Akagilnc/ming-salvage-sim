@@ -36,8 +36,10 @@
  *     ship. `verifyCmr` owns pass ordering and the ADR0032 strong-leg
  *     / required-leg degradation floor. #875 demolished the accounting court
  *     (leg-accounting death, claimed-fixed coverage audit, disposition-enum kill):
- *     envelope prose no longer aborts a live run. Three-channel routing stays
- *     (exit / findings count / decision gate) plus real infra durable abort.
+ *     envelope prose no longer aborts a live run. #930: family court closure is
+ *     the shared T2 judge tri-state (converged|continue|escalate) — open-count
+ *     as a second closer is deleted. Three-channel routing stays
+ *     (exit / judge status / decision gate) plus real infra durable abort.
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
  * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,
@@ -133,6 +135,12 @@ import type {
   WorkerSpec,
 } from "../types.js";
 import { findingIdentityKey } from "../findings.js";
+import {
+  closeFamilyCourtFromJudgeOutput,
+  priorFamilyJudgeVerdictRowsFromLedger,
+} from "../judgeStation.js";
+import { residualIntegratedCmrToJudgeOutput } from "./dispatchFamilyWorker.js";
+import { reviewFixDecisionGate } from "../reviewFixAssertionGate.js";
 import {
   buildReviewRoundStamp,
   readTelemetryRecords,
@@ -618,6 +626,12 @@ interface IntegratedCmrPassOutcome {
     readonly priorCmrFindingIdentityKeysByPass: Partial<
       Record<IntegratedCmrPass, readonly string[]>
     >;
+    /** #930 — per-pass family judge session for resume across fix rounds. */
+    readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
+    /** #930 — refuse keys blind-routed back to the family judge. */
+    readonly refusedFindingIdentityKeysByPass?: Partial<
+      Record<IntegratedCmrPass, readonly string[]>
+    >;
   };
 }
 
@@ -662,6 +676,12 @@ async function runCmrCoderFix(input: {
   readonly resolvedRoute: ResolvedModelRoute;
   readonly billingPool?: string;
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
+  /** #930 — judge session to resume after fix / refuse. */
+  readonly judgeSessionId?: string;
+  readonly priorCmrFindingIdentityKeysByPass?: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  >;
+  readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -679,6 +699,9 @@ async function runCmrCoderFix(input: {
     resolvedRoute,
     billingPool,
     billingPoolSlots,
+    judgeSessionId,
+    priorCmrFindingIdentityKeysByPass,
+    judgeSessionIdByPass,
   } = input;
   const reasonPrefix =
     `integrated cmr ${pass} coder-fix for ` +
@@ -813,7 +836,7 @@ async function runCmrCoderFix(input: {
       familyHeadBefore: currentFamilyHeadBefore,
       familyHeadAfter,
       blockingFindingIdentityKeys,
-      reason: `${reasonPrefix}: completed coder receipt carried another shape; fresh reviewer will judge the diff`,
+      reason: `${reasonPrefix}: completed coder receipt carried another shape; family judge will re-open on the diff`,
     });
     return { result: { ok: true, ran: true }, familyHeadAfter };
   }
@@ -849,14 +872,51 @@ async function runCmrCoderFix(input: {
     return { result: { ok: false, ran: true }, familyHeadAfter };
   }
 
+  // #930: legal refuse is a completion, not a terminal / idle death — blind-route
+  // keys back to the family judge for re-ruling (same contract as single-slice).
+  const refuseRecords = fixResult.output.refuseRecords ?? [];
+  const refusedFindingIdentityKeys =
+    refuseRecords.length > 0
+      ? (reviewFixDecisionGate({ records: refuseRecords })
+          ?.refusedFindingIdentityKeys ?? [])
+      : (fixResult.output.refusedFindingIdentityKeys ?? []);
+
   await recordCmrFixCommitted(familyBackend, {
     cmrPass: pass,
     familyHeadBefore: currentFamilyHeadBefore,
     familyHeadAfter,
     blockingFindingIdentityKeys,
-    reason: `${reasonPrefix}: coder-fix completed; fresh reviewer will judge findings`,
+    reason:
+      refusedFindingIdentityKeys.length > 0
+        ? `${reasonPrefix}: coder-fix refused ${refusedFindingIdentityKeys.length} finding(s); family judge will re-rule`
+        : // Keep "fresh reviewer will judge findings" phrasing for ledger grep stability
+          // while the re-open is the same family judge court (#930).
+          `${reasonPrefix}: coder-fix completed; fresh reviewer will judge findings`,
   });
-  return { result: { ok: true, ran: true }, familyHeadAfter };
+  return {
+    result: { ok: true, ran: true },
+    familyHeadAfter,
+    // Surface refuse + judge session so the pass loop re-opens the court.
+    restartFinalBarrier: {
+      familyHeadAfter,
+      priorCmrFindingIdentityKeysByPass: priorCmrFindingIdentityKeysByPass ?? {},
+      ...(judgeSessionId !== undefined || judgeSessionIdByPass !== undefined
+        ? {
+            judgeSessionIdByPass: {
+              ...(judgeSessionIdByPass ?? {}),
+              ...(judgeSessionId !== undefined ? { [pass]: judgeSessionId } : {}),
+            },
+          }
+        : {}),
+      ...(refusedFindingIdentityKeys.length > 0
+        ? {
+            refusedFindingIdentityKeysByPass: {
+              [pass]: refusedFindingIdentityKeys,
+            },
+          }
+        : {}),
+    },
+  };
 }
 
 async function readPostCmrFamilyHead(
@@ -1611,20 +1671,22 @@ function stampCmrReviewRound(input: {
       (record): record is TelemetryReviewRoundRecord =>
         record.phase === "review_round" && record.cmrPass === input.pass,
     );
-    const output =
-      input.result.kind === "completed" && input.result.output.kind === "cmr"
-        ? input.result.output
-        : undefined;
+    const completed =
+      input.result.kind === "completed" ? input.result.output : undefined;
+    const judgeOut = completed?.kind === "judge" ? completed : undefined;
+    const cmrOut = completed?.kind === "cmr" ? completed : undefined;
     const workerVerdict =
       input.result.kind === "escalated"
         ? "escalated"
         : input.result.kind === "failed"
           ? "failed"
-          : output?.converged === true
+          : judgeOut?.status === "converged" || cmrOut?.converged === true
             ? "converged"
-            : (output?.findings?.length ?? 0) > 0
+            : judgeOut?.status === "continue" ||
+                (cmrOut?.findings?.length ?? 0) > 0
               ? "blocking"
               : "not_converged";
+    const findingsCargo = judgeOut?.findings ?? cmrOut?.findings;
     tryAppendTelemetryRecord(
       ledgerDir,
       buildReviewRoundStamp({
@@ -1634,10 +1696,10 @@ function stampCmrReviewRound(input: {
         reviewRound: priorReviewRecords.length + 1,
         verdict: workerVerdict,
         finalDisposition: input.finalDisposition,
-        ...(output?.findings !== undefined ? { findings: output.findings } : {}),
+        ...(findingsCargo !== undefined ? { findings: findingsCargo } : {}),
         priorReviewRecords,
-        ...(output?.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: output.priorFindingDispositions }
+        ...(cmrOut?.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: cmrOut.priorFindingDispositions }
           : {}),
       }),
     );
@@ -1725,6 +1787,11 @@ async function runIntegratedCmrPass(input: {
   readonly allowCoderFix: boolean;
   readonly billingPool?: string;
   readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
+  /** #930 — resume the family judge session for this pass when present. */
+  readonly judgeSessionId?: string;
+  /** #930 — refuse keys from prior coder-fix for judge re-ruling. */
+  readonly refusedFindingIdentityKeys?: readonly string[];
+  readonly judgeSessionIdByPass?: Partial<Record<IntegratedCmrPass, string>>;
 }): Promise<IntegratedCmrPassOutcome> {
   const {
     pass,
@@ -1742,6 +1809,9 @@ async function runIntegratedCmrPass(input: {
     priorCmrFindingIdentityKeys,
     priorCmrFindingIdentityKeysByPass,
     allowCoderFix,
+    judgeSessionId,
+    refusedFindingIdentityKeys,
+    judgeSessionIdByPass,
   } = input;
   const routeFingerprint = modelRouteFingerprint(resolvedRoute);
   const resolvedFamilyHeadAfter = await readPostCmrFamilyHead(
@@ -1761,9 +1831,23 @@ async function runIntegratedCmrPass(input: {
       familyHeadAfter: resolvedFamilyHeadAfter,
     };
   }
-  const spec = cmrWorkerSpec("fresh", pass, resolvedRoute);
+  // #930: resume the same family judge when we hold a session id; otherwise
+  // open fresh and land priorJudgeVerdicts from the ledger (session-loss path).
+  const resumeJudgeSessionId =
+    typeof judgeSessionId === "string" && judgeSessionId.length > 0
+      ? judgeSessionId
+      : undefined;
+  const spec = cmrWorkerSpec(
+    resumeJudgeSessionId !== undefined ? "resume" : "fresh",
+    pass,
+    resolvedRoute,
+  );
   const familyLedger = await familyBackend.readFamilyLedger();
   const priorRoundFindings = priorCmrFindingsFromFamilyLedger(familyLedger, pass);
+  const priorJudgeVerdicts = priorFamilyJudgeVerdictRowsFromLedger(
+    familyLedger,
+    pass,
+  );
   const cmrPool = billingPoolForFamilyWorker({
     ...(billingPool !== undefined ? { billingPool } : {}),
     ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
@@ -1776,6 +1860,9 @@ async function runIntegratedCmrPass(input: {
     modelRoute: resolvedRoute,
     ...(cmrPool !== undefined ? { billingPool: cmrPool } : {}),
     cmrPass: pass,
+    ...(resumeJudgeSessionId !== undefined
+      ? { resumeSessionId: resumeJudgeSessionId }
+      : {}),
     ...(llmResolvedChildren !== undefined && llmResolvedChildren.length > 0
       ? { llmResolvedChildren }
       : {}),
@@ -1785,6 +1872,15 @@ async function runIntegratedCmrPass(input: {
       ? { priorCmrFindingIdentityKeys }
       : {}),
     ...(priorRoundFindings.length > 0 ? { priorRoundFindings } : {}),
+    // Session-loss / trajectory: always land prior rows when present (same as
+    // single-slice #925). Fresh opens after lost session rely on these alone.
+    ...(priorJudgeVerdicts.length > 0
+      ? { priorJudgeVerdicts }
+      : {}),
+    ...(refusedFindingIdentityKeys !== undefined &&
+    refusedFindingIdentityKeys.length > 0
+      ? { refusedFindingIdentityKeys }
+      : {}),
   };
   const stampReviewRound = (
     result: WorkerResult,
@@ -1832,48 +1928,6 @@ async function runIntegratedCmrPass(input: {
     expectedFamilyHead: resolvedFamilyHeadAfter,
     familyHeadAfter: postWorkerFamilyHead,
   });
-  const routeRawReviewerArtifactsToFix = async (
-    reason: string,
-    sessionId: string | undefined,
-  ): Promise<IntegratedCmrPassOutcome> => {
-    const rawReviewerArtifacts = reviewerArtifactPointers(
-      reviewerMonitorHandle,
-      sessionId,
-    );
-    await persistFinalReviewRound("accepted", () =>
-      recordCmrReviewed(familyBackend, {
-        cmrPass: pass,
-        reason,
-        familyHeadAfter: postWorkerFamilyHead,
-        blockingFindingIdentityKeys: [],
-      }),
-    );
-    const fixRound = await runCmrCoderFix({
-      pass,
-      familyBackend,
-      familyBase,
-      ...(runId !== undefined ? { runId } : {}),
-      blockingFindings: [],
-      blockingFindingIdentityKeys: [],
-      rawReviewerArtifacts,
-      familyHeadBefore: postWorkerFamilyHead,
-      escalationAnswer,
-      familyIssue,
-      resolvedRoute,
-      ...(billingPool !== undefined ? { billingPool } : {}),
-      ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
-    });
-    if (!fixRound.result.ok) return fixRound;
-    return {
-      result: { ok: true, ran: true },
-      familyHeadAfter: fixRound.familyHeadAfter,
-      restartFinalBarrier: {
-        familyHeadAfter: fixRound.familyHeadAfter,
-        priorCmrFindingIdentityKeysByPass:
-          priorCmrFindingIdentityKeysByPass ?? {},
-      },
-    };
-  };
   if (cmrResult.kind === "escalated") {
     const reason = cmrResult.escalation.reason;
     const diagnosis = cmrResult.escalation.diagnosis;
@@ -1965,114 +2019,240 @@ async function runIntegratedCmrPass(input: {
       familyHeadAfter: postWorkerFamilyHead,
     };
   }
-  if (cmrResult.output.kind !== "cmr") {
-    return await routeRawReviewerArtifactsToFix(
-      `integrated cmr ${pass} reviewer completed with a non-review shape; raw artifacts require fixer inspection`,
-      cmrResult.sessionId,
-    );
-  }
-  // Family CMR still routes by reviewer-declared open count until #930 unifies
-  // on judge tri-state. ADR 0131/0132 single-slice channel (b) is separate.
-  // Structured findings are cargo and cannot supply a missing count.
-  const openFindingsCount = cmrResult.output.findingsCount;
-  if (openFindingsCount === undefined) {
-    return await routeRawReviewerArtifactsToFix(
-      `integrated cmr ${pass} reviewer omitted its declared count; raw artifacts require fixer inspection`,
-      cmrResult.sessionId,
-    );
-  }
-  // Declared count is the complete family-CMR routing signal (pre-#930).
-  // Positive always enters coder-fix. Structured findings are optional cargo;
-  // when absent, the fixer receives the raw reviewer artifact pointers instead.
-  if (openFindingsCount > 0) {
-    const blockingFindings = cmrResult.output.findings ?? [];
-    const blockingFindingIdentityKeys = [
-      ...new Set(blockingFindings.map(findingIdentityKey)),
-    ];
-    const reason =
-      `integrated cmr ${pass} reviewer declared ${openFindingsCount} open findings`;
-    const stopSummary: StopSummary = stageFailureStopSummary({
-      status: "cmr_failed",
-      summary: reason,
-      repairHint: "send the reviewer artifacts to coder-fix, then run a fresh review",
-    });
-    // The runner schedules from count only; finding content is cargo.
-    if (allowCoderFix) {
-      await persistFinalReviewRound("accepted", () =>
-        recordCmrReviewed(familyBackend, {
-          cmrPass: pass,
-          reason,
-          familyHeadAfter: postWorkerFamilyHead,
-          blockingFindingIdentityKeys,
-          stopSummary,
-        }),
-      );
-      const fixFamilyHeadBefore = postWorkerFamilyHead;
-      const fixRound = await runCmrCoderFix({
-        pass,
-        familyBackend,
-        familyBase,
-        ...(runId !== undefined ? { runId } : {}),
-        blockingFindings,
-        blockingFindingCount: openFindingsCount,
-        blockingFindingIdentityKeys,
-        rawReviewerArtifacts: reviewerArtifactPointers(
-          reviewerMonitorHandle,
-          cmrResult.sessionId,
-        ),
-        ...(cmrResult.output.findingFamilies !== undefined
-          ? { findingFamilies: cmrResult.output.findingFamilies }
-          : {}),
-        familyHeadBefore: fixFamilyHeadBefore,
-        escalationAnswer,
-        familyIssue,
-        resolvedRoute,
-        ...(billingPool !== undefined ? { billingPool } : {}),
-        ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
-      });
-      if (!fixRound.result.ok) return fixRound;
-      const updatedPriorKeys = [
-        ...new Set([...(priorCmrFindingIdentityKeys ?? []), ...blockingFindingIdentityKeys]),
-      ];
-      return {
-        result: { ok: true, ran: true },
-        familyHeadAfter: fixRound.familyHeadAfter,
-        restartFinalBarrier: {
-          familyHeadAfter: fixRound.familyHeadAfter,
-          priorCmrFindingIdentityKeysByPass: {
-            ...(priorCmrFindingIdentityKeysByPass ?? {}),
-            [pass]: updatedPriorKeys,
-          },
-        },
-      };
-    }
+  // #930: family court closes on shared T2 judge tri-state only. Residual
+  // kind:"cmr" paper (legacy fixtures / pre-judge seat) is projected ONCE into
+  // judge form at this boundary — same class as single-slice residual→judge
+  // (0/missing → unusable, never silent clean). Live kind:"judge" is direct.
+  const rawOutput = cmrResult.output;
+  const judgeTraffic =
+    rawOutput.kind === "judge"
+      ? rawOutput
+      : rawOutput.kind === "cmr"
+        ? residualIntegratedCmrToJudgeOutput(rawOutput) ?? rawOutput
+        : rawOutput;
+  const closure = closeFamilyCourtFromJudgeOutput(judgeTraffic);
+  const openedJudgeSessionId =
+    typeof cmrResult.sessionId === "string" && cmrResult.sessionId.length > 0
+      ? cmrResult.sessionId
+      : resumeJudgeSessionId;
+  const judgeStatusForLedger =
+    judgeTraffic.kind === "judge" ? judgeTraffic.status : undefined;
+  const judgeDispositionsForLedger =
+    judgeTraffic.kind === "judge" ? judgeTraffic.findingDispositions : undefined;
+  const advanceCoderForLedger =
+    judgeTraffic.kind === "judge" ? judgeTraffic.advanceCoder : undefined;
+  // S3: findingFamilies / skippedLegs must not drop on kind:judge (cargo rides).
+  const cargoSource =
+    rawOutput !== null && typeof rawOutput === "object"
+      ? (rawOutput as {
+          readonly skippedLegs?: ReadonlyArray<{
+            readonly slug: string;
+            readonly reason: string;
+          }>;
+          readonly findingFamilies?: ReadonlyArray<FindingFamily>;
+        })
+      : undefined;
+  const skippedLegs = cargoSource?.skippedLegs;
+  const findingFamilies = cargoSource?.findingFamilies;
+
+  const mergeRestart = (
+    base: NonNullable<IntegratedCmrPassOutcome["restartFinalBarrier"]>,
+  ): NonNullable<IntegratedCmrPassOutcome["restartFinalBarrier"]> => ({
+    ...base,
+    judgeSessionIdByPass: {
+      ...(judgeSessionIdByPass ?? {}),
+      ...(base.judgeSessionIdByPass ?? {}),
+      ...(openedJudgeSessionId !== undefined
+        ? { [pass]: openedJudgeSessionId }
+        : {}),
+    },
+  });
+
+  if (closure.action === "pass") {
     await persistFinalReviewRound("accepted", () =>
-      recordDurableAbort(familyBackend, {
-        phase: "final",
+      recordCmrPassed(familyBackend, {
+        cmrPass: pass,
+        familyHeadAfter: postWorkerFamilyHead,
+        routeFingerprint,
+        ...(openedJudgeSessionId !== undefined
+          ? { sessionId: openedJudgeSessionId }
+          : {}),
+        judgeStatus: "converged",
+        ...(judgeDispositionsForLedger !== undefined
+          ? { findingDispositions: judgeDispositionsForLedger }
+          : {}),
+        ...(advanceCoderForLedger !== undefined
+          ? { advanceCoder: advanceCoderForLedger }
+          : {}),
+        stopSummary: familyCmrPassStopSummary({
+          familyHeadAfter: postWorkerFamilyHead,
+          skippedLegs,
+        }),
+      }),
+    );
+    return {
+      result: { ok: true, ran: true },
+      familyHeadAfter: postWorkerFamilyHead,
+    };
+  }
+
+  if (closure.action === "escalate") {
+    const reason = closure.reason;
+    const diagnosis = closure.diagnosis;
+    const stopSummary = decisionGateParkStopSummary({
+      summary: `${reason} — ${diagnosis}`,
+      repairHint:
+        "answer the family judge decision gate, then resume the family court in place",
+      heads:
+        postWorkerFamilyHead !== undefined
+          ? { actualFamilyHead: postWorkerFamilyHead }
+          : undefined,
+    });
+    await persistFinalReviewRound("accepted", async () => {
+      await recordCmrReviewed(familyBackend, {
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        blockingFindingIdentityKeys: [],
+        ...(openedJudgeSessionId !== undefined
+          ? { sessionId: openedJudgeSessionId }
+          : {}),
+        judgeStatus: "escalate",
+        ...(judgeDispositionsForLedger !== undefined
+          ? { findingDispositions: judgeDispositionsForLedger }
+          : {}),
+        stopSummary,
+      });
+      await familyBackend.escalateFamily?.({
+        reason,
+        diagnosis,
+        familyHeadAfter: postWorkerFamilyHead,
+        stopSummary,
+        escalationKind: "decision",
+      });
+    });
+    return {
+      result: { ok: false, ran: true },
+      familyHeadAfter: postWorkerFamilyHead,
+    };
+  }
+
+  // continue | unusable → coder-fix (or abort when fix disabled)
+  const isUnusable = closure.action === "unusable";
+  const blockingFindings =
+    closure.action === "continue" ? closure.blocking : [];
+  const blockingFindingIdentityKeys =
+    closure.action === "continue" ? closure.blockingIdentityKeys : [];
+  const blockingFindingCount =
+    closure.action === "continue" ? closure.blockingFindingCount : 0;
+  const reason = isUnusable
+    ? `integrated cmr ${pass} ${closure.reason}`
+    : `integrated cmr ${pass} judge continue with ${blockingFindingCount} live finding(s)`;
+  const stopSummary: StopSummary = stageFailureStopSummary({
+    status: "cmr_failed",
+    summary: reason,
+    repairHint: isUnusable
+      ? "send the raw judge/reviewer artifacts to coder-fix, then re-open the family judge"
+      : "send live findings to coder-fix, then resume the family judge",
+  });
+
+  if (allowCoderFix) {
+    await persistFinalReviewRound("accepted", () =>
+      recordCmrReviewed(familyBackend, {
         cmrPass: pass,
         reason,
         familyHeadAfter: postWorkerFamilyHead,
         blockingFindingIdentityKeys,
+        ...(openedJudgeSessionId !== undefined
+          ? { sessionId: openedJudgeSessionId }
+          : {}),
+        ...(judgeStatusForLedger !== undefined
+          ? { judgeStatus: judgeStatusForLedger }
+          : isUnusable
+            ? {}
+            : { judgeStatus: "continue" }),
+        ...(judgeDispositionsForLedger !== undefined
+          ? { findingDispositions: judgeDispositionsForLedger }
+          : {}),
+        ...(advanceCoderForLedger !== undefined
+          ? { advanceCoder: advanceCoderForLedger }
+          : {}),
         stopSummary,
       }),
     );
+    const fixFamilyHeadBefore = postWorkerFamilyHead;
+    const fixRound = await runCmrCoderFix({
+      pass,
+      familyBackend,
+      familyBase,
+      ...(runId !== undefined ? { runId } : {}),
+      blockingFindings,
+      blockingFindingCount,
+      blockingFindingIdentityKeys,
+      rawReviewerArtifacts: reviewerArtifactPointers(
+        reviewerMonitorHandle,
+        cmrResult.sessionId,
+      ),
+      ...(findingFamilies !== undefined ? { findingFamilies } : {}),
+      familyHeadBefore: fixFamilyHeadBefore,
+      escalationAnswer,
+      familyIssue,
+      resolvedRoute,
+      ...(billingPool !== undefined ? { billingPool } : {}),
+      ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
+      ...(openedJudgeSessionId !== undefined
+        ? { judgeSessionId: openedJudgeSessionId }
+        : {}),
+      ...(priorCmrFindingIdentityKeysByPass !== undefined
+        ? { priorCmrFindingIdentityKeysByPass }
+        : {}),
+      ...(judgeSessionIdByPass !== undefined ? { judgeSessionIdByPass } : {}),
+    });
+    if (!fixRound.result.ok) return fixRound;
+    const updatedPriorKeys = [
+      ...new Set([
+        ...(priorCmrFindingIdentityKeys ?? []),
+        ...blockingFindingIdentityKeys,
+      ]),
+    ];
+    const fromFix = fixRound.restartFinalBarrier;
     return {
-      result: stageGate("cmr_failed"),
-      familyHeadAfter: postWorkerFamilyHead,
+      result: { ok: true, ran: true },
+      familyHeadAfter: fixRound.familyHeadAfter,
+      restartFinalBarrier: mergeRestart({
+        familyHeadAfter: fixRound.familyHeadAfter,
+        priorCmrFindingIdentityKeysByPass: {
+          ...(priorCmrFindingIdentityKeysByPass ?? {}),
+          ...(fromFix?.priorCmrFindingIdentityKeysByPass ?? {}),
+          [pass]: updatedPriorKeys,
+        },
+        ...(fromFix?.refusedFindingIdentityKeysByPass !== undefined
+          ? {
+              refusedFindingIdentityKeysByPass:
+                fromFix.refusedFindingIdentityKeysByPass,
+            }
+          : {}),
+        ...(fromFix?.judgeSessionIdByPass !== undefined
+          ? { judgeSessionIdByPass: fromFix.judgeSessionIdByPass }
+          : {}),
+      }),
     };
   }
-  // A zero declaration converges; the runner does not inspect finding content.
-  const skippedLegs = cmrResult.output.skippedLegs;
-  await persistFinalReviewRound("accepted", () => recordCmrPassed(familyBackend, {
-    cmrPass: pass,
-    familyHeadAfter: postWorkerFamilyHead,
-    routeFingerprint,
-    stopSummary: familyCmrPassStopSummary({
+
+  await persistFinalReviewRound("accepted", () =>
+    recordDurableAbort(familyBackend, {
+      phase: "final",
+      cmrPass: pass,
+      reason,
       familyHeadAfter: postWorkerFamilyHead,
-      skippedLegs,
+      blockingFindingIdentityKeys,
+      stopSummary,
     }),
-  }));
-  return { result: { ok: true, ran: true }, familyHeadAfter: postWorkerFamilyHead };
+  );
+  return {
+    result: stageGate("cmr_failed"),
+    familyHeadAfter: postWorkerFamilyHead,
+  };
   } finally {
     stampReviewRound(reviewRoundResult, finalReviewRoundDisposition);
   }
@@ -2189,9 +2369,9 @@ export async function runVerifyCmr(
     return stageGate("cmr_failed");
   }
 
-  // #419: Step5 completeness and Step6 correctness are two runner-dispatched
-  // CMR worker passes. Correctness is structurally unreachable unless the
-  // completeness worker returns a green terminal verdict.
+  // #419 / #930: Step5 completeness and Step6 correctness are two ordered
+  // family courts of the SAME judge machine. Correctness is unreachable until
+  // completeness returns judge-converged.
   const activePriorKeysByPass: Partial<
     Record<IntegratedCmrPass, readonly string[]>
   > = {
@@ -2207,43 +2387,83 @@ export async function runVerifyCmr(
     pass: IntegratedCmrPass,
   ): readonly string[] | undefined =>
     activePriorKeysByPass[pass];
-  const completeness = await runIntegratedCmrPass({
-    pass: "completeness",
-    familyBackend,
-    familyBase,
-    ...(runId !== undefined ? { runId } : {}),
-    llmResolvedChildren,
-    escalationAnswer,
-    familyHeadAfter,
-    familyIssue,
-    moduleContext,
-    priorCmrFindingIdentityKeys: priorKeysForPass("completeness"),
-    priorCmrFindingIdentityKeysByPass: activePriorKeysByPass,
-    resolvedRoute,
-    allowCoderFix: true,
-    ...scopedPoolFields,
-  });
-  if (!completeness.result.ok) return completeness.result;
-  if (completeness.restartFinalBarrier !== undefined) {
-    return runVerifyCmr({
-      phase: "final",
+  // Process-local judge session + refuse maps survive barrier restarts within
+  // this final-phase invocation (persistent court across fix rounds).
+  let judgeSessionIdByPass: Partial<Record<IntegratedCmrPass, string>> = {};
+  let refusedFindingIdentityKeysByPass: Partial<
+    Record<IntegratedCmrPass, readonly string[]>
+  > = {};
+
+  // Completeness court: loop continue/unusable → fix → resume judge until pass.
+  let completenessFamilyHeadAfter = familyHeadAfter;
+  let completenessPriorKeysByPass = activePriorKeysByPass;
+  for (;;) {
+    const completeness = await runIntegratedCmrPass({
+      pass: "completeness",
       familyBackend,
       familyBase,
-      runId,
-      modelRoute,
-      ...scopedPoolFields,
+      ...(runId !== undefined ? { runId } : {}),
       llmResolvedChildren,
       escalationAnswer,
-      familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
+      familyHeadAfter: completenessFamilyHeadAfter,
       familyIssue,
       moduleContext,
-      priorCmrFindingIdentityKeysByPass:
-        completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass,
+      priorCmrFindingIdentityKeys:
+        completenessPriorKeysByPass.completeness ??
+        priorKeysForPass("completeness"),
+      priorCmrFindingIdentityKeysByPass: completenessPriorKeysByPass,
+      resolvedRoute,
+      allowCoderFix: true,
+      ...scopedPoolFields,
+      ...(judgeSessionIdByPass.completeness !== undefined
+        ? { judgeSessionId: judgeSessionIdByPass.completeness }
+        : {}),
+      ...(refusedFindingIdentityKeysByPass.completeness !== undefined
+        ? {
+            refusedFindingIdentityKeys:
+              refusedFindingIdentityKeysByPass.completeness,
+          }
+        : {}),
+      judgeSessionIdByPass,
     });
+    if (!completeness.result.ok) return completeness.result;
+    if (completeness.restartFinalBarrier === undefined) {
+      completenessFamilyHeadAfter = completeness.familyHeadAfter;
+      break;
+    }
+    // After fix, re-verify before re-opening the court (parity with correctness).
+    const verifyAfterCompletenessFix = await runFamilyVerifyOrAbort({
+      phase,
+      familyBase,
+      familyBackend,
+      familyHeadAfter: completeness.restartFinalBarrier.familyHeadAfter,
+      runId,
+      familyIssue,
+    });
+    if (verifyAfterCompletenessFix !== undefined) {
+      return verifyAfterCompletenessFix;
+    }
+    completenessFamilyHeadAfter =
+      completeness.restartFinalBarrier.familyHeadAfter;
+    completenessPriorKeysByPass =
+      completeness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
+    judgeSessionIdByPass = {
+      ...judgeSessionIdByPass,
+      ...(completeness.restartFinalBarrier.judgeSessionIdByPass ?? {}),
+    };
+    // Keep refuse keys only for the immediate next judge open.
+    const nextRefuse =
+      completeness.restartFinalBarrier.refusedFindingIdentityKeysByPass
+        ?.completeness;
+    refusedFindingIdentityKeysByPass =
+      nextRefuse !== undefined
+        ? { completeness: nextRefuse }
+        : {};
   }
+  refusedFindingIdentityKeysByPass = {};
 
-  let correctnessFamilyHeadAfter = completeness.familyHeadAfter;
-  let correctnessPriorKeysByPass = activePriorKeysByPass;
+  let correctnessFamilyHeadAfter = completenessFamilyHeadAfter;
+  let correctnessPriorKeysByPass = completenessPriorKeysByPass;
   while (true) {
     const correctness = await runIntegratedCmrPass({
       pass: "correctness",
@@ -2260,6 +2480,16 @@ export async function runVerifyCmr(
       resolvedRoute,
       allowCoderFix: true,
       ...scopedPoolFields,
+      ...(judgeSessionIdByPass.correctness !== undefined
+        ? { judgeSessionId: judgeSessionIdByPass.correctness }
+        : {}),
+      ...(refusedFindingIdentityKeysByPass.correctness !== undefined
+        ? {
+            refusedFindingIdentityKeys:
+              refusedFindingIdentityKeysByPass.correctness,
+          }
+        : {}),
+      judgeSessionIdByPass,
     });
     if (!correctness.result.ok) return correctness.result;
     if (correctness.restartFinalBarrier === undefined) {
@@ -2278,6 +2508,17 @@ export async function runVerifyCmr(
     correctnessFamilyHeadAfter = correctness.restartFinalBarrier.familyHeadAfter;
     correctnessPriorKeysByPass =
       correctness.restartFinalBarrier.priorCmrFindingIdentityKeysByPass;
+    judgeSessionIdByPass = {
+      ...judgeSessionIdByPass,
+      ...(correctness.restartFinalBarrier.judgeSessionIdByPass ?? {}),
+    };
+    const nextRefuse =
+      correctness.restartFinalBarrier.refusedFindingIdentityKeysByPass
+        ?.correctness;
+    refusedFindingIdentityKeysByPass =
+      nextRefuse !== undefined
+        ? { ...refusedFindingIdentityKeysByPass, correctness: nextRefuse }
+        : { ...refusedFindingIdentityKeysByPass, correctness: undefined };
   }
   const cmrPassedFamilyHeadAfter = correctnessFamilyHeadAfter;
   // Both CMR passes converged. Continue through ship, online review, auto-merge,
