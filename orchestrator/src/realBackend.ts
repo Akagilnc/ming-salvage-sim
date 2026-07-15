@@ -2908,11 +2908,12 @@ export class RealBackend implements Backend {
       // (ADR 0131 / #899) — not a second court in the runner.
       const decoded = decodeReviewerOpenCountReceipt(raw);
       if (decoded === undefined) {
-        // Unusable open-count is not zero and not a successful coder completion
-        // (#899 / ADR 0131). Fail the Action for #598 mechanical redispatch.
-        throw new Error(
-          `${spec.id}-${spec.role}: unusable open-count receipt (missing findingsCount); failing Action for mechanical redispatch`,
-        );
+        // Process-clean unusable open-count is not findingsCount=0 and not a
+        // #598 shape-lane throw (ADR 0131 / #899). Typed SO already fails closed
+        // at Sandcastle when the schema is the seat policy; remaining unusable
+        // paper follows the runner's non-reviewer envelope → S5 + raw artifacts.
+        // Do not mint kind:coder (fake coder seat) and do not invent count 0.
+        return { kind: "fixer", committed: false };
       }
       return decoded;
     }

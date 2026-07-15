@@ -46,10 +46,11 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     // Count is authenticated at the typed boundary: missing findingsCount never
     // becomes kind:"reviewer". If a non-reviewer envelope somehow reaches S4,
     // topology still sends it to the fixer path (never derive open-count from
-    // findings.length). Decode itself fails closed rather than minting coder.
+    // findings.length). Decode maps unusable open-count to a non-reviewer
+    // opaque-miss envelope (not findingsCount:0, not #598 shape throw).
     expect(route({
       from: "S4",
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
+      output: { kind: "fixer", committed: false },
     })).toEqual({ kind: "next", step: "S5" });
   });
 
