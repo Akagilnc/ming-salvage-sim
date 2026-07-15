@@ -651,12 +651,14 @@ describe("#677 real S5 fix-commit path wiring", () => {
     expect(result.status).toBe("success");
     const s6Index = backend.specs.findIndex((s) => s.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
-    expect(backend.landings[s6Index]?.refusedFindingIdentityKeys).toEqual([
-      refuseKey,
-    ]);
+    // #919 M3: refuse traffic keys sole on thin ctx; landing = refuseRecords only.
     expect(backend.ctxs[s6Index]?.refusedFindingIdentityKeys).toEqual([
       refuseKey,
     ]);
+    expect(backend.landings[s6Index]?.refusedFindingIdentityKeys).toBeUndefined();
+    expect(backend.landings[s6Index]?.refuseRecords?.[0]?.identityKey).toBe(
+      refuseKey,
+    );
   });
 
   it("crash-resume after S5 with refuse+assertion-touch rebuilds both onto S6", async () => {
@@ -811,12 +813,14 @@ describe("#677 real S5 fix-commit path wiring", () => {
     // Fresh process: locals were never set in this run — must come from ledger rebuild.
     expect(backend.ctxs[s6Index]?.preexistingAssertionTouched).toBe(true);
     expect(backend.landings[s6Index]?.preexistingAssertionTouched).toBe(true);
+    // #919 M3: keys on thin ctx; landing carries refuseRecords only.
     expect(backend.ctxs[s6Index]?.refusedFindingIdentityKeys).toEqual([
       refuseKey,
     ]);
-    expect(backend.landings[s6Index]?.refusedFindingIdentityKeys).toEqual([
+    expect(backend.landings[s6Index]?.refusedFindingIdentityKeys).toBeUndefined();
+    expect(backend.landings[s6Index]?.refuseRecords?.[0]?.identityKey).toBe(
       refuseKey,
-    ]);
+    );
   });
 });
 
