@@ -35,6 +35,7 @@ import {
   FIX_FOCUS_LANDING_FILE,
   formatFixFocusMarkdown,
 } from "./findingFamilies.js";
+import { findingIdentityKeys } from "./findings.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -243,17 +244,26 @@ function writeFixFindingsLandingFile(
       : undefined;
   ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
   ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
+  // Identity keys are derived here at the fixer-landing boundary from opaque
+  // findings cargo — not by the runner reading cargo fields (ADR 0131 / #899).
+  // Prefer cargo-derived keys; fall back to ctx keys when findings rows are
+  // sparse (family envelope / count-only reopen may still carry prior keys).
+  const findingsRows = landing?.blockingFindings ?? [];
+  const identityKeys =
+    findingsRows.length > 0
+      ? findingIdentityKeys(findingsRows)
+      : [...(ctx.blockingFindingIdentityKeys ?? [])];
   writeFileSync(
     landingPath,
     `${JSON.stringify(
       {
         // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
         // ADR 0062) — never from the runner's thin DispatchContext.
-        blockingFindings: landing?.blockingFindings ?? [],
+        blockingFindings: findingsRows,
         ...(rawReviewerArtifacts !== undefined
           ? { rawReviewerArtifacts }
           : {}),
-        blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+        blockingFindingIdentityKeys: identityKeys,
         ...(ctx.preexistingAssertionTouched === true
           ? { preexistingAssertionTouched: true }
           : {}),

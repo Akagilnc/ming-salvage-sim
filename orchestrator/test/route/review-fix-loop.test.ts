@@ -208,9 +208,9 @@ describe("#369 per-slice runner-visible review/fix loop", () => {
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
-    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
-      "correctness|src/runner.ts:1|fix worker needs structured finding data",
-    ]);
+    // #899: runner transports opaque findings cargo only; identity keys are
+    // derived at the fixer landing writer, not as a runner envelope court.
+    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
   });
 
   // #604 slice 4 (ADR 0062): there is no cross-module deferral pass, so every
@@ -364,9 +364,8 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     const s6Index = backend.specs.findIndex((spec) => spec.id === "S6");
     expect(s6Index).toBeGreaterThanOrEqual(0);
     expect(backend.landings[s6Index]?.blockingFindings).toEqual([blocking]);
-    expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys).toEqual([
-      blockingKey,
-    ]);
+    // #899: identity-key derivation is landing-writer work, not runner envelope.
+    expect(backend.ctxs[s6Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
   });
 
   it("threads S4 finding dispositions through live re-review classification and persists them", async () => {
@@ -1910,9 +1909,8 @@ describe("#369 runner resume/retry review fixes", () => {
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
-    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
-      "correctness|src/runner.ts:1116|s5 needs the persisted blocker after resume",
-    ]);
+    // #899: resume still pass-through findings cargo; keys land at the writer.
+    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
   });
 
   it("rebuilds S5 findings from the last reviewer when resuming an escalated S5", async () => {
@@ -1982,9 +1980,8 @@ describe("#369 runner resume/retry review fixes", () => {
     expect(s5Index).toBeGreaterThanOrEqual(0);
     expect(backend.specs[s5Index]?.session).toBe("resume");
     expect(backend.landings[s5Index]?.blockingFindings).toEqual([finding]);
-    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys).toEqual([
-      "correctness|src/runner.ts:902|s5 fallback still needs the blocker",
-    ]);
+    // #899: resume pass-through findings cargo; keys land at the writer.
+    expect(backend.ctxs[s5Index]?.blockingFindingIdentityKeys ?? []).toEqual([]);
   });
 
   it("#877: resume into S4 after empty S6 ships without disposition court", async () => {

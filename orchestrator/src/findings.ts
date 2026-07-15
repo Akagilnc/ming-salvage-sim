@@ -30,9 +30,9 @@ export function findingIdentityKey(finding: Finding): string {
 }
 
 /**
- * Identity keys for a findings cargo list. Landing / envelope consumers derive
- * keys here — the runner must not re-shape cargo or invent a second court
- * (ADR 0131 / #899).
+ * Identity keys for a findings cargo list. Landing / fixer materialization
+ * derives keys here — the runner only pass-through findings rows and routes
+ * by findingsCount (ADR 0131 / #899).
  */
 export function findingIdentityKeys(
   findings: ReadonlyArray<Finding>,
@@ -41,19 +41,13 @@ export function findingIdentityKeys(
 }
 
 /**
- * Pass-through of typed reviewer findings cargo for the fixer landing.
+ * Opaque pass-through of typed reviewer findings cargo for the fixer landing.
  * Shape tolerance for untyped raw receipts belongs at the decode boundary
- * ({@link decodeReviewerOpenCountReceipt}), not in the runner.
+ * ({@link decodeReviewerOpenCountReceipt}), not in the runner. Identity keys
+ * are NOT derived here — {@link findingIdentityKeys} at the landing writer.
  */
-export function fixLandingFromReviewerFindings(
-  findings: ReadonlyArray<Finding>,
-): {
-  readonly findings: Finding[];
-  readonly identityKeys: string[];
-} {
-  const rows = [...findings];
-  return {
-    findings: rows,
-    identityKeys: findingIdentityKeys(rows),
-  };
+export function opaqueFindingsCargo(
+  findings: ReadonlyArray<Finding> | unknown,
+): Finding[] {
+  return Array.isArray(findings) ? [...(findings as Finding[])] : [];
 }
