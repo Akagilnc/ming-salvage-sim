@@ -3298,35 +3298,37 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               reason: `${step} worker raised a decision gate`,
               diagnosis: err.tag.state_summary,
             };
-            // #919 CR U1: S3/S6 judge seat (role still "reviewer", soul verify)
-            // must mint T2 kind:"judge" escalate — never residual open-count paper.
+            // #919 CR U1 + residual R1: single-slice agent seats are only
+            // coder (S2/S5) or judge (S3/S6 — role still "reviewer", soul
+            // verify). Always mint T2 kind:"judge" escalate on the judge seat;
+            // never residual open-count kind:"reviewer" paper (deleted dead arm).
             const isJudgeSeat =
               step === "S3" ||
               step === "S6" ||
               expectedKind === "verify" ||
               stepSpecs[step].soul === "verify";
-            const decisionOutput: StepOutput =
-              expectedKind === "coder"
-                ? {
-                    kind: "coder",
-                    committed: false,
-                    commitsAdded: 0,
-                    escalate: escalation,
-                  }
-                : isJudgeSeat
-                  ? {
-                      kind: "judge",
-                      status: "escalate",
-                      reason: escalation.reason,
-                      diagnosis: escalation.diagnosis,
-                      escalate: escalation,
-                    }
-                  : {
-                      kind: "reviewer",
-                      findings: [],
-                      findingsCount: 0,
-                      escalate: escalation,
-                    };
+            let decisionOutput: StepOutput;
+            if (expectedKind === "coder") {
+              decisionOutput = {
+                kind: "coder",
+                committed: false,
+                commitsAdded: 0,
+                escalate: escalation,
+              };
+            } else if (isJudgeSeat) {
+              decisionOutput = {
+                kind: "judge",
+                status: "escalate",
+                reason: escalation.reason,
+                diagnosis: escalation.diagnosis,
+                escalate: escalation,
+              };
+            } else {
+              // Exhaustive: topology has no third agent seat kind.
+              throw new Error(
+                `runner: decision_gate on non-coder non-judge seat ${step} (expectedKind=${expectedKind})`,
+              );
+            }
             return await escalateTermination(
               step,
               escalation,
@@ -3642,9 +3644,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
-    // #919 CR U7: advanceCoder sole source = output.advanceCoder (recovery /
-    // priorJudgeVerdictRowsFromLedger read it there). No dual-write onto the
-    // ledger row top-level (#926 owns any roster consumption).
+    // #919 CR U7/R2: advanceCoder sole source = output.advanceCoder (recovery /
+    // priorJudgeVerdictRowsFromLedger). Top-level LedgerEntry.advanceCoder deleted
+    // (zero readers; dual-write already gone). #926 owns any roster consumption.
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
