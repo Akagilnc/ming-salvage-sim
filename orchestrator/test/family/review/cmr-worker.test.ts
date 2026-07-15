@@ -63,6 +63,10 @@ import {
   workerReceiptSchema,
 } from "../../../src/receiptRecovery.js";
 import {
+  MAX_DISPATCH_ATTEMPTS,
+  withMechanicalRetry,
+} from "../../../src/dispatchRetry.js";
+import {
   runScriptedStructuredOutput,
   type ScriptedAgent,
 } from "../../helpers/scripted-sandcastle-run.js";
@@ -841,6 +845,45 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     });
   });
 
+  it("accepts initial-good open-count via real sc.run (no same-session resume)", async () => {
+    // #899 four-case matrix: first emission already valid → one agent call.
+    const good = {
+      findingsCount: 0,
+      findings: [],
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      ...VALID_CMR_VERDICT_FIELDS,
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: "cmr",
+      schema: workerReceiptSchema(),
+      emissions: [{ body: JSON.stringify(good) }],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "sess-cmr-initial-good",
+      cleanups,
+    });
+    expect(result.output).toMatchObject({ findingsCount: 0 });
+    expect(agent.callCount).toBe(1);
+    expect(agent.resumedSessions).toEqual([undefined]);
+  });
+
+  it("accepts initial-good decision-gate via real sc.run (no same-session resume)", async () => {
+    const good = {
+      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: DECISION_GATE_TAG,
+      schema: decisionGateSignalSchema,
+      emissions: [{ body: JSON.stringify(good) }],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "sess-decision-initial-good",
+      cleanups,
+    });
+    expect(result.output).toEqual(good);
+    expect(agent.callCount).toBe(1);
+    expect(agent.resumedSessions).toEqual([undefined]);
+  });
+
   it("classifies Sandcastle's real non-resumable maxRetries error as recovery failure", async () => {
     // #899: real sc.run rejects maxRetries>0 on providers without sessionStorage.
     await expect(
@@ -865,6 +908,28 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(isReceiptRecoveryFailure(new Error(
       'output.maxRetries requires an agent provider that supports session resumption. The "grok" provider does not. Use claudeCode, codex, or pi, or set maxRetries to 0.',
     ))).toBe(true);
+  });
+
+  it("classifies non-resumable maxRetries as recovery failure for decision-gate too", async () => {
+    // #899 four-case matrix: both typed signals share non-resumable fail-closed.
+    await expect(
+      runScriptedStructuredOutput({
+        tag: DECISION_GATE_TAG,
+        schema: decisionGateSignalSchema,
+        emissions: [{ body: JSON.stringify({ escalate: { reason: "r", diagnosis: "d" } }) }],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        resumable: false,
+        name: "grok",
+        cleanups,
+      }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(
+        /output\.maxRetries requires an agent provider that supports session resumption/i,
+      );
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
   });
 
   it("propagates StructuredOutputError when native CMR receipt retries are exhausted", async () => {
@@ -1060,6 +1125,177 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       findingsCount: 0,
     });
     expect(sandcastleCalls).toBe(1);
+  });
+
+  it("accepts initial-good open-count at the family CMR production seam", async () => {
+    // #899 four-case matrix (production): first-good typed open-count, one sc.run.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let coderFixCalls = 0;
+    class Backend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "cmr",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        return typedSandboxRunResult({
+          converged: true,
+          findingsCount: 0,
+          successfulLegs: [...DEFAULT_CMR_LEGS],
+          ...VALID_CMR_VERDICT_FIELDS,
+        });
+      }
+      protected override async runFamilyCoderFixWorker(): Promise<WorkerResult> {
+        coderFixCalls += 1;
+        throw new Error("coder-fix must not run on initial-good open-count");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-initial-good-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).resolves.toMatchObject({
+      kind: "verdict",
+      findingsCount: 0,
+    });
+    expect(sandcastleCalls).toBe(1);
+    expect(coderFixCalls).toBe(0);
+  });
+
+  it("#598 same-position redispatch on open-count SOE exhaust; zero fixer/next-gate", async () => {
+    // #899: native maxRetries exhaust → Action throw → #598 mechanical redispatch
+    // at the same fixed position; never feed empty cargo to fixer / next gate.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let coderFixCalls = 0;
+    const exhausted = new sc.StructuredOutputError("open-count exhaust", {
+      tag: "cmr",
+      rawMatched: JSON.stringify({ findingsCount: -1 }),
+      commits: [],
+      branch: "fb",
+      sessionId: "sess-cmr-soe-598",
+    });
+    class Backend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        throw exhausted;
+      }
+      protected override async runFamilyCoderFixWorker(): Promise<WorkerResult> {
+        coderFixCalls += 1;
+        throw new Error("coder-fix must not run after open-count SOE");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-soe-598-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    const spec = cmrWorkerSpec();
+    await expect(
+      withMechanicalRetry(
+        spec,
+        { familyBase: "fb", cmrPass: "completeness" },
+        async (s, c) => {
+          // Mirror dispatchOrAbort: rethrow Action failure for #598.
+          try {
+            await be.run(s as ReturnType<typeof cmrWorkerSpec>, c);
+            throw new Error("expected SOE throw");
+          } catch (err) {
+            throw err;
+          }
+        },
+        { rethrowOnExhaustion: true, sleepMs: async () => {} },
+      ),
+    ).rejects.toBe(exhausted);
+    expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(coderFixCalls).toBe(0);
+    expect(isReceiptRecoveryFailure(exhausted)).toBe(true);
+  });
+
+  it("#598 same-position redispatch on decision-gate SOE exhaust; zero next-gate", async () => {
+    // #899 four-case matrix (production): decision-gate SO on the family
+    // coder-fix seat exhausts → Action throw → #598 mechanical redispatch at
+    // the same fixed position. No human-loop park; no next-gate advance.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let nextGateCalls = 0;
+    const exhausted = new sc.StructuredOutputError("decision-gate exhaust", {
+      tag: DECISION_GATE_TAG,
+      rawMatched: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }),
+      commits: [],
+      branch: "fb",
+      sessionId: "sess-decision-soe-598",
+    });
+    class Backend extends RealFamilyBackend {
+      /** Expose the production coder-fix seat that binds decisionGateOutput(). */
+      public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: DECISION_GATE_TAG,
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        throw exhausted;
+      }
+      protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
+        nextGateCalls += 1;
+        throw new Error("next CMR gate must not run after decision-gate SOE");
+      }
+      protected override async runShipWorker(): Promise<ReturnType<typeof shipOutcomeFromResult>> {
+        nextGateCalls += 1;
+        throw new Error("ship gate must not run after decision-gate SOE");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-soe-598-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    const fixSpec = familyCoderFixWorkerSpec();
+    await expect(
+      withMechanicalRetry(
+        fixSpec,
+        { familyBase: "fb", cmrPass: "completeness" },
+        async (s, c) => be.runFix(s, c),
+        { rethrowOnExhaustion: true, sleepMs: async () => {} },
+      ),
+    ).rejects.toBe(exhausted);
+    expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
+    expect(nextGateCalls).toBe(0);
+    expect(isReceiptRecoveryFailure(exhausted)).toBe(true);
   });
 
   it("rejects malformed decision-gate and open-count receipts at the Sandcastle schema seam", () => {

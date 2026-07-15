@@ -16,7 +16,6 @@
  * The family ship worker (RealFamilyBackend) emits this `<ship>` tag.
  */
 
-import { z } from "zod";
 import { parseLastTaggedJsonSoft } from "./lastTaggedJson.js";
 import { classifyDecisionGate } from "./receiptRecovery.js";
 import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
@@ -61,38 +60,11 @@ export function isFilledString(v: unknown): v is string {
 }
 
 /**
- * A genuinely non-empty string at the SCHEMA layer (cmr S336 r3): trimmed,
- * min-length 1 — rejects `""` and whitespace-only delivery cargo.
- */
-const nonEmpty = z.string().trim().min(1);
-
-/**
- * Cargo decoding for the non-bell `<ship>` shapes. The independent escalation
- * probe runs first and tolerates every sibling key; these schemas only enrich
- * transported cargo and never decide whether a clean worker process may continue.
- *
- * Mirrors family_ship.md:
- *   1. `{status:"pushed",    branch}`            — shipped, no pr (pr MUST be absent);
- *   2. `{status:"pr_opened", branch, pr}`        — shipped, pr REQUIRED;
- *   3. `{escalate:{reason, diagnosis}}` — a genuine decision bell.
- * Known success fields are non-empty when present. Unknown sibling fields remain
- * cargo.
- */
-const pushedSchema = z
-  .object({ status: z.literal("pushed"), branch: nonEmpty.optional() })
-  .passthrough();
-const prOpenedSchema = z
-  .object({
-    status: z.literal("pr_opened"),
-    branch: nonEmpty.optional(),
-    pr: nonEmpty,
-  })
-  .passthrough();
-
-/**
  * Prefer Sandcastle typed decision signal for gates (#899). Machine sidecar is
  * the opaque delivery-cargo channel only — never promotes escalation into fate
  * when typed output is absent (#899). Stdout is telemetry only.
+ * Ordinary status/pr cargo is transported with tolerant field reads only — no
+ * Zod/schema gate and no SO re-ask on cargo shape (PRD #899 / ADR 0131).
  */
 export function shipOutcomeFromResult(result: {
   completionSignal?: string | string[];
@@ -173,29 +145,31 @@ function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
 }
 
 /**
- * Delivery-cargo only: status/pr enrichment. Never promotes escalate into fate
- * (sidecar/stdout fourth-channel ban, #899).
+ * Delivery-cargo only: best-effort status/pr enrichment. No schema validation —
+ * missing or off-shape fields stay opaque completed cargo and never alter fate
+ * (sidecar/stdout fourth-channel ban, #899 / ADR 0131).
  */
 function classifyShipCargoPayload(parsed: unknown): ShipWorkerOutcome {
-  if (parsed === null || typeof parsed !== "object") {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { kind: "completed" };
   }
-  const pushed = pushedSchema.safeParse(parsed);
-  if (pushed.success) {
+  const cargo = parsed as Record<string, unknown>;
+  const branch = isFilledString(cargo.branch) ? cargo.branch.trim() : undefined;
+  if (cargo.status === "pushed") {
     return {
       kind: "shipped",
       status: "pushed",
-      ...(pushed.data.branch !== undefined ? { branch: pushed.data.branch } : {}),
+      ...(branch !== undefined ? { branch } : {}),
     };
   }
-  const prOpened = prOpenedSchema.safeParse(parsed);
-  if (prOpened.success) {
+  if (cargo.status === "pr_opened" && isFilledString(cargo.pr)) {
     return {
       kind: "shipped",
       status: "pr_opened",
-      ...(prOpened.data.branch !== undefined ? { branch: prOpened.data.branch } : {}),
-      pr: prOpened.data.pr,
+      ...(branch !== undefined ? { branch } : {}),
+      pr: cargo.pr.trim(),
     };
   }
+  // Unknown / incomplete delivery shapes: clean exit still advances; cargo ignored.
   return { kind: "completed" };
 }
