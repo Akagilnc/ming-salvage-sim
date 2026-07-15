@@ -1,0 +1,644 @@
+/**
+ * #921 — Judge verdict + full-wave station completion thin envelope contracts.
+ *
+ * Pure-function prefactor for #919 (PRD) / ADR 0132. Later slices (#924/#925/#927)
+ * wire these schemas into sandcastle typed output and runner topology; this module
+ * does not touch the runner.
+ *
+ * ## Envelope boundary
+ *
+ * Worker / station receipt schemas validate only:
+ *   1. routing / completion-status traffic signals
+ *   2. identity keys of findings involved
+ *   3. cargo pointers (opaque path / URI)
+ *
+ * They do **not** open or schema-check cargo body prose. Four legal refuse
+ * reasons + evidence are validated only on the **judge finding-disposition table**
+ * (and later by the judge when reading cargo). Coder refuse cargo is opaque.
+ *
+ * ## Field vocabulary (canonical unique — envelope field level)
+ *
+ * - Positive family: `refused*` (`status: "refused"`, `refusedFindingIdentityKeys`)
+ * - Rejected spellings: any envelope key matching `^refuted` (e.g.
+ *   `refutedFindingIdentityKeys`) — invented dual-field compatibility is banned
+ * - Findings-store terminal flip `refuted` (ADR 0129 / ADR 0130 fixer adjudication)
+ *   is a **different layer**: judge kill dispositions use `action: "refute"` here
+ *   and later map to that store flip; the envelope traffic signal stays `refused*`
+ *
+ * ## Stations colocated here (no parallel contract directory)
+ *
+ * `judge` | `coder` | `coderFix` | `familyCoderFix` | `ship`
+ *
+ * Shared traffic fields: `station`, `status`, optional `cargoPointer`.
+ * Per-station extras stay on the same thin envelope (e.g. refuse keys, advanceCoder).
+ */
+
+import { z } from "zod";
+
+// ─── Result type (never throw bare exceptions from decode/parse) ─────────────
+
+/**
+ * Decode / validate result. Callers branch on `ok` — parsers never throw for
+ * shape failures (garbage in → readable `reason` out).
+ */
+export type ContractResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly reason: string };
+
+function ok<T>(value: T): ContractResult<T> {
+  return { ok: true, value };
+}
+
+function fail(reason: string): ContractResult<never> {
+  return { ok: false, reason };
+}
+
+function zodFail(prefix: string, err: z.ZodError): ContractResult<never> {
+  const detail = err.issues
+    .map((i) => {
+      const path = i.path.length > 0 ? i.path.join(".") : "(root)";
+      return `${path}: ${i.message}`;
+    })
+    .join("; ");
+  return fail(`${prefix}: ${detail}`);
+}
+
+// ─── Four legal refuse / kill reasons (global rule 16 / ADR 0132) ────────────
+
+/**
+ * Canonical machine tokens for the four legal kill/refuse reasons.
+ *
+ * Chinese gloss (owner constitution / souls):
+ * - `unconstitutional` — 违宪（与已拍定 ADR / owner 决策 / 验收文相抵）
+ * - `over_defense` — 过度防御（护栏类处方答不上三问）
+ * - `not_established` — 事实不成立（主张对不上真实代码）
+ * - `scope_creep` — 越权加戏（修它 = 发明 spec 里没有的行为）
+ *
+ * Aligns with ADR 0130 fixer second-gate refuse channel: same four reasons,
+ * different seat (judge kill table vs fixer refuse). Hard-to-fix is never a reason.
+ */
+export const LEGAL_REFUSE_REASONS = [
+  "unconstitutional",
+  "over_defense",
+  "not_established",
+  "scope_creep",
+] as const;
+
+export type LegalRefuseReason = (typeof LEGAL_REFUSE_REASONS)[number];
+
+const legalRefuseReasonSchema = z.enum(LEGAL_REFUSE_REASONS);
+
+/** Parse one four-reason token; invents are rejected with a readable reason. */
+export function parseLegalRefuseReason(
+  raw: unknown,
+): ContractResult<LegalRefuseReason> {
+  const parsed = legalRefuseReasonSchema.safeParse(raw);
+  if (!parsed.success) {
+    return fail(
+      `illegal refuse reason (expected one of ${LEGAL_REFUSE_REASONS.join("|")}): ${String(raw)}`,
+    );
+  }
+  return ok(parsed.data);
+}
+
+// ─── Stations ────────────────────────────────────────────────────────────────
+
+/**
+ * Full-wave stations that complete via a thin typed receipt envelope.
+ * Colocated by design — do not invent a parallel contracts/ directory.
+ */
+export const STATION_IDS = [
+  "judge",
+  "coder",
+  "coderFix",
+  "familyCoderFix",
+  "ship",
+] as const;
+
+export type StationId = (typeof STATION_IDS)[number];
+
+/** Coder-family stations share the same refuse / completed / escalate traffic. */
+export const CODER_STATION_IDS = [
+  "coder",
+  "coderFix",
+  "familyCoderFix",
+] as const;
+
+export type CoderStationId = (typeof CODER_STATION_IDS)[number];
+
+// ─── Banned envelope spellings (refuted* dual-field ban) ─────────────────────
+
+/**
+ * Envelope field names that look like invent-spellings of the refuse vocabulary.
+ * Findings-store status `refuted` is not an envelope field — it never appears here.
+ */
+const BANNED_REFUTED_KEY = /^refuted/i;
+
+function bannedRefutedKeys(record: Record<string, unknown>): string[] {
+  return Object.keys(record).filter((k) => BANNED_REFUTED_KEY.test(k));
+}
+
+/**
+ * Reject envelopes that carry any `refuted*` field name (canonical is `refused*`).
+ * Dual refused*+refuted* is also rejected — no compatibility shims.
+ */
+function rejectBannedEnvelopeVocabulary(
+  record: Record<string, unknown>,
+): ContractResult<true> {
+  const banned = bannedRefutedKeys(record);
+  if (banned.length === 0) return ok(true);
+  return fail(
+    `canonical envelope vocabulary is refused* only; banned refuted* field(s): ${banned.join(", ")}` +
+      (record.refusedFindingIdentityKeys !== undefined
+        ? " (dual refused*+refuted* fields are forbidden)"
+        : ""),
+  );
+}
+
+function asRecord(raw: unknown): ContractResult<Record<string, unknown>> {
+  if (raw === null || raw === undefined) {
+    return fail("envelope must be a non-null object");
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return fail(`envelope must be an object, got ${Array.isArray(raw) ? "array" : typeof raw}`);
+  }
+  return ok(raw as Record<string, unknown>);
+}
+
+const nonEmptyString = z.string().trim().min(1);
+
+/** Optional cargo pointer: absent/undefined ok; empty string rejected. */
+const cargoPointerSchema = nonEmptyString.optional();
+
+// ─── Finding disposition table (judge-side) ──────────────────────────────────
+
+/**
+ * Judge kill row: refute this finding under one of the four legal reasons,
+ * with evidence. Maps later to findings-store terminal flip `refuted` (ADR 0130)
+ * — that store status is not an envelope field.
+ */
+export interface JudgeKillDisposition {
+  readonly identityKey: string;
+  readonly action: "refute";
+  /** One of {@link LEGAL_REFUSE_REASONS}. */
+  readonly reason: LegalRefuseReason;
+  /** Non-empty evidence string the judge records for audit. */
+  readonly evidence: string;
+}
+
+/** Live finding row: still open for fix; no reason/evidence on the envelope. */
+export interface JudgeLiveDisposition {
+  readonly identityKey: string;
+  readonly action: "live";
+}
+
+export type JudgeFindingDisposition =
+  | JudgeKillDisposition
+  | JudgeLiveDisposition;
+
+const killDispositionSchema = z
+  .object({
+    identityKey: nonEmptyString,
+    action: z.literal("refute"),
+    reason: legalRefuseReasonSchema,
+    evidence: nonEmptyString,
+  })
+  .strict();
+
+const liveDispositionSchema = z
+  .object({
+    identityKey: nonEmptyString,
+    action: z.literal("live"),
+  })
+  .strict();
+
+/**
+ * Parse one finding disposition row.
+ *
+ * Kill rows validate the four-reason enum + non-empty evidence.
+ * Live rows reject smuggled `reason` / `evidence` keys (strict).
+ *
+ * Sole validation path for disposition rows — used both by the public parser
+ * and by {@link decodeJudgeVerdict} so nested continue tables never surface
+ * bare Zod union "Invalid input" (AC: 可读原因).
+ */
+export function parseFindingDisposition(
+  raw: unknown,
+): ContractResult<JudgeFindingDisposition> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return fail(
+      `finding disposition must be an object, got ${Array.isArray(raw) ? "array" : typeof raw}`,
+    );
+  }
+  const rec = raw as Record<string, unknown>;
+  const action = rec.action;
+
+  if (action === "live") {
+    if (rec.reason !== undefined || rec.evidence !== undefined) {
+      return fail(
+        "live disposition must not carry reason/evidence (only kill/refute rows do)",
+      );
+    }
+    const parsed = liveDispositionSchema.safeParse(rec);
+    if (!parsed.success) return zodFail("finding disposition", parsed.error);
+    return ok(parsed.data);
+  }
+
+  if (action === "refute") {
+    // Surface reason/evidence failures with explicit field names (union "Invalid
+    // input" is not readable enough for AC "可读原因").
+    if (typeof rec.identityKey !== "string" || rec.identityKey.trim().length === 0) {
+      return fail("finding disposition identityKey must be a non-empty string");
+    }
+    const reasonResult = parseLegalRefuseReason(rec.reason);
+    if (!reasonResult.ok) {
+      return fail(`finding disposition reason: ${reasonResult.reason}`);
+    }
+    if (typeof rec.evidence !== "string" || rec.evidence.trim().length === 0) {
+      return fail("finding disposition evidence must be a non-empty string");
+    }
+    const parsed = killDispositionSchema.safeParse(rec);
+    if (!parsed.success) return zodFail("finding disposition", parsed.error);
+    return ok(parsed.data);
+  }
+
+  return fail(
+    `finding disposition action must be refute|live, got ${String(action)}`,
+  );
+}
+
+/**
+ * Zod adapter around {@link parseFindingDisposition}: keeps continue-verdict
+ * arrays on one validation path with readable issue messages (no bare union).
+ */
+const findingDispositionSchema: z.ZodType<JudgeFindingDisposition> = z
+  .unknown()
+  .transform((val, ctx) => {
+    const result = parseFindingDisposition(val);
+    if (!result.ok) {
+      ctx.addIssue({ code: "custom", message: result.reason });
+      return z.NEVER;
+    }
+    return result.value;
+  });
+
+// ─── Judge verdict (three states) ────────────────────────────────────────────
+
+/**
+ * Judge verdict status tokens — the sole convergence signal after #919
+ * (replaces open-count mechanical closure).
+ */
+export type JudgeVerdictStatus = "converged" | "continue" | "escalate";
+
+interface JudgeEnvelopeBase {
+  readonly station: "judge";
+  /** Opaque cargo pointer; body is never schema-checked here. */
+  readonly cargoPointer?: string;
+}
+
+/** Convergence: no further fix rounds. */
+export interface JudgeVerdictConverged extends JudgeEnvelopeBase {
+  readonly status: "converged";
+}
+
+/**
+ * Continue the fix loop. May carry:
+ * - `findingDispositions` — kill (refute+reason+evidence) and live rows
+ * - `advanceCoder` — suggestion to switch coder roster entry (runner still
+ *   owns the stay-put fallback when the target is unusable — #926)
+ */
+export interface JudgeVerdictContinue extends JudgeEnvelopeBase {
+  readonly status: "continue";
+  readonly findingDispositions: readonly JudgeFindingDisposition[];
+  readonly advanceCoder?: string;
+}
+
+/**
+ * Escalate via the existing decision-gate park path (no new escalate channel).
+ * `reason` + `diagnosis` are the doorbell cargo (same shape as worker escalate).
+ */
+export interface JudgeVerdictEscalate extends JudgeEnvelopeBase {
+  readonly status: "escalate";
+  readonly reason: string;
+  readonly diagnosis: string;
+}
+
+export type JudgeVerdict =
+  | JudgeVerdictConverged
+  | JudgeVerdictContinue
+  | JudgeVerdictEscalate;
+
+const judgeConvergedSchema = z
+  .object({
+    station: z.literal("judge"),
+    status: z.literal("converged"),
+    cargoPointer: cargoPointerSchema,
+  })
+  .strict();
+
+const judgeContinueSchema = z
+  .object({
+    station: z.literal("judge"),
+    status: z.literal("continue"),
+    findingDispositions: z.array(findingDispositionSchema),
+    advanceCoder: nonEmptyString.optional(),
+    cargoPointer: cargoPointerSchema,
+  })
+  .strict();
+
+const judgeEscalateSchema = z
+  .object({
+    station: z.literal("judge"),
+    status: z.literal("escalate"),
+    reason: nonEmptyString,
+    diagnosis: nonEmptyString,
+    cargoPointer: cargoPointerSchema,
+  })
+  .strict();
+
+const judgeVerdictSchema = z.discriminatedUnion("status", [
+  judgeConvergedSchema,
+  judgeContinueSchema,
+  judgeEscalateSchema,
+]);
+
+/** Encode a validated judge verdict into its canonical JSON shape. */
+export function encodeJudgeVerdict(verdict: JudgeVerdict): JudgeVerdict {
+  // Already typed; return a plain JSON-safe clone of the canonical shape.
+  return JSON.parse(JSON.stringify(verdict)) as JudgeVerdict;
+}
+
+/** Decode + validate a judge verdict envelope. Never throws on bad shape. */
+export function decodeJudgeVerdict(raw: unknown): ContractResult<JudgeVerdict> {
+  const record = asRecord(raw);
+  if (!record.ok) return record;
+  const banned = rejectBannedEnvelopeVocabulary(record.value);
+  if (!banned.ok) return banned;
+  const parsed = judgeVerdictSchema.safeParse(record.value);
+  if (!parsed.success) {
+    return zodFail("judge verdict", parsed.error);
+  }
+  return ok(parsed.data);
+}
+
+// ─── Coder-family envelopes ──────────────────────────────────────────────────
+
+interface CoderEnvelopeBase {
+  readonly station: CoderStationId;
+  readonly cargoPointer?: string;
+}
+
+/**
+ * Clean completion (commits / no-op done). Must not carry refuse keys —
+ * refuse is its own traffic status.
+ */
+export interface CoderCompletedEnvelope extends CoderEnvelopeBase {
+  readonly status: "completed";
+}
+
+/**
+ * Legal refuse receipt (ADR 0130 second-gate aligned; #910/#927 export path).
+ *
+ * Envelope-level only:
+ * - `status: "refused"` (canonical; `refuted` is not a status token here)
+ * - `refusedFindingIdentityKeys` — identity keys of refused findings
+ * - `cargoPointer` — optional pointer to opaque cargo (four reasons + evidence
+ *   for the judge); schema never validates that cargo body
+ */
+export interface CoderRefusedEnvelope extends CoderEnvelopeBase {
+  readonly status: "refused";
+  readonly refusedFindingIdentityKeys: readonly string[];
+}
+
+/**
+ * Coder rings the decision bell (same shape as other escalate seats).
+ * Distinct from refuse — refuse is a legal completion back to the judge table.
+ */
+export interface CoderEscalateEnvelope extends CoderEnvelopeBase {
+  readonly status: "escalate";
+  readonly reason: string;
+  readonly diagnosis: string;
+}
+
+export type CoderStationEnvelope =
+  | CoderCompletedEnvelope
+  | CoderRefusedEnvelope
+  | CoderEscalateEnvelope;
+
+const coderStationSchema = z.enum(CODER_STATION_IDS);
+
+const coderCompletedSchema = z
+  .object({
+    station: coderStationSchema,
+    status: z.literal("completed"),
+    cargoPointer: cargoPointerSchema,
+  })
+  .strict();
+
+const coderRefusedSchema = z
+  .object({
+    station: coderStationSchema,
+    status: z.literal("refused"),
+    refusedFindingIdentityKeys: z.array(nonEmptyString).min(1),
+    cargoPointer: cargoPointerSchema,
+  })
+  .strict();
+
+const coderEscalateSchema = z
+  .object({
+    station: coderStationSchema,
+    status: z.literal("escalate"),
+    reason: nonEmptyString,
+    diagnosis: nonEmptyString,
+    cargoPointer: cargoPointerSchema,
+  })
+  .strict();
+
+/**
+ * Strip unknown keys before schema parse so opaque cargo body siblings
+ * (refuseRecords prose, essays, …) are ignored rather than rejected.
+ * Traffic fields + banned-vocabulary check still apply.
+ */
+const CODER_TRAFFIC_KEYS = new Set([
+  "station",
+  "status",
+  "cargoPointer",
+  "refusedFindingIdentityKeys",
+  "reason",
+  "diagnosis",
+]);
+
+function pickCoderTraffic(record: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of CODER_TRAFFIC_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      out[key] = record[key];
+    }
+  }
+  return out;
+}
+
+/** Encode a validated coder-family envelope into its canonical JSON shape. */
+export function encodeCoderEnvelope(
+  envelope: CoderStationEnvelope,
+): CoderStationEnvelope {
+  return JSON.parse(JSON.stringify(envelope)) as CoderStationEnvelope;
+}
+
+/**
+ * Decode + validate a coder / coderFix / familyCoderFix envelope.
+ *
+ * - `refused` requires non-empty `refusedFindingIdentityKeys`
+ * - cargo body siblings are stripped (not validated)
+ * - `refuted*` field names fail closed
+ * - `completed` must not carry refuse keys
+ */
+export function decodeCoderEnvelope(
+  raw: unknown,
+): ContractResult<CoderStationEnvelope> {
+  const record = asRecord(raw);
+  if (!record.ok) return record;
+  const banned = rejectBannedEnvelopeVocabulary(record.value);
+  if (!banned.ok) return banned;
+
+  const status = record.value.status;
+  if (status === "completed" && record.value.refusedFindingIdentityKeys !== undefined) {
+    return fail(
+      "completed coder envelope must not carry refusedFindingIdentityKeys (use status:\"refused\")",
+    );
+  }
+
+  const traffic = pickCoderTraffic(record.value);
+  if (status === "completed") {
+    const parsed = coderCompletedSchema.safeParse(traffic);
+    if (!parsed.success) return zodFail("coder envelope", parsed.error);
+    return ok(parsed.data);
+  }
+  if (status === "refused") {
+    const parsed = coderRefusedSchema.safeParse(traffic);
+    if (!parsed.success) return zodFail("coder envelope", parsed.error);
+    return ok(parsed.data);
+  }
+  if (status === "escalate") {
+    const parsed = coderEscalateSchema.safeParse(traffic);
+    if (!parsed.success) return zodFail("coder envelope", parsed.error);
+    return ok(parsed.data);
+  }
+  return fail(
+    `coder envelope status must be completed|refused|escalate, got ${String(status)}`,
+  );
+}
+
+// ─── Ship envelope ───────────────────────────────────────────────────────────
+
+interface ShipEnvelopeBase {
+  readonly station: "ship";
+  readonly cargoPointer?: string;
+}
+
+export interface ShipShippedEnvelope extends ShipEnvelopeBase {
+  readonly status: "shipped";
+}
+
+export interface ShipCompletedEnvelope extends ShipEnvelopeBase {
+  readonly status: "completed";
+}
+
+export interface ShipEscalateEnvelope extends ShipEnvelopeBase {
+  readonly status: "escalate";
+  readonly reason: string;
+  readonly diagnosis: string;
+}
+
+export type ShipStationEnvelope =
+  | ShipShippedEnvelope
+  | ShipCompletedEnvelope
+  | ShipEscalateEnvelope;
+
+const shipShippedSchema = z
+  .object({
+    station: z.literal("ship"),
+    status: z.literal("shipped"),
+    cargoPointer: cargoPointerSchema,
+  })
+  .strict();
+
+const shipCompletedSchema = z
+  .object({
+    station: z.literal("ship"),
+    status: z.literal("completed"),
+    cargoPointer: cargoPointerSchema,
+  })
+  .strict();
+
+const shipEscalateSchema = z
+  .object({
+    station: z.literal("ship"),
+    status: z.literal("escalate"),
+    reason: nonEmptyString,
+    diagnosis: nonEmptyString,
+    cargoPointer: cargoPointerSchema,
+  })
+  .strict();
+
+const shipEnvelopeSchema = z.discriminatedUnion("status", [
+  shipShippedSchema,
+  shipCompletedSchema,
+  shipEscalateSchema,
+]);
+
+/** Encode a validated ship envelope into its canonical JSON shape. */
+export function encodeShipEnvelope(
+  envelope: ShipStationEnvelope,
+): ShipStationEnvelope {
+  return JSON.parse(JSON.stringify(envelope)) as ShipStationEnvelope;
+}
+
+/** Decode + validate a ship station envelope. Never throws on bad shape. */
+export function decodeShipEnvelope(
+  raw: unknown,
+): ContractResult<ShipStationEnvelope> {
+  const record = asRecord(raw);
+  if (!record.ok) return record;
+  const banned = rejectBannedEnvelopeVocabulary(record.value);
+  if (!banned.ok) return banned;
+  const parsed = shipEnvelopeSchema.safeParse(record.value);
+  if (!parsed.success) {
+    return zodFail("ship envelope", parsed.error);
+  }
+  return ok(parsed.data);
+}
+
+// ─── Unified station decode ──────────────────────────────────────────────────
+
+export type StationEnvelope =
+  | JudgeVerdict
+  | CoderStationEnvelope
+  | ShipStationEnvelope;
+
+/**
+ * Decode any full-wave station completion envelope by `station` discriminator.
+ * Unknown stations fail with a readable reason (no throw).
+ */
+export function decodeStationEnvelope(
+  raw: unknown,
+): ContractResult<StationEnvelope> {
+  const record = asRecord(raw);
+  if (!record.ok) return record;
+  const banned = rejectBannedEnvelopeVocabulary(record.value);
+  if (!banned.ok) return banned;
+
+  const station = record.value.station;
+  if (station === "judge") return decodeJudgeVerdict(record.value);
+  if (
+    station === "coder" ||
+    station === "coderFix" ||
+    station === "familyCoderFix"
+  ) {
+    return decodeCoderEnvelope(record.value);
+  }
+  if (station === "ship") return decodeShipEnvelope(record.value);
+  return fail(
+    `unknown station (expected ${STATION_IDS.join("|")}): ${String(station)}`,
+  );
+}
