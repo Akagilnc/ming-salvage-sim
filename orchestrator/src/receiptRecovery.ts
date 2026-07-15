@@ -231,11 +231,52 @@ export function decodeReviewerOpenCountReceipt(
   };
 }
 
+const RECEIPT_RECOVERY_MESSAGE =
+  /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession|output\.maxRetries requires an agent provider that supports session resumption)/i;
+
+/**
+ * Walk Effect/Fiber `cause` / nested `error` wrappers that Sandcastle may put
+ * around a native {@link sc.StructuredOutputError} (observed under concurrent
+ * vitest load as FiberFailure → ExecError). Production #598 disposition must
+ * still see the receipt-recovery class through the wrap.
+ */
+function* walkErrorChain(error: unknown): Generator<unknown> {
+  let current: unknown = error;
+  for (let depth = 0; depth < 8 && current != null; depth += 1) {
+    yield current;
+    if (typeof current !== "object") break;
+    const bag = current as { cause?: unknown; error?: unknown };
+    if (bag.cause !== undefined && bag.cause !== current) {
+      current = bag.cause;
+      continue;
+    }
+    if (bag.error !== undefined && bag.error !== current) {
+      current = bag.error;
+      continue;
+    }
+    break;
+  }
+}
+
+/** Locate a nested StructuredOutputError, if any, inside wrapper errors. */
+export function nestedStructuredOutputError(
+  error: unknown,
+): sc.StructuredOutputError | undefined {
+  for (const node of walkErrorChain(error)) {
+    if (node instanceof sc.StructuredOutputError) return node;
+  }
+  return undefined;
+}
+
 /** A native receipt retry that must fail the Action for #598 mechanical redispatch. */
 export function isReceiptRecoveryFailure(error: unknown): boolean {
-  if (error instanceof sc.StructuredOutputError) return true;
-  return error instanceof Error &&
-    /(?:(?:resume\s*)?session.*(?:not found|expired|missing|unavailable)|does not support resumeSession|output\.maxRetries requires an agent provider that supports session resumption)/i.test(error.message);
+  for (const node of walkErrorChain(error)) {
+    if (node instanceof sc.StructuredOutputError) return true;
+    if (node instanceof Error && RECEIPT_RECOVERY_MESSAGE.test(node.message)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
