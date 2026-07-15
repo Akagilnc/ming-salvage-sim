@@ -217,4 +217,58 @@ describe("#928 completion-signal retirement", () => {
       }
     });
   });
+
+  describe("sandcastle sc.run: explicit completionSignal disable (not omit)", () => {
+    /**
+     * Fact (node_modules/@ai-hero/sandcastle):
+     *   if (options.completionSignal === undefined)
+     *     completionSignals = ["<promise>COMPLETE</promise>"];  // DEFAULT
+     *   else if (Array.isArray(options.completionSignal))
+     *     completionSignals = options.completionSignal;        // [] disables
+     * Omitting the option is therefore NOT off — production must pass [].
+     */
+    it("documents sandcastle: omit defaults ON; empty array disables", () => {
+      const sandcastleIndex = join(
+        import.meta.dirname,
+        "../../node_modules/@ai-hero/sandcastle/dist/index.js",
+      );
+      expect(existsSync(sandcastleIndex)).toBe(true);
+      const src = readFileSync(sandcastleIndex, "utf8");
+      expect(src).toMatch(
+        /DEFAULT_COMPLETION_SIGNAL\s*=\s*"<promise>COMPLETE<\/promise>"/,
+      );
+      expect(src).toMatch(
+        /options\.completionSignal\s*===\s*void 0[\s\S]*DEFAULT_COMPLETION_SIGNAL/,
+      );
+      // Array branch assigns through — empty array yields zero matchable signals.
+      expect(src).toMatch(
+        /Array\.isArray\(options\.completionSignal\)[\s\S]*completionSignals\s*=\s*options\.completionSignal/,
+      );
+    });
+
+    it("both production sc.run chokepoints force completionSignal: []", () => {
+      const real = readFileSync(
+        join(import.meta.dirname, "../../src/realBackend.ts"),
+        "utf8",
+      );
+      const family = readFileSync(
+        join(import.meta.dirname, "../../src/family/realFamilyBackend.ts"),
+        "utf8",
+      );
+      // Lock the force-disable at invokeSandcastleRun (omit is NOT off).
+      expect(real).toMatch(/completionSignal:\s*\[\]/);
+      expect(family).toMatch(/completionSignal:\s*\[\]/);
+      // Must not rely on "no field" / undefined alone.
+      const realInvoke = real.slice(
+        real.indexOf("protected async invokeSandcastleRun"),
+        real.indexOf("protected async runAgentSandbox"),
+      );
+      const familyInvoke = family.slice(
+        family.indexOf("protected async invokeSandcastleRun"),
+        family.indexOf("protected async runAgentSandbox"),
+      );
+      expect(realInvoke).toMatch(/completionSignal:\s*\[\]/);
+      expect(familyInvoke).toMatch(/completionSignal:\s*\[\]/);
+    });
+  });
 });

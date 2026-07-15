@@ -347,7 +347,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     expect(o.kind).toBe("completed");
   });
 
-  it("ignores non-bell sidecar parse failure independently of the obsolete completion signal", () => {
+  it("ignores non-bell sidecar parse failure; completion is exit + legal envelope", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-unsignaled-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");

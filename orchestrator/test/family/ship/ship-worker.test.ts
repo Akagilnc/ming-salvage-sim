@@ -4,9 +4,10 @@
  *
  * The family ship worker = the 2b container's TOP-LEVEL claude; it `Skill`-invokes
  * `gstack-ship` over the family base and STOPS at the PR (止于 PR — the online bot
- * cmr + merge are the separate pr-review-loop stage). Its `<ship>` tag is gated on
- * the completion signal then classified into a {@link ShipWorkerOutcome}, which
- * `dispatchWorker` maps to the full {@link WorkerResult} union (PRD #330 R2):
+ * cmr + merge are the separate pr-review-loop stage). Completion is clean exit +
+ * legal sidecar / typed envelope; the outcome is classified into a
+ * {@link ShipWorkerOutcome}, which `dispatchWorker` maps to the full
+ * {@link WorkerResult} union (PRD #330 R2):
  *   shipped → completed ShipResult; escalate → escalated.
  *
  * Tested WITHOUT a real container (mirrors #335's cmr-worker test): the

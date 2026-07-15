@@ -13,8 +13,8 @@
  *
  * Tested WITHOUT a real container:
  *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / sparse cargo;
- *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion signals
- *     remain compatibility telemetry, not a verdict gate;
+ *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion is
+ *     clean exit + legal sidecar / typed envelope (no password gate);
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
  *     clean cmr reviewer soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
@@ -120,20 +120,18 @@ const DERIVED_EMPTY_FINDINGS_COUNT = { findingsCount: 0 } as const;
 /** A Sandcastle result fixture with the public result shape, not a partial cast. */
 function sandboxRunResult({
   branch = "fb",
-  completionSignal,
   stdout = "",
   commits = [],
   sessionId,
 }: {
   readonly branch?: string;
-  readonly completionSignal?: string;
   readonly stdout?: string;
   readonly commits?: ReadonlyArray<{ readonly sha: string }>;
   readonly sessionId?: string;
 } = {}): RunResult {
+  // #928: do not feed completionSignal — completion is exit + legal sidecar.
   return {
     branch,
-    completionSignal,
     stdout,
     commits: [...commits],
     iterations: sessionId === undefined ? [] : [{ sessionId }],

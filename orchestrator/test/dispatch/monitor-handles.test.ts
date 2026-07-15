@@ -52,7 +52,6 @@ import type {
 function sleepWorker(
   logDir: string,
   poolId: string,
-  signal: string,
   stepId: string,
 ): ReturnType<typeof dispatchMonitoredCliWorker> {
   return dispatchMonitoredCliWorker({
@@ -217,7 +216,7 @@ describe("#684 worker monitor handles", () => {
   it("dispatchMonitoredCliWorker atomically returns pid/log/pool/instance handle", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-684-dispatch-"));
     try {
-      const { handle, child } = await sleepWorker(dir, "grok/composer", "unused", "S2");
+      const { handle, child } = await sleepWorker(dir, "grok/composer", "S2");
       expect(handle.pid).toBe(child.pid);
       expect(handle.pid).toBeGreaterThan(0);
       expect(handle.logPath).toBe(join(dir, "S2.log"));
@@ -281,8 +280,8 @@ describe("#684 worker monitor handles", () => {
   it("killWorkerTree kills only the target pid tree — parallel workers do not cross-kill", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-684-parallel-"));
     try {
-      const a = await sleepWorker(dir, "grok/build", "A_DONE", "worker-a");
-      const b = await sleepWorker(dir, "zai/glm-5.2", "B_DONE", "worker-b");
+      const a = await sleepWorker(dir, "grok/build", "worker-a");
+      const b = await sleepWorker(dir, "zai/glm-5.2", "worker-b");
 
       expect(a.handle.pid).not.toBe(b.handle.pid);
       expect(isWorkerAlive(a.handle, injectedDeps(a.handle))).toBe(true);
@@ -600,7 +599,7 @@ exit 0
       session: "fresh",
       contextRetention: "retain",
       promptFile: "coder.md",
-      maxIter: 5,
+      maxIter: 1,
       model: "sonnet",
       soul: "coder",
       toolchain: [],
@@ -640,7 +639,7 @@ exit 0
         session: "fresh",
         contextRetention: "retain",
         promptFile: "coder.md",
-        maxIter: 5,
+        maxIter: 1,
         model: "sonnet",
         soul: "coder",
         toolchain: [],
@@ -721,7 +720,7 @@ exit 0
         session: "fresh",
         contextRetention: "retain",
         promptFile: "coder.md",
-        maxIter: 5,
+        maxIter: 1,
         model: "sonnet",
         soul: "coder",
         toolchain: [],

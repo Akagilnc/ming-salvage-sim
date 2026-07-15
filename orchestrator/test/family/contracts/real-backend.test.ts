@@ -1749,7 +1749,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("treats a guarded cmr sidecar as completion even when Sandcastle omits the completion signal", () => {
+  it("treats a guarded cmr sidecar as completion on clean exit without a password string", () => {
     const dir = trackTempDir("cmr-outcome-sidecar-complete-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -2286,15 +2286,16 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
       }),
     ).toEqual({ resolved: true });
   });
-  it("keeps a valid merger result available for git-truth adjudication without a signal", () => {
-    // The compatibility signal is telemetry only. The caller must still verify
-    // the merge commit and conflict state before recording a landed merge.
+  it("keeps a valid merger result available for git-truth adjudication from typed envelope alone", () => {
+    // #928: completion is exit + legal sidecar / typed envelope. The caller
+    // must still verify the merge commit and conflict state before recording
+    // a landed merge.
     const out = mergerOutcomeFromResult({
       stdout: '<merger>{"resolved": true}</merger>',
     });
     expect(out).toEqual({ resolved: true });
   });
-  it("a wrong completion signal is unresolved", () => {
+  it("typed merger envelope alone is enough for resolved (no password required)", () => {
     expect(
       mergerOutcomeFromResult({
         stdout: '<merger>{"resolved": true}</merger>',
@@ -3037,7 +3038,7 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         contextRetention: "clean",
         skill: "gstack-ship",
         promptFile: "family_ship.md",
-        maxIter: 5,
+        maxIter: 1,
         model: "gpt-5.6-terra",
         soul: "ship",
         toolchain: [],

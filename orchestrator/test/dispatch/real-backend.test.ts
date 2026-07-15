@@ -122,21 +122,19 @@ const CODER_ESCALATE_ENVELOPE = {
 type AgentRunResult = Awaited<ReturnType<typeof sc.run>>;
 
 function agentRunResult({
-  completionSignal,
   stdout,
   commits = [],
   sessionId,
   output,
 }: {
-  readonly completionSignal?: string;
   readonly stdout: string;
   readonly commits?: ReadonlyArray<{ sha: string }>;
   readonly sessionId: string;
   readonly output?: unknown;
 }): AgentRunResult {
+  // #928: do not feed completionSignal — completion is exit + legal sidecar.
   return {
     branch: "test-agent-branch",
-    completionSignal,
     stdout,
     commits: [...commits],
     iterations: [{ sessionId }],

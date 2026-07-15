@@ -3253,8 +3253,10 @@ export class RealBackend implements Backend {
         pool,
       ),
       // #899 / ADR 0128 / #928: every selected seat is single-iteration
-      // (maxIter:1). No completionSignal — clean exit + typed envelope / sidecar
-      // is completion. Native SO re-asks stay in-session.
+      // (maxIter:1). Sandcastle completionSignal forced off at
+      // invokeSandcastleRun (`[]` — omit falls back to default password).
+      // Completion is clean exit + typed envelope / sidecar. Native SO re-asks
+      // stay in-session.
       maxIterations: spec.maxIter,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
@@ -3413,7 +3415,18 @@ export class RealBackend implements Backend {
     // #899 hotfix: the #684 monitor only sees the bridge's stdout; forward
     // agent-stream liveness as a throttled heartbeat so healthy long steps
     // are not idle-killed (see sandboxStreamHeartbeat.ts).
-    return await sc.run(withMonitorStreamHeartbeat(options));
+    //
+    // #928: sandcastle defaults `completionSignal` to
+    // `"<promise>COMPLETE</promise>"` when the option is omitted
+    // (`DEFAULT_COMPLETION_SIGNAL` in @ai-hero/sandcastle). Empty array is the
+    // only API-supported disable — omit is NOT off. Production completion is
+    // clean process exit + legal sidecar / typed envelope, never a password.
+    return await sc.run(
+      withMonitorStreamHeartbeat({
+        ...options,
+        completionSignal: [],
+      }),
+    );
   }
 
   /**
