@@ -1653,22 +1653,23 @@ function stampCmrReviewRound(input: {
       (record): record is TelemetryReviewRoundRecord =>
         record.phase === "review_round" && record.cmrPass === input.pass,
     );
+    // #919 CR N3: production court traffic is kind:"judge" only. Residual
+    // unusable is kind:"reviewer" ({@link unusableResidualOpenCountPaper}) —
+    // never dual-read kind:"cmr" as a live verdict signal.
     const completed =
       input.result.kind === "completed" ? input.result.output : undefined;
     const judgeOut = completed?.kind === "judge" ? completed : undefined;
-    const cmrOut = completed?.kind === "cmr" ? completed : undefined;
     const workerVerdict =
       input.result.kind === "escalated"
         ? "escalated"
         : input.result.kind === "failed"
           ? "failed"
-          : judgeOut?.status === "converged" || cmrOut?.converged === true
+          : judgeOut?.status === "converged"
             ? "converged"
-            : judgeOut?.status === "continue" ||
-                (cmrOut?.findings?.length ?? 0) > 0
+            : judgeOut?.status === "continue"
               ? "blocking"
               : "not_converged";
-    const findingsCargo = judgeOut?.findings ?? cmrOut?.findings;
+    const findingsCargo = judgeOut?.findings;
     tryAppendTelemetryRecord(
       ledgerDir,
       buildReviewRoundStamp({
@@ -1680,9 +1681,6 @@ function stampCmrReviewRound(input: {
         finalDisposition: input.finalDisposition,
         ...(findingsCargo !== undefined ? { findings: findingsCargo } : {}),
         priorReviewRecords,
-        ...(cmrOut?.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: cmrOut.priorFindingDispositions }
-          : {}),
       }),
     );
   } catch (err) {

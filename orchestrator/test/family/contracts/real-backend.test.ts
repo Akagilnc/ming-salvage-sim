@@ -41,7 +41,6 @@ import {
   mergerOutcomeFromResult,
   type MergerAuth,
   parseCmrOutcome,
-  parseMergerOutcome,
   REFERENCED_FAMILY_PROMPT_FILES,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
@@ -1121,109 +1120,139 @@ describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)",
   });
 });
 
-describe("parseMergerOutcome (#291 pure)", () => {
-  it("parses a resolved tag", () => {
+// #919 CR N1: parseMergerOutcome dual DELETED. Resolve cargo + T2 escalate
+// live only on mergerOutcomeFromResult / decodeMergerEnvelope.
+describe("merger resolve cargo (#291 pure, T2-only)", () => {
+  it("parses a resolved stdout cargo tag (no typed envelope)", () => {
     expect(
-      parseMergerOutcome('blah\n<merger>{"resolved": true, "tradeoffs": ""}</merger>\nMERGER_STEP_COMPLETE'),
+      mergerOutcomeFromResult({
+        stdout:
+          'blah\n<merger>{"resolved": true, "tradeoffs": ""}</merger>\nMERGER_STEP_COMPLETE',
+      }),
     ).toEqual({ resolved: true });
   });
-  it("parses an escalate tag, surfacing the reason", () => {
-    const out = parseMergerOutcome(
-      '<merger>{"resolved": false, "escalate": {"reason": "ambiguous", "diagnosis": "needs decision"}}</merger>',
-    );
+  it("stdout escalate is cargo-stripped, not a fate bell (T2 owns escalate)", () => {
+    // #919 CR N1: nested escalate on stdout never parks — fate is T2 envelope.
+    const out = mergerOutcomeFromResult({
+      stdout:
+        '<merger>{"resolved": false, "escalate": {"reason": "ambiguous", "diagnosis": "needs decision"}}</merger>',
+    });
     expect(out.resolved).toBe(false);
-    expect(out.reason).toContain("ambiguous");
+    expect(out.escalation).toBeUndefined();
   });
   it("no tag → not resolved", () => {
-    expect(parseMergerOutcome("nothing here").resolved).toBe(false);
+    expect(mergerOutcomeFromResult({ stdout: "nothing here" }).resolved).toBe(
+      false,
+    );
   });
   it("takes the LAST tag when the agent iterated", () => {
-    const out = parseMergerOutcome(
-      '<merger>{"resolved": false, "escalate": {"reason": "first"}}</merger>' +
+    const out = mergerOutcomeFromResult({
+      stdout:
+        '<merger>{"resolved": false, "escalate": {"reason": "first"}}</merger>' +
         '<merger>{"resolved": true}</merger>',
-    );
+    });
     expect(out).toEqual({ resolved: true });
   });
   it("a non-object JSON payload (null / true / number) is unresolved, NOT a crash", () => {
-    // `JSON.parse("null")` succeeds and returns null; the old code then read
-    // `parsed.resolved` → TypeError OUTSIDE the try/catch, crashing the parent
-    // (agy R1). Any non-object payload must be a safe unresolved-with-reason.
-    expect(parseMergerOutcome("<merger>null</merger>")).toEqual({
+    expect(
+      mergerOutcomeFromResult({ stdout: "<merger>null</merger>" }),
+    ).toEqual({
       resolved: false,
       reason: "merger agent <merger> tag was not a JSON object",
     });
-    expect(parseMergerOutcome("<merger>true</merger>").resolved).toBe(false);
-    expect(parseMergerOutcome("<merger>42</merger>").resolved).toBe(false);
-    // typeof [] === "object" — must not coerce array cargo into a resolve path.
-    expect(parseMergerOutcome("<merger>[]</merger>")).toEqual({
+    expect(
+      mergerOutcomeFromResult({ stdout: "<merger>true</merger>" }).resolved,
+    ).toBe(false);
+    expect(
+      mergerOutcomeFromResult({ stdout: "<merger>42</merger>" }).resolved,
+    ).toBe(false);
+    expect(
+      mergerOutcomeFromResult({ stdout: "<merger>[]</merger>" }),
+    ).toEqual({
       resolved: false,
       reason: "merger agent <merger> tag was not a JSON object",
     });
   });
 
-  // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
-  // merger_resolve_conflict.md: "must match the shape above exactly". A
-  // resolved:true carrying extra/mixed keys (e.g. an escalate verdict) must NOT
-  // count as a clean resolve — fail-CLOSED to unresolved.
-  describe("Finding A — strict shape (resolved:true rejects extra/mixed keys)", () => {
-    it("resolved:true carrying an escalate ⇒ NOT resolved (mixed payload)", () => {
-      const out = parseMergerOutcome(
-        '<merger>{"resolved": true, "escalate": {"reason": "r", "diagnosis": "d"}}</merger>',
-      );
-      expect(out.resolved).toBe(false);
+  describe("Finding A — strict resolve cargo shape", () => {
+    it("resolved:true carrying escalate is stripped → still resolves when cargo is clean", () => {
+      // escalate key is stripped before strict resolve schema; pure resolve remains.
+      const out = mergerOutcomeFromResult({
+        stdout:
+          '<merger>{"resolved": true, "escalate": {"reason": "r", "diagnosis": "d"}}</merger>',
+      });
+      expect(out).toEqual({ resolved: true });
     });
 
     it("resolved:true carrying an unknown EXTRA key ⇒ NOT resolved (strict)", () => {
       expect(
-        parseMergerOutcome('<merger>{"resolved": true, "junk": 1}</merger>').resolved,
+        mergerOutcomeFromResult({
+          stdout: '<merger>{"resolved": true, "junk": 1}</merger>',
+        }).resolved,
       ).toBe(false);
     });
 
     it("resolved as a NON-boolean ⇒ NOT resolved", () => {
-      expect(parseMergerOutcome('<merger>{"resolved": "true"}</merger>').resolved).toBe(
-        false,
-      );
+      expect(
+        mergerOutcomeFromResult({
+          stdout: '<merger>{"resolved": "true"}</merger>',
+        }).resolved,
+      ).toBe(false);
     });
 
     it("still accepts the LEGAL success shapes (regression: with/without tradeoffs)", () => {
-      expect(parseMergerOutcome('<merger>{"resolved": true}</merger>')).toEqual({
-        resolved: true,
-      });
       expect(
-        parseMergerOutcome('<merger>{"resolved": true, "tradeoffs": "picked left"}</merger>'),
+        mergerOutcomeFromResult({
+          stdout: '<merger>{"resolved": true}</merger>',
+        }),
+      ).toEqual({ resolved: true });
+      expect(
+        mergerOutcomeFromResult({
+          stdout:
+            '<merger>{"resolved": true, "tradeoffs": "picked left"}</merger>',
+        }),
       ).toEqual({ resolved: true });
     });
 
-    it("still surfaces a legal escalate (regression)", () => {
-      const out = parseMergerOutcome(
-        '<merger>{"resolved": false, "escalate": {"reason": "ambiguous", "diagnosis": "needs decision"}}</merger>',
-      );
+    it("T2 merger escalate parks decision (sole fate channel)", () => {
+      const out = mergerOutcomeFromResult({
+        output: {
+          station: "merger",
+          status: "escalate",
+          reason: "ambiguous",
+          diagnosis: "needs decision",
+        },
+        stdout: "",
+      });
       expect(out.resolved).toBe(false);
       expect(out.reason).toContain("ambiguous");
+      expect(out.escalation?.diagnosis).toContain("needs decision");
     });
   });
 });
 
-// #596 F2: family-side decode seam test (raw through parse*Outcome, using isValid* guards)
+// #596 F2: family-side decode seam test (raw through parse*Outcome)
+// #919 CR N1: cargo parsers no longer ring classifyDecisionGate bells.
 describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-loop kinds (raw, not fake)", () => {
   it.each([
     ["verify", "parseVerifyOutcome"],
     ["fixer", "parseFixerOutcome"],
     ["cleanup", "parseCleanupOutcome"],
     ["docRelease", "parseDocReleaseOutcome"],
-  ] as const)("%s receipt rings its decision bell before unrelated cargo is decoded", async (tag, parser) => {
-    const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod[parser](
-      `<${tag}>${JSON.stringify({
-        unrelatedCargo: { wrong: [1, 2, 3] },
-        escalate: { reason: "owner choice", diagnosis: "family contract fork" },
-      })}</${tag}>`,
-    );
-    expect(out).toMatchObject({
-      kind: "escalate",
-      escalation: { reason: "owner choice", diagnosis: "family contract fork" },
-    });
-  });
+  ] as const)(
+    "%s cargo with nested escalate is opaque cargo (no decision-gate dual)",
+    async (tag, parser) => {
+      const mod = await import("../../../src/family/realFamilyBackend.js");
+      const out = mod[parser](
+        `<${tag}>${JSON.stringify({
+          unrelatedCargo: { wrong: [1, 2, 3] },
+          escalate: { reason: "owner choice", diagnosis: "family contract fork" },
+        })}</${tag}>`,
+      );
+      // #919 CR N1: receiptDecisionBell DELETED — escalate-only/off-shape is cargo.
+      expect(out).toMatchObject({ kind: "cargo" });
+    },
+  );
 
   // import here via the file's re-export or direct (the test file imports some parses)
   // we will require the module symbols via the existing pattern; use dynamic to avoid top-edit
@@ -2434,7 +2463,7 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
     ).toEqual({ resolved: true });
   });
 
-  it("a signaled run delegates to parseMergerOutcome (resolved)", () => {
+  it("a signaled run resolves from stdout cargo (resolved)", () => {
     expect(
       mergerOutcomeFromResult({
         stdout: '<merger>{"resolved": true}</merger>',

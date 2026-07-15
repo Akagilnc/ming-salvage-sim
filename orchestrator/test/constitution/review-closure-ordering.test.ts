@@ -27,6 +27,7 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
+import { liveCmrJudgeContinue } from "../helpers/judge-fixtures.js";
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -68,18 +69,16 @@ class ClosureOrderingBackend implements FamilyBackend {
     _ctx: DispatchContext,
   ): Promise<WorkerResult> {
     if (spec.kind === "cmr") {
+      // #919 CR N3: live kind:judge continue (not residual kind:cmr).
       return {
         kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: false,
+        output: liveCmrJudgeContinue([NEW_BLOCKER], {
           reason: "fresh re-review found a new blocker",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
-          findings: [NEW_BLOCKER],
           ...CMR_EVIDENCE,
-        },
+        }),
       };
     }
     this.dispatchedNonCmrKinds.push(spec.kind);
