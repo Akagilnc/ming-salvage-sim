@@ -8,8 +8,8 @@ Proposed
 
 ## Decision
 
-Coder/CoderFix 遇到服务端 `capacity`/拥挤（非 429 `quota`）时立即保留现场并重派：先在当前 live billing pool 按 Coder-Rec 顺位换 checkpoint，无同池候选才回退既有跨池 `relay`，不 `park` 等配额窗，也不把池判死。Reviewer / Verification 及 delivery/shared-tail Finding Repair 仍只在各自 Action 的角色能力与 route 内换 seat，不读取 Coder-Rec。
+Coder/CoderFix 遇到服务端 `capacity`/拥挤（非 429 `quota`）时保留现场；这是客观执行故障，由 owning Action / Policy 按 ADR 0134 选择下一固定席位。不判池死、不等 quota window，也不设同池 checkpoint 特例。
 
 ## Consequences
 
-ledger 的 handoff trigger 记为 `capacity`，使其与 `quota_wall`、`hang_with_live_pool`、自报 `blocked` 可区分。
+用现行 owner-scoped records/telemetry 记录 `capacity`，使其与 `quota` 等其他执行状态可区分；旧 ledger 不作为权威。

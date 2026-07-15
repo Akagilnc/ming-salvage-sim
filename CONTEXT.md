@@ -605,8 +605,8 @@ _Avoid_: 自评自修、顺手修一下、在 reviewer worker 内启动 engine �
 _Avoid_: reviewer 自修、amend 折叠、coder/fixer 完成时的 commit gate、无 commit 白跑或重试、runner 代判修复正确。
 
 **delivery-base Finding Repair**:
-来源无关、作用于当前 delivery branch / base 的 Finding Repair scope；与只处理 family 增量合入接缝的 `family-integration Finding Repair` 相区别。准确调用位置只读 #869。
-_Avoid_: 把它等同 family-integration scope、为 single 虚构 family base / ledger、在 glossary 复制 gate matrix。
+来源无关、作用于当前 delivery branch / base 的 Finding Repair scope；处理当前交付基线上的 finding 修复，不把家族增量合入接缝的处理混入本 scope。准确调用位置只读 #869。
+_Avoid_: 把它和家族增量合入接缝的修复混为一谈、为 single 虚构 family base / ledger、在 glossary 复制 gate matrix。
 
 **文档发布 (docRelease)**:
 把当前 PR 代码与项目文档对齐的共享 Action / worker；它自行判断合法空跑并核验自己的 commit / push 副作用。single 与 family 共用，准确调用与重入位置只读 #869。
