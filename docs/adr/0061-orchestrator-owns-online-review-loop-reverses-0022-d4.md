@@ -1,4 +1,4 @@
-Status: Accepted（2026-07-06：grill 收敛 #366 → 16-issue 重切 → 本地 kill-axis cmr 2 轮收敛 → 线上 4-bot 3 轮收敛，PR #605 合入）
+Status: Proposed
 
 Current authority: 线上评审仍属于编排器 shared tail；准确顺序只读 #869，Runner 边界只读 ADR 0131。PR / checks / threads 的读取与外部效果核验分别属于 Online Review、Ship / PR Publication 与 Merge / Delivery 等具名 Action，不属于 Runner。
 

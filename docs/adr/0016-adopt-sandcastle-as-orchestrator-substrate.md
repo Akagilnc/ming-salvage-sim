@@ -1,6 +1,6 @@
 # 采用 Sandcastle 作为 epic 编排器底座；编排器收缩为叠加在其上的「质量层」
 
-Status: Accepted（2026-06-19 提出 / 2026-06-20 Accepted；spike 实证「底座可行 + 并行编排可行 + 缺质量层」三面。**评审闭环完成**：本地 cmr 6 轮收敛（r1=14→r6=0）+ 线上 bot（PR #246：真 finding 仅 1 处 markdown 已修；G2 安全阀 / G4 reviewer 守护按用户 defer 决定记录在案）。parallel-planner 并行编排证据已补（见 Spike 证据 4）。在此之前 #217 PRD 的「整套自建」描述不作数、以本 ADR 方向为准。）
+Status: Proposed
 
 Current authority: 本 ADR 只保留“Sandcastle 是执行底座、编排器只叠项目质量层”的方向决定。现行交付拓扑只读 #869，Runner 边界只读 ADR 0131，Action / 角色所有权只读 #868；下文 #244、S0–S8 与 v1 模型/镜像细节仅为历史。
 

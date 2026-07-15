@@ -1,4 +1,4 @@
-Status: Accepted（2026-07-06 用户拍板；本地 kill-axis cmr + 线上 4-bot 收敛，PR #605 合入；开工拓扑已由 #869/#871 取代）
+Status: Proposed
 
 # 0063: 编排器环境新鲜靠无条件重建，不做检测式 staleness 闸
 

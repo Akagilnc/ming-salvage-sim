@@ -1,6 +1,6 @@
 # 家族集成层：现成子片 + distinct branch + parent base
 
-Status: Accepted（2026-06-21；grill-with-docs 收敛 + 设计 cmr 5 轮 + 线上 bot 收敛 → PR #290 合入 main。）
+Status: Proposed
 
 ## Current authority
 

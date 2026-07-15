@@ -1,6 +1,6 @@
 # 0128 — Sandcastle 单一拥有 agent 执行底座
 
-- Status: Accepted（2026-07-12，#871 grill；2026-07-14 按 #863 架构审计修订）
+- Status: Proposed
 - Date: 2026-07-11
 
 **决策**：Execution Plane 只指真正运行自主 agent session 的环境；当前唯一执行底座是 Sandcastle。Scene Provisioning / Recovery 复用 Sandcastle 的 worktree 获取与 sandbox 生命周期，但 worker 结束时只关闭 sandbox/container；常驻 slice/family worktree 的删除不得交给 `Worktree.close()`，只走 ADR 0024 与 #868 授权的 Closure and Reclamation 入口。需要模型的专业 Action 通过共享 Worker Invocation capability 把可执行席位绑定为 Sandcastle `AgentProvider`，并复用其 `run`、session resume、结构化结果与 timeout 语义；该 capability 不是独立 Action 或 Flow position。host launcher 与 monitor 只负责开工、观察、取消和重入控制，不直接运行 agent CLI，也不另建 agent 执行协议。

@@ -1,4 +1,4 @@
-Status: Accepted（2026-07-13）
+Status: Proposed
 
 # 0131: runner 三通道零判断权
 

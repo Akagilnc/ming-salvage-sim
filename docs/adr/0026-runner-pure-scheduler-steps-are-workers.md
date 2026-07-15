@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: proposed
 supersedes-part-of: ADR 0018 (step 分类); ADR 0016 (spike 发现4 的 cmr/gstack 不进容器排除)
 partially-superseded-by: ADR 0030; ADR 0131; issue #869
 ---

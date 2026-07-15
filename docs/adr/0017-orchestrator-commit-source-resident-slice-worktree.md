@@ -1,6 +1,6 @@
 # 编排器的 commit 真源 = 一条常驻 slice worktree;Sandcastle sandbox 只当隔离壳;家族 base 当前置
 
-Status: Accepted（2026-06-20；grill-with-docs 收敛 v1 编排器设计。**评审闭环完成**：本地 cmr 6 轮收敛 + 线上 bot（PR #246）。本 ADR 是 ADR 0016「薄质量层」的 worktree 维度具体化，收口 0016 当时含糊的 worktree 模型。）
+Status: Proposed
 
 Current authority: 本 ADR 只保留“每个 slice 使用一条常驻 worktree/分支承载劳动与 commit”的决定。commit 创建归 #868 的 Change Finalization Action，接力顺序只读 #869；base/scene 与恢复、回收分别只读 ADR 0022/#871 与 ADR 0127。下文 v0.1 base、step ledger 与同镜像细节仅为历史。
 

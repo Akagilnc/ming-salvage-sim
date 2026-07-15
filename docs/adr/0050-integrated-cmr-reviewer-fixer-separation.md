@@ -1,6 +1,6 @@
 # Integrated CMR reviewer / fixer separation
 
-Status: Accepted (#533/#553, 2026-07-03)
+Status: Proposed
 
 Current authority: ADR 0131 定义 Runner 三通道，#869 定义现行接力拓扑。本 ADR 只保留 reviewer / fixer 角色分离与 fresh re-review 决策。
 

@@ -1,6 +1,6 @@
 # 编排器路线 = 一等命名预设 + slug→后端数据注册表
 
-Status: Accepted（2026-06-29；本地 cmr 8 轮[完整性 4 + 正确性 4] + 线上 bot 3 轮双闸收敛，PR #425）
+Status: Proposed
 
 Current authority: 本 ADR 只保留“命名路线 + slug 注册表 + family-tight 不变式”。Policy Resolution / Quota Seating 的求值与处置只读 #870，Runner 边界只读 ADR 0131；路线或 override 的专业结果不得进入 Runner。#905 / PR #912 已进一步裁定：`agy` 只指真实 agy CLI，`grok-4.5` 只经 grok-build / SuperGrok provider，OpenCode 不再是编排器 transport。
 

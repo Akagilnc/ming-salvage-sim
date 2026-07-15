@@ -1,6 +1,6 @@
 # v1 编排器 = runner 驱动外层步骤序列；agent 只在步内执行，不决定下一步
 
-Status: Accepted（2026-06-20；固定外层顺序的核心决定保留；Runner-facing mechanics 已由 ADR 0131 与 #869 取代。）
+Status: Proposed
 
 Current authority: #869 单一拥有现行交付拓扑，ADR 0131 单一拥有 Runner 三通道。下文旧 `completionSignal`、output schema、reviewer JSON 内容路由与 Runner prompt 注入权均废止，不得作为实现依据。
 

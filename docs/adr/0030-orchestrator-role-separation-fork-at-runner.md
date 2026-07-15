@@ -1,6 +1,6 @@
 # 编排器角色分离：分叉点 = Runner 派出的独立 worker
 
-Status: Accepted（2026-06-29；本地 CMR 8 轮 + 线上 bot 3 轮，PR #425）
+Status: Proposed
 
 Current authority: ADR 0131 定义 Runner 三通道，#869 定义现行接力拓扑，ADR 0129 定义 findings 跨 worker 流转。本 ADR 只保留 coder / reviewer / coder-fix 角色分离。
 

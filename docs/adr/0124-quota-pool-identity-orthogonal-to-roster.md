@@ -4,7 +4,7 @@ Date: 2026-07-10
 
 ## Status
 
-Superseded by ADR 0134（2026-07-14）
+Proposed
 
 ## Decision
 

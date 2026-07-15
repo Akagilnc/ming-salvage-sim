@@ -1,4 +1,4 @@
-Status: Accepted（2026-07-09：grill-with-docs → #735 PRD → 本地设计 cmr completeness+correctness 收敛：grok-4.5 + composer-2.5-fast + agy）
+Status: Proposed
 
 # 0123: 文档发布与自动合并不以路径白名单为闸
 
