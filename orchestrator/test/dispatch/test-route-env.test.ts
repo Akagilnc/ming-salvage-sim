@@ -7,12 +7,12 @@ describe("#441 test route isolation", () => {
       routeName: "normal",
       slots: {
         coder: "gpt-5.6-terra",
-        reviewer: "gpt-5.6-sol",
         coderFix: "gpt-5.6-terra",
         ship: "sonnet",
         merger: "sonnet",
         cmrCompleteness: "gpt-5.6-sol",
         cmrCorrectness: "gpt-5.6-sol",
+        verify: "gpt-5.6-sol",
       },
       legCollections: {
         cmrReview: [

@@ -154,11 +154,11 @@ import type {
   WorktreeHandle,
 } from "./types.js";
 
-/** Map a wall step to the route slot a relay baton rewrites. */
+/** Map a wall step to the route slot a relay baton rewrites. #923: S3/S6 → verify. */
 function relaySlotForWallStep(
   wallStep: StepId,
-): "coder" | "reviewer" | "coderFix" {
-  if (wallStep === "S3" || wallStep === "S6") return "reviewer";
+): "coder" | "verify" | "coderFix" {
+  if (wallStep === "S3" || wallStep === "S6") return "verify";
   if (wallStep === "S5") return "coderFix";
   return "coder";
 }
@@ -1266,8 +1266,9 @@ export function coderModel(env: ModelRouteEnv = process.env): string {
   return modelForSlot("coder", env);
 }
 
+/** Model for S3/S6 judge openings — #923: reads the unified verify slot. */
 export function reviewerModel(env: ModelRouteEnv = process.env): string {
-  return modelForSlot("reviewer", env);
+  return modelForSlot("verify", env);
 }
 
 type WorkerStepId = "S2" | "S3" | "S5" | "S6";
@@ -1296,7 +1297,8 @@ export function stepSpecsForRoute(
       id: "S3",
       role: "reviewer",
       promptFile: "reviewer_review.md",
-      model: route.slots.reviewer,
+      // #923: judge identity is the verify slot (ORCHESTRATOR_VERIFY_MODEL).
+      model: route.slots.verify,
       completionSignal: "REVIEWER_STEP_COMPLETE",
       maxIter: 1,
       soul: "READ-ONLY",
@@ -1317,7 +1319,8 @@ export function stepSpecsForRoute(
       id: "S6",
       role: "reviewer",
       promptFile: "reviewer_review.md",
-      model: route.slots.reviewer,
+      // #923: judge identity is the verify slot (ORCHESTRATOR_VERIFY_MODEL).
+      model: route.slots.verify,
       completionSignal: "REVIEWER_STEP_COMPLETE",
       maxIter: 1,
       soul: "READ-ONLY",
@@ -1333,7 +1336,7 @@ function activeRelaySmokeEntryKey(
 ): string | undefined {
   const slot =
     step === "S2" ? "coder" :
-    step === "S3" || step === "S6" ? "reviewer" :
+    step === "S3" || step === "S6" ? "verify" :
     step === "S5" ? "coderFix" : undefined;
   return slot === undefined ? undefined : `${slot}:${route.slots[slot]}`;
 }
@@ -1656,8 +1659,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     activeRelayStep = wallStep ?? "S2";
     const relaySlot = relaySlotForWallStep(wallStep ?? "S2");
     const slots = { ...modelRoute.slots };
-    if (relaySlot === "reviewer") {
-      slots.reviewer = baton.slug;
+    if (relaySlot === "verify") {
+      // #923: S3/S6 judge openings share the verify slot.
+      slots.verify = baton.slug;
     } else if (relaySlot === "coderFix") {
       slots.coderFix = baton.slug;
       stickyRelayCoderFixSlug = baton.slug;

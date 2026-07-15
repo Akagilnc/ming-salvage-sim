@@ -151,7 +151,6 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
           "[orchestrator:family] model route lineup",
           "route=normal",
           "coder=gpt-5.6-terra",
-          "reviewer=gpt-5.6-sol",
           "coderFix=gpt-5.6-terra",
           "ship=sonnet",
           "merger=sonnet",

@@ -43,7 +43,6 @@ describe("#422 model route presets", () => {
     );
     expect(resolved.slots).toEqual({
       coder: "gpt-5.6-terra",
-      reviewer: "gpt-5.6-sol",
       coderFix: "gpt-5.6-terra",
       ship: "sonnet",
       merger: "sonnet",
@@ -58,7 +57,6 @@ describe("#422 model route presets", () => {
       [
         "route=normal",
         "coder=gpt-5.6-terra",
-        "reviewer=gpt-5.6-sol",
         "coderFix=gpt-5.6-terra",
         "ship=sonnet",
         "merger=sonnet",
@@ -120,11 +118,11 @@ describe("#422 model route presets", () => {
 
   it("single-slot overrides win over the selected base route", () => {
     const resolved = resolveRouteModels("normal", {
-      reviewer: "opus",
+      verify: "opus",
       ship: "gpt-5.6-terra",
     });
 
-    expect(resolved.slots.reviewer).toBe("opus");
+    expect(resolved.slots.verify).toBe("opus");
     expect(resolved.slots.ship).toBe("gpt-5.6-terra");
     expect(resolved.slots.coder).toBe("gpt-5.6-terra");
   });
@@ -139,7 +137,7 @@ describe("#422 model route presets", () => {
     expect(() =>
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "normal",
-        ORCHESTRATOR_REVIEWER_MODEL: "gpt-5.5",
+        ORCHESTRATOR_VERIFY_MODEL: "gpt-5.5",
       }),
     ).toThrow(/unknown model slug/i);
   });
@@ -162,7 +160,6 @@ describe("#422 model route presets", () => {
     ]);
 
     expect(codexCheap.slots.coder).toBe("gpt-5.6-terra");
-    expect(codexCheap.slots.reviewer).toBe("gpt-5.6-sol");
     expect(codexCheap.slots.verify).toBe("gpt-5.6-sol");
     expect(codexCheap.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "opus",
@@ -175,22 +172,21 @@ describe("#422 model route presets", () => {
     ]);
   });
 
-  it("assigns Sol to reviewer and every judging gate in every Codex-enabled preset", () => {
+  it("assigns Sol to the unified verify judge seat and every judging gate in every Codex-enabled preset", () => {
     for (const routeName of ["normal", "codex-cheap", "claude-cheap", "claude-tight"] as const) {
       const { slots } = resolveRouteModels(routeName, {});
 
       expect(slots).toMatchObject({
         coder: "gpt-5.6-terra",
         coderFix: "gpt-5.6-terra",
-        reviewer: "gpt-5.6-sol",
         cmrCompleteness: "gpt-5.6-sol",
         cmrCorrectness: "gpt-5.6-sol",
         verify: "gpt-5.6-sol",
       });
+      expect(slots).not.toHaveProperty("reviewer");
     }
 
     expect(resolveRouteModels("codex-tight", {}).slots).toMatchObject({
-      reviewer: "opus",
       cmrCompleteness: "opus",
       cmrCorrectness: "opus",
       verify: "opus",
@@ -403,19 +399,19 @@ describe("#422 model route presets", () => {
   });
 
   it("turns tight-route violations into a structured non-interactive stop decision", () => {
-    const route = resolveRouteModels("claude-tight", { reviewer: "opus" });
+    const route = resolveRouteModels("claude-tight", { verify: "opus" });
 
     const decision = applyTightRoutePolicy(route, { interactive: false });
 
     expect(decision.kind).toBe("stop");
     if (decision.kind === "stop") {
       expect(decision.escalation.reason).toMatch(/tight route violation/i);
-      expect(decision.escalation.diagnosis).toContain("reviewer=opus(claude)");
+      expect(decision.escalation.diagnosis).toContain("verify=opus(claude)");
     }
   });
 
   it("lets the interactive policy seam warn and continue only on explicit confirmation", () => {
-    const route = resolveRouteModels("claude-tight", { reviewer: "opus" });
+    const route = resolveRouteModels("claude-tight", { verify: "opus" });
     const warnings: string[] = [];
 
     const declined = applyTightRoutePolicy(route, {
@@ -431,11 +427,11 @@ describe("#422 model route presets", () => {
 
     expect(declined.kind).toBe("stop");
     expect(accepted.kind).toBe("continue");
-    expect(warnings.some((message) => message.includes("reviewer=opus(claude)"))).toBe(true);
+    expect(warnings.some((message) => message.includes("verify=opus(claude)"))).toBe(true);
   });
 
   it("runtime tight-route policy accepts an async interactive confirmation seam", async () => {
-    const route = resolveRouteModels("claude-tight", { reviewer: "opus" });
+    const route = resolveRouteModels("claude-tight", { verify: "opus" });
     const decision = await applyRuntimeTightRoutePolicy(route, {
       interactive: true,
       confirm: async () => true,
@@ -446,7 +442,7 @@ describe("#422 model route presets", () => {
 
   it("runner startup returns a structured non-interactive escalate before backend work", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
-    vi.stubEnv("ORCHESTRATOR_REVIEWER_MODEL", "opus");
+    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "opus");
     vi.resetModules();
 
     class BackendShouldNotRun implements Backend {
@@ -484,12 +480,12 @@ describe("#422 model route presets", () => {
 
     expect(result.status).toBe("escalate");
     expect(result.errorPackage?.failedStep).toBe("S0");
-    expect(result.errorPackage?.reason).toContain("reviewer=opus(claude)");
+    expect(result.errorPackage?.reason).toContain("verify=opus(claude)");
   });
 
   it("family runner startup returns a structured non-interactive escalation before backend work", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
-    vi.stubEnv("ORCHESTRATOR_REVIEWER_MODEL", "opus");
+    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "opus");
     vi.resetModules();
 
     const familyBackend: FamilyBackend = {
@@ -520,7 +516,7 @@ describe("#422 model route presets", () => {
     expect(result.status).toBe("escalated");
     expect(result.familyBase).toBe("family/376-base");
     expect(result.escalation?.reason).toMatch(/tight route violation/i);
-    expect(result.escalation?.diagnosis).toContain("reviewer=opus(claude)");
+    expect(result.escalation?.diagnosis).toContain("verify=opus(claude)");
     expect(result.children).toEqual([{ issue: 428, status: "skipped" }]);
   });
 });
