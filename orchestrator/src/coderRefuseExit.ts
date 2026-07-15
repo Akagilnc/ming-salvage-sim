@@ -9,12 +9,14 @@
  * Decode-side cargo siblings stay in realBackend (`coderRefuseCargoFields`);
  * this module only projects typed coder output onto S6 reverify signals.
  *
+ * 信封宪法: cargo (`refuseRecords`) never invents traffic keys. Keys come only
+ * from the non-empty envelope field.
+ *
  * Reuses {@link LEGAL_REFUSE_REASONS} / refused* vocabulary from
  * stationReceiptContracts (T2). Re-dispatch governance (#902) is out of scope.
  */
 
 import type { ReviewFixRefuseRecord } from "./types.js";
-import { reviewFixDecisionGate } from "./reviewFixAssertionGate.js";
 import {
   LEGAL_REFUSE_REASONS,
   type LegalRefuseReason,
@@ -33,30 +35,25 @@ export interface CoderRefuseCapableOutput {
 /**
  * Traffic keys for S5→S6 reverify.
  *
- * Prefer envelope `refusedFindingIdentityKeys` (canonical T2 traffic). Fall
- * back to well-shaped #677 refuseRecords via the decision gate. Never parses
- * four-reason tokens or evidence prose.
+ * Sole source = non-empty envelope `refusedFindingIdentityKeys` (canonical T2
+ * traffic). Cargo `refuseRecords` never invents keys — even well-shaped #677
+ * records do not fall back into topology. Never parses four-reason tokens or
+ * evidence prose.
  */
 export function coderRefuseTrafficKeys(
   output: CoderRefuseCapableOutput,
 ): readonly string[] {
-  const fromEnvelope = (output.refusedFindingIdentityKeys ?? []).filter(
+  return (output.refusedFindingIdentityKeys ?? []).filter(
     (k): k is string => typeof k === "string" && k.trim().length > 0,
   );
-  if (fromEnvelope.length > 0) return fromEnvelope;
-
-  const records = output.refuseRecords ?? [];
-  if (records.length === 0) return [];
-  return reviewFixDecisionGate({ records })?.refusedFindingIdentityKeys ?? [];
 }
 
 /**
  * S6 reverify signals derived from a completed S5 coder output.
  *
- * Sole production projection for refuse reverify: keys = envelope traffic;
- * refuseRecords = opaque cargo (pass-through, no reason validation).
- * Runner threads keys onto thin DispatchContext and cargo onto landing only
- * (信封宪法 — cargo prose never lives on the thin ctx).
+ * Sole production projection for refuse reverify: keys = envelope traffic
+ * (thin DispatchContext only); refuseRecords = opaque cargo (landing only).
+ * Runner must not dual-write keys onto WorkerLandingPayload (信封宪法).
  */
 export function coderRefuseReverifyLanding(output: CoderRefuseCapableOutput): {
   readonly refusedFindingIdentityKeys: readonly string[];

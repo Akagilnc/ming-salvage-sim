@@ -129,9 +129,10 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
 
 /**
  * Map a {@link StepSpec.role} to its {@link WorkerKind} for the agent steps.
- * S2/S5 coder → `coder`; S3/S6 verify-judge → `verify` (#919 S2 seat identity).
- * Residual role:"reviewer" still maps to kind reviewer. (Ship/cmr/merge are
- * built directly, not from a role StepSpec.)
+ * S2/S5 coder → `coder`; S3/S6 verify-judge → `verify` (#919 S2 / M4 live seat).
+ * Residual role:"reviewer" still maps to kind reviewer for historical fixtures
+ * only — live single-slice seats are role:"verify". (Ship/cmr/merge are built
+ * directly, not from a role StepSpec.)
  */
 function workerKindForRole(role: StepSpec["role"]): WorkerKind {
   if (role === "coder") return "coder";
@@ -1093,7 +1094,7 @@ export function workerResultToStep(
     // Attach the escalate to a minimal role-shaped output so route()'s
     // escalate-first edge fires (the runner checks `output.escalate` before the
     // full role schema).
-    // #919 CR U1: S3/S6 seat role stays "reviewer" but always mints T2
+    // #919 M4 / U1: non-coder agent seats (live role:"verify" judge) mint T2
     // kind:"judge" escalate — never residual open-count reviewer paper.
     const output: StepOutput =
       expectedKind === "coder"
