@@ -18,14 +18,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  LEGAL_REFUSE_REASONS,
-  coderRefuseOpaqueCargo,
   coderRefuseReverifyLanding,
   coderRefuseTrafficKeys,
-  isCoderRefuseReceipt,
+} from "../../src/coderRefuseExit.js";
+import {
+  LEGAL_REFUSE_REASONS,
   mintFourReasonRefuseRecord,
   type LegalRefuseReason,
-} from "../../src/coderRefuseExit.js";
+} from "../helpers/coder-refuse-fixtures.js";
 import { decodeCoderEnvelope } from "../../src/stationReceiptContracts.js";
 import { findingIdentityKey } from "../../src/findings.js";
 import { route } from "../../src/route.js";
@@ -271,19 +271,25 @@ describe("#927 pure: refuse traffic keys (envelope wins, blind to reasons)", () 
     expect(landing.refuseRecords?.[0]?.reason).toBe("not_established");
   });
 
-  it("isCoderRefuseReceipt requires keys and rejects escalate dual-class (negative)", () => {
+  it("landing is refuse when traffic keys present; escalate is not dual-classed", () => {
+    // Production projection is landing only; keys present ⇒ refuse signals.
     expect(
-      isCoderRefuseReceipt({
+      coderRefuseReverifyLanding({
         refusedFindingIdentityKeys: [key],
-      }),
-    ).toBe(true);
+      }).refusedFindingIdentityKeys,
+    ).toEqual([key]);
+    // Escalate is a different exit — route reads escalate first; landing still
+    // extracts keys if present, but dual-classification is a route concern.
     expect(
-      isCoderRefuseReceipt({
+      coderRefuseTrafficKeys({
         refusedFindingIdentityKeys: [key],
         escalate: { reason: "stuck", diagnosis: "needs owner" },
       }),
-    ).toBe(false);
-    expect(isCoderRefuseReceipt({ committed: false } as never)).toBe(false);
+    ).toEqual([key]);
+    expect(
+      coderRefuseReverifyLanding({ committed: false } as never)
+        .refusedFindingIdentityKeys,
+    ).toEqual([]);
   });
 
   it("opaque cargo passes through without reason validation", () => {
@@ -296,9 +302,12 @@ describe("#927 pure: refuse traffic keys (envelope wins, blind to reasons)", () 
       evidence: "whatever",
     };
     // Runner does not validate reason tokens — judge does.
-    expect(coderRefuseOpaqueCargo({ refuseRecords: [invent] })).toEqual([
-      invent,
-    ]);
+    expect(
+      coderRefuseReverifyLanding({
+        refusedFindingIdentityKeys: [key],
+        refuseRecords: [invent],
+      }).refuseRecords,
+    ).toEqual([invent]);
   });
 
   it("mintFourReasonRefuseRecord rejects invent reasons (negative factory)", () => {

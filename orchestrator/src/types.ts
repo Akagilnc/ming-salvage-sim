@@ -989,13 +989,10 @@ export interface DispatchContext {
   /**
    * #677 / #927 legal refuse keys from S5 — thin identity list for S6
    * judge re-adjudicate (runner does not park or read refuse cargo prose).
+   * Opaque refuseRecords prose rides only on {@link WorkerLandingPayload}
+   * (信封宪法 — thin ctx is traffic keys only).
    */
   readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
-  /**
-   * #927 opaque refuse cargo for S6 judge. Thin DispatchContext may carry it
-   * when landing is rebuilt from ledger; runner never routes on reason tokens.
-   */
-  readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /**
    * FAMILY CMR coder-fix retry only: runner-observed repair-evidence gate failures
    * from earlier attempts for the SAME blocking finding set. Fresh retry workers
