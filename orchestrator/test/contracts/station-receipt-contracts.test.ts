@@ -278,7 +278,53 @@ describe("#921 finding disposition table (judge-side four reasons)", () => {
     });
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) {
-      expect(parsed.reason).toMatch(/reason|findingDispositions/i);
+      // Nested continue-table path must surface the four-reason vocabulary,
+      // not a bare Zod union "Invalid input" (AC: 可读原因).
+      expect(parsed.reason).toMatch(/findingDispositions/i);
+      expect(parsed.reason).toMatch(
+        /illegal refuse reason|unconstitutional|over_defense|not_established|scope_creep/i,
+      );
+      expect(parsed.reason).not.toMatch(/Invalid input/i);
+    }
+  });
+
+  it("decodeJudgeVerdict rejects kill row missing evidence with readable field name (negative)", () => {
+    const parsed = decodeJudgeVerdict({
+      station: "judge",
+      status: "continue",
+      findingDispositions: [
+        {
+          identityKey: "k",
+          action: "refute",
+          reason: "scope_creep",
+        },
+      ],
+    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.reason).toMatch(/findingDispositions/i);
+      expect(parsed.reason).toMatch(/evidence/i);
+      expect(parsed.reason).not.toMatch(/Invalid input/i);
+    }
+  });
+
+  it("decodeJudgeVerdict rejects live row that smuggles reason (negative)", () => {
+    const parsed = decodeJudgeVerdict({
+      station: "judge",
+      status: "continue",
+      findingDispositions: [
+        {
+          identityKey: "k",
+          action: "live",
+          reason: "unconstitutional",
+        },
+      ],
+    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.reason).toMatch(/findingDispositions/i);
+      expect(parsed.reason).toMatch(/live|reason/i);
+      expect(parsed.reason).not.toMatch(/Invalid input/i);
     }
   });
 });

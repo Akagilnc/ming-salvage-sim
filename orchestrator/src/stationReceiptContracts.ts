@@ -212,16 +212,15 @@ const liveDispositionSchema = z
   })
   .strict();
 
-const findingDispositionSchema = z.union([
-  killDispositionSchema,
-  liveDispositionSchema,
-]);
-
 /**
  * Parse one finding disposition row.
  *
  * Kill rows validate the four-reason enum + non-empty evidence.
  * Live rows reject smuggled `reason` / `evidence` keys (strict).
+ *
+ * Sole validation path for disposition rows — used both by the public parser
+ * and by {@link decodeJudgeVerdict} so nested continue tables never surface
+ * bare Zod union "Invalid input" (AC: 可读原因).
  */
 export function parseFindingDisposition(
   raw: unknown,
@@ -267,6 +266,21 @@ export function parseFindingDisposition(
     `finding disposition action must be refute|live, got ${String(action)}`,
   );
 }
+
+/**
+ * Zod adapter around {@link parseFindingDisposition}: keeps continue-verdict
+ * arrays on one validation path with readable issue messages (no bare union).
+ */
+const findingDispositionSchema: z.ZodType<JudgeFindingDisposition> = z
+  .unknown()
+  .transform((val, ctx) => {
+    const result = parseFindingDisposition(val);
+    if (!result.ok) {
+      ctx.addIssue({ code: "custom", message: result.reason });
+      return z.NEVER;
+    }
+    return result.value;
+  });
 
 // ─── Judge verdict (three states) ────────────────────────────────────────────
 
