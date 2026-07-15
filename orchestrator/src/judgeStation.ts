@@ -212,9 +212,11 @@ export function liveDispositionsForFindings(
 }
 
 /**
- * Residual open-count → sole continue dispositions (F3).
- * One projection for runner normalize + realBackend decode — mint opaque
- * `__open_N` live keys when cargo is sparse so count still routes to S5.
+ * Residual open-count paper only — not ADR 0131 channel (b), not the preferred
+ * production S3/S6 path. One projection for runner normalize + realBackend
+ * residual decode: mint opaque `__open_N` live keys when cargo is sparse so a
+ * positive residual count can still land on S5. Main path uses typed judge
+ * dispositions instead.
  */
 export function liveDispositionsForOpenCount(
   findingsCount: number,

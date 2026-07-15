@@ -323,15 +323,19 @@ export interface CoderOutput {
 }
 
 /**
- * Output of a reviewer step (S3/S6). `findingsCount` is the self-reported open
- * count (ADR 0131 / #899 routing signal); `findings` rows are cargo for the fixer.
+ * Residual open-count review envelope (legacy / non-judge seats). Not the
+ * S3/S6 main path: single-slice topology routes on judge status
+ * `converged|continue|escalate` (ADR 0131 channel (b) / #925).
+ * `findingsCount` is the self-reported open count on this residual paper;
+ * positive count may project to judge continue, zero/missing → unusable
+ * (not silent converged). `findings` rows are cargo for the fixer.
  * Count is required on this envelope — missing/invalid counts never become
  * `kind: "reviewer"` (typed boundary maps them to unusable cargo).
  */
 export interface ReviewerOutput {
   readonly kind: "reviewer";
   readonly findings: ReadonlyArray<Finding>;
-  /** Reviewer-declared open count; validated at the typed worker boundary. */
+  /** Residual declared open count; validated at the typed worker boundary. */
   readonly findingsCount: number;
   readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
   /** Any agent step may signal it is stuck (route() reads this first). */
@@ -1012,21 +1016,23 @@ export interface DispatchContext {
 export type CoderResult = CoderOutput;
 
 /**
- * Per-slice reviewer worker output. ADR 0030 keeps review/fix convergence
- * runner-visible: reviewer workers return structured findings so the S4 envelope
- * boundary can count blocking findings (信封宪法, ADR 0062) rather than a bare verdict.
+ * Residual historical open-count paper (legacy / rebuild / non-judge seats).
+ * Alias of {@link ReviewerOutput} — not the main single-slice S3/S6 path.
+ * S3/S6 routes on {@link JudgeResult} status tri-state; S4 mechanical
+ * open-count classification is dissolved (#925 / ADR 0131 channel (b)).
  */
 export type ReviewerResult = ReviewerOutput;
 
 /**
- * A family integrated-cmr worker's output (#335/#449). The runner routes only
- * the worker's self-reported findings count; all other reviewer fields are cargo.
+ * A family integrated-cmr worker's output (#335/#449). Family CMR still routes
+ * by declared findingsCount until #930; single-slice ADR 0131/0132 judge
+ * tri-state is a separate channel. Other reviewer fields are cargo.
  */
 export interface CmrResult {
   readonly kind: "cmr";
   /** Which integrated CMR pass produced this verdict, when known. */
   readonly cmrPass?: "completeness" | "correctness";
-  /** Optional reviewer cargo; routing comes only from findingsCount. */
+  /** Optional reviewer cargo; family CMR routes by findingsCount until #930. */
   readonly converged?: boolean;
   /** Why it did not converge — set when red (handed to escalate). */
   readonly reason?: string;
@@ -1040,7 +1046,7 @@ export interface CmrResult {
   readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
   /** Structured CMR findings passed through as worker cargo. */
   readonly findings?: readonly Finding[];
-  /** Reviewer-declared count. Structured finding rows never supply it. */
+  /** Family-CMR declared count (until #930). Structured rows never supply it. */
   readonly findingsCount?: number;
   /** Cross-round grouped findings + recurring-class markers (#711). */
   readonly findingFamilies?: readonly FindingFamily[];
