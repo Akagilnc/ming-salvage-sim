@@ -50,10 +50,15 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
+import {
+  liveCmrJudgeContinue,
+  legacyCmrScriptToWorkerOutput,
+} from "../../helpers/judge-fixtures.js";
 
 /**
- * Test-fake residual boundary (#919 M2 / R7): project residual open-count only.
- * Happy path must emit live kind:judge directly — no boolean→green promote.
+ * Test-fake boundary (#919 E / R7): scripts may declare positive findingsCount
+ * as continue intent — mint **live** kind:judge continue here (not production
+ * residual projection; residualIntegratedCmrToJudgeOutput is always undefined).
  */
 function cmrScriptToWorkerOutput(cmr: IntegratedCmrResult): JudgeResult | {
   readonly kind: "cmr";
@@ -68,64 +73,9 @@ function cmrScriptToWorkerOutput(cmr: IntegratedCmrResult): JudgeResult | {
   readonly findingFamilies?: IntegratedCmrResult["findingFamilies"];
   readonly evidencePaths?: ReadonlyArray<string>;
 } {
-  const projected = residualIntegratedCmrToJudgeOutput(cmr);
-  if (projected !== undefined) {
-    return {
-      ...projected,
-      ...(cmr.successfulLegs !== undefined
-        ? { successfulLegs: cmr.successfulLegs }
-        : {}),
-      ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
-      ...(cmr.findingFamilies !== undefined
-        ? { findingFamilies: cmr.findingFamilies }
-        : {}),
-      ...(cmr.evidencePaths !== undefined
-        ? { evidencePaths: cmr.evidencePaths }
-        : {}),
-    } as JudgeResult;
-  }
-  // Happy-path scripts that only declare boolean green (no open-count): emit
-  // live judge directly at the fake boundary (not residual promote of 0).
-  if (cmr.converged === true && typeof cmr.findingsCount !== "number") {
-    return {
-      kind: "judge",
-      status: "converged",
-      ...(cmr.successfulLegs !== undefined
-        ? { successfulLegs: cmr.successfulLegs }
-        : {}),
-      ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
-      ...(cmr.evidencePaths !== undefined
-        ? { evidencePaths: cmr.evidencePaths }
-        : {}),
-    } as JudgeResult;
-  }
-  return {
-    kind: "cmr",
-    converged: cmr.converged,
-    ...(cmr.findingsCount !== undefined
-      ? { findingsCount: cmr.findingsCount }
-      : {}),
-    ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-    ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
-    ...(cmr.successfulLegs !== undefined
-      ? { successfulLegs: cmr.successfulLegs }
-      : {}),
-    ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
-    ...(cmr.claimedFixedFindingIdentityKeys !== undefined
-      ? {
-          claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys,
-        }
-      : {}),
-    ...(cmr.priorFindingDispositions !== undefined
-      ? { priorFindingDispositions: cmr.priorFindingDispositions }
-      : {}),
-    ...(cmr.findingFamilies !== undefined
-      ? { findingFamilies: cmr.findingFamilies }
-      : {}),
-    ...(cmr.evidencePaths !== undefined
-      ? { evidencePaths: cmr.evidencePaths }
-      : {}),
-  };
+  // Shared fake boundary — production residual projector never mints continue.
+  void residualIntegratedCmrToJudgeOutput(cmr);
+  return legacyCmrScriptToWorkerOutput(cmr);
 }
 
 const CMR_EVIDENCE = {
@@ -1396,11 +1346,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
         if (spec.kind === "cmr") {
           return {
             kind: "completed",
-            output: {
-              kind: "cmr",
-              converged: false,
-              findingsCount: 1,
-              findings: [{
+            output: liveCmrJudgeContinue(
+              [{
                 severity: "high",
                 category: "correctness",
                 claim_quote: "startup marker must retain runner provenance",
@@ -1408,9 +1355,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
                 suggested_fix: "stamp the synthesized failure",
                 action: "fix_now",
               }],
-              successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-              ...CMR_EVIDENCE,
-            },
+              {
+                successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+                ...CMR_EVIDENCE,
+              },
+            ),
           };
         }
         if (spec.kind === "coder") {

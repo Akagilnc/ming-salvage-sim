@@ -18,6 +18,7 @@
 
 import { parseLastTaggedJsonSoft } from "./lastTaggedJson.js";
 import { classifyDecisionGate } from "./receiptRecovery.js";
+import { decodeShipEnvelope } from "./stationReceiptContracts.js";
 import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
 import type { Escalation } from "./types.js";
 
@@ -60,10 +61,10 @@ export function isFilledString(v: unknown): v is string {
 }
 
 /**
- * Prefer Sandcastle typed decision signal for gates (#899). Machine sidecar is
- * the opaque delivery-cargo channel only — never promotes escalation into fate
- * when typed output is absent (#899). Stdout is telemetry only.
- * Ordinary status/pr cargo is transported with tolerant field reads only — no
+ * Prefer Sandcastle typed T2 ship envelope for completion/escalate (#919 D /
+ * ADR 0132). Machine sidecar is the opaque delivery-cargo channel only — never
+ * promotes escalation into fate when typed output is absent (#899). Stdout is
+ * telemetry only. Ordinary status/pr cargo uses tolerant field reads only — no
  * Zod/schema gate and no SO re-ask on cargo shape (PRD #899 / ADR 0131).
  */
 export function shipOutcomeFromResult(result: {
@@ -71,8 +72,28 @@ export function shipOutcomeFromResult(result: {
   stdout: string;
   output?: unknown;
 }): ShipWorkerOutcome {
-  // Typed Output.object is the sole fate channel for decision gates.
+  // Typed Output.object is the sole fate channel for completion / escalate.
   if (result.output !== undefined) {
+    // #919 D: primary path is T2 ship envelope (station:ship + status tri-state).
+    const decoded = decodeShipEnvelope(result.output);
+    if (decoded.ok) {
+      if (decoded.value.status === "escalate") {
+        return {
+          kind: "escalate",
+          reason: decoded.value.reason,
+          diagnosis: decoded.value.diagnosis,
+        };
+      }
+      // completed / shipped traffic: delivery cargo still enriches from sidecar.
+      const cargo = shipCargoFromSidecar(result.outcomePath);
+      if (decoded.value.status === "shipped") {
+        if (cargo.kind === "shipped") return cargo;
+        return { kind: "shipped" };
+      }
+      return cargo;
+    }
+    // Residual pre-T2 decision-gate dual (unit fixtures / legacy emissions):
+    // bell still escalates; no-gate `{}` enriches cargo only.
     const gate = classifyDecisionGate(result.output, "ship");
     if (gate.kind === "bell") {
       return {
@@ -81,8 +102,6 @@ export function shipOutcomeFromResult(result: {
         diagnosis: gate.diagnosis,
       };
     }
-    // Signal present with no gate (`{}`): enrich delivery cargo from sidecar only.
-    // Do not re-parse escalate from cargo (fourth channel).
     return shipCargoFromSidecar(result.outcomePath);
   }
   // No typed signal: exit code is enough for process success. Sidecar may still

@@ -712,6 +712,45 @@ const shipEnvelopeSchema = z.discriminatedUnion("status", [
   shipEscalateSchema,
 ]);
 
+/**
+ * Sandcastle `Output.object` tag for ship station receipts (#919 D / ADR 0132).
+ * Traffic fields are schema-validated; delivery cargo (branch/pr) stays sidecar.
+ */
+export const SHIP_RECEIPT_TAG = "ship";
+
+/**
+ * Production SO schema for the family ship station receipt.
+ *
+ * Field vocabulary is shared with {@link decodeShipEnvelope}. Cargo siblings
+ * (branch/pr essays) pass through — only illegal traffic re-asks.
+ */
+export function shipStationReceiptSchema(): z.ZodType {
+  const shipped = z
+    .object({
+      station: z.literal("ship"),
+      status: z.literal("shipped"),
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough();
+  const completed = z
+    .object({
+      station: z.literal("ship"),
+      status: z.literal("completed"),
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough();
+  const escalate = z
+    .object({
+      station: z.literal("ship"),
+      status: z.literal("escalate"),
+      reason: nonEmptyString,
+      diagnosis: nonEmptyString,
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough();
+  return z.union([shipped, completed, escalate]);
+}
+
 /** Encode a validated ship envelope into its canonical JSON shape. */
 export function encodeShipEnvelope(
   envelope: ShipStationEnvelope,
@@ -727,7 +766,14 @@ export function decodeShipEnvelope(
   if (!record.ok) return record;
   const banned = rejectBannedEnvelopeVocabulary(record.value);
   if (!banned.ok) return banned;
-  const parsed = shipEnvelopeSchema.safeParse(record.value);
+  // Strip cargo siblings (branch/pr) before strict traffic decode.
+  const traffic: Record<string, unknown> = {};
+  for (const key of ["station", "status", "cargoPointer", "reason", "diagnosis"]) {
+    if (Object.prototype.hasOwnProperty.call(record.value, key)) {
+      traffic[key] = record.value[key];
+    }
+  }
+  const parsed = shipEnvelopeSchema.safeParse(traffic);
   if (!parsed.success) {
     return zodFail("ship envelope", parsed.error);
   }
