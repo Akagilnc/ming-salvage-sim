@@ -87,12 +87,13 @@ export const AGY_PRINT_TIMEOUT = "15m";
  * Headless / print-mode argv (workers + bare-ping; shared seam).
  * Invariant (#915 / agy 1.1.2): the token after `--print` is the prompt
  * itself — never `""`. Empty `--print` is a hard CLI error ("empty prompt");
- * stdin is not consulted for the print body on current agy.
+ * stdin is not a delivery channel on current agy (no fallthrough).
+ * Return shape is args-only — no dead second channel.
  */
 export function agyPrintInvocation(
   model: string,
   prompt: string,
-): { readonly args: readonly string[]; readonly stdin: string } {
+): { readonly args: readonly string[] } {
   const trimmedModel = model.trim();
   return {
     args: [
@@ -104,9 +105,6 @@ export function agyPrintInvocation(
       "--print",
       prompt,
     ],
-    // Prompt already rides `--print`; keep stdin empty so bare-ping / shell
-    // paths do not pretend a second delivery channel exists.
-    stdin: "",
   };
 }
 
@@ -152,9 +150,9 @@ export function agyAgent(
       // Ignore dangerouslySkipPermissions: agy hard-forbids that flag.
       resetStreamParser();
       const inv = agyPrintInvocation(model, prompt);
+      // Prompt is only the --print argv token (Sandcastle stdin optional; omit).
       return {
         command: `agy ${inv.args.map(shellEscape).join(" ")}`,
-        stdin: inv.stdin,
       };
     },
     buildInteractiveArgs({ prompt }) {
