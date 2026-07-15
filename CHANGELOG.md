@@ -4,6 +4,12 @@
 
 ## [未发布]
 
+## [0.28.1.0] — 2026-07-15
+
+### Fixed
+- **编排器 #915 agy 烟测空 `--print` 必死**：`agyPrintInvocation` 把 prompt 作为 `--print` 实参送达（agy 1.1.2 拒空 print、不吃 stdin），bare-ping 与 AgentProvider 共用同一 seam。
+- 删除假 stdin 双通道与 `{ args }` 残袋；interactive 仍走 `--prompt-interactive`，与 print 分缝。
+
 ## [0.28.0.0] — 2026-07-15
 
 ### Added
