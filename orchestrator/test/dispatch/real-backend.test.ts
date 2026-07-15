@@ -1929,16 +1929,16 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       findingsCount: 1,
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
-    // Misspelled gate keys on combined receipts must also re-ask (#899) —
-    // findingsCount alone must not treat escalte/escalatee as no-gate cargo.
+    // Only the exact `escalate` key is a gate. Near-miss spellings are opaque
+    // cargo (no approximate key inference) — same as any other unknown field.
     expect(receipt.safeParse({
       findingsCount: 0,
-      escalte: { reason: "typo key", diagnosis: "must re-ask" },
-    }).success).toBe(false);
+      escalte: { reason: "typo key", diagnosis: "opaque cargo" },
+    }).success).toBe(true);
     expect(receipt.safeParse({
       findingsCount: 2,
-      escalatee: { reason: "misspelled", diagnosis: "must re-ask" },
-    }).success).toBe(false);
+      escalatee: { reason: "near-miss", diagnosis: "not a gate" },
+    }).success).toBe(true);
     // Ordinary cargo keys remain free.
     expect(receipt.safeParse({
       findingsCount: 0,
