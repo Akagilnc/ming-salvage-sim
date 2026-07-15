@@ -3261,9 +3261,10 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899/#924: traffic signals attach Output.object(+maxRetries). Reviewer
-      // uses open-count schema; coder uses T2 station-receipt schema (cargo
-      // siblings passthrough — no cargo-shape re-ask).
+      // #899/#924/#925: traffic signals attach Output.object(+maxRetries).
+      // S3/S6 use T2 judge station-receipt; residual/legacy reviewer role uses
+      // open-count schema; coder uses T2 station-receipt (cargo siblings
+      // passthrough — no cargo-shape re-ask).
       ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.
