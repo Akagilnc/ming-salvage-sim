@@ -437,7 +437,8 @@ describe("#927 AC: refuse receipt → judge re-adjudicate (uphold / reverse)", (
     expect(refuseLanding).toBeDefined();
     // #919 M3: keys on thin ctx only; landing carries refuseRecords cargo.
     expect(refuseLanding!.ctx.refusedFindingIdentityKeys).toEqual([key]);
-    expect(refuseLanding!.landing?.refusedFindingIdentityKeys).toBeUndefined();
+    // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(refuseLanding!.landing).not.toHaveProperty("refusedFindingIdentityKeys");
     expect(refuseLanding!.landing?.refuseRecords?.[0]?.reason).toBe(
       "unconstitutional",
     );
@@ -474,7 +475,8 @@ describe("#927 AC: refuse receipt → judge re-adjudicate (uphold / reverse)", (
     // First S6 saw refuse keys on thin ctx (M3: not dual-written on landing)
     const refuseLanding = backend.firstS6RefuseLanding();
     expect(refuseLanding?.ctx.refusedFindingIdentityKeys).toEqual([key]);
-    expect(refuseLanding?.landing?.refusedFindingIdentityKeys).toBeUndefined();
+    // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(refuseLanding?.landing).not.toHaveProperty("refusedFindingIdentityKeys");
     // Sequence includes S5 → S6 → S5 → S6
     const path = backend.dispatched.filter(
       (d) => d.startsWith("S5:") || d.startsWith("S6:"),
@@ -581,7 +583,8 @@ describe("#927 AC: four legal reasons each reach judge re-adjudicate", () => {
       expect(refuseLanding).toBeDefined();
       // Traffic keys sole on thin ctx (M3)
       expect(refuseLanding!.ctx.refusedFindingIdentityKeys).toEqual([key]);
-      expect(refuseLanding!.landing?.refusedFindingIdentityKeys).toBeUndefined();
+      // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(refuseLanding!.landing).not.toHaveProperty("refusedFindingIdentityKeys");
       // Opaque cargo — runner transported reason without routing on it
       expect(refuseLanding!.landing?.refuseRecords?.[0]?.reason).toBe(reason);
       expect(refuseLanding!.landing?.refuseRecords?.[0]?.evidence).toBe(
