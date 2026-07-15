@@ -455,7 +455,7 @@ describe("#884 driver stage line logs", () => {
               ], findingsCount: 1,
             };
           }
-          return { kind: "reviewer", findings: [], findingsCount: 0 };
+          return { kind: "judge", status: "converged" };
         }
         // Any remaining role (verify/fixer/cleanup/docRelease): keep the loop moving.
         return { kind: "coder", committed: true, commitsAdded: 1 };

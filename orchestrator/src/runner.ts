@@ -83,8 +83,6 @@ import {
 import {
   resolveCoderRecOrder,
   lookupCoderRosterEntry,
-  completedS6RoundsFromLedger,
-  CODER_REC_FALLBACK_AFTER_ROUNDS,
   type CoderRosterEntry,
 } from "./coderRoster.js";
 import {
@@ -1406,7 +1404,9 @@ function normalizeJudgeSeatOutput(
   if (step !== "S3" && step !== "S6") return output;
   if (output.kind === "judge") return output;
 
-  // Residual open-count reviewer paper → sole judge form (shared F3 helper).
+  // Residual open-count reviewer paper → sole judge continue form when count
+  // is positive (shared F3 helper). Zero / missing / non-integer residual is
+  // unusable (#925 AC / #919 CR P1): never mint silent converged.
   if (output.kind === "reviewer") {
     const projected = judgeContinueFromOpenCount(
       output.findingsCount,
@@ -1427,7 +1427,8 @@ function normalizeJudgeSeatOutput(
         escalate: output.escalate,
       };
     }
-    return { kind: "judge", status: "converged" };
+    // Leave residual paper as-is → route judgeStatusOf → unusable → S5.
+    return output;
   }
 
   // Offline skeleton / residual online-review VerifyResult on the judge seat
@@ -1592,7 +1593,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   // #767: modelRoute / stepSpecs stay mutable so Coder-Rec can override the
-  // coder (+ coderFix) slot at S0 and advance it after non-converging fix rounds.
+  // coder (+ coderFix) slot at S0 (first seat stay-put; #926 owns advanceCoder).
   modelRoute = routePolicy.route;
   let stepSpecs = stepSpecsForRoute(modelRoute);
   /** Issue body used for Coder-Rec parse (S0 meta.body, else S1 snapshot.body). */
@@ -1610,8 +1611,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const wallHitBillingPools = new Set<BillingPoolId>();
   /**
    * #686 — sticky resource-relay baton slug. Scopes stickiness to resource
-   * handoffs only: blocks Coder-Rec snap-back while nonConvergingRounds === 0,
-   * but clears so #767 quality advance (S6 rounds) still runs.
+   * handoffs only: blocks Coder-Rec snap-back after a relay for the rest of
+   * the run. ADR 0132 deleted round-threshold quality advance; #926 owns any
+   * future advanceCoder roster policy.
    */
   let stickyRelayCoderSlug: string | undefined;
   /** S5 resource relay is independent from the normal S2 coder slot. */
@@ -1621,23 +1623,22 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   /** The only step allowed to consume the current relay pool and focus baton. */
   let activeRelayStep: StepId | undefined;
   // #924: coder persistent session across S2 → S5 rounds (declared early so
-  // Coder-Rec model advances can invalidate it before the next dispatch).
+  // relay / first-seat Coder-Rec model changes can invalidate it).
   let coderSessionId: string | undefined;
   let coderSessionModel: string | undefined;
   // #925: judge persistent session across S3 → S6 rounds (same model).
   let judgeSessionId: string | undefined;
   let judgeSessionModel: string | undefined;
 
-  const applyCoderRecSelection = async (
-    nonConvergingRounds: number,
-  ): Promise<ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined> => {
+  /** Apply Coder-Rec first-seat stay-put (no round-threshold rotation). */
+  const applyCoderRecSelection = async (): Promise<
+    ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined
+  > => {
     if (coderRecEnvSkipped) return undefined;
-    // Resource-relay stickiness: hold the baton until #767 quality advance
-    // would actually move (S6 rounds ≥ FALLBACK). Do NOT set coderRecEnvSkipped.
-    if (
-      stickyRelayCoderSlug !== undefined &&
-      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
-    ) {
+    // Resource-relay stickiness: hold the baton for the run. ADR 0132 deleted
+    // round-threshold quality advance; judge advanceCoder roster wiring is
+    // #926. Do NOT set coderRecEnvSkipped.
+    if (stickyRelayCoderSlug !== undefined) {
       if (modelRoute.slots.coder !== stickyRelayCoderSlug) {
         modelRoute = withCoderSlot(modelRoute, stickyRelayCoderSlug);
         stepSpecs = stepSpecsForRoute(modelRoute);
@@ -1654,10 +1655,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       return undefined;
     }
-    if (
-      stickyRelayCoderFixSlug !== undefined &&
-      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
-    ) {
+    if (stickyRelayCoderFixSlug !== undefined) {
       if (modelRoute.slots.coderFix !== stickyRelayCoderFixSlug) {
         modelRoute = {
           ...modelRoute,
@@ -1676,19 +1674,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       return undefined;
     }
-    if (stickyRelayCoderSlug !== undefined) {
-      stickyRelayCoderSlug = undefined;
-    }
-    if (stickyRelayCoderFixSlug !== undefined) {
-      stickyRelayCoderFixSlug = undefined;
-    }
     let applied: ReturnType<typeof applyCoderRecToRoute>;
     try {
-      applied = applyCoderRecToRoute(
-        modelRoute,
-        coderRecIssueBody,
-        nonConvergingRounds,
-      );
+      applied = applyCoderRecToRoute(modelRoute, coderRecIssueBody);
     } catch (err) {
       // #906: broken Coder-Rec mark / unregistered model → admission fail-closed
       // (same family as route smoke failure): escalate, zero dispatch.
@@ -1707,8 +1695,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     if (applied.route === modelRoute) return undefined;
     modelRoute = applied.route;
-    // #686 P1: quality advance must not inherit the prior resource-relay pool —
-    // reselect from the new model's dispatch binding.
+    // #686 P1: a coder-slot change must not inherit the prior resource-relay
+    // pool — reselect from the new model's dispatch binding.
     currentBillingPool = billingPoolFromQuotaPool(
       poolForModelRef(modelRoute.slots.coder),
     );
@@ -1724,14 +1712,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       coderSessionModel = undefined;
     }
     // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
-    // before its first dispatch (top-of-loop OR the S2/S5 advance path).
+    // before its first dispatch (top-of-loop OR the S2/S5 re-apply path).
     routeSmokeChecked = false;
     if (applied.entry !== undefined) {
       console.info(
-        `[orchestrator] Coder-Rec → ${applied.entry.id} (${applied.entry.slug})` +
-          (nonConvergingRounds > 0
-            ? ` after ${nonConvergingRounds} non-converging review round(s)`
-            : ""),
+        `[orchestrator] Coder-Rec → ${applied.entry.id} (${applied.entry.slug})`,
       );
     }
     return applyRuntimeTightRoutePolicy(modelRoute, {
@@ -1745,11 +1730,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     readonly diagnosis: string;
   }): Promise<RunResult> => {
     const stopSummary = stopSummaryForStartupRouteFailure(escalation);
-    // #899: this stop can fire MID-RUN (the S2/S5 advance path), not only at
-    // startup. It used to return an inline RunResult with an in-memory-only
-    // S8 — no disk row, no output — so the family saw a bare "failed", resume
-    // could not classify the breakpoint, and every re-ignition replayed the
-    // whole run from scratch. Terminal returns must speak and persist.
+    // #899: this stop can fire MID-RUN (the S2/S5 Coder-Rec re-apply path),
+    // not only at startup. It used to return an inline RunResult with an
+    // in-memory-only S8 — no disk row, no output — so the family saw a bare
+    // "failed", resume could not classify the breakpoint, and every re-ignition
+    // replayed the whole run from scratch. Terminal returns must speak and persist.
     console.error(
       `[orchestrator] ${escalation.reason}: ${escalation.diagnosis}`,
     );
@@ -1966,12 +1951,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     activeRelayStep = undefined;
   };
 
-  // #899: count COMPLETED S6 rounds only — monitor-spawn / bookkeeping event
-  // rows share the S6 step id and were doubling one round into two (see
-  // completedS6RoundsFromLedger).
-  const coderRecRoundsFromLedger = (
-    entries: ReadonlyArray<LedgerEntry>,
-  ): number => completedS6RoundsFromLedger(entries);
   // Family-run context (ADR 0022 decision 2). Production always supplies this
   // for a child. Focused skeleton tests may omit it and cut from the test base;
   // S7 remains a local handoff in either case.
@@ -2720,9 +2699,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
 
     // #767: resume skips S0/S1, so re-fetch the issue body and apply Coder-Rec
-    // (including the S6-count advance position from the restored ledger) before
-    // the first dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute
-    // sees undefined body → skippedForMissingMarking → silent preset revert.
+    // (first seat only — ADR 0132 deleted S6-count rotation) before the first
+    // dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute sees
+    // undefined body → skippedForMissingMarking → silent preset revert.
     // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely (try meta,
     // then snapshot) — never errorTerminate / poison the resume terminal state.
     try {
@@ -2750,9 +2729,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset",
       );
     }
-    const coderRecPolicy = await applyCoderRecSelection(
-      coderRecRoundsFromLedger(ledger.filter((entry) => isStepId(entry.step))),
-    );
+    const coderRecPolicy = await applyCoderRecSelection();
     if (coderRecPolicy?.kind === "stop") {
       return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
@@ -2893,9 +2870,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
         // #767: apply Coder-Rec BEFORE the S0 smoke so we smoke the final
         // route once (not the preset, then a full re-smoke after mutation).
-        // Mid-loop advance still re-smokes via the S2/S5 path below.
+        // S2/S5 re-apply first-seat stay-put below (no round rotation).
         coderRecIssueBody = meta.body;
-        const coderRecPolicy = await applyCoderRecSelection(0);
+        const coderRecPolicy = await applyCoderRecSelection();
         if (coderRecPolicy?.kind === "stop") {
           return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
         }
@@ -2953,9 +2930,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           snapshot.body.length > 0
         ) {
           coderRecIssueBody = snapshot.body;
-          const coderRecPolicy = await applyCoderRecSelection(
-            coderRecRoundsFromLedger(ledger),
-          );
+          const coderRecPolicy = await applyCoderRecSelection();
           if (coderRecPolicy?.kind === "stop") {
             return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
           }
@@ -2980,14 +2955,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
-        // #767: before each coder dispatch, re-select from Coder-Rec using the
-        // number of completed S6 fix rounds as the non-convergence counter.
-        // Mid-loop advance clears routeSmokeChecked — re-smoke here because the
-        // top-of-loop check already ran for this iteration.
+        // #767 / ADR 0132: before each coder dispatch, re-apply Coder-Rec
+        // (first seat / sticky stay-put — no round-threshold rotation).
+        // Re-smoke here if the route mutated, because the top-of-loop check
+        // already ran for this iteration.
         if (step === "S2" || step === "S5") {
-          const coderRecPolicy = await applyCoderRecSelection(
-            coderRecRoundsFromLedger(ledger),
-          );
+          const coderRecPolicy = await applyCoderRecSelection();
           if (coderRecPolicy?.kind === "stop") {
             return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
           }

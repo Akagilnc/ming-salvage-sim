@@ -56,8 +56,13 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
+        // Historical residual open-count zero + still-active prose (pre-#925).
+        // Topology no longer silent-cleans residual zero; these rows remain as
+        // ledger history for the no-progress park, not a live clean signal.
         entry("S6", {
-          kind: "reviewer", findings: [], findingsCount: 0,
+          kind: "reviewer",
+          findings: [],
+          findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
           ],
@@ -65,7 +70,9 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
-          kind: "reviewer", findings: [], findingsCount: 0,
+          kind: "reviewer",
+          findings: [],
+          findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
           ],
@@ -418,12 +425,7 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S6", {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
-          ],
-        }),
+        entry("S6", { kind: "judge", status: "converged" }),
         escalationAnswer("S4", "   "),
       ],
     });

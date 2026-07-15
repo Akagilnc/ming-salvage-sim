@@ -402,7 +402,7 @@ class DogfoodSingleSliceBackend implements Backend {
     if ((spec.role === "reviewer" || spec.role === "verify")) {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
-      return scripted ?? { kind: "reviewer", findings: [], findingsCount: 0 };
+      return scripted ?? { kind: "judge", status: "converged" };
     }
     const scripted =
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
@@ -423,7 +423,7 @@ class DogfoodSingleSliceBackend implements Backend {
       this.reviewerAttempt += 1;
       return {
         kind: "completed",
-        output: scripted ?? { kind: "reviewer", findings: [], findingsCount: 0 },
+        output: scripted ?? { kind: "judge", status: "converged" },
       };
     }
     const scripted =
@@ -683,12 +683,7 @@ async function runnerAnsweredResumeReplay(): Promise<SeamReplay> {
       }),
     ],
   }, [
-    {
-      kind: "reviewer", findings: [], findingsCount: 0,
-        priorFindingDispositions: [
-        { identityKey: activeKey, status: "verified-closed" },
-      ],
-    },
+    { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 307, backend });
   if (result.status !== "success") {
@@ -748,12 +743,7 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
           { identityKey: originalKey, status: "verified-closed" },
         ],
       },
-      {
-        kind: "reviewer", findings: [], findingsCount: 0,
-        priorFindingDispositions: [
-          { identityKey: changedKey, status: "verified-closed" },
-        ],
-      },
+      { kind: "judge", status: "converged" },
     ],
     [
       {
@@ -890,7 +880,10 @@ async function runnerReviewerEscalationReplay(input: {
 }): Promise<SeamReplay> {
   const backend = new DogfoodSingleSliceBackend(undefined, [
     {
-      kind: "reviewer", findings: [], findingsCount: 0,
+      kind: "judge",
+      status: "escalate",
+      reason: input.escalation.reason,
+      diagnosis: input.escalation.diagnosis,
       escalate: input.escalation,
     },
   ]);
@@ -1702,12 +1695,7 @@ async function closurePositiveReplay(): Promise<SeamReplay> {
   const key = findingIdentityKey(closureFinding);
   const backend = new DogfoodSingleSliceBackend(undefined, [
     { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
-    {
-      kind: "reviewer", findings: [], findingsCount: 0,
-        priorFindingDispositions: [
-        { identityKey: key, status: "verified-closed" },
-      ],
-    },
+    { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
   if (result.status !== "success") {
@@ -1894,7 +1882,7 @@ async function closureContextMissingReplay(): Promise<SeamReplay> {
   });
   const backend = new DogfoodSingleSliceBackend(undefined, [
     { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
-    { kind: "reviewer", findings: [], findingsCount: 0 },
+    { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
   if (result.status !== "success") {

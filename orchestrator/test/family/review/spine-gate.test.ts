@@ -85,7 +85,7 @@ class ChildBackend implements Backend {
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
@@ -734,7 +734,7 @@ describe("#291 spine — the final barrier (verify + cmr + 止于 PR) is GATED o
   class FailingCoderChildBackend extends ChildBackend {
     override async runStep(spec: StepSpec): Promise<StepOutput> {
       if (spec.role === "coder") throw new Error("coder process crashed");
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     }
   }
   it("a child that fails its single-slice run ⇒ NO final verify / cmr / PR, status incomplete", async () => {

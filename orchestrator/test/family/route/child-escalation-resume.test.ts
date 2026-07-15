@@ -108,7 +108,7 @@ class EscalatingChildBackend implements Backend {
     this.resumeSessionCalls.push([issue, spec.id, sessionId]);
     // On resume the child completes cleanly (the decision was answered).
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     return {
@@ -148,7 +148,7 @@ class EscalatingChildBackend implements Backend {
       return { output: out, sessionId: ORIGINAL_SESSION_ID };
     }
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void> {
     // stateDir encodes the issue (the runner passes a per-issue state dir); fall

@@ -16,23 +16,27 @@ import type { FamilyModuleContext } from "./family/moduleDeclaration.js";
 import type { ModelProviderFactory } from "./modelRegistry.js";
 import type { ResolvedModelRoute } from "./modelRoutes.js";
 import type { ProviderDegradationSummary, StopSummary } from "./stopSummary.js";
+// Single source of truth for judge disposition / verdict status tokens (#919 CR P3).
+import type {
+  JudgeFindingDisposition,
+  JudgeVerdictStatus,
+} from "./stationReceiptContracts.js";
+
+export type { JudgeFindingDisposition, JudgeVerdictStatus };
 
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The child-slice step sequence (ADR 0030): the runner owns the visible
+ * The child-slice step sequence (ADR 0030 / #925): the runner owns the visible
  * per-slice review/fix loop.
  *
- *   S0 gate → S1 context → S2 implement → S3 review → S4 classify
- *     → S7 local handoff when clean
- *     → S5 fix → S6 fresh full-diff review → S4 re-check while blocking remains
- *     → S8 handoff
+ *   S0 gate → S1 context → S2 implement → S3 judge establish
+ *     converged → S7 local handoff → S8 handoff
+ *     continue  → S5 fix → S6 judge resume → (verdict again)
+ *     escalate  → decision park
  *
- * S2 and S5 are coder workers. S3 and S6 are fresh read-only reviewer workers.
- * S4 is the runner-owned ENVELOPE boundary (信封宪法, ADR 0062): it reads only the
- * blocking findings COUNT (0 → pass, non-0 → fix loop), never the finding content,
- * making per-round verdicts visible in the ledger instead of hiding the loop inside
- * one coder session.
+ * S2 and S5 are coder workers. S3 and S6 are the persistent verify judge.
+ * S4 mechanical open-count classification is dissolved (legacy resume residual).
  */
 /** Executable child-slice topology. The runner routes only these steps. */
 export type SliceStepId =
@@ -267,26 +271,6 @@ export interface FindingDisposition {
   readonly boundedReopen?: string;
 }
 
-/**
- * Judge finding disposition row (T2 / #921 schema mirror on StepOutput).
- * Kill = `refute` + four-reason token + evidence; live = open for S5 fix.
- */
-export type JudgeFindingDisposition =
-  | {
-      readonly identityKey: string;
-      readonly action: "refute";
-      readonly reason:
-        | "unconstitutional"
-        | "over_defense"
-        | "not_established"
-        | "scope_creep";
-      readonly evidence: string;
-    }
-  | {
-      readonly identityKey: string;
-      readonly action: "live";
-    };
-
 /** Fresh-review adjudication for a prior coder-fix worker's claimed-fixed finding. */
 export interface PriorFindingDisposition {
   /** Stable key produced by `findingIdentityKey` for the prior claimed-fixed finding. */
@@ -367,7 +351,7 @@ export interface Escalation {
  */
 export interface JudgeResult {
   readonly kind: "judge";
-  readonly status: "converged" | "continue" | "escalate";
+  readonly status: JudgeVerdictStatus;
   /** Present on continue: kill + live rows (schema-fixed). */
   readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
   /** Optional continue suggestion to switch coder roster entry (#926 consumes). */
@@ -380,8 +364,6 @@ export interface JudgeResult {
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
 }
-
-export type JudgeVerdictStatus = JudgeResult["status"];
 
 /** Escalation bucket recorded on a terminal S8 entry (#439). */
 export type EscalationKind = "decision" | "failure";

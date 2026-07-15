@@ -87,7 +87,7 @@ class ScriptedRunnerBackend implements Backend {
 
 function validWorkerResult(spec: WorkerSpec): WorkerResult {
   if ((spec.kind === "reviewer" || spec.kind === "verify")) {
-    return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+    return { kind: "completed", output: { kind: "judge", status: "converged" } };
   }
   const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
   if (skeleton !== undefined) return skeleton;
