@@ -78,12 +78,5 @@ export function sampleFinding(
   };
 }
 
-/** True for S3/S6 judge seats after #925 (kind verify; residual reviewer kind). */
-export function isJudgeSeat(spec: {
-  readonly kind?: string;
-  readonly id?: string;
-  readonly role?: string;
-}): boolean {
-  if (spec.id === "S3" || spec.id === "S6") return true;
-  return spec.kind === "verify" || spec.role === "verify";
-}
+/** True for S3/S6 judge seats after #925 — re-export production predicate (#919 S2). */
+export { isJudgeSeat } from "../../src/judgeStation.js";

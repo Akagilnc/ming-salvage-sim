@@ -118,10 +118,12 @@ import {
   isValidEscalation,
 } from "./validate.js";
 import {
+  isJudgeSeat,
   mintJudgeEscalate,
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
   projectResidualReviewerToJudge,
+  projectVerifyConvergedBooleanToJudge,
 } from "./judgeStation.js";
 import {
   contractDriftStopSummary,
@@ -1449,17 +1451,9 @@ function normalizeJudgeSeatOutput(
   }
 
   // Offline skeleton / residual online-review VerifyResult on the judge seat
-  // (kind:"verify"+converged) — map boolean to tri-state; never re-enter
-  // open-count routing.
+  // (kind:"verify"+converged) — shared boolean→judge helper (#919 S1).
   if (output.kind === "verify" && typeof output.converged === "boolean") {
-    return output.converged
-      ? { kind: "judge", status: "converged" }
-      : {
-          kind: "judge",
-          status: "continue",
-          findingDispositions: [],
-          findings: [],
-        };
+    return projectVerifyConvergedBooleanToJudge(output.converged);
   }
 
   return output;
@@ -3551,15 +3545,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               reason: `${step} worker raised a decision gate`,
               diagnosis: err.tag.state_summary,
             };
-            // #919 CR U1 + residual R1: single-slice agent seats are only
+            // #919 CR U1 + residual R1 / S2: single-slice agent seats are only
             // coder (S2/S5) or judge (S3/S6 — role still "reviewer", soul
             // verify). Always mint T2 kind:"judge" escalate on the judge seat;
             // never residual open-count kind:"reviewer" paper (deleted dead arm).
-            const isJudgeSeat =
-              step === "S3" ||
-              step === "S6" ||
-              expectedKind === "verify" ||
-              stepSpecs[step].soul === "verify";
+            const seatIsJudge = isJudgeSeat({
+              step,
+              kind: expectedKind,
+              role: stepSpecs[step].role,
+              soul: stepSpecs[step].soul,
+            });
             let decisionOutput: StepOutput;
             if (expectedKind === "coder") {
               decisionOutput = {
@@ -3568,7 +3563,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 commitsAdded: 0,
                 escalate: escalation,
               };
-            } else if (isJudgeSeat) {
+            } else if (seatIsJudge) {
               decisionOutput = mintJudgeEscalate(escalation);
             } else {
               // Exhaustive: topology has no third agent seat kind.
