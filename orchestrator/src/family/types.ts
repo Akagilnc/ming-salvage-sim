@@ -39,6 +39,7 @@ import type {
   VerifyCmrPhase,
   VerifyCmrResult,
 } from "./verifyCmr.js";
+import type { FamilyStageFailureStatus } from "./familyTerminal.js";
 import type { StopSummary } from "../stopSummary.js";
 import type {
   ModelRouteSlot,
@@ -1051,17 +1052,16 @@ export interface FamilyChildResult {
  *
  * Precedence when more than one applies: `"escalated"` (resume-entry / park, most
  * urgent) > stage failures > `"incomplete"` > `"success"`.
+ *
+ * Stage-failure tokens derive from canonical {@link FamilyStageFailureStatus}
+ * (FAMILY_STAGE_FAILURE_STATUSES) — do not re-list here.
  */
+/** Family-run outcome. Stage failures derive from {@link FamilyStageFailureStatus}. */
 export type FamilyRunStatus =
   | "success"
   | "incomplete"
   | "escalated"
-  | "verify_failed"
-  | "cmr_failed"
-  | "ship_failed"
-  | "online_review_failed"
-  | "merge_failed"
-  | "cleanup_failed";
+  | FamilyStageFailureStatus;
 
 /** The family run result. */
 export interface FamilyRunResult {

@@ -117,6 +117,7 @@ import {
   isValidEscalation,
 } from "./validate.js";
 import {
+  mintJudgeEscalate,
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
   projectResidualReviewerToJudge,
@@ -942,15 +943,17 @@ function rebuildBlockingFromLedger(
       continue;
     }
 
-    // Residual S4 + reviewer open-count (historical ledgers).
-    findingDispositions = [
-      ...(entry.findingDispositions ?? []),
-    ];
+    // Historical residual only (pre-#925 S4 + open-count paper). Cargo keeps
+    // raw findings + count with empty identity keys — lossless vs inventing
+    // __open_N via projectJudgeContinueBlocking. Artifact attach uses the
+    // shared residual→judge continue predicate (no third count arm).
+    findingDispositions = [...(entry.findingDispositions ?? [])];
     pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
     pendingBlockingFindingIdentityKeys = [];
     pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
     pendingRawReviewerArtifacts =
-      lastReviewerOutputForS4.findingsCount > 0
+      projectResidualReviewerToJudge(lastReviewerOutputForS4)?.status ===
+      "continue"
         ? reviewerRawArtifactPointers(
             lastReviewerMonitorHandle,
             lastReviewerSessionId,
@@ -959,23 +962,26 @@ function rebuildBlockingFromLedger(
     lastJudgeContinueIndex = -1;
   }
 
-  // Pre-S4 crash window residual: last reviewer has positive open-count but
-  // no S4 yet / stale earlier S4. Skip when a later judge continue already
-  // projected the live open set (new path has no S4).
+  // Historical residual only — pre-S4 crash window: last reviewer has positive
+  // open-count but no S4 yet / stale earlier S4. Positive-count predicate is
+  // projectResidualReviewerToJudge (no third count arm). Skip when a later
+  // judge continue already projected the live open set (new path has no S4).
   if (
     lastJudgeContinueIndex < 0 &&
-    lastReviewerOutputForS4?.kind === "reviewer" &&
-    typeof lastReviewerOutputForS4.findingsCount === "number" &&
-    Number.isSafeInteger(lastReviewerOutputForS4.findingsCount) &&
-    lastReviewerOutputForS4.findingsCount > 0
+    lastReviewerOutputForS4?.kind === "reviewer"
   ) {
-    pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
-    pendingBlockingFindingIdentityKeys = [];
-    pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
-    pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-      lastReviewerMonitorHandle,
-      lastReviewerSessionId,
+    const residualContinue = projectResidualReviewerToJudge(
+      lastReviewerOutputForS4,
     );
+    if (residualContinue?.status === "continue") {
+      pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
+      pendingBlockingFindingIdentityKeys = [];
+      pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
+      pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+        lastReviewerMonitorHandle,
+        lastReviewerSessionId,
+      );
+    }
   }
 
   return {
@@ -3316,13 +3322,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 escalate: escalation,
               };
             } else if (isJudgeSeat) {
-              decisionOutput = {
-                kind: "judge",
-                status: "escalate",
-                reason: escalation.reason,
-                diagnosis: escalation.diagnosis,
-                escalate: escalation,
-              };
+              decisionOutput = mintJudgeEscalate(escalation);
             } else {
               // Exhaustive: topology has no third agent seat kind.
               throw new Error(

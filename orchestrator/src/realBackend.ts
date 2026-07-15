@@ -86,6 +86,7 @@ import {
 } from "./stationReceiptContracts.js";
 import {
   judgeResultFromVerdict,
+  mintJudgeEscalate,
   projectResidualReviewerToJudge,
 } from "./judgeStation.js";
 
@@ -3075,13 +3076,10 @@ export class RealBackend implements Backend {
     // not re-open kind:"reviewer"+findingsCount:0 as a gate envelope.
     const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
     if (gate.kind === "bell") {
-      return {
-        kind: "judge",
-        status: "escalate",
+      return mintJudgeEscalate({
         reason: gate.reason,
         diagnosis: gate.diagnosis,
-        escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
-      };
+      });
     }
     if (spec.role === "reviewer") {
       // Open-count fate only from the typed/raw channel — never from a separate

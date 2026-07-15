@@ -36,6 +36,7 @@ import {
   formatFixFocusMarkdown,
 } from "./findingFamilies.js";
 import { findingIdentityKeys } from "./findings.js";
+import { mintJudgeEscalate } from "./judgeStation.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -1094,13 +1095,7 @@ export function workerResultToStep(
             commitsAdded: 0,
             escalate: result.escalation,
           }
-        : {
-            kind: "judge",
-            status: "escalate",
-            reason: result.escalation.reason,
-            diagnosis: result.escalation.diagnosis,
-            escalate: result.escalation,
-          };
+        : mintJudgeEscalate(result.escalation);
     // PRESERVE the worker's sessionId on the escalate path (codex cmr R4 finding):
     // the human-answer resume (planResume → resumeSession) resumes the recorded
     // ledger sessionId; dropping it here would resume the wrong (run-level UUID)
