@@ -85,9 +85,11 @@ import {
   judgeStationReceiptSchema,
 } from "./stationReceiptContracts.js";
 import {
+  isJudgeSeat,
   judgeResultFromVerdict,
   mintJudgeEscalate,
   projectResidualReviewerToJudge,
+  unusableResidualOpenCountPaper,
 } from "./judgeStation.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
@@ -1166,8 +1168,8 @@ export function checkOwnGitDir(
 export function soulForStep(
   spec: Pick<StepSpec, "role" | "soul"> & { readonly id?: string },
 ): StepSoul {
-  // #925: S3/S6 judge seats pin the verify soul while WorkerKind stays
-  // `reviewer` (child dispatch seam). Reviewer.md remains the leg soul only.
+  // #925 / #919 S2: S3/S6 judge seats are role+soul verify. Residual
+  // role:"reviewer"+soul:"verify" still accepted for older fixtures.
   if (
     (spec.id === "S3" || spec.id === "S6") &&
     spec.soul === "verify" &&
@@ -1316,13 +1318,24 @@ function extractJudgeTag(stdout: string): unknown | undefined {
   return extractTaggedJson(stdout, JUDGE_RECEIPT_TAG);
 }
 
-function extractRoleReceipt(stdout: string, role: StepSpec["role"]): unknown | undefined {
+/**
+ * Cargo/stdout tag extract for a seat. Judge seats (#919 S2) always take the
+ * judge tag — never the residual open-count `<review>` dual channel, even when
+ * a fixture still spells role as `"reviewer"`.
+ */
+function extractRoleReceipt(
+  stdout: string,
+  spec: Pick<StepSpec, "role" | "id" | "soul">,
+): unknown | undefined {
   try {
-    return role === "coder"
+    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
+      return extractJudgeTag(stdout);
+    }
+    return spec.role === "coder"
       ? extractCoderTag(stdout)
-      : role === "reviewer"
+      : spec.role === "reviewer"
         ? extractReviewerTag(stdout)
-        : role === "verify"
+        : spec.role === "verify"
           ? extractJudgeTag(stdout)
           : undefined;
   } catch {
@@ -2961,7 +2974,7 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     options?: AgentStepRunOptions,
   ): unknown | undefined {
-    const compatibility = extractRoleReceipt(result.stdout, spec.role);
+    const compatibility = extractRoleReceipt(result.stdout, spec);
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
@@ -3091,13 +3104,8 @@ export class RealBackend implements Backend {
         // at Sandcastle when the schema is the seat policy; remaining unusable
         // paper follows the runner's non-reviewer envelope → S5 + raw artifacts.
         //
-        // TOPOLOGY PIN (not a claim that "this worker was a fixer"):
-        // `kind:"fixer"` is the existing non-reviewer envelope the S4→S5 route
-        // already understands (route table sends non-reviewer at S4 to S5). Do
-        // NOT "fix" this back to kind:"coder" (fake coder seat) and do NOT
-        // throw for abolished cargo-shape #598 — inventing a new envelope kind
-        // or reopening shape courts is out of scope here.
-        return { kind: "fixer", committed: false };
+        // #919 AS4: honest residual unusable paper; never kind:fixer placeholder.
+        return unusableResidualOpenCountPaper();
       }
       return decoded;
     }
@@ -3138,15 +3146,15 @@ export class RealBackend implements Backend {
       if (projected !== undefined) {
         return projected;
       }
-      // Residual open-count present but not positive continue (0 / non-routeable)
-      // and no escalate → unusable, never silent converged (#925 AC / #919 CR P1).
+      // Residual open-count present but not positive continue → honest residual
+      // unusable paper (#919 AS4). Never kind:fixer placeholder.
+      return unusableResidualOpenCountPaper();
     }
 
-    // Missing/unusable residual paper → same non-judge unusable envelope the
-    // pre-#925 open-count seat used (route → S5 + raw artifacts), never a
-    // silent converged.
+    // Missing/unusable residual paper → honest residual unusable (#919 AS4),
+    // never silent converged / never kind:fixer placeholder.
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      return { kind: "fixer", committed: false };
+      return unusableResidualOpenCountPaper();
     }
 
     throw new Error(

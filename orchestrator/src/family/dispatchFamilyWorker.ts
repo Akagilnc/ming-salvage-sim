@@ -106,8 +106,8 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  *   - `session: "fresh"` = start a NEW pass session (not a crash/escalate
  *     `resume`, which skips git-truthing). `verifyCmr` dispatches one fresh worker
  *     per pass and gates correctness on completeness.
- *   - `role: "reviewer"` and `contextRetention: "clean"` = this worker reports
- *     review artifacts/outcome only. Blocking findings return to the runner; a
+ *   - `role: "verify"` + `soul: "verify"` and `contextRetention: "clean"` =
+ *     judge-seat identity (#919 S2). Blocking findings return to the runner; a
  *     separate coder-fix worker commits repairs.
  *   - `maxIter: 1` = one reviewer pass. Fresh re-review is a new runner dispatch,
  *     not an in-worker fix loop.
@@ -123,7 +123,8 @@ export function cmrWorkerSpec(
   return {
     id: "S3",
     kind: "cmr",
-    role: "reviewer",
+    // #919 S2: seat identity verify; kind stays cmr.
+    role: "verify",
     host: workerHostForModel(model),
     session,
     contextRetention: "clean",

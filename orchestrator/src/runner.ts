@@ -1170,11 +1170,10 @@ export function stepSpecsForRoute(
     },
     S3: {
       id: "S3",
-      // #925 / #919 S2: persistent verify judge. Soul is verify; role stays
-      // `reviewer` so WorkerKind does not collide with online-review S9
-      // (`kind:verify`). #923: reviewer remains leg-soul vocabulary only;
-      // isJudgeSeat matches step id + soul:"verify".
-      role: "reviewer",
+      // #925 / #919 S2: persistent verify judge. Seat identity is role+soul
+      // `"verify"`; `#923` model-route slot is already verify. Leg-soul
+      // `"reviewer"` remains only inside multi-model review legs.
+      role: "verify",
       promptFile: "judge_station.md",
       model: route.slots.verify,
       maxIter: 1,
@@ -1193,9 +1192,8 @@ export function stepSpecsForRoute(
     },
     S6: {
       id: "S6",
-      // #925 / #919 S2: same judge seat as S3 — resume S3 session; role stays
-      // `reviewer` (WorkerKind seam; soul is verify).
-      role: "reviewer",
+      // #925 / #919 S2: same judge seat as S3 — resume S3 session; role+soul verify.
+      role: "verify",
       promptFile: "judge_station.md",
       model: route.slots.verify,
       maxIter: 1,

@@ -142,7 +142,7 @@ describe("#877 residual read-word fate forks — survival", () => {
     expect(result.status).toBe("success");
     expect(result.stopSummary?.reason).not.toBe("contract_drift");
     expect(backend.dispatched).toEqual(
-      expect.arrayContaining(["S3:reviewer", "S5:coder", "S6:reviewer"]),
+      expect.arrayContaining(["S3:verify", "S5:coder", "S6:verify"]),
     );
   });
 

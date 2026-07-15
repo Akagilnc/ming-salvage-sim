@@ -129,8 +129,9 @@ const SKILL_FOR_KIND: Readonly<Record<WorkerKind, string | undefined>> = {
 
 /**
  * Map a {@link StepSpec.role} to its {@link WorkerKind} for the agent steps.
- * S2/S5 coder → `coder`; S3/S6 reviewer → `reviewer`. (Ship/cmr/merge are built
- * directly, not from a role StepSpec.)
+ * S2/S5 coder → `coder`; S3/S6 verify-judge → `verify` (#919 S2 seat identity).
+ * Residual role:"reviewer" still maps to kind reviewer. (Ship/cmr/merge are
+ * built directly, not from a role StepSpec.)
  */
 function workerKindForRole(role: StepSpec["role"]): WorkerKind {
   if (role === "coder") return "coder";
@@ -140,22 +141,21 @@ function workerKindForRole(role: StepSpec["role"]): WorkerKind {
 
 /**
  * Context retention by work type (ADR 0026): production workers (coder/fix)
- * RETAIN context across fix rounds ("what I wrote, why"); review workers
- * (reviewer/cmr) start each round CLEAN (clean eyes, cross-model independence).
- * This is DECOUPLED from the dispatch {@link WorkerSessionMode} — a normal coder
- * round is `session:"fresh"` yet `contextRetention:"retain"` (ADR 0026 invariant:
- * normal fix keeps maxIter, NOT the crash/escalate resume path).
+ * RETAIN context across fix rounds ("what I wrote, why"); review / judge seats
+ * start each round CLEAN (clean eyes). This is DECOUPLED from the dispatch
+ * {@link WorkerSessionMode} — a normal coder round is `session:"fresh"` yet
+ * `contextRetention:"retain"` (ADR 0026 invariant: normal fix keeps maxIter,
+ * NOT the crash/escalate resume path).
  *
  * #925 S3/S6 judge continuity is `resumeSessionId` only (same agent session).
- * Single-slice seats keep WorkerKind `reviewer` (fixture/compat seam, AS4) so
- * `contextRetention` stays `"clean"` here — do not read that flag as "judge
- * loses trajectory"; trajectory after session loss is priorJudgeVerdicts
- * landing, not contextRetention.
+ * #919 S2: judge seats force clean via {@link stepSpecToWorkerSpec} (isJudgeSeat),
+ * independent of WorkerKind spelling. Family online-review S9 also pins clean
+ * explicitly on its WorkerSpec.
  */
 function retentionForKind(kind: WorkerKind): WorkerContextRetention {
   // Production workers (coder + post-review fixer) retain context across rounds.
-  // `verify` kind is the family online-review seat; single-slice S3/S6 judges
-  // stay `reviewer` → clean (session continuity is resumeSessionId, not this).
+  // Online-review verify kind defaults retain here; single-slice S3/S6 force
+  // clean in stepSpecToWorkerSpec (session continuity is resumeSessionId).
   return kind === "coder" || kind === "fixer" || kind === "verify"
     ? "retain"
     : "clean";
@@ -360,13 +360,17 @@ export function stepSpecToWorkerSpec(
   billingPool?: BillingPoolId,
 ): WorkerSpec {
   const kind = workerKindForRole(spec.role);
+  // #919 S2: S3/S6 judge seats are clean-eyes verify; promptFile is the station
+  // contract (judge_station.md). Skill for kind:verify is online-review /verify
+  // and is unused by RealBackend.runStep (promptFile+soul drive the seat).
+  const judgeSeat = spec.id === "S3" || spec.id === "S6";
   return {
     id: spec.id,
     kind,
     role: spec.role,
     host: workerHostForModel(spec.model, billingPool),
     session,
-    contextRetention: retentionForKind(kind),
+    contextRetention: judgeSeat ? "clean" : retentionForKind(kind),
     skill: SKILL_FOR_KIND[kind],
     promptFile: spec.promptFile,
     maxIter: spec.maxIter,
@@ -479,11 +483,13 @@ export async function legacyDispatchWorker(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): Promise<WorkerResult> {
-  const runStepKinds = new Set<WorkerKind>(["coder", "reviewer"]);
+  // #919 S2: S3/S6 verify-judge seats use the same runStep/resumeSession path
+  // as residual reviewer; family online-review kind:verify uses family dispatch.
+  const runStepKinds = new Set<WorkerKind>(["coder", "reviewer", "verify"]);
   if (!runStepKinds.has(spec.kind)) {
     throw new Error(
       `legacyDispatchWorker: worker kind '${spec.kind}' (${spec.id}) has no legacy ` +
-        `dispatch path — only child coder/reviewer workers are forwarded. ` +
+        `dispatch path — only child coder/reviewer/verify-judge workers are forwarded. ` +
         `Family endgame workers must use the family dispatch seam.`,
     );
   }

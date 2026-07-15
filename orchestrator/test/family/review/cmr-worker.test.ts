@@ -795,7 +795,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     // The pass worker is a clean reviewer boundary; blocking findings return to the
     // runner, which dispatches a separate coder-fix worker.
     expect(spec.contextRetention).toBe("clean");
-    expect(spec.role).toBe("reviewer");
+    // #919 S2: family CMR pass seat identity is verify (kind stays cmr).
+    expect(spec.role).toBe("verify");
     expect(spec.maxIter).toBe(1);
     expect(spec.soul).toBe("verify");
   });
