@@ -1,23 +1,35 @@
 import { describe, expect, it } from "vitest";
+import { classifyDecisionGate } from "../../src/receiptRecovery.js";
 import { route } from "../../src/route.js";
 import { probeWorkerDecisionBell } from "../../src/workerReceipt.js";
 
 describe("ADR 0131 zero-judgment runner constitution", () => {
   it("routes any present escalation ticket, including empty strings, to decision", () => {
+    // Route table: once a typed seat already admitted escalate onto StepOutput,
+    // presence alone is the stop edge (cargo quality is not re-judged here).
     expect(route({ from: "S2", output: {
       kind: "coder", committed: true, commitsAdded: 1,
       escalate: { reason: "", diagnosis: "" },
     } })).toEqual({ kind: "handoff", status: "escalate" });
   });
 
-  it("treats the escalate block itself as the decision bell", () => {
-    expect(probeWorkerDecisionBell({ escalate: {} })).toEqual({
-      reason: "",
-      diagnosis: "",
-    });
-    expect(
+  it("fails closed on present-but-malformed decision bells (unified #899 court)", () => {
+    // Production probe + classify share one contract: empty escalate is not a bell.
+    expect(() => probeWorkerDecisionBell({ escalate: {} })).toThrow(
+      /malformed decision gate/,
+    );
+    expect(() =>
       probeWorkerDecisionBell({ escalate: { reason: "", diagnosis: "" } }),
-    ).toEqual({ reason: "", diagnosis: "" });
+    ).toThrow(/malformed decision gate/);
+    expect(() => classifyDecisionGate({ escalate: {} }, "constitution")).toThrow(
+      /malformed decision gate/,
+    );
+    expect(
+      probeWorkerDecisionBell({
+        escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      }),
+    ).toEqual({ reason: "owner choice", diagnosis: "contract fork" });
+    expect(probeWorkerDecisionBell({ findingsCount: 0 })).toBeUndefined();
   });
 
   it("routes S4 solely by reviewer-declared findingsCount (never findings.length)", () => {
@@ -32,8 +44,9 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
       output: { kind: "reviewer", findings: [], findingsCount: 0 },
     })).toEqual({ kind: "next", step: "S7" });
     // Count is authenticated at the typed boundary: missing findingsCount never
-    // becomes kind:"reviewer". Unusable receipt cargo is kind:"coder" → fixer
-    // (never derive open-count from findings.length).
+    // becomes kind:"reviewer". If a non-reviewer envelope somehow reaches S4,
+    // topology still sends it to the fixer path (never derive open-count from
+    // findings.length). Decode itself fails closed rather than minting coder.
     expect(route({
       from: "S4",
       output: { kind: "coder", committed: false, commitsAdded: 0 },
