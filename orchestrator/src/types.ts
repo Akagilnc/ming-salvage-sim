@@ -852,10 +852,10 @@ export interface DispatchContext {
   readonly telemetryDir?: string;
   /**
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
-   * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
-   * recorded agent session. Normal S2/S3/S5/S6 runner-visible work is
-   * `session:"fresh"` and does NOT carry this (codex cmr R3/R4 finding: normal
-   * work must not take the crash/escalate resume path).
+   * dispatch. #924 / ADR 0132: single-slice coder seats thread this for normal
+   * S5 continuity of the S2-established session (same model), as well as the
+   * crash/escalate reopen path. Reviewer seats (S3/S6) stay fresh and do not
+   * carry this. A worker is `resume` only when the runner supplies a real id.
    */
   readonly resumeSessionId?: string;
   /**

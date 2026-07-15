@@ -1450,6 +1450,100 @@ describe("RealBackend reviewer output contract", () => {
       commitsAdded: 1,
     });
   });
+
+  it("maps status:refused traffic keys and cargo refuseRecords without cargo override", () => {
+    // Envelope refuse keys are traffic; refuseRecords are opaque cargo.
+    // Cargo must not replace traffic keys with a different set.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 924,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-coder-refuse-"),
+    });
+
+    const refuseRecord = {
+      identityKey: "correctness|src/a.ts:1|claim",
+      finding: "claim",
+      acceptanceCriterion: "AC-1",
+      conflictReason: "unconstitutional",
+    };
+
+    const decoded = backend.probeDecodeOutput(
+      coderSpec,
+      {
+        station: "coderFix",
+        status: "refused",
+        refusedFindingIdentityKeys: ["correctness|src/a.ts:1|claim"],
+        committed: true,
+        commitsAdded: 1,
+      },
+      {
+        committed: true,
+        commitsAdded: 1,
+        // Hostile cargo: different key set must not win over envelope traffic.
+        refusedFindingIdentityKeys: ["wrong|cargo|key"],
+        refuseRecords: [refuseRecord],
+      },
+    );
+
+    expect(decoded).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+      refusedFindingIdentityKeys: ["correctness|src/a.ts:1|claim"],
+      refuseRecords: [refuseRecord],
+    });
+  });
+
+  it("does not smuggle refusedFindingIdentityKeys from cargo onto status:completed", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 924,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-coder-no-smuggle-"),
+    });
+
+    const decoded = backend.probeDecodeOutput(
+      coderSpec,
+      {
+        station: "coder",
+        status: "completed",
+        committed: true,
+        commitsAdded: 1,
+      },
+      {
+        committed: true,
+        commitsAdded: 1,
+        refusedFindingIdentityKeys: ["smuggled|from|cargo"],
+        refuseRecords: [
+          {
+            identityKey: "smuggled|from|cargo",
+            finding: "x",
+            acceptanceCriterion: "AC",
+            conflictReason: "not_established",
+          },
+        ],
+      },
+    );
+
+    expect(decoded).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 1,
+    });
+    expect(decoded).not.toHaveProperty("refusedFindingIdentityKeys");
+    expect(decoded).not.toHaveProperty("refuseRecords");
+  });
 });
 
 describe("RealBackend runStep toolchain preflight (#286)", () => {
