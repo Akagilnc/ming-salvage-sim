@@ -1,3 +1,5 @@
+> **修订预告（2026-07-15）**：本 ADR 之〔通道(b) open-count 关环 → 判词三态；completion 条款 → 「干净退出 + 合法 sidecar」唯一结论〕经 #919（Accepted，见 ADR 0132）拍定修订，随对应切片落地生效；落地前按现文执行，评审时勿以现文否决 #919 已拍方向。
+
 Status: Accepted（2026-07-13 owner 当日裁决成文；本 ADR 为口谕的 canonical 落笔，被取代旧条款见「取代」节）
 
 # 0131: runner 三通道零判断权——交通警察总纲（自报数 + fixer 判卷 + runner 永不按门）
