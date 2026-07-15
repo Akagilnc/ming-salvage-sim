@@ -1,6 +1,6 @@
 # cmr 承重闸底线 = ≥1 强腿，否则 escalate
 
-Status: Accepted（2026-06-29；本地 cmr 8 轮[完整性 4 + 正确性 4] + 线上 bot 3 轮双闸收敛，PR #425）
+Status: Proposed
 
 ## 决定
 

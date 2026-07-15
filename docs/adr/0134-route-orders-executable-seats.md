@@ -4,7 +4,7 @@ Date: 2026-07-14
 
 ## Status
 
-Accepted（2026-07-14；#870 本地 CMR R7/R8 + PR #908 R1/R2；架构复盘补清 preflight / resume 边界）
+Proposed
 
 ## Decision
 

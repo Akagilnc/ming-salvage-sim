@@ -4,7 +4,7 @@ Date: 2026-07-10
 
 ## Status
 
-Accepted（Owner 终审，见 issue #661 评论 2026-07-10；部分收窄 ADR 0024 决定 2）
+Proposed
 
 ## Decision
 

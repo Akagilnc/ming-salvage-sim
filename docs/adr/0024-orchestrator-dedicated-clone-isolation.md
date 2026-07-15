@@ -1,6 +1,6 @@
 # 编排器 mainRepo 必须是独立 clone，回归 Sandcastle 原生 worktree 生命周期
 
-Status: Accepted（2026-06-21；grill-with-docs 收敛 → 设计 cmr 5 轮 + 线上 bot 收敛 → PR #290 合入 main；改号 PR #300 由 0021→0024 避撞 fiscal 0021。）
+Status: Proposed
 
 Current authority: 本 ADR 只保留“每 invocation 独立 clone + Sandcastle prune 隔离”决定；worktree 的两个授权回收入口只读 #868/#869 与 ADR 0127。
 
