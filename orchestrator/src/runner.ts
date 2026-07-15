@@ -119,11 +119,9 @@ import {
   isValidEscalation,
 } from "./validate.js";
 import {
-  judgeKillsToLedgerDispositions,
-  liveDispositionsForFindings,
-  liveFindingIdentityKeys,
-  openFindingsForFixer,
+  judgeContinueFromOpenCount,
   priorJudgeVerdictRowsFromLedger,
+  projectJudgeContinueBlocking,
 } from "./judgeStation.js";
 import {
   contractDriftStopSummary,
@@ -866,6 +864,19 @@ function reviewerRawArtifactPointers(
   };
 }
 
+/**
+ * Rebuild the S5 open-set / kill flips / raw-artifact pointers from a
+ * persisted ledger (crash/resume seed).
+ *
+ * Single shared projection (F2/F3):
+ *   - #925 live path: S3/S6 `kind:"judge" status:"continue"` → kills + live-only
+ *     open set (same as in-process continue edge via
+ *     {@link projectJudgeContinueBlocking}).
+ *   - Residual historical path: S4 + preceding `kind:"reviewer"` open-count.
+ *
+ * Walk order: last applicable projection wins for the open set; judge kill
+ * flips accumulate across continue rounds (mirrors the live path).
+ */
 function replayS4FindingsCountState(
   ledger: ReadonlyArray<LedgerEntry>,
 ): S4FindingsCountReplay {
@@ -877,11 +888,49 @@ function replayS4FindingsCountState(
   let lastReviewerSessionId: string | undefined;
   let lastReviewerMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
+  /** Index of the last judge-continue projection (suppresses stale residual rebind). */
+  let lastJudgeContinueIndex = -1;
 
-  for (const entry of ledger) {
+  for (let i = 0; i < ledger.length; i++) {
+    const entry = ledger[i]!;
     if (isBookkeepingEntry(entry)) {
       continue;
     }
+
+    // #925: judge continue rebuilds open set the same way as the live edge.
+    if (
+      (entry.step === "S3" || entry.step === "S6") &&
+      entry.output?.kind === "judge" &&
+      entry.output.status === "continue"
+    ) {
+      const projected = projectJudgeContinueBlocking(entry.output);
+      if (projected !== undefined) {
+        if (projected.killDispositions.length > 0) {
+          findingDispositions = [
+            ...findingDispositions,
+            ...projected.killDispositions,
+          ];
+        }
+        pendingBlockingFindings = projected.blocking;
+        pendingBlockingFindingIdentityKeys = projected.blockingIdentityKeys;
+        pendingBlockingFindingCount = projected.blockingFindingCount;
+        pendingRawReviewerArtifacts =
+          projected.blockingFindingCount > 0
+            ? reviewerRawArtifactPointers(
+                entry.monitorHandle,
+                typeof entry.sessionId === "string" ? entry.sessionId : undefined,
+              )
+            : undefined;
+        lastJudgeContinueIndex = i;
+        // A later residual reviewer must not clobber this open set via the
+        // pre-S4 rebind below unless a newer S4 residual follows.
+        lastReviewerOutputForS4 = undefined;
+        lastReviewerSessionId = undefined;
+        lastReviewerMonitorHandle = undefined;
+      }
+      continue;
+    }
+
     if (entry.output?.kind === "reviewer") {
       if (!isStepId(entry.step)) continue;
       lastReviewerOutputForS4 = entry.output;
@@ -894,23 +943,13 @@ function replayS4FindingsCountState(
       continue;
     }
 
-    // #877: findings-count channel only — disposition prose / still-active
-    // reopen / no-progress courts demolished. Prior keys absent from findings[]
-    // are closed by the three-channel envelope; the runner does not inspect prose.
-    // Findings rows are opaque cargo: typed ReviewerOutput already decoded them
-    // at the worker boundary; runner only shallow-copies + count-routes. Identity
-    // keys are derived at the fixer landing writer, not here (ADR 0131 / #899).
+    // Residual S4 + reviewer open-count (historical ledgers).
     findingDispositions = [
       ...(entry.findingDispositions ?? []),
     ];
-    // Opaque cargo copy only — not a decode/validation boundary.
     pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
     pendingBlockingFindingIdentityKeys = [];
-    // Count is the typed open-count, never cargo-array length.
     pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
-    // Live path attaches raw pointers on every positive open-count → S5 edge;
-    // resume after the persisted S4 boundary must rebuild them from the
-    // preceding reviewer ledger row (sessionId + monitor handle paths).
     pendingRawReviewerArtifacts =
       lastReviewerOutputForS4.findingsCount > 0
         ? reviewerRawArtifactPointers(
@@ -918,14 +957,14 @@ function replayS4FindingsCountState(
             lastReviewerSessionId,
           )
         : undefined;
+    lastJudgeContinueIndex = -1;
   }
 
-  // Pre-S4 crash window (codex R3 / C-R4-1): last reviewer has positive open-
-  // count but either no S4 row yet, or an earlier S4 left stale raw pointers
-  // from a prior round (S3 r1 → S4 → S5 → S6 r2, crash before the second S4).
-  // Always rebind findings/count/raw from the last reviewer so S5 does not
-  // inherit r1 artifacts when r2 is the open review.
+  // Pre-S4 crash window residual: last reviewer has positive open-count but
+  // no S4 yet / stale earlier S4. Skip when a later judge continue already
+  // projected the live open set (new path has no S4).
   if (
+    lastJudgeContinueIndex < 0 &&
     lastReviewerOutputForS4?.kind === "reviewer" &&
     typeof lastReviewerOutputForS4.findingsCount === "number" &&
     Number.isSafeInteger(lastReviewerOutputForS4.findingsCount) &&
@@ -1366,28 +1405,15 @@ function normalizeJudgeSeatOutput(
   if (step !== "S3" && step !== "S6") return output;
   if (output.kind === "judge") return output;
 
-  // Residual open-count reviewer paper → sole judge form.
+  // Residual open-count reviewer paper → sole judge form (shared F3 helper).
   if (output.kind === "reviewer") {
-    if (
-      typeof output.findingsCount === "number" &&
-      Number.isSafeInteger(output.findingsCount) &&
-      output.findingsCount > 0
-    ) {
-      const findings = [...output.findings];
-      // Positive open-count with sparse/empty cargo still continues: mint
-      // opaque live keys so S5 receives count + raw artifacts (ADR 0131).
-      const dispositions =
-        findings.length > 0
-          ? liveDispositionsForFindings(findings)
-          : Array.from({ length: output.findingsCount }, (_, i) => ({
-              identityKey: `__open_${i + 1}`,
-              action: "live" as const,
-            }));
+    const projected = judgeContinueFromOpenCount(
+      output.findingsCount,
+      output.findings,
+    );
+    if (projected !== undefined) {
       return {
-        kind: "judge",
-        status: "continue",
-        findingDispositions: dispositions,
-        findings,
+        ...projected,
         ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
       };
     }
@@ -3555,24 +3581,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               lastOutput = output;
               break;
             }
-            // Apply continue dispositions: kill → refuted ledger flips; live → S5.
+            // Apply continue dispositions via the shared projection helper
+            // (same helper resume rebuild uses — F2 single open-set seam).
             if (output.status === "continue") {
-              const dispositions = output.findingDispositions ?? [];
-              const kills = judgeKillsToLedgerDispositions(dispositions);
-              if (kills.length > 0) {
-                findingDispositions = [...findingDispositions, ...kills];
-              }
-              const cargo = output.findings ?? [];
-              pendingBlockingFindings = openFindingsForFixer(cargo, dispositions);
-              pendingBlockingFindingIdentityKeys =
-                liveFindingIdentityKeys(dispositions);
-              pendingBlockingFindingCount =
-                pendingBlockingFindingIdentityKeys.length;
-              if (pendingBlockingFindingCount > 0) {
-                pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-                  stepMonitorHandle,
-                  stepSessionId,
-                );
+              const projected = projectJudgeContinueBlocking(output);
+              if (projected !== undefined) {
+                if (projected.killDispositions.length > 0) {
+                  findingDispositions = [
+                    ...findingDispositions,
+                    ...projected.killDispositions,
+                  ];
+                }
+                pendingBlockingFindings = projected.blocking;
+                pendingBlockingFindingIdentityKeys =
+                  projected.blockingIdentityKeys;
+                pendingBlockingFindingCount = projected.blockingFindingCount;
+                if (pendingBlockingFindingCount > 0) {
+                  pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                    stepMonitorHandle,
+                    stepSessionId,
+                  );
+                }
               }
             } else {
               // converged / escalate: no open findings for S5.

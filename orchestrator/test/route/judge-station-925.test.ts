@@ -5,23 +5,30 @@
  * 1. runOrchestrator + fake Backend — topology / resume / session-loss /
  *    escalate park / S5 open-only
  * 2. Pure helpers — leg prompt shape, disposition flips, live filter
+ * 3. CR R1: prior verdict landing (F1), judge-continue resume rebuild (F2),
+ *    single open-count projection (F3), escalate answer resume (S1)
  */
 
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   buildJudgeReviewLegPrompt,
   isLegalJudgeReviewLegSession,
+  judgeContinueFromOpenCount,
   judgeKillsToLedgerDispositions,
   judgeReviewLegSessionMode,
+  liveDispositionsForOpenCount,
   liveFindingsBlockConverged,
   openFindingsForFixer,
   priorJudgeVerdictRowsFromLedger,
+  projectJudgeContinueBlocking,
 } from "../../src/judgeStation.js";
 import { findingIdentityKey } from "../../src/findings.js";
+import { legacyDispatchWorker } from "../../src/dispatchWorker.js";
 import { route } from "../../src/route.js";
 import { runOrchestrator, stepSpecsForEnv } from "../../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
@@ -32,7 +39,10 @@ import type {
   IssueMeta,
   IssueSnapshot,
   LedgerEntry,
+  PersistentLedgerEntry,
+  ResumeState,
   StepOutput,
+  StepSpec,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -44,6 +54,14 @@ import {
   judgeEscalate,
   sampleFinding,
 } from "../helpers/judge-fixtures.js";
+import {
+  DispatchRecordingResumeBackend,
+  entry,
+  escalationAnswer,
+  s8,
+  STATE_DIR,
+  WORKTREE as RESUME_WORKTREE,
+} from "../helpers/resume-fixtures.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const SOULS = join(ROOT, "image/souls");
@@ -403,6 +421,8 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     const s6Idx = backend.specs.findIndex((s) => s.id === "S6");
     expect(s6Idx).toBeGreaterThanOrEqual(0);
     const s6Ctx = backend.ctxs[s6Idx]!;
+    // Resume was requested (dead session path) before completing as fresh.
+    expect(backend.resumeSessionCalls.some(([id]) => id === "S6")).toBe(true);
     // Runner transports prior rows; does not synthesise prose summary.
     expect(s6Ctx.priorJudgeVerdicts).toBeDefined();
     expect(s6Ctx.priorJudgeVerdicts!.length).toBeGreaterThanOrEqual(1);
@@ -419,6 +439,208 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     expect(result.status).toBe("success");
     expect(result.stepLedger.some((e) => e.step === "S4")).toBe(false);
     expect(backend.dispatched.some((d) => d.startsWith("S4:"))).toBe(false);
+  });
+});
+
+describe("#925 F1: priorJudgeVerdicts land in fix-findings file", () => {
+  it("legacyDispatchWorker writes prior rows into stateDir fix-findings.json", async () => {
+    const worktree: WorktreeHandle = {
+      branch: "feat/925-prior",
+      base: "main",
+      path: mkdtempSync(join(tmpdir(), "judge-prior-wt-")),
+    };
+    const stateDir = mkdtempSync(join(tmpdir(), "judge-prior-ledger-"));
+    const prior = priorJudgeVerdictRowsFromLedger([
+      {
+        step: "S3",
+        sessionId: "j-dead",
+        output: judgeContinue([sampleFinding("prior", "p.ts:1")], {
+          advanceCoder: "gpt-5.6-sol",
+        }),
+      },
+    ]);
+    expect(prior.length).toBe(1);
+
+    let observedLanding: unknown;
+    const backend: Backend = {
+      async smokeModelRoute(route) {
+        return route;
+      },
+      async findResumeState() {
+        return undefined;
+      },
+      async resumeSession() {
+        throw new Error("not expected");
+      },
+      async fetchIssueMeta() {
+        throw new Error("not expected");
+      },
+      async fetchIssueSnapshot() {
+        throw new Error("not expected");
+      },
+      async prepareWorktree() {
+        throw new Error("not expected");
+      },
+      async writeSnapshot() {},
+      async runStep() {
+        observedLanding = JSON.parse(
+          readFileSync(join(stateDir, "fix-findings.json"), "utf8"),
+        );
+        return judgeConverged();
+      },
+      async writeLedger() {},
+    };
+
+    const result = await legacyDispatchWorker(
+      backend,
+      {
+        id: "S6",
+        kind: "reviewer",
+        role: "reviewer",
+        host: "codex",
+        session: "fresh",
+        contextRetention: "clean",
+        skill: "/code-review",
+        promptFile: "judge_station.md",
+        completionSignal: "JUDGE_STEP_COMPLETE",
+        maxIter: 1,
+        model: "gpt-5.4",
+        soul: "verify",
+        toolchain: [],
+      },
+      {
+        worktree,
+        stateDir,
+        priorJudgeVerdicts: prior,
+      },
+    );
+
+    expect(result.kind).toBe("completed");
+    expect(observedLanding).toMatchObject({
+      priorJudgeVerdicts: [
+        expect.objectContaining({
+          step: "S3",
+          status: "continue",
+          advanceCoder: "gpt-5.6-sol",
+          sessionId: "j-dead",
+        }),
+      ],
+    });
+    // Negative: no runner narrative summary field in the landing file.
+    expect(
+      (observedLanding as { trajectorySummary?: string }).trajectorySummary,
+    ).toBeUndefined();
+  });
+});
+
+describe("#925 F2: crash/resume rebuilds open set from judge continue", () => {
+  it("ledger with S3 judge continue seeds S5 open set; killed keys excluded", async () => {
+    const live = sampleFinding("live-claim", "live.ts:1");
+    const dead = sampleFinding("dead-claim", "dead.ts:2");
+    const liveKey = findingIdentityKey(live);
+    const deadKey = findingIdentityKey(dead);
+    const continueOut = judgeContinue([live, dead], {
+      kill: [
+        {
+          identityKey: deadKey,
+          action: "refute",
+          reason: "not_established",
+          evidence: "claim does not match code",
+        },
+      ],
+    });
+    const resumeLedger: PersistentLedgerEntry[] = [
+      entry("S0"),
+      entry("S1"),
+      entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+      entry("S3", continueOut, S3_SESSION),
+    ];
+    const resumeState: ResumeState = {
+      worktree: RESUME_WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: resumeLedger,
+    };
+    const backend = new DispatchRecordingResumeBackend(resumeState);
+    // Finish after S5: override S6 to judge converged (default returns reviewer
+    // open-count 0 which normalises to converged — also fine).
+    const result = await runOrchestrator({ issueNumber: 9256, backend });
+    expect(result.status).toBe("success");
+
+    // planResume of S3 continue → S5; first dispatch is S5 with open set.
+    expect(backend.dispatchSpecs[0]?.id).toBe("S5");
+    const s5Ctx = backend.dispatchContexts[0]!;
+    expect(s5Ctx.blockingFindingIdentityKeys).toEqual([liveKey]);
+    expect(s5Ctx.blockingFindingIdentityKeys).not.toContain(deadKey);
+    expect(s5Ctx.blockingFindingCount).toBe(1);
+  });
+});
+
+describe("#925 S1: judge escalate park → owner answer → 原地 resume", () => {
+  it("S3 escalate + escalation_answered resumes the same judge session in place", async () => {
+    class JudgeEscalateResumeBackend extends DispatchRecordingResumeBackend {
+      override async resumeSession(
+        spec: StepSpec,
+        _worktree: WorktreeHandle,
+        sessionId: string,
+      ): Promise<StepOutput> {
+        this.calls.push(`resumeSession(${spec.id}, ${sessionId})`);
+        this.resumeSessionCalls.push([spec.id, sessionId]);
+        this.runStepIds.push(spec.id);
+        // Answered reopen of the S3 judge → converge.
+        if (spec.id === "S3") {
+          return judgeConverged();
+        }
+        return { kind: "coder", committed: true, commitsAdded: 1 };
+      }
+
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<WorkerResult> {
+        this.dispatchSpecs.push(spec);
+        this.dispatchContexts.push(ctx);
+        const stepSpec = spec as unknown as StepSpec;
+        if (typeof ctx.resumeSessionId === "string") {
+          const output = await this.resumeSession(
+            stepSpec,
+            ctx.worktree!,
+            ctx.resumeSessionId,
+          );
+          return { kind: "completed", output, sessionId: ctx.resumeSessionId };
+        }
+        const output = await this.runStep(stepSpec, ctx.worktree!);
+        return { kind: "completed", output };
+      }
+    }
+
+    const backend = new JudgeEscalateResumeBackend({
+      worktree: RESUME_WORKTREE,
+      stateDir: STATE_DIR,
+      ledger: [
+        entry("S0"),
+        entry("S1"),
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        entry(
+          "S3",
+          judgeEscalate("stalled", "same bug 3 rounds"),
+          S3_SESSION,
+        ),
+        s8("escalate"),
+        escalationAnswer("S3", "owner: keep going with the live set"),
+      ],
+    });
+
+    const result = await runOrchestrator({ issueNumber: 9257, backend });
+    expect(result.status).toBe("success");
+    // 原地 resume of the escalated S3 judge session — not a fresh S0 cut.
+    expect(backend.resumeSessionCalls[0]).toEqual(["S3", S3_SESSION]);
+    expect(backend.dispatchContexts[0]?.escalationAnswer).toEqual({
+      event: "escalation_answered",
+      forStep: "S3",
+      answer: "owner: keep going with the live set",
+      source: "human",
+    });
+    expect(backend.dispatchSpecs[0]?.session).toBe("resume");
   });
 });
 
@@ -442,6 +664,44 @@ describe("#925 priorJudgeVerdictRowsFromLedger pure", () => {
   });
 });
 
+describe("#925 F3: single open-count → continue projection", () => {
+  it("mints __open_N live keys when cargo is sparse; reuses findings when present", () => {
+    const sparse = liveDispositionsForOpenCount(2, []);
+    expect(sparse).toEqual([
+      { identityKey: "__open_1", action: "live" },
+      { identityKey: "__open_2", action: "live" },
+    ]);
+    const f = sampleFinding("c", "c.ts:1");
+    const withCargo = liveDispositionsForOpenCount(1, [f]);
+    expect(withCargo).toEqual([
+      { identityKey: findingIdentityKey(f), action: "live" },
+    ]);
+    const continueOut = judgeContinueFromOpenCount(2, []);
+    expect(continueOut?.status).toBe("continue");
+    expect(continueOut?.findingDispositions).toEqual(sparse);
+    expect(judgeContinueFromOpenCount(0, [])).toBeUndefined();
+  });
+
+  it("projectJudgeContinueBlocking keeps live keys only and flips kills", () => {
+    const live = sampleFinding("L", "l.ts:1");
+    const dead = sampleFinding("D", "d.ts:2");
+    const out = judgeContinue([live, dead], {
+      kill: [
+        {
+          identityKey: findingIdentityKey(dead),
+          action: "refute",
+          reason: "scope_creep",
+          evidence: "out of AC",
+        },
+      ],
+    });
+    const projected = projectJudgeContinueBlocking(out);
+    expect(projected?.blockingIdentityKeys).toEqual([findingIdentityKey(live)]);
+    expect(projected?.killDispositions).toHaveLength(1);
+    expect(projected?.killDispositions[0]!.status).toBe("refuted");
+  });
+});
+
 describe("#925 verify.md 收敛判官 chapter + judge prompt", () => {
   it("soul chapter has tri-state / four reasons / trajectory stall", () => {
     const text = readFileSync(join(SOULS, "verify.md"), "utf8");
@@ -456,12 +716,14 @@ describe("#925 verify.md 收敛判官 chapter + judge prompt", () => {
     expect(text).toMatch(/走势|卡死/);
   });
 
-  it("judge_station prompt teaches T2 envelope fields", () => {
+  it("judge_station prompt teaches T2 envelope fields + session-loss landing", () => {
     const text = readFileSync(join(PROMPTS, "judge_station.md"), "utf8");
     expect(text).toMatch(/stationReceiptContracts/);
     expect(text).toMatch(/JUDGE_STEP_COMPLETE/);
     expect(text).toMatch(/findingDispositions/);
     expect(text).toMatch(/advanceCoder/);
     expect(text).toMatch(/maxIterations|maxIter/);
+    expect(text).toMatch(/priorJudgeVerdicts/);
+    expect(text).toMatch(/ORCHESTRATOR_FIX_FINDINGS_PATH|fix-findings/);
   });
 });

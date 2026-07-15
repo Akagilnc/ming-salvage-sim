@@ -144,11 +144,17 @@ function workerKindForRole(role: StepSpec["role"]): WorkerKind {
  * This is DECOUPLED from the dispatch {@link WorkerSessionMode} — a normal coder
  * round is `session:"fresh"` yet `contextRetention:"retain"` (ADR 0026 invariant:
  * normal fix keeps maxIter, NOT the crash/escalate resume path).
+ *
+ * #925 S3/S6 judge continuity is `resumeSessionId` only (same agent session).
+ * Single-slice seats keep WorkerKind `reviewer` (fixture/compat seam, AS4) so
+ * `contextRetention` stays `"clean"` here — do not read that flag as "judge
+ * loses trajectory"; trajectory after session loss is priorJudgeVerdicts
+ * landing, not contextRetention.
  */
 function retentionForKind(kind: WorkerKind): WorkerContextRetention {
-  // Production workers (coder + post-review fixer) retain context across rounds;
-  // #925: verify judge also retains (persistent S3→S6 session memory).
-  // Other review-like workers start each round clean.
+  // Production workers (coder + post-review fixer) retain context across rounds.
+  // `verify` kind is the family online-review seat; single-slice S3/S6 judges
+  // stay `reviewer` → clean (session continuity is resumeSessionId, not this).
   return kind === "coder" || kind === "fixer" || kind === "verify"
     ? "retain"
     : "clean";
@@ -218,12 +224,19 @@ function writeFixFindingsLandingFile(
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
 ): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
+  const priorJudgeVerdicts =
+    ctx.priorJudgeVerdicts !== undefined && ctx.priorJudgeVerdicts.length > 0
+      ? ctx.priorJudgeVerdicts
+      : undefined;
   const needsFindingsLanding =
     (spec.id === "S5" && spec.kind === "coder") ||
-    // #925: S6 is the verify judge (kind verify); still needs fix-findings landing
-    // for re-adjudication of prior open rows.
+    // #925: S6 is the verify judge (kind verify/reviewer); still needs
+    // fix-findings landing for re-adjudication of prior open rows.
     (spec.id === "S6" && (spec.kind === "reviewer" || spec.kind === "verify")) ||
-    ctx.escalationAnswer !== undefined;
+    ctx.escalationAnswer !== undefined ||
+    // #925 F1: prior judge verdict rows must reach the worker via the same
+    // fix-findings landing seam (session-loss / fresh-after-dead-session).
+    ((spec.id === "S3" || spec.id === "S6") && priorJudgeVerdicts !== undefined);
   if (!needsFindingsLanding || ctx.worktree === undefined) {
     return undefined;
   }
@@ -283,6 +296,11 @@ function writeFixFindingsLandingFile(
           : {}),
         ...(ctx.escalationAnswer !== undefined
           ? { escalationAnswer: ctx.escalationAnswer }
+          : {}),
+        // #925 F1: structured prior judge verdict rows only — runner never
+        // synthesises a narrative trajectory summary.
+        ...(priorJudgeVerdicts !== undefined
+          ? { priorJudgeVerdicts }
           : {}),
       },
       null,
