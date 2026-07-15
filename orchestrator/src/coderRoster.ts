@@ -323,20 +323,13 @@ export function resolveAdvanceCoderSuggestion(
       currentSlug: currentCoderSlug,
     };
   }
+  // Same seat via exact slug, id token, or roster alias of the current seat.
+  const currentEntry = lookupCoderRosterEntry(currentCoderSlug);
   if (
     entry.slug === currentCoderSlug ||
-    normalizeToken(entry.id) === normalizeToken(currentCoderSlug)
+    normalizeToken(entry.id) === normalizeToken(currentCoderSlug) ||
+    (currentEntry !== undefined && currentEntry.id === entry.id)
   ) {
-    // Also treat "suggestion resolves to the same seat via alias" as already active.
-    return {
-      kind: "noop",
-      reason: "already_active",
-      currentSlug: currentCoderSlug,
-    };
-  }
-  // currentCoderSlug may itself be an id / alias — compare via roster when possible.
-  const currentEntry = lookupCoderRosterEntry(currentCoderSlug);
-  if (currentEntry !== undefined && currentEntry.id === entry.id) {
     return {
       kind: "noop",
       reason: "already_active",

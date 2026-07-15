@@ -289,6 +289,58 @@ describe("#926 behavior: runner executes advance_coder", () => {
     expect(stayPutRows[0]!.state_summary).toMatch(/claude-opus-not-on-roster/);
   });
 
+  it("stay-put when roster-valid target fails smoke (不可派 — never terminal)", async () => {
+    // AC: 推进目标无效/不可派 → 留守 + 台账 + 不终局. luna is roster-legal
+    // but not on the default route lineup, so S0 smoke still passes.
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    class UnassignableLunaBackend extends AdvanceCoderBackend {
+      override async smokeModelRoute(route: any) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async ({ slug }) => {
+          if (slug === "gpt-5.6-luna") {
+            throw new Error("luna seat tool smoke unavailable");
+          }
+          return { cliVersion: "test" };
+        });
+      }
+    }
+    const backend = new UnassignableLunaBackend([
+      {
+        kind: "continue",
+        findings: [sampleFinding()],
+        advanceCoder: "luna@med",
+      },
+      { kind: "converged" },
+    ]);
+    const result = await runOrchestrator({ issueNumber: 9266, backend });
+
+    expect(result.status).toBe("success");
+    expect(result.status).not.toBe("error");
+    expect(result.status).not.toBe("escalate");
+
+    // Never switched to the unassignable seat.
+    expect(backend.coderModels.every((m) => m === "grok-4.5")).toBe(true);
+    expect(backend.coderModels.length).toBeGreaterThanOrEqual(2);
+    expect(backend.coderSessions[1]).toBe("resume");
+    expect(backend.resumeSessionIds[1]).toBe(S2_SESSION);
+
+    const stayPutRows = result.stepLedger.filter(
+      (e) => e.event === "coder_advance_stay_put",
+    );
+    expect(stayPutRows.length).toBe(1);
+    expect(stayPutRows[0]).toMatchObject({
+      event: "coder_advance_stay_put",
+      reason: "unassignable_target",
+      fromModelId: "grok-4.5",
+      toModelId: "grok-4.5",
+    });
+    expect(stayPutRows[0]!.state_summary).toMatch(/luna@med/);
+    // Must not also claim a successful advance.
+    expect(
+      result.stepLedger.some((e) => e.event === "coder_advance"),
+    ).toBe(false);
+  });
+
   it("without advanceCoder, multi-round path never mechanically rotates coder", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
     // Three continue rounds then converge — pure round count, no judge order.
