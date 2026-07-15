@@ -8,8 +8,8 @@ Proposed
 
 ## Decision
 
-Coder/CoderFix 的资源触发（额度墙/池死/hang-with-live-pool）与专业评审 Action 声明的质量不收敛触发，共用 #767 的 `Coder-Rec: X → Y → Z` 一张表、同一顺序；编排器不设第二张 coder relay 专用 fallback 表。资源触发时多走一步 ADR 0124 的正交查池：当前模型先换活池（同模型换马甲），全池死才顺位下一模型。Reviewer / Verification 及 delivery/shared-tail Finding Repair 的 seat 与 relay 继续受各自 Action 的角色能力和 route 约束，不读取 Coder-Rec。
+编排器不维护第二张 coder relay 候选表；候选与顺序只读取 ADR 0134 的固定席位。资源或 `capacity` 触发时，由 owning Action 请求下一固定席位；质量不收敛不触发换座。
 
 ## Consequences
 
-设计者只维护一份 coder 换人序；「平档换马甲」由池正交内建，免去 coder 的「资源换棒 vs 质量换棒」第二张表，同时不把 coder 候选误派到评审角色。
+候选与顺序只有 ADR 0134 一份真源，不另造 relay 机制或质量换座规则。
