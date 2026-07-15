@@ -7,8 +7,8 @@
  * multiple pools (实证: grok-4.5 on grok-build then Cursor).
  *
  * #789 — `claude` is the Anthropic / Claude Code billing boundary that serves
- * roster backups sonnet-5 / haiku-4.5 (same family as the cmrReview opus leg,
- * different runnable slugs → pool-separation stays clear).
+ * roster backups sonnet-5 / haiku-4.5. #920 removed pool-separation filtering
+ * so same-model cross-role (or same family as a cmrReview leg) is legal.
  *
  * ADR 0125 three-tier park-vs-relay also lives here as a pure decision
  * over pool state + "has live baton" (baton selection is {@link
@@ -17,7 +17,6 @@
 
 import {
   lookupCoderRosterEntry,
-  poolSeparationViolation,
   type CoderRosterEntry,
 } from "./coderRoster.js";
 
@@ -264,11 +263,6 @@ export interface SelectNextRelayBatonInput {
   readonly currentPool: BillingPoolId;
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
-  readonly reviewerSlugs?: ReadonlyArray<string>;
-  /** Reviewer legs after this candidate becomes the coder baton. */
-  readonly reviewerSlugsForCandidate?: (
-    candidate: CoderRosterEntry,
-  ) => ReadonlyArray<string>;
 }
 
 function poolServesModel(
@@ -325,12 +319,11 @@ export function findLiveBillingPoolForModel(
  * pool-orthogonal step for resource triggers:
  *   1. same model on a different live pool (换马甲)
  *   2. else next roster model that has any live pool
- * Pool-separation filter (#767) is preserved.
+ * #920: no review-slot conflict filter — live pool alone decides eligibility.
  */
 export function selectNextRelayBaton(
   input: SelectNextRelayBatonInput,
 ): NextRelayBaton | undefined {
-  const reviewerSlugs = input.reviewerSlugs ?? [];
   const current =
     lookupCoderRosterEntry(input.currentModelId) ??
     input.rosterOrder.find((e) => e.id === input.currentModelId);
@@ -352,8 +345,7 @@ export function selectNextRelayBaton(
     }
   }
 
-  // 2. Walk roster from the entry AFTER current; pick first with a live pool
-  //    that also passes pool-separation.
+  // 2. Walk roster from the entry AFTER current; pick first with a live pool.
   const startIdx = input.rosterOrder.findIndex(
     (e) =>
       e.id === input.currentModelId ||
@@ -363,11 +355,6 @@ export function selectNextRelayBaton(
   const from = startIdx >= 0 ? startIdx + 1 : 0;
   for (let i = from; i < input.rosterOrder.length; i++) {
     const candidate = input.rosterOrder[i]!;
-    const candidateReviewerSlugs =
-      input.reviewerSlugsForCandidate?.(candidate) ?? reviewerSlugs;
-    if (poolSeparationViolation(candidate, candidateReviewerSlugs) !== undefined) {
-      continue;
-    }
     const lives = livePoolsForModel(
       input.pools,
       candidate.id,
@@ -388,6 +375,7 @@ export function selectNextRelayBaton(
  * #787: capacity is checkpoint-local, not a billing-pool quota wall. Prefer
  * the next Coder-Rec checkpoint that the current live pool can serve; only
  * then fall back to the ordinary pool-orthogonal relay order.
+ * #920: no review-slot conflict filter.
  */
 export function selectCapacityRelayBaton(
   input: SelectNextRelayBatonInput,
@@ -408,15 +396,6 @@ export function selectCapacityRelayBaton(
     const from = startIdx >= 0 ? startIdx + 1 : 0;
     for (let i = from; i < input.rosterOrder.length; i++) {
       const candidate = input.rosterOrder[i]!;
-      const candidateReviewerSlugs =
-        input.reviewerSlugsForCandidate?.(candidate) ??
-        input.reviewerSlugs ??
-        [];
-      if (
-        poolSeparationViolation(candidate, candidateReviewerSlugs) !== undefined
-      ) {
-        continue;
-      }
       if (poolServesModel(currentPool, candidate.id, candidate.slug)) {
         return {
           modelId: candidate.id,

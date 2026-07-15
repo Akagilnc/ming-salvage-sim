@@ -73,7 +73,6 @@ import {
   modelForSlot,
   printableRouteLineup,
   degradeOptionalRouteSmokeFailures,
-  routeConflictSlugsExcluding,
   resolveActiveModelRoute,
   knownLiveBillingPoolsFromRoute,
   withCoderSlot,
@@ -155,32 +154,7 @@ import type {
   WorktreeHandle,
 } from "./types.js";
 
-/**
- * The self-review peers after a relay candidate lands in its real route.
- *
- * Relay candidates can only replace the coder (S2/S5) or reviewer (S3/S6)
- * slot. Every other complete-route checkpoint remains a separation peer,
- * including both CMR gates, verify, and every CMR review leg. Removal is by
- * slot identity rather than slug so another checkpoint using the same slug is
- * still a conflict.
- */
-export function relayCandidateConflictSlugs(
-  route: ResolvedModelRoute,
-  candidate: CoderRosterEntry,
-  wallStep: StepId,
-): ReadonlyArray<string> {
-  const replacedSlot = relaySlotForWallStep(wallStep);
-  const candidateRoute =
-    replacedSlot === "coder"
-      ? withCoderSlot(route, candidate.slug)
-      : {
-          ...route,
-          slots: { ...route.slots, [replacedSlot]: candidate.slug },
-        };
-
-  return routeConflictSlugsExcluding(candidateRoute, replacedSlot);
-}
-
+/** Map a wall step to the route slot a relay baton rewrites. */
 function relaySlotForWallStep(
   wallStep: StepId,
 ): "coder" | "reviewer" | "coderFix" {
@@ -1849,12 +1823,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
   };
 
-  const reviewerSlugsForRelayCandidate = (
-    candidate: CoderRosterEntry,
-    wallStep: StepId,
-  ): ReadonlyArray<string> =>
-    relayCandidateConflictSlugs(modelRoute, candidate, wallStep);
-
   const relayBillingPoolForDispatch = (
     dispatchStep: StepId,
   ): BillingPoolId | undefined =>
@@ -3082,8 +3050,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   currentPool,
                   rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
                   pools,
-                  reviewerSlugsForCandidate: (candidate) =>
-                    reviewerSlugsForRelayCandidate(candidate, step),
                   now: relayNow(),
                   step,
                 });
@@ -3241,8 +3207,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 err.disposition.resetAt,
                 true,
               ),
-              reviewerSlugsForCandidate: (candidate) =>
-                reviewerSlugsForRelayCandidate(candidate, step),
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
@@ -3293,8 +3257,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools,
-              reviewerSlugsForCandidate: (candidate) =>
-                reviewerSlugsForRelayCandidate(candidate, step),
               now: relayNow(),
               step,
             });
