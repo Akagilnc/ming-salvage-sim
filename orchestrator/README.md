@@ -163,8 +163,8 @@ Before igniting, read the FINAL lineup (preset + your overrides) against the
 seating rules. These are enforced by maintaining the route table itself —
 deliberately NO validator machinery (owner ruling 2026-07-11):
 
-- **Judging seats are sol-only**: `reviewer`, `cmrCompleteness`,
-  `cmrCorrectness`, `verify` sit gpt-5.6-sol. terra does not review.
+- **Judging seats are sol-only**: `verify` (sole judge identity; #923),
+  `cmrCompleteness`, `cmrCorrectness` sit gpt-5.6-sol. terra does not review.
 - **Coding seats stay terra**: `coder`, `coderFix`.
 - If sol ever holds a fixing seat, the floor reviewer for its output is
   cross-family (opus).
@@ -262,13 +262,13 @@ preset (ORCHESTRATOR_ROUTE, default "normal")
 
 Presets (`src/modelRoutes.ts` `ROUTE_PRESETS`):
 
-| preset | coder/coderFix | reviewer | verify + cmr gates | ship/merger/fixer/cleanup/docRelease | cmrReview legs |
-| --- | --- | --- | --- | --- | --- |
-| `normal` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | sonnet | codex sol + claude opus (+agy) |
-| `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | sonnet | opus + agy + codex sol |
-| `codex-tight` | sonnet | opus | opus | sonnet | opus + agy (codex family excluded) |
-| `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | gpt-5.6-terra | codex-side legs |
-| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | gpt-5.6-terra | codex sol + agy (claude family excluded) |
+| preset | coder/coderFix | verify (judge; S3/S6 + verify) + cmr gates | ship/merger/fixer/cleanup/docRelease | cmrReview legs |
+| --- | --- | --- | --- | --- |
+| `normal` | gpt-5.6-terra | gpt-5.6-sol | sonnet | codex sol + claude opus (+agy) |
+| `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | sonnet | opus + agy + codex sol |
+| `codex-tight` | sonnet | opus | sonnet | opus + agy (codex family excluded) |
+| `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | codex-side legs |
+| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | codex sol + agy (claude family excluded) |
 
 `*-tight` presets declare `tightFamilies` — the family whose quota is scarce is
 kept off every slot and leg. Pick the preset whose scarce pool matches
@@ -277,17 +277,19 @@ reality, then fine-tune single slots:
 | slot | env var |
 | --- | --- |
 | coder | `ORCHESTRATOR_CODER_MODEL` |
-| reviewer | `ORCHESTRATOR_REVIEWER_MODEL` |
 | coderFix | `ORCHESTRATOR_CODER_FIX_MODEL` |
 | ship | `ORCHESTRATOR_SHIP_MODEL` |
 | merger | `ORCHESTRATOR_MERGER_MODEL` |
 | cmrCompleteness | `ORCHESTRATOR_CMR_COMPLETENESS_MODEL` |
 | cmrCorrectness | `ORCHESTRATOR_CMR_CORRECTNESS_MODEL` |
-| verify | `ORCHESTRATOR_VERIFY_MODEL` |
+| verify (judge: S3/S6 + verify station) | `ORCHESTRATOR_VERIFY_MODEL` |
 | delivery fixer | `ORCHESTRATOR_FIXER_MODEL` |
 | cleanup | `ORCHESTRATOR_CLEANUP_MODEL` |
 | docRelease | `ORCHESTRATOR_DOCRELEASE_MODEL` |
 | cmrReview legs | `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` (comma list) |
+
+`ORCHESTRATOR_REVIEWER_MODEL` is **retired** (#923). Setting it fails closed with a
+migration hint to `ORCHESTRATOR_VERIFY_MODEL` (never silently ignored).
 
 Role vocabulary worth keeping straight:
 
