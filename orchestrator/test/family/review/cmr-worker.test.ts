@@ -1087,22 +1087,86 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     }
   });
 
-  it("accepts a recovered open-count at the family CMR production seam", async () => {
-    // Production seam after native recovery: one sc.run result, typed output only.
+  it("recovers open-count via production CMR worker + real sc.run (bad→good)", async () => {
+    // #899: four-case matrix must cross the production worker boundary AND real
+    // sc.run native maxRetries — not only a post-recovery fixture.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
     let sandcastleCalls = 0;
-    const completeVerdict = {
-      converged: true,
+    const agentOut: { agent?: ScriptedAgent } = {};
+    const good = {
       findingsCount: 0,
+      findings: [],
+      converged: true,
       successfulLegs: [...DEFAULT_CMR_LEGS],
       ...VALID_CMR_VERDICT_FIELDS,
     };
     class Backend extends RealFamilyBackend {
-      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        // Production seat must bind open-count SO + maxRetries.
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "cmr",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        const run = await runScriptedStructuredOutput({
+          tag: "cmr",
+          schema: workerReceiptSchema(),
+          emissions: [
+            { body: JSON.stringify({ findingsCount: -1 }) },
+            { body: JSON.stringify(good) },
+          ],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "prod-cmr-recover-session",
+          cleanups,
+          agentOut,
+        });
+        return run.result;
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-prod-recover-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+
+    await expect(
+      be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" }),
+    ).resolves.toMatchObject({
+      kind: "verdict",
+      findingsCount: 0,
+    });
+    // One production sc.run invocation; native same-session resume is inside it.
+    expect(sandcastleCalls).toBe(1);
+    expect(agentOut.agent?.callCount).toBe(2);
+    expect(agentOut.agent?.resumedSessions).toEqual([
+      undefined,
+      "prod-cmr-recover-session",
+    ]);
+  });
+
+  it("fails open-count non-resumable provider via production CMR worker + real sc.run", async () => {
+    // #899 four-case: unrecoverable provider must surface through production seat.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let coderFixCalls = 0;
+    class Backend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
@@ -1112,19 +1176,40 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           tag: "cmr",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
-        return typedSandboxRunResult(completeVerdict, {
-          sessionId: "same-cmr-reviewer-session",
-        });
+        return (
+          await runScriptedStructuredOutput({
+            tag: "cmr",
+            schema: workerReceiptSchema(),
+            emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
+            maxRetries: RECEIPT_MAX_RETRIES,
+            resumable: false,
+            name: "grok",
+            cleanups,
+          })
+        ).result;
+      }
+      protected override async runFamilyCoderFixWorker(): Promise<WorkerResult> {
+        coderFixCalls += 1;
+        throw new Error("coder-fix must not run on non-resumable SO failure");
       }
     }
-    const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-native-retry-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
-
-    await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).resolves.toMatchObject({
-      kind: "verdict",
-      converged: true,
-      findingsCount: 0,
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-prod-nonresumable-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(
+      be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(
+        /output\.maxRetries requires an agent provider that supports session resumption/i,
+      );
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
     });
     expect(sandcastleCalls).toBe(1);
+    expect(coderFixCalls).toBe(0);
   });
 
   it("accepts initial-good open-count at the family CMR production seam", async () => {
@@ -1296,6 +1381,132 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(nextGateCalls).toBe(0);
     expect(isReceiptRecoveryFailure(exhausted)).toBe(true);
+  });
+
+  it("recovers decision-gate via production coder-fix + real sc.run (bad→good)", async () => {
+    // #899: decision-gate four-case matrix through production seat + real sc.run.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    const agentOut: { agent?: ScriptedAgent } = {};
+    const good = {
+      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+    };
+    class Backend extends RealFamilyBackend {
+      public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: DECISION_GATE_TAG,
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        const run = await runScriptedStructuredOutput({
+          tag: DECISION_GATE_TAG,
+          schema: decisionGateSignalSchema,
+          emissions: [
+            { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+            { body: JSON.stringify(good) },
+          ],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "prod-decision-recover-session",
+          cleanups,
+          agentOut,
+        });
+        return run.result;
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-prod-recover-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(
+      be.runFix(familyCoderFixWorkerSpec(), { familyBase: "fb" }),
+    ).resolves.toMatchObject({
+      kind: "completed",
+      output: {
+        escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      },
+    });
+    expect(sandcastleCalls).toBe(1);
+    expect(agentOut.agent?.callCount).toBe(2);
+    expect(agentOut.agent?.resumedSessions).toEqual([
+      undefined,
+      "prod-decision-recover-session",
+    ]);
+  });
+
+  it("fails decision-gate non-resumable provider via production coder-fix + real sc.run", async () => {
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let nextGateCalls = 0;
+    class Backend extends RealFamilyBackend {
+      public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: DECISION_GATE_TAG,
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        return (
+          await runScriptedStructuredOutput({
+            tag: DECISION_GATE_TAG,
+            schema: decisionGateSignalSchema,
+            emissions: [{
+              body: JSON.stringify({
+                escalate: { reason: "r", diagnosis: "d" },
+              }),
+            }],
+            maxRetries: RECEIPT_MAX_RETRIES,
+            resumable: false,
+            name: "grok",
+            cleanups,
+          })
+        ).result;
+      }
+      protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
+        nextGateCalls += 1;
+        throw new Error("next CMR gate must not run on non-resumable SO failure");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-prod-nonresumable-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(
+      be.runFix(familyCoderFixWorkerSpec(), { familyBase: "fb" }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(
+        /output\.maxRetries requires an agent provider that supports session resumption/i,
+      );
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
+    expect(sandcastleCalls).toBe(1);
+    expect(nextGateCalls).toBe(0);
   });
 
   it("rejects malformed decision-gate and open-count receipts at the Sandcastle schema seam", () => {

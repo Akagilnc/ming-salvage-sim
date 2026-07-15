@@ -380,7 +380,9 @@ describe("#331 non-completed WorkerResult routing", () => {
 });
 
 describe("ADR 0131 reviewer count envelope", () => {
-  it("dispatches S5 with the reviewer's raw artifact facts when findings are not countable", async () => {
+  it("routes by findingsCount when findings cargo is non-array (no shape court)", async () => {
+    // #899 / ADR 0131: runner never re-dispatches from findings-array shape.
+    // Non-array cargo is empty landing cargo; positive count still opens S5.
     class NonArrayFindingsBackend extends DispatchBackend {
       readonly landings: Array<WorkerLandingPayload | undefined> = [];
       reviewerCalls = 0;
@@ -397,8 +399,12 @@ describe("ADR 0131 reviewer count envelope", () => {
           this.ctxs.push(ctx);
           return {
             kind: "completed",
-            // Deliberately inject an illegal reviewer shape to exercise raw-artifact fallback.
-            output: { kind: "reviewer", findings: "not-an-array" } as unknown as StepOutput,
+            output: {
+              kind: "reviewer",
+              findingsCount: 1,
+              // Illegal cargo shape — must not zero count or skip S5.
+              findings: "not-an-array",
+            } as unknown as StepOutput,
             sessionId: "reviewer-session-non-array",
           };
         }
@@ -421,6 +427,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(backend.specs.filter((spec) => spec.kind === "reviewer")).toHaveLength(2);
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
       blockingFindings: [],
       rawReviewerArtifacts: { reviewerSessionId: "reviewer-session-non-array" },

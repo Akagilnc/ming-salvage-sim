@@ -106,6 +106,19 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
     );
   });
 
+  it("pr_opened without pr remains shipped cargo (no required-field discard)", () => {
+    // #899: ordinary delivery cargo is not schema-gated — missing pr must not
+    // demote a clean ship report to completed / discarded.
+    const o = parseShipOutcome(
+      '<ship>{"status": "pr_opened", "branch": "feat/no-pr-url"}</ship>',
+    );
+    expect(o).toEqual({
+      kind: "shipped",
+      status: "pr_opened",
+      branch: "feat/no-pr-url",
+    });
+  });
+
   // #899: only well-formed bells (non-empty reason+diagnosis) are fate signals.
   // Malformed escalate fails the Action for #598 — never invents a park.
   describe("malformed decision bells fail the Action", () => {
@@ -395,6 +408,29 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     });
 
     expect(o.kind).toBe("completed");
+  });
+
+  it("sidecar pr_opened without pr stays shipped delivery cargo", () => {
+    // #899: do not discard incomplete pr_opened for a missing pr URL.
+    const dir = mkdtempSync(join(tmpdir(), "ship-pr-opened-no-pr-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ status: "pr_opened", branch: "feat/opaque" }),
+      "utf8",
+    );
+
+    expect(
+      shipOutcomeFromResult({
+        output: {},
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({
+      kind: "shipped",
+      status: "pr_opened",
+      branch: "feat/opaque",
+    });
   });
 
   it("a signal alone is not a machine outcome", () => {

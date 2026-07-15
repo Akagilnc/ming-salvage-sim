@@ -42,7 +42,8 @@ export type ShipWorkerOutcome =
       readonly kind: "shipped";
       readonly branch?: string;
       readonly status: "pr_opened";
-      readonly pr: string;
+      /** Optional delivery cargo — missing pr never demotes clean exit (#899). */
+      readonly pr?: string;
     }
   | {
       readonly kind: "escalate";
@@ -145,9 +146,9 @@ function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
 }
 
 /**
- * Delivery-cargo only: best-effort status/pr enrichment. No schema validation —
- * missing or off-shape fields stay opaque completed cargo and never alter fate
- * (sidecar/stdout fourth-channel ban, #899 / ADR 0131).
+ * Delivery-cargo only: best-effort field reads. No schema validation, no
+ * required-field gate, no discard of known status for missing siblings —
+ * process fate is exit code + typed decision gate only (#899 / ADR 0131).
  */
 function classifyShipCargoPayload(parsed: unknown): ShipWorkerOutcome {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -155,21 +156,24 @@ function classifyShipCargoPayload(parsed: unknown): ShipWorkerOutcome {
   }
   const cargo = parsed as Record<string, unknown>;
   const branch = isFilledString(cargo.branch) ? cargo.branch.trim() : undefined;
+  const pr = isFilledString(cargo.pr) ? cargo.pr.trim() : undefined;
   if (cargo.status === "pushed") {
     return {
       kind: "shipped",
       status: "pushed",
       ...(branch !== undefined ? { branch } : {}),
+      // Extra pr on pushed is cargo noise — leave it off the pushed shape.
     };
   }
-  if (cargo.status === "pr_opened" && isFilledString(cargo.pr)) {
+  if (cargo.status === "pr_opened") {
+    // pr is optional delivery cargo: absence does not demote to completed.
     return {
       kind: "shipped",
       status: "pr_opened",
       ...(branch !== undefined ? { branch } : {}),
-      pr: cargo.pr.trim(),
+      ...(pr !== undefined ? { pr } : {}),
     };
   }
-  // Unknown / incomplete delivery shapes: clean exit still advances; cargo ignored.
+  // Unknown status: clean exit still advances; no invented delivery fields.
   return { kind: "completed" };
 }
