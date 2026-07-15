@@ -1,5 +1,5 @@
 /**
- * #905 — Sandcastle AgentProvider for the real agy (Antigravity / Gemini) CLI.
+ * #905 / #915 — Sandcastle AgentProvider for the real agy (Antigravity / Gemini) CLI.
  *
  * Historical mis-wires (opencode → grok under the `agy` slug) are forbidden:
  * when this leg is dead (Gemini consumer EOL), optional-leg degrade only —
@@ -8,16 +8,17 @@
  * ## Invocation class (one contract, two modes)
  *
  * 1. **Headless / print** (workers + bare-ping):  
- *    `agy --sandbox [--model X] --print-timeout 15m --print ''` + **prompt on stdin**.  
- *    NEVER put the prompt after `--print` (agy 1.0.7 treats the next token as
- *    the print value; huge prompts hit ARG_MAX).
+ *    `agy --sandbox [--model X] --print-timeout 15m --print <prompt>`.  
+ *    The token after `--print` MUST be the non-empty prompt. agy 1.1.2
+ *    rejects empty `--print` / `--print ''` with "empty prompt" and does
+ *    **not** fall through to stdin (#915 accident on #899 ignition).
+ *    Never bare `-p`/`--print` without a value (next flag would be swallowed).
  * 2. **Interactive** (Sandcastle TTY; `process.stdin` is the keyboard):  
  *    `agy --sandbox [--model X] --prompt-interactive <seed>`.  
  *    NEVER use `--print <seed>` here — that is print-mode, not interactive.
  *
  * NEVER `--dangerously-skip-permissions` (re-consents a high scope and breaks
- * headless auth on the next run). Mirrors `ak-cross-m-review/backends/gemini.sh`
- * for print mode.
+ * headless auth on the next run).
  */
 
 import type * as sc from "@ai-hero/sandcastle";
@@ -83,26 +84,26 @@ export function parseAgyStreamLine(line: string): Array<AgyParsedStreamEvent> {
 export const AGY_PRINT_TIMEOUT = "15m";
 
 /**
- * Headless / print-mode argv + stdin (workers, bare-ping, gemini.sh shape).
- * Invariant: the token after `--print` is always `""`; prompt is only on stdin.
+ * Headless / print-mode argv (workers + bare-ping; shared seam).
+ * Invariant (#915 / agy 1.1.2): the token after `--print` is the prompt
+ * itself — never `""`. Empty `--print` is a hard CLI error ("empty prompt");
+ * stdin is not a delivery channel on current agy (no fallthrough).
+ * Returns plain argv (no bag / second channel).
  */
 export function agyPrintInvocation(
   model: string,
   prompt: string,
-): { readonly args: readonly string[]; readonly stdin: string } {
+): readonly string[] {
   const trimmedModel = model.trim();
-  return {
-    args: [
-      "--sandbox",
-      ...(trimmedModel !== "" ? (["--model", trimmedModel] as const) : []),
-      // C10: Go duration with unit (agy rejects bare "900000").
-      "--print-timeout",
-      AGY_PRINT_TIMEOUT,
-      "--print",
-      "",
-    ],
-    stdin: prompt,
-  };
+  return [
+    "--sandbox",
+    ...(trimmedModel !== "" ? (["--model", trimmedModel] as const) : []),
+    // C10: Go duration with unit (agy rejects bare "900000").
+    "--print-timeout",
+    AGY_PRINT_TIMEOUT,
+    "--print",
+    prompt,
+  ];
 }
 
 /**
@@ -146,10 +147,10 @@ export function agyAgent(
     buildPrintCommand({ prompt }) {
       // Ignore dangerouslySkipPermissions: agy hard-forbids that flag.
       resetStreamParser();
-      const inv = agyPrintInvocation(model, prompt);
+      const args = agyPrintInvocation(model, prompt);
+      // Prompt is only the --print argv token (Sandcastle stdin optional; omit).
       return {
-        command: `agy ${inv.args.map(shellEscape).join(" ")}`,
-        stdin: inv.stdin,
+        command: `agy ${args.map(shellEscape).join(" ")}`,
       };
     },
     buildInteractiveArgs({ prompt }) {

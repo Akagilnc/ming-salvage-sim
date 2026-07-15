@@ -185,13 +185,11 @@ export function barePingArgv(
         ],
       };
     case "agy": {
-      // #905 r2: same shape as agyAgent / gemini.sh — shared helper, no clone.
-      // `--print ''` + stdin; never put the prompt after --print (agy 1.0.7).
-      const inv = agyPrintInvocation(model, prompt);
+      // #905 / #915: shared helper with agyAgent — prompt is the --print value
+      // only (agy 1.1.2 rejects empty --print; no stdin delivery channel).
       return {
         file: "agy",
-        args: inv.args,
-        input: inv.stdin,
+        args: agyPrintInvocation(model, prompt),
       };
     }
     case "grok":
