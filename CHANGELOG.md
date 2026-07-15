@@ -4,6 +4,25 @@
 
 ## [未发布]
 
+## [0.29.0.0] — 2026-07-16
+
+### Added
+- **编排器 #919 修复环判官化**：持久 verify 判官三态（converged/continue/escalate）统一单切 S3/S6 与 family CMR 关环；毙单四理由 + 活单送修。
+- **#924/#926/#927**：coder 持久会话 + 官方 typed 收据；advanceCoder 执行/留守同构（`executeAdvanceCoderSuggestion`）；coder 驳回信封盲路由回判官。
+- **#922/#929**：终态实名与非零退出码映射；终局必落盘。
+- **#930**：family 双闸共用判官机；open-count 第二关环删除。
+- **全工位 T2 收据**：judge/coder/ship/merger/onlineReview 官方 thin envelope。
+
+### Changed
+- 完成定义统一为单迭代 + 干净退出 + typed 信封；`completionSignal` 退役。
+- reviewer 模型槽并入 verify（#923）；池隔离拆除（#920）。
+- residual 非 judge 纸 fail-loud unusable，禁止 open-count 铸 continue。
+
+### Fixed
+- empty continue 空转（family + 单切）fail-loud。
+- family refuse keys 与单切同构；ship dual decision-gate 拆除。
+
+
 ## [0.28.1.0] — 2026-07-15
 
 ### Fixed
