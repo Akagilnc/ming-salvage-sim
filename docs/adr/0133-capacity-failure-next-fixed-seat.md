@@ -1,4 +1,4 @@
-# 0133. Coder/CoderFix 模型拥挤按 checkpoint 换棒
+# 0133. capacity 客观失败 → 下一固定席位
 
 Date: 2026-07-11
 

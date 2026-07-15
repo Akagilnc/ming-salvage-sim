@@ -16,6 +16,4 @@ typed open-count / decision-gate signal 的 Action-owned structured retry 与写
 
 ## Consequences
 
-ADR 0124 的模型/池正交匹配、ADR 0126 的同模型优先换池与质量轮数换棒，以及 ADR 0133 的同池 checkpoint 优先均被本决定收窄；ADR 0125 的额度阈值与等待/换棒分流保留，但候选耗尽从静默 park 收窄为保留现场并走既有 decision gate。现有指标继续记录，等真实数据支持评分时再另行设计。
-
-#870 的实现切片只补 Sandcastle 不提供的固定选座与额度业务语义；所有 agent 执行能力直接复用 ADR 0128，不在 Policy 或 Runner 旁边建立第二套包装。
+ADR 0124 的 pool 只作观测，不改写固定席位顺序；ADR 0126 不设第二张候选表，也不因质量不收敛换座；ADR 0133 的 capacity 客观失败直接请求下一固定席位；ADR 0125 按阈值等待、沿固定顺序交棒、候选耗尽进入既有 decision gate 三分流。
