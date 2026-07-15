@@ -2197,8 +2197,11 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(outcomePathAtRun, JSON.stringify({ resolved: true }), "utf8");
         return {
+          branch: "family/293-base",
           completionSignal: "MERGER_STEP_COMPLETE",
           stdout: "<merger>{}</merger>",
+          commits: [],
+          iterations: [],
           // Typed no-gate decision signal (SO was attached on this seat).
           output: {},
         } as Awaited<ReturnType<typeof sc.run>>;
@@ -2228,8 +2231,11 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
         _options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         return {
+          branch: "family/293-base",
           completionSignal: "MERGER_STEP_COMPLETE",
           stdout: '<merger>{"resolved": true}</merger>',
+          commits: [],
+          iterations: [],
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }

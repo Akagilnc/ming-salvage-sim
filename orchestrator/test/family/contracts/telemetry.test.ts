@@ -602,8 +602,11 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
         if (outcomePath === undefined) throw new Error("missing merger outcome landing");
         writeFileSync(outcomePath, JSON.stringify({ resolved: true }), "utf8");
         return {
+          branch: "family/786",
           completionSignal: "MERGER_STEP_COMPLETE",
           stdout: "<merger>{}</merger>",
+          commits: [],
+          iterations: [],
           // Typed no-gate decision signal (SO was attached on this seat).
           output: {},
         } as Awaited<ReturnType<typeof sc.run>>;
