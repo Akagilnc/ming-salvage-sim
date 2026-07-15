@@ -363,6 +363,10 @@ export interface Escalation {
  * #925 S3/S6 judge station output. Topology reads only `status` (+ escalate
  * fields on the escalate branch). Dispositions / advanceCoder / findings are
  * fixed-schema or cargo — never prose-parsed for routing.
+ *
+ * Family integrated-CMR may ride optional opaque cargo siblings via
+ * `withFamilyJudgeCargo` (#919 / #930). Topology must not close a court by
+ * reading these fields — traffic is the status tri-state only.
  */
 export interface JudgeResult {
   readonly kind: "judge";
@@ -378,6 +382,17 @@ export interface JudgeResult {
   readonly diagnosis?: string;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
+  /**
+   * Opaque family cargo siblings (telemetry / residual / fixture width).
+   * Topology never routes on these — attach only, never invent a second closer.
+   */
+  readonly cmrPass?: "completeness" | "correctness";
+  readonly successfulLegs?: readonly string[];
+  readonly skippedLegs?: readonly CmrSkippedLeg[];
+  readonly evidencePaths?: readonly string[];
+  readonly findingFamilies?: readonly FindingFamily[];
+  readonly claimedFixedFindingIdentityKeys?: readonly string[];
+  readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
 }
 
 /** Escalation bucket recorded on a terminal S8 entry (#439). */
