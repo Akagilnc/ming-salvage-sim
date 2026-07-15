@@ -16,14 +16,38 @@ every in-scope site checked, `file:line` — `fixed` or `already-correct`, givin
 the next reviewer coverage to verify. Record same-class sites noticed outside
 the assigned family base as `file:line` — `out-of-scope observation` for the
 runner; never edit them.
-The `<fixer>` outcome remains only the JSON envelope defined below.
+The role cargo remains only the JSON body defined below.
 
-## Output
+## Required output
 
-Always emit `<decision>{}</decision>` (or with `escalate`) before the role cargo tag.
-When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same cargo JSON object
-directly to that path (sidecar is cargo transport for the runner). Also emit
-`<fixer>` cargo JSON:
+When you are done (or are escalating), the real completion evidence is the
+single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
+set (role cargo only), the always-emitted typed `<onlineReview>` station-receipt
+envelope, and any optional opaque `<fixer>` cargo tag.
+
+Emit **one** typed `<onlineReview>` station-receipt envelope. Sandcastle
+validates the traffic shape via `Output.object` against the T2 contract in
+`orchestrator/src/stationReceiptContracts.ts`
+(`onlineReviewStationReceiptSchema` / `decodeOnlineReviewEnvelope`, tag
+`onlineReview` / `ONLINE_REVIEW_RECEIPT_TAG`) — **do not invent a second field
+vocabulary** and **do not emit a separate decision-gate dual tag**.
+
+### Envelope traffic fields (schema-validated)
+
+| field | meaning |
+| --- | --- |
+| `station` | `"onlineReview"` |
+| `status` | `"completed"` \| `"escalate"` |
+| `cargoPointer` | optional non-empty path/URI to opaque cargo body |
+| `reason` / `diagnosis` | required non-empty when `status:"escalate"` |
+
+Thin gate only: completed \| escalate. Commit narrative is cargo, never a fate
+signal on this envelope.
+
+### Role cargo (opaque; not SO-validated)
+
+Write fixer cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set (sidecar is cargo
+transport). You may also emit opaque `<fixer>` cargo JSON for the same body:
 
 ```json
 {"committed": true, "fixCommitSha": "<the-commit-sha-you-just-made>"}
@@ -41,6 +65,26 @@ branch (e.g. a prior crashed attempt already landed the fix) — proceed to veri
 not a park;
 
 or `{"committed": false}` when the assigned finding(s) are **genuinely still
-present** and you made no new commit (decision gate).
+present** and you made no new commit (pair with envelope `completed`; runner
+routes on process + envelope, not cargo shape).
 
-This seat is single-iteration. Completion is clean exit + legal sidecar / typed receipt — no STEP_COMPLETE password.
+### Examples
+
+Completed:
+
+```text
+<onlineReview>{"station":"onlineReview","status":"completed"}</onlineReview>
+```
+
+Escalation:
+
+```text
+<onlineReview>{"station":"onlineReview","status":"escalate","reason":"<short>","diagnosis":"<what blocks the fix>"}</onlineReview>
+```
+
+Rules:
+
+- Emit exactly one final `<onlineReview>` envelope (last wins if you iterate).
+- Role cargo never carries escalate — fate is the typed envelope only.
+- This seat is single-iteration. Completion is clean exit + legal typed
+  envelope / sidecar — no STEP_COMPLETE password.

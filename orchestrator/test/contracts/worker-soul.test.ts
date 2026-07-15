@@ -287,30 +287,61 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
   it("every existing prompt still defines its structured output contract (tag + clean exit)", () => {
     // #928: completion is clean exit + legal sidecar / typed envelope — no
     // *_STEP_COMPLETE password. Each worker must still emit its role tag.
-    // #924: single-slice coder seats use T2 station-receipt on <coder> (no
-    // dedicated <decision> tag). Family ship/merger still use decision-gate.
+    // #924 / #919: full-wave seats use T2 station receipts (no dedicated
+    // <decision> tag). Ship/merger/onlineReview traffic rides the station tag.
     const prompts = [
-      ["coder_implement.md", /<coder>/, false],
-      ["coder_fix.md", /<coder>/, false],
-      ["judge_station.md", /<judge>/, false],
-      ["family_ship.md", /<ship>/, true],
-      ["integrated_cmr_completeness.md", /<cmr>/, false],
-      ["integrated_cmr_correctness.md", /<cmr>/, false],
-      ["merger_resolve_conflict.md", /<merger>/, true],
+      ["coder_implement.md", /<coder>/],
+      ["coder_fix.md", /<coder>/],
+      ["judge_station.md", /<judge>/],
+      ["family_ship.md", /<ship>/],
+      ["integrated_cmr_completeness.md", /<cmr>/],
+      ["integrated_cmr_correctness.md", /<cmr>/],
+      ["merger_resolve_conflict.md", /<merger>/],
+      ["verify.md", /<onlineReview>/],
+      ["fixer.md", /<onlineReview>/],
+      ["docRelease.md", /<onlineReview>/],
     ] as const;
 
-    for (const [promptName, tag, needsDecisionTag] of prompts) {
+    for (const [promptName, tag] of prompts) {
       const prompt = read(promptName);
       expect(prompt).toMatch(tag);
       expect(prompt).not.toMatch(/_STEP_COMPLETE/);
       expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
       expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
-      // Optional decision-gate seats always emit a dedicated <decision> tag so
-      // ordinary cargo stays outside Output.object (#899). Coder seats (#924)
-      // put traffic on the station-receipt <coder> envelope instead.
-      if (needsDecisionTag) {
-        expect(prompt).toMatch(/<decision>/);
-      }
+      // #919 online R2: no seat teaches the abolished dual <decision> gate tag.
+      expect(prompt).not.toMatch(/<decision>/);
+    }
+  });
+
+  it("#919 T2: ship / merger / onlineReview prompts teach station envelopes", () => {
+    const ship = read("family_ship.md");
+    expect(ship).toMatch(/shipStationReceiptSchema|decodeShipEnvelope/);
+    expect(ship).toMatch(/stationReceiptContracts/);
+    expect(ship).toMatch(/"shipped"/);
+    expect(ship).toMatch(/"completed"/);
+    expect(ship).toMatch(/"escalate"/);
+    expect(ship).toMatch(/"station":"ship"/);
+    // Cargo token pr_opened lives on sidecar, not as envelope traffic status.
+    expect(ship).toMatch(/pr_opened/);
+    expect(ship).not.toMatch(/<decision>/);
+
+    const merger = read("merger_resolve_conflict.md");
+    expect(merger).toMatch(/mergerStationReceiptSchema|decodeMergerEnvelope/);
+    expect(merger).toMatch(/stationReceiptContracts/);
+    expect(merger).toMatch(/"station":"merger"/);
+    expect(merger).toMatch(/"completed"/);
+    expect(merger).toMatch(/"escalate"/);
+    expect(merger).toMatch(/resolved/);
+    expect(merger).not.toMatch(/<decision>/);
+
+    for (const promptName of ["verify.md", "fixer.md", "docRelease.md"] as const) {
+      const prompt = read(promptName);
+      expect(prompt).toMatch(/onlineReviewStationReceiptSchema|decodeOnlineReviewEnvelope/);
+      expect(prompt).toMatch(/stationReceiptContracts/);
+      expect(prompt).toMatch(/"station":"onlineReview"/);
+      expect(prompt).toMatch(/"completed"/);
+      expect(prompt).toMatch(/"escalate"/);
+      expect(prompt).not.toMatch(/<decision>/);
     }
   });
 
