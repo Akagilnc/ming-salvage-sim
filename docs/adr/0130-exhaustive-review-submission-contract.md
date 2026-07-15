@@ -1,3 +1,5 @@
+> **修订落地说明（2026-07-15）**：#921 信封字段级驳回词表（下节 `refused*` 交通信号 vs 状态库行态 `refuted`；实现真源 `orchestrator/src/stationReceiptContracts.ts`）已在 **family/919** 落地（#921 merge into family/919）。本说明对齐文档与代码，**不翻转** Status——Accepted 仅在 owner 拍板时改（对照 ADR 0132 头部 Accepted 戳）；在此之前 Status 保持 Proposed。
+
 Status: Proposed
 
 # 0130: 评审交卷契约——看见的都写行，fixer 首务验真翻状态，一切评审模式统一

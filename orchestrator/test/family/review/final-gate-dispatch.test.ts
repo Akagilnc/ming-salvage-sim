@@ -457,7 +457,13 @@ describe("#331 the family ship worker must return a SHIP payload (codex R2 guard
       familyBase: "feat/330",
       familyBackend: be,
     });
-    expect(res).toMatchObject({ ok: false, ran: true });
+    // Off-contract ship payload still synthesizes a PR handle and continues into
+    // online review, which then dies as online_review_failed (#922 stage token).
+    expect(res).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "online_review_failed",
+    });
   });
 });
 
@@ -535,28 +541,41 @@ describe("#336 cmr S336 r4 — the terminal family gate re-asserts the ship succ
     });
   }
 
-  it("a completed ship with status 'pushed' (not pr_opened) ⇒ ship_failed gate", async () => {
+  it("a completed ship with status 'pushed' (not pr_opened) ⇒ online_review_failed gate", async () => {
     const res = await gate({
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pushed" },
     });
-    expect(res).toMatchObject({ ok: false, ran: true });
+    // Host still synthesizes a PR handle from branch; death is later online-review.
+    expect(res).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "online_review_failed",
+    });
   });
 
-  it("a completed ship missing its pr URL ⇒ ship_failed gate", async () => {
+  it("a completed ship missing its pr URL ⇒ online_review_failed gate", async () => {
     const res = await gate({
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pr_opened" },
     });
-    expect(res).toMatchObject({ ok: false, ran: true });
+    expect(res).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "online_review_failed",
+    });
   });
 
-  it("a completed ship with a blank pr URL ⇒ ship_failed gate", async () => {
+  it("a completed ship with a blank pr URL ⇒ online_review_failed gate", async () => {
     const res = await gate({
       kind: "completed",
       output: { kind: "ship", branch: "feat/330", status: "pr_opened", pr: "   " },
     });
-    expect(res).toMatchObject({ ok: false, ran: true });
+    expect(res).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "online_review_failed",
+    });
   });
 
   it("a completed ship that reports the wrong branch follows host-verified PR truth", async () => {
@@ -745,7 +764,11 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
       familyBackend: backend,
     });
 
-    expect(res).toMatchObject({ ok: false, ran: true });
+    expect(res).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "ship_failed",
+    });
     expect(backend.ledger.filter((e) => e.status === "cmr_passed")).toHaveLength(2);
     const latest = backend.ledger.at(-1);
     expect(latest?.status).toBe("aborted");
@@ -768,7 +791,11 @@ describe("#330 a failed/wrong-kind final cmr/ship worker writes a durable aborte
     // This minimal backend returns a ship payload to the later online-review
     // worker too, so that unrelated stage remains incomplete. The ship gate itself
     // must nevertheless have persisted host HEAD truth before reaching it.
-    expect(res).toMatchObject({ ok: false, ran: true });
+    expect(res).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "online_review_failed",
+    });
     const shipped = backend.ledger.find((e) => e.status === "shipped");
     expect(shipped?.familyHeadAfter).toBe("post-ship-head");
     expect(shipped).toMatchObject({ status: "shipped" });

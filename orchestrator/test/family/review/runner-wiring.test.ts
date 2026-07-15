@@ -1191,7 +1191,11 @@ describe("family spine verify-cmr wiring (#293 seam 4)", () => {
         familyIssue: 604,
       });
 
-      expect(result).toMatchObject({ ok: false, ran: true });
+      expect(result).toMatchObject({
+        ok: false,
+        ran: true,
+        failedStatus: "cmr_failed",
+      });
       const reviewed = backend.ledger.find(
         (entry) => entry.status === "cmr_reviewed",
       );

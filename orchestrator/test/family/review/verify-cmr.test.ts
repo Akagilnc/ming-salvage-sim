@@ -198,8 +198,12 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
       familyBackend: backend,
     });
     // ok:false → the spine aborts before the next wave (decision 3④).
-    expect(result.ok).toBe(false);
-    expect(result.ran).toBe(true);
+    // #922: stage-named failedStatus (not a bare {ok,ran} mash).
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
     // The red verify writes an `aborted` event carrying the error package +
     // family base (decision 3④/5; the schema is #298's, #296 only calls it).
     expect(backend.aborted).toHaveLength(1);
@@ -228,7 +232,11 @@ describe("#296 verify-cmr hook body — wave phase (fail-fast verify)", () => {
       familyHeadAfter: "head-before-final-verify",
     });
 
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
     expect(backend.ledger).toContainEqual(
       expect.objectContaining({
         status: "aborted",
@@ -311,7 +319,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyBackend: backend,
     });
 
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.prCalls).toEqual([]);
     expect(
       backend.ledger.some((entry) => entry.status === "cmr_reviewed"),
@@ -1243,7 +1255,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toMatchObject({ ok: false, ran: true });
+    // Decision park: omit failedStatus so the spine escalates (not stage death).
+    expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]).toMatchObject({
       reason: "completeness cmr needs human review",
@@ -1291,7 +1304,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.escalations).toContainEqual(expect.objectContaining({
       escalationKind: "failure",
       reason: "cmr worker auth missing",
@@ -1342,7 +1359,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.escalations).toContainEqual(expect.objectContaining({
       escalationKind: "failure",
       reason: "coder-fix worker auth missing",
@@ -1385,7 +1406,11 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "ship_failed",
+    });
     expect(backend.escalations).toContainEqual(expect.objectContaining({
       escalationKind: "failure",
       reason: "ship worker auth missing",
@@ -1441,7 +1466,8 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
       familyHeadAfter: "head-after-final-verify",
     });
 
-    expect(result).toMatchObject({ ok: false, ran: true });
+    // Decision park: omit failedStatus so the spine escalates (not stage death).
+    expect(result).toEqual({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]).toMatchObject({
       reason: "ship needs human review",
@@ -1488,13 +1514,19 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
     // Verify ran (ran:true), but with no cmr capability the hook reports a red
     // final barrier (ok:false) — NOT a false success.
     expect(backend.verifyCalls).toHaveLength(1);
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
   });
 
   it("a backend with verify + cmr but WITHOUT dispatchWorker (final phase) FAILS-SAFE to ok:false — the terminal 止于-PR step could not run", async () => {
     // verify green + cmr converged, but the PR capability is missing → the terminal
     // action (decision 4, 止于 PR) cannot run. {ok:true} would report "success" for a
     // run whose PR never opened; fail-safe to {ok:false, ran:true} instead.
+    // Legacy CMR without findingsCount still routes via the CMR gate (raw artifacts
+    // / missing count), so the stage token is cmr_failed — not ship_failed.
     class VerifyAndCmrBackend extends BareFamilyBackend {
       async runFamilyVerify(): Promise<FamilyVerifyResult> {
         return { ok: true };
@@ -1509,7 +1541,11 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
   });
 });
 
@@ -1568,7 +1604,11 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/cmr worker threw on startup/i);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/no such ref/i);
@@ -1625,7 +1665,11 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: shipBackend,
     });
-    expect(shipResult).toMatchObject({ ok: false, ran: true });
+    expect(shipResult).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "ship_failed",
+    });
     expect(shipBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(shipBackend.aborted[0]?.errorPackage.reason).toMatch(/git checkout/i);
 
@@ -1635,7 +1679,11 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: cmrBackend,
     });
-    expect(cmrResult).toMatchObject({ ok: false, ran: true });
+    expect(cmrResult).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(cmrBackend.throwKindDispatches).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 
@@ -1794,7 +1842,11 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBackend: backend,
     });
 
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
@@ -1816,7 +1868,11 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "ship_failed",
+    });
     expect(backend.aborted).toHaveLength(1);
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/git checkout/i);
   });
@@ -1851,7 +1907,11 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
       familyBackend: backend,
     });
 
-    expect(result).toMatchObject({ ok: false, ran: true });
+    expect(result).toMatchObject({
+      ok: false,
+      ran: true,
+      failedStatus: "ship_failed",
+    });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "aborted",
       event: "aborted",
