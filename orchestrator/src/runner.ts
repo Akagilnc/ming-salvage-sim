@@ -834,15 +834,16 @@ function lastReviewerStep(
   return undefined;
 }
 
-interface S4FindingsCountReplay {
+interface BlockingFromLedgerRebuild {
   readonly blocking: ReadonlyArray<Finding>;
   readonly blockingIdentityKeys: ReadonlyArray<string>;
   /** Reviewer-declared open-count (ADR 0131), not findings-array length. */
   readonly blockingFindingCount: number;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
   /**
-   * Rebuilt raw artifact pointers for the positive-count → S5 edge after an S4
-   * resume boundary (host paths; materialised into the fixer sandbox at landing).
+   * Rebuilt raw artifact pointers for the positive-count → S5 edge after a
+   * judge-continue or residual S4 resume boundary (host paths; materialised
+   * into the fixer sandbox at landing).
    */
   readonly rawReviewerArtifacts?: WorkerLandingPayload["rawReviewerArtifacts"];
 }
@@ -868,7 +869,7 @@ function reviewerRawArtifactPointers(
  * Rebuild the S5 open-set / kill flips / raw-artifact pointers from a
  * persisted ledger (crash/resume seed).
  *
- * Single shared projection (F2/F3):
+ * Single shared projection (F2/F3) — not S4-only:
  *   - #925 live path: S3/S6 `kind:"judge" status:"continue"` → kills + live-only
  *     open set (same as in-process continue edge via
  *     {@link projectJudgeContinueBlocking}).
@@ -877,9 +878,9 @@ function reviewerRawArtifactPointers(
  * Walk order: last applicable projection wins for the open set; judge kill
  * flips accumulate across continue rounds (mirrors the live path).
  */
-function replayS4FindingsCountState(
+function rebuildBlockingFromLedger(
   ledger: ReadonlyArray<LedgerEntry>,
-): S4FindingsCountReplay {
+): BlockingFromLedgerRebuild {
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
   let pendingBlockingFindingCount = 0;
@@ -1056,7 +1057,7 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
-    const replayedS4 = replayS4FindingsCountState(executableLedger);
+    const rebuiltBlocking = rebuildBlockingFromLedger(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
@@ -1066,14 +1067,14 @@ function planResume(
         ? repairIntent !== undefined
           ? continueRepairFromEvent(
               repairIntent,
-              replayedS4.blockingFindingCount,
+              rebuiltBlocking.blockingFindingCount,
             )
           : latestContinueFixingAfter(
               ledger,
               lastEntryIndex,
-              replayedS4.blockingFindingCount,
+              rebuiltBlocking.blockingFindingCount,
             ) ??
-            continueRepairFromAnswer(answer, replayedS4.blockingFindingCount)
+            continueRepairFromAnswer(answer, rebuiltBlocking.blockingFindingCount)
         : undefined;
     if (
       decisionStep === undefined ||
@@ -2601,17 +2602,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // #877: persisted S4 boundaries are replayed from reviewer findings-count
-    // only. Each S4 replaces the pending blocker set with that reviewer's
-    // `findings[]`; prose dispositions do not preserve or reopen findings.
-    // #899: also rebuild raw reviewer artifact pointers so a crash/resume after
-    // S4 still hands the fixer host paths (materialised at landing).
-    const replayedS4 = replayS4FindingsCountState(plan.priorLedger);
-    pendingBlockingFindings = [...replayedS4.blocking];
-    pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
-    pendingBlockingFindingCount = replayedS4.blockingFindingCount;
-    findingDispositions = [...replayedS4.findingDispositions];
-    pendingRawReviewerArtifacts = replayedS4.rawReviewerArtifacts;
+    // #925/#877: rebuild pending open-set / kill flips from the prior ledger
+    // (judge continue + residual historical S4/reviewer open-count). Each
+    // projection replaces the pending blocker set; prose dispositions do not
+    // reopen findings. #899: also rebuild raw reviewer artifact pointers so a
+    // crash/resume after S4 still hands the fixer host paths (materialised at
+    // landing).
+    const rebuiltBlocking = rebuildBlockingFromLedger(plan.priorLedger);
+    pendingBlockingFindings = [...rebuiltBlocking.blocking];
+    pendingBlockingFindingIdentityKeys = [...rebuiltBlocking.blockingIdentityKeys];
+    pendingBlockingFindingCount = rebuiltBlocking.blockingFindingCount;
+    findingDispositions = [...rebuiltBlocking.findingDispositions];
+    pendingRawReviewerArtifacts = rebuiltBlocking.rawReviewerArtifacts;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;

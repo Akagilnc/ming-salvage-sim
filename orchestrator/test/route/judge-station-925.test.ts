@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,7 @@ import { route } from "../../src/route.js";
 import { runOrchestrator, stepSpecsForEnv } from "../../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
+  AgentStepRunOptions,
   Backend,
   DispatchContext,
   Finding,
@@ -42,6 +43,7 @@ import type {
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
+  StepResult,
   StepSpec,
   WorkerResult,
   WorkerSpec,
@@ -89,14 +91,9 @@ class JudgeBackend implements Backend {
   /** Scripted judge outputs per S3/S6 opening (0 = first). */
   private judgeScripts: JudgeResultScript[];
   private judgeIdx = 0;
-  private failResumeOnce: boolean;
 
-  constructor(
-    judgeScripts?: JudgeResultScript[],
-    opts?: { failResumeOnce?: boolean },
-  ) {
+  constructor(judgeScripts?: JudgeResultScript[]) {
     this.judgeScripts = judgeScripts ?? [{ kind: "converged" }];
-    this.failResumeOnce = opts?.failResumeOnce === true;
   }
 
   async findResumeState(): Promise<undefined> {
@@ -141,11 +138,6 @@ class JudgeBackend implements Backend {
 
     if (typeof ctx.resumeSessionId === "string") {
       this.resumeSessionCalls.push([spec.id, ctx.resumeSessionId]);
-      if (this.failResumeOnce && spec.id === "S6") {
-        this.failResumeOnce = false;
-        // Simulate dead-session fallback: still complete as fresh with new id,
-        // but the runner already requested resume (shape under test).
-      }
     }
 
     if (spec.kind === "coder") {
@@ -404,33 +396,144 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     expect(backend.specs.some((s) => s.id === "S7")).toBe(false);
   });
 
-  it("session-loss path still supplies prior judge verdict rows (trajectory)", async () => {
-    const backend = new JudgeBackend(
-      [
-        {
-          kind: "continue",
-          findings: [sampleFinding("r1", "r1.ts:1")],
-        },
-        { kind: "converged" },
-      ],
-      { failResumeOnce: true },
-    );
+  it("dead resume → fresh S6 consumes prior continue via fix-findings landing", async () => {
+    // Real session-loss behaviour (not ctx-only shape): resume fails once →
+    // mechanical redispatch opens fresh S6; prior verdict rows land in
+    // fix-findings.json; the seat converges only when that landing carries the
+    // expected prior status (消费此前走势).
+    const parent = mkdtempSync(join(tmpdir(), "judge-session-loss-"));
+    const worktreePath = join(parent, "wt-9254");
+    mkdirSync(worktreePath, { recursive: true });
+    const worktree: WorktreeHandle = {
+      branch: "feat/925-session-loss",
+      base: "main",
+      path: worktreePath,
+    };
+    const DEAD_SESSION = "sess-judge-s3-dead-925";
+    const FRESH_AFTER_DEAD = "sess-judge-s6-fresh-after-dead";
+    let resumeFailCount = 0;
+    let s6FreshOpenings = 0;
+    let observedLanding: {
+      priorJudgeVerdicts?: Array<{
+        status?: string;
+        step?: string;
+        sessionId?: string;
+      }>;
+      trajectorySummary?: string;
+    } | undefined;
+    let s6ConsumedPriorContinue = false;
+
+    const readLanding = (
+      options?: AgentStepRunOptions,
+    ): typeof observedLanding => {
+      const landingPath = options?.fixFindingsLanding?.path;
+      if (landingPath === undefined || !existsSync(landingPath)) {
+        return undefined;
+      }
+      return JSON.parse(readFileSync(landingPath, "utf8")) as NonNullable<
+        typeof observedLanding
+      >;
+    };
+
+    const backend: Backend = {
+      async smokeModelRoute(route) {
+        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+      },
+      async findResumeState() {
+        return undefined;
+      },
+      async fetchIssueMeta(issueNumber) {
+        return {
+          number: issueNumber,
+          isReadyForAgent: true,
+          hasSubIssues: false,
+          isClosed: false,
+          openBlockedBy: [],
+        };
+      },
+      async fetchIssueSnapshot(issueNumber) {
+        return {
+          number: issueNumber,
+          body: "b",
+          comments: [],
+          agentBrief: "",
+        };
+      },
+      async prepareWorktree() {
+        return worktree;
+      },
+      async writeSnapshot() {},
+      async writeLedger() {},
+      async resumeSession(spec, _wt, sessionId, options) {
+        if (spec.id === "S6") {
+          resumeFailCount += 1;
+          // Landing is written before resumeSession (legacyDispatchWorker).
+          observedLanding = readLanding(options);
+          throw new Error(
+            `Session resume failed: session ${sessionId} not found`,
+          );
+        }
+        throw new Error(`unexpected resume of ${spec.id}`);
+      },
+      async runStep(spec, _wt, options): Promise<StepOutput | StepResult> {
+        if (spec.id === "S2" || spec.id === "S5") {
+          return { kind: "coder", committed: true, commitsAdded: 1 };
+        }
+        if (spec.id === "S3") {
+          return {
+            output: judgeContinue([sampleFinding("r1", "r1.ts:1")]),
+            sessionId: DEAD_SESSION,
+          };
+        }
+        if (spec.id === "S6") {
+          s6FreshOpenings += 1;
+          // Fresh seat after dead resume — must read structured prior rows from
+          // the fix-findings landing (not a runner-synthesised narrative).
+          observedLanding = readLanding(options);
+          const priors = observedLanding?.priorJudgeVerdicts;
+          const sawContinue = (priors ?? []).some(
+            (r) => r.status === "continue",
+          );
+          if (!sawContinue) {
+            return {
+              output: judgeEscalate(
+                "no_prior_trajectory",
+                "landing missing prior continue status",
+              ),
+              sessionId: FRESH_AFTER_DEAD,
+            };
+          }
+          s6ConsumedPriorContinue = true;
+          return {
+            output: judgeConverged(),
+            sessionId: FRESH_AFTER_DEAD,
+          };
+        }
+        throw new Error(`unexpected runStep of ${spec.id}`);
+      },
+    };
+
     const result = await runOrchestrator({ issueNumber: 9254, backend });
     expect(result.status).toBe("success");
-
-    const s6Idx = backend.specs.findIndex((s) => s.id === "S6");
-    expect(s6Idx).toBeGreaterThanOrEqual(0);
-    const s6Ctx = backend.ctxs[s6Idx]!;
-    // Resume was requested (dead session path) before completing as fresh.
-    expect(backend.resumeSessionCalls.some(([id]) => id === "S6")).toBe(true);
-    // Runner transports prior rows; does not synthesise prose summary.
-    expect(s6Ctx.priorJudgeVerdicts).toBeDefined();
-    expect(s6Ctx.priorJudgeVerdicts!.length).toBeGreaterThanOrEqual(1);
-    expect(s6Ctx.priorJudgeVerdicts![0]!.status).toBe("continue");
-    // Negative: no runner-authored narrative field.
-    expect(
-      (s6Ctx as { trajectorySummary?: string }).trajectorySummary,
-    ).toBeUndefined();
+    // Dead resume once, then fresh S6 (no second resume).
+    expect(resumeFailCount).toBe(1);
+    expect(s6FreshOpenings).toBe(1);
+    expect(s6ConsumedPriorContinue).toBe(true);
+    expect(observedLanding?.priorJudgeVerdicts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          step: "S3",
+          status: "continue",
+          sessionId: DEAD_SESSION,
+        }),
+      ]),
+    );
+    // Negative: no runner-authored narrative field in the landing file.
+    expect(observedLanding?.trajectorySummary).toBeUndefined();
+    // Fresh after dead keeps a new session id on the S6 ledger row.
+    const s6Row = result.stepLedger.find((e) => e.step === "S6");
+    expect(s6Row?.sessionId).toBe(FRESH_AFTER_DEAD);
   });
 
   it("no S4 open-count step appears on a clean judge path", async () => {
