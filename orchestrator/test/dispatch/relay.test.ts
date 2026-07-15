@@ -63,7 +63,7 @@ import {
 import { decideIdleAfterProbe, QuotaWaitForResetError } from "../../src/quotaProbe.js";
 import { buildCliMonitorSpawnSpec } from "../../src/cliMonitorHooks.js";
 import { dispatchWorkerWithMonitor, legacyDispatchWorker } from "../../src/dispatchWorker.js";
-import { relayCandidateConflictSlugs, runOrchestrator } from "../../src/runner.js";
+import { runOrchestrator } from "../../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   Backend,
@@ -1877,69 +1877,31 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
 describe("#920 same-model cross-role is legal (ex-#686 conflict filter)", () => {
   const sol = lookupCoderRosterEntry("sol@med")!;
 
-  it.each(["S3", "S6"] as const)(
-    "%s still reports peer slots for telemetry, but selection is not gated on them",
-    (wallStep) => {
-      const route = resolveRouteModels("normal", {
-        cmrCompleteness: sol.slug,
-        cmrCorrectness: sol.slug,
-        verify: sol.slug,
-      }, {
-        cmrReview: ["opus", "gpt-5.6-sol", "agy"],
-      });
-
-      const peers = relayCandidateConflictSlugs(route, sol, wallStep);
-
-      expect(peers).toEqual(
-        expect.arrayContaining([
-          route.slots.coder,
-          route.slots.cmrCompleteness,
-          route.slots.cmrCorrectness,
-          route.slots.verify,
-          ...route.legCollections.cmrReview.map((leg) => leg.slug),
-        ]),
-      );
-      // #920: peer overlap is informational only — roster selection must still
-      // admit sol even when every judging seat shares its slug.
-      expect(selectCoderRecEntry([sol], 0).id).toBe("sol@med");
-      expect(
-        selectNextRelayBaton({
-          currentModelId: "grok-4.5",
-          currentPool: "grok-build",
-          rosterOrder: resolveCoderRecOrder(
-            "Coder-Rec: grok-4.5 → sol@med",
-          ),
-          pools: [
-            { id: "grok-build", status: "dead", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["grok-4.5"] },
-            { id: "codex-5h", status: "live", parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS, models: ["sol@med"] },
-          ],
-        })?.modelId,
-      ).toBe("sol@med");
-    },
-  );
-
-  it.each([
-    "sol@med",
-    "grok-4.5",
-  ] as const)(
-    "peer-slug list excludes only the slot %s is replacing (S3/S6 reviewer)",
-    (candidateId) => {
-      const candidate = lookupCoderRosterEntry(candidateId)!;
-      const route = resolveRouteModels("normal", {
-        reviewer: candidate.slug,
-        cmrCompleteness: "opus",
-        cmrCorrectness: "opus",
-        verify: "opus",
-      }, {
-        cmrReview: ["opus", "agy"],
-      });
-
-      for (const wallStep of ["S3", "S6"] as const) {
-        const peers = relayCandidateConflictSlugs(route, candidate, wallStep);
-        expect(peers).not.toContain(candidate.slug);
-      }
-    },
-  );
+  it("admits sol on roster select and relay baton when every judging seat shares its slug", () => {
+    // Pre-#920 pool separation vetoed sol whenever review/CMR seats shared its slug.
+    expect(selectCoderRecEntry([sol], 0).id).toBe("sol@med");
+    expect(
+      selectNextRelayBaton({
+        currentModelId: "grok-4.5",
+        currentPool: "grok-build",
+        rosterOrder: resolveCoderRecOrder("Coder-Rec: grok-4.5 → sol@med"),
+        pools: [
+          {
+            id: "grok-build",
+            status: "dead",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["grok-4.5"],
+          },
+          {
+            id: "codex-5h",
+            status: "live",
+            parkThresholdMs: DEFAULT_PARK_THRESHOLD_MS,
+            models: ["sol@med"],
+          },
+        ],
+      })?.modelId,
+    ).toBe("sol@med");
+  });
 });
 
 /**

@@ -73,7 +73,6 @@ import {
   modelForSlot,
   printableRouteLineup,
   degradeOptionalRouteSmokeFailures,
-  routeConflictSlugsExcluding,
   resolveActiveModelRoute,
   knownLiveBillingPoolsFromRoute,
   withCoderSlot,
@@ -155,32 +154,7 @@ import type {
   WorktreeHandle,
 } from "./types.js";
 
-/**
- * Peer slots after a relay candidate lands in its real route (telemetry /
- * diagnostics). #920 removed pool-separation gating — callers must not treat
- * this list as a selection veto.
- *
- * Relay candidates can only replace the coder (S2/S5) or reviewer (S3/S6)
- * slot. Other complete-route checkpoints are listed as peers (CMR gates,
- * verify, cmrReview legs). Exclusion is by slot identity rather than slug.
- */
-export function relayCandidateConflictSlugs(
-  route: ResolvedModelRoute,
-  candidate: CoderRosterEntry,
-  wallStep: StepId,
-): ReadonlyArray<string> {
-  const replacedSlot = relaySlotForWallStep(wallStep);
-  const candidateRoute =
-    replacedSlot === "coder"
-      ? withCoderSlot(route, candidate.slug)
-      : {
-          ...route,
-          slots: { ...route.slots, [replacedSlot]: candidate.slug },
-        };
-
-  return routeConflictSlugsExcluding(candidateRoute, replacedSlot);
-}
-
+/** Map a wall step to the route slot a relay baton rewrites. */
 function relaySlotForWallStep(
   wallStep: StepId,
 ): "coder" | "reviewer" | "coderFix" {
