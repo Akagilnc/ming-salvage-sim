@@ -1016,9 +1016,10 @@ export interface DispatchContext {
 export type CoderResult = CoderOutput;
 
 /**
- * Per-slice reviewer worker output. ADR 0030 keeps review/fix convergence
- * runner-visible: reviewer workers return structured findings so the S4 envelope
- * boundary can count blocking findings (信封宪法, ADR 0062) rather than a bare verdict.
+ * Residual historical open-count paper (legacy / rebuild / non-judge seats).
+ * Alias of {@link ReviewerOutput} — not the main single-slice S3/S6 path.
+ * S3/S6 routes on {@link JudgeResult} status tri-state; S4 mechanical
+ * open-count classification is dissolved (#925 / ADR 0131 channel (b)).
  */
 export type ReviewerResult = ReviewerOutput;
 
