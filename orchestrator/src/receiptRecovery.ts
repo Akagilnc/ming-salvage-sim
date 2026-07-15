@@ -1,6 +1,13 @@
 import * as sc from "@ai-hero/sandcastle";
 import { z } from "zod";
 
+import type {
+  Finding,
+  PriorFindingDisposition,
+  ReviewerOutput,
+  StepOutput,
+} from "./types.js";
+
 /** The bounded native Sandcastle retry budget ratified by #899. */
 export const RECEIPT_MAX_RETRIES = 2;
 
@@ -170,6 +177,62 @@ export function classifyDecisionGate(
     return { kind: "bell", reason: probe.reason, diagnosis: probe.diagnosis };
   }
   return { kind: "none" };
+}
+
+/**
+ * Decode an untyped open-count receipt into a typed {@link ReviewerOutput}.
+ *
+ * Production Sandcastle / sidecar payloads enter here as `unknown`. Findings
+ * rows are opaque cargo: non-array shapes become empty cargo, never rewrite
+ * the declared findingsCount (ADR 0131 / #899). Missing or unusable count is
+ * not a zero open-count — callers map that to the unusable-receipt path.
+ *
+ * Returns `undefined` when the receipt cannot supply a non-negative integer
+ * findingsCount (unusable review envelope).
+ */
+export function decodeReviewerOpenCountReceipt(
+  raw: unknown,
+): ReviewerOutput | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const receipt = raw as {
+    findingsCount?: unknown;
+    findings?: unknown;
+    priorFindingDispositions?: unknown;
+  };
+  const findingsCount =
+    typeof receipt.findingsCount === "number" &&
+    Number.isSafeInteger(receipt.findingsCount) &&
+    receipt.findingsCount >= 0
+      ? receipt.findingsCount
+      : undefined;
+  if (findingsCount === undefined) return undefined;
+  const findings: Finding[] = Array.isArray(receipt.findings)
+    ? (receipt.findings as Finding[])
+    : [];
+  const priorFindingDispositions = Array.isArray(receipt.priorFindingDispositions)
+    ? (receipt.priorFindingDispositions as ReadonlyArray<PriorFindingDisposition>)
+    : undefined;
+  return {
+    kind: "reviewer",
+    findings,
+    findingsCount,
+    ...(priorFindingDispositions !== undefined
+      ? { priorFindingDispositions }
+      : {}),
+  };
+}
+
+/**
+ * Same decode as {@link decodeReviewerOpenCountReceipt}, but returns a
+ * StepOutput compatible with the unusable-receipt → fixer path when count is
+ * missing (coder no-commit placeholder used by RealBackend).
+ */
+export function decodeReviewerReceiptOrUnusable(raw: unknown): StepOutput {
+  const decoded = decodeReviewerOpenCountReceipt(raw);
+  if (decoded !== undefined) return decoded;
+  return { kind: "coder", committed: false, commitsAdded: 0 };
 }
 
 /** A native receipt retry that must fail the Action for #598 mechanical redispatch. */

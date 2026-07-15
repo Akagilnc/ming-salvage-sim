@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
+import { decodeReviewerOpenCountReceipt } from "../../src/receiptRecovery.js";
 import {
   dispatchWorker,
   docReleaseWorkerSpec,
@@ -382,7 +383,19 @@ describe("#331 non-completed WorkerResult routing", () => {
 describe("ADR 0131 reviewer count envelope", () => {
   it("routes by findingsCount when findings cargo is non-array (no shape court)", async () => {
     // #899 / ADR 0131: runner never re-dispatches from findings-array shape.
-    // Non-array cargo is empty landing cargo; positive count still opens S5.
+    // Illegal cargo enters through the real decode boundary (unknown → typed);
+    // non-array findings become empty landing cargo; positive count still opens S5.
+    const decodedNonArrayCargo = decodeReviewerOpenCountReceipt({
+      findingsCount: 1,
+      // Illegal cargo shape at the untyped boundary — decoder empties rows.
+      findings: "not-an-array",
+    });
+    expect(decodedNonArrayCargo).toEqual({
+      kind: "reviewer",
+      findings: [],
+      findingsCount: 1,
+    });
+
     class NonArrayFindingsBackend extends DispatchBackend {
       readonly landings: Array<WorkerLandingPayload | undefined> = [];
       reviewerCalls = 0;
@@ -399,12 +412,8 @@ describe("ADR 0131 reviewer count envelope", () => {
           this.ctxs.push(ctx);
           return {
             kind: "completed",
-            output: {
-              kind: "reviewer",
-              findingsCount: 1,
-              // Illegal cargo shape — must not zero count or skip S5.
-              findings: "not-an-array",
-            } as unknown as StepOutput,
+            // Typed output only — no `as unknown as` type escape hatch.
+            output: decodedNonArrayCargo!,
             sessionId: "reviewer-session-non-array",
           };
         }
