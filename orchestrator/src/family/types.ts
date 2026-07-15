@@ -574,8 +574,8 @@ export interface FamilyBackend {
    * The {@link DispatchContext} for a family worker carries `familyBase` (the
    * caller has only the base string, no single-slice worktree path — PRD #330 R2);
    * `worktree` is optional / backend-inferred. The {@link WorkerResult} is the
-   * same discriminated union: a cmr `red` verdict is `completed` (with a
-   * {@link CmrResult} payload), NOT `failed`.
+   * same discriminated union: a cmr residual red is `completed` with
+   * unusableResidualOpenCountPaper (kind:"reviewer"), NOT `failed`.
    *
    * The runner's family verify-cmr hook always dispatches through the free
    * function `dispatchFamilyWorker(familyBackend, spec, ctx)` (verifyCmr.ts).

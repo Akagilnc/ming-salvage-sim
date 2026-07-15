@@ -1557,7 +1557,7 @@ export class RealFamilyBackend implements FamilyBackend {
       };
     }
     // Residual (incl. positive findingsCount / kind:verdict cargo): one unusable
-    // paper only — never kind:cmr+findingsCount dual shape.
+    // paper only — {@link unusableResidualOpenCountPaper} (kind:"reviewer").
     return {
       kind: "completed",
       output: unusableResidualOpenCountPaper(),
@@ -3911,8 +3911,9 @@ function classifyCmrOutcomePayload(
 
   // #919 E: residual open-count / legacy cmr paper is BOUNDARY-ONLY transport.
   // Typed judge failed above → never treat open-count as live fate. Residual
-  // cargo rides as kind:verdict; cmrOutcomeToWorkerResult maps it to unusable
-  // kind:cmr (never mint continue from findingsCount).
+  // cargo rides as kind:verdict; cmrOutcomeToWorkerResult maps it to
+  // {@link unusableResidualOpenCountPaper} (kind:"reviewer"+findingsCount:0) —
+  // never mint continue from findingsCount; never dual kind:"cmr" unusable.
   return residualCmrVerdictCargo(normalizedParsed);
 }
 
@@ -4141,31 +4142,11 @@ const mergerResolvedSchema = z
   .strict();
 
 /**
- * Parse the merger agent's `<merger>{…}</merger>` outcome from its stdout (the
- * shape in prompts/merger_resolve_conflict.md). Pure so it is unit-tested without
- * a container. Returns whether it resolved + an optional escalate reason.
- *
- * The decision bell is an independent existence probe, so malformed sibling cargo
- * cannot turn a worker-pressed gate into a mechanical conflict retry. Resolved cargo
- * remains strict. Only the LAST `<merger>` tag is read (the agent may iterate).
+ * Resolve-cargo only (no decision-gate dual). Escalate fate is the T2 merger
+ * station receipt via {@link mergerOutcomeFromResult} / decodeMergerEnvelope
+ * (#919 CR N1). Callers that still hold raw stdout must strip escalate first
+ * (see {@link classifyMergerCargoOnly}).
  */
-export function parseMergerOutcome(stdout: string): {
-  resolved: boolean;
-  reason?: string;
-} {
-  const body = extractLastTagBody(stdout, "merger");
-  if (body === undefined) {
-    return { resolved: false, reason: "merger agent emitted no <merger> tag" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body.trim());
-  } catch {
-    return { resolved: false, reason: "merger agent <merger> tag was not valid JSON" };
-  }
-  return classifyMergerOutcomePayload(parsed, "merger agent <merger> tag");
-}
-
 function classifyMergerOutcomePayload(
   parsed: unknown,
   source: string,
@@ -4175,19 +4156,6 @@ function classifyMergerOutcomePayload(
   // we never treat an array payload as merger cargo (agy R1 / gemini R1).
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { resolved: false, reason: `${source} was not a JSON object` };
-  }
-  const gate = classifyDecisionGate(parsed, "merger");
-  if (gate.kind === "bell") {
-    return {
-      resolved: false,
-      reason: gate.reason,
-      escalation: {
-        reason: gate.reason,
-        diagnosis: gate.diagnosis,
-        escalationKind: "decision",
-        phase: "wave",
-      },
-    };
   }
   if (mergerResolvedSchema.safeParse(parsed).success) {
     return { resolved: true };
@@ -4313,24 +4281,9 @@ function parseOutcomePayload(
   }
 }
 
-type ReceiptDecisionBell = {
-  readonly kind: "escalate";
-  readonly escalation: { readonly reason: string; readonly diagnosis: string };
-};
-
 type ReceiptCargo = { readonly kind: "cargo" };
 
 const RECEIPT_CARGO: ReceiptCargo = { kind: "cargo" };
-
-function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
-  const gate = classifyDecisionGate(parsed, "review-loop");
-  return gate.kind === "bell"
-    ? {
-        kind: "escalate",
-        escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
-      }
-    : undefined;
-}
 
 /**
  * Role-native opaque-miss cargo after a clean process + typed no-gate decision
@@ -4358,7 +4311,7 @@ function sparseReviewLoopCompleted(
 /**
  * Cargo-only review-loop result. Escalate is never admitted from sidecar/stdout
  * — those transports enrich delivery cargo only (#899). Fate comes solely from
- * the dedicated decision-gate Output.object handled by the caller.
+ * the T2 onlineReview station receipt handled by the caller (#919 CR N1).
  */
 function reviewLoopCargoResult(
   stdout: string,
@@ -4391,24 +4344,26 @@ function reviewLoopCargoResult(
         : kind === "cleanup"
           ? parseCleanupOutcome(cargoStdout)
           : parseDocReleaseOutcome(cargoStdout);
-  if (parsed.kind === "escalate" || parsed.kind === "cargo") {
-    // After escalate strip, remaining off-shape paper is opaque miss cargo —
-    // complete the Action; do not re-open cargo shape as a #598 channel.
+  if (parsed.kind === "cargo") {
+    // Off-shape paper is opaque miss cargo — complete the Action; do not
+    // re-open cargo shape as a #598 channel.
     return sparseReviewLoopCompleted(kind, sessionId);
   }
   return { kind: "completed", output: parsed, sessionId };
 }
 
+/**
+ * #919 CR N1: cargo-only decode. Fate bells live on the T2 onlineReview
+ * envelope (decodeOnlineReviewEnvelope); never probe classifyDecisionGate here.
+ */
 export function parseVerifyOutcome(
   stdout: string,
   outcomePath?: string,
-): VerifyResult | ReceiptDecisionBell | ReceiptCargo {
+): VerifyResult | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "verify", outcomePath);
   if ("error" in payload || !isJsonRecord(payload.parsed)) return RECEIPT_CARGO;
   const parsed = normalizeFindingFamiliesWireAliases(payload.parsed);
   if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
-  const decisionBell = receiptDecisionBell(parsed);
-  if (decisionBell !== undefined) return decisionBell;
   if (typeof parsed.converged !== "boolean") return RECEIPT_CARGO;
   const stringArray = (value: unknown): value is string[] =>
     Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -4466,13 +4421,11 @@ export function parseVerifyOutcome(
 export function parseFixerOutcome(
   stdout: string,
   outcomePath?: string,
-): FixerResult | ReceiptDecisionBell | ReceiptCargo {
+): FixerResult | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "fixer", outcomePath);
   if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
   if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
-  const decisionBell = receiptDecisionBell(parsed);
-  if (decisionBell !== undefined) return decisionBell;
   if (typeof parsed.committed !== "boolean") return RECEIPT_CARGO;
   const candidate: FixerResult = {
     kind: "fixer",
@@ -4490,13 +4443,11 @@ export function parseFixerOutcome(
 export function parseCleanupOutcome(
   stdout: string,
   outcomePath?: string,
-): CleanupResult | ReceiptDecisionBell | ReceiptCargo {
+): CleanupResult | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "cleanup", outcomePath);
   if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
   if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
-  const decisionBell = receiptDecisionBell(parsed);
-  if (decisionBell !== undefined) return decisionBell;
   if (typeof parsed.terminal !== "boolean" || typeof parsed.ok !== "boolean") {
     return RECEIPT_CARGO;
   }
@@ -4535,13 +4486,11 @@ export function parseCleanupOutcome(
 export function parseDocReleaseOutcome(
   stdout: string,
   outcomePath?: string,
-): DocReleaseResult | ReceiptDecisionBell | ReceiptCargo {
+): DocReleaseResult | ReceiptCargo {
   const payload = parseOutcomePayload(stdout, "docRelease", outcomePath);
   if ("error" in payload) return RECEIPT_CARGO;
   const parsed = payload.parsed;
   if (!isJsonRecord(parsed)) return RECEIPT_CARGO;
-  const decisionBell = receiptDecisionBell(parsed);
-  if (decisionBell !== undefined) return decisionBell;
   if (typeof parsed.released !== "boolean") return RECEIPT_CARGO;
   const candidate: DocReleaseResult = { kind: "docRelease", released: parsed.released };
   return candidate;

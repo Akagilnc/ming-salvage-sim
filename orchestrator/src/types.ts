@@ -1076,6 +1076,11 @@ export type ReviewerResult = ReviewerOutput;
  * #930: family court **traffic** is {@link JudgeResult} tri-state only;
  * this shape is residual cargo / legacy fixtures. Topology must not close
  * a court by reading findingsCount (second open-count closer deleted).
+ *
+ * @deprecated #919 CR N3 — production residual fail-loud is
+ * {@link unusableResidualOpenCountPaper} (`kind:"reviewer"+findingsCount:0`);
+ * live court traffic is {@link JudgeResult}. Prefer those over minting
+ * `kind:"cmr"`. Retained only for residual fixture / ledger width.
  */
 export interface CmrResult {
   readonly kind: "cmr";

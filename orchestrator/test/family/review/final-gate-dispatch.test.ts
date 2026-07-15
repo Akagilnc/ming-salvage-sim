@@ -108,33 +108,29 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     if (spec.kind === "cmr") {
-      // Test-fake: promote boolean green → kind:judge; residual positive → continue.
-      const res = await legacyDispatchFamilyWorker(this, spec, ctx);
-      if (res.kind !== "completed") return res;
-      // Re-map residual kind:cmr paper through the shared test helper so green
-      // boolean scripts become live judge traffic (production never does this).
-      if (res.output.kind === "cmr") {
-        const { kind: _k, ...rest } = res.output as {
-          kind: "cmr";
-          converged?: boolean;
-          findingsCount?: number;
-          reason?: string;
-          findings?: IntegratedCmrResult["findings"];
-          successfulLegs?: readonly string[];
-          skippedLegs?: IntegratedCmrResult["skippedLegs"];
-          claimedFixedFindingIdentityKeys?: readonly string[];
-          priorFindingDispositions?: IntegratedCmrResult["priorFindingDispositions"];
-          evidencePaths?: readonly string[];
-        };
-        return {
-          kind: "completed",
-          output: legacyCmrScriptToWorkerOutput({
-            converged: rest.converged ?? false,
-            ...rest,
-          }),
-        };
+      // #919 CR N2/N3: production residual is unusableResidualOpenCountPaper
+      // (kind:reviewer). Test-fake maps IntegratedCmrResult script intent to
+      // live kind:judge via legacyCmrScriptToWorkerOutput (production never
+      // re-opens residual open-count as a closer).
+      const familyBase = ctx.familyBase;
+      if (familyBase === undefined) {
+        throw new Error("CapableFamilyBackend: cmr requires ctx.familyBase");
       }
-      return res;
+      const cmr = await this.runIntegratedCmr({
+        familyBase,
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+        ...(ctx.llmResolvedChildren !== undefined &&
+        ctx.llmResolvedChildren.length > 0
+          ? { llmResolvedChildren: ctx.llmResolvedChildren }
+          : {}),
+        ...(ctx.escalationAnswer !== undefined
+          ? { escalationAnswer: ctx.escalationAnswer }
+          : {}),
+      });
+      return {
+        kind: "completed",
+        output: legacyCmrScriptToWorkerOutput(cmr),
+      };
     }
     if (spec.kind === "ship") {
       const familyBase = ctx.familyBase!;
@@ -962,21 +958,22 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
 });
 
 describe("#331 legacyDispatchFamilyWorker — wraps the legacy CMR return as WorkerResult", () => {
-  it("cmr worker: residual red is completed kind:cmr unusable paper (NOT failed / NOT continue) (#919 E)", async () => {
+  it("cmr worker: residual red is completed unusableResidualOpenCountPaper (NOT failed / NOT continue) (#919 E / CR N2)", async () => {
     const be = new CapableFamilyBackend();
     be.cmrConverged = false;
     const res = await legacyDispatchFamilyWorker(be, cmrWorkerSpec(), {
       familyBase: "fb",
     });
-    // #919 E: residual IntegratedCmrResult never mints judge continue via
-    // findingsCount. Completed residual kind:cmr paper is court-unusable;
-    // live continue is typed kind:judge only.
+    // #919 E / CR S1: residual IntegratedCmrResult never mints judge continue.
+    // One shared unusable paper (kind:"reviewer"+findingsCount:0) only.
     expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "cmr") {
-      expect(res.output.findingsCount).toBe(1);
-      expect(res.output.converged).toBe(false);
+    if (res.kind === "completed" && res.output.kind === "reviewer") {
+      expect(res.output.findingsCount).toBe(0);
+      expect(res.output.findings).toEqual([]);
     } else {
-      throw new Error("expected completed residual kind:cmr paper");
+      throw new Error(
+        "expected completed unusableResidualOpenCountPaper (kind:reviewer)",
+      );
     }
   });
 
