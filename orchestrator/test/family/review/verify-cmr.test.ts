@@ -23,10 +23,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
-import {
-  legacyDispatchFamilyWorker,
-  residualIntegratedCmrToJudgeOutput,
-} from "../../../src/family/dispatchFamilyWorker.js";
+import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
 import { MAX_DISPATCH_ATTEMPTS } from "../../../src/dispatchRetry.js";
 import { activeModelRoute, modelRouteFingerprint } from "../../../src/modelRoutes.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
@@ -54,27 +51,16 @@ import {
   liveCmrJudgeContinue,
   legacyCmrScriptToWorkerOutput,
 } from "../../helpers/judge-fixtures.js";
+import { unusableResidualOpenCountPaper } from "../../../src/judgeStation.js";
 
 /**
- * Test-fake boundary (#919 E / R7): scripts may declare positive findingsCount
- * as continue intent — mint **live** kind:judge continue here (not production
- * residual projection; residualIntegratedCmrToJudgeOutput is always undefined).
+ * Test-fake boundary (#919 E / R7 / CR N2): scripts may declare positive
+ * findingsCount as continue intent — mint **live** kind:judge continue here.
+ * Production residual is {@link unusableResidualOpenCountPaper} only.
  */
-function cmrScriptToWorkerOutput(cmr: IntegratedCmrResult): JudgeResult | {
-  readonly kind: "cmr";
-  readonly converged: boolean;
-  readonly findingsCount?: number;
-  readonly reason?: string;
-  readonly findings?: ReadonlyArray<Finding>;
-  readonly successfulLegs?: ReadonlyArray<string>;
-  readonly skippedLegs?: IntegratedCmrResult["skippedLegs"];
-  readonly claimedFixedFindingIdentityKeys?: ReadonlyArray<string>;
-  readonly priorFindingDispositions?: IntegratedCmrResult["priorFindingDispositions"];
-  readonly findingFamilies?: IntegratedCmrResult["findingFamilies"];
-  readonly evidencePaths?: ReadonlyArray<string>;
-} {
-  // Shared fake boundary — production residual projector never mints continue.
-  void residualIntegratedCmrToJudgeOutput(cmr);
+function cmrScriptToWorkerOutput(
+  cmr: IntegratedCmrResult,
+): JudgeResult | ReturnType<typeof unusableResidualOpenCountPaper> {
   return legacyCmrScriptToWorkerOutput(cmr);
 }
 

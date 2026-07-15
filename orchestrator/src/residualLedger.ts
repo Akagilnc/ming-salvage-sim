@@ -55,6 +55,11 @@ export function reviewerRawArtifactPointers(
 /**
  * Historical residual open-set projection (pre-#925 open-count paper).
  *
+ * **Single-slice crash/resume only** (#919 CR N4). Not a live court closer and
+ * never a family production path. Positive residual count may project continue
+ * solely so historical ledgers rebuild the open set for fixer redispatch —
+ * live seats mint typed `kind:"judge"` instead.
+ *
  * Shared by the S4-attached residual arm and the pre-S4 crash residual arm in
  * {@link rebuildBlockingFromLedger}. Cargo keeps raw findings + declared count
  * with empty identity keys (lossless vs inventing `__open_N`); raw artifacts

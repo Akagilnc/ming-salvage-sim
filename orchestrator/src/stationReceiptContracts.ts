@@ -27,10 +27,12 @@
  *
  * ## Stations colocated here (no parallel contract directory)
  *
- * `judge` | `coder` | `coderFix` | `familyCoderFix` | `ship`
+ * `judge` | `coder` | `coderFix` | `familyCoderFix` | `ship` |
+ * `merger` | `onlineReview`
  *
  * Shared traffic fields: `station`, `status`, optional `cargoPointer`.
  * Per-station extras stay on the same thin envelope (e.g. refuse keys, advanceCoder).
+ * Thin gate seats (merger / onlineReview): completed | escalate only.
  */
 
 import { z } from "zod";
@@ -118,6 +120,8 @@ export const STATION_IDS = [
   "coderFix",
   "familyCoderFix",
   "ship",
+  "merger",
+  "onlineReview",
 ] as const;
 
 export type StationId = (typeof STATION_IDS)[number];
@@ -780,12 +784,209 @@ export function decodeShipEnvelope(
   return ok(parsed.data);
 }
 
+// ─── Thin gate stations (merger / onlineReview) ──────────────────────────────
+// ADR 0132: completed | escalate only. No rich cargo on the envelope.
+// Resolve / role cargo rides sidecar; fate is this thin T2 receipt.
+
+/** Sandcastle Output.object tag for the merger station receipt. */
+export const MERGER_RECEIPT_TAG = "merger";
+
+/** Sandcastle Output.object tag for family online-review-loop gate seats. */
+export const ONLINE_REVIEW_RECEIPT_TAG = "onlineReview";
+
+export type ThinGateStationId = "merger" | "onlineReview";
+
+interface ThinGateEnvelopeBase {
+  readonly cargoPointer?: string;
+}
+
+export interface MergerCompletedEnvelope extends ThinGateEnvelopeBase {
+  readonly station: "merger";
+  readonly status: "completed";
+}
+
+export interface MergerEscalateEnvelope extends ThinGateEnvelopeBase {
+  readonly station: "merger";
+  readonly status: "escalate";
+  readonly reason: string;
+  readonly diagnosis: string;
+}
+
+export type MergerStationEnvelope =
+  | MergerCompletedEnvelope
+  | MergerEscalateEnvelope;
+
+export interface OnlineReviewCompletedEnvelope extends ThinGateEnvelopeBase {
+  readonly station: "onlineReview";
+  readonly status: "completed";
+}
+
+export interface OnlineReviewEscalateEnvelope extends ThinGateEnvelopeBase {
+  readonly station: "onlineReview";
+  readonly status: "escalate";
+  readonly reason: string;
+  readonly diagnosis: string;
+}
+
+export type OnlineReviewStationEnvelope =
+  | OnlineReviewCompletedEnvelope
+  | OnlineReviewEscalateEnvelope;
+
+export type ThinGateStationEnvelope =
+  | MergerStationEnvelope
+  | OnlineReviewStationEnvelope;
+
+const THIN_GATE_TRAFFIC_KEYS = [
+  "station",
+  "status",
+  "cargoPointer",
+  "reason",
+  "diagnosis",
+] as const;
+
+function thinGateEnvelopeSchema(
+  station: ThinGateStationId,
+): z.ZodType<ThinGateStationEnvelope> {
+  const completed = z
+    .object({
+      station: z.literal(station),
+      status: z.literal("completed"),
+      cargoPointer: cargoPointerSchema,
+    })
+    .strict();
+  const escalate = z
+    .object({
+      station: z.literal(station),
+      status: z.literal("escalate"),
+      reason: nonEmptyString,
+      diagnosis: nonEmptyString,
+      cargoPointer: cargoPointerSchema,
+    })
+    .strict();
+  return z.discriminatedUnion("status", [completed, escalate]) as z.ZodType<
+    ThinGateStationEnvelope
+  >;
+}
+
+const mergerEnvelopeSchema = thinGateEnvelopeSchema("merger");
+const onlineReviewEnvelopeSchema = thinGateEnvelopeSchema("onlineReview");
+
+/**
+ * Production SO schema for the merger station receipt (completed | escalate).
+ * Resolve cargo stays sidecar outside SO.
+ */
+export function mergerStationReceiptSchema(): z.ZodType {
+  const completed = z
+    .object({
+      station: z.literal("merger"),
+      status: z.literal("completed"),
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough();
+  const escalate = z
+    .object({
+      station: z.literal("merger"),
+      status: z.literal("escalate"),
+      reason: nonEmptyString,
+      diagnosis: nonEmptyString,
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough();
+  return z.union([completed, escalate]);
+}
+
+/**
+ * Production SO schema for family online-review-loop gate seats
+ * (verify / fixer / cleanup / docRelease). Role cargo stays sidecar.
+ */
+export function onlineReviewStationReceiptSchema(): z.ZodType {
+  const completed = z
+    .object({
+      station: z.literal("onlineReview"),
+      status: z.literal("completed"),
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough();
+  const escalate = z
+    .object({
+      station: z.literal("onlineReview"),
+      status: z.literal("escalate"),
+      reason: nonEmptyString,
+      diagnosis: nonEmptyString,
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough();
+  return z.union([completed, escalate]);
+}
+
+function pickThinGateTraffic(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const traffic: Record<string, unknown> = {};
+  for (const key of THIN_GATE_TRAFFIC_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      traffic[key] = record[key];
+    }
+  }
+  return traffic;
+}
+
+/** Encode a validated merger envelope into its canonical JSON shape. */
+export function encodeMergerEnvelope(
+  envelope: MergerStationEnvelope,
+): MergerStationEnvelope {
+  return cloneJson(envelope);
+}
+
+/** Decode + validate a merger station envelope. Never throws on bad shape. */
+export function decodeMergerEnvelope(
+  raw: unknown,
+): ContractResult<MergerStationEnvelope> {
+  const record = asRecord(raw);
+  if (!record.ok) return record;
+  const banned = rejectBannedEnvelopeVocabulary(record.value);
+  if (!banned.ok) return banned;
+  const parsed = mergerEnvelopeSchema.safeParse(
+    pickThinGateTraffic(record.value),
+  );
+  if (!parsed.success) {
+    return zodFail("merger envelope", parsed.error);
+  }
+  return ok(parsed.data as MergerStationEnvelope);
+}
+
+/** Encode a validated online-review envelope into its canonical JSON shape. */
+export function encodeOnlineReviewEnvelope(
+  envelope: OnlineReviewStationEnvelope,
+): OnlineReviewStationEnvelope {
+  return cloneJson(envelope);
+}
+
+/** Decode + validate an online-review station envelope. Never throws on bad shape. */
+export function decodeOnlineReviewEnvelope(
+  raw: unknown,
+): ContractResult<OnlineReviewStationEnvelope> {
+  const record = asRecord(raw);
+  if (!record.ok) return record;
+  const banned = rejectBannedEnvelopeVocabulary(record.value);
+  if (!banned.ok) return banned;
+  const parsed = onlineReviewEnvelopeSchema.safeParse(
+    pickThinGateTraffic(record.value),
+  );
+  if (!parsed.success) {
+    return zodFail("onlineReview envelope", parsed.error);
+  }
+  return ok(parsed.data as OnlineReviewStationEnvelope);
+}
+
 // ─── Unified station decode ──────────────────────────────────────────────────
 
 export type StationEnvelope =
   | JudgeVerdict
   | CoderStationEnvelope
-  | ShipStationEnvelope;
+  | ShipStationEnvelope
+  | MergerStationEnvelope
+  | OnlineReviewStationEnvelope;
 
 /**
  * Decode any full-wave station completion envelope by `station` discriminator.
@@ -809,6 +1010,8 @@ export function decodeStationEnvelope(
     return decodeCoderEnvelope(record.value);
   }
   if (station === "ship") return decodeShipEnvelope(record.value);
+  if (station === "merger") return decodeMergerEnvelope(record.value);
+  if (station === "onlineReview") return decodeOnlineReviewEnvelope(record.value);
   return fail(
     `unknown station (expected ${STATION_IDS.join("|")}): ${String(station)}`,
   );
