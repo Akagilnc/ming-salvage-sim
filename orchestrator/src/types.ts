@@ -325,9 +325,10 @@ export type EscalationKind = "decision" | "failure";
  * Minimal JSONL shape for recording the answer:
  * `{ "step":"S4", "event":"escalation_answered", "forStep":"S4", "answer":"..." }`
  * If the answer means "continue fixing" after an S4 no-progress decision, it is
- * executable only when it also carries `findingIdentityKey` or a `findingScope`
- * that matches the active finding; unscoped continue answers stay paused rather
- * than guessing which finding to reopen.
+ * executable only when it also carries an explicit `findingIdentityKey` or a
+ * non-empty `findingScope` (opaque transport to the fixer). Runner does not
+ * match scope against findings cargo (#899 / ADR 0131); unscoped continue
+ * answers stay paused rather than guessing which finding to reopen.
  *
  * It intentionally remains a ledger row, not an edit to the prior S8 boundary.
  */
@@ -352,11 +353,17 @@ export interface EscalationAnswerEvent extends EscalationAnswerPayload {
 
 /** Scope carried by runner bookkeeping events that target active findings. */
 export interface FindingRepairScope {
-  /** Exact runner identity keys for the finding lineage, when available. */
+  /** Exact identity keys for the finding lineage, when available. */
   readonly identityKeys?: ReadonlyArray<string>;
-  /** Broader path/location scope; only used when it maps to one active finding. */
+  /**
+   * Broader path/location scope. Opaque transport for the fixer — runner does
+   * not match this against findings cargo (#899 / ADR 0131).
+   */
   readonly locations?: ReadonlyArray<string>;
-  /** Broader category scope; only used when it maps to one active finding. */
+  /**
+   * Broader category scope. Opaque transport for the fixer — runner does not
+   * match this against findings cargo (#899 / ADR 0131).
+   */
   readonly categories?: ReadonlyArray<string>;
   /** Optional durable grouping label from a review thread / finding group. */
   readonly findingGroup?: string;
@@ -756,7 +763,8 @@ export interface WorkerLandingPayload {
     readonly branch: string;
     readonly pr?: string;
     readonly prHead?: string;
-    readonly status: string;
+    /** Opaque cargo when present; never required for process success (#899). */
+    readonly status?: string;
   };
   /** 1-based family online review round (runner-enforced cap). */
   readonly onlineReviewRound?: number;
@@ -993,8 +1001,13 @@ export interface ShipResult {
   readonly pr?: string;
   /** The PR head commit SHA/OID verified by the host, when available. */
   readonly prHead?: string;
-  /** A short status string (e.g. "pushed" | "pr_opened"). Values: #336. */
-  readonly status: string;
+  /**
+   * Opaque delivery status token from worker cargo when present
+   * (e.g. "pushed" | "pr_opened"). Optional — missing cargo status must not
+   * be synthesized into process fate (#899 / ADR 0131). Clean exit alone is
+   * success; status is presentation cargo only.
+   */
+  readonly status?: string;
   /** Nonblocking ship-side review degradation metadata, if gstack-ship reports it. */
   readonly degradedReviews?: ReadonlyArray<ProviderDegradationSummary>;
   // NOTE: a ship worker that STOPS for a human (gstack-ship STOP/HITL) is the

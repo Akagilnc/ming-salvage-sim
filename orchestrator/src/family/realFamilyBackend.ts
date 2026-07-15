@@ -2657,13 +2657,13 @@ export class RealFamilyBackend implements FamilyBackend {
     // Clean exit (exit 0): process success regardless of cargo richness.
     // Missing / off-shape delivery cargo must NOT become a coder no-commit
     // report — that re-opens cargo as a fourth fate channel (#899 / ADR 0131).
+    // Cargo fields are transported as-is; status is never synthesized.
     if (outcome.kind === "completed") {
       return {
         kind: "completed",
         output: {
           kind: "ship",
           branch: ctx.familyBase,
-          status: "completed",
         },
       };
     }
@@ -2672,7 +2672,7 @@ export class RealFamilyBackend implements FamilyBackend {
       output: {
         kind: "ship",
         branch: outcome.branch ?? ctx.familyBase,
-        status: outcome.status,
+        ...(outcome.status !== undefined ? { status: outcome.status } : {}),
         ...(outcome.pr !== undefined ? { pr: outcome.pr } : {}),
       },
     };

@@ -2232,7 +2232,7 @@ export async function runVerifyCmr(
   const ship: ShipResult =
     shipResult.kind === "completed" && shipResult.output?.kind === "ship"
       ? shipResult.output
-      : { kind: "ship", branch: familyBase, status: "completed" };
+      : { kind: "ship", branch: familyBase };
   const shipPr =
     isFilledString(ship.pr)
       ? ship.pr

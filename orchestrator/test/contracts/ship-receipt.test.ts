@@ -462,7 +462,8 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     });
   });
 
-  it("branch/pr alone still enrich delivery without inventing a status court", () => {
+  it("branch/pr alone still enrich delivery without inventing a status token", () => {
+    // #899: opaque cargo — missing status stays missing; never synthesize.
     const dir = mkdtempSync(join(tmpdir(), "ship-branch-only-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -479,7 +480,6 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       }),
     ).toEqual({
       kind: "shipped",
-      status: "completed",
       branch: "feat/branch-only",
       pr: "https://gh/pr/1",
     });

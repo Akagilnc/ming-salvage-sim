@@ -40,7 +40,7 @@ import {
   reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
-import { findingIdentityKeys, opaqueFindingsCargo } from "./findings.js";
+import { opaqueFindingsCargo } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY child worker step (S2/S3/S5/S6) through ONE free function
 // instead of reaching for runStep/resumeSession directly.
@@ -752,10 +752,6 @@ function latestAnswerAfter(
   return undefined;
 }
 
-function normaliseScopePart(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 function isBookkeepingSource(
   value: unknown,
 ): value is ContinueFixingEvent["source"] {
@@ -804,83 +800,6 @@ function isFindingRepairScope(
   );
 }
 
-function stripLocationLine(value: string): string {
-  const withoutLineColumn = value
-    .trim()
-    .replace(/:\d+(?::\d+)?(?::[^:/\\]+)?$/, "");
-  const withoutSymbol = withoutLineColumn.replace(/:[^:/\\]+$/, "").trim();
-  if (/^[A-Za-z]$/.test(withoutSymbol) && /^[A-Za-z]:$/.test(withoutLineColumn)) {
-    return `${withoutSymbol}:`;
-  }
-  return withoutSymbol;
-}
-
-function locationScopeMatches(scope: string, location: string): boolean {
-  const normalisedScope = normaliseScopePart(stripLocationLine(scope));
-  const normalisedLocation = normaliseScopePart(location);
-  const normalisedLocationPath = normaliseScopePart(stripLocationLine(location));
-  if (
-    normalisedScope === normalisedLocation ||
-    normalisedScope === normalisedLocationPath
-  ) {
-    return true;
-  }
-  return (
-    normalisedLocationPath.startsWith(`${normalisedScope}/`) ||
-    normalisedLocationPath.endsWith(`/${normalisedScope}`) ||
-    normalisedLocationPath.includes(`/${normalisedScope}/`)
-  );
-}
-
-function textScopeMatches(scope: string, values: ReadonlyArray<string>): boolean {
-  const normalisedScope = normaliseScopePart(scope);
-  return values.some((value) => normaliseScopePart(value) === normalisedScope);
-}
-
-function findingMatchesBroadScope(
-  finding: Finding,
-  key: string,
-  scope: NonNullable<ContinueFixingEvent["findingScope"]>,
-): boolean {
-  const locationScopes = scope.locations ?? [];
-  const categoryScopes = scope.categories ?? [];
-  const groupScope = scope.findingGroup;
-  const contextScope = scope.reviewContext;
-  const featureScope = scope.featureArea;
-  const textualValues = [finding.category, finding.claim_quote, key];
-
-  const locationMatches =
-    locationScopes.length === 0 ||
-    locationScopes.some((location) =>
-      locationScopeMatches(location, finding.location),
-    );
-  const categoryMatches =
-    categoryScopes.length === 0 ||
-    categoryScopes.some((category) =>
-      textScopeMatches(category, [finding.category]),
-    );
-  const groupMatches =
-    groupScope === undefined ||
-    locationScopeMatches(groupScope, finding.location) ||
-    textScopeMatches(groupScope, textualValues);
-  const contextMatches =
-    contextScope === undefined ||
-    locationScopeMatches(contextScope, finding.location) ||
-    textScopeMatches(contextScope, textualValues);
-  const featureMatches =
-    featureScope === undefined ||
-    locationScopeMatches(featureScope, finding.location) ||
-    textScopeMatches(featureScope, textualValues);
-
-  return (
-    locationMatches &&
-    categoryMatches &&
-    groupMatches &&
-    contextMatches &&
-    featureMatches
-  );
-}
-
 function isContinueFixingEntry(
   entry: LedgerEntry,
 ): entry is LedgerEntry & ContinueFixingEvent {
@@ -911,42 +830,39 @@ function answerMapsToContinueFixing(answer: EscalationAnswerEvent): boolean {
   );
 }
 
-function matchingContinueFixingKeys(
+/**
+ * Explicit identity keys written on the human continue-fixing signal.
+ * Never derived from findings cargo (ADR 0131 / #899).
+ */
+function explicitContinueFixingKeys(
   event: ContinueFixingEvent,
-  activeFindings: ReadonlyArray<Finding>,
-  activeIdentityKeys: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
-  const exactKeys = new Set<string>();
+  const keys: string[] = [];
   const addKey = (key: string | undefined) => {
-    if (key !== undefined && key.trim().length > 0) exactKeys.add(key);
+    if (key !== undefined && key.trim().length > 0) keys.push(key);
   };
   addKey(event.findingIdentityKey);
   for (const key of event.findingScope?.identityKeys ?? []) addKey(key);
+  return keys;
+}
 
-  const exactMatches = activeIdentityKeys.filter((key) => exactKeys.has(key));
-  if (exactMatches.length > 0) return exactMatches;
-
+/**
+ * Whether the human continue-fixing event carries an actionable explicit
+ * signal (exact identity key and/or non-empty findingScope fields). Runner
+ * does NOT match that signal against findings cargo — scope filtering is the
+ * fixer's job (#899 / ADR 0131).
+ */
+function hasContinueFixingSignal(event: ContinueFixingEvent): boolean {
+  if (explicitContinueFixingKeys(event).length > 0) return true;
   const scope = event.findingScope;
-  if (scope === undefined) return [];
-  const hasBroadScope =
+  if (scope === undefined) return false;
+  return (
     (scope.locations?.length ?? 0) > 0 ||
     (scope.categories?.length ?? 0) > 0 ||
     (scope.findingGroup?.trim().length ?? 0) > 0 ||
     (scope.reviewContext?.trim().length ?? 0) > 0 ||
-    (scope.featureArea?.trim().length ?? 0) > 0;
-  if (!hasBroadScope) return [];
-
-  const broadMatches = activeFindings
-    .map((finding, index) => ({ finding, key: activeIdentityKeys[index] }))
-    .filter(({ finding, key }) => {
-      if (key === undefined) return false;
-      return findingMatchesBroadScope(finding, key, scope);
-    })
-    .map(({ key }) => key!);
-
-  // Broad module/file scopes must not reset sibling findings together. Without
-  // a durable exact identity/group key, only a single active match is safe.
-  return broadMatches.length === 1 ? broadMatches : [];
+    (scope.featureArea?.trim().length ?? 0) > 0
+  );
 }
 
 export function normalizeGitOutputLines(output: string): string[] {
@@ -1075,29 +991,30 @@ interface ContinueFixingRepair {
 
 function continueRepairFromEvent(
   event: ContinueFixingEvent,
-  replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
+  openCount: number,
 ): ContinueFixingRepair | undefined {
-  // Keys for human-scope matching are derived from opaque findings cargo at
-  // the bookkeeping edge — not stored as a runner-owned identity court.
-  const matchingIdentityKeys = matchingContinueFixingKeys(
+  // Explicit human signal only. Do not read findings cargo or derive identity
+  // keys here — landing/fixer owns cargo identity materialization (#899).
+  if (!hasContinueFixingSignal(event)) return undefined;
+  // Channel (b): reopen only when the reviewer declared open findings.
+  // Disposition prose / cargo-row key matching is not a runner court (#877/#899).
+  if (openCount <= 0) return undefined;
+  return {
     event,
-    replay.blocking,
-    findingIdentityKeys(replay.blocking),
-  );
-  if (matchingIdentityKeys.length === 0) return undefined;
-  return { event, matchingIdentityKeys };
+    matchingIdentityKeys: explicitContinueFixingKeys(event),
+  };
 }
 
 function continueRepairFromAnswer(
   answer: EscalationAnswerEvent | undefined,
-  replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
+  openCount: number,
 ): ContinueFixingRepair | undefined {
   if (answer === undefined || !answerMapsToContinueFixing(answer)) {
     return undefined;
   }
   const source = answer.source;
   if (!isExecutableEscalationAnswerSource(source)) return undefined;
-  const matchingIdentityKeys = matchingContinueFixingKeys(
+  return continueRepairFromEvent(
     {
       event: "runner_bookkeeping",
       intent: "continue_fixing",
@@ -1110,22 +1027,19 @@ function continueRepairFromAnswer(
         ? { findingScope: answer.findingScope }
         : {}),
     },
-    replay.blocking,
-    findingIdentityKeys(replay.blocking),
+    openCount,
   );
-  if (matchingIdentityKeys.length === 0) return undefined;
-  return { event: answer, matchingIdentityKeys };
 }
 
 function latestContinueFixingAfter(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
   index: number,
-  replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
+  openCount: number,
 ): ContinueFixingRepair | undefined {
   for (let i = ledger.length - 1; i > index; i--) {
     const entry = ledger[i]!;
     if (!isContinueFixingEntry(entry)) continue;
-    const repair = continueRepairFromEvent(entry, replay);
+    const repair = continueRepairFromEvent(entry, openCount);
     if (repair !== undefined) return repair;
   }
   return undefined;
@@ -1369,9 +1283,16 @@ function planResume(
     const continueFixingRepair =
       decisionStep === "S4"
         ? repairIntent !== undefined
-          ? continueRepairFromEvent(repairIntent, replayedS4)
-          : latestContinueFixingAfter(ledger, lastEntryIndex, replayedS4) ??
-            continueRepairFromAnswer(answer, replayedS4)
+          ? continueRepairFromEvent(
+              repairIntent,
+              replayedS4.blockingFindingCount,
+            )
+          : latestContinueFixingAfter(
+              ledger,
+              lastEntryIndex,
+              replayedS4.blockingFindingCount,
+            ) ??
+            continueRepairFromAnswer(answer, replayedS4.blockingFindingCount)
         : undefined;
     if (
       decisionStep === undefined ||
