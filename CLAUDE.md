@@ -81,9 +81,7 @@ hermes proxy 当 OpenAI 兼容后端：`hermes proxy start --provider nous|xai`�
 ## Skill routing
 
 > **ADR 0030 已落地（#369）**：per-slice reviewer 与 fixer 必须角色分离，worker 只做自己的角色、不在单 session 内跨棒。编排器的准确接力顺序只读 #869。
-
 > **ADR 0062 摘要**：编排器 Runner 只读三信号（exit code / decision gate / reviewer 自报 open-count），不读卷面散文；`DELETE > patch` 是专业 reviewer / fixer 的 kill-axis，Runner 不读取或解释 finding 文本与 DELETE / patch 取舍。
-
 > Machine-executable routing for an agent working a slice in a worktree (esp. the orchestrator's in-container worker roles — ADR 0016 「现状缺口」, ADR 0026). The narrative `## 开发流程` above is for humans; THIS section is the in-container agent's routing table. Routing is by the task at hand, not by ceremony.
 
 When you are an agent assigned a single slice issue in this worktree, route by what the task is:
