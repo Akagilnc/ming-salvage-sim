@@ -3199,9 +3199,11 @@ export class RealBackend implements Backend {
       return judgeResultFromVerdict(envelope.value, findings);
     }
 
-    // Residual open-count paper (legacy fixtures / pre-#925 ledger replay):
-    // project to the sole judge form via shared residual→judge helper — never
-    // re-open a second open-count routing path (#919 CR U3).
+    // Residual open-count paper (legacy fixtures / pre-#925 ledger replay).
+    // #919 CR N4: single-slice historical residual only — positive count may
+    // project continue for resume compatibility. Live seats emit T2 kind:judge;
+    // family court never closes on residual open-count (unusable paper only).
+    // Never re-open a second open-count routing path (#919 CR U3).
     const openCount = decodeReviewerOpenCountReceipt(raw);
     if (openCount !== undefined) {
       const projected = projectResidualReviewerToJudge(openCount);

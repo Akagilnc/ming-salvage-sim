@@ -606,8 +606,8 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
           stdout: "<merger>{}</merger>",
           commits: [],
           iterations: [],
-          // Typed no-gate decision signal (SO was attached on this seat).
-          output: {},
+          // Typed T2 merger completed (SO was attached on this seat).
+          output: { station: "merger", status: "completed" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }

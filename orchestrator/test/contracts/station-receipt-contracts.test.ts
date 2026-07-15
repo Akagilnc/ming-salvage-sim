@@ -11,15 +11,21 @@ import {
   LEGAL_REFUSE_REASONS,
   decodeCoderEnvelope,
   decodeJudgeVerdict,
+  decodeMergerEnvelope,
+  decodeOnlineReviewEnvelope,
   decodeShipEnvelope,
   decodeStationEnvelope,
   encodeCoderEnvelope,
   encodeJudgeVerdict,
+  encodeMergerEnvelope,
+  encodeOnlineReviewEnvelope,
   encodeShipEnvelope,
   parseFindingDisposition,
   parseLegalRefuseReason,
   type CoderStationEnvelope,
   type JudgeVerdict,
+  type MergerStationEnvelope,
+  type OnlineReviewStationEnvelope,
   type ShipStationEnvelope,
 } from "../../src/stationReceiptContracts.js";
 
@@ -28,7 +34,7 @@ import {
 // 2. Finding disposition table (four legal reasons + evidence on kill rows)
 // 3. Coder refuse envelope (refused + identity keys + cargo pointer; no cargo body)
 // 4. Canonical refused* vocabulary (refuted* / dual fields rejected)
-// 5. Full-wave thin envelopes (judge / coder / coderFix / familyCoderFix / ship)
+// 5. Full-wave thin envelopes (judge / coder* / ship / merger / onlineReview)
 
 describe("#921 judge verdict three-state", () => {
   it.each([
@@ -519,12 +525,66 @@ describe("#921 full-wave station thin envelopes", () => {
 
   it("rejects unknown station (negative)", () => {
     const parsed = decodeStationEnvelope({
-      station: "merger",
+      station: "not-a-station",
       status: "completed",
     });
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) {
       expect(parsed.reason).toMatch(/station/i);
+    }
+  });
+
+  it("merger / onlineReview completed|escalate round-trip (positive)", () => {
+    const mergerDone: MergerStationEnvelope = {
+      station: "merger",
+      status: "completed",
+    };
+    const mergerEsc: MergerStationEnvelope = {
+      station: "merger",
+      status: "escalate",
+      reason: "product fork",
+      diagnosis: "both sides preserve distinct APIs",
+    };
+    expect(decodeMergerEnvelope(encodeMergerEnvelope(mergerDone))).toEqual({
+      ok: true,
+      value: mergerDone,
+    });
+    expect(decodeMergerEnvelope(encodeMergerEnvelope(mergerEsc))).toEqual({
+      ok: true,
+      value: mergerEsc,
+    });
+    expect(decodeStationEnvelope(mergerDone)).toEqual({
+      ok: true,
+      value: mergerDone,
+    });
+
+    const orDone: OnlineReviewStationEnvelope = {
+      station: "onlineReview",
+      status: "completed",
+    };
+    const orEsc: OnlineReviewStationEnvelope = {
+      station: "onlineReview",
+      status: "escalate",
+      reason: "owner choice",
+      diagnosis: "review contract fork",
+    };
+    expect(
+      decodeOnlineReviewEnvelope(encodeOnlineReviewEnvelope(orDone)),
+    ).toEqual({ ok: true, value: orDone });
+    expect(
+      decodeOnlineReviewEnvelope(encodeOnlineReviewEnvelope(orEsc)),
+    ).toEqual({ ok: true, value: orEsc });
+  });
+
+  it("rejects merger escalate without reason (negative)", () => {
+    const parsed = decodeMergerEnvelope({
+      station: "merger",
+      status: "escalate",
+      diagnosis: "x",
+    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.reason).toMatch(/reason/i);
     }
   });
 

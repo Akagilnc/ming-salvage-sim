@@ -315,7 +315,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
     expect(
       shipOutcomeFromResult({
-        output: {},
+        output: { station: "ship", status: "completed" },
         outcomePath,
         stdout: "",
       }),
@@ -413,7 +413,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
     expect(
       shipOutcomeFromResult({
-        output: {},
+        output: { station: "ship", status: "completed" },
         outcomePath,
         stdout: "",
       }),
@@ -441,7 +441,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
     expect(
       shipOutcomeFromResult({
-        output: {},
+        output: { station: "ship", status: "completed" },
         outcomePath,
         stdout: "",
       }),
@@ -465,7 +465,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
     expect(
       shipOutcomeFromResult({
-        output: {},
+        output: { station: "ship", status: "completed" },
         outcomePath,
         stdout: "",
       }),
@@ -474,6 +474,22 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       branch: "feat/branch-only",
       pr: "https://gh/pr/1",
     });
+  });
+
+  it("illegal non-T2 typed output fails closed (no decision-gate dual)", () => {
+    // #919 CR N1: production decode miss must not fall through classifyDecisionGate.
+    expect(() =>
+      shipOutcomeFromResult({
+        output: {},
+        stdout: "",
+      }),
+    ).toThrow(/illegal ship station receipt/);
+    expect(() =>
+      shipOutcomeFromResult({
+        output: { escalate: { reason: "legacy", diagnosis: "dual" } },
+        stdout: "",
+      }),
+    ).toThrow(/illegal ship station receipt/);
   });
 
   it("a signal alone is not a machine outcome", () => {

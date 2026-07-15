@@ -74,38 +74,32 @@ export function shipOutcomeFromResult(result: {
 }): ShipWorkerOutcome {
   // Typed Output.object is the sole fate channel for completion / escalate.
   if (result.output !== undefined) {
-    // #919 D: primary path is T2 ship envelope (station:ship + status tri-state).
+    // #919 D / CR N1: T2 ship envelope only — no decision-gate dual fallthrough.
+    // Production decode miss fails closed for #598 (illegal after SO attach).
     const decoded = decodeShipEnvelope(result.output);
-    if (decoded.ok) {
-      if (decoded.value.status === "escalate") {
-        return {
-          kind: "escalate",
-          reason: decoded.value.reason,
-          diagnosis: decoded.value.diagnosis,
-        };
-      }
-      // completed / shipped traffic: delivery cargo still enriches from sidecar.
-      const cargo = shipCargoFromSidecar(result.outcomePath);
-      if (decoded.value.status === "shipped") {
-        if (cargo.kind === "shipped") return cargo;
-        return { kind: "shipped" };
-      }
-      return cargo;
+    if (!decoded.ok) {
+      throw new Error(
+        `ship: illegal ship station receipt: ${decoded.reason}`,
+      );
     }
-    // Residual pre-T2 decision-gate dual (unit fixtures / legacy emissions):
-    // bell still escalates; no-gate `{}` enriches cargo only.
-    const gate = classifyDecisionGate(result.output, "ship");
-    if (gate.kind === "bell") {
+    if (decoded.value.status === "escalate") {
       return {
         kind: "escalate",
-        reason: gate.reason,
-        diagnosis: gate.diagnosis,
+        reason: decoded.value.reason,
+        diagnosis: decoded.value.diagnosis,
       };
     }
-    return shipCargoFromSidecar(result.outcomePath);
+    // completed / shipped traffic: delivery cargo still enriches from sidecar.
+    const cargo = shipCargoFromSidecar(result.outcomePath);
+    if (decoded.value.status === "shipped") {
+      if (cargo.kind === "shipped") return cargo;
+      return { kind: "shipped" };
+    }
+    return cargo;
   }
   // No typed signal: exit code is enough for process success. Sidecar may still
   // enrich delivery cargo (status/pr) but MUST NOT supply escalate (#899).
+  // Production ship attaches SO + requireTypedTrafficSignal before this path.
   return shipCargoFromSidecar(result.outcomePath);
 }
 

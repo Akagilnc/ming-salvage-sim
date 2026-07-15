@@ -11,10 +11,9 @@ import type {
 export const RECEIPT_MAX_RETRIES = 2;
 
 /**
- * Always-emitted typed decision-gate tag for optional gate seats (#899).
- * Bound to {@link decisionGateOutput} so ordinary cargo tags (`coder` / `ship` /
- * `merger` / review-loop roles) stay outside Output.object — missing or
- * malformed cargo never forces structured-output re-ask.
+ * Legacy decision-gate tag retained for unit fixtures that pin Sandcastle's
+ * four-case matrix on the raw `decision` tag (#899). Production seats attach
+ * T2 station receipts (coder / judge / ship / merger / onlineReview) instead.
  */
 export const DECISION_GATE_TAG = "decision";
 
@@ -130,18 +129,6 @@ export function workerReceiptOutput(
 }
 
 /**
- * Optional decision-gate Output.object on the dedicated {@link DECISION_GATE_TAG}.
- * Cargo tags stay untyped (ADR 0131 / #899).
- *
- * Coder / judge / family ship no longer use this (#924 / #919 M1 / #919 D) —
- * they attach T2 station receipt schemas. Residual dual-channel seats
- * (merger / review-loop) still call this.
- */
-export function decisionGateOutput(): sc.OutputDefinition {
-  return workerReceiptOutput(DECISION_GATE_TAG, decisionGateSignalSchema);
-}
-
-/**
  * #924 — single-slice coder station receipt Output.object.
  * Schema lives in {@link coderStationReceiptSchema} (T2 / stationReceiptContracts);
  * this is only the Sandcastle attach helper (tag + maxRetries).
@@ -161,6 +148,29 @@ export function coderReceiptOutput(
 export function shipReceiptOutput(
   schema: z.ZodType,
   tag: string = "ship",
+): sc.OutputDefinition {
+  return workerReceiptOutput(tag, schema);
+}
+
+/**
+ * #919 CR T2 — family merger station receipt Output.object.
+ * Schema lives in {@link mergerStationReceiptSchema} (T2 / stationReceiptContracts).
+ */
+export function mergerReceiptOutput(
+  schema: z.ZodType,
+  tag: string = "merger",
+): sc.OutputDefinition {
+  return workerReceiptOutput(tag, schema);
+}
+
+/**
+ * #919 CR T2 — family online-review-loop gate station receipt Output.object.
+ * Schema lives in {@link onlineReviewStationReceiptSchema}
+ * (T2 / stationReceiptContracts). Shared by verify/fixer/cleanup/docRelease.
+ */
+export function onlineReviewReceiptOutput(
+  schema: z.ZodType,
+  tag: string = "onlineReview",
 ): sc.OutputDefinition {
   return workerReceiptOutput(tag, schema);
 }
