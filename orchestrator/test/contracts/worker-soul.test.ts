@@ -289,9 +289,11 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
   it("every existing prompt still defines its structured output contract (tag + signal)", () => {
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
+    // #924: single-slice coder seats use T2 station-receipt on <coder> (no
+    // dedicated <decision> tag). Family ship/merger still use decision-gate.
     const prompts = [
-      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/, true],
-      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/, true],
+      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/, false],
+      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/, false],
       ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/, false],
       ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/, true],
       ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
@@ -305,8 +307,9 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
       expect(prompt).toMatch(signal);
       expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
       expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
-      // #899: optional decision-gate seats always emit a dedicated <decision> tag
-      // so ordinary cargo stays outside Output.object.
+      // Optional decision-gate seats always emit a dedicated <decision> tag so
+      // ordinary cargo stays outside Output.object (#899). Coder seats (#924)
+      // put traffic on the station-receipt <coder> envelope instead.
       if (needsDecisionTag) {
         expect(prompt).toMatch(/<decision>/);
       }

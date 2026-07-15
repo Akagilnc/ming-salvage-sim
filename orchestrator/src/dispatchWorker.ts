@@ -320,9 +320,9 @@ function writeWorkerOutcomeLandingFile(
  * runner call".
  *
  * `session` is supplied by the runner per-invocation: `"resume"` ONLY when it is
- * threading a `resumeSessionId` (the crash/escalate-resume path); `"fresh"`
- * otherwise (the normal S2/S5 path). The default is `"fresh"` — a worker is never
- * marked `resume` by work type alone (ADR 0026; codex cmr R3 finding).
+ * threading a `resumeSessionId` (crash/escalate resume OR #924 S5 continuity of
+ * the S2 coder session); `"fresh"` otherwise. The default is `"fresh"` — a
+ * worker is never marked `resume` by work type alone.
  */
 export function stepSpecToWorkerSpec(
   spec: StepSpec,
@@ -432,10 +432,11 @@ export function docReleaseWorkerSpec(
  * Compatibility wrapper for older Backends: forward a child worker to the
  * existing methods and wrap the return into a {@link WorkerResult}.
  *
- *   - coder (the S2 build worker): when `ctx.resumeSessionId` is set the worker is
- *     dispatched via `backend.resumeSession` (the escalate/crash-resume path), else
- *     via `backend.runStep`. The returned `StepOutput | StepResult` is wrapped as
- *     `completed` (carrying the real per-step `sessionId` when surfaced).
+ *   - coder (S2 build / S5 fix): when `ctx.resumeSessionId` is set the worker is
+ *     dispatched via `backend.resumeSession` (#924 S5 continuity of the S2
+ *     session, or crash/escalate reopen); else via `backend.runStep`. The
+ *     returned `StepOutput | StepResult` is wrapped as `completed` (carrying the
+ *     real per-step `sessionId` when surfaced).
  * This wrapper yields `completed`; unified real workers produce process `failed`
  * and worker-declared `escalated` results directly.
  */

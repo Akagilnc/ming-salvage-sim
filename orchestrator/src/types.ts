@@ -555,17 +555,17 @@ export type WorkerHost = "claude" | Exclude<ModelProviderFactory, "claudeCode">;
 
 /**
  * The DISPATCH MODE for this worker invocation:
- *   - `fresh`  — a brand-new `sandbox.run()`. THE NORMAL CASE for every worker,
- *     including S2 implement and a normal S5 fix round.
+ *   - `fresh`  — a brand-new `sandbox.run()` (S2 establish, every reviewer
+ *     round, or coder when no prior session / model mismatch).
  *   - `resume` — continue a PRIOR agent session via the Sandcastle-native
  *     `resumeSession` path (carrying {@link DispatchContext.resumeSessionId}).
  *
- * ADR 0026 INVARIANT (do not conflate with context retention): `resume` is the
- * CRASH/ESCALATE-resume path ONLY and pins maxIter to 1. A normal coder/fix
- * round must NOT use it (it keeps within-step maxIter). So a worker is `resume`
- * ONLY when the runner is actually threading a `resumeSessionId`; otherwise
- * `fresh`. "Retain context across fix rounds" is a SEPARATE concern — see
- * {@link WorkerSpec.contextRetention} — NOT expressed via `resume`.
+ * #924 / ADR 0132: single-slice coder seats use `resume` for normal S5 fix
+ * rounds that continue the S2-established session (same model). Crash/escalate
+ * resume still threads `resumeSessionId` the same way. Reviewer seats stay
+ * `fresh` every round. A worker is `resume` ONLY when the runner threads a
+ * real `resumeSessionId`; otherwise `fresh`. maxIter remains 1 on every seat
+ * (Ralph outer multi-iter retired).
  */
 export type WorkerSessionMode = "fresh" | "resume";
 
@@ -610,11 +610,10 @@ export interface WorkerSpec {
   /** Which container host runs it (Claude `Skill` invoke vs Codex SKILL.md item). */
   readonly host: WorkerHost;
   /**
-   * The dispatch path for THIS invocation: `fresh` (a new `sandbox.run()`, the
-   * normal case) or `resume` (the crash/escalate-resume path, set ONLY when the
-   * runner threads a {@link DispatchContext.resumeSessionId}). NOT a proxy for
-   * "coder retains context" — see {@link contextRetention} (ADR 0026 invariant:
-   * a normal fix round is `fresh`, never `resume`).
+   * The dispatch path for THIS invocation: `fresh` or `resume` (set ONLY when
+   * the runner threads a {@link DispatchContext.resumeSessionId}). #924: normal
+   * S5 continuity resumes the S2 coder session; crash/escalate resume is the
+   * same channel. See {@link contextRetention} for the retain/clean axis.
    */
   readonly session: WorkerSessionMode;
   /**
@@ -853,10 +852,10 @@ export interface DispatchContext {
   readonly telemetryDir?: string;
   /**
    * The prior agent session id to resume — present ONLY for a `session:"resume"`
-   * dispatch, i.e. the CRASH/ESCALATE-resume path where the runner re-opens a
-   * recorded agent session. Normal S2/S3/S5/S6 runner-visible work is
-   * `session:"fresh"` and does NOT carry this (codex cmr R3/R4 finding: normal
-   * work must not take the crash/escalate resume path).
+   * dispatch. #924 / ADR 0132: single-slice coder seats thread this for normal
+   * S5 continuity of the S2-established session (same model), as well as the
+   * crash/escalate reopen path. Reviewer seats (S3/S6) stay fresh and do not
+   * carry this. A worker is `resume` only when the runner supplies a real id.
    */
   readonly resumeSessionId?: string;
   /**
