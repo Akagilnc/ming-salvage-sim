@@ -37,8 +37,8 @@ import { shWithClock } from "./externalCall.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import {
   reviewFixAssertionSignal,
-  reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
+import { coderRefuseReverifyLanding } from "./coderRefuseExit.js";
 import { route } from "./route.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY child worker step (S2/S3/S5/S6) through ONE free function
@@ -150,6 +150,7 @@ import type {
   LedgerEntry,
   PersistentLedgerEntry,
   ResumeState,
+  ReviewFixRefuseRecord,
   RunInput,
   RunResult,
   SliceStepId,
@@ -613,33 +614,25 @@ function gitHead(worktree: WorktreeHandle | undefined): string | undefined {
   return gitOutputLines(worktree, ["rev-parse", "HEAD"])[0];
 }
 /**
- * #677: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
+ * #677 / #927: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
  *
- * `preexistingAssertionTouchedForReverify` and
- * `refusedFindingIdentityKeysForReverify` are process-local; a crash between
- * S5 completing and S6 running would otherwise drop both. Prefer rebuild over
- * new durable fields: refuse keys already live on the S5 coder output, and the
- * assertion signal is recomputed from ledger branchHEADs + worktree git
+ * `preexistingAssertionTouchedForReverify`,
+ * `refusedFindingIdentityKeysForReverify`, and opaque `refuseRecordsForReverify`
+ * are process-local; a crash between S5 completing and S6 running would
+ * otherwise drop them. Prefer rebuild over new durable fields: refuse keys +
+ * cargo already live on the S5 coder output, and the assertion signal is
+ * recomputed from ledger branchHEADs + worktree git
  * (same shape as #743 authorization rebuild / S4 findings-count replay).
  */
 interface S5ReverifySignals {
   readonly preexistingAssertionTouched: boolean;
   readonly refusedFindingIdentityKeys: readonly string[];
+  readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
 }
 
 function ledgerEntryBranchHead(entry: LedgerEntry): string | undefined {
   const head = (entry as PersistentLedgerEntry).branchHEAD;
   return isLikelyGitSha(head) ? head : undefined;
-}
-
-function refusedKeysFromCoderOutput(
-  output: Extract<StepOutput, { kind: "coder" }>,
-): readonly string[] {
-  const records = output.refuseRecords ?? [];
-  if (records.length > 0) {
-    return reviewFixDecisionGate({ records })?.refusedFindingIdentityKeys ?? [];
-  }
-  return output.refusedFindingIdentityKeys ?? [];
 }
 
 export function rebuildS5ReverifySignalsFromLedger(
@@ -664,7 +657,10 @@ export function rebuildS5ReverifySignalsFromLedger(
 
   const s5 = ledger[s5Index]!;
   const output = s5.output as Extract<StepOutput, { kind: "coder" }>;
-  const refusedFindingIdentityKeys = refusedKeysFromCoderOutput(output);
+  // #927: shared traffic extract (envelope keys win; never drops keys when
+  // refuseRecords shape is non-#677 cargo).
+  const refuseLanding = coderRefuseReverifyLanding(output);
+  const refusedFindingIdentityKeys = refuseLanding.refusedFindingIdentityKeys;
 
   let preexistingAssertionTouched = false;
   if (worktree !== undefined) {
@@ -702,6 +698,9 @@ export function rebuildS5ReverifySignalsFromLedger(
   return {
     preexistingAssertionTouched,
     refusedFindingIdentityKeys,
+    ...(refuseLanding.refuseRecords !== undefined
+      ? { refuseRecords: refuseLanding.refuseRecords }
+      : {}),
   };
 }
 
@@ -2193,6 +2192,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastReviewerStepId: StepId | undefined;
   let preexistingAssertionTouchedForReverify = false;
   let refusedFindingIdentityKeysForReverify: readonly string[] = [];
+  /** #927 opaque refuse cargo for S6 judge re-adjudicate (not routing input). */
+  let refuseRecordsForReverify: readonly ReviewFixRefuseRecord[] | undefined;
   // Preserve the full ledger for relay and resume accounting.
   let resumeHistoryLedger: ReadonlyArray<LedgerEntry> = [];
 
@@ -2806,6 +2807,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       rebuilt.preexistingAssertionTouched;
     refusedFindingIdentityKeysForReverify =
       rebuilt.refusedFindingIdentityKeys;
+    refuseRecordsForReverify = rebuilt.refuseRecords;
 
     // #924: rebuild coder session continuity from the last S2/S5 ledger row so
     // crash/re-feed still resumes the same agent session when models match.
@@ -3296,6 +3298,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                               refusedFindingIdentityKeysForReverify,
                           }
                         : {}),
+                      // #927: refuseRecords cargo is landing-only (信封宪法).
                     }
                   : {}),
               };
@@ -3319,6 +3322,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                             refusedFindingIdentityKeys:
                               refusedFindingIdentityKeysForReverify,
                           }
+                        : {}),
+                      // #927: four-reason + evidence cargo for judge re-adjudicate
+                      // (landing only — never mirrored onto thin DispatchContext).
+                      ...(step === "S6" &&
+                      refuseRecordsForReverify !== undefined &&
+                      refuseRecordsForReverify.length > 0
+                        ? { refuseRecords: refuseRecordsForReverify }
                         : {}),
                     }
                   : undefined;
@@ -3826,18 +3836,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
             }
           }
-          // #677: legal refuse — wire decision gate on the real S5 path.
-          // Refused keys stay in the fix→fresh-re-review loop (never escalate/park).
+          // #677 / #927: legal refuse — envelope keys are traffic; refuseRecords
+          // are opaque cargo for the S6 judge. Never escalate/park on refuse;
+          // never drop envelope keys when cargo shape is non-#677.
           if (step === "S5") {
-            const records = output.refuseRecords ?? [];
-            if (records.length > 0) {
-              const legal = reviewFixDecisionGate({ records });
-              refusedFindingIdentityKeysForReverify =
-                legal?.refusedFindingIdentityKeys ?? [];
-            } else {
-              refusedFindingIdentityKeysForReverify =
-                output.refusedFindingIdentityKeys ?? [];
-            }
+            const refuseLanding = coderRefuseReverifyLanding(output);
+            refusedFindingIdentityKeysForReverify =
+              refuseLanding.refusedFindingIdentityKeys;
+            refuseRecordsForReverify = refuseLanding.refuseRecords;
           }
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
