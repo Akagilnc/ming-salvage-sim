@@ -1,0 +1,533 @@
+/**
+ * #930 — family CMR courts close on shared T2 judge tri-state (not open-count).
+ *
+ * Seams (owner #919 Testing Decisions + #930 AC):
+ * 1. runVerifyCmr + fake FamilyBackend — dual gates, tri-state routing,
+ *    refuse → re-open judge, resume session shape, session-loss prior rows
+ * 2. Pure helpers — closeFamilyCourtFromJudgeOutput, liveFindingsBlockConverged,
+ *    priorFamilyJudgeVerdictRowsFromLedger
+ */
+
+import { describe, expect, it } from "vitest";
+
+import {
+  closeFamilyCourtFromJudgeOutput,
+  liveFindingsBlockConverged,
+  priorFamilyJudgeVerdictRowsFromLedger,
+  projectJudgeContinueBlocking,
+} from "../../../src/judgeStation.js";
+import { findingIdentityKey } from "../../../src/findings.js";
+import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
+import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
+import type {
+  FamilyBackend,
+  FamilyLedgerEntry,
+  FamilyEscalation,
+  FamilyVerifyRequest,
+  FamilyVerifyResult,
+  MergeRequest,
+} from "../../../src/family/types.js";
+import type {
+  DispatchContext,
+  JudgeResult,
+  WorkerResult,
+  WorkerSpec,
+} from "../../../src/types.js";
+import {
+  judgeConverged,
+  judgeContinue,
+  judgeEscalate,
+  sampleFinding,
+} from "../../helpers/judge-fixtures.js";
+
+const FINDING = sampleFinding("family open claim", "orchestrator/src/family/verifyCmr.ts:1");
+const FINDING_KEY = findingIdentityKey(FINDING);
+
+function completedJudge(
+  output: JudgeResult,
+  sessionId?: string,
+): WorkerResult {
+  return {
+    kind: "completed",
+    output,
+    ...(sessionId !== undefined ? { sessionId } : {}),
+  };
+}
+
+class FamilyJudgeBackend implements FamilyBackend {
+  readonly ledger: FamilyLedgerEntry[] = [];
+  readonly dispatches: Array<{
+    readonly kind: string;
+    readonly session: string;
+    readonly cmrPass?: string;
+    readonly resumeSessionId?: string;
+    readonly priorJudgeVerdicts?: DispatchContext["priorJudgeVerdicts"];
+    readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
+    readonly blockingFindingIdentityKeys?: ReadonlyArray<string>;
+  }> = [];
+  readonly escalations: FamilyEscalation[] = [];
+  readonly prCalls: string[] = [];
+  currentFamilyHead = "head-1";
+
+  private completenessRound = 0;
+  private correctnessRound = 0;
+  private coderFixRound = 0;
+
+  constructor(
+    private readonly script: {
+      completeness?: (round: number, ctx: DispatchContext) => WorkerResult;
+      correctness?: (round: number, ctx: DispatchContext) => WorkerResult;
+      coder?: (round: number, ctx: DispatchContext) => WorkerResult;
+    } = {},
+  ) {}
+
+  async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
+    return { familyHead: `+${child.childIssue}` };
+  }
+  async appendFamilyLedger(entry: FamilyLedgerEntry): Promise<void> {
+    this.ledger.push(entry);
+  }
+  async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
+    return this.ledger;
+  }
+  async readFamilyHead(): Promise<string> {
+    return this.currentFamilyHead;
+  }
+  async runFamilyVerify(_req: FamilyVerifyRequest): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+  async escalateFamily(esc: FamilyEscalation): Promise<void> {
+    this.escalations.push(esc);
+  }
+
+  async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+    this.dispatches.push({
+      kind: spec.kind,
+      session: spec.session,
+      ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+      ...(ctx.resumeSessionId !== undefined
+        ? { resumeSessionId: ctx.resumeSessionId }
+        : {}),
+      ...(ctx.priorJudgeVerdicts !== undefined
+        ? { priorJudgeVerdicts: ctx.priorJudgeVerdicts }
+        : {}),
+      ...(ctx.refusedFindingIdentityKeys !== undefined
+        ? { refusedFindingIdentityKeys: ctx.refusedFindingIdentityKeys }
+        : {}),
+      ...(ctx.blockingFindingIdentityKeys !== undefined
+        ? { blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys }
+        : {}),
+    });
+
+    if (spec.kind === "cmr") {
+      if (ctx.cmrPass === "completeness") {
+        const round = this.completenessRound++;
+        if (this.script.completeness !== undefined) {
+          return this.script.completeness(round, ctx);
+        }
+        return completedJudge(judgeConverged(), "judge-sess-completeness");
+      }
+      const round = this.correctnessRound++;
+      if (this.script.correctness !== undefined) {
+        return this.script.correctness(round, ctx);
+      }
+      return completedJudge(judgeConverged(), "judge-sess-correctness");
+    }
+
+    if (spec.kind === "coder") {
+      const round = this.coderFixRound++;
+      this.currentFamilyHead = `head-after-fix-${round + 1}`;
+      if (this.script.coder !== undefined) {
+        return this.script.coder(round, ctx);
+      }
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: true, commitsAdded: 1 },
+      };
+    }
+
+    if (spec.kind === "ship") {
+      this.prCalls.push(ctx.familyBase ?? "");
+      return {
+        kind: "completed",
+        output: {
+          kind: "ship",
+          branch: ctx.familyBase ?? "family/base",
+          status: "pr_opened",
+          pr: `pr://${ctx.familyBase}`,
+          prHead: this.currentFamilyHead,
+        },
+      };
+    }
+
+    // #600/#603 online-review tail after ship (verify / fixer / docRelease / cleanup).
+    const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
+    if (skeleton !== undefined) return skeleton;
+    throw new Error(`unexpected worker kind ${spec.kind}`);
+  }
+}
+
+describe("#930 pure family judge closure", () => {
+  it("converged → pass", () => {
+    expect(closeFamilyCourtFromJudgeOutput(judgeConverged())).toEqual({
+      action: "pass",
+    });
+  });
+
+  it("continue → live-only open set for coder-fix", () => {
+    const killKey = findingIdentityKey(
+      sampleFinding("dead claim", "a.ts:1"),
+    );
+    const live = FINDING;
+    const verdict = judgeContinue([live, sampleFinding("dead claim", "a.ts:1")], {
+      kill: [
+        {
+          identityKey: killKey,
+          action: "refute",
+          reason: "not_established",
+          evidence: "claim fails on real code",
+        },
+      ],
+    });
+    const closure = closeFamilyCourtFromJudgeOutput(verdict);
+    expect(closure.action).toBe("continue");
+    if (closure.action !== "continue") return;
+    expect(closure.blockingIdentityKeys).toEqual([FINDING_KEY]);
+    expect(closure.blocking).toEqual([live]);
+    expect(closure.blockingFindingCount).toBe(1);
+    expect(closure.killDispositions).toHaveLength(1);
+    expect(closure.killDispositions[0]?.status).toBe("refuted");
+  });
+
+  it("escalate → escalate action with reason/diagnosis", () => {
+    expect(closeFamilyCourtFromJudgeOutput(judgeEscalate("stuck", "need owner"))).toEqual({
+      action: "escalate",
+      reason: "stuck",
+      diagnosis: "need owner",
+    });
+  });
+
+  it("negative: residual kind:cmr+findingsCount is unusable (not a closer)", () => {
+    const closure = closeFamilyCourtFromJudgeOutput({
+      kind: "cmr",
+      findingsCount: 0,
+      converged: true,
+    } as never);
+    expect(closure.action).toBe("unusable");
+  });
+
+  it("negative: residual positive findingsCount alone cannot open continue", () => {
+    const closure = closeFamilyCourtFromJudgeOutput({
+      kind: "cmr",
+      findingsCount: 3,
+      findings: [FINDING],
+    } as never);
+    expect(closure.action).toBe("unusable");
+  });
+
+  it("negative: live findings block converged (envelope consistency)", () => {
+    const dispositions = [
+      { identityKey: FINDING_KEY, action: "live" as const },
+    ];
+    expect(liveFindingsBlockConverged(dispositions)).toBe(true);
+    // Topology still trusts status enum — pure check for seat self-check.
+    expect(closeFamilyCourtFromJudgeOutput(judgeConverged()).action).toBe("pass");
+  });
+
+  it("projectJudgeContinueBlocking shared with single-slice", () => {
+    const projected = projectJudgeContinueBlocking(
+      judgeContinue([FINDING]),
+    );
+    expect(projected?.blockingFindingCount).toBe(1);
+    expect(projected?.blockingIdentityKeys).toEqual([FINDING_KEY]);
+  });
+
+  it("priorFamilyJudgeVerdictRowsFromLedger filters by pass and status", () => {
+    const rows = priorFamilyJudgeVerdictRowsFromLedger(
+      [
+        {
+          status: "cmr_reviewed",
+          event: "cmr_reviewed",
+          cmrPass: "completeness",
+          judgeStatus: "continue",
+          sessionId: "sess-a",
+          findingDispositions: [
+            { identityKey: FINDING_KEY, action: "live" },
+          ],
+        },
+        {
+          status: "cmr_passed",
+          event: "cmr_passed",
+          cmrPass: "correctness",
+          judgeStatus: "converged",
+          sessionId: "sess-b",
+        },
+        {
+          status: "cmr_reviewed",
+          event: "cmr_reviewed",
+          cmrPass: "completeness",
+          // no judgeStatus — ignored
+        },
+      ],
+      "completeness",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      step: "family-cmr:completeness",
+      status: "continue",
+      sessionId: "sess-a",
+    });
+  });
+});
+
+describe("#930 runVerifyCmr family judge courts", () => {
+  it("dual gates: both courts must judge-converged before ship", async () => {
+    const backend = new FamilyJudgeBackend();
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    const cmrPasses = backend.dispatches
+      .filter((d) => d.kind === "cmr")
+      .map((d) => d.cmrPass);
+    expect(cmrPasses).toEqual(["completeness", "correctness"]);
+    expect(backend.prCalls).toHaveLength(1);
+    expect(
+      backend.ledger.filter((e) => e.status === "cmr_passed"),
+    ).toHaveLength(2);
+  });
+
+  it("continue → family coder-fix with live keys only, then re-open judge", async () => {
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) => {
+        if (round === 0) {
+          return completedJudge(judgeContinue([FINDING]), "judge-sess-c");
+        }
+        return completedJudge(judgeConverged(), "judge-sess-c");
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    const coder = backend.dispatches.find((d) => d.kind === "coder");
+    expect(coder?.blockingFindingIdentityKeys).toEqual([FINDING_KEY]);
+    expect(
+      backend.ledger.some((e) => e.status === "cmr_reviewed"),
+    ).toBe(true);
+    expect(
+      backend.ledger.some((e) => e.status === "cmr_fix_committed"),
+    ).toBe(true);
+  });
+
+  it("judge escalate parks via escalateFamily (not silent terminal)", async () => {
+    const backend = new FamilyJudgeBackend({
+      completeness: () =>
+        completedJudge(judgeEscalate("stuck", "need owner decision"), "j1"),
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result.ok).toBe(false);
+    expect(backend.escalations).toHaveLength(1);
+    expect(backend.escalations[0]).toMatchObject({
+      reason: "stuck",
+      diagnosis: "need owner decision",
+    });
+    expect(backend.prCalls).toEqual([]);
+  });
+
+  it("persistent judge: after fix, same pass resumes session (resume shape)", async () => {
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) => {
+        if (round === 0) {
+          return completedJudge(judgeContinue([FINDING]), "judge-sess-persist");
+        }
+        return completedJudge(judgeConverged(), "judge-sess-persist");
+      },
+    });
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    const completenessDispatches = backend.dispatches.filter(
+      (d) => d.kind === "cmr" && d.cmrPass === "completeness",
+    );
+    expect(completenessDispatches.length).toBeGreaterThanOrEqual(2);
+    expect(completenessDispatches[0]?.session).toBe("fresh");
+    expect(completenessDispatches[0]?.resumeSessionId).toBeUndefined();
+    // Second opening after coder-fix resumes the same judge session.
+    expect(completenessDispatches[1]?.session).toBe("resume");
+    expect(completenessDispatches[1]?.resumeSessionId).toBe("judge-sess-persist");
+  });
+
+  it("session loss: fresh judge receives priorJudgeVerdicts from ledger rows", async () => {
+    const backend = new FamilyJudgeBackend({
+      completeness: (round, ctx) => {
+        if (round === 0) {
+          return completedJudge(judgeContinue([FINDING]), "judge-sess-lost");
+        }
+        // Simulate lost session: backend returns a new session id; runner
+        // must have supplied priorJudgeVerdicts on a fresh (no resume) open.
+        expect(ctx.priorJudgeVerdicts?.length ?? 0).toBeGreaterThan(0);
+        expect(ctx.priorJudgeVerdicts?.[0]).toMatchObject({
+          status: "continue",
+        });
+        return completedJudge(judgeConverged(), "judge-sess-new");
+      },
+    });
+    // Force second open without resume by clearing session after first open:
+    // script still gets resume from runner — we instead seed ledger-only path
+    // by using a backend that omits sessionId on first open, then checks priors.
+    const noSessionBackend = new FamilyJudgeBackend({
+      completeness: (round, ctx) => {
+        if (round === 0) {
+          // No sessionId → runner cannot resume; second open is fresh + priors.
+          return { kind: "completed", output: judgeContinue([FINDING]) };
+        }
+        expect(ctx.resumeSessionId).toBeUndefined();
+        expect(ctx.priorJudgeVerdicts?.some((r) => r.status === "continue")).toBe(
+          true,
+        );
+        return completedJudge(judgeConverged(), "judge-fresh-after-loss");
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: noSessionBackend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    void backend;
+  });
+
+  it("refuse envelope blind-routes back to family judge (not terminal / not idle)", async () => {
+    const backend = new FamilyJudgeBackend({
+      completeness: (round, ctx) => {
+        if (round === 0) {
+          return completedJudge(judgeContinue([FINDING]), "judge-refuse");
+        }
+        // Second open must see refused keys for re-ruling.
+        expect(ctx.refusedFindingIdentityKeys).toEqual([FINDING_KEY]);
+        return completedJudge(judgeConverged(), "judge-refuse");
+      },
+      coder: () => ({
+        kind: "completed",
+        output: {
+          kind: "coder",
+          committed: true,
+          commitsAdded: 1,
+          refusedFindingIdentityKeys: [FINDING_KEY],
+          refuseRecords: [
+            {
+              identityKey: FINDING_KEY,
+              finding: FINDING.claim_quote,
+              acceptanceCriterion: "AC-1",
+              conflictReason: "unconstitutional: contradicts accepted ADR",
+            },
+          ],
+        },
+      }),
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.escalations).toEqual([]);
+    // Completeness re-opened after refuse (not multi-iter idle / not terminal).
+    expect(
+      backend.dispatches.filter(
+        (d) => d.kind === "cmr" && d.cmrPass === "completeness",
+      ).length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("residual kind:cmr projects once into judge form (no parallel open-count closer)", async () => {
+    // Residual paper may still arrive as kind:cmr+findingsCount from legacy
+    // fixtures; the boundary projects it to kind:judge once. Topology never
+    // has a second `if findingsCount > 0` branch.
+    const backend = new FamilyJudgeBackend({
+      completeness: () => ({
+        kind: "completed",
+        output: {
+          kind: "cmr",
+          converged: true,
+          findingsCount: 0,
+          successfulLegs: ["opus"],
+        },
+      }),
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(
+      backend.ledger.some(
+        (e) => e.status === "cmr_passed" && e.judgeStatus === "converged",
+      ),
+    ).toBe(true);
+    // Residual green did not require a fix round.
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
+  });
+
+  it("negative: non-judge non-cmr envelope is unusable re-furnace (not silent pass)", async () => {
+    let opens = 0;
+    const backend = new FamilyJudgeBackend({
+      completeness: () => {
+        opens += 1;
+        if (opens === 1) {
+          return {
+            kind: "completed",
+            output: { kind: "fixer", committed: false },
+          };
+        }
+        return completedJudge(judgeConverged(), "after-refurnace");
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
+    expect(opens).toBeGreaterThanOrEqual(2);
+  });
+
+  it("ADR 0030 order: correctness court not opened until completeness converged", async () => {
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) => {
+        if (round === 0) {
+          return completedJudge(judgeContinue([FINDING]), "j-c");
+        }
+        return completedJudge(judgeConverged(), "j-c");
+      },
+    });
+    await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    const ordered = backend.dispatches
+      .filter((d) => d.kind === "cmr")
+      .map((d) => d.cmrPass);
+    // Completeness may open twice (continue then pass); correctness only after.
+    const firstCorrectness = ordered.indexOf("correctness");
+    const lastCompleteness = ordered.lastIndexOf("completeness");
+    expect(firstCorrectness).toBeGreaterThan(lastCompleteness === -1 ? -1 : 0);
+    expect(ordered.slice(0, firstCorrectness).every((p) => p === "completeness")).toBe(
+      true,
+    );
+  });
+});

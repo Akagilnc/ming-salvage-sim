@@ -2,6 +2,9 @@
 > `converged | continue | escalate`（ADR 0132）。禁双轨：一台判官机多处开庭，
 > 不得并行保留 open-count 机械关环。completion 条款中「干净退出 + 合法 sidecar」
 > 的最终统一仍随 #928 落地；落地前其余既有完成信号路径按现文。
+>
+> **修订（2026-07-15，#930 落地）**：family 后段 completeness / correctness 双闸
+> 同样只消费判词三态（两庭一机）；family 路径上的 open-count 第二台数数机删除。
 
 Status: Proposed
 

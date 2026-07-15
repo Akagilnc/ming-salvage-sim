@@ -1522,11 +1522,12 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
   });
 
   it("a backend with verify + cmr but WITHOUT dispatchWorker (final phase) FAILS-SAFE to ok:false — the terminal 止于-PR step could not run", async () => {
-    // verify green + cmr converged, but the PR capability is missing → the terminal
-    // action (decision 4, 止于 PR) cannot run. {ok:true} would report "success" for a
-    // run whose PR never opened; fail-safe to {ok:false, ran:true} instead.
-    // Legacy CMR without findingsCount still routes via the CMR gate (raw artifacts
-    // / missing count), so the stage token is cmr_failed — not ship_failed.
+    // verify green + cmr judge-converged, but the PR capability is missing → the
+    // terminal action (decision 4, 止于 PR) cannot run. {ok:true} would report
+    // "success" for a run whose PR never opened; fail-safe to {ok:false, ran:true}.
+    // #930: residual IntegratedCmrResult {converged:true} projects to judge
+    // converged at the boundary, so the stage token is ship_failed (CMR court
+    // passed; ship capability missing).
     class VerifyAndCmrBackend extends BareFamilyBackend {
       async runFamilyVerify(): Promise<FamilyVerifyResult> {
         return { ok: true };
@@ -1544,7 +1545,7 @@ describe("#296 verify-cmr hook body — graceful no-op when the backend lacks th
     expect(result).toMatchObject({
       ok: false,
       ran: true,
-      failedStatus: "cmr_failed",
+      failedStatus: "ship_failed",
     });
   });
 });

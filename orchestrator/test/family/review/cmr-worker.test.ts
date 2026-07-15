@@ -637,16 +637,21 @@ describe("integrated CMR pass prompt closure contract", () => {
   ]) {
     it(`${promptName} routes same-module still-red examples into the runner coder-fix path`, () => {
       const prompt = readFileSync(join(realPromptsDir, promptName), "utf8");
-      const examples = [...prompt.matchAll(/<cmr>(\{[^\n]*"converged": false[^\n]*\})<\/cmr>/g)];
+      // #930: family court examples use <judge> continue envelopes (not <cmr>).
+      const examples = [
+        ...prompt.matchAll(/<judge>(\{[^\n]*"status"\s*:\s*"continue"[^\n]*\})<\/judge>/g),
+      ];
 
       expect(examples.length).toBeGreaterThan(0);
       for (const [, rawJson] of examples) {
         const output = JSON.parse(rawJson) as {
+          readonly status?: string;
           readonly findings?: readonly {
             readonly action: string;
             readonly disposition?: { readonly kind?: string };
           }[];
         };
+        expect(output.status).toBe("continue");
         for (const finding of output.findings ?? []) {
           if (finding.disposition?.kind === "same_module") {
             expect(finding.action).toBe("fix_now");
@@ -1883,7 +1888,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     },
   );
 
-  it("a converged verdict ⇒ WorkerResult.completed with a bare cmr payload", async () => {
+  it("a converged verdict ⇒ WorkerResult.completed with T2 judge converged (#930)", async () => {
     const be = fixtured();
     be.outcome = {
       kind: "verdict",
@@ -1893,40 +1898,39 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "cmr") {
-      expect(res.output.converged).toBe(true);
-      expect(res.output.successfulLegs).toEqual(STRONG_LEGS);
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      expect(res.output.status).toBe("converged");
     } else {
-      throw new Error("expected completed cmr payload");
+      throw new Error("expected completed judge payload");
     }
   });
 
-  it("a red verdict ⇒ WorkerResult.completed (NOT failed), carrying the reason", async () => {
+  it("a red verdict ⇒ WorkerResult.completed judge continue (NOT failed) (#930)", async () => {
     const be = fixtured();
     be.outcome = {
       kind: "verdict",
       converged: false,
       reason: "seam mismatch",
+      findingsCount: 1,
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
     expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "cmr") {
-      expect(res.output.converged).toBe(false);
-      expect(res.output.reason).toBe("seam mismatch");
-      expect(res.output.successfulLegs).toEqual(STRONG_LEGS);
+    if (res.kind === "completed" && res.output.kind === "judge") {
+      expect(res.output.status).toBe("continue");
     } else {
-      throw new Error("expected completed cmr payload");
+      throw new Error("expected completed judge payload");
     }
   });
 
-  it("preserves evidencePaths on the runner-facing cmr output", async () => {
+  it("projects residual red outcome to judge continue traffic (#930)", async () => {
     const be = fixtured();
     be.outcome = {
       kind: "verdict",
       converged: false,
       reason: "blocking findings remain",
+      findingsCount: 1,
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
@@ -1936,11 +1940,12 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(res).toEqual({
       kind: "completed",
       output: {
-        kind: "cmr",
-        converged: false,
-        reason: "blocking findings remain",
-        successfulLegs: STRONG_LEGS,
-        ...CMR_EVIDENCE,
+        kind: "judge",
+        status: "continue",
+        findingDispositions: [
+          { identityKey: "__open_1", action: "live" },
+        ],
+        findings: [],
       },
     });
   });
