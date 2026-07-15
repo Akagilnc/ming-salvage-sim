@@ -35,14 +35,9 @@ export type ShipWorkerOutcome =
   | {
       readonly kind: "shipped";
       readonly branch?: string;
-      readonly status: "pushed";
-      readonly pr?: never;
-    }
-  | {
-      readonly kind: "shipped";
-      readonly branch?: string;
-      readonly status: "pr_opened";
-      /** Optional delivery cargo — missing pr never demotes clean exit (#899). */
+      /** Opaque delivery status token from cargo — not a process-fate enum. */
+      readonly status: "pushed" | "pr_opened";
+      /** Optional delivery cargo — never gates clean exit (#899). */
       readonly pr?: string;
     }
   | {
@@ -146,34 +141,37 @@ function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
 }
 
 /**
- * Delivery-cargo only: best-effort field reads. No schema validation, no
- * required-field gate, no discard of known status for missing siblings —
- * process fate is exit code + typed decision gate only (#899 / ADR 0131).
+ * Delivery-cargo only: opaque sidecar transport. No field classification court,
+ * no trim-based discard, no required-sibling gate — process fate is exit code +
+ * typed decision gate only (#899 / ADR 0131). Sidecar fields are copied as-is
+ * when present so missing/off-shape delivery cargo never becomes a fourth channel.
  */
 function classifyShipCargoPayload(parsed: unknown): ShipWorkerOutcome {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { kind: "completed" };
   }
   const cargo = parsed as Record<string, unknown>;
-  const branch = isFilledString(cargo.branch) ? cargo.branch.trim() : undefined;
-  const pr = isFilledString(cargo.pr) ? cargo.pr.trim() : undefined;
+  // Opaque: only recognise the two delivery status tokens workers already emit.
+  // Anything else stays completed cargo — never invent status or drop siblings.
+  if (cargo.status !== "pushed" && cargo.status !== "pr_opened") {
+    return { kind: "completed" };
+  }
+  const branch = typeof cargo.branch === "string" ? cargo.branch : undefined;
+  const pr = typeof cargo.pr === "string" ? cargo.pr : undefined;
   if (cargo.status === "pushed") {
     return {
       kind: "shipped",
       status: "pushed",
       ...(branch !== undefined ? { branch } : {}),
-      // Extra pr on pushed is cargo noise — leave it off the pushed shape.
-    };
-  }
-  if (cargo.status === "pr_opened") {
-    // pr is optional delivery cargo: absence does not demote to completed.
-    return {
-      kind: "shipped",
-      status: "pr_opened",
-      ...(branch !== undefined ? { branch } : {}),
+      // pr on pushed is still cargo — transport it when present (no discard).
       ...(pr !== undefined ? { pr } : {}),
     };
   }
-  // Unknown status: clean exit still advances; no invented delivery fields.
-  return { kind: "completed" };
+  // pr_opened: pr is optional delivery cargo; absence does not demote to completed.
+  return {
+    kind: "shipped",
+    status: "pr_opened",
+    ...(branch !== undefined ? { branch } : {}),
+    ...(pr !== undefined ? { pr } : {}),
+  };
 }

@@ -40,7 +40,7 @@ import {
   reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
-import { findingIdentityKey } from "./findings.js";
+import { fixLandingFromReviewerFindings } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY child worker step (S2/S3/S5/S6) through ONE free function
 // instead of reaching for runStep/resumeSession directly.
@@ -1258,17 +1258,16 @@ function replayS4FindingsCountState(
     // #877: findings-count channel only — disposition prose / still-active
     // reopen / no-progress courts demolished. Prior keys absent from findings[]
     // are closed by the three-channel envelope; the runner does not inspect prose.
-    // Findings rows are cargo: non-array shapes transport as empty cargo, never
-    // alter findingsCount routing (ADR 0131 / #899).
-    const blocking = Array.isArray(lastReviewerOutputForS4.findings)
-      ? [...lastReviewerOutputForS4.findings]
-      : [];
-    const blockingIdentityKeys = blocking.map(findingIdentityKey);
+    // Findings rows are opaque cargo: typed ReviewerOutput already decoded them
+    // at the worker boundary; runner only pass-through + count routing (ADR 0131 / #899).
+    const landing = fixLandingFromReviewerFindings(
+      lastReviewerOutputForS4.findings,
+    );
     findingDispositions = [
       ...(entry.findingDispositions ?? []),
     ];
-    pendingBlockingFindings = blocking;
-    pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
+    pendingBlockingFindings = landing.findings;
+    pendingBlockingFindingIdentityKeys = landing.identityKeys;
     // Count is the typed open-count, never cargo-array length.
     pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
     // Live path attaches raw pointers on every positive open-count → S5 edge;
@@ -2169,13 +2168,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     _afterFix: boolean,
   ): string[] {
     if (reviewerOutput?.kind !== "reviewer") return [];
-    // Cargo tolerance only — non-array findings never rewrite the open-count.
-    const blocking = Array.isArray(reviewerOutput.findings)
-      ? [...reviewerOutput.findings]
-      : [];
-    const blockingIdentityKeys = blocking.map(findingIdentityKey);
-    pendingBlockingFindings = blocking;
-    pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
+    // Opaque cargo pass-through only. Shape handling + identity-key derivation
+    // live on the decode / landing helpers — not a runner shape court (ADR 0131 / #899).
+    const landing = fixLandingFromReviewerFindings(reviewerOutput.findings);
+    pendingBlockingFindings = landing.findings;
+    pendingBlockingFindingIdentityKeys = landing.identityKeys;
     // ADR 0131: declared count is the control signal; findings rows are cargo.
     pendingBlockingFindingCount = reviewerOutput.findingsCount;
     return [];

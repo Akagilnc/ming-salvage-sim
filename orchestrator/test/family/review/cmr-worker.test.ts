@@ -1213,7 +1213,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   });
 
   it("accepts initial-good open-count at the family CMR production seam", async () => {
-    // #899 four-case matrix (production): first-good typed open-count, one sc.run.
+    // #899 four-case matrix (production): first-good typed open-count through
+    // production worker + real sc.run (not a post-hoc fixture).
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1221,6 +1222,14 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
     let sandcastleCalls = 0;
     let coderFixCalls = 0;
+    const agentOut: { agent?: ScriptedAgent } = {};
+    const good = {
+      findingsCount: 0,
+      findings: [],
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      ...VALID_CMR_VERDICT_FIELDS,
+    };
     class Backend extends RealFamilyBackend {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
@@ -1234,12 +1243,16 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           tag: "cmr",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
-        return typedSandboxRunResult({
-          converged: true,
-          findingsCount: 0,
-          successfulLegs: [...DEFAULT_CMR_LEGS],
-          ...VALID_CMR_VERDICT_FIELDS,
+        const run = await runScriptedStructuredOutput({
+          tag: "cmr",
+          schema: workerReceiptSchema(),
+          emissions: [{ body: JSON.stringify(good) }],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "prod-cmr-initial-good-session",
+          cleanups,
+          agentOut,
         });
+        return run.result;
       }
       protected override async runFamilyCoderFixWorker(): Promise<WorkerResult> {
         coderFixCalls += 1;
@@ -1256,12 +1269,14 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       findingsCount: 0,
     });
     expect(sandcastleCalls).toBe(1);
+    expect(agentOut.agent?.callCount).toBe(1);
     expect(coderFixCalls).toBe(0);
   });
 
   it("#598 same-position redispatch on open-count SOE exhaust; zero fixer/next-gate", async () => {
-    // #899: native maxRetries exhaust → Action throw → #598 mechanical redispatch
-    // at the same fixed position; never feed empty cargo to fixer / next gate.
+    // #899: production seat + real sc.run exhaust (initial + maxRetries) →
+    // Action throw → #598 mechanical redispatch at the same fixed position;
+    // never feed empty cargo to fixer / next gate.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1269,23 +1284,38 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
     let sandcastleCalls = 0;
     let coderFixCalls = 0;
-    const exhausted = new sc.StructuredOutputError("open-count exhaust", {
-      tag: "cmr",
-      rawMatched: JSON.stringify({ findingsCount: -1 }),
-      commits: [],
-      branch: "fb",
-      sessionId: "sess-cmr-soe-598",
-    });
+    let lastExhaustError: unknown;
     class Backend extends RealFamilyBackend {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
         return this.runCmrWorker(spec, ctx);
       }
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(
-        _options: Parameters<typeof sc.run>[0],
+        options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
-        throw exhausted;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "cmr",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        try {
+          await runScriptedStructuredOutput({
+            tag: "cmr",
+            schema: workerReceiptSchema(),
+            emissions: [
+              { body: JSON.stringify({ findingsCount: -1 }) },
+              { body: JSON.stringify({ findingsCount: -2 }) },
+              { body: JSON.stringify({ findingsCount: -3 }) },
+            ],
+            maxRetries: RECEIPT_MAX_RETRIES,
+            sessionId: `sess-cmr-soe-598-${sandcastleCalls}`,
+            cleanups,
+          });
+          throw new Error("expected StructuredOutputError after open-count exhaust");
+        } catch (err) {
+          lastExhaustError = err;
+          throw err;
+        }
       }
       protected override async runFamilyCoderFixWorker(): Promise<WorkerResult> {
         coderFixCalls += 1;
@@ -1304,25 +1334,25 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         { familyBase: "fb", cmrPass: "completeness" },
         async (s, c) => {
           // Mirror dispatchOrAbort: rethrow Action failure for #598.
-          try {
-            await be.run(s as ReturnType<typeof cmrWorkerSpec>, c);
-            throw new Error("expected SOE throw");
-          } catch (err) {
-            throw err;
-          }
+          await be.run(s as ReturnType<typeof cmrWorkerSpec>, c);
+          throw new Error("expected SOE throw");
         },
         { rethrowOnExhaustion: true, sleepMs: async () => {} },
       ),
-    ).rejects.toBe(exhausted);
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(sc.StructuredOutputError);
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
     expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(coderFixCalls).toBe(0);
-    expect(isReceiptRecoveryFailure(exhausted)).toBe(true);
+    expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
   });
 
   it("#598 same-position redispatch on decision-gate SOE exhaust; zero next-gate", async () => {
     // #899 four-case matrix (production): decision-gate SO on the family
-    // coder-fix seat exhausts → Action throw → #598 mechanical redispatch at
-    // the same fixed position. No human-loop park; no next-gate advance.
+    // coder-fix seat exhausts via real sc.run → Action throw → #598 mechanical
+    // redispatch at the same fixed position. No human-loop park; no next-gate.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1330,13 +1360,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
     let sandcastleCalls = 0;
     let nextGateCalls = 0;
-    const exhausted = new sc.StructuredOutputError("decision-gate exhaust", {
-      tag: DECISION_GATE_TAG,
-      rawMatched: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }),
-      commits: [],
-      branch: "fb",
-      sessionId: "sess-decision-soe-598",
-    });
+    let lastExhaustError: unknown;
     class Backend extends RealFamilyBackend {
       /** Expose the production coder-fix seat that binds decisionGateOutput(). */
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
@@ -1353,7 +1377,24 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           tag: DECISION_GATE_TAG,
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
-        throw exhausted;
+        try {
+          await runScriptedStructuredOutput({
+            tag: DECISION_GATE_TAG,
+            schema: decisionGateSignalSchema,
+            emissions: [
+              { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+              { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
+              { body: JSON.stringify({ escalate: { reason: "r", diagnosis: "" } }) },
+            ],
+            maxRetries: RECEIPT_MAX_RETRIES,
+            sessionId: `sess-decision-soe-598-${sandcastleCalls}`,
+            cleanups,
+          });
+          throw new Error("expected StructuredOutputError after decision-gate exhaust");
+        } catch (err) {
+          lastExhaustError = err;
+          throw err;
+        }
       }
       protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
         nextGateCalls += 1;
@@ -1377,10 +1418,77 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         async (s, c) => be.runFix(s, c),
         { rethrowOnExhaustion: true, sleepMs: async () => {} },
       ),
-    ).rejects.toBe(exhausted);
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(sc.StructuredOutputError);
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
     expect(sandcastleCalls).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(nextGateCalls).toBe(0);
-    expect(isReceiptRecoveryFailure(exhausted)).toBe(true);
+    expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
+  });
+
+  it("accepts initial-good decision-gate at the family coder-fix production seam", async () => {
+    // #899 four-case matrix (production): first-good decision gate through
+    // production seat + real sc.run — one agent emission, no repair.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
+    let sandcastleCalls = 0;
+    let nextGateCalls = 0;
+    const agentOut: { agent?: ScriptedAgent } = {};
+    const good = {
+      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+    };
+    class Backend extends RealFamilyBackend {
+      public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        sandcastleCalls += 1;
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: DECISION_GATE_TAG,
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        const run = await runScriptedStructuredOutput({
+          tag: DECISION_GATE_TAG,
+          schema: decisionGateSignalSchema,
+          emissions: [{ body: JSON.stringify(good) }],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "prod-decision-initial-good-session",
+          cleanups,
+          agentOut,
+        });
+        return run.result;
+      }
+      protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
+        nextGateCalls += 1;
+        throw new Error("next CMR gate must not run on initial-good decision gate");
+      }
+    }
+    const be = new Backend({
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-initial-good-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
+    });
+    await expect(
+      be.runFix(familyCoderFixWorkerSpec(), { familyBase: "fb" }),
+    ).resolves.toMatchObject({
+      kind: "completed",
+      output: {
+        escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      },
+    });
+    expect(sandcastleCalls).toBe(1);
+    expect(agentOut.agent?.callCount).toBe(1);
+    expect(nextGateCalls).toBe(0);
   });
 
   it("recovers decision-gate via production coder-fix + real sc.run (bad→good)", async () => {

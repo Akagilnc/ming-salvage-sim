@@ -70,6 +70,7 @@ import {
 import {
   classifyDecisionGate,
   decisionGateOutput,
+  decodeReviewerOpenCountReceipt,
   logAndRethrowReceiptFailure,
   requireTypedTrafficSignal,
   workerReceiptOutput,
@@ -256,8 +257,6 @@ import type {
   Backend,
   CliMonitorSpawnSpec,
   DispatchContext,
-  Finding,
-  PriorFindingDisposition,
   IssueMeta,
   IssueSnapshot,
   IssueSnapshotMeta,
@@ -2937,37 +2936,14 @@ export class RealBackend implements Backend {
     if (spec.role === "reviewer") {
       // Open-count fate only from the typed/raw channel — never from a separate
       // cargo fallback that could reintroduce findingsCount as a fourth channel.
-      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      // Shape handling for findings cargo lives on the shared decode boundary
+      // (ADR 0131 / #899) — not a second court in the runner.
+      const decoded = decodeReviewerOpenCountReceipt(raw);
+      if (decoded === undefined) {
         // Unusable review cargo — not a zero open-count (ADR 0131).
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
-      const receipt = raw as {
-        findingsCount?: unknown;
-        findings?: unknown;
-        priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
-      };
-      // ADR 0131 / #899: open-count is findingsCount only — never derive from
-      // findings-array cargo length. Missing count → unusable receipt (fixer path).
-      const findingsCount =
-        typeof receipt.findingsCount === "number" &&
-        Number.isSafeInteger(receipt.findingsCount) &&
-        receipt.findingsCount >= 0
-          ? receipt.findingsCount
-          : undefined;
-      if (findingsCount === undefined) {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
-      }
-      const findings = Array.isArray(receipt.findings)
-        ? (receipt.findings as ReadonlyArray<Finding>)
-        : [];
-      return {
-        kind: "reviewer",
-        findings,
-        findingsCount,
-        ...(Array.isArray(receipt.priorFindingDispositions)
-          ? { priorFindingDispositions: receipt.priorFindingDispositions }
-          : {}),
-      };
+      return decoded;
     }
     // Coder: decision signal may be `{}` (no gate). Cargo comes from the
     // ordinary `<coder>` tag / sidecar — never re-read escalate from cargo.
