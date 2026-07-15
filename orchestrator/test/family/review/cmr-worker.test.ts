@@ -1062,13 +1062,14 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(agent.resumedSessions).toEqual([undefined, "same-decision-session"]);
   });
 
-  it("recovers combined open-count+gate when escalate key is misspelled (bad→good)", async () => {
-    // #899: misspelled gate keys on a findingsCount receipt must fail schema so
-    // Sandcastle same-session re-asks the original author — not silent no-gate.
-    const good = {
+  it("treats misspelled escalate key on open-count as opaque cargo (no re-ask)", async () => {
+    // #899: only the exact `escalate` key is a gate. Near-miss spellings ride
+    // as opaque cargo — no approximate key inference that could false-positive
+    // legitimate cargo keys into a misspelled-gate failure.
+    const payload = {
       findingsCount: 1,
       findings: [],
-      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      escalte: { reason: "typo", diagnosis: "opaque cargo" },
       converged: true,
       successfulLegs: [...DEFAULT_CMR_LEGS],
       ...VALID_CMR_VERDICT_FIELDS,
@@ -1076,28 +1077,17 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     const { agent, result } = await runScriptedStructuredOutput({
       tag: "cmr",
       schema: workerReceiptSchema(),
-      emissions: [
-        {
-          body: JSON.stringify({
-            findingsCount: 1,
-            escalte: { reason: "typo", diagnosis: "key" },
-          }),
-        },
-        { body: JSON.stringify(good) },
-      ],
+      emissions: [{ body: JSON.stringify(payload) }],
       maxRetries: RECEIPT_MAX_RETRIES,
       sessionId: "same-cmr-combined-misspell-session",
       cleanups,
     });
-    expect(result.output).toMatchObject({
-      findingsCount: 1,
-      escalate: good.escalate,
-    });
-    expect(agent.callCount).toBe(2);
-    expect(agent.resumedSessions).toEqual([
-      undefined,
-      "same-cmr-combined-misspell-session",
-    ]);
+    expect(result.output).toMatchObject({ findingsCount: 1 });
+    expect(
+      (result.output as { escalate?: unknown }).escalate,
+    ).toBeUndefined();
+    expect(agent.callCount).toBe(1);
+    expect(agent.resumedSessions).toEqual([undefined]);
   });
 
   it("exhausts decision-gate maxRetries via real sc.run without inventing a gate", async () => {
@@ -1690,15 +1680,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       findingsCount: 2,
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
-    // Misspelled gate keys on combined open-count receipts must re-ask too.
+    // Near-miss spellings of escalate are opaque cargo — no approximate match.
     expect(workerReceiptSchema().safeParse({
       findingsCount: 0,
       escalte: { reason: "typo", diagnosis: "key" },
-    }).success).toBe(false);
+    }).success).toBe(true);
     expect(workerReceiptSchema().safeParse({
       findingsCount: 1,
-      escalatee: { reason: "misspelled", diagnosis: "must re-ask" },
-    }).success).toBe(false);
+      escalatee: { reason: "near-miss", diagnosis: "not a gate" },
+    }).success).toBe(true);
   });
 
   it("keeps approved finding-family cargo on an otherwise typed CMR verdict", () => {
