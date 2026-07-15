@@ -1344,6 +1344,47 @@ describe("RealBackend reviewer output contract", () => {
     ).toThrow(/illegal coder station receipt/i);
   });
 
+  it("rings residual decision_gate as T2 judge escalate (not open-count paper)", () => {
+    // #919 CR: after S3/S6 early-return, residual non-judge decode still used to
+    // mint {kind:"reviewer", findingsCount:0, escalate} — same dual-shape
+    // landmine runner R1 deleted. Gate bell → T2 kind:"judge" status:"escalate".
+    const residualReviewerSpec: StepSpec = {
+      ...reviewerSpec,
+      // Non-S3/S6 so decodeOutput does not early-return to decodeJudgeStationOutput.
+      id: "S4",
+    };
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 919,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-gate-mint-"),
+    });
+
+    const decoded = backend.probeDecodeOutput(residualReviewerSpec, {
+      escalate: {
+        reason: "owner decision needed",
+        diagnosis: "residual AC fork",
+      },
+    });
+
+    expect(decoded).toEqual({
+      kind: "judge",
+      status: "escalate",
+      reason: "owner decision needed",
+      diagnosis: "residual AC fork",
+      escalate: {
+        reason: "owner decision needed",
+        diagnosis: "residual AC fork",
+      },
+    });
+    expect(decoded.kind).not.toBe("reviewer");
+  });
+
   it("transports reviewer rows without adjudicating disposition fields", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const backend = new DecodeOnlyBackend({
