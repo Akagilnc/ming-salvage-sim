@@ -81,6 +81,7 @@ import {
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
 import {
+  resolveAdvanceCoderSuggestion,
   resolveCoderRecOrder,
   lookupCoderRosterEntry,
   type CoderRosterEntry,
@@ -1636,12 +1637,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   /**
    * #686 — sticky resource-relay baton slug. Scopes stickiness to resource
    * handoffs only: blocks Coder-Rec snap-back after a relay for the rest of
-   * the run. ADR 0132 deleted round-threshold quality advance; #926 owns any
-   * future advanceCoder roster policy.
+   * the run. ADR 0132 deleted round-threshold quality advance.
    */
   let stickyRelayCoderSlug: string | undefined;
   /** S5 resource relay is independent from the normal S2 coder slot. */
   let stickyRelayCoderFixSlug: string | undefined;
+  /**
+   * #926 — sticky judge-advanced coder slug. Holds after a successful
+   * `advanceCoder` so Coder-Rec first-seat re-apply cannot snap back. Resource
+   * relay stickiness still wins when set (capacity crisis overrides quality advance).
+   */
+  let stickyJudgeAdvanceCoderSlug: string | undefined;
   /** #686 — last written relay focus path (forwarded on next dispatch). */
   let activeRelayFocusPath: string | undefined;
   /** The only step allowed to consume the current relay pool and focus baton. */
@@ -1660,8 +1666,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   > => {
     if (coderRecEnvSkipped) return undefined;
     // Resource-relay stickiness: hold the baton for the run. ADR 0132 deleted
-    // round-threshold quality advance; judge advanceCoder roster wiring is
-    // #926. Do NOT set coderRecEnvSkipped.
+    // round-threshold quality advance. Do NOT set coderRecEnvSkipped.
     if (stickyRelayCoderSlug !== undefined) {
       if (modelRoute.slots.coder !== stickyRelayCoderSlug) {
         modelRoute = withCoderSlot(modelRoute, stickyRelayCoderSlug);
@@ -1685,6 +1690,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ...modelRoute,
           slots: { ...modelRoute.slots, coderFix: stickyRelayCoderFixSlug },
         };
+        stepSpecs = stepSpecsForRoute(modelRoute);
+        routeSmokeChecked = false;
+        if (
+          coderSessionModel !== undefined &&
+          stepSpecs.S2.model !== coderSessionModel &&
+          stepSpecs.S5.model !== coderSessionModel
+        ) {
+          coderSessionId = undefined;
+          coderSessionModel = undefined;
+        }
+      }
+      return undefined;
+    }
+    // #926: judge-advanced seat holds against Coder-Rec first-seat re-apply.
+    if (stickyJudgeAdvanceCoderSlug !== undefined) {
+      if (modelRoute.slots.coder !== stickyJudgeAdvanceCoderSlug) {
+        modelRoute = withCoderSlot(modelRoute, stickyJudgeAdvanceCoderSlug);
         stepSpecs = stepSpecsForRoute(modelRoute);
         routeSmokeChecked = false;
         if (
@@ -1782,6 +1804,115 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       stepLedger: ledger,
       stopSummary,
     };
+  };
+
+  /**
+   * #926 — execute a judge `advanceCoder` suggestion (or stay-put + audit).
+   * Never terminals the run for roster unusability — continue path stays open.
+   */
+  const applyJudgeAdvanceCoder = async (
+    suggestion: string,
+    forStep: "S3" | "S6",
+  ): Promise<void> => {
+    const currentSlug = modelRoute.slots.coder;
+    const decision = resolveAdvanceCoderSuggestion(suggestion, currentSlug);
+    const ts = new Date().toISOString();
+
+    if (decision.kind === "noop") {
+      return;
+    }
+
+    if (decision.kind === "stay_put") {
+      const marker: LedgerEntry = {
+        step: forStep,
+        event: "coder_advance_stay_put",
+        reason: decision.reason,
+        fromModelId: decision.currentSlug,
+        toModelId: decision.currentSlug,
+        state_summary: decision.suggestion,
+        ts,
+      };
+      ledger.push(marker);
+      if (stateDir !== undefined) {
+        try {
+          await backend.writeLedger(
+            {
+              ...marker,
+              sessionId,
+              prompt_hash: await hashPrompt(undefined, forStep, backend),
+              branchHEAD: await resolveBranchHEAD(),
+              ts,
+            },
+            stateDir,
+          );
+        } catch (err) {
+          // Audit write failure must not kill the run for roster reasons —
+          // in-memory marker already carries the stay-put for this process.
+          console.warn(
+            `[orchestrator] #926 stay-put ledger write failed (fail-open): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+      console.info(
+        `[orchestrator] #926 advanceCoder stay-put (${decision.reason}): ` +
+          `kept ${decision.currentSlug}; suggestion=${decision.suggestion}`,
+      );
+      return;
+    }
+
+    // advanced
+    const preserveCoderFix =
+      process.env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
+      process.env.ORCHESTRATOR_CODER_FIX_MODEL.trim() !== "";
+    modelRoute = withCoderSlot(modelRoute, decision.entry.slug, {
+      preserveCoderFix,
+    });
+    stickyJudgeAdvanceCoderSlug = decision.entry.slug;
+    stepSpecs = stepSpecsForRoute(modelRoute);
+    routeSmokeChecked = false;
+    // New coder: fresh session (memory = worktree git history + ledger only).
+    coderSessionId = undefined;
+    coderSessionModel = undefined;
+    // Billing pool follows the new seat (same as Coder-Rec slot change).
+    currentBillingPool = billingPoolFromQuotaPool(
+      poolForModelRef(modelRoute.slots.coder),
+    );
+
+    const marker: LedgerEntry = {
+      step: forStep,
+      event: "coder_advance",
+      fromModelId: decision.fromSlug,
+      toModelId: decision.entry.slug,
+      state_summary: suggestion.trim(),
+      ts,
+    };
+    ledger.push(marker);
+    if (stateDir !== undefined) {
+      try {
+        await backend.writeLedger(
+          {
+            ...marker,
+            sessionId,
+            prompt_hash: await hashPrompt(undefined, forStep, backend),
+            branchHEAD: await resolveBranchHEAD(),
+            ts,
+          },
+          stateDir,
+        );
+      } catch (err) {
+        console.warn(
+          `[orchestrator] #926 advance ledger write failed (fail-open): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    console.info(
+      `[orchestrator] #926 advanceCoder → ${decision.entry.id} (${decision.entry.slug}) ` +
+        `from ${decision.fromSlug}; prior coder session retired`,
+    );
   };
 
   /** #686 — apply a relay baton onto the wall-hit role slot (role-aware). */
@@ -2741,6 +2872,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     if (coderRecPolicy?.kind === "stop") {
       return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
+
+    // #926 — rebuild judge-advanced sticky seat from the latest successful
+    // coder_advance row (before resource-relay, which still wins when present).
+    for (let i = resumeLedger.length - 1; i >= 0; i--) {
+      const row = resumeLedger[i]!;
+      if (row.event === "coder_advance" && typeof row.toModelId === "string") {
+        const advanced = lookupCoderRosterEntry(row.toModelId);
+        const slug = advanced?.slug ?? row.toModelId;
+        stickyJudgeAdvanceCoderSlug = slug;
+        if (modelRoute.slots.coder !== slug) {
+          modelRoute = withCoderSlot(modelRoute, slug);
+          stepSpecs = stepSpecsForRoute(modelRoute);
+          routeSmokeChecked = false;
+          // Advanced seat is a different model — do not resume the old session.
+          if (
+            coderSessionModel !== undefined &&
+            stepSpecs.S2.model !== coderSessionModel &&
+            stepSpecs.S5.model !== coderSessionModel
+          ) {
+            coderSessionId = undefined;
+            coderSessionModel = undefined;
+          }
+        }
+        break;
+      }
+    }
+
     const relayResume = resumeRelayFromLedger(
       resumeLedger.filter(
         (entry): entry is PersistentLedgerEntry & { readonly step: StepId } =>
@@ -3731,6 +3889,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         output,
         findingDispositions: stepFindingDispositions,
       });
+    }
+
+    // #926: after a judge continue row is durably recorded, execute optional
+    // advanceCoder (or stay-put + audit). Never terminals for roster unusability.
+    if (
+      (step === "S3" || step === "S6") &&
+      output?.kind === "judge" &&
+      output.status === "continue" &&
+      typeof output.advanceCoder === "string"
+    ) {
+      await applyJudgeAdvanceCoder(output.advanceCoder, step);
     }
 
     // A relay baton is a step-local override. Once its relayed step has
