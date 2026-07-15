@@ -118,6 +118,11 @@ import {
   normalizeFindingFamiliesWireAliases,
 } from "../findingFamilies.js";
 import {
+  materializeRawReviewerArtifactsForSandbox,
+  RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
+  RAW_REVIEWER_STDOUT_SANDBOX_FILE,
+} from "../rawReviewerArtifacts.js";
+import {
   ONLINE_REVIEW_LANDING_FILE,
   SANDBOX_ONLINE_REVIEW_PATH_ENV,
 } from "./onlineReviewLoop.js";
@@ -1729,6 +1734,12 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       } finally {
         rmSync(fixFindingsLanding.path, { force: true });
+        rmSync(join(this.opts.workingRepo, RAW_REVIEWER_STDOUT_SANDBOX_FILE), {
+          force: true,
+        });
+        rmSync(join(this.opts.workingRepo, RAW_REVIEWER_SIDECAR_SANDBOX_FILE), {
+          force: true,
+        });
         if (fixFocusLanding !== undefined) {
           rmSync(fixFocusLanding.path, { force: true });
         }
@@ -1744,7 +1755,18 @@ export class RealFamilyBackend implements FamilyBackend {
     landing?: WorkerLandingPayload,
   ): { path: string; sandboxPath: string } {
     this.excludeOptionalRuntimeFileFromGit(FAMILY_FIX_FINDINGS_FILENAME);
+    this.excludeOptionalRuntimeFileFromGit(RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+    this.excludeOptionalRuntimeFileFromGit(RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
     const path = join(this.opts.workingRepo, FAMILY_FIX_FINDINGS_FILENAME);
+    // Host monitor paths are not visible inside the family coder-fix container.
+    // Materialise into the sandbox cwd (workingRepo) and rewrite pointers (#899).
+    const rawReviewerArtifacts =
+      landing?.rawReviewerArtifacts !== undefined
+        ? materializeRawReviewerArtifactsForSandbox(
+            landing.rawReviewerArtifacts,
+            this.opts.workingRepo,
+          )
+        : undefined;
     writeFileSync(
       path,
       `${JSON.stringify(
@@ -1752,8 +1774,8 @@ export class RealFamilyBackend implements FamilyBackend {
           // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
           // ADR 0062) — never from the runner's thin DispatchContext.
           blockingFindings: landing?.blockingFindings ?? [],
-          ...(landing?.rawReviewerArtifacts !== undefined
-            ? { rawReviewerArtifacts: landing.rawReviewerArtifacts }
+          ...(rawReviewerArtifacts !== undefined
+            ? { rawReviewerArtifacts }
             : {}),
           blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
           ...(ctx.preexistingAssertionTouched === true
@@ -1912,7 +1934,7 @@ export class RealFamilyBackend implements FamilyBackend {
       };
     }
     // No-gate typed signal (`{}`): cargo comes from the sidecar only and never
-    // reintroduces escalate (fourth channel).
+    // reintroduces escalate (fourth channel — strip before / after parse).
     try {
       const cargo = (() => {
         try {
@@ -1923,7 +1945,15 @@ export class RealFamilyBackend implements FamilyBackend {
       })();
       const parsed = (() => {
         try {
-          return cargo !== undefined ? parseCoderSelfReport(cargo) : undefined;
+          if (cargo === undefined) return undefined;
+          // Strip fate keys before schema parse so opaque cargo cannot supply
+          // escalate after a validated no-gate typed decision (#899).
+          const stripped: Record<string, unknown> =
+            cargo !== null && typeof cargo === "object" && !Array.isArray(cargo)
+              ? { ...(cargo as Record<string, unknown>) }
+              : {};
+          delete stripped.escalate;
+          return parseCoderSelfReport(stripped);
         } catch {
           return undefined;
         }
@@ -1945,12 +1975,12 @@ export class RealFamilyBackend implements FamilyBackend {
     }
   }
 
+  /** Delivery cargo only — never re-reads escalate after a no-gate typed signal. */
   private familyCoderOutput(output: SelfReportedCoder): CoderResult {
     return {
       kind: "coder",
       committed: output.committed,
       commitsAdded: output.commitsAdded,
-      ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
     };
   }
 

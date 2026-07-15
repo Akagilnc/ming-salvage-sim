@@ -1114,24 +1114,38 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   it.each([
     [
       "malformed reviewer",
-      {
-        reviewerSessionId: "cmr-reviewer-malformed",
-        sidecarPath: "/ledger/cmr-malformed.json",
-        statement: "the previous reviewer raw artifacts are here",
-      },
+      "cmr-reviewer-malformed",
+      "sidecar" as const,
     ],
     [
       "reviewer-declared positive count with empty findings",
-      {
-        reviewerSessionId: "cmr-reviewer-empty-findings",
-        stdoutPath: "/ledger/cmr-empty-findings.log",
-        statement: "the previous reviewer raw artifacts are here",
-      },
+      "cmr-reviewer-empty-findings",
+      "stdout" as const,
     ],
   ] as const)(
     "transports raw reviewer artifacts into family coder-fix findings for %s",
-    (_label, rawReviewerArtifacts) => {
+    (_label, reviewerSessionId, hostKind) => {
       const repo = realRepo335();
+      // Host-only paths must be materialised into the sandbox cwd so the fixer
+      // container can read them (#899) — write real host files then assert
+      // sandbox-relative names land in the findings JSON.
+      const hostDir = mkDir("raw-reviewer-host-");
+      const hostStdout = join(hostDir, "reviewer.stdout");
+      const hostSidecar = join(hostDir, "reviewer.sidecar");
+      writeFileSync(hostStdout, "reviewer stdout body\n", "utf8");
+      writeFileSync(hostSidecar, JSON.stringify({ findingsCount: 1 }), "utf8");
+      const rawReviewerArtifacts =
+        hostKind === "sidecar"
+          ? {
+              reviewerSessionId,
+              sidecarPath: hostSidecar,
+              statement: "the previous reviewer raw artifacts are here" as const,
+            }
+          : {
+              reviewerSessionId,
+              stdoutPath: hostStdout,
+              statement: "the previous reviewer raw artifacts are here" as const,
+            };
 
       class FixFindingsBackend extends RealFamilyBackend {
         public writeFixFindings(
@@ -1158,11 +1172,36 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         { blockingFindings: [], rawReviewerArtifacts },
       );
 
-      expect(JSON.parse(readFileSync(landing.path, "utf8"))).toEqual({
-        blockingFindings: [],
-        rawReviewerArtifacts,
-        blockingFindingIdentityKeys: [],
-      });
+      const written = JSON.parse(readFileSync(landing.path, "utf8")) as {
+        rawReviewerArtifacts: {
+          reviewerSessionId?: string;
+          stdoutPath?: string;
+          sidecarPath?: string;
+          statement: string;
+        };
+      };
+      expect(written.rawReviewerArtifacts.reviewerSessionId).toBe(reviewerSessionId);
+      expect(written.rawReviewerArtifacts.statement).toBe(
+        "the previous reviewer raw artifacts are here",
+      );
+      if (hostKind === "sidecar") {
+        expect(written.rawReviewerArtifacts.sidecarPath).toBe(
+          ".orchestrator-raw-reviewer.sidecar",
+        );
+        expect(readFileSync(join(repo, ".orchestrator-raw-reviewer.sidecar"), "utf8")).toBe(
+          JSON.stringify({ findingsCount: 1 }),
+        );
+        // Host absolute path must not leak into the findings file.
+        expect(JSON.stringify(written)).not.toContain(hostSidecar);
+      } else {
+        expect(written.rawReviewerArtifacts.stdoutPath).toBe(
+          ".orchestrator-raw-reviewer.stdout",
+        );
+        expect(readFileSync(join(repo, ".orchestrator-raw-reviewer.stdout"), "utf8")).toBe(
+          "reviewer stdout body\n",
+        );
+        expect(JSON.stringify(written)).not.toContain(hostStdout);
+      }
     },
   );
 

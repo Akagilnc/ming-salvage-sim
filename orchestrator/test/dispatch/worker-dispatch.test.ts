@@ -79,7 +79,14 @@ class DispatchBackend implements Backend {
     path: "/resident/worktrees/issue-331",
   };
 
-  async findResumeState(): Promise<undefined> {
+  async findResumeState(): Promise<
+    | undefined
+    | {
+        worktree: WorktreeHandle;
+        stateDir: string;
+        ledger: PersistentLedgerEntry[];
+      }
+  > {
     return undefined;
   }
   async resumeSession(): Promise<StepOutput> {
@@ -568,6 +575,142 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(result.status).toBe("success");
     expect(backend.specs.some((spec) => spec.id === "S5")).toBe(true);
     expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
+  });
+
+  it("rebuilds raw reviewer artifact pointers when resuming after a persisted S4 boundary", async () => {
+    // #899: positive open-count artifacts live only in process memory during a
+    // live run; crash/resume after S4 must rebuild them from the preceding
+    // reviewer ledger row so sparse cargo cannot produce a no-op fixer landing.
+    const finding = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "resume must keep raw pointers",
+      location: "src/runner.ts:2731",
+      suggested_fix: "rebuild from reviewer ledger entry",
+      action: "fix_now" as const,
+    };
+    const monitorHandle = {
+      pid: 4242,
+      logPath: "/host/ledger/S3.stdout",
+      resultPath: "/host/ledger/S3.sidecar.json",
+      poolId: "claude/sonnet",
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stepId: "S3",
+      dispatchedAt: "2026-07-15T00:00:00.000Z",
+      instanceId: "spawned:4242:2026-07-15T00:00:00.000Z",
+    };
+    class ResumeAfterS4Backend extends DispatchBackend {
+      readonly landings: Array<WorkerLandingPayload | undefined> = [];
+      // Widen the base's Promise<undefined> return so resume fixtures typecheck.
+      override async findResumeState(): Promise<
+        | undefined
+        | {
+            worktree: WorktreeHandle;
+            stateDir: string;
+            ledger: PersistentLedgerEntry[];
+          }
+      > {
+        return {
+          worktree: this.worktree,
+          stateDir: "/resident/worktrees/.ledger-899-s4-resume",
+          ledger: [
+            {
+              step: "S0",
+              sessionId: "run",
+              prompt_hash: "h0",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:00.000Z",
+            },
+            {
+              step: "S1",
+              sessionId: "run",
+              prompt_hash: "h1",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:01.000Z",
+            },
+            {
+              step: "S2",
+              sessionId: "coder-s2",
+              prompt_hash: "h2",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:02.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S3",
+              sessionId: "reviewer-session-s4-resume",
+              prompt_hash: "h3",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:03.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 1,
+                findings: [finding],
+              },
+              monitorHandle,
+            },
+            {
+              step: "S4",
+              sessionId: "run",
+              prompt_hash: "h4",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:04.000Z",
+            },
+          ],
+        };
+      }
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        this.landings.push(landing);
+        this.specs.push(spec);
+        this.ctxs.push(ctx);
+        this.dispatched.push(
+          `${spec.id}:${spec.kind}:${spec.role}:${spec.session}:${spec.contextRetention}:${spec.skill ?? "—"}`,
+        );
+        if (spec.id === "S5") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          };
+        }
+        if (spec.kind === "coder") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: false, commitsAdded: 0 },
+        };
+      }
+    }
+
+    const backend = new ResumeAfterS4Backend();
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+
+    expect(result.status).toBe("success");
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThan(-1);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
+    expect(backend.landings[s5Index]).toMatchObject({
+      blockingFindings: [finding],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "reviewer-session-s4-resume",
+        stdoutPath: "/host/ledger/S3.stdout",
+        sidecarPath: "/host/ledger/S3.sidecar.json",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
   });
 });
 

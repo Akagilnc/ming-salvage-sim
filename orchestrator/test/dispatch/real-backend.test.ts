@@ -1837,10 +1837,18 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   });
 
   it("rejects malformed coder decision gates so Sandcastle re-asks while opaque cargo passes", () => {
-    // #899: dedicated decision-tag schema — objects only; present-but-malformed
-    // escalate fails so Sandcastle same-session re-asks. Ordinary cargo is not SO.
+    // #899: dedicated decision-tag schema — only strict `{}` (no-gate) or a
+    // well-formed escalate bell. Unknown / misspelled keys fail so Sandcastle
+    // same-session re-asks rather than treating them as no-gate.
     expect(decisionGateSignalSchema.safeParse({}).success).toBe(true);
-    expect(decisionGateSignalSchema.safeParse({ note: "no-gate" }).success).toBe(true);
+    expect(decisionGateSignalSchema.safeParse({ note: "no-gate" }).success).toBe(false);
+    expect(decisionGateSignalSchema.safeParse({ escalte: {
+      reason: "typo key",
+      diagnosis: "must not pass as no-gate",
+    } }).success).toBe(false);
+    expect(decisionGateSignalSchema.safeParse({
+      escalatee: { reason: "misspelled", diagnosis: "must re-ask" },
+    }).success).toBe(false);
     expect(decisionGateSignalSchema.safeParse(null).success).toBe(false);
     expect(decisionGateSignalSchema.safeParse("not-object").success).toBe(false);
     expect(decisionGateSignalSchema.safeParse({

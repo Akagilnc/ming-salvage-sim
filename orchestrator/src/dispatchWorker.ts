@@ -36,6 +36,11 @@ import {
   formatFixFocusMarkdown,
 } from "./findingFamilies.js";
 import {
+  materializeRawReviewerArtifactsForSandbox,
+  RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
+  RAW_REVIEWER_STDOUT_SANDBOX_FILE,
+} from "./rawReviewerArtifacts.js";
+import {
   modelForSlot,
   routeSmokeFailure,
   type ResolvedModelRoute,
@@ -227,6 +232,17 @@ function writeFixFindingsLandingFile(
   } else {
     ensureGitExcluded(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
   }
+  // Host monitor paths are not visible inside the fixer container. Copy
+  // readable raw products into the sandbox cwd and rewrite pointers (#899).
+  const rawReviewerArtifacts =
+    landing?.rawReviewerArtifacts !== undefined
+      ? materializeRawReviewerArtifactsForSandbox(
+          landing.rawReviewerArtifacts,
+          ctx.worktree.path,
+        )
+      : undefined;
+  ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+  ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
   writeFileSync(
     landingPath,
     `${JSON.stringify(
@@ -234,8 +250,8 @@ function writeFixFindingsLandingFile(
         // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
         // ADR 0062) — never from the runner's thin DispatchContext.
         blockingFindings: landing?.blockingFindings ?? [],
-        ...(landing?.rawReviewerArtifacts !== undefined
-          ? { rawReviewerArtifacts: landing.rawReviewerArtifacts }
+        ...(rawReviewerArtifacts !== undefined
+          ? { rawReviewerArtifacts }
           : {}),
         blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
         ...(ctx.preexistingAssertionTouched === true
@@ -491,6 +507,16 @@ export async function legacyDispatchWorker(
   } finally {
     if (fixFindingsLanding?.cleanup) {
       rmSync(fixFindingsLanding.path, { force: true });
+    }
+    if (ctx.worktree !== undefined) {
+      // Materialised host artifacts live next to the worktree cwd; always
+      // best-effort remove so a crash mid-fix does not leave host copies.
+      rmSync(join(ctx.worktree.path, RAW_REVIEWER_STDOUT_SANDBOX_FILE), {
+        force: true,
+      });
+      rmSync(join(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE), {
+        force: true,
+      });
     }
     if (fixFocusLanding?.cleanup) {
       rmSync(fixFocusLanding.path, { force: true });

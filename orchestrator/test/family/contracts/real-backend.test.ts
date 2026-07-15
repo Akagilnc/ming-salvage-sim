@@ -1354,6 +1354,77 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     },
   );
 
+  it("does not let family coder-fix cargo escalate after a no-gate typed decision", async () => {
+    // #899: opaque sidecar cargo must not reintroduce escalate after a validated
+    // no-gate typed decision (fourth routing channel ban).
+    class Harness extends RealFamilyBackend {
+      public classify(
+        result: {
+          output?: unknown;
+          stdout: string;
+          iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+        },
+        outcomePath: string,
+      ) {
+        return this.familyCoderResultFromRun(
+          {
+            stdout: result.stdout,
+            commits: [],
+            iterations: [...(result.iterations ?? [])],
+            ...(result.output !== undefined ? { output: result.output } : {}),
+          },
+          {
+            id: "S5",
+            kind: "coder",
+            role: "coder",
+            host: "claude",
+            session: "fresh",
+            contextRetention: "clean",
+            promptFile: "x.md",
+            completionSignal: "CODER_STEP_COMPLETE",
+            maxIter: 1,
+            model: "sonnet",
+            soul: "coder",
+            toolchain: [],
+          },
+          outcomePath,
+        );
+      }
+    }
+    const dir = trackTempDir(`family-coder-spoof-escalate-`);
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        committed: true,
+        commitsAdded: 1,
+        escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+      }),
+      "utf8",
+    );
+    const be = new Harness({
+      workingRepo: dir,
+      familyBase: "fb",
+      ledgerDir: dir,
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc",
+    });
+    const out = be.classify({ output: {}, stdout: "" }, outcomePath);
+    expect(out.kind).toBe("completed");
+    if (out.kind === "completed") {
+      expect(out.output).toEqual({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+      });
+      expect("escalate" in out.output).toBe(false);
+    }
+  });
+
   it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
     "does not let sidecar bells override a schema-validated typed %s decision signal",
     async (role) => {
