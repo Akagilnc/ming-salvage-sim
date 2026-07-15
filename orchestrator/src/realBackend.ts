@@ -189,7 +189,7 @@ export function barePingArgv(
       // only (agy 1.1.2 rejects empty --print; no stdin delivery channel).
       return {
         file: "agy",
-        args: [...agyPrintInvocation(model, prompt)],
+        args: agyPrintInvocation(model, prompt),
       };
     }
     case "grok":
