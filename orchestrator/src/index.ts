@@ -158,6 +158,17 @@ export {
   syncStopSummaryToStageFailure,
 } from "./family/familyTerminal.js";
 export type { FamilyStageFailureStatus } from "./family/familyTerminal.js";
+// ── #929 terminal → process exit-code map (driver thin shell) ──────────────
+export {
+  TERMINAL_EXIT_CODES,
+  TERMINAL_EXIT_STATUSES,
+  exitCodeForTerminal,
+  exitProcessForFamilyRun,
+  familyDriverExitCode,
+  isTerminalExitStatus,
+  runResultExitCode,
+} from "./terminalExitCode.js";
+export type { TerminalExitStatus } from "./terminalExitCode.js";
 export type {
   ChildSlice,
   ConflictResolveRequest,
