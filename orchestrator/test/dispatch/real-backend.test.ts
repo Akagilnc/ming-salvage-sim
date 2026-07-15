@@ -2040,6 +2040,22 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.agentOptions[0]!.resumeSession).toBe("prior-coder-session");
   });
 
+  it("classifies Effect Die.defect-nested StructuredOutputError as #598 recovery", () => {
+    // Concurrent vitest / Effect runtime may wrap SOE as FiberFailure → Die.defect
+    // rather than cause/error. walkErrorChain must follow defect so CI does not
+    // flake on AssertionError false≠true for isReceiptRecoveryFailure.
+    const soe = new StructuredOutputError("bad output", {
+      tag: CODER_RECEIPT_TAG,
+      rawMatched: undefined,
+      commits: [],
+      branch: "feat/x",
+      sessionId: "sess-die-defect",
+    });
+    const die = { _tag: "Die", defect: soe };
+    const fiber = { _tag: "FiberFailure", cause: die };
+    expect(isReceiptRecoveryFailure(fiber)).toBe(true);
+  });
+
   it("does not derive open-count from findings-array cargo when findingsCount is missing", () => {
     // #899 / ADR 0131: missing findingsCount is unusable review paper — never
     // synthesize findings.length, never invent a fake kind:"coder" seat, and
