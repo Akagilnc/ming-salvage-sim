@@ -183,6 +183,7 @@ import type {
   VerifyResult,
   VerifyWorkerTerminalState,
   WorkerLandingPayload,
+  WorkerOutput,
   WorkerResult,
   WorkerSpec,
 } from "../types.js";
@@ -2215,7 +2216,8 @@ export class RealFamilyBackend implements FamilyBackend {
       };
     }
     // No-gate typed signal: sidecar/stdout enrich cargo only — never escalate.
-    // Unusable / malformed cargo fails the Action (no fake coder seat).
+    // Sparse / unusable cargo completes as role-native opaque miss (ship-aligned);
+    // cargo shape is never a #598 process failure (#899 / ADR 0131).
     return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
   }
 
@@ -3850,10 +3852,6 @@ function gitExitStatus(err: unknown): number | undefined {
 // Single-slice uses RealBackend outputFor/decodeOutput + extract*Tag; this is family eqv.
 // ════════════════════════════════════════════════════════════════════════════
 
-function isMalformedDecisionGateError(err: unknown): boolean {
-  return err instanceof Error && err.message.includes("malformed decision gate");
-}
-
 function parseOutcomePayload(
   stdout: string,
   tag: string,
@@ -3868,30 +3866,9 @@ function parseOutcomePayload(
       sidecarReadError = err;
     }
     if (sidecar !== undefined) {
-      // One decision-gate court: classifyDecisionGate (throws on malformed).
-      // Prefer stdout only when sidecar has no gate and stdout carries a
-      // well-formed bell — never soft-accept empty escalate fields (#899).
-      const sidecarGate = classifyDecisionGate(sidecar, `${tag} outcome sidecar`);
-      if (sidecarGate.kind === "none") {
-        const last = extractLastTagBody(stdout, tag);
-        if (last !== undefined) {
-          try {
-            const compatibility = JSON.parse(last.trim());
-            if (
-              classifyDecisionGate(compatibility, `${tag} worker <${tag}> tag`)
-                .kind === "bell"
-            ) {
-              return {
-                parsed: compatibility,
-                source: `${tag} worker <${tag}> tag`,
-              };
-            }
-          } catch (err) {
-            if (isMalformedDecisionGateError(err)) throw err;
-            // Compatibility cargo is unreadable and carries no extractable bell.
-          }
-        }
-      }
+      // Cargo source selection is not a gate court (#899 / H2). Prefer a
+      // readable sidecar; do not shop stdout because it carries a decision
+      // bell. Fate is typed SO only — callers strip escalate after read.
       return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
     }
     if (sidecarReadError !== undefined) {
@@ -3943,6 +3920,29 @@ function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
 }
 
 /**
+ * Role-native opaque-miss cargo after a clean process + typed no-gate decision
+ * (ship-aligned; #899 / ADR 0131). Cargo shape never fails the Action for #598
+ * and never mints a fake `kind:"coder"` seat report.
+ */
+function sparseReviewLoopCompleted(
+  kind: string,
+  sessionId: string | undefined,
+): WorkerResult {
+  const output: WorkerOutput =
+    kind === "verify"
+      ? // Fail-soft: not green → topology continues to fixer with raw artifacts.
+        { kind: "verify", converged: false }
+      : kind === "fixer"
+        ? { kind: "fixer", committed: false }
+        : kind === "cleanup"
+          ? // Delivery-class: exit 0 = process success; cargo miss does not flip fate.
+            { kind: "cleanup", terminal: true, ok: true }
+          : // Empty-run success is legal for 文档发布 (process success, cargo miss).
+            { kind: "docRelease", released: true };
+  return { kind: "completed", output, sessionId };
+}
+
+/**
  * Cargo-only review-loop result. Escalate is never admitted from sidecar/stdout
  * — those transports enrich delivery cargo only (#899). Fate comes solely from
  * the dedicated decision-gate Output.object handled by the caller.
@@ -3964,15 +3964,12 @@ function reviewLoopCargoResult(
   // sidecar bell cannot mask legitimate delivery cargo.
   const raw = parseOutcomePayload(stdout, tag, outcomePath);
   if ("error" in raw || !isJsonRecord(raw.parsed)) {
-    // Unusable review-loop paper is not a successful coder seat (#899).
-    throw new Error(
-      `family-${kind}: unusable review-loop cargo; failing Action for mechanical redispatch`,
-    );
+    // Sparse / unreadable cargo: process success + opaque miss (not #598).
+    return sparseReviewLoopCompleted(kind, sessionId);
   }
   const cargo: Record<string, unknown> = { ...raw.parsed };
   delete cargo.escalate;
   const cargoStdout = `<${tag}>${JSON.stringify(cargo)}</${tag}>`;
-  // Malformed decision gates must rethrow for #598 — never mint a fake coder.
   const parsed =
     kind === "verify"
       ? parseVerifyOutcome(cargoStdout)
@@ -3982,11 +3979,9 @@ function reviewLoopCargoResult(
           ? parseCleanupOutcome(cargoStdout)
           : parseDocReleaseOutcome(cargoStdout);
   if (parsed.kind === "escalate" || parsed.kind === "cargo") {
-    // After escalate strip, cargo/escalate shapes mean unusable delivery paper —
-    // not a completed coder report.
-    throw new Error(
-      `family-${kind}: unusable review-loop cargo; failing Action for mechanical redispatch`,
-    );
+    // After escalate strip, remaining off-shape paper is opaque miss cargo —
+    // complete the Action; do not re-open cargo shape as a #598 channel.
+    return sparseReviewLoopCompleted(kind, sessionId);
   }
   return { kind: "completed", output: parsed, sessionId };
 }

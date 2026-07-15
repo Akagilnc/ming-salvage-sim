@@ -1280,19 +1280,18 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ).toEqual({ kind: "docRelease", released: true });
   });
 
-  it("rings a review-loop stdout decision bell before parseable sidecar cargo", async () => {
+  it("prefers readable sidecar cargo over a stdout decision bell (no bell-shop)", async () => {
+    // #899 H2: cargo source selection is not a gate court. Prefer sidecar when
+    // present; do not shop stdout because it carries escalate. Fate is typed SO.
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const dir = trackTempDir("review-loop-outcome-bell-");
     const outcomePath = join(dir, "outcome.json");
-    writeFileSync(outcomePath, JSON.stringify({ unrelatedCargo: true }), "utf8");
+    writeFileSync(outcomePath, JSON.stringify({ converged: true }), "utf8");
 
     expect(mod.parseVerifyOutcome(
       '<verify>{"bad": 1, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</verify>',
       outcomePath,
-    )).toMatchObject({
-      kind: "escalate",
-      escalation: { reason: "owner choice", diagnosis: "review fork" },
-    });
+    )).toEqual({ kind: "verify", converged: true });
   });
 
   it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(

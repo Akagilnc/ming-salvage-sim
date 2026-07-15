@@ -78,11 +78,19 @@ import type * as sc from "@ai-hero/sandcastle";
 import { resolveRouteModels } from "../../src/modelRoutes.js";
 // NOTE: `hasAgentBrief` was removed in #329 (vestigial after #328 de-gated the
 // brief); S1's `extractAgentBrief` is the surviving brief reader.
+import * as scRuntime from "@ai-hero/sandcastle";
 import { StructuredOutputError } from "@ai-hero/sandcastle";
 import {
+  DECISION_GATE_TAG,
+  RECEIPT_MAX_RETRIES,
   decisionGateSignalSchema,
+  isReceiptRecoveryFailure,
   workerReceiptSchema,
 } from "../../src/receiptRecovery.js";
+import {
+  runScriptedStructuredOutput,
+  type ScriptedAgent,
+} from "../helpers/scripted-sandcastle-run.js";
 
 type AgentRunResult = Awaited<ReturnType<typeof sc.run>>;
 
@@ -1250,7 +1258,9 @@ describe("RealBackend reviewer output contract", () => {
     promptFile: "coder_fix.md",
     model: "sonnet",
     completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
+    // Production SO seats are single-iter (ADR 0128 / #899). maxIter>1 would
+    // suppress decision-gate Output.object and hide the production SO path.
+    maxIter: 1,
     soul: "coder",
     toolchain: ["node", "typescript"],
   };
@@ -1460,7 +1470,9 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     promptFile: "coder_implement.md",
     model: "gpt-5.6-sol",
     completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
+    // Production seats are single-iter with decision-gate SO (#899). Keep
+    // fixtures aligned so maxIter>1 cannot hide the Output.object attach path.
+    maxIter: 1,
     soul: "coder",
     toolchain: ["python", "node", "npm", "typescript"],
   };
@@ -1575,6 +1587,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-286",
+      output: {},
     });
 
     const result = await backend.runStep(coderSpec, {
@@ -1596,6 +1609,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: "worker completed its changes",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-advisory-exit",
+      output: {},
     });
 
     await expect(
@@ -1697,6 +1711,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: "coder completed implementation but omitted its receipt",
       commits: [{ sha: "abc123" }],
       iterations: [{}],
+      // Typed no-gate decision signal present; ordinary cargo may be absent.
+      output: {},
     } as AgentRunResult;
 
     await expect(
@@ -1755,6 +1771,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: "resumed worker completed its changes",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-resumed-advisory-exit",
+      // intentionally omit output — typed signal required
     });
 
     await expect(
@@ -1802,18 +1819,20 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   });
 
   it("does not derive open-count from findings-array cargo when findingsCount is missing", () => {
-    // #899: missing findingsCount is unusable — fail closed for #598, never
-    // synthesize findings.length and never mint a fake kind:"coder" seat.
+    // #899 / ADR 0131: missing findingsCount is unusable review paper — never
+    // synthesize findings.length, never invent findingsCount:0, never mint a
+    // fake kind:"coder" seat, and never throw for abolished #598 shape lane.
+    // Non-reviewer envelope → runner unusable path (S5 + raw artifacts).
     const backend = makeBackend();
 
-    expect(() =>
+    expect(
       backend.probeDecodeOutput(reviewerSpec, {
         findings: [{ severity: "high", category: "x", claim_quote: "y", location: "z", suggested_fix: "w", action: "fix_now" }],
       }),
-    ).toThrow(/unusable open-count receipt/);
-    expect(() =>
+    ).toEqual({ kind: "fixer", committed: false });
+    expect(
       backend.probeDecodeOutput(reviewerSpec, { findings: [] }),
-    ).toThrow(/unusable open-count receipt/);
+    ).toEqual({ kind: "fixer", committed: false });
     expect(
       backend.probeDecodeOutput(reviewerSpec, { findingsCount: 0, findings: [] }),
     ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
@@ -1866,6 +1885,311 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.output).toMatchObject({
       tag: "review",
       maxRetries: 2,
+    });
+  });
+
+  // ─── #899 T1: single-slice production SO four-case matrix ─────────────────
+  // Family production seat coverage lives in cmr-worker.test.ts. This block
+  // exercises RealBackend single-slice reviewer open-count + coder decision-gate
+  // at the real sc.run boundary (scripted provider, no LLM).
+
+  describe("#899 single-slice production SO four-case matrix", () => {
+    const cleanups: string[] = [];
+    afterEach(() => {
+      while (cleanups.length > 0) {
+        const dir = cleanups.pop();
+        if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("accepts initial-good open-count via real sc.run (no same-session resume)", async () => {
+      const { agent, result } = await runScriptedStructuredOutput({
+        tag: "review",
+        schema: workerReceiptSchema(),
+        emissions: [{ body: JSON.stringify({ findingsCount: 0, findings: [] }) }],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        sessionId: "sess-ss-review-initial-good",
+        cleanups,
+      });
+      expect(result.output).toMatchObject({ findingsCount: 0 });
+      expect(agent.callCount).toBe(1);
+      expect(agent.resumedSessions).toEqual([undefined]);
+
+      // Production decode path: typed open-count → kind:reviewer.
+      const backend = makeBackend();
+      expect(
+        backend.probeDecodeOutput(reviewerSpec, result.output),
+      ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
+    });
+
+    it("accepts initial-good decision-gate via real sc.run (no same-session resume)", async () => {
+      const good = {
+        escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      };
+      const { agent, result } = await runScriptedStructuredOutput({
+        tag: DECISION_GATE_TAG,
+        schema: decisionGateSignalSchema,
+        emissions: [{ body: JSON.stringify(good) }],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        sessionId: "sess-ss-decision-initial-good",
+        cleanups,
+      });
+      expect(result.output).toEqual(good);
+      expect(agent.callCount).toBe(1);
+
+      const backend = makeBackend();
+      expect(
+        backend.probeDecodeOutput(coderSpec, result.output),
+      ).toMatchObject({
+        escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      });
+    });
+
+    it("recovers open-count bad→good same-session via real sc.run", async () => {
+      const agentOut: { agent?: ScriptedAgent } = {};
+      const good = { findingsCount: 2, findings: [] };
+      const { agent, result } = await runScriptedStructuredOutput({
+        tag: "review",
+        schema: workerReceiptSchema(),
+        emissions: [
+          { body: JSON.stringify({ findingsCount: -1 }) },
+          { body: JSON.stringify(good) },
+        ],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        sessionId: "sess-ss-review-recover",
+        cleanups,
+        agentOut,
+      });
+      expect(result.output).toMatchObject({ findingsCount: 2 });
+      expect(agent.callCount).toBe(2);
+      expect(agent.resumedSessions).toEqual([
+        undefined,
+        "sess-ss-review-recover",
+      ]);
+      expect(agentOut.agent?.callCount).toBe(2);
+
+      const backend = makeBackend();
+      expect(
+        backend.probeDecodeOutput(reviewerSpec, result.output),
+      ).toMatchObject({ kind: "reviewer", findingsCount: 2 });
+    });
+
+    it("recovers decision-gate bad→good same-session via real sc.run", async () => {
+      const good = {
+        escalate: { reason: "owner", diagnosis: "needs human" },
+      };
+      const { agent, result } = await runScriptedStructuredOutput({
+        tag: DECISION_GATE_TAG,
+        schema: decisionGateSignalSchema,
+        emissions: [
+          { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+          { body: JSON.stringify(good) },
+        ],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        sessionId: "sess-ss-decision-recover",
+        cleanups,
+      });
+      expect(result.output).toEqual(good);
+      expect(agent.callCount).toBe(2);
+      expect(agent.resumedSessions).toEqual([
+        undefined,
+        "sess-ss-decision-recover",
+      ]);
+    });
+
+    it("propagates StructuredOutputError when open-count maxRetries are exhausted", async () => {
+      const agentOut: { agent?: ScriptedAgent } = {};
+      try {
+        await runScriptedStructuredOutput({
+          tag: "review",
+          schema: workerReceiptSchema(),
+          emissions: [
+            { body: JSON.stringify({ findingsCount: -1 }) },
+            { body: JSON.stringify({ findingsCount: -2 }) },
+            { body: JSON.stringify({ findingsCount: -3 }) },
+          ],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "sess-ss-review-exhausted",
+          cleanups,
+          agentOut,
+        });
+        expect.unreachable("expected StructuredOutputError after maxRetries exhaust");
+      } catch (err) {
+        expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
+        const soe = err as scRuntime.StructuredOutputError;
+        expect(soe.tag).toBe("review");
+        expect(isReceiptRecoveryFailure(err)).toBe(true);
+        expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
+      }
+    });
+
+    it("propagates StructuredOutputError when decision-gate maxRetries are exhausted", async () => {
+      const agentOut: { agent?: ScriptedAgent } = {};
+      try {
+        await runScriptedStructuredOutput({
+          tag: DECISION_GATE_TAG,
+          schema: decisionGateSignalSchema,
+          emissions: [
+            { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+            { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
+            { body: JSON.stringify({ escalate: { reason: "x", diagnosis: "" } }) },
+          ],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          sessionId: "sess-ss-decision-exhausted",
+          cleanups,
+          agentOut,
+        });
+        expect.unreachable("expected StructuredOutputError after maxRetries exhaust");
+      } catch (err) {
+        expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
+        expect((err as scRuntime.StructuredOutputError).tag).toBe(DECISION_GATE_TAG);
+        expect(isReceiptRecoveryFailure(err)).toBe(true);
+        expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
+      }
+    });
+
+    it("classifies non-resumable open-count maxRetries as recovery failure", async () => {
+      await expect(
+        runScriptedStructuredOutput({
+          tag: "review",
+          schema: workerReceiptSchema(),
+          emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          resumable: false,
+          name: "grok",
+          cleanups,
+        }),
+      ).rejects.toSatisfy((err: unknown) => {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toMatch(
+          /output\.maxRetries requires an agent provider that supports session resumption/i,
+        );
+        expect(isReceiptRecoveryFailure(err)).toBe(true);
+        return true;
+      });
+    });
+
+    it("classifies non-resumable decision-gate maxRetries as recovery failure", async () => {
+      await expect(
+        runScriptedStructuredOutput({
+          tag: DECISION_GATE_TAG,
+          schema: decisionGateSignalSchema,
+          emissions: [{ body: JSON.stringify({}) }],
+          maxRetries: RECEIPT_MAX_RETRIES,
+          resumable: false,
+          name: "grok",
+          cleanups,
+        }),
+      ).rejects.toSatisfy((err: unknown) => {
+        expect(isReceiptRecoveryFailure(err)).toBe(true);
+        return true;
+      });
+    });
+
+    it("production RealBackend reviewer seat: first-good open-count via real sc.run", async () => {
+      // #899 T1: cross production RealBackend.runStep boundary + real sc.run.
+      const agentOut: { agent?: ScriptedAgent } = {};
+      let sandcastleCalls = 0;
+      class ProductionSeatBackend extends PreflightBackend {
+        protected override async runAgentSandbox(
+          options: Parameters<typeof scRuntime.run>[0],
+        ): Promise<Awaited<ReturnType<typeof scRuntime.run>>> {
+          sandcastleCalls += 1;
+          this.lastAgentOptions = options;
+          this.agentOptions.push(options);
+          expect(options.output).toEqual(
+            expect.objectContaining({ tag: "review", maxRetries: RECEIPT_MAX_RETRIES }),
+          );
+          const run = await runScriptedStructuredOutput({
+            tag: "review",
+            schema: workerReceiptSchema(),
+            emissions: [
+              { body: JSON.stringify({ findingsCount: 0, findings: [] }) },
+            ],
+            maxRetries: RECEIPT_MAX_RETRIES,
+            sessionId: "prod-ss-review-initial-good",
+            cleanups,
+            agentOut,
+          });
+          return run.result;
+        }
+      }
+      const backend = new ProductionSeatBackend({
+        sourceRepo: "/tmp/source",
+        remote: "https://github.com/owner/name.git",
+        runKey: 899,
+        repo: "owner/name",
+        imageName: "img",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        home: tempHome("rb-home-ss-prod-review-"),
+      });
+      await expect(
+        backend.runStep(reviewerSpec, {
+          branch: "feat/issue-899",
+          base: "main",
+          path: "/tmp/worktree/issue-899",
+        }),
+      ).resolves.toMatchObject({
+        output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      });
+      expect(sandcastleCalls).toBe(1);
+      expect(agentOut.agent?.callCount).toBe(1);
+    });
+
+    it("production RealBackend coder seat: decision-gate SOE exhaust → #598, zero fixer", async () => {
+      let sandcastleCalls = 0;
+      class ProductionSeatBackend extends PreflightBackend {
+        protected override async runAgentSandbox(
+          options: Parameters<typeof scRuntime.run>[0],
+        ): Promise<Awaited<ReturnType<typeof scRuntime.run>>> {
+          sandcastleCalls += 1;
+          this.lastAgentOptions = options;
+          this.agentOptions.push(options);
+          expect(options.output).toEqual(
+            expect.objectContaining({
+              tag: DECISION_GATE_TAG,
+              maxRetries: RECEIPT_MAX_RETRIES,
+            }),
+          );
+          return (
+            await runScriptedStructuredOutput({
+              tag: DECISION_GATE_TAG,
+              schema: decisionGateSignalSchema,
+              emissions: [
+                { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+                { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
+                { body: JSON.stringify({ escalate: { reason: "x", diagnosis: "" } }) },
+              ],
+              maxRetries: RECEIPT_MAX_RETRIES,
+              sessionId: "prod-ss-decision-exhausted",
+              cleanups,
+            })
+          ).result;
+        }
+      }
+      const backend = new ProductionSeatBackend({
+        sourceRepo: "/tmp/source",
+        remote: "https://github.com/owner/name.git",
+        runKey: 899,
+        repo: "owner/name",
+        imageName: "img",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        home: tempHome("rb-home-ss-prod-coder-"),
+      });
+      await expect(
+        backend.runStep(coderSpec, {
+          branch: "feat/issue-899",
+          base: "main",
+          path: "/tmp/worktree/issue-899",
+        }),
+      ).rejects.toSatisfy((err: unknown) => {
+        expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
+        expect(isReceiptRecoveryFailure(err)).toBe(true);
+        return true;
+      });
+      expect(sandcastleCalls).toBe(1);
     });
   });
 
@@ -2048,6 +2372,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-grok-auth-cleanup",
+      output: {},
     });
 
     await backend.runStep(coderSpec, {
@@ -2078,6 +2403,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: "<coder>not json</coder>\nCODER_STEP_COMPLETE",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-496",
+      output: {},
     });
 
     const result = await backend.runStep(
@@ -2111,6 +2437,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed":true,"commitsAdded":1}</coder>',
       commits: [{ sha: "unreachable-after-reset" }],
       sessionId: "sess-final-graph-truth",
+      output: {},
     });
 
     await expect(
@@ -2140,6 +2467,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>\nCODER_STEP_COMPLETE',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-dir-sidecar",
+      output: {},
     });
 
     const result = await backend.runStep(
@@ -2260,6 +2588,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-bad-sidecar",
+      output: {},
     });
 
     await expect(
@@ -2374,6 +2703,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-286",
+      output: {},
     });
     const worktree = {
       branch: "feat/issue-286",
@@ -2604,9 +2934,9 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
 
 describe("realBackend extractCoderTag", () => {
   it("extracts + JSON-parses the <coder> tag from coder stdout", () => {
-    // coder steps run maxIter>1, so Sandcastle's typed `output` (which requires
-    // maxIterations:1) is unavailable; the structured coder result is carried in
-    // a <coder> tag in stdout instead.
+    // #899: production coder seats are single-iter with decision-gate SO on the
+    // dedicated `decision` tag; ordinary committed/commitsAdded cargo still
+    // rides the opaque `<coder>` stdout/sidecar channel (never SO).
     const stdout =
       "some agent chatter\n<coder>{\"committed\": true, \"commitsAdded\": 2}</coder>\nCODER_STEP_COMPLETE";
     expect(extractCoderTag(stdout)).toEqual({ committed: true, commitsAdded: 2 });
