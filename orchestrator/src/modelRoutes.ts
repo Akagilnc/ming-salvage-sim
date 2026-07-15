@@ -630,25 +630,6 @@ export function knownLiveBillingPoolsFromRoute(
   return [...live];
 }
 
-/**
- * All self-review peers in a complete landed route except one slot owned by
- * the relay candidate. Exclusion is by slot identity: a matching slug in any
- * other slot or CMR review leg remains a conflict.
- */
-export function routeConflictSlugsExcluding(
-  route: Pick<ResolvedModelRoute, "slots" | "legCollections">,
-  excludedSlot: ModelRouteSlot,
-): ReadonlyArray<string> {
-  return [
-    ...(excludedSlot === "coder" ? [] : [route.slots.coder]),
-    ...(excludedSlot === "reviewer" ? [] : [route.slots.reviewer]),
-    ...(excludedSlot === "cmrCompleteness" ? [] : [route.slots.cmrCompleteness]),
-    ...(excludedSlot === "cmrCorrectness" ? [] : [route.slots.cmrCorrectness]),
-    ...(excludedSlot === "verify" ? [] : [route.slots.verify]),
-    ...route.legCollections.cmrReview.map((leg) => leg.slug),
-  ];
-}
-
 export function routeSmokeFailure(
   route: Pick<ResolvedModelRoute, "slots" | "legCollections" | "smoke">,
   now = Date.now(),
