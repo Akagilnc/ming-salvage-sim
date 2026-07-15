@@ -229,7 +229,6 @@ describe("#879 availability probe (bare-ping smoke) uses the same classification
       ...resolveRouteModels("normal", {}),
       slots: {
         coder: "opus",
-        reviewer: "opus",
         coderFix: "opus",
         ship: "opus",
         merger: "opus",

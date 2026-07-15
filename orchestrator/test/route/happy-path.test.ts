@@ -152,7 +152,6 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
         "[orchestrator] model route lineup",
         "route=normal",
         "coder=gpt-5.6-terra",
-        "reviewer=gpt-5.6-sol",
         "coderFix=gpt-5.6-terra",
         "ship=sonnet",
         "merger=sonnet",
