@@ -88,24 +88,22 @@ export const AGY_PRINT_TIMEOUT = "15m";
  * Invariant (#915 / agy 1.1.2): the token after `--print` is the prompt
  * itself — never `""`. Empty `--print` is a hard CLI error ("empty prompt");
  * stdin is not a delivery channel on current agy (no fallthrough).
- * Return shape is args-only — no dead second channel.
+ * Returns plain argv (no bag / second channel).
  */
 export function agyPrintInvocation(
   model: string,
   prompt: string,
-): { readonly args: readonly string[] } {
+): readonly string[] {
   const trimmedModel = model.trim();
-  return {
-    args: [
-      "--sandbox",
-      ...(trimmedModel !== "" ? (["--model", trimmedModel] as const) : []),
-      // C10: Go duration with unit (agy rejects bare "900000").
-      "--print-timeout",
-      AGY_PRINT_TIMEOUT,
-      "--print",
-      prompt,
-    ],
-  };
+  return [
+    "--sandbox",
+    ...(trimmedModel !== "" ? (["--model", trimmedModel] as const) : []),
+    // C10: Go duration with unit (agy rejects bare "900000").
+    "--print-timeout",
+    AGY_PRINT_TIMEOUT,
+    "--print",
+    prompt,
+  ];
 }
 
 /**
@@ -149,10 +147,10 @@ export function agyAgent(
     buildPrintCommand({ prompt }) {
       // Ignore dangerouslySkipPermissions: agy hard-forbids that flag.
       resetStreamParser();
-      const inv = agyPrintInvocation(model, prompt);
+      const args = agyPrintInvocation(model, prompt);
       // Prompt is only the --print argv token (Sandcastle stdin optional; omit).
       return {
-        command: `agy ${inv.args.map(shellEscape).join(" ")}`,
+        command: `agy ${args.map(shellEscape).join(" ")}`,
       };
     },
     buildInteractiveArgs({ prompt }) {

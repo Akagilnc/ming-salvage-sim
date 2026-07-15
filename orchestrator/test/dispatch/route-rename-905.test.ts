@@ -172,14 +172,14 @@ describe("#915 agy print prompt delivery (real CLI form)", () => {
     const prompt = "Reply with exactly: nonce-915";
     const print = agyPrintInvocation("", prompt);
 
-    expect(print.args).toContain("--sandbox");
-    expect(print.args).toContain("--print-timeout");
-    expect(print.args).toContain("--print");
-    const printIdx = print.args.indexOf("--print");
-    expect(print.args[printIdx + 1]).toBe(prompt);
-    expect(print.args[printIdx + 1]).not.toBe("");
+    expect(print).toContain("--sandbox");
+    expect(print).toContain("--print-timeout");
+    expect(print).toContain("--print");
+    const printIdx = print.indexOf("--print");
+    expect(print[printIdx + 1]).toBe(prompt);
+    expect(print[printIdx + 1]).not.toBe("");
     // Real CLI form: prompt is an argv token after --print (agy 1.1.2).
-    expect(print.args).toContain(prompt);
+    expect(print).toContain(prompt);
   });
 
   it("bare-ping argv matches shared print helper (prompt on --print, not empty)", () => {
@@ -192,7 +192,7 @@ describe("#915 agy print prompt delivery (real CLI form)", () => {
     });
 
     expect(built.file).toBe("agy");
-    expect(built.args).toEqual([...shared.args]);
+    expect(built.args).toEqual([...shared]);
     expect(built.args[built.args.indexOf("--print") + 1]).toBe(prompt);
     expect(built.args).toContain(prompt);
     // #915 dead-channel delete: print delivery is argv-only (no stdin dual path).
@@ -208,7 +208,7 @@ describe("#915 agy print prompt delivery (real CLI form)", () => {
     const prompt = "nonce-model-915";
     const built = barePingArgv("agy", "Gemini 3.5 Flash", prompt);
     const shared = agyPrintInvocation("Gemini 3.5 Flash", prompt);
-    expect(built.args).toEqual([...shared.args]);
+    expect(built.args).toEqual([...shared]);
     expect(built.args).toContain("--model");
     expect(built.args).toContain("Gemini 3.5 Flash");
     expect(built.args).toContain("--print-timeout");
@@ -250,12 +250,12 @@ describe("#915 agy print prompt delivery (real CLI form)", () => {
   it("never ends print argv with empty --print token (the #915 accident shape)", () => {
     const prompt = "must-not-be-dropped";
     for (const model of ["", "Gemini 3.5 Flash"] as const) {
-      const inv = agyPrintInvocation(model, prompt);
-      const lastPrintIdx = inv.args.lastIndexOf("--print");
+      const args = agyPrintInvocation(model, prompt);
+      const lastPrintIdx = args.lastIndexOf("--print");
       expect(lastPrintIdx).toBeGreaterThanOrEqual(0);
-      expect(inv.args[lastPrintIdx + 1]).toBe(prompt);
+      expect(args[lastPrintIdx + 1]).toBe(prompt);
       // The fatal production shape was: ... --print-timeout 15m --print <empty>
-      expect(inv.args[lastPrintIdx + 1]?.length ?? 0).toBeGreaterThan(0);
+      expect(args[lastPrintIdx + 1]?.length ?? 0).toBeGreaterThan(0);
     }
   });
 });
