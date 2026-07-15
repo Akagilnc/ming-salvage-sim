@@ -1173,7 +1173,7 @@ export function soulForStep(
   // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
   if (
     spec.soul === "verify" &&
-    isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })
+    isJudgeSeat({ id: spec.id })
   ) {
     return "verify";
   }
@@ -1334,7 +1334,7 @@ function extractRoleReceipt(
   spec: Pick<StepSpec, "role" | "id" | "soul">,
 ): unknown | undefined {
   try {
-    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
+    if (isJudgeSeat({ id: spec.id })) {
       return extractJudgeTag(stdout);
     }
     return spec.role === "coder"
@@ -1395,29 +1395,22 @@ export function coderCargoFields(body: unknown): {
 }
 
 /**
- * Opaque refuse cargo siblings (#677 / #924). Traffic `refusedFindingIdentityKeys`
- * live on the T2 envelope; detail records stay cargo and are never SO-validated.
+ * Opaque refuse cargo siblings (#677 / #924 / #919 R5).
+ * Traffic `refusedFindingIdentityKeys` live only on the T2 envelope
+ * ({@link projectCoderStationReceipt} reads them via decode, never from cargo).
+ * This helper extracts cargo-only `refuseRecords` — never invents traffic keys.
  */
 export function coderRefuseCargoFields(body: unknown): {
-  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
 } {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return {};
   }
   const receipt = body as Record<string, unknown>;
-  const keys = Array.isArray(receipt.refusedFindingIdentityKeys)
-    ? receipt.refusedFindingIdentityKeys.filter(
-        (k): k is string => typeof k === "string" && k.trim().length > 0,
-      )
-    : undefined;
   const records = Array.isArray(receipt.refuseRecords)
     ? (receipt.refuseRecords as ReviewFixRefuseRecord[])
     : undefined;
   return {
-    ...(keys !== undefined && keys.length > 0
-      ? { refusedFindingIdentityKeys: keys }
-      : {}),
     ...(records !== undefined && records.length > 0
       ? { refuseRecords: records }
       : {}),
@@ -3018,7 +3011,7 @@ export class RealBackend implements Backend {
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
     // S9 online-review must not take JUDGE_RECEIPT.
-    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
+    if (isJudgeSeat({ id: spec.id })) {
       return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
     }
     if (spec.role === "reviewer") {
@@ -3122,7 +3115,7 @@ export class RealBackend implements Backend {
     const cargo =
       typedOutputUsed &&
       (spec.role === "coder" ||
-        isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul }))
+        isJudgeSeat({ id: spec.id }))
         ? this.cargoRawFor(result, spec, options)
         : undefined;
     const output = this.decodeOutput(spec, raw, cargo);
@@ -3146,7 +3139,7 @@ export class RealBackend implements Backend {
     // #925 / #919 S2/R7: S3/S6 judge seats — T2 verdict is the sole topology signal.
     // S9 online-review is not a judge seat (isJudgeSeat false) and never lands
     // here on RealBackend (family review-loop owns verify decode).
-    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
+    if (isJudgeSeat({ id: spec.id })) {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
     // #919 CR: decision_gate bell must not mint residual open-count paper

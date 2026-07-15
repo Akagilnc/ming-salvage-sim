@@ -1430,7 +1430,9 @@ export class RealFamilyBackend implements FamilyBackend {
           "merged base whose diff the cross-model review audits).",
       );
     }
-    const outcome = await this.runCmrWorker(spec, ctx);
+    // #919 R2: pass refuseRecords / priorJudgeVerdicts landing into CMR court
+    // (same fix-findings landing shape as single-slice S6 reverify).
+    const outcome = await this.runCmrWorker(spec, ctx, landing);
     return this.cmrOutcomeToWorkerResult(outcome, ctx);
   }
 
@@ -1643,6 +1645,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async runCmrWorker(
     spec: WorkerSpec,
     ctx: DispatchContext,
+    landing?: WorkerLandingPayload,
   ): Promise<CmrWorkerOutcome> {
     // FAIL-CLOSED before any container work (codex cmr R3): the focus file pins the
     // EXACT cut-SHA review-scope diff (prompt contract in the integrated CMR pass prompts — do
@@ -1746,6 +1749,21 @@ export class RealFamilyBackend implements FamilyBackend {
       // baseline SHA + the machine-resolved children.
       this.writeCmrFocusFile(ctx);
       this.writeCmrRouteFile(ctx, frozenReviewLegs);
+      // #919 R2 / #927 isomorphic: when refuse cargo or prior judge rows are
+      // present, land them via the same fix-findings file the judge soul reads
+      // (single-slice S6 shape — keys + refuseRecords + priorJudgeVerdicts).
+      const needsFixFindingsLanding =
+        (landing?.refuseRecords !== undefined &&
+          landing.refuseRecords.length > 0) ||
+        (landing?.refusedFindingIdentityKeys !== undefined &&
+          landing.refusedFindingIdentityKeys.length > 0) ||
+        (ctx.refusedFindingIdentityKeys !== undefined &&
+          ctx.refusedFindingIdentityKeys.length > 0) ||
+        (ctx.priorJudgeVerdicts !== undefined &&
+          ctx.priorJudgeVerdicts.length > 0);
+      const fixFindingsLanding = needsFixFindingsLanding
+        ? this.writeFamilyFixFindingsFile(ctx, landing)
+        : undefined;
       const outcomeLanding = this.prepareCmrOutcomeLanding(ctx);
       try {
         let result: Awaited<ReturnType<typeof sc.run>>;
@@ -1754,7 +1772,13 @@ export class RealFamilyBackend implements FamilyBackend {
             name: "family-cmr",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
-            sandbox: this.cmrSandbox(auth, frozenReviewLegs, outcomeLanding, ctx),
+            sandbox: this.cmrSandbox(
+              auth,
+              frozenReviewLegs,
+              outcomeLanding,
+              ctx,
+              fixFindingsLanding,
+            ),
             // Derive the model from the spec via the shared validated seam (cmr S336 r7
             // symmetry): resolve the worker's slug through the shared family registry —
             // no constant that could silently drift
@@ -1800,6 +1824,9 @@ export class RealFamilyBackend implements FamilyBackend {
           lastSessionIdIfPresent(result),
         );
       } finally {
+        if (fixFindingsLanding !== undefined) {
+          rmSync(fixFindingsLanding.path, { force: true });
+        }
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
@@ -1943,8 +1970,8 @@ export class RealFamilyBackend implements FamilyBackend {
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
-          // #899: dedicated decision-gate tag; ordinary `<coder>` cargo stays
-          // outside Output.object (no committed shape re-ask).
+          // #919 R3: T2 coder station receipt (CODER_RECEIPT_TAG + schema) —
+          // same as single-slice; ordinary committed cargo stays outside SO.
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1960,9 +1987,8 @@ export class RealFamilyBackend implements FamilyBackend {
             maxIterations: spec.maxIter,
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
-            // #919 post-R8 M1: same T2 coder station receipt as single-slice
-            // (#924 / coderStationReceiptSchema) — refuse traffic must survive
-            // the family decode path (not decision-gate dual-channel).
+            // #919 post-R8 M1 / R3: T2 coderStationReceiptSchema — refuse
+            // traffic survives the family decode path (not decision-gate dual).
             output: coderReceiptOutput(
               coderStationReceiptSchema(),
               CODER_RECEIPT_TAG,
@@ -2027,12 +2053,23 @@ export class RealFamilyBackend implements FamilyBackend {
           ctx.refusedFindingIdentityKeys.length > 0
             ? { refusedFindingIdentityKeys: ctx.refusedFindingIdentityKeys }
             : {}),
+          // #919 R2 / #927: opaque refuse cargo for judge re-adjudicate —
+          // landing only (信封宪法); never invented from thin ctx.
+          ...(landing?.refuseRecords !== undefined &&
+          landing.refuseRecords.length > 0
+            ? { refuseRecords: landing.refuseRecords }
+            : {}),
           ...(ctx.repairAttemptFailures !== undefined &&
           ctx.repairAttemptFailures.length > 0
             ? { repairAttemptFailures: ctx.repairAttemptFailures }
             : {}),
           ...(ctx.escalationAnswer !== undefined
             ? { escalationAnswer: ctx.escalationAnswer }
+            : {}),
+          // #925 F1 / #919: structured prior judge rows for session-loss reopen.
+          ...(ctx.priorJudgeVerdicts !== undefined &&
+          ctx.priorJudgeVerdicts.length > 0
+            ? { priorJudgeVerdicts: ctx.priorJudgeVerdicts }
             : {}),
         },
         null,
@@ -2626,8 +2663,17 @@ export class RealFamilyBackend implements FamilyBackend {
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
+    fixFindingsLanding?: { path: string; sandboxPath: string },
   ): sc.SandboxProvider {
-    return docker(this.cmrSandboxConfig(auth, reviewLegs, outcomeLanding, ctx));
+    return docker(
+      this.cmrSandboxConfig(
+        auth,
+        reviewLegs,
+        outcomeLanding,
+        ctx,
+        fixFindingsLanding,
+      ),
+    );
   }
 
   /**
@@ -2768,6 +2814,7 @@ export class RealFamilyBackend implements FamilyBackend {
     reviewLegs: NonNullable<WorkerSpec["cmrReviewLegs"]>,
     outcomeLanding?: { path: string; sandboxPath: string },
     ctx?: Pick<DispatchContext, "billingPool">,
+    fixFindingsLanding?: { path: string; sandboxPath: string },
   ): {
     imageName: string;
     env: Record<string, string>;
@@ -2802,6 +2849,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = outcomeLanding.sandboxPath;
     }
+    // #919 R2: same fix-findings env pointer as single-slice judge / family coder.
+    if (fixFindingsLanding !== undefined) {
+      env[SANDBOX_FIX_FINDINGS_PATH_ENV] = fixFindingsLanding.sandboxPath;
+    }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     // Each leg's auth is mounted only when present (the 降级链 — a missing leg
     // degrades, the rest still review). The agy dir is WRITABLE (default, no
@@ -2819,6 +2870,8 @@ export class RealFamilyBackend implements FamilyBackend {
         sandboxPath: outcomeLanding.sandboxPath,
       });
     }
+    // Fix-findings is written into the worktree cwd (workingRepo); no extra
+    // bind-mount is required — env points at the sandbox-relative filename.
     // #372: souls mount live for integrated cmr worker (souls not baked).
     // Shared helper (single source for the mount + readonly:true).
     mounts.push(soulsMount(this.opts.soulsDir));

@@ -3335,12 +3335,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             // coder (S2/S5) or judge (S3/S6 via isJudgeSeat step/id). Always mint
             // T2 kind:"judge" escalate on the judge seat; never residual
             // open-count kind:"reviewer" paper (deleted dead arm).
-            const seatIsJudge = isJudgeSeat({
-              step,
-              kind: expectedKind,
-              role: stepSpecs[step].role,
-              soul: stepSpecs[step].soul,
-            });
+            const seatIsJudge = isJudgeSeat({ step });
             let decisionOutput: StepOutput;
             if (expectedKind === "coder") {
               decisionOutput = {
@@ -3723,15 +3718,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // #926: after a judge continue row is durably recorded, execute optional
     // advanceCoder (or stay-put + audit). Never terminals for roster unusability.
+    // #919 R1: sole isJudgeSeat membership (no redundant S3||S6 string OR).
     if (
       isJudgeSeat({ step }) &&
-      (step === "S3" || step === "S6") &&
       output?.kind === "judge" &&
       output.status === "continue" &&
       typeof output.advanceCoder === "string"
     ) {
-      // step narrowed to S3|S6 for applyJudgeAdvanceCoder; membership = isJudgeSeat.
-      await applyJudgeAdvanceCoder(output.advanceCoder, step);
+      // isJudgeSeat guarantees step/id is S3|S6 for applyJudgeAdvanceCoder.
+      await applyJudgeAdvanceCoder(output.advanceCoder, step as "S3" | "S6");
     }
 
     // A relay baton is a step-local override. Once its relayed step has
