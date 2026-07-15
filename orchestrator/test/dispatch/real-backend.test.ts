@@ -51,7 +51,6 @@ import {
   opencodeAuthMount,
   applyUniformCredentialProvisioning,
   parseBlockedBy,
-  parseCoderSelfReport,
   parseSubIssueCount,
   promptsDirError,
   soulsDirError,
@@ -2624,29 +2623,6 @@ describe("realBackend extractCoderTag", () => {
         '<coder>{"committed": false, "commitsAdded": 0} trailing</coder>',
       ),
     ).toThrow();
-  });
-
-  it("returns an escalate payload when the coder tag carries one", () => {
-    const stdout =
-      '<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "blocked", "diagnosis": "design gap"}}</coder>';
-    expect(parseCoderSelfReport(extractCoderTag(stdout))).toEqual({
-      committed: false,
-      commitsAdded: 0,
-      escalate: {
-        reason: "blocked",
-        diagnosis: "design gap",
-      },
-    });
-  });
-
-  it("accepts a coder escalation with only worker-owned reason and diagnosis", () => {
-    expect(parseCoderSelfReport({
-      committed: false,
-      commitsAdded: 0,
-      escalate: { reason: "blocked", diagnosis: "design gap" },
-    })).toMatchObject({
-      escalate: { reason: "blocked", diagnosis: "design gap" },
-    });
   });
 
   it("treats a missing coder tag as an advisory compatibility miss", () => {

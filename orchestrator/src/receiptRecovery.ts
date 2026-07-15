@@ -5,7 +5,6 @@ import type {
   Finding,
   PriorFindingDisposition,
   ReviewerOutput,
-  StepOutput,
 } from "./types.js";
 
 /** The bounded native Sandcastle retry budget ratified by #899. */
@@ -230,17 +229,6 @@ export function decodeReviewerOpenCountReceipt(
       ? { priorFindingDispositions }
       : {}),
   };
-}
-
-/**
- * Same decode as {@link decodeReviewerOpenCountReceipt}, but returns a
- * StepOutput compatible with the unusable-receipt → fixer path when count is
- * missing (coder no-commit placeholder used by RealBackend).
- */
-export function decodeReviewerReceiptOrUnusable(raw: unknown): StepOutput {
-  const decoded = decodeReviewerOpenCountReceipt(raw);
-  if (decoded !== undefined) return decoded;
-  return { kind: "coder", committed: false, commitsAdded: 0 };
 }
 
 /** A native receipt retry that must fail the Action for #598 mechanical redispatch. */

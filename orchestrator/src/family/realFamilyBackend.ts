@@ -3343,15 +3343,6 @@ export function cmrOutcomeFromResult(result: {
   return classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
 }
 
-/** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
-export function parseFindingsSentinel(stdout: string): number | undefined {
-  const matches = [...stdout.matchAll(/(?:^|\n)findings\s*=\s*(\d+)\s*(?=\n|$)/g)];
-  const raw = matches.at(-1)?.[1];
-  if (raw === undefined) return undefined;
-  const count = Number(raw);
-  return Number.isSafeInteger(count) ? count : undefined;
-}
-
 /** A trimmed, non-empty string at the schema layer (mirrors shipOutcome.ts). */
 const nonEmpty = z.string().trim().min(1);
 
