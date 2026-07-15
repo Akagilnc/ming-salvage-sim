@@ -2912,7 +2912,13 @@ export class RealBackend implements Backend {
         // #598 shape-lane throw (ADR 0131 / #899). Typed SO already fails closed
         // at Sandcastle when the schema is the seat policy; remaining unusable
         // paper follows the runner's non-reviewer envelope → S5 + raw artifacts.
-        // Do not mint kind:coder (fake coder seat) and do not invent count 0.
+        //
+        // TOPOLOGY PIN (not a claim that "this worker was a fixer"):
+        // `kind:"fixer"` is the existing non-reviewer envelope the S4→S5 route
+        // already understands (route table sends non-reviewer at S4 to S5). Do
+        // NOT "fix" this back to kind:"coder" (fake coder seat) and do NOT
+        // throw for abolished cargo-shape #598 — inventing a new envelope kind
+        // or reopening shape courts is out of scope here.
         return { kind: "fixer", committed: false };
       }
       return decoded;

@@ -39,17 +39,3 @@ export function findingIdentityKeys(
 ): string[] {
   return findings.map(findingIdentityKey);
 }
-
-/**
- * Opaque pass-through of typed reviewer findings cargo for the fixer landing.
- * Callers must already hold a typed {@link Finding} array (from
- * {@link decodeReviewerOpenCountReceipt} or a typed ReviewerOutput). Shape
- * tolerance for untyped raw receipts stays at the decode boundary only —
- * this helper never re-decodes. Identity keys are NOT derived here —
- * {@link findingIdentityKeys} at the landing writer.
- */
-export function opaqueFindingsCargo(
-  findings: ReadonlyArray<Finding>,
-): Finding[] {
-  return [...findings];
-}

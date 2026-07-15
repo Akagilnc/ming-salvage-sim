@@ -102,8 +102,11 @@ class SeamOnlyBackend implements Backend {
     }
     if (spec.kind === "reviewer") {
       this.reviewCount += 1;
+      // Explicit open-count declaration for the fixture (ADR 0131 / #899): never
+      // derive findingsCount from findings.length as if that were production law.
+      const findingsCount = this.reviewCount === 1 ? 1 : 0;
       const findings: Finding[] =
-        this.reviewCount === 1
+        findingsCount === 1
           ? [
               {
                 severity: "high",
@@ -120,7 +123,7 @@ class SeamOnlyBackend implements Backend {
         output: {
           kind: "reviewer",
           findings,
-          findingsCount: findings.length,
+          findingsCount,
           ...(this.reviewCount > 1
             ? {
                 priorFindingDispositions: [

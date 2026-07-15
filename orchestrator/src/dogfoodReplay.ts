@@ -604,6 +604,12 @@ function runnerFinding(input: {
 
 function noProgressDecisionLedger(
   findings: ReadonlyArray<Finding>,
+  /**
+   * Explicit open-count declaration for the fixture. Must be supplied by the
+   * scenario — never derived from findings.length as production law (ADR 0131 /
+   * #899: count is a typed signal, array length is opaque cargo).
+   */
+  findingsCount: number,
 ): ReadonlyArray<PersistentLedgerEntry> {
   const dispositions = findings.map((item) => ({
     identityKey: findingIdentityKey(item),
@@ -619,7 +625,8 @@ function noProgressDecisionLedger(
       output: {
         kind: "reviewer",
         findings,
-        findingsCount: findings.length,
+        // Explicit fixture declaration — not findings.length as a production rule.
+        findingsCount,
       },
     }),
     ledgerEntry("S4"),
@@ -630,7 +637,8 @@ function noProgressDecisionLedger(
       output: {
         kind: "reviewer",
         findings,
-        findingsCount: findings.length,
+        // Explicit fixture declaration — not findings.length as a production rule.
+        findingsCount,
         priorFindingDispositions: dispositions,
       },
     }),
@@ -642,7 +650,8 @@ function noProgressDecisionLedger(
       output: {
         kind: "reviewer",
         findings,
-        findingsCount: findings.length,
+        // Explicit fixture declaration — not findings.length as a production rule.
+        findingsCount,
         priorFindingDispositions: dispositions,
       },
     }),
@@ -663,7 +672,8 @@ async function runnerAnsweredResumeReplay(): Promise<SeamReplay> {
     worktree: REPLAY_WORKTREE,
     stateDir: "/dogfood/.ledger-307",
     ledger: [
-      ...noProgressDecisionLedger([activeFinding]),
+      // Explicit open-count: scenario has one active finding row matching count 1.
+      ...noProgressDecisionLedger([activeFinding], 1),
       ledgerEntry("S4", {
         event: "escalation_answered",
         forStep: "S4",
@@ -793,7 +803,8 @@ async function runnerTargetedResetReplay(): Promise<SeamReplay> {
     worktree: REPLAY_WORKTREE,
     stateDir: "/dogfood/.ledger-307-targeted-reset",
     ledger: [
-      ...noProgressDecisionLedger([targetFinding, siblingFinding]),
+      // Explicit open-count: scenario declares two still-active findings.
+      ...noProgressDecisionLedger([targetFinding, siblingFinding], 2),
       ledgerEntry("S4", {
         event: "runner_bookkeeping",
         intent: "continue_fixing",
@@ -914,7 +925,8 @@ async function runnerInvalidEscalationAnswerReplay(): Promise<SeamReplay> {
     worktree: REPLAY_WORKTREE,
     stateDir: "/dogfood/.ledger-440-invalid-answer",
     ledger: [
-      ...noProgressDecisionLedger([activeFinding]),
+      // Explicit open-count: scenario has one active finding row matching count 1.
+      ...noProgressDecisionLedger([activeFinding], 1),
       ledgerEntry("S4", {
         event: "escalation_answered",
         forStep: "S4",

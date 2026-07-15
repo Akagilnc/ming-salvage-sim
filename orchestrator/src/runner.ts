@@ -40,7 +40,6 @@ import {
   reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
-import { opaqueFindingsCargo } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY child worker step (S2/S3/S5/S6) through ONE free function
 // instead of reaching for runStep/resumeSession directly.
@@ -1175,14 +1174,13 @@ function replayS4FindingsCountState(
     // reopen / no-progress courts demolished. Prior keys absent from findings[]
     // are closed by the three-channel envelope; the runner does not inspect prose.
     // Findings rows are opaque cargo: typed ReviewerOutput already decoded them
-    // at the worker boundary; runner only pass-through + count routing. Identity
+    // at the worker boundary; runner only shallow-copies + count-routes. Identity
     // keys are derived at the fixer landing writer, not here (ADR 0131 / #899).
     findingDispositions = [
       ...(entry.findingDispositions ?? []),
     ];
-    pendingBlockingFindings = opaqueFindingsCargo(
-      lastReviewerOutputForS4.findings,
-    );
+    // Opaque cargo copy only — not a decode/validation boundary.
+    pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
     pendingBlockingFindingIdentityKeys = [];
     // Count is the typed open-count, never cargo-array length.
     pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
@@ -2091,10 +2089,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     _afterFix: boolean,
   ): string[] {
     if (reviewerOutput?.kind !== "reviewer") return [];
-    // Opaque cargo pass-through only. Runner routes by findingsCount and
-    // transports findings rows as-is; identity-key derivation is the landing
-    // writer's job (dispatchWorker → fixer), not a runner court (ADR 0131 / #899).
-    pendingBlockingFindings = opaqueFindingsCargo(reviewerOutput.findings);
+    // Opaque cargo copy only — not a decode/validation boundary. Runner routes
+    // by findingsCount and transports findings rows as-is; identity-key
+    // derivation is the landing writer's job (dispatchWorker → fixer), not a
+    // runner court (ADR 0131 / #899).
+    pendingBlockingFindings = [...reviewerOutput.findings];
     pendingBlockingFindingIdentityKeys = [];
     // ADR 0131: declared count is the control signal; findings rows are cargo.
     pendingBlockingFindingCount = reviewerOutput.findingsCount;
