@@ -129,7 +129,6 @@ describe("RealFamilyBackend live officer effort", () => {
     session: "fresh",
     contextRetention: "clean",
     promptFile: "integrated_cmr_completeness.md",
-    completionSignal: "CMR_STEP_COMPLETE",
     maxIter: 1,
     model: "gpt-5.6-sol",
     soul: "cmr",
@@ -1306,7 +1305,6 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         session: "fresh",
         contextRetention: "clean",
         promptFile: "x.md",
-        completionSignal: "X",
         maxIter: 1,
         model: "sonnet",
         soul: "coder",
@@ -1380,7 +1378,6 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
             session: "fresh",
             contextRetention: "clean",
             promptFile: "x.md",
-            completionSignal: "CODER_STEP_COMPLETE",
             maxIter: 1,
             model: "sonnet",
             soul: "coder",
@@ -1450,7 +1447,6 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
             session: "fresh",
             contextRetention: "clean",
             promptFile: "x.md",
-            completionSignal: "CODER_STEP_COMPLETE",
             maxIter: 1,
             model: "sonnet",
             soul: "coder",
@@ -1517,7 +1513,6 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         session: "fresh",
         contextRetention: "clean",
         promptFile: "x.md",
-        completionSignal: "X",
         maxIter: 1,
         model: "sonnet",
         soul: "coder",
@@ -1738,7 +1733,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     );
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout: "<cmr>not json</cmr>\nfindings = 0\nCMR_STEP_COMPLETE",
       outcomePath,
       cmrReviewLegs: [
@@ -1755,7 +1749,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("treats a guarded cmr sidecar as completion even when Sandcastle omits the completion signal", () => {
+  it("treats a guarded cmr sidecar as completion on clean exit without a password string", () => {
     const dir = trackTempDir("cmr-outcome-sidecar-complete-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -1785,7 +1779,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     );
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: undefined,
       stdout:
         "CMR correctness gate completed through the outcome guard.\n" +
         "findings = 1\n" +
@@ -1810,7 +1803,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     // #899: decision bells enter fate only via typed Output.object; sidecar is
     // cargo. Typed escalate still works when free-form text quotes </cmr>.
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
       output: {
         escalate: {
@@ -1833,7 +1825,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     writeFileSync(outcomePath, "{not json", "utf8");
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
@@ -1850,7 +1841,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     writeFileSync(outcomePath, "   \n", "utf8");
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>\nfindings = 0\n',
       outcomePath,
@@ -1870,7 +1860,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
 
   it("falls back to signaled cmr stdout only when no outcome sidecar path exists", () => {
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>\nfindings = 0\n',
       cmrReviewLegs: [
@@ -1893,7 +1882,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     writeFileSync(outcomePath, "{not json", "utf8");
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: undefined,
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
@@ -2228,7 +2216,6 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
 
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "MERGER_STEP_COMPLETE",
         stdout: "<merger>not json</merger>\nMERGER_STEP_COMPLETE",
         outcomePath,
       }),
@@ -2249,7 +2236,6 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
 
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "MERGER_STEP_COMPLETE",
         stdout: "<merger>not json</merger>\nMERGER_STEP_COMPLETE",
         outcomePath,
       }),
@@ -2262,7 +2248,6 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
     writeFileSync(outcomePath, "{not json", "utf8");
 
     const outcome = mergerOutcomeFromResult({
-      completionSignal: "MERGER_STEP_COMPLETE",
       stdout: '<merger>{"resolved": true}</merger>',
       outcomePath,
     });
@@ -2279,7 +2264,6 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
     writeFileSync(outcomePath, "   \n", "utf8");
 
     const outcome = mergerOutcomeFromResult({
-      completionSignal: "MERGER_STEP_COMPLETE",
       stdout: '<merger>{"resolved": true}</merger>',
       outcomePath,
     });
@@ -2290,7 +2274,6 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
   it("falls back to signaled merger stdout only when no outcome sidecar path exists", () => {
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "MERGER_STEP_COMPLETE",
         stdout: '<merger>{"resolved": true}</merger>',
       }),
     ).toEqual({ resolved: true });
@@ -2299,24 +2282,22 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
   it("a signaled run delegates to parseMergerOutcome (resolved)", () => {
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "MERGER_STEP_COMPLETE",
         stdout: '<merger>{"resolved": true}</merger>',
       }),
     ).toEqual({ resolved: true });
   });
-  it("keeps a valid merger result available for git-truth adjudication without a signal", () => {
-    // The compatibility signal is telemetry only. The caller must still verify
-    // the merge commit and conflict state before recording a landed merge.
+  it("keeps a valid merger result available for git-truth adjudication from typed envelope alone", () => {
+    // #928: completion is exit + legal sidecar / typed envelope. The caller
+    // must still verify the merge commit and conflict state before recording
+    // a landed merge.
     const out = mergerOutcomeFromResult({
-      completionSignal: undefined,
       stdout: '<merger>{"resolved": true}</merger>',
     });
     expect(out).toEqual({ resolved: true });
   });
-  it("a wrong completion signal is unresolved", () => {
+  it("typed merger envelope alone is enough for resolved (no password required)", () => {
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "SOME_OTHER_SIGNAL",
         stdout: '<merger>{"resolved": true}</merger>',
       }).resolved,
     ).toBe(true);
@@ -2348,7 +2329,6 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
         writeFileSync(outcomePathAtRun, JSON.stringify({ resolved: true }), "utf8");
         return {
           branch: "family/293-base",
-          completionSignal: "MERGER_STEP_COMPLETE",
           stdout: "<merger>{}</merger>",
           commits: [],
           iterations: [],
@@ -2382,7 +2362,6 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         return {
           branch: "family/293-base",
-          completionSignal: "MERGER_STEP_COMPLETE",
           stdout: '<merger>{"resolved": true}</merger>',
           commits: [],
           iterations: [],
@@ -2971,7 +2950,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
         agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
         maxIterations: 1,
-        completionSignal: "CODER_STEP_COMPLETE",
         branchStrategy: { type: "head" },
         promptFile: join(realPromptsDir, "coder_fix.md"),
         quotaProbe: {
@@ -3012,7 +2990,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
         agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
         maxIterations: 1,
-        completionSignal: "CMR_STEP_COMPLETE",
         branchStrategy: { type: "head" },
         promptFile: join(realPromptsDir, "integrated_cmr_correctness.md"),
         quotaProbe: { modelRef: "gpt-5.6-terra", step: "S3" },
@@ -3035,7 +3012,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
         agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
         maxIterations: 1,
-        completionSignal: "SHIP_STEP_COMPLETE",
         branchStrategy: { type: "head" },
         promptFile: join(realPromptsDir, "family_ship.md"),
         quotaProbe: undefined,
@@ -3062,8 +3038,7 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         contextRetention: "clean",
         skill: "gstack-ship",
         promptFile: "family_ship.md",
-        completionSignal: "SHIP_STEP_COMPLETE",
-        maxIter: 5,
+        maxIter: 1,
         model: "gpt-5.6-terra",
         soul: "ship",
         toolchain: [],

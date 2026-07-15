@@ -129,5 +129,5 @@ Rules:
   bind Sandcastle `Output.object` to the `cmr` tag with `maxRetries`; the tag is
   the traffic-signal channel, not an optional compatibility fallback. If you
   iterate, the last typed `<cmr>` tag is the one that counts.
-- On the final multi-iter step you MUST print CMR_STEP_COMPLETE on its own final
-  line (sandcastle iteration terminator — not optional telemetry).
+
+This seat is single-iteration. Completion is clean exit + legal sidecar / typed receipt — no STEP_COMPLETE password.

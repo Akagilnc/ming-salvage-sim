@@ -295,6 +295,12 @@ function writeFixFindingsLandingFile(
         ctx.refusedFindingIdentityKeys.length > 0
           ? { refusedFindingIdentityKeys: ctx.refusedFindingIdentityKeys }
           : {}),
+        // #927: opaque refuse cargo (four reasons + evidence) for judge
+        // re-adjudication — landing only (信封宪法); never from thin ctx.
+        ...(landing?.refuseRecords !== undefined &&
+        landing.refuseRecords.length > 0
+          ? { refuseRecords: landing.refuseRecords }
+          : {}),
         ...(ctx.escalationAnswer !== undefined
           ? { escalationAnswer: ctx.escalationAnswer }
           : {}),
@@ -363,7 +369,6 @@ export function stepSpecToWorkerSpec(
     contextRetention: retentionForKind(kind),
     skill: SKILL_FOR_KIND[kind],
     promptFile: spec.promptFile,
-    completionSignal: spec.completionSignal,
     maxIter: spec.maxIter,
     model: spec.model,
     soul: spec.soul,
@@ -392,7 +397,6 @@ export function verifyWorkerSpec(
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.verify,
     promptFile: VERIFY_PROMPT_FILE,
-    completionSignal: "VERIFY_STEP_COMPLETE",
     maxIter: 1,
     model,
     soul: "verify",
@@ -415,8 +419,7 @@ export function fixerWorkerSpec(
     contextRetention: "retain",
     skill: SKILL_FOR_KIND.fixer,
     promptFile: FIXER_PROMPT_FILE,
-    completionSignal: "FIXER_STEP_COMPLETE",
-    // #899 / ADR 0128: one single-iteration Sandcastle run per selected seat.
+    // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat.
     maxIter: 1,
     model,
     soul: "fixer",
@@ -444,7 +447,6 @@ export function docReleaseWorkerSpec(
     contextRetention: "clean",
     skill: SKILL_FOR_KIND.docRelease,
     promptFile: DOCRELEASE_PROMPT_FILE,
-    completionSignal: "DOCRELEASE_STEP_COMPLETE",
     maxIter: 1,
     model,
     soul: "docRelease",
@@ -793,7 +795,6 @@ export async function dispatchWorkerWithMonitor(
         args: cliSpec.args,
         logDir: cliSpec.logDir,
         poolId: cliSpec.poolId,
-        completionSignal: cliSpec.completionSignal,
         stepId: cliSpec.stepId,
         ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
         ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
@@ -1120,7 +1121,6 @@ function workerSpecToStepSpec(spec: WorkerSpec): StepSpec {
     role: spec.role,
     promptFile: spec.promptFile,
     model: spec.model,
-    completionSignal: spec.completionSignal,
     maxIter: spec.maxIter,
     soul: spec.soul,
     toolchain: spec.toolchain,

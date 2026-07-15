@@ -117,8 +117,7 @@ describe("#334 RealBackend.boxConfig uses baked skills", () => {
     role: "coder",
     promptFile: "coder_implement.md",
     model: "sonnet",
-    completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
+    maxIter: 1,
     soul: "coder",
     toolchain: ["python"],
   };
@@ -246,7 +245,7 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     // #925: judge seat uses verify soul; reviewer.md is for fresh legs only.
     expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/verify\.md/);
     expect(review).toMatch(/reviewer\.md/);
-    expect(review).toMatch(/JUDGE_STEP_COMPLETE|stationReceiptContracts/);
+    expect(review).toMatch(/stationReceiptContracts|clean exit|single-iteration/);
   });
 
   it("the worker image bakes the Matt code-review skill for reviewer workers", () => {
@@ -285,25 +284,25 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(readSoul("cmr_correctness.md")).toBe(readSoul("verify.md"));
   });
 
-  it("every existing prompt still defines its structured output contract (tag + signal)", () => {
-    // Thinning the METHOD must not drop the output contract route()/the seam
-    // decode against — each worker must still emit its tag + completion signal.
+  it("every existing prompt still defines its structured output contract (tag + clean exit)", () => {
+    // #928: completion is clean exit + legal sidecar / typed envelope — no
+    // *_STEP_COMPLETE password. Each worker must still emit its role tag.
     // #924: single-slice coder seats use T2 station-receipt on <coder> (no
     // dedicated <decision> tag). Family ship/merger still use decision-gate.
     const prompts = [
-      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/, false],
-      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/, false],
-      ["judge_station.md", /<judge>/, /JUDGE_STEP_COMPLETE/, false],
-      ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/, true],
-      ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
-      ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
-      ["merger_resolve_conflict.md", /<merger>/, /MERGER_STEP_COMPLETE/, true],
+      ["coder_implement.md", /<coder>/, false],
+      ["coder_fix.md", /<coder>/, false],
+      ["judge_station.md", /<judge>/, false],
+      ["family_ship.md", /<ship>/, true],
+      ["integrated_cmr_completeness.md", /<cmr>/, false],
+      ["integrated_cmr_correctness.md", /<cmr>/, false],
+      ["merger_resolve_conflict.md", /<merger>/, true],
     ] as const;
 
-    for (const [promptName, tag, signal, needsDecisionTag] of prompts) {
+    for (const [promptName, tag, needsDecisionTag] of prompts) {
       const prompt = read(promptName);
       expect(prompt).toMatch(tag);
-      expect(prompt).toMatch(signal);
+      expect(prompt).not.toMatch(/_STEP_COMPLETE/);
       expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
       expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
       // Optional decision-gate seats always emit a dedicated <decision> tag so

@@ -51,17 +51,16 @@ describe("#807 grokAgent AgentProvider", () => {
   });
 
   it("emits text (not result) per chunk, then ONE accumulated result on end", () => {
-    // #899 hotfix regression: sandcastle's completion-signal check and
-    // result.stdout (coder-receipt extraction) read the LAST result event's
-    // payload. Per-chunk result events made that a last-chunk roulette — the
-    // receipt and CODER_STEP_COMPLETE lived in earlier chunks, so iterations
-    // never stopped and escalate cargo degraded to committed:false.
+    // #899 hotfix / #928: result.stdout (typed envelope / sidecar extraction
+    // after clean exit) reads the LAST result event's payload. Per-chunk result
+    // events made that a last-chunk roulette — the coder receipt lived in
+    // earlier chunks and escalate cargo degraded to committed:false.
     const parse = createGrokStreamParser();
     expect(
       parse('{"type":"text","data":"<coder>{\\"committed\\":false}</coder>\\n"}'),
     ).toEqual([{ type: "text", text: '<coder>{"committed":false}</coder>\n' }]);
-    expect(parse('{"type":"text","data":"CODER_STEP_COMPLETE"}')).toEqual([
-      { type: "text", text: "CODER_STEP_COMPLETE" },
+    expect(parse('{"type":"text","data":"trailing chatter"}')).toEqual([
+      { type: "text", text: "trailing chatter" },
     ]);
     expect(
       parse('{"type":"end","stopReason":"EndTurn","sessionId":"sess-1"}'),
@@ -69,7 +68,7 @@ describe("#807 grokAgent AgentProvider", () => {
       { type: "session_id", sessionId: "sess-1" },
       {
         type: "result",
-        result: '<coder>{"committed":false}</coder>\nCODER_STEP_COMPLETE',
+        result: '<coder>{"committed":false}</coder>\ntrailing chatter',
       },
     ]);
   });

@@ -248,8 +248,6 @@ export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
  */
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
-/** The cmr worker's completion signal (matches the integrated CMR pass prompts). */
-const CMR_COMPLETION_SIGNAL = "CMR_STEP_COMPLETE";
 /**
  * The integrated-cmr reviewer soul (ADR 0030). It invokes `ak-cross-m-review` for
  * one selected gate and returns runner-visible review outcomes; persistent repairs
@@ -370,8 +368,6 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
     DOCRELEASE_PROMPT_FILE,
   ]),
 ];
-/** The merger agent's completion signal (matches prompts/merger_resolve_conflict.md). */
-const MERGER_COMPLETION_SIGNAL = "MERGER_STEP_COMPLETE";
 /** The merger resolver model slot, selected by the active route. */
 export function mergerModel(route?: ResolvedModelRoute): string {
   return route?.slots.merger ?? modelForSlot("merger");
@@ -845,7 +841,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // FAIL-CLOSED on the WORKER's OWN auth (integ-cmr int-r2 A-1, mirroring the
     // cmr/ship worker preflight): when the merger slot resolves to a Claude-family
     // model, the Claude OAuth token is THIS worker's auth, not a degradable leg.
-    // Absent, the worker cannot start and never fires its completion signal; that
+    // Absent, the worker cannot start and never reaches clean exit + sidecar; that
     // failure would throw out of `sc.run` (NOT a structured non-resolve), and the
     // thrown startup error would surface as an opaque wave abort instead of the
     // merger's honest "did not resolve" → escalate path
@@ -907,7 +903,6 @@ export class RealFamilyBackend implements FamilyBackend {
           contextRetention: "clean",
           skill: "resolving-merge-conflicts",
           promptFile: MERGER_CONFLICT_PROMPT,
-          completionSignal: MERGER_COMPLETION_SIGNAL,
           maxIter: 1,
           model,
           soul: "coder",
@@ -939,7 +934,6 @@ export class RealFamilyBackend implements FamilyBackend {
             sandbox: this.mergerSandbox(auth, outcomeLanding, model),
             agent: agentForSlug(model),
             maxIterations: 1,
-            completionSignal: MERGER_COMPLETION_SIGNAL,
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
             // #899: dedicated decision-gate tag; resolve cargo stays opaque.
@@ -1580,8 +1574,8 @@ export class RealFamilyBackend implements FamilyBackend {
    *
    * The worker is the container's TOP-LEVEL route-selected reviewer, running on the
    * resident family base (`branchStrategy: head` keeps it on the full current diff)
-   * under the dedicated `cmr` soul. Its `<cmr>` tag TERMINAL pass verdict is gated
-   * on the completion signal then parsed into a
+   * under the dedicated `cmr` soul. Completion is clean exit + typed receipt /
+   * legal sidecar (#928); the `<cmr>` verdict is parsed into a
    * {@link CmrWorkerOutcome}; `verifyCmr.ts` performs the ADR 0030 pass sequencing
    * and accounting around that verdict.
    */
@@ -1709,7 +1703,6 @@ export class RealFamilyBackend implements FamilyBackend {
             // pass worker. The pass verdict is consumed by verifyCmr, which owns pass
             // sequencing and accounting.
             maxIterations: spec.maxIter,
-            completionSignal: spec.completionSignal,
             // On the resident family base so the clean CMR reviewer audits the
             // current full family diff. Persistent repairs are made only by the
             // separate family coder-fix worker.
@@ -1762,7 +1755,17 @@ export class RealFamilyBackend implements FamilyBackend {
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     // #899 hotfix: same monitored-bridge liveness forwarding as the
     // single-slice seam (see sandboxStreamHeartbeat.ts).
-    return await sc.run(withMonitorStreamHeartbeat(options));
+    //
+    // #928: sandcastle defaults `completionSignal` to
+    // `"<promise>COMPLETE</promise>"` when omitted. Empty array is the only
+    // API-supported disable — omit is NOT off. Production completion is clean
+    // exit + legal sidecar / typed envelope (same as RealBackend).
+    return await sc.run(
+      withMonitorStreamHeartbeat({
+        ...options,
+        completionSignal: [],
+      }),
+    );
   }
 
   /**
@@ -1902,7 +1905,6 @@ export class RealFamilyBackend implements FamilyBackend {
             ),
             agent: this.agentForSpec(spec, ctx),
             maxIterations: spec.maxIter,
-            completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
             output: decisionGateOutput(),
@@ -2095,7 +2097,7 @@ export class RealFamilyBackend implements FamilyBackend {
   protected familyCoderResultFromRun(
     result: Pick<
       Awaited<ReturnType<typeof sc.run>>,
-      "completionSignal" | "stdout" | "commits" | "iterations"
+      "stdout" | "commits" | "iterations"
     > & { readonly output?: unknown },
     spec: WorkerSpec,
     outcomePath: string,
@@ -2221,7 +2223,6 @@ export class RealFamilyBackend implements FamilyBackend {
           ),
           agent: this.agentForSpec(spec, ctx),
           maxIterations: spec.maxIter,
-          completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
           output: decisionGateOutput(),
@@ -2369,7 +2370,7 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   protected familyReviewLoopResultFromRun(
-    result: Pick<Awaited<ReturnType<typeof sc.run>>, "completionSignal" | "stdout" | "iterations"> & {
+    result: Pick<Awaited<ReturnType<typeof sc.run>>, "stdout" | "iterations"> & {
       readonly output?: unknown;
     },
     spec: WorkerSpec,
@@ -2833,8 +2834,9 @@ export class RealFamilyBackend implements FamilyBackend {
    * The worker is the container's TOP-LEVEL agent (gstack-ship's pipeline + any
    * retry cycles run there), under the WRITE (`coder`) soul (it
    * commits the VERSION/CHANGELOG bump + pushes + opens the PR).
-   * `branchStrategy:{type:"head"}` keeps it on the checked-out family base. Its
-   * `<ship>` tag is gated on the completion signal then classified.
+   * `branchStrategy:{type:"head"}` keeps it on the checked-out family base.
+   * Completion is clean exit + legal sidecar / typed gate (#928); delivery cargo
+   * is classified from the typed envelope / sidecar, not a STEP_COMPLETE password.
    */
   protected async runShipWorker(
     spec: WorkerSpec,
@@ -2964,7 +2966,6 @@ export class RealFamilyBackend implements FamilyBackend {
       // mapping `familyShipWorkerSpec().model` resolves to (cmr S336 r7 P1).
       agent: this.agentForSpec(spec, ctx),
       maxIterations: spec.maxIter,
-      completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
       // #899: dedicated decision-gate tag; PR/URL cargo stays on `<ship>` outside SO.
@@ -3468,18 +3469,12 @@ export interface MergerAuth {
 }
 
 /**
- * Decide the cmr worker outcome from a Sandcastle run result. Guarded CMR workers
- * write their machine result to the runner-owned sidecar; a valid sidecar is the
- * completion proof and verdict source. Legacy/no-sidecar workers still require the
- * Sandcastle completion signal before stdout fallback is trusted.
- */
-/**
  * Prefer Sandcastle typed receipt for fate signals (decision gate + findingsCount).
+ * #928: completion is clean exit + typed envelope / legal sidecar — no signal.
  * Sidecar/stdout are cargo only — never override a schema-validated count or
  * admit an unvalidated decision bell into the human loop (#899).
  */
 export function cmrOutcomeFromResult(result: {
-  completionSignal?: string | string[];
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
   outcomePath?: string;
   output?: unknown;
@@ -3825,7 +3820,6 @@ function parseCmrStdoutCargo(stdout: string): unknown {
  * no-gate `{}` (same class as shipOutcomeFromResult).
  */
 export function mergerOutcomeFromResult(result: {
-  completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
   output?: unknown;

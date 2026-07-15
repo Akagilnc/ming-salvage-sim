@@ -41,7 +41,6 @@ export interface MonitoredCliDispatchInput {
   readonly args: readonly string[];
   readonly logDir: string;
   readonly poolId: string;
-  readonly completionSignal: string;
   readonly stepId: string;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
@@ -188,8 +187,6 @@ export function validateMonitorHandle(
     handle.logPath.length > 0 &&
     typeof handle.poolId === "string" &&
     handle.poolId.length > 0 &&
-    typeof handle.completionSignal === "string" &&
-    handle.completionSignal.length > 0 &&
     typeof handle.stepId === "string" &&
     handle.stepId.length > 0 &&
     typeof handle.dispatchedAt === "string" &&
@@ -313,7 +310,6 @@ export async function dispatchMonitoredCliWorker(
     logPath,
     logStartOffset,
     poolId: input.poolId,
-    completionSignal: input.completionSignal,
     stepId: input.stepId,
     dispatchedAt,
     instanceId,
@@ -371,16 +367,6 @@ export function isWorkerIdle(
   if (current.mtimeMs > previous.mtimeMs) return false;
   if (idleThresholdMs <= 0) return true;
   return Date.now() - current.mtimeMs >= idleThresholdMs;
-}
-
-/** Detect the handle's expected completion signal in its log file. */
-export function hasCompletionSignalInLog(
-  handle: WorkerMonitorHandle,
-  deps?: WorkerMonitorDeps,
-): boolean {
-  const d = resolveDeps(deps);
-  if (!existsSync(handle.logPath)) return false;
-  return d.readLogTail(handle.logPath).includes(handle.completionSignal);
 }
 
 /** Collect the full pid subtree rooted at the handle pid. */

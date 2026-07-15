@@ -1,10 +1,9 @@
 /**
  * #825 — closing regression sweep for ADR 0062 / #820.
  *
- * #911: `*_STEP_COMPLETE` sentinels are multi-iter **required** sandcastle
- * terminators (not optional telemetry; align with prompts/README). Routing
- * behavior is exercised below through worker results and durable ledgers, not
- * source-text bans.
+ * #928: `*_STEP_COMPLETE` passwords retired — completion is clean exit + legal
+ * sidecar / typed envelope. Routing behavior is exercised below through worker
+ * results and durable ledgers, not source-text bans.
  */
 
 import { describe, expect, it } from "vitest";

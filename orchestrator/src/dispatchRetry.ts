@@ -3,7 +3,7 @@
  *
  * Runner function (a) (ADR 0062 / #604): a worker dispatch that ends in a
  * PROCESS-LEVEL failure (a returned `failed`
- * kind, a thrown exception, or a "no completion signal" case surfacing as one of
+ * kind, a thrown exception, or a missing-sidecar / incomplete handoff surfacing as one of
  * those) is retried with a FRESH (non-resume) session for the SAME step, up to a
  * small fixed bound. A result that parsed into a valid, JUDGED shape
  * (`completed` / `escalated`) is returned as-is with ZERO retry, regardless of
