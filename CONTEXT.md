@@ -1,6 +1,6 @@
 # Ming_LLM 语境
 
-本文件固定明末政略模拟探针的项目语言。它只做 glossary：给 API key 游戏线、本地 CLI 探针线、聊天写动作和结算流程提供稳定词汇，不记录实现方案。
+本文件固定明末政略模拟探针的项目语言。它只做 glossary：给 API key 游戏线、本地 CLI 探针线、聊天写动作和结算流程提供稳定词汇，不记录实现方案。下列 Orchestrator 新架构术语均为 Issue #869 目标态，尚不代表当前实现。
 
 ## Language
 
@@ -11,28 +11,48 @@
 _Avoid_: 把每个 host 子进程、监控器或桥接层都叫执行面
 
 **开工入口（Ignition Entry）**:
-使用者启动编排任务的唯一公开入口。使用者只提供 issue 号；入口负责更新并构建最新版编排器、重烤 worker image、挂载输入、定位或创建该 issue 的唯一工作现场，再把任务交给内部流程。
-_Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamilyDriver`、让使用者拼内部路径和参数
+使用者启动编排任务的唯一公开入口。使用者只提供 issue 号；入口负责更新并构建最新版编排器、重烤 worker image、挂载输入和执行 Policy preflight，再按 #871 调用开工 Actions。Action 产出的 facts 只交给 Canonical / Family Flow，由 Flow 归结 fixed position；无保留 scene 的目标必须先经 Issue Admission，准入前不得建立新 scene。准确接力只读 #869/#871。
+_Avoid_: 手工 freshness ritual、每个父 issue 写 driver、公开 `runFamilyDriver`、让使用者拼内部路径和参数、由入口解释 facts 或在准入前建现场
 
 **父工作树（Family Base Worktree）**:
 家族模式下一个父 issue 唯一的集成现场。由父流程启动的子 issue 都从它切出自己的工作树，完成后再合回这里；同一个未完成父 issue 重入时继续使用这个现场。直接单独启动某个子 issue 时不要求先建立父工作树。
 _Avoid_: 每次重试新建父现场、共享主工作区、给同一父 issue 建多个并行现场
 
+**单片现场（Standalone Scene）**:
+无既有 scene、且经 Issue Admission 确认为 open + ready 的叶子 issue 所拥有的唯一隔离 worktree；它不虚构 parent base、child worktree 或 child merge。terminal-success 前，owning Flow 在派每个新 Action 前复用 Issue Admission 只刷新 live open/closed/ready 状态，不重新分类、准入或建立现场。若 issue closed，不杀当前 invocation、不删现场；当前 invocation 结束后停止派下一 Action，保留当前 fixed position 与 Lineage records。closed 状态重入只认回并保持该现场，reopen + ready 后从同一位置继续。
+_Avoid_: 把顶层隔离 worktree 误叫 family-of-one、close 时杀 worker 或删现场、reopen 后另建替代现场
+
 **家族子工作树（Family Child Worktree）**:
-家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 重入时继续使用原工作树、编排账与 agent session，不另建第二个现场。直接输入子 issue 号则走单片模式的独立 worktree 和 PR，不使用本术语。
+家族模式下一个子 issue 唯一的工作现场，从所属父工作树当前基线切出，完成后合回父工作树。同一个未完成家族子 issue 重入时始终继续使用原 worktree 与 Lineage records；当前席位确有已捕获、可恢复 session 时才走 ordinary resume，否则保留同一 scene/worktree 并走明确的新 invocation/relay，不能伪称恢复旧 session。relay 保留现场、baton 与旧 session/checkpoint 记录，successor 席位由 Policy 按 ADR 0134 的固定顺序选择，再由当前专业 Action 通过 Worker Invocation capability 为该席位启动新的 agent/session/checkpoint，不另建替代现场。直接输入子 issue 号时，只有无既有 scene 且 Issue Admission 确认为 open + ready 叶子才走单片模式的独立 worktree 和 PR；closed/open-unready 无 scene 叶子 quiet skip；有既有 scene（含 terminal failure 后保留者）则重入 owning flow，不另建现场。
 _Avoid_: 临时执行世代、每轮新 worktree、从陈旧远端基线重切
 
-**家族开工过滤（Family Admission Filter）**:
-父 issue 首次启动及每次重入时，在创建现场前根据 live GitHub facts 选择可运行的家族子 issue。行为契约见 ADR 0022 与 #871。
-_Avoid_: 先创建现场再过滤、用缓存或本地推断代替 live GitHub facts
+**议题准入（Issue Admission）**:
+单一负责 live GitHub 准入事实的 Action。目标无保留 scene 时，它读取目标状态、`ready-for-agent` 与 native sub-issues：closed 目标或 open-unready 叶子 quiet skip；open + ready 叶子可走 single；open parent 进入 family。retained standalone 的 owning Flow 在派每个新 Action 前复用它的 direct 分支只刷新 live open/closed/ready 状态，不重新分类、准入或查询 locator。family 首次启动及每次重入时，同一 Action 的 family 分支 refetch membership、状态、标签与依赖，完成过滤和 cycle 处置并产出候选/依赖交通事实。locator 与 scene 所有权只由 Scene Provisioning / Recovery 查询；保留 scene 永远优先重入 owning flow，closed standalone 的停止派工与 reopen 恢复由 owning Flow 按单片现场契约处理。准确调用位置只读 #869，产品契约见 #871。
+_Avoid_: 先创建现场再做无现场准入、用缓存或本地推断代替 live facts、让 Issue Admission 读取 locator、让 Action 与 Runner 各做一遍 admission
+
+**现场供给 / 恢复（Scene Provisioning / Recovery）**:
+单一负责当前 Flow 的 scene inventory、Lineage locator 查询与同一 scene 的 Capsule 取得/恢复；它只产出无 scene、当前 flow 所有、其他 flow 所有的 scene traffic facts。准入与拓扑归 Issue Admission / Flow，不归本 Action。
+_Avoid_: 让它重新准入 issue、解释 delivery topology、由 Runner 查询 locator
 
 **合并工（Merger Worker）**:
 只在子分支机械合并回父工作树发生真实 Git 冲突时出场、负责解决该次冲突的 worker。无冲突时由确定性合并直接完成，不调用模型。
 _Avoid_: 每次合并都派 worker、把合并工当常驻角色、让模型代替干净的 Git 合并
 
-**编排账（Orchestration Ledger）**:
-用于续跑与定位 agent session 的持久化编排状态与记录，记载已完成步骤、结果、下一步与 session identity。它不是 agent 的对话记忆；真正的模型上下文留在 agent session，由编排账中的 session identity 定位。
-_Avoid_: 模型记忆、聊天记录、让容器自行猜恢复点
+**编排记录（Orchestration Records）**:
+各专业 owner 为续跑写下的持久记录总称，例如流程位置、家族合入状态、待回答问题与当前席位。记录的字段和含义仍归写入它的 Flow / Action / Policy；Lineage 统一保存与按 owner 取回，但不解释。它不是独立于 Lineage 的另一套账本，也不是 agent 的对话记忆。
+_Avoid_: 独立 Orchestration Ledger 服务、四处并列的恢复真源、模型记忆、聊天记录、让容器自行猜恢复点
+
+**Execution Capsule**:
+当前进程内对一个既有 scene 的 live 表示，持有本次可用的 Sandcastle worktree/sandbox handle、baton 与当前活动 session handle。它不落盘；进程重入时不会“复活旧 handle”，而是由 Scene Provisioning / Recovery 根据 Lineage locator 为同一 scene 重新取得 live handle，并构造新的 Capsule。
+_Avoid_: durable record、container/PID locator、把旧内存对象当恢复真源、让 Capsule 决定流程或选座
+
+**Lineage**:
+编排器唯一的 durable 恢复底座。它保存 run/scene locator、当前 flow position，以及 Flow / Action / Policy 各自定义的 owner-scoped records；Scene Provisioning / Recovery 只通过它定位同一 scene。Lineage 只保存、索引和取回，不解释 retry、finding、decision、policy 或外部副作用语义。
+_Avoid_: 第二套 step/family 数据库、live runtime handle、万能业务状态机、从记录内容替 Runner 判卷
+
+**Worker Invocation capability**:
+需要模型的专业 Action 消费 Scene Provisioning / Recovery 为同一 scene 新建或恢复的 Capsule，并通过共享 Worker Invocation capability 管理该 scene 内的 agent invocation、当前角色 session、quota/capacity park/wake 与 relay。它不是 Flow position 或独立 Action；Flow 只调度 #869 的专业 Action，Runner 只看该专业 Action 进程的 exit code。agent run、session resume、structured-output repair、idle/completion timeout 与 cancel 直接复用 Sandcastle；本仓不再用 PID、stdout parser、sidecar 或第二套通用 retry executor 复制这些能力。当前席位确有可恢复 session 时，ordinary retry/resume 才恢复原 session；不具备该能力时保留同一 scene/worktree，按 Policy 进入新的 invocation/relay，不伪造 session resume。relay 保留 scene、worktree、baton 与旧 session/checkpoint records，由 Policy 选择 successor 席位，再由调用方专业 Action 通过该 capability 启动新 session。
+_Avoid_: 把 Worker Invocation capability 暴露成第二套 Flow topology、让 Runner 消费其内部 retry budget 或选择重派 worker、把有界 Action 进程重试变成第四通道、让该 capability 重建 scene/locator/live handle、把 relay 写成 same-session、把专业 Action 内部 crash 和执行通道崩溃的原因文字交给 Runner
 
 ### Runtime And LLM
 
@@ -521,8 +541,20 @@ _Avoid_: 第二案头/独立急务界面；把六动作做成通用下旨的语�
 ### Epic Orchestration
 
 **Epic 编排器**:
-把一个 issue 喂进去、AFK 跑到「待评审/待合」状态的本地自动化。它复用 Sandcastle 底座(容器隔离、订阅 auth、分支、Ralph 循环),自叠本 epic 的质量层(多模型评审承重闸、findings 升级、家族整体闸)。
+把一个 issue 喂进去、沿唯一交付主流程自治跑到 merge 与收尾的本地自动化。它以 Sandcastle 作为唯一 agent 执行底座，由 runner 调度相互独立的专业动作完成开发、评审、修复、合并、发布和清理；底层能力归属只读 ADR 0128 与 #868，不在流程或术语表复制。
 _Avoid_: CI、流水线(太泛)、hermes(那是一个具体后端不是编排器)
+
+**交付主流程**:
+编排器当前唯一的一条 issue→merge 路线。single 与 family 使用同一条主流程和共同尾段；Flow 消费 Issue Admission、Scene Provisioning / Recovery 等动作产出的业务与交通事实，把它们归结为下一固定流程位置，Runner 只执行该位置并处理 ADR 0131 三通道，不直接接收或解释这些事实。准确动作顺序、接力与重入只读 #869，术语表不复制拓扑。
+_Avoid_: 三套 workflow、Role Workflow Definition、可执行 DSL、把业务/交通事实变成 Runner 第四通道、把 wiki 逐字翻译成运行时流程、在 glossary 保存第二份步骤表
+
+**编排动作**:
+交付主流程里一个目的明确的专业步骤，拥有该步必要 skill/capability 的绑定与实际调用，以及模型腿、外部副作用核验与合法空跑。skill 的方法与内容仍以版本化 skill 自身为真源，不复制进流程、runner 或 prompt。动作可以向 runner 提交需要人类决定，但不得跨角色私自推进后续流程；是否以及何时调用下一动作由流程层决定。
+_Avoid_: runner 分支、万能 executeAction、把动作内部方法复制进流程或 prompt
+
+**仓库变更能力（Repository Mutation）**:
+Scene Provisioning / Recovery、Family Integration Merge 与 Closure and Reclamation 修改同一 owning clone 的 worktree / branch 图时共用的窄 capability。三个动作仍各自拥有建立、合并、回收的业务语义；capability 只按真实执行拓扑提供必要的串行化，不是新 Action，也不归 Runner。
+_Avoid_: 每个动作各建一把锁、预造分布式锁、让 Runner 持锁或读 Git 结果、把三个动作合成仓库巨无霸
 
 **独立子 issue**:
 本身就是一个自足交付物的 issue,没有父 epic 罩着,自身底下也不挂子 issue(leaf)。
@@ -533,11 +565,11 @@ _Avoid_: 单 issue、孤儿 issue
 _Avoid_: 子任务、subtask(太泛,不区分独立与否)
 
 **家族 base**:
-同一父 epic 下所有家族子片共享的基线分支,由家族集成层把子片合回它。**家族层(v0.1 deferred)的不变式**;**v0.1 单片编排从 main 切、此刻不消费家族 base**(不从它派生),家族 base 的派生/合回是家族集成层的事。
+同一父 epic 下所有家族子片共享的唯一集成基线；合入、验证与依赖放行的准确顺序只读 #869。
 _Avoid_: 主干、main、集成分支(太泛)
 
 **角色**:
-编排管线里一个定义好的职能单元(如 coder、reviewer、ship、merger)。每个角色有自己的一段固定流程、一个 profile 镜像、一份 soul。(commander 不是角色——它无 soul、是 runner 的确定性调度步,见 commander 词条。)同一条切片由不同角色接力(coder 写、reviewer 评),它们靠各自独立的 agent 上下文保持判断独立。
+编排管线里一个定义好的职能单元(如 coder、reviewer、ship、merger)。每个角色有自己的一段固定流程、一个 profile 镜像、一份 soul。同一条切片由不同角色接力(coder 写、reviewer 评),它们靠各自独立的 agent 上下文保持判断独立。
 _Avoid_: agent(太泛)、stage、阶段(混淆流程步与职能)
 
 **profile / 角色镜像**:
@@ -553,90 +585,86 @@ _Avoid_: system prompt、人设、persona(太泛)
 _Avoid_: caller、上游、parent(太泛)
 
 **step(编排步)**:
-runner 控的一个外层 wiki 步骤,两类:**worker 步**(产出工作——写码/评审/cmr/ship/merge——一个顶层 agent/执行器跑在自己容器里,见 worker / 0026)与 **runner 调度决策**(gate / route / 排序 / ledger / 续跑——纯 TS、不跑 agent)。step 的序由 runner 推,不由 agent。(0026 把 push/cmr/ship 从原「runner 动作」改成 worker 步;runner 只剩调度决策。)
+交付主流程里由 runner 推进的一步：要么调用一个编排动作产出工作，要么执行纯机械的交通调度。步骤顺序由唯一交付主流程固定；专业做法留在动作内部。
 _Avoid_: 阶段、stage(太泛)、iteration(那是步内的)
 
-**StepSpec**:
-一个 **worker 步**的固定规格——固定 role + promptFile + agent/model + completionSignal + output schema + maxIterations。存在代码里,不临场生成。(role 决定注哪份 soul:v0.1 一镜像双角色,runner 凭 role 选 coder/reviewer soul。)**仅 worker 步有**——runner 调度决策(gate/route/排序/ledger/续跑)不跑 agent、无 StepSpec。
-_Avoid_: 配置、config(太泛)
-
 **runner**(纯调度器):
-驱动 step 序列的 TS 代码,**只做调度**——step 之间的流程决策(input gate / route / 排序 / step ledger / 续跑);由 `route()` 定下一步,agent 永不决定下一步、不跳步、不改流程。它**派 worker 步、等 worker、按三态交通灯叫下一位,自己不干也不评任何具体活**(具体纪律活在 worker invoke 的 skill 里,见 worker / 0026)。评审场景只看“未决 findings 为 0 / 大于 0 / 需要人”;不接 worker outcome JSON,不读 finding 内容,不比较 commit/head,不核测试或证据。
+驱动交付主流程的交通警察。它只数 exit code、读取 reviewer 按所属 versioned review authority 自报的 blocking open-count（0 / 大于 0）、转运 worker 自己按下的决策门。Runner 不解释 severity 或 findings 状态，不读任何报告文字，不核对 count，不读取 commit、HEAD、diff、PR 或其他完成证据，也不判断专业工作是否合格。
 _Avoid_: 编排器(指整个系统,runner 只是它控调度那部分)、把它当干活的(它只调度)、把 runner 当语义裁判、用自由文本/正则推断路由。
 
 **worker**:
-wiki 流程里的**一步**(可大可小),由 runner 派出去执行。判据 = **步内没有需要调度的东西**(调度只发生在步与步之间,是 runner 的活)。每个 worker 跑在自己的容器/上下文里,里面的 agent 是该容器的**顶层**(Claude 或 Codex,非 runner 的 sub),故能起自己的 sub + CLI(例:cmr worker 起 1 Agent + 2 CLI 跑三腿)。worker **不一定用 skill**(如 merge 可能就不用);用时 Claude=`Skill` invoke、Codex=加载 SKILL.md 当 skill item 传入 prompt。
+执行一个编排动作的专业工作者。每个 worker 跑在自己的容器/上下文里，拥有完成本动作所需的 skill、工具和同角色模型腿；它可以提交需要人类决定，但不能自行跨到下一角色或接管外层调度。
 _Avoid_: 把 worker 等同「invoke skill 的步」(用不用 skill 不是 worker 的判据)、subagent(worker 是顶层容器、不是 runner 的子代理)。
 
 **reviewer worker**:
-被 runner 派出、只负责评审并把 findings 写入状态库的 worker。它可以读 scope/issue/ADR、运行评审所需测试、派多模型 review legs、汇总原始评审证据,但不承担持久修复,不得提交修复 commit。CMR completeness/correctness worker 也遵守同一边界。它完成后只给调度层三种结果:未决 findings 为 0、未决 findings 大于 0、需要人类决定;finding 内容留给下一位专业 worker,不交给 runner 裁判。边界取舍见 0050、0129。
-_Avoid_: 自评自修、顺手修一下、把 CMR reviewer 当 coder-fix。
+被 runner 派出、只负责评审的 worker。它可以读 scope/issue/ADR、运行评审所需测试、按所属动作调用模型腿并汇总证据，但不承担持久修复；即使复用一个支持自治修复循环的评审 engine，编排器内也只调用它的单次 reviewer pass，完成后按所属 versioned review authority 自报 blocking open-count 或提交需要人类决定，finding 内容留给 fixer 与 fresh reviewer，不交给 runner 裁判。
+_Avoid_: 自评自修、顺手修一下、在 reviewer worker 内启动 engine 自带的 fix loop、把 CMR reviewer 当 coder-fix。
 
 **coder-fix worker**:
-被 runner 派出、专门处理 findings 状态库中未决项的 worker。它逐项验真:真的就修复并写 commit,假的就写明反证；随后更新对应 finding 状态并交给 fresh reviewer 复核。commit、测试和说明由下一位 reviewer 检查,runner 不比较 hash、不核证据、不判断修复是否正确。边界取舍见 0050、0129。
-_Avoid_: reviewer 自修、amend 折叠、无 commit 修复、runner 代判修复正确。
+被 runner 派出、专门处理 reviewer 交来的未决项的 worker。它逐项验真、完成修复与自查，并把结果留给 fresh reviewer 全量复核；具体接力顺序由唯一交付主流程定义。Runner 不读取提交或修复证据。
+_Avoid_: reviewer 自修、amend 折叠、coder/fixer 完成时的 commit gate、无 commit 白跑或重试、runner 代判修复正确。
+
+**delivery-base Finding Repair**:
+来源无关、作用于当前 delivery branch / base 的 Finding Repair scope；处理当前交付基线上的 finding 修复，不把家族增量合入接缝的处理混入本 scope。准确调用位置只读 #869。
+_Avoid_: 把它和家族增量合入接缝的修复混为一谈、为 single 虚构 family base / ledger、在 glossary 复制 gate matrix。
 
 **文档发布 (docRelease)**:
-线上评审 loop 收敛之后、自动合并之前的 worker 步：在 PR 头上跑 `/gstack-document-release`，把刚交付的代码与项目文档对齐。成功收尾（含合法空跑）才算发布完成；有文档 commit 时由该 worker 推到 PR 远端头。单切片与 family 共用同一步，不按来源分叉。
-_Avoid_: 把文档发布当成 merge 本身、runner 直接改文档、用路径白名单当发布成败判据、只在本地 commit 不推远端。
+把当前 PR 代码与项目文档对齐的共享 Action / worker；它自行判断合法空跑并核验自己的 commit / push 副作用。single 与 family 共用，准确调用与重入位置只读 #869。
+_Avoid_: 把文档发布当成 merge 本身、Runner 直接改文档或检查路径 / commit、在 glossary 复制 shared-tail 顺序。
 
 **文档发布空跑**:
-`/gstack-document-release` 判定当前无文档债、不产生 commit 的合法成功收尾。空跑仍算文档发布完成，不挡后续自动合并。
+`/gstack-document-release` 判定当前无文档债、不产生 commit 的合法成功收尾；后续固定流程仍只读 #869，不由 Runner 按“是否有 commit”分叉。
 _Avoid_: 把空跑当失败、为凑 commit 造空提交、把「没改文件」等同 skill 崩溃。
 
 **修复证据**:
-coder-fix worker 留给下一轮 reviewer 的可追踪材料:新增 commit、对应 diff、finding scope 对应关系、focused test log、same-class bug scan、introduced-regression check。它帮助 reviewer 复核,不是 runner 的机械门票；runner 不比较 commit/head、不检查材料一致性。
-_Avoid_: 口头说已修、只贴总结不落 commit/test、自查二连缺席、把修复证据当 reviewer concurrence。
+coder-fix worker 留给下一轮专业 reviewer 的可追踪材料，例如对应 diff、finding scope 对应关系、focused test log、same-class bug scan 与 introduced-regression check。它帮助 reviewer 复核，不是 runner 的输入，也不授予 fixer 提交权；commit 只由 Change Finalization 创建，准确接力只读 #869。
+_Avoid_: 口头说已修、有代码变化却不留下 diff/test/self-check 材料、自查二连缺席、把修复证据当 reviewer concurrence。
 
 **smart zoom**(步的粒度):
 选一个 worker/step 该多大的权衡(Matt)。大步省调度、但一个上下文塞太多会到上限;小步上下文清爽、但调度多。判据 = 步内无需调度 + 上下文预算。大步不一定好。
 
-**completionSignal**:
-一个 step 完成时 agent 必须 emit 的固定串(如 `AK_STEP_COMPLETE:coder_implement`)。runner 靠它确认该步真跑完。
-_Avoid_: 结束标记、done(太泛)
-
 **评审调度信号**:
-reviewer 完成专业判断后留给 runner 的最小交通灯,只有三种:未决 findings 为 0、未决 findings 大于 0、需要人类决定。0 继续,大于 0 派 fixer,需要人则 park。runner 不接收 worker outcome JSON,不读取 finding 内容,不比较 commit/head,不核测试或证据；这些由下一位专业 worker 处理。
+reviewer 完成专业判断后留给 runner 的最小交通灯：按所属 versioned review authority 自报 blocking open-count 为 0、自报 blocking open-count 大于 0，或主动提交需要人类决定。说几条就是几条；runner 不解释 severity 或 findings 状态，不从卷面派生或对账 count，也不读取 finding 内容、格式、测试或证据。
 _Avoid_: outcome JSON、finding 分类器、commit hash 一致性闸、让 runner 管理或评价 worker。
 
 **step ledger**:
-每个 **worker 步**落一条的账本(step / promptFile / prompt_hash / agent / model / commits before-after / sessionId 等)。防跳步的事后真源 + 续跑真源(下一步只读 ledger,不靠 LLM 记忆)。同 0017 的「状态文件」是同一份。(runner 的纯调度决策不产 worker 制品、不落 StepSpec 字段,但其路由结果仍记入 ledger 供续跑。)
-_Avoid_: 日志、log(太泛)、history
-
-**commander**:
-家族集成层的**确定性波次调度步**(runner 调度决策、无 soul、非 LLM)。读父 epic 现成的 GitHub native sub-issues + 显式 blocked_by DAG → 拓扑分波(未阻塞者并发为一波、被阻塞者下波)→ fan-out。**不分解 epic、不建 sub-issue**——切片由 to-tickets 在编排器外(design session)切好发布,commander 只调度现成片。区别于原生 parallel-planner Plan stage(那是 LLM「选 unblocked」的选择器、且会重推我们已有的显式 blocked_by,故不采用)。
-_Avoid_: 分解器 / planner(它不分解)、原生 Plan stage(它 LLM 选片、本 commander 确定性读现成)
+Canonical Delivery Flow 定义、通过 Lineage 持久化的单片进度记录视图，记录当前 flow position、已完成动作与局部 park。它不是独立 persistence module；session/scene locator 只由 Lineage 保存，字段含义由 Flow 拥有，runner 不拿它判卷。
+_Avoid_: 第二套 durable store、恢复 locator 真源、commit before/after 对账材料、日志
 
 **波次 / wave**:
-commander 一次并发放出的一组互不阻塞子片。被 blocked_by 阻塞者,等其阻塞者合回家族 base 后入下一波。波内并行、波间 barrier。
+某一时刻同时满足依赖、可以并发启动的一组子片。波次只是启动快照，不提供批次级完成 barrier；后续交通语义只读 #869。
 _Avoid_: 批次、轮(混淆评审轮)
 
 **family ledger**:
-家族集成层的账本(家族 base worktree 的 sibling、worktree 外),记已合子片 hash / 当前波次 / 家族 base HEAD,供 merger 幂等续跑(崩溃重启跳过已合)。区别于单片的 step ledger。
-_Avoid_: step ledger(那是单片的)、状态文件(太泛)
+Family flow 定义、通过 Lineage 持久化的家族进度记录视图，记录子片合入、park、关闭/取消及父流程位置。它不是独立 persistence module，也不保存 scene locator；字段含义由 Family flow 拥有，Lineage 只存取，runner 不以 commit、HEAD 或提交数量裁决。
+_Avoid_: 第二套 durable store、scene locator 真源、step ledger(那是单片视图)、状态文件(太泛)
 
 **family escalation answer**:
-家族层 decision escalation 被人类回答后的 append-only 续跑信号。它是 family ledger 里的 `escalation_answered` 事件,不编辑/删除原来的 pause 或 `S8(escalate)` 行;runner 只用它重开 decision escalation,把答案传回对应 CMR / coder-fix / reviewer / ship worker。failure escalation 不被 answer row 自动重开。
-_Avoid_: 改写旧 ledger 行、把 answer 当新的需求 brief、用 answer 覆盖 runner 固定 repo/base/head 控制字段、把 failure escalation 当可自动恢复
+家族层 worker 主动提交的 decision gate 被人类回答后的续跑信号。Human Decision action 负责把答案关联回原请求，Lineage 单一持久化 pending request、answer 与关联关系；runner 只 opaque 转运并按固定流程恢复对应 worker，不读取或解释答案。进程失败不会因存在 answer 自动恢复。
+_Avoid_: 把 answer 当新的需求 brief、由 family ledger 重复持久化、让 runner 解释答案或覆盖固定控制字段、把进程失败当可自动恢复
 
 **路线 / route**:
-一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …),显式列出本轮**全部模型槽**(coder / per-slice reviewer / coder-fix / ship / merger / cmr 腿)各自用哪个模型。切路线 = 拨一个总开关、整套翻;任一槽可被单 env override 盖过。本质 = 「按额度死活选哪些家族干活」——额度按家族整片死(claude 100% → sonnet/opus/haiku 全死),故没有槽能钉死在某家族。切换手动(额度紧但未耗尽时提前调)。(0031)
+一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定可执行席位。第一版席位身份可包含「接入渠道 + 模型」，但 current candidate 服从 #905：`agy` 是真实 agy CLI，`grok-4.5` 只经 grok-build / SuperGrok provider；OpenCode、Cursor/Grok 与 glm-via-OpenCode 不得进入席位集合。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。operator 手动选择 base route，并可单独 override 任一 seat；runtime preflight、quota 与 candidate traversal 只读紧邻的 Policy Resolution、#870 与 ADR 0134。(0031, 0134)
 _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
+
+**策略解析 / Policy Resolution**:
+需要模型的专业 Action 通过 Worker Invocation capability 取得角色要求、固定有序席位与客观可用性事实后，交给 Policy 机械返回第一个可用席位、等待到何时或当前无席位，并可附供 Action 与 telemetry 使用的 provider-neutral 客观原因；Runner 不消费这些结果。第一版的席位身份是“接入渠道 + 模型”，指标只记录、不评分。(0134)
+_Avoid_: 让 Runner 选模型、按 finding / 评审轮数换模型、跨池同模型归一、另建第二张换棒顺序表
 
 **cheap vs tight**(某家族吃紧的两档):
 **cheap = 额度不足、省着用** = 把吃紧家族从除 cmr 强腿外的所有槽撤掉、只留它在承重闸当一条腿;**tight = 基本耗尽** = 连那条 cmr 腿也撤、全家族清零。cheap↔tight 差且只差吃紧家族的那一条 cmr 腿(其余槽都已撤离、相同)。家族用量梯度:normal(全量)→ cheap(只剩 cmr 一腿)→ tight(零)。
 _Avoid_: 把 cheap 当「主动用便宜档」(不是,是额度不足被迫省)、把 cheap/tight 当两套无关路线(只差一条 cmr 腿)
 
 **模型槽 / model slot**:
-一条路线里可独立赋模型的一个角色位(coder / reviewer / fix / ship / merger / 各 cmr 腿)。日常切换多半只动其中 1-2 槽(走 override),不是整路线重写。
+一条路线里可独立赋模型的一个 Action / worker seat；是否需要模型及能力要求由 owning Action 声明，Policy / route registry 承接，不在词表复制一张静态槽位清单。日常切换多半只动其中 1-2 个 seat(走 override)，不是整路线重写。
 _Avoid_: 角色(角色是职能单元,槽是它在某路线里的模型赋值位)
 
 **后端注册表 / registry**:
-把 model slug 翻成真后端的数据表:每条 = `slug → {provider, model-id, options, family, strong-leg}`,覆盖 Sandcastle 原生 6 provider(claudeCode/codex/opencode/copilot/cursor/pi)。`family` 让路线解析器自动校验「claude-tight 无 Claude 槽」;`strong-leg` 标谁够格当 cmr 底线腿。加已烤 CLI 的兄弟模型 = 加一行;加新 CLI = 烤二进制+挂 auth 一次。是 slug→后端唯一真源、「第一次做点工作、后续方便切」的落点。(0031)
+把 model slug 翻成真后端的数据表:每条 = `slug → {provider, model-id, options, family, strong-leg}`,只登记当前获准的可执行 provider。`family` 让路线解析器自动校验「claude-tight 无 Claude 槽」;`strong-leg` 标谁够格当 cmr 底线腿。加已接入 provider 的兄弟模型 = 加一行;新 CLI 先完成二进制、auth 与 provider adapter，再登记 owner 批准的 slug。当前 `agy →` 真 agy CLI、`grok-4.5 → grok`，无 OpenCode / glm slug。是 slug→后端唯一真源、「第一次做点工作、后续方便切」的落点。(0031)
 _Avoid_: 写死的 switch(那是被它取代的旧形态)、config(太泛)
 
 **强腿 / strong leg**:
-撑得起 cmr 承重闸底线的强模型 —— **只认 opus / codex(gpt-5.5)**。cmr 硬底线 = **≥1 撑底线强腿实际跑成**,否则 escalate(没牙的闸不放行)。**agy(gemini) = bonus 腿**:跨家族多一票更好,但不可靠、不撑底线(codex+claude 双死、只剩 agy 也 escalate)。便宜实验模型(glm/haiku/spark)默认是 coder 槽的、不当 cmr 腿。(0032)
+撑得起 cmr 承重闸底线的强模型 —— **只认 opus / codex(gpt-5.6-sol)**。cmr 硬底线 = **≥1 撑底线强腿实际跑成**,否则 escalate(没牙的闸不放行)。**agy(gemini) = bonus 腿**:跨家族多一票更好,但不可靠、不撑底线(codex+claude 双死、只剩 agy 也 escalate)。便宜实验模型(haiku 等)默认是 coder 槽的、不当 cmr 腿。(0032)
 _Avoid_: 把任何模型都算腿、把 agy 当撑底线腿、把 coder 槽的便宜模型当评审腿
 
 **藩府梗阻 / vassal obstruction**:

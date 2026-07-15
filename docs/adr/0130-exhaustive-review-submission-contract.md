@@ -1,12 +1,12 @@
 > **修订预告（2026-07-15）**：本 ADR 之〔驳回词表 canonical 化（refused* 单一字段族，信封字段级）〕经 #919（Accepted，见 ADR 0132）拍定修订，随对应切片落地生效；落地前按现文执行，评审时勿以现文否决 #919 已拍方向。
 
-Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive clear）
+Status: Proposed
 
 # 0130: 评审交卷契约——看见的都写行，fixer 首务验真翻状态，一切评审模式统一
 
 ## 决定
 
-评审腿的交付标准从「挖到可钉死的发现即可收工」改为**穷尽本轮可见面**：一轮内把看见的**所有发现**（不限严重度——严重度是行属性，不是入库门槛）逐条写入 findings 状态库（ADR 0129）后才算交付完成；不分「已演练/未演练」档。**fixer 的第一个任务是对 open 行逐条实证真伪**：真→修+同类横扫后翻 fixed，伪→翻 refuted+证据留言，由下轮 fresh 复审员验证后终翻。本契约适用**一切评审模式**（家族 completeness/correctness、per-slice、doc 模式），**计划统一落地于** ak-cross-m-review skill 单一来源（实现任务归 #873，skill 侧工单已派；wiki §额外硬规则第 8 条已先行载入），编排器侧（含 per-slice reviewer 腿）只经角色文件指针引用、不复写第二份。
+评审腿的交付标准从「挖到可钉死的发现即可收工」改为**穷尽本轮可见面**：一轮内把看见的**所有发现**（不限严重度——严重度是行属性，不是入库门槛）逐条写入 findings 状态库（ADR 0129）后才算交付完成；不分「已演练/未演练」档。每个 review Action 按其 versioned review authority 自己标记 blocking 与 non-blocking terminal；后者不进修复环，也不计入 reviewer 自报的 open-count。具体等级与 terminal 口径归该 authority，不复制 CMR 模式矩阵到 Runner 或本 ADR。评审腿退出前必须自报阻塞未决数；typed open-count / findings 写入由 Action 当场纠错并按 #899 structured retry，耗尽时当前 Action 非零退出。格式或写入失败不得变成 decision gate；只有 worker 成功提交的真实专业、设计或范围决策请求才走 decision gate。Runner 不增设“卷面不可用”第四通道。**fixer 的第一个任务是对 blocking open 行逐条实证真伪**：真→修 + 同类横扫后翻 fixed，伪→翻 refuted + 证据留言，由下轮 fresh 复审员验证后终翻。本契约适用**一切评审模式**（家族 completeness / correctness、per-slice、doc 模式），契约真源就是本 ADR；各评审 Action 由各自 versioned role / skill 消费，per-slice 不因此调用 `ak-cross-m-review`，Runner 只保留指针、不复写第二份。
 
 ## 根因（实证数据与出处：#860 正文与 grill 评论、#861 裁决串；EXAM-818 对照见 #856）
 

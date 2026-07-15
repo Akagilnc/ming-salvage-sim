@@ -8,53 +8,51 @@ correctness, and cross-model review legs), verify/fix, family ship, and cleanup.
 The S0–S8 slice runner remains internal child machinery, not a second public
 entry or terminal-delivery topology.
 
+This is the current legacy runtime. #863 tracks its replacement by one
+Canonical Delivery Flow; #896 replaces family-of-one normalization with a true
+standalone scene. Read live #869 for the exact target delivery order; executable
+pins land through the implementation tickets identified by #869 Testing Decisions.
+This README does not define a second copy.
+
 ## Constitution (ADR 0131 — three channels, zero judgment; lineage ADR 0062)
 
-The runner is a pure dispatcher. It counts exactly three signals and **never
-reads worker prose**:
+The runner is a pure dispatcher. It accepts exactly three signals and **never
+reads worker prose or completion evidence**:
 
-1. **exit 0/1** → true process-level failure (non-zero exit / crash / no
-   completion signal) gets a step-level mechanical retry; normal exit
-   continues.
-2. **self-declared open-count 0 / non-0** → zero passes the gate; non-zero
-   keeps the loop going on the fixed topology (after a fix leg a fresh review
-   leg always follows — ADR 0129 keeps fixer-flipped rows open until a fresh
-   reviewer closes them; whose turn it is comes from the topology, never from
-   a runner judgment). The count is the reviewer's own declaration: either an
-   explicit count in the receipt, or an in-process review seam's own `findings`
-   array. Missing declarative count is not zero and is never derived from cargo
-   rows. The runner never derives a check or re-classifies severity/action.
-   Whether the declaration
-   matches the papers is the fixer's judgment when it reads the submission —
-   never the runner's.
-3. **decision-gate signal** → durable park; the answer resumes the SAME worker
-   session in place (`resumeSessionId`).
+1. **exit code** — process life or death; only a real process failure enters
+   the mechanical retry lane.
+2. **reviewer self-declared blocking open-count** — `0` closes the current review gate;
+   `>0` follows the fixed topology defined only in #869. This README does not
+   restate the intermediate repair/verification/finalization route, and the
+   runner never derives or reconciles the number. Each review Action marks
+   blocking and non-blocking terminal under its versioned review authority;
+   only the former belongs in this count.
+3. **worker-raised decision gate** — relayed to the human unchanged; the runner
+   never presses or interprets the gate itself.
 
-Corollaries are locked by positive routing tests under `test/constitution/`,
-not by forbidden-source-text sweeps. In particular see
+Commits, HEAD, diffs, PRs, tests, findings, report shape and external-effect
+evidence are never runner inputs. Each Action performs and verifies its own
+side effects; the next professional worker judges empty work or a false fix.
+Detailed operational rules live in `orchestrator/CLAUDE.md`; professional
+methods live in versioned souls/skills/actions. Read live #869 for the target
+delivery topology; its Testing Decisions identify the implementation tickets
+that will land the executable pins.
+
+The canonical Action contract will be landed by #899: typed traffic signals use
+Sandcastle structured-output retry inside the owning Action, and retry
+exhaustion makes that Action exit non-zero. The Runner sees only the exit code;
+it neither judges the bad envelope nor hands raw artifacts to a fixer.
+
+**Current legacy exception, not constitution:** until #899 and #898 remove the
+old path, `verifyCmr` and the review fix loops can still hand raw reviewer
+artifact pointers to a fixer. This records current operator truth only; it is
+not an ADR 0131 corollary or a basis for future implementation, and must not be
+copied or expanded.
+
+Canonical corollaries are locked by positive routing tests under
+`test/constitution/`, not by forbidden-source-text sweeps. In particular see
 `reviewer-open-count.test.ts`, `review-closure-behavior.test.ts`, and
 `worker-reporting.test.ts`:
-
-- A worker whose **envelope cannot be extracted** (no kind, no count,
-  undecodable output) is never judged, never mechanically redispatched, and
-  never dressed up as a process failure — and the runner never presses the
-  decision gate for it either. Deeming a paper "unusable" is itself a judgment
-  the runner has no authority to make; the decision gate only relays a gate a
-  worker itself pressed, and a runner pressing it is a forged doorbell.
-  Disposition splits by the worker's source of truth. **Reviewer/verify**
-  (their output IS the paper): the runner makes zero judgment and zero park and
-  hands the raw artifact pointers down the fixed topology to the fixer, who
-  reads what it can, bounces the rest back to the reviewer, or raises.
-  **Coder/ship**: exit-zero completion proceeds to the next worker; the runner
-  neither reads the receipt nor queries git/host to adjudicate it. The next
-  reviewer judges an empty or incorrect delivery (bounce or raise).
-  Only repeated process crashes (#598 — no work, no paper to judge) still take
-  the infra park. A readable-but-wrong submission is likewise the next wisdom's
-  problem (the fixer bounces it back to the reviewer or raises).
-  `synthesizedFailure` may only ever be derived from channel-1 process facts
-  (the git/host external-truth source was revoked 2026-07-13: three channels,
-  no exceptions), and a missing reviewer result is never synthesized into
-  success (`findings: []` / `converged: true`) — nor into failure.
 - **The worker's OK is OK — no git verdicts.** A coder or ship worker's
   exit-zero completion routes forward as-is; self-verification (real commit /
   PR exists) and idempotency live in the worker soul, an empty diff is judged
@@ -65,10 +63,10 @@ not by forbidden-source-text sweeps. In particular see
   routing tests prove that their prose placement cannot become a runner fate
   channel; no source-text ban is used as the lock.
 - **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the
-  runner dispatches ship again. The worker verifies whether the branch's exact
-  delivery already exists and returns success without duplicate push, PR, or
-  version bump. Process failures use durable `mechanical_redispatch_attempt`
-  rows; decision gates are transported unchanged.
+   runner dispatches ship again. The worker verifies whether the branch's exact
+   delivery already exists and returns success without duplicate push, PR, or
+   version bump. Process failures use durable `mechanical_redispatch_attempt`
+   rows; decision gates are transported unchanged.
 
 ## Igniting a family run (cold start — everything a fresh session needs)
 
@@ -88,8 +86,9 @@ not by forbidden-source-text sweeps. In particular see
 
 - A **parent epic** or **leaf issue** number is the run key. Parent epic
   children must be attached as **native sub-issues** (not just task-list
-  mentions); a leaf issue is normalized automatically to a family-of-one.
-- Children the run may build carry the `ready-for-agent` label — the S0 gate
+  mentions). In the current runtime, a leaf issue is normalized automatically
+  to a family-of-one; #896 replaces this with one standalone scene.
+- Issues the run may build carry the `ready-for-agent` label — the current S0 gate
   (rfa) refuses anything else. Pull the label to hold a child out.
 - Native `blocked_by` dependencies between children drive wave order
   (`commander.selectWave`; the graph must be acyclic). Independent children
@@ -216,10 +215,12 @@ Startup is fail-closed: if the route smoke fails, the run records an
 | `.../family-<EPIC>-ledger/telemetry.jsonl` | per-leg raw stats (#786) |
 | `docker ps` | live sandcastle worker containers |
 
-The driver process itself is quiet between phase boundaries — a silent
-half-hour with a running container is normal work, not a hang. Judge a hang by
-worker-log idleness (> 15 min without growth), and kill only that worker's own
-pid tree; the relay successor continues on its uncommitted drift.
+**Current legacy runtime only:** the driver process itself is quiet between
+phase boundaries, so a silent half-hour with a running container can be normal
+work. The current monitor uses worker-log idleness (> 15 min without growth)
+and a worker-local PID kill before relaying onto the surviving drift. This is
+not the canonical contract: Sandcastle owns idle/completion timeout and cancel,
+Policy owns relay/wait/decision, and #898 removes the PID-based path.
 
 ### 6. Decision gates (parks) and answers
 
@@ -232,13 +233,17 @@ answer, append ONE JSON line to `family-ledger.jsonl`:
 {"status":"escalation_answered","event":"escalation_answered","phase":"final","childIssue":494,"answer":"<your adjudication, plain text>"}
 ```
 
-…then re-run the same ignition command. The runner routes the answer into the
-parked child's own ledger and resumes the SAME worker session
-(`resumeSessionId`) — the worker continues its conversation where it stopped.
+…then re-run the same ignition command. In the current legacy runtime the
+runner routes the answer into the parked child's own ledger and supplies a
+captured `resumeSessionId` when one exists. The same conversation resumes only
+when Sandcastle captured the session and the provider supports resume. Codex
+and Grok currently disable session capture, so this runtime cannot promise
+same-session continuation for those providers. The canonical target preserves
+the scene/worktree and starts a new invocation/relay when resume is unavailable.
 
 ### 7. Resume semantics
 
-The driver is idempotent: state lives in the durable ledgers, so re-running
+The current legacy driver is idempotent: state lives in its durable ledgers, so re-running
 the identical command after a crash, kill, or park continues from the last
 durable row. Children already merged re-admit as `already_done`; retry budgets
 carry over (no fresh windfall); completed mutating steps (ship) short-circuit
@@ -279,17 +284,18 @@ reality, then fine-tune single slots:
 | cmrCompleteness | `ORCHESTRATOR_CMR_COMPLETENESS_MODEL` |
 | cmrCorrectness | `ORCHESTRATOR_CMR_CORRECTNESS_MODEL` |
 | verify | `ORCHESTRATOR_VERIFY_MODEL` |
-| fixer | `ORCHESTRATOR_FIXER_MODEL` |
+| delivery fixer | `ORCHESTRATOR_FIXER_MODEL` |
 | cleanup | `ORCHESTRATOR_CLEANUP_MODEL` |
 | docRelease | `ORCHESTRATOR_DOCRELEASE_MODEL` |
 | cmrReview legs | `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` (comma list) |
 
 Role vocabulary worth keeping straight:
 
-- **coderFix** = in-loop fix worker during the build (responds to S3 reviewer
-  findings until the review is clean).
-- **fixer** = family-endgame repair worker for verify/CI/online-review findings.
-  Different seat, independently staffed.
+- **coderFix** = repair worker used by per-slice and family-integration review
+  scopes.
+- **fixer** = repair worker used by delivery/shared-tail review scopes. It is a
+  different seat and is independently staffed. Exact dispatch positions live
+  only in #869.
 
 Roster conventions (from the exam/marathon evidence, 2026-07):
 
@@ -326,41 +332,41 @@ Gemini CLI; when that leg is dead, optional-leg degrade applies — never a
 substituted vendor model under the `agy` name. `grok-4.5` always dispatches via
 the SuperGrok CLI (`provider: "grok"`).
 
-## Review loops
+## Review roles
 
-1. **Per-slice loop** (runner-visible, ADR 0030): coder → fresh read-only
-   reviewer over the current full diff → coder-fix (new commit, never amend) →
-   fresh reviewer again, until findings reach zero. Review fixes are always
-   NEW commits: round-by-round history is part of the record.
-2. **Integrated CMR** (family close): completeness gate, correctness gate, and
-   cross-model review legs (`cmrReview`, e.g. codex sol + claude opus) over the
-   assembled family base — it exists to catch cross-slice seams that
-   per-slice green cannot see.
-3. **Online bot rounds** (after a PR opens): sourcery / codex-connector /
-   gemini / coderabbit threads are worked finding-by-finding — fix as a new
-   commit, reply with the commit hash, resolve the thread; refutations are
-   replied with verifiable evidence instead of code. Before the runner performs
-   its own merge, host state may require mergeState CLEAN and zero unresolved
-   threads. This gates only the runner's merge action; it never judges or
-   reclassifies a worker receipt.
+Exact gate order and repair re-entry live only in #869. This README records the
+role boundaries:
 
-Ticket discipline for fix rounds: every ticket carries a sweep clause ("fix the
-finding, then sweep for the same class and print a self-audit checklist").
-When reviews deepen the same invariant chain two rounds in a row, the next
-ticket states the FULL target invariant (not the single hole) and goes to a
-structural-judgment coder. Any slice reaching round 5 triggers a mandatory
-stop-and-rethink before the next dispatch.
+- Per-slice coder, reviewer and fixer are independent workers. The reviewer
+  reports its own blocking unresolved open-count; the runner never reads the findings or
+  checks the repair.
+- Integrated completeness and correctness remain distinct professional review
+  actions over the assembled delivery base (a single slice branch or family
+  base). Their methods live in the versioned
+  review skills, not in the runner or this README.
+- Online review, repair, document release and merge use the same shared tail for
+  single and family delivery. GitHub evidence is owned by the corresponding
+  Action, never by the runner.
+
+Each fixer performs the same-class scan and introduced-regression check, leaves
+its materials, and stops. Commit/no-op finalization, independent Verification,
+and fresh originating review occur only where #869 places them; this README
+defines no alternate order or round cap.
 
 Testing discipline (hard-won): fixtures must consume only real rendered
-artifacts (the rendered prompt text, the actual envelope) — a fixture that
-peeks at internal parameters is a psychic model and will greenlight broken
+artifacts (the rendered prompt text and production worker artifacts) — a
+fixture that peeks at internal parameters is a psychic model and will greenlight broken
 value-chains. Every positive e2e pairs with a negative case that would have
 caught the original bug. Assert on the run's OUTPUT (result/ledger/files),
 never on input the test itself seeded.
 
 ## Durability and resume
 
-- The step ledger (`steps.jsonl`) is the single source of resume truth;
+- **Current legacy runtime only:** the step ledger (`steps.jsonl`) is the
+  single source of resume truth. The canonical target makes Lineage the sole
+  durable source and keeps the step ledger as a Flow projection; #867 owns the
+  migration and #898 removes this legacy path.
+- In that current legacy runtime,
   bookkeeping rows (`mechanical_redispatch_attempt`, ship streak/attempt
   records) use dedicated kinds that step consumers ignore but the budget
   scanner rebuilds from.
@@ -393,11 +399,13 @@ Phases (one JSON object per line):
 | `commit` | each coder commit | worker identity (stepId + modelSlug) / size metrics / escape-hatch counts (code files only) |
 | `verification` | each family typecheck or test command | typecheck / wave-unit / final-full pass-fail, structured count when supplied, monotonic duration |
 
-Join key: `legId` on a dispatch+collect pair. Unobtainable fields are `null`;
-telemetry I/O is fail-open and must never block the worker path — collection is
-fully async (boundaries frozen at schedule time from SHAs the runner already
-holds, per-ledger ordered appends, subprocess timeouts, a failed stamp never
-blocks the next one).
+Join key: `legId` on a dispatch+collect pair. Unobtainable fields are `null`.
+In the current legacy runtime, telemetry I/O is fail-open and fully async;
+boundaries are frozen from SHAs already held by the legacy driver, appends are
+ordered per ledger, and a failed stamp never blocks the next one. This is not
+Generic Runner authority. In the canonical target, the mutating Action or an
+external observation surface supplies commit boundaries; Generic Runner never
+reads commit, HEAD, diff, or PR state for telemetry or routing.
 
 ### `first_output_at` precision (poll granularity — not true TTFB)
 
@@ -419,9 +427,11 @@ not sub-poll TTFB. When non-null the monotonic order holds:
 
 ### `review_round` semantics
 
-`review_round` is an append-only observation after the integrated-CMR runner has
-finished its terminal gates. `finalDisposition` says whether that runner accepted
-the review result; rejected rows are telemetry only and never alter routing.
+This section documents the legacy implementation until #898 makes its control
+path unreachable; it is not target Generic Runner authority. `review_round` is
+an append-only observation after the legacy integrated-CMR path has finished its
+current terminal gates. `finalDisposition` records whether that legacy path
+accepted the review result; rejected rows are telemetry only and never alter routing.
 `findingsBySeverity`, identity-key lists, and closure dispositions are `null` when
 the worker did not produce a parseable CMR payload. `identityMatch` is always
 `exact_identity_match`: keys already present in earlier rows of the same pass are
@@ -434,6 +444,9 @@ to `fixed`
 (`still-active` / `unable-to-assess`). These rows are telemetry only: they have no
 review, fix-loop, or ADR 0062 routing authority.
 
+The canonical cutover must remove Runner-side review-payload parsing; retained
+telemetry, if any, is emitted outside Generic Runner.
+
 Field-level JSDoc lives on `TelemetryCollectRecord.first_output_at` in
 `src/telemetry.ts`; the stamp site is `noteFirstOutputIfPastBaseline` /
 `reconcileFirstOutputAt` in `src/dispatchWorker.ts`.
@@ -445,17 +458,23 @@ Field-level JSDoc lives on `TelemetryCollectRecord.first_output_at` in
 `test/**`, so every test fixture and mock must satisfy the current production
 contracts before the behavioral suite runs.
 
-Caveat: repository CI currently runs only the Python engine tests and the web
-build — the orchestrator vitest suite is NOT a required check yet (#838), so
-run `npx vitest run` locally before merging anything that touches
-`orchestrator/`. Individually-green branches can still combine into a red
-main across cross-slice seams; the integrated gates exist precisely for that.
+Repository CI now runs orchestrator `npm test` as its own job, in addition to
+the Python engine and web jobs. This README does not assert which jobs the
+GitHub ruleset marks as required, so still run `npm test` locally before
+merging orchestrator changes. Individually-green branches can still combine
+into a red main across cross-slice seams; the integrated gates exist precisely
+for that.
 
 ## Known failure signatures
+
+This table documents the current pre-cutover runtime. It is operational help,
+not the canonical target contract; #898 removes the retired paths after the
+replacement Actions and Sandcastle controls land.
 
 | symptom | likely cause | fix |
 | --- | --- | --- |
 | startup `route smoke failed … did not echo the expected nonce` (every launch) | smoke prompt lost its `{{NONCE}}` placeholder, or model at capacity | check `prompts/route-smoke.md` placeholder; switch checkpoint |
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
-| worker looks hung | judge by idle threshold (>15 min with no new output), then kill only that worker's own pid tree; capacity/quota errors are not hangs | relay a successor onto the surviving drift |
+| resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
+| worker looks hung (legacy path) | the current monitor judges by idle threshold (>15 min with no new output), then kills only that worker's own pid tree; capacity/quota errors are not hangs | current-runtime recovery is to relay a successor onto the surviving drift; the canonical target delegates idle/completion timeout and cancellation to Sandcastle, with Policy owning relay/wait/decision |
