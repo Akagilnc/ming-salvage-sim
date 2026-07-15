@@ -52,8 +52,8 @@ import type {
 } from "../../../src/types.js";
 
 /**
- * Test-fake only: map scripted IntegratedCmrResult onto the post-#930 seat.
- * Production residual never invents green from boolean alone (#919 M2).
+ * Test-fake residual boundary (#919 M2 / R7): project residual open-count only.
+ * Happy path must emit live kind:judge directly — no boolean→green promote.
  */
 function cmrScriptToWorkerOutput(cmr: IntegratedCmrResult): JudgeResult | {
   readonly kind: "cmr";
@@ -84,8 +84,8 @@ function cmrScriptToWorkerOutput(cmr: IntegratedCmrResult): JudgeResult | {
         : {}),
     } as JudgeResult;
   }
-  // Legacy scripts that only declare boolean green (no open-count field) mean
-  // the live judge seat in fixtures. findingsCount:0 stays unusable residual.
+  // Happy-path scripts that only declare boolean green (no open-count): emit
+  // live judge directly at the fake boundary (not residual promote of 0).
   if (cmr.converged === true && typeof cmr.findingsCount !== "number") {
     return {
       kind: "judge",
@@ -191,9 +191,9 @@ class CapableFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    // Default green is boolean converged without open-count — the dispatchWorker
-    // fake promotes that to kind:judge (live seat). findingsCount:0 stays
-    // residual unusable (never silent pass; #919 M2).
+    // Default green is boolean converged without open-count — fake emits live
+    // kind:judge (happy 直出). findingsCount:0 stays residual unusable
+    // (never silent pass; #919 M2/R7).
     const result =
       this.script.cmr?.(req) ?? {
         converged: true,

@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildJudgeReviewLegPrompt,
+  isJudgeSeat,
   isLegalJudgeReviewLegSession,
   judgeContinueFromOpenCount,
   judgeKillsToLedgerDispositions,
@@ -31,6 +32,7 @@ import {
 import { findingIdentityKey } from "../../src/findings.js";
 import {
   legacyDispatchWorker,
+  verifyWorkerSpec,
   workerResultToStep,
 } from "../../src/dispatchWorker.js";
 import { route } from "../../src/route.js";
@@ -378,6 +380,48 @@ describe("#925 S3/S6 maxIterations=1 + seat identity", () => {
     expect(specs.S6.soul).toBe("verify");
     expect(specs.S3.promptFile).toBe("judge_station.md");
     expect(specs.S6.promptFile).toBe("judge_station.md");
+  });
+
+  it("#919 R7: isJudgeSeat is S3/S6 only — S9 online-review is not a judge", () => {
+    const specs = stepSpecsForEnv();
+    expect(
+      isJudgeSeat({
+        id: specs.S3.id,
+        role: specs.S3.role,
+        soul: specs.S3.soul,
+      }),
+    ).toBe(true);
+    expect(
+      isJudgeSeat({
+        id: specs.S6.id,
+        role: specs.S6.role,
+        soul: specs.S6.soul,
+      }),
+    ).toBe(true);
+    // step/id aliases
+    expect(isJudgeSeat({ step: "S3" })).toBe(true);
+    expect(isJudgeSeat({ step: "S6" })).toBe(true);
+
+    // Family S9 verifyWorkerSpec: kind/role/soul "verify" is online-review,
+    // not the judge seat (must not take JUDGE_RECEIPT).
+    const s9 = verifyWorkerSpec();
+    expect(s9.id).toBe("S9");
+    expect(s9.kind).toBe("verify");
+    expect(s9.role).toBe("verify");
+    expect(s9.soul).toBe("verify");
+    expect(
+      isJudgeSeat({
+        id: s9.id,
+        kind: s9.kind,
+        role: s9.role,
+        soul: s9.soul,
+      }),
+    ).toBe(false);
+    // kind|role|soul "verify" alone never claims judge.
+    expect(isJudgeSeat({ kind: "verify" })).toBe(false);
+    expect(isJudgeSeat({ role: "verify" })).toBe(false);
+    expect(isJudgeSeat({ soul: "verify" })).toBe(false);
+    expect(isJudgeSeat({ role: "verify", soul: "verify" })).toBe(false);
   });
 });
 

@@ -1168,9 +1168,8 @@ export function checkOwnGitDir(
 export function soulForStep(
   spec: Pick<StepSpec, "role" | "soul"> & { readonly id?: string },
 ): StepSoul {
-  // #925 / #919 S2: judge seats force verify soul via the sole isJudgeSeat
-  // predicate (S3/S6 ids, role/kind/soul verify, residual dual-spell rows).
-  // Avoid re-coding S3/S6 OR here.
+  // #925 / #919 S2/R7: judge seats (S3/S6 only) force verify soul via the
+  // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
   if (
     spec.soul === "verify" &&
     isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })
@@ -1318,10 +1317,16 @@ function extractJudgeTag(stdout: string): unknown | undefined {
   return extractTaggedJson(stdout, JUDGE_RECEIPT_TAG);
 }
 
+function extractVerifyTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "verify");
+}
+
 /**
- * Cargo/stdout tag extract for a seat. Judge seats (#919 S2) always take the
- * judge tag — never the residual open-count `<review>` dual channel, even when
- * a fixture still spells role as `"reviewer"`.
+ * Cargo/stdout tag extract for a seat. Judge seats (#919 S2/R7: S3/S6 only)
+ * always take the judge tag — never the residual open-count `<review>` dual
+ * channel, even when a fixture still spells role as `"reviewer"`. Non-judge
+ * role `"verify"` (family S9 online-review) keeps the verify receipt tag —
+ * never {@link JUDGE_RECEIPT_TAG}.
  */
 function extractRoleReceipt(
   stdout: string,
@@ -1336,7 +1341,7 @@ function extractRoleReceipt(
       : spec.role === "reviewer"
         ? extractReviewerTag(stdout)
         : spec.role === "verify"
-          ? extractJudgeTag(stdout)
+          ? extractVerifyTag(stdout)
           : undefined;
   } catch {
     return undefined;
@@ -2946,12 +2951,15 @@ export class RealBackend implements Backend {
 
   /**
    * Typed Sandcastle output for ADR 0131 / #924 / #925 traffic signals:
-   * - verify (S3/S6 judge): T2 judge verdict on {@link JUDGE_RECEIPT_TAG}
+   * - S3/S6 judge: T2 judge verdict on {@link JUDGE_RECEIPT_TAG}
    * - reviewer (legacy residual): open-count receipt on the `review` tag
    * - coder: T2 station receipt on {@link CODER_RECEIPT_TAG}
+   * - non-judge role verify (S9 online-review): not configured here — family
+   *   review-loop workers own the verify receipt channel on RealFamilyBackend
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
-    // #925 / #919 S2: judge seats — T2 verdict via sole isJudgeSeat predicate.
+    // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
+    // S9 online-review must not take JUDGE_RECEIPT.
     if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
       return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
     }
@@ -3077,7 +3085,9 @@ export class RealBackend implements Backend {
     if (spec.role === "coder") {
       return this.decodeCoderStationOutput(spec, raw, cargo);
     }
-    // #925 / #919 S2: judge seats — T2 verdict is the sole topology signal.
+    // #925 / #919 S2/R7: S3/S6 judge seats — T2 verdict is the sole topology signal.
+    // S9 online-review is not a judge seat (isJudgeSeat false) and never lands
+    // here on RealBackend (family review-loop owns verify decode).
     if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }

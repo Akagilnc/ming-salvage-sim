@@ -84,14 +84,15 @@ export function sampleFinding(
 export { isJudgeSeat } from "../../src/judgeStation.js";
 
 /**
- * Test-fake boundary only (#919 M2): promote legacy IntegratedCmrResult scripts
- * to live kind:judge traffic.
+ * Test-fake boundary only (#919 M2 / R7).
  *
- * - residual open-count projects via production residualIntegratedCmrToJudgeOutput
- * - boolean green WITHOUT findingsCount → kind:judge converged (fixtures mean live seat)
- * - findingsCount:0 stays residual unusable (never silent clean)
+ * - residual positive open-count → project to kind:judge continue
+ * - boolean green WITHOUT findingsCount → live kind:judge converged
+ *   (happy-path scripts 直出 judge at the fake boundary — not production)
+ * - findingsCount:0 / residual unusable paper stays kind:cmr (**never** silent clean)
  *
- * Production residual path never performs this boolean-green promotion.
+ * Production residual path never invents green from boolean alone. Prefer
+ * {@link judgeConverged} / {@link liveCmrJudgeGreen} for new fixtures.
  */
 export function legacyCmrScriptToWorkerOutput(
   cmr: IntegratedCmrResult,
@@ -109,10 +110,10 @@ export function legacyCmrScriptToWorkerOutput(
         : {}),
     } as JudgeResult;
   }
+  // Happy path 直出 judge — only when open-count is absent. findingsCount:0
+  // falls through as residual unusable (never silent clean).
   if (cmr.converged === true && typeof cmr.findingsCount !== "number") {
-    return {
-      kind: "judge",
-      status: "converged",
+    return liveCmrJudgeGreen({
       ...(cmr.successfulLegs !== undefined
         ? { successfulLegs: cmr.successfulLegs }
         : {}),
@@ -120,7 +121,7 @@ export function legacyCmrScriptToWorkerOutput(
       ...(cmr.evidencePaths !== undefined
         ? { evidencePaths: cmr.evidencePaths }
         : {}),
-    } as JudgeResult;
+    });
   }
   return {
     kind: "cmr",
@@ -146,4 +147,26 @@ export function legacyCmrScriptToWorkerOutput(
       ? { evidencePaths: cmr.evidencePaths }
       : {}),
   };
+}
+
+/**
+ * Test-fake live green for family CMR happy path (#919 R7).
+ * Prefer this over residual `kind:cmr` + `findingsCount:0` scripts.
+ */
+export function liveCmrJudgeGreen(opts?: {
+  readonly successfulLegs?: ReadonlyArray<string>;
+  readonly skippedLegs?: IntegratedCmrResult["skippedLegs"];
+  readonly evidencePaths?: ReadonlyArray<string>;
+}): JudgeResult {
+  return {
+    kind: "judge",
+    status: "converged",
+    ...(opts?.successfulLegs !== undefined
+      ? { successfulLegs: opts.successfulLegs }
+      : {}),
+    ...(opts?.skippedLegs !== undefined ? { skippedLegs: opts.skippedLegs } : {}),
+    ...(opts?.evidencePaths !== undefined
+      ? { evidencePaths: opts.evidencePaths }
+      : {}),
+  } as JudgeResult;
 }

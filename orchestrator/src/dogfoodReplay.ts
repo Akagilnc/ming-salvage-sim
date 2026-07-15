@@ -449,7 +449,16 @@ class DogfoodSingleSliceBackend implements Backend {
   ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.dispatchedModels.push(`${spec.id}:${spec.model}`);
-    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
+    // #919 R7: sole isJudgeSeat (S3/S6) — not dual kind reviewer|verify OR.
+    // S9 online-review verify is not a judge seat.
+    if (
+      isJudgeSeat({
+        id: spec.id,
+        kind: spec.kind,
+        role: spec.role,
+        soul: spec.soul,
+      })
+    ) {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
       return {

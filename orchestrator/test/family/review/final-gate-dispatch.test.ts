@@ -78,8 +78,8 @@ class CapableFamilyBackend implements FamilyBackend {
     req: IntegratedCmrRequest,
   ): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
-    // #919 M2: residual findingsCount:0 is unusable. Boolean green without
-    // open-count is promoted by legacyCmrScriptToWorkerOutput (test-fake only).
+    // #919 M2/R7: residual findingsCount:0 is unusable. Boolean green without
+    // open-count → live judge via legacyCmrScriptToWorkerOutput happy path.
     return this.cmrConverged
       ? {
           converged: true,
