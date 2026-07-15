@@ -75,6 +75,7 @@ import {
   degradeOptionalRouteSmokeFailures,
   resolveActiveModelRoute,
   knownLiveBillingPoolsFromRoute,
+  relaySlotForSingleSliceWallStep,
   withCoderSlot,
   type ModelRouteEnv,
   type ResolvedModelRoute,
@@ -153,15 +154,6 @@ import type {
   WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
-
-/** Map a wall step to the route slot a relay baton rewrites. #923: S3/S6 → verify. */
-function relaySlotForWallStep(
-  wallStep: StepId,
-): "coder" | "verify" | "coderFix" {
-  if (wallStep === "S3" || wallStep === "S6") return "verify";
-  if (wallStep === "S5") return "coderFix";
-  return "coder";
-}
 
 /** Merge resume history with the display-seeded ledger without replaying shared rows. */
 export function mergeResumeLedgerHistory(
@@ -1266,11 +1258,6 @@ export function coderModel(env: ModelRouteEnv = process.env): string {
   return modelForSlot("coder", env);
 }
 
-/** Model for S3/S6 judge openings — #923: reads the unified verify slot. */
-export function reviewerModel(env: ModelRouteEnv = process.env): string {
-  return modelForSlot("verify", env);
-}
-
 type WorkerStepId = "S2" | "S3" | "S5" | "S6";
 
 export function stepSpecsForRoute(
@@ -1334,11 +1321,12 @@ function activeRelaySmokeEntryKey(
   step: StepId | undefined,
   route: Pick<ResolvedModelRoute, "slots">,
 ): string | undefined {
-  const slot =
-    step === "S2" ? "coder" :
-    step === "S3" || step === "S6" ? "verify" :
-    step === "S5" ? "coderFix" : undefined;
-  return slot === undefined ? undefined : `${slot}:${route.slots[slot]}`;
+  // #923: single-slice map lives in modelRoutes (S3/S6 → verify); do not fork it.
+  if (step !== "S2" && step !== "S3" && step !== "S5" && step !== "S6") {
+    return undefined;
+  }
+  const slot = relaySlotForSingleSliceWallStep(step);
+  return `${slot}:${route.slots[slot]}`;
 }
 
 export function stepSpecsForEnv(
@@ -1657,7 +1645,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const applyRelayBaton = (baton: NextRelayBaton, wallStep?: StepId): void => {
     currentBillingPool = baton.pool;
     activeRelayStep = wallStep ?? "S2";
-    const relaySlot = relaySlotForWallStep(wallStep ?? "S2");
+    const relaySlot = relaySlotForSingleSliceWallStep(wallStep ?? "S2");
     const slots = { ...modelRoute.slots };
     if (relaySlot === "verify") {
       // #923: S3/S6 judge openings share the verify slot.
@@ -1757,7 +1745,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   });
 
   const modelRefForWallStep = (wallStep: StepId): string => {
-    return modelRoute.slots[relaySlotForWallStep(wallStep)];
+    return modelRoute.slots[relaySlotForSingleSliceWallStep(wallStep)];
   };
 
   const modelIdForWallStep = (wallStep: StepId): string => {
