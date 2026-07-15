@@ -3070,9 +3070,10 @@ export class RealBackend implements Backend {
 
   /**
    * #924 — decode a T2 coder station receipt into {@link CoderOutput}.
-   * Traffic (status / refuse keys / escalate reason) from the envelope;
+   * Traffic (status / refuse keys / escalate reason) from the envelope only;
    * committed / commitsAdded / refuseRecords from cargo siblings or the cargo
-   * channel. Illegal envelope after SO validation throws for #598 redispatch.
+   * channel. Cargo must never invent or override traffic refuse keys.
+   * Illegal envelope after SO validation throws for #598 redispatch.
    */
   private decodeCoderStationOutput(
     spec: StepSpec,
@@ -3081,12 +3082,19 @@ export class RealBackend implements Backend {
   ): StepOutput {
     const body = cargo !== undefined ? cargo : raw;
     const fields = coderCargoFields(body);
-    const refuseExtras = coderRefuseCargoFields(body);
+    // Opaque refuseRecords may live on cargo or as SO passthrough siblings on raw.
+    const refuseRecords =
+      coderRefuseCargoFields(body).refuseRecords ??
+      coderRefuseCargoFields(raw).refuseRecords;
+    const refuseRecordsExtra =
+      refuseRecords !== undefined ? { refuseRecords } : {};
 
     // Prefer T2 station envelope when present (production SO path).
     const envelope = decodeCoderEnvelope(raw);
     if (envelope.ok) {
       if (envelope.value.status === "escalate") {
+        // Escalate is orthogonal to commit cargo; refuse traffic is a different
+        // status — do not smuggle refusedFindingIdentityKeys onto a bell.
         return {
           kind: "coder",
           committed: fields.committed,
@@ -3095,30 +3103,31 @@ export class RealBackend implements Backend {
             reason: envelope.value.reason,
             diagnosis: envelope.value.diagnosis,
           },
-          ...refuseExtras,
         };
       }
       if (envelope.value.status === "refused") {
+        // Envelope keys are the sole traffic source (never overwritten by cargo).
         return {
           kind: "coder",
           committed: fields.committed,
           commitsAdded: fields.commitsAdded,
           refusedFindingIdentityKeys: envelope.value.refusedFindingIdentityKeys,
-          ...refuseExtras,
+          ...refuseRecordsExtra,
         };
       }
-      // completed
+      // completed — refuse keys are traffic for status:"refused" only.
       return {
         kind: "coder",
         committed: fields.committed,
         commitsAdded: fields.commitsAdded,
-        ...refuseExtras,
       };
     }
 
     // Legacy dual-channel fallback: dedicated decision-gate `{}` / `{escalate}`
     // payloads that pre-date #924 (tests / residual cargo). Not a production SO
     // accept path — production attaches coderStationReceiptSchema.
+    // #677 residual: refuse keys may still ride on the cargo channel here.
+    const refuseExtras = coderRefuseCargoFields(body);
     const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
     if (gate.kind === "bell") {
       return {

@@ -344,7 +344,9 @@ describe.sequential("#924 coder station-receipt Output.object (T2 schema)", () =
       }).success,
     ).toBe(true);
   });
-});describe("#924 session lost degrades to fresh (run survives)", () => {
+});
+
+describe("#924 session lost degrades to fresh (run survives)", () => {
   it("classifyResumeError maps dead session to fresh-run (negative path stays alive)", () => {
     // Production resumeSession already falls back to runFreshAgentStep on this
     // class — the run does not die. Pin the pure classifier contract here.
