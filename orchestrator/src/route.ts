@@ -1,20 +1,21 @@
 /**
- * route() — the runner's deterministic decision function (ADR 0018 §1, ADR 0030).
+ * route() — the runner's deterministic decision function (ADR 0018 §1, ADR 0030 / #925).
  *
  * The next step is decided HERE by the runner, never by the agent. route()
  * consumes the structured step output and returns the next StepId. This is the
  * state-machine edge table from PRD #244's contract layer.
  *
- * ADR 0030 re-splits per-slice review/fix convergence into runner-visible
- * worker boundaries:
+ * #925 / ADR 0132: per-slice review/fix convergence is judge-verdict driven:
  *
- *   S0→S1→S2(implement)→S3(review)→S4(classify)
- *     clean/deferred only → S7(local handoff) → S8(success)
- *     blocking → S5(fix)→S6(fresh full-diff review)→S4
+ *   S0→S1→S2(implement)→S3(judge establish)
+ *     converged → S7(local handoff) → S8(success)
+ *     continue  → S5(fix)→S6(judge resume)→(verdict again)
+ *     escalate  → decision-kind park (global stop edge)
  *
- * A valid decision escalation stays the global stop edge (checked FIRST).
- * Envelope shape never decides fate: kind guards only narrow worker-owned fields;
- * an unusable envelope follows the same fixed topology to the next worker.
+ * S4 mechanical open-count classification is dissolved. A valid decision
+ * escalation stays the global stop edge (checked FIRST). Envelope shape never
+ * decides fate beyond the typed status enum: an unusable envelope follows the
+ * fixed topology to the fixer path (never silent clean).
  */
 
 import type { SliceStepId, StepOutput } from "./types.js";
@@ -42,20 +43,58 @@ export interface RouteContext {
 }
 
 /**
+ * Collapse residual open-count reviewer paper (and offline verify skeletons)
+ * into the sole judge-status form used by topology. Production decode already
+ * emits `kind:"judge"`; this keeps resume of pre-#925 ledger rows and test
+ * fixtures on one routing path (no parallel open-count station).
+ */
+function judgeStatusOf(output: StepOutput | undefined):
+  | "converged"
+  | "continue"
+  | "escalate"
+  | "unusable" {
+  if (output == null) return "unusable";
+  if (output.kind === "judge") {
+    if (output.status === "converged") return "converged";
+    if (output.status === "continue") return "continue";
+    return "escalate";
+  }
+  if (output.kind === "reviewer") {
+    if (output.escalate != null) return "escalate";
+    if (
+      typeof output.findingsCount === "number" &&
+      Number.isSafeInteger(output.findingsCount) &&
+      output.findingsCount > 0
+    ) {
+      return "continue";
+    }
+    if (
+      typeof output.findingsCount === "number" &&
+      Number.isSafeInteger(output.findingsCount) &&
+      output.findingsCount === 0
+    ) {
+      return "converged";
+    }
+    return "unusable";
+  }
+  if (output.kind === "verify" && typeof output.converged === "boolean") {
+    return output.converged ? "converged" : "continue";
+  }
+  return "unusable";
+}
+
+/**
  * Decide the next step.
  *
- * ADR 0030 edges: S2 committed output goes to S3, S3/S6 reviewer output goes to
- * S4, S4 sends blocking findings to S5 and clean/deferred-only reviews to S7.
- * The global escalate stop (#251) is still checked FIRST, ahead of the switch.
+ * #925 edges: S2 → S3 judge; S3/S6 judge verdict → S7 / S5 / escalate park;
+ * S5 → S6. The global escalate stop (#251) is still checked FIRST.
  */
 export function route(ctx: RouteContext): RouteDecision {
   // ── Global escalate stop edge (#251) ────────────────────────────────────
   // Check FIRST, ahead of every other edge (PRD #244 contract layer).
-  // The S2 build worker can carry `escalate`; when present the runner stops
-  // immediately, records the output in the ledger, and returns S8 handoff
-  // (status=escalate). The model supplies reason+diagnosis; the runner does NOT
+  // Judge escalate status also surfaces via escalateOf (reason+diagnosis on
+  // the output). The model supplies reason+diagnosis; the runner does NOT
   // reclassify (impl vs design is the model's call — US#20).
-  //
   const escalate = escalateOf(ctx.output);
   if (escalate != null) {
     return { kind: "handoff", status: "escalate" };
@@ -63,52 +102,41 @@ export function route(ctx: RouteContext): RouteDecision {
 
   switch (ctx.from) {
     case "S0":
-      // S0 input_gate passed → load context.
-      // Gate is implemented in runner.ts: rejects non-compliant issues before
-      // reaching this edge (rfa ∧ no sub-issues ∧ blocked_by closed).
       return { kind: "next", step: "S1" };
 
     case "S1":
-      // S1 load_context done → implementation worker.
       return { kind: "next", step: "S2" };
 
     case "S2": {
-      // A completed implementation worker always hands the scene to the fresh
-      // reviewer. Empty or incorrect work is the reviewer's judgment.
+      // Implementation always hands the scene to the judge (S3 establish).
       return { kind: "next", step: "S3" };
     }
 
     case "S3":
-    case "S6":
-      return { kind: "next", step: "S4" };
+    case "S6": {
+      // #925: judge verdict tri-state is the sole convergence signal.
+      // Residual open-count paper is projected to the same three statuses
+      // (no second S4 station, no prose parsing).
+      const status = judgeStatusOf(ctx.output);
+      if (status === "converged") return { kind: "next", step: "S7" };
+      if (status === "continue") return { kind: "next", step: "S5" };
+      if (status === "escalate") return { kind: "handoff", status: "escalate" };
+      // Unusable envelope → fixer path (never silent clean / S7).
+      return { kind: "next", step: "S5" };
+    }
 
     case "S4": {
-      if (ctx.output?.kind === "reviewer") {
-        // ADR 0131 / #899: findingsCount is authenticated at the typed worker
-        // boundary (schema + decode). Runner only compares the count with zero —
-        // never re-validates shape and never reads findings-array cargo length.
-        //
-        // Legacy ledger rows may still be kind:"reviewer" without findingsCount
-        // (pre-#899). `undefined > 0` is false and would wrongly S7/success —
-        // missing count is unusable envelope → S5, never silent clean (codex R2).
-        const count = ctx.output.findingsCount;
-        if (
-          typeof count !== "number" ||
-          !Number.isSafeInteger(count) ||
-          count < 0
-        ) {
-          return { kind: "next", step: "S5" };
-        }
-        return count > 0
-          ? { kind: "next", step: "S5" }
-          : { kind: "next", step: "S7" };
-      }
-      // Unusable review cargo (not a typed reviewer receipt) → fixer path.
+      // #925: S4 mechanical open-count station is dissolved. Residual path for
+      // legacy ledgers that still land on S4 — same status projection as S3/S6.
+      const status = judgeStatusOf(ctx.output);
+      if (status === "converged") return { kind: "next", step: "S7" };
+      if (status === "continue") return { kind: "next", step: "S5" };
+      if (status === "escalate") return { kind: "handoff", status: "escalate" };
       return { kind: "next", step: "S5" };
     }
 
     case "S5": {
-      // Fix and fresh re-review alternate by topology, never by git movement.
+      // Fix and fresh re-judge alternate by topology.
       return { kind: "next", step: "S6" };
     }
 
@@ -116,11 +144,9 @@ export function route(ctx: RouteContext): RouteDecision {
       return { kind: "handoff", status: "success" };
 
     case "S8":
-      // S8 is terminal — route() is never called to leave it.
       throw new Error("route: S8 is terminal; nothing routes out of it");
 
     default: {
-      // Exhaustiveness guard: a new slice step must be handled above.
       const never: never = ctx.from;
       throw new Error(`route: unhandled step ${String(never)}`);
     }

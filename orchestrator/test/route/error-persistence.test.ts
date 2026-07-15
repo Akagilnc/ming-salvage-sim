@@ -215,7 +215,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       if (spec.id === "S3") return { kind: "coder", committed: true, commitsAdded: 1 };
-      return spec.role === "reviewer"
+      return (spec.role === "reviewer" || spec.role === "verify")
         ? { kind: "reviewer", findings: [], findingsCount: 0 }
         : { kind: "coder", committed: true, commitsAdded: 1 };
     };
@@ -249,7 +249,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "reviewer") {
+      if ((spec.role === "reviewer" || spec.role === "verify")) {
         return { kind: "reviewer", findings: [], findingsCount: 0 };
       }
       return { kind: "coder", committed: true, commitsAdded: 1 };

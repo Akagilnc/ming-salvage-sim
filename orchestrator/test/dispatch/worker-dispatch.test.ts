@@ -143,7 +143,7 @@ class DispatchBackend implements Backend {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
     throw new Error(`unexpected child worker kind: ${spec.kind}`);
@@ -215,7 +215,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
 
     const byId = Object.fromEntries(backend.specs.map((s) => [s.id, s]));
     expect(byId.S2.promptFile).toBe("coder_implement.md");
-    expect(byId.S3.promptFile).toBe("reviewer_review.md");
+    expect(byId.S3.promptFile).toBe("judge_station.md");
   });
 
   it("hands the resident worktree to every single-slice worker via DispatchContext", async () => {
@@ -405,7 +405,7 @@ describe("ADR 0131 reviewer count envelope", () => {
         landing?: WorkerLandingPayload,
       ): Promise<WorkerResult> {
         this.landings.push(landing);
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           this.reviewerCalls += 1;
           if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
           this.specs.push(spec);
@@ -433,7 +433,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     const result = await runOrchestrator({ issueNumber: 331, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.specs.filter((spec) => spec.kind === "reviewer")).toHaveLength(2);
+    expect(backend.specs.filter((spec) => (spec.kind === "reviewer" || spec.kind === "verify"))).toHaveLength(2);
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
     expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
@@ -459,7 +459,7 @@ describe("ADR 0131 reviewer count envelope", () => {
           landing?: WorkerLandingPayload,
         ): Promise<WorkerResult> {
           this.landings.push(landing);
-          if (spec.kind === "reviewer") {
+          if ((spec.kind === "reviewer" || spec.kind === "verify")) {
             this.reviewerCalls += 1;
             if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
             this.specs.push(spec);
@@ -523,7 +523,7 @@ describe("ADR 0131 reviewer count envelope", () => {
         landing?: WorkerLandingPayload,
       ): Promise<WorkerResult> {
         this.landings.push(landing);
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           this.reviewerCalls += 1;
           if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
           this.specs.push(spec);
@@ -570,7 +570,7 @@ describe("ADR 0131 reviewer count envelope", () => {
     class WrongReviewerKindBackend extends DispatchBackend {
       reviewerCalls = 0;
       override async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           this.reviewerCalls += 1;
           if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
           this.specs.push(spec);
@@ -692,7 +692,7 @@ describe("ADR 0131 reviewer count envelope", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return {
             kind: "completed",
             output: { kind: "reviewer", findings: [], findingsCount: 0 },
@@ -865,7 +865,7 @@ describe("ADR 0131 reviewer count envelope", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return {
             kind: "completed",
             output: { kind: "reviewer", findings: [], findingsCount: 0 },
@@ -1046,7 +1046,7 @@ describe("ADR 0131 reviewer count envelope", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return {
             kind: "completed",
             output: { kind: "reviewer", findings: [], findingsCount: 0 },

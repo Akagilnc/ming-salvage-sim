@@ -381,6 +381,59 @@ export function decodeJudgeVerdict(raw: unknown): ContractResult<JudgeVerdict> {
   return ok(parsed.data);
 }
 
+/**
+ * Sandcastle `Output.object` tag for judge station receipts (#925).
+ * Traffic fields are schema-validated; findings cargo siblings may passthrough.
+ */
+export const JUDGE_RECEIPT_TAG = "judge";
+
+/**
+ * Production SO schema for the S3/S6 judge station receipt.
+ *
+ * Same source of field vocabulary as {@link decodeJudgeVerdict}. Cargo
+ * siblings (findings rows, essays) pass through — only illegal traffic re-asks.
+ */
+export function judgeStationReceiptSchema(): z.ZodType {
+  const converged = z
+    .object({
+      station: z.literal("judge"),
+      status: z.literal("converged"),
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough()
+    .superRefine((value, ctx) => {
+      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
+    });
+
+  const continueSchema = z
+    .object({
+      station: z.literal("judge"),
+      status: z.literal("continue"),
+      findingDispositions: z.array(findingDispositionSchema),
+      advanceCoder: nonEmptyString.optional(),
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough()
+    .superRefine((value, ctx) => {
+      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
+    });
+
+  const escalate = z
+    .object({
+      station: z.literal("judge"),
+      status: z.literal("escalate"),
+      reason: nonEmptyString,
+      diagnosis: nonEmptyString,
+      cargoPointer: cargoPointerSchema,
+    })
+    .passthrough()
+    .superRefine((value, ctx) => {
+      rejectBannedRefutedKeysInSo(value as Record<string, unknown>, ctx);
+    });
+
+  return z.union([converged, continueSchema, escalate]);
+}
+
 // ─── Coder-family envelopes ──────────────────────────────────────────────────
 
 interface CoderEnvelopeBase {
