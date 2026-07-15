@@ -28,8 +28,8 @@ const decisionBellSchema = z.object({
 
 /**
  * Single shared probe for the optional `escalate` key on any receipt/signal
- * payload. Schema refinement, well-formed-bell helpers, and runtime
- * classification all route through this so none/malformed/bell stay one parse.
+ * payload. Schema refinement and runtime classification both route through
+ * this so none/malformed/bell stay one parse.
  */
 type EscalateProbe =
   | { readonly kind: "absent" }
@@ -141,27 +141,6 @@ export function requireTypedTrafficSignal(
 }
 
 /**
- * Shared well-formed decision-bell probe for production parsers (#899 seam).
- * Returns the bell only when reason and diagnosis are both non-empty after trim;
- * present-but-malformed escalate is {@link isMalformedDecisionGate}.
- */
-export function wellFormedDecisionBell(
-  receipt: unknown,
-): { reason: string; diagnosis: string } | undefined {
-  const probe = probeEscalate(receipt);
-  if (probe.kind !== "bell") return undefined;
-  return { reason: probe.reason, diagnosis: probe.diagnosis };
-}
-
-/**
- * True when the payload carries an `escalate` key that fails the strict
- * decision-gate contract (empty reason/diagnosis, wrong shape, etc.).
- */
-export function isMalformedDecisionGate(receipt: unknown): boolean {
-  return probeEscalate(receipt).kind === "malformed";
-}
-
-/**
  * Classified decision-gate signal after malformed-gate validation (#899 seam).
  * Callers map `bell` into role-specific escalate outcomes and treat `none` as
  * "no gate — continue with cargo".
@@ -174,7 +153,8 @@ export type DecisionGateClassification =
  * Central malformed-gate validation + bell classification for production parsers.
  * Present-but-malformed `escalate` throws so the Action exits non-zero for #598;
  * well-formed bells and no-gate payloads are returned as a discriminated result.
- * Single probe pass — no double-parse of the same escalate payload.
+ * Single probe pass via {@link probeEscalate} — no double-parse, no parallel
+ * well-formed/malformed helper exports.
  */
 export function classifyDecisionGate(
   receipt: unknown,
