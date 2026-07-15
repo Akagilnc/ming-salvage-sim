@@ -63,7 +63,6 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
-import { z } from "zod";
 import {
   extractLastTagBody,
 } from "./lastTaggedJson.js";
@@ -1255,13 +1254,6 @@ export function stripJsonFence(s: string): string {
   return stripOutcomeJsonFence(s);
 }
 
-/** The self-reported coder JSON a step emits (already shape-validated). */
-export interface SelfReportedCoder {
-  readonly committed: boolean;
-  readonly commitsAdded: number;
-  readonly escalate?: { readonly reason: string; readonly diagnosis: string };
-}
-
 /**
  * Tolerant coder cargo fields (committed / commitsAdded). Missing or off-shape
  * values default to the no-commit report — never invent escalate from cargo,
@@ -1696,29 +1688,6 @@ export interface RealBackendOptions {
    * as `origin/main`.
    */
   readonly familyBase?: string;
-}
-
-/**
- * zod schema for the reviewer step's structured output (route() consumes it).
- *
- * #604 slice 4 (ADR 0062): the reviewer contract no longer carries routing
- * disposition kinds — the only disposition a reviewer may emit is the
- * accepted-suppression governance carrier.
- */
-const coderOutputSchema = z.object({
-  committed: z.boolean(),
-  commitsAdded: z.number().int().nonnegative(),
-  escalate: z
-    .object({
-      reason: z.string(),
-      diagnosis: z.string(),
-    })
-    .optional(),
-});
-
-/** Parse a coder worker self-report with the same schema the single-slice path uses. */
-export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
-  return coderOutputSchema.parse(raw);
 }
 
 /**
