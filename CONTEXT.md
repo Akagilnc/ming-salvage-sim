@@ -644,7 +644,7 @@ _Avoid_: 第二套 durable store、scene locator 真源、step ledger(那是单�
 _Avoid_: 把 answer 当新的需求 brief、由 family ledger 重复持久化、让 runner 解释答案或覆盖固定控制字段、把进程失败当可自动恢复
 
 **路线 / route**:
-一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定可执行席位。第一版以「接入渠道 + 模型」识别席位，例如 xAI/Grok 与 Cursor/Grok 是两个独立候选，不归并成“同一模型的两个池”。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。operator 手动选择 base route，并可单独 override 任一 seat；runtime preflight、quota 与 candidate traversal 只读紧邻的 Policy Resolution、#870 与 ADR 0134。(0031, 0134)
+一条命名预设(`normal` / `claude-cheap` / `claude-tight` / `codex-cheap` / `codex-tight` …)，为本轮每个需要模型的 Action / worker seat 指定可执行席位。第一版席位身份可包含「接入渠道 + 模型」，但 current candidate 服从 #905：`agy` 是真实 agy CLI，`grok-4.5` 只经 grok-build / SuperGrok provider；OpenCode、Cursor/Grok 与 glm-via-OpenCode 不得进入席位集合。完整 seat 集合由 owning Action 的 capability request 与 Policy / route registry 提供，本词表不复制枚举。operator 手动选择 base route，并可单独 override 任一 seat；runtime preflight、quota 与 candidate traversal 只读紧邻的 Policy Resolution、#870 与 ADR 0134。(0031, 0134)
 _Avoid_: 环境/profile(那是镜像)、家族(那是模型 vendor 分组)
 
 **策略解析 / Policy Resolution**:
@@ -660,11 +660,11 @@ _Avoid_: 把 cheap 当「主动用便宜档」(不是,是额度不足被迫省)�
 _Avoid_: 角色(角色是职能单元,槽是它在某路线里的模型赋值位)
 
 **后端注册表 / registry**:
-把 model slug 翻成真后端的数据表:每条 = `slug → {provider, model-id, options, family, strong-leg}`,覆盖 Sandcastle 原生 6 provider(claudeCode/codex/opencode/copilot/cursor/pi)。`family` 让路线解析器自动校验「claude-tight 无 Claude 槽」;`strong-leg` 标谁够格当 cmr 底线腿。加已烤 CLI 的兄弟模型 = 加一行;加新 CLI = 烤二进制+挂 auth 一次。是 slug→后端唯一真源、「第一次做点工作、后续方便切」的落点。(0031)
+把 model slug 翻成真后端的数据表:每条 = `slug → {provider, model-id, options, family, strong-leg}`,只登记当前获准的可执行 provider。`family` 让路线解析器自动校验「claude-tight 无 Claude 槽」;`strong-leg` 标谁够格当 cmr 底线腿。加已接入 provider 的兄弟模型 = 加一行;新 CLI 先完成二进制、auth 与 provider adapter，再登记 owner 批准的 slug。当前 `agy →` 真 agy CLI、`grok-4.5 → grok`，无 OpenCode / glm slug。是 slug→后端唯一真源、「第一次做点工作、后续方便切」的落点。(0031)
 _Avoid_: 写死的 switch(那是被它取代的旧形态)、config(太泛)
 
 **强腿 / strong leg**:
-撑得起 cmr 承重闸底线的强模型 —— **只认 opus / codex(gpt-5.5)**。cmr 硬底线 = **≥1 撑底线强腿实际跑成**,否则 escalate(没牙的闸不放行)。**agy(gemini) = bonus 腿**:跨家族多一票更好,但不可靠、不撑底线(codex+claude 双死、只剩 agy 也 escalate)。便宜实验模型(glm/haiku/spark)默认是 coder 槽的、不当 cmr 腿。(0032)
+撑得起 cmr 承重闸底线的强模型 —— **只认 opus / codex(gpt-5.5)**。cmr 硬底线 = **≥1 撑底线强腿实际跑成**,否则 escalate(没牙的闸不放行)。**agy(gemini) = bonus 腿**:跨家族多一票更好,但不可靠、不撑底线(codex+claude 双死、只剩 agy 也 escalate)。便宜实验模型(haiku 等)默认是 coder 槽的、不当 cmr 腿。(0032)
 _Avoid_: 把任何模型都算腿、把 agy 当撑底线腿、把 coder 槽的便宜模型当评审腿
 
 **藩府梗阻 / vassal obstruction**:
