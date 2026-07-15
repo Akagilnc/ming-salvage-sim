@@ -104,6 +104,25 @@ export const DEFAULT_CODER_REC_ORDER: ReadonlyArray<string> = [
  */
 export const CODER_REC_FALLBACK_AFTER_ROUNDS = 2;
 
+/**
+ * Completed S6 (fresh full-diff re-review) rounds in a run ledger.
+ *
+ * #899 (2026-07-15): the ledger carries a `worker_monitor_spawned` EVENT row
+ * AND a completion row per S6 round (plus other bookkeeping event rows with
+ * step ids). Counting raw `step === "S6"` rows doubled one real round into
+ * two, prematurely hit {@link CODER_REC_FALLBACK_AFTER_ROUNDS}, advanced the
+ * roster onto the run's own reviewer slug, and pool separation then exhausted
+ * the roster — killing the run. Only event-less rows are completed rounds.
+ */
+export function completedS6RoundsFromLedger(
+  entries: ReadonlyArray<{ readonly step?: string; readonly event?: string }>,
+): number {
+  return entries.reduce(
+    (n, e) => (e.step === "S6" && e.event === undefined ? n + 1 : n),
+    0,
+  );
+}
+
 /** Allow optional Markdown bullet markers (`- `, `* `, `+ `) before the label. */
 const CODER_REC_LINE =
   /^\s*(?:[-*+]\s+)?Coder-Rec\s*:\s*(.+?)\s*$/im;

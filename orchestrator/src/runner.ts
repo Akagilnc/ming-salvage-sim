@@ -84,6 +84,7 @@ import {
 import {
   resolveCoderRecOrder,
   lookupCoderRosterEntry,
+  completedS6RoundsFromLedger,
   CODER_REC_FALLBACK_AFTER_ROUNDS,
   type CoderRosterEntry,
 } from "./coderRoster.js";
@@ -1648,18 +1649,37 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     });
   };
 
-  const stopForCoderRecTightRoutePolicy = (escalation: {
+  const stopForCoderRecTightRoutePolicy = async (escalation: {
     readonly reason: string;
     readonly diagnosis: string;
-  }): RunResult => {
+  }): Promise<RunResult> => {
     const stopSummary = stopSummaryForStartupRouteFailure(escalation);
+    // #899: this stop can fire MID-RUN (the S2/S5 advance path), not only at
+    // startup. It used to return an inline RunResult with an in-memory-only
+    // S8 — no disk row, no output — so the family saw a bare "failed", resume
+    // could not classify the breakpoint, and every re-ignition replayed the
+    // whole run from scratch. Terminal returns must speak and persist.
+    console.error(
+      `[orchestrator] ${escalation.reason}: ${escalation.diagnosis}`,
+    );
+    ledger.push({ step: "S8", stopSummary });
+    await persistBestEffort(
+      "S8",
+      undefined,
+      undefined,
+      "escalate",
+      undefined,
+      undefined,
+      "failure",
+      stopSummary,
+    );
     return {
       status: "escalate",
       errorPackage: {
         failedStep: "S0",
         reason: `${escalation.reason}: ${escalation.diagnosis}`,
       },
-      stepLedger: [{ step: "S8", stopSummary }],
+      stepLedger: ledger,
       stopSummary,
     };
   };
@@ -1860,9 +1880,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     activeRelayStep = undefined;
   };
 
+  // #899: count COMPLETED S6 rounds only — monitor-spawn / bookkeeping event
+  // rows share the S6 step id and were doubling one round into two (see
+  // completedS6RoundsFromLedger).
   const coderRecRoundsFromLedger = (
     entries: ReadonlyArray<LedgerEntry>,
-  ): number => entries.reduce((n, e) => (e.step === "S6" ? n + 1 : n), 0);
+  ): number => completedS6RoundsFromLedger(entries);
   // Family-run context (ADR 0022 decision 2). Production always supplies this
   // for a child. Focused skeleton tests may omit it and cut from the test base;
   // S7 remains a local handoff in either case.
@@ -2587,7 +2610,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       coderRecRoundsFromLedger(ledger.filter((entry) => isStepId(entry.step))),
     );
     if (coderRecPolicy?.kind === "stop") {
-      return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+      return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
     const relayResume = resumeRelayFromLedger(
       resumeLedger.filter(
@@ -2730,7 +2753,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         coderRecIssueBody = meta.body;
         const coderRecPolicy = await applyCoderRecSelection(0);
         if (coderRecPolicy?.kind === "stop") {
-          return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+          return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
         }
 
         const smokeResult = await ensureRouteSmoke();
@@ -2790,7 +2813,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             coderRecRoundsFromLedger(ledger),
           );
           if (coderRecPolicy?.kind === "stop") {
-            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+            return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
           }
         }
         break;
@@ -2822,7 +2845,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             coderRecRoundsFromLedger(ledger),
           );
           if (coderRecPolicy?.kind === "stop") {
-            return stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
+            return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
           }
           if (!routeSmokeChecked) {
             const smokeResult = await ensureRouteSmoke();
