@@ -111,22 +111,18 @@ class SeamOnlyBackend implements Backend {
               },
             ]
           : [];
+      if (findingsCount === 0) {
+        return {
+          kind: "completed",
+          output: { kind: "judge", status: "converged" },
+        };
+      }
       return {
         kind: "completed",
         output: {
           kind: "reviewer",
           findings,
           findingsCount,
-          ...(this.reviewCount > 1
-            ? {
-                priorFindingDispositions: [
-                  {
-                    identityKey: "correctness|f.ts:1|x",
-                    status: "verified-closed",
-                  },
-                ],
-              }
-            : {}),
         },
       };
     }

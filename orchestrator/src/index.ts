@@ -273,7 +273,6 @@ export type {
 
 // ── design-time Coder-Rec roster (#767) ─────────────────────────────────────
 export {
-  CODER_REC_FALLBACK_AFTER_ROUNDS,
   CODER_ROSTER,
   CODER_ROSTER_VERSION,
   CoderRecError,
@@ -283,7 +282,7 @@ export {
   resolveCoderRecOrder,
   selectCoderRecEntry,
 } from "./coderRoster.js";
-export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./coderRoster.js";
+export type { CoderPoolId, CoderRosterEntry } from "./coderRoster.js";
 export {
   applyCoderRecToRoute,
   applyRelayBatonToRoute,

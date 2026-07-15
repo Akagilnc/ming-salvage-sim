@@ -891,7 +891,6 @@ async function askContinue(message: string): Promise<boolean> {
 export function applyCoderRecToRoute(
   route: ResolvedModelRoute,
   issueBody: string | undefined,
-  nonConvergingRounds: number,
   env: ModelRouteEnv = process.env,
 ): {
   readonly route: ResolvedModelRoute;
@@ -932,8 +931,8 @@ export function applyCoderRecToRoute(
     };
   }
   const order = resolveCoderRecOrder(issueBody);
-  // #920: no reviewer/CMR conflict filter — pick purely by roster position.
-  const entry = selectCoderRecEntry(order, nonConvergingRounds);
+  // #920 / ADR 0132: first roster seat only (sticky stay-put). No rounds arg.
+  const entry = selectCoderRecEntry(order);
   if (
     route.slots.coder === entry.slug &&
     (preserveCoderFix || route.slots.coderFix === entry.slug)

@@ -344,16 +344,7 @@ describe("#677 legal refuse one finding, fix the others", () => {
         // Second fix round closes the remaining finding without overturn.
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              {
-                identityKey: refuseKey,
-                status: "verified-closed",
-                reason: "finding withdrawn after re-review accepted alternate repair path",
-              },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -421,12 +412,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: findingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -449,12 +435,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: findingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -568,12 +549,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: findingKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -652,12 +628,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         },
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: refuseKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
       coderOutputs: [
@@ -827,12 +798,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: {
-            kind: "reviewer", findings: [], findingsCount: 0,
-            priorFindingDispositions: [
-              { identityKey: refuseKey, status: "verified-closed" },
-            ],
-          },
+          output: { kind: "judge", status: "converged" },
         },
       ],
     });
@@ -988,7 +954,7 @@ class FixLoopBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
-    if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "reviewer", findings: [], findingsCount: 0 };
+    if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
   async writeLedger(
@@ -1024,7 +990,7 @@ class FixLoopBackend implements Backend {
       const result = this.opts.reviewerResults[this.reviewerAttempts];
       this.reviewerAttempts += 1;
       return (
-        result ?? { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } }
+        result ?? { kind: "completed", output: { kind: "judge", status: "converged" } }
       );
     }
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);

@@ -842,7 +842,7 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
       if (spec.kind === "reviewer" || spec.id === "S3" || spec.id === "S6") {
         return {
           kind: "completed",
-          output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          output: { kind: "judge", status: "converged" },
         };
       }
       if (spec.kind === "ship") {

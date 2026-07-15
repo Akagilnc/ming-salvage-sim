@@ -144,7 +144,7 @@ class DispatchBackend implements Backend {
       };
     }
     if ((spec.kind === "reviewer" || spec.kind === "verify")) {
-      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+      return { kind: "completed", output: { kind: "judge", status: "converged" } };
     }
     throw new Error(`unexpected child worker kind: ${spec.kind}`);
   }
@@ -304,7 +304,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
         }
         return {
           kind: "completed",
-          output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          output: { kind: "judge", status: "converged" },
         };
       }
     }
@@ -346,7 +346,7 @@ describe("#331 non-completed WorkerResult routing", () => {
           escalation: { reason: "design blocker", diagnosis: "need a human" },
         };
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+      return { kind: "completed", output: { kind: "judge", status: "converged" } };
     }
   }
 
@@ -368,7 +368,7 @@ describe("#331 non-completed WorkerResult routing", () => {
       if (spec.kind === "coder") {
         return { kind: "failed", reason: "container crashed" };
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+      return { kind: "completed", output: { kind: "judge", status: "converged" } };
     }
   }
 
@@ -695,7 +695,7 @@ describe("ADR 0131 reviewer count envelope", () => {
         if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "coder") {
@@ -868,7 +868,7 @@ describe("ADR 0131 reviewer count envelope", () => {
         if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "coder") {
@@ -1049,7 +1049,7 @@ describe("ADR 0131 reviewer count envelope", () => {
         if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         return {
@@ -1364,7 +1364,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       this.runStepOutcomeLandings.push(options?.outcomeLanding);
       return spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
-        : { kind: "reviewer", findings: [], findingsCount: 0 };
+        : { kind: "judge", status: "converged" };
     }
     async resumeSession(
       _spec: StepSpec,

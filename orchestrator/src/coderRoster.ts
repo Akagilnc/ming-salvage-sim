@@ -97,31 +97,6 @@ export const DEFAULT_CODER_REC_ORDER: ReadonlyArray<string> = [
   "luna@med",
 ];
 
-/**
- * After this many non-converging per-slice review/fix rounds on the current
- * coder, advance to the next roster-valid entry (issue: "2-3 轮不收敛 → 顺位补位").
- */
-export const CODER_REC_FALLBACK_AFTER_ROUNDS = 2;
-
-/**
- * Completed S6 (fresh full-diff re-review) rounds in a run ledger.
- *
- * #899 (2026-07-15): the ledger carries a `worker_monitor_spawned` EVENT row
- * AND a completion row per S6 round (plus other bookkeeping event rows with
- * step ids). Counting raw `step === "S6"` rows doubled one real round into
- * two and prematurely hit {@link CODER_REC_FALLBACK_AFTER_ROUNDS}. Only
- * event-less rows are completed rounds. (#920 removed the follow-on
- * pool-separation exhaust path that turned that miscount into a hard kill.)
- */
-export function completedS6RoundsFromLedger(
-  entries: ReadonlyArray<{ readonly step?: string; readonly event?: string }>,
-): number {
-  return entries.reduce(
-    (n, e) => (e.step === "S6" && e.event === undefined ? n + 1 : n),
-    0,
-  );
-}
-
 /** Allow optional Markdown bullet markers (`- `, `* `, `+ `) before the label. */
 const CODER_REC_LINE =
   /^\s*(?:[-*+]\s+)?Coder-Rec\s*:\s*(.+?)\s*$/im;
@@ -279,44 +254,21 @@ export function resolveCoderRecOrder(
   return entriesForTokens(parsed);
 }
 
-export interface SelectCoderRecOptions {
-  /** Override the default fallback threshold (tests). */
-  readonly fallbackAfterRounds?: number;
-}
-
-function indexForRounds(
-  nonConvergingRounds: number,
-  orderLength: number,
-  fallbackAfterRounds: number,
-): number {
-  if (orderLength <= 0) return 0;
-  if (fallbackAfterRounds <= 0) return 0;
-  const steps = Math.floor(
-    Math.max(0, nonConvergingRounds) / fallbackAfterRounds,
-  );
-  // Clamp to the last seat — single-entry and exhausted multi-entry rosters
-  // stay put forever (#920: never throw a "roster exhausted" kill path).
-  return Math.min(steps, orderLength - 1);
-}
-
 /**
- * Select the coder for the current non-converging-round count.
- * Advances one roster step every {@link CODER_REC_FALLBACK_AFTER_ROUNDS} rounds.
- * Past the end of the order (or on a single-entry roster) the last/top seat
- * stays in place — never exhausts (#920 / ADR 0132 D5).
+ * Select the active Coder-Rec entry.
+ *
+ * ADR 0132 / #919 CR: first roster-valid marked entry only (sticky stay-put).
+ * Round-threshold mechanical advance is deleted — no rounds argument, no
+ * fallback-after-N constant. Judge `advanceCoder` roster policy is #926.
+ * Empty order still throws (misconfigured roster).
  */
 export function selectCoderRecEntry(
   order: ReadonlyArray<CoderRosterEntry>,
-  nonConvergingRounds: number,
-  opts: SelectCoderRecOptions = {},
 ): CoderRosterEntry {
   if (order.length === 0) {
     throw new Error(
       "coder roster order is empty — roster table / default order misconfigured",
     );
   }
-  const threshold =
-    opts.fallbackAfterRounds ?? CODER_REC_FALLBACK_AFTER_ROUNDS;
-  const index = indexForRounds(nonConvergingRounds, order.length, threshold);
-  return order[index]!;
+  return order[0]!;
 }
