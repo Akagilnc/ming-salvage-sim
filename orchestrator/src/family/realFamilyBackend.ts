@@ -58,9 +58,9 @@ import { isAbsolute, join } from "node:path";
 
 import { z } from "zod";
 import {
-  decisionGateSignalSchema,
+  decisionGateOutput,
   isMalformedDecisionGate,
-  reaskReceiptOrThrow,
+  logAndRethrowReceiptFailure,
   wellFormedDecisionBell,
   workerReceiptOutput,
   workerReceiptSchema,
@@ -884,8 +884,8 @@ export class RealFamilyBackend implements FamilyBackend {
             completionSignal: MERGER_COMPLETION_SIGNAL,
             branchStrategy: { type: "head" }, // commit the resolved merge in place
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
-            // #899: signal-only decision gate; resolve cargo stays opaque.
-            output: workerReceiptOutput("merger", decisionGateSignalSchema),
+            // #899: dedicated decision-gate tag; resolve cargo stays opaque.
+            output: decisionGateOutput(),
           });
           const outcome = mergerOutcomeFromResult({
             ...result,
@@ -1614,10 +1614,7 @@ export class RealFamilyBackend implements FamilyBackend {
         } catch (err) {
           // #899: typed traffic-signal exhaust exits non-zero for #598; do not
           // convert SOE into a sparse success verdict that feeds the fixer.
-          return await reaskReceiptOrThrow(
-            async () => { throw err; },
-            "family CMR",
-          );
+          logAndRethrowReceiptFailure(err, "family CMR");
         }
         return withCmrSession(
           cmrOutcomeFromResult({
@@ -1694,8 +1691,8 @@ export class RealFamilyBackend implements FamilyBackend {
       try {
         const outcomeLanding = this.prepareFamilyCoderOutcomeLanding();
         try {
-          // #899: signal-only decision-gate Output.object; ordinary cargo fields
-          // stay opaque inside decisionGateSignalSchema (no committed shape re-ask).
+          // #899: dedicated decision-gate tag; ordinary `<coder>` cargo stays
+          // outside Output.object (no committed shape re-ask).
           const result = await this.runAgentSandbox({
             name: "family-coder-fix",
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -1712,7 +1709,7 @@ export class RealFamilyBackend implements FamilyBackend {
             completionSignal: spec.completionSignal,
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
-            output: workerReceiptOutput("coder", decisionGateSignalSchema),
+            output: decisionGateOutput(),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -1892,29 +1889,34 @@ export class RealFamilyBackend implements FamilyBackend {
     outcomePath: string,
   ): WorkerResult {
     try {
-      // Typed Output.object is the sole fate+cargo channel when present (#899).
-      // Sidecar is only consulted when typed is absent — never overrides a
-      // schema-validated decision signal.
-      const raw =
-        result.output !== undefined
-          ? result.output
-          : readRequiredWorkerOutcomeSidecar(outcomePath);
-      if (isMalformedDecisionGate(raw)) {
-        throw new Error(
-          "family-coder-fix: malformed decision gate; failing Action for mechanical redispatch",
-        );
+      // Typed decision signal is the sole fate channel (#899). Cargo comes from
+      // the sidecar and never reintroduces escalate when typed is absent or is
+      // a no-gate `{}` signal.
+      if (result.output !== undefined) {
+        if (isMalformedDecisionGate(result.output)) {
+          throw new Error(
+            "family-coder-fix: malformed decision gate; failing Action for mechanical redispatch",
+          );
+        }
+        const decisionBell = wellFormedDecisionBell(result.output);
+        if (decisionBell !== undefined) {
+          return {
+            kind: "escalated",
+            escalation: decisionBell,
+            sessionId: lastSessionId(result),
+          };
+        }
       }
-      const decisionBell = wellFormedDecisionBell(raw);
-      if (decisionBell !== undefined) {
-        return {
-          kind: "escalated",
-          escalation: decisionBell,
-          sessionId: lastSessionId(result),
-        };
-      }
+      const cargo = (() => {
+        try {
+          return readRequiredWorkerOutcomeSidecar(outcomePath);
+        } catch {
+          return undefined;
+        }
+      })();
       const parsed = (() => {
         try {
-          return parseCoderSelfReport(raw);
+          return cargo !== undefined ? parseCoderSelfReport(cargo) : undefined;
         } catch {
           return undefined;
         }
@@ -1996,9 +1998,8 @@ export class RealFamilyBackend implements FamilyBackend {
         spec.kind === "fixer" ? this.writeFamilyFixFocusFile(landing) : undefined;
       const outcomeLanding = this.prepareFamilyReviewOutcomeLanding();
       try {
-        // #899: signal-only decision-gate Output.object for every gate-capable
-        // review-loop seat. Role tags (verify/fixer/cleanup/docRelease) are always
-        // required by prompts; ordinary cargo fields stay opaque inside the schema.
+        // #899: dedicated decision-gate tag for every gate-capable review-loop
+        // seat. Role tags (verify/fixer/cleanup/docRelease) carry opaque cargo only.
         const result = await this.runAgentSandbox({
           name: `family-${spec.kind}`,
           idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2016,7 +2017,7 @@ export class RealFamilyBackend implements FamilyBackend {
           completionSignal: spec.completionSignal,
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
-          output: workerReceiptOutput(spec.kind, decisionGateSignalSchema),
+          output: decisionGateOutput(),
         });
         return this.familyReviewLoopResultFromRun(result, spec, outcomeLanding.path);
       } finally {
@@ -2170,66 +2171,21 @@ export class RealFamilyBackend implements FamilyBackend {
   ): WorkerResult {
     try {
       const sessionId = lastSessionIdIfPresent(result);
-      // Typed Output.object is the sole fate channel when present (#899).
-      // Sidecar/stdout become cargo-only and must never override a validated
-      // typed decision signal (including typed "no escalate").
+      // Typed decision signal is the sole fate channel (#899). When present with
+      // a well-formed gate, escalate; when present as no-gate `{}` or absent,
+      // sidecar/stdout enrich cargo only — never reintroduce escalate.
       if (result.output !== undefined) {
-        return reviewLoopResultFromTypedPayload(result.output, spec.kind, sessionId);
-      }
-      if (spec.kind === "verify") {
-        const parsed = parseVerifyOutcome(result.stdout, outcomePath);
-        if (parsed.kind === "escalate") {
-          return { kind: "escalated", escalation: parsed.escalation, sessionId };
+        if (isMalformedDecisionGate(result.output)) {
+          throw new Error(
+            `family-${spec.kind}: malformed decision gate; failing Action for mechanical redispatch`,
+          );
         }
-        if (parsed.kind === "cargo") {
-          return {
-            kind: "completed",
-            output: { kind: "coder", committed: false, commitsAdded: 0 },
-            sessionId,
-          };
+        const typedBell = wellFormedDecisionBell(result.output);
+        if (typedBell !== undefined) {
+          return { kind: "escalated", escalation: typedBell, sessionId };
         }
-        return { kind: "completed", output: parsed, sessionId };
       }
-      if (spec.kind === "fixer") {
-        const parsed = parseFixerOutcome(result.stdout, outcomePath);
-        if (parsed.kind === "escalate") {
-          return { kind: "escalated", escalation: parsed.escalation, sessionId };
-        }
-        if (parsed.kind === "cargo") {
-          return {
-            kind: "completed",
-            output: { kind: "coder", committed: false, commitsAdded: 0 },
-            sessionId,
-          };
-        }
-        return { kind: "completed", output: parsed, sessionId };
-      }
-      if (spec.kind === "cleanup") {
-        const parsed = parseCleanupOutcome(result.stdout, outcomePath);
-        if (parsed.kind === "escalate") {
-          return { kind: "escalated", escalation: parsed.escalation, sessionId };
-        }
-        if (parsed.kind === "cargo") {
-          return {
-            kind: "completed",
-            output: { kind: "coder", committed: false, commitsAdded: 0 },
-            sessionId,
-          };
-        }
-        return { kind: "completed", output: parsed, sessionId };
-      }
-      const parsed = parseDocReleaseOutcome(result.stdout, outcomePath);
-      if (parsed.kind === "escalate") {
-        return { kind: "escalated", escalation: parsed.escalation, sessionId };
-      }
-      if (parsed.kind === "cargo") {
-        return {
-          kind: "completed",
-          output: { kind: "coder", committed: false, commitsAdded: 0 },
-          sessionId,
-        };
-      }
-      return { kind: "completed", output: parsed, sessionId };
+      return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
     } catch (err) {
       // Malformed decision gates must not become empty success cargo.
       if (err instanceof Error && err.message.includes("malformed decision gate")) {
@@ -2825,9 +2781,8 @@ export class RealFamilyBackend implements FamilyBackend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: signal-only decision-gate Output.object; PR/URL cargo stays opaque
-      // inside decisionGateSignalSchema (no status/branch/pr shape re-ask).
-      output: workerReceiptOutput("ship", decisionGateSignalSchema),
+      // #899: dedicated decision-gate tag; PR/URL cargo stays on `<ship>` outside SO.
+      output: decisionGateOutput(),
     });
   }
 
@@ -3330,26 +3285,23 @@ export function cmrOutcomeFromResult(result: {
   stdout?: string;
 }): CmrWorkerOutcome {
   const stdout = (result.stdout ?? "").trim();
-  // Typed Output.object is the sole fate channel when present.
+  // Typed Output.object is the sole fate channel (findingsCount + decision gate).
   if (result.output !== undefined) {
     return classifyCmrOutcomePayload(result.output, "CMR typed receipt");
   }
-  // Cargo-only fallbacks: sidecar then stdout tags. Decision bells and open-count
-  // still come only from the payload's own fields (no stdout sentinel overlay).
+  // Cargo-only fallbacks: sidecar then stdout tags. Never admit findingsCount or
+  // escalate as process fate from untyped transports (#899).
   if (result.outcomePath !== undefined) {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
-        return classifyCmrOutcomePayload(
-          sidecar,
-          "cmr worker outcome sidecar",
-        );
+        return classifyCmrCargoOnly(sidecar);
       }
     } catch {
       // Unreadable sidecar → try stdout cargo below.
     }
   }
-  return parseCmrOutcome(stdout);
+  return classifyCmrCargoOnly(parseCmrStdoutCargo(stdout));
 }
 
 /** Constitutional reviewer count channel; richer JSON never decides 0-vs-positive. */
@@ -3665,6 +3617,32 @@ function sparseCmrCargo(): Extract<CmrWorkerOutcome, { readonly kind: "verdict" 
 }
 
 /**
+ * Cargo-only CMR classify: strip findingsCount + escalate so untyped transports
+ * cannot change routing (#899). Other prose cargo (legs, findings rows, evidence)
+ * may still be transported for the next fixer.
+ */
+function classifyCmrCargoOnly(parsed: unknown): CmrWorkerOutcome {
+  if (!isJsonRecord(parsed)) return sparseCmrCargo();
+  const cargo: Record<string, unknown> = { ...parsed };
+  delete cargo.escalate;
+  delete cargo.findingsCount;
+  return classifyCmrOutcomePayload(cargo, "cmr cargo");
+}
+
+/** Parse `<cmr>` stdout as opaque cargo JSON (no fate probes). */
+function parseCmrStdoutCargo(stdout: string): unknown {
+  const re = /<cmr>([\s\S]*?)<\/cmr>/g;
+  let last: string | undefined;
+  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
+  if (last === undefined) return undefined;
+  try {
+    return JSON.parse(last.trim());
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Parse the merger's structured result for telemetry. The caller does not use
  * this self-report as proof of a landed merge: the post-run git state must show
  * a two-parent merge commit with no in-progress conflict.
@@ -3679,11 +3657,13 @@ export function mergerOutcomeFromResult(result: {
   if (result.output !== undefined) {
     return classifyMergerOutcomePayload(result.output, "merger typed receipt");
   }
+  // Cargo-only: resolve status may be enriched, but escalate must not enter the
+  // human loop from an untyped sidecar/stdout (#899).
   if (result.outcomePath !== undefined) {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
       if (sidecar !== undefined) {
-        return classifyMergerOutcomePayload(sidecar, "merger agent outcome sidecar");
+        return classifyMergerCargoOnly(sidecar, "merger agent outcome sidecar");
       }
     } catch (err) {
       return {
@@ -3692,7 +3672,37 @@ export function mergerOutcomeFromResult(result: {
       };
     }
   }
-  return parseMergerOutcome(result.stdout);
+  return classifyMergerCargoOnly(
+    (() => {
+      const re = /<merger>([\s\S]*?)<\/merger>/g;
+      let last: string | undefined;
+      for (let m = re.exec(result.stdout); m !== null; m = re.exec(result.stdout)) last = m[1];
+      if (last === undefined) return undefined;
+      try {
+        return JSON.parse(last.trim());
+      } catch {
+        return undefined;
+      }
+    })(),
+    "merger agent <merger> tag",
+  );
+}
+
+function classifyMergerCargoOnly(
+  parsed: unknown,
+  source: string,
+): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
+  if (parsed === null || typeof parsed !== "object") {
+    return {
+      resolved: false,
+      reason: parsed === undefined
+        ? `${source} carried no cargo`
+        : `${source} was not a JSON object`,
+    };
+  }
+  const cargo: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+  delete cargo.escalate;
+  return classifyMergerOutcomePayload(cargo, source);
 }
 
 /** Resolved cargo stays strict; the decision bell is probed independently first. */
@@ -3931,24 +3941,16 @@ function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
 }
 
 /**
- * Classify a review-loop seat from a schema-validated typed Output.object only.
- * Sidecar/stdout are never consulted — they cannot override a validated decision
- * signal (including typed "no escalate") (#899).
+ * Cargo-only review-loop result. Escalate is never admitted from sidecar/stdout
+ * — those transports enrich delivery cargo only (#899). Fate comes solely from
+ * the dedicated decision-gate Output.object handled by the caller.
  */
-function reviewLoopResultFromTypedPayload(
-  payload: unknown,
+function reviewLoopCargoResult(
+  stdout: string,
   kind: string,
   sessionId: string | undefined,
+  outcomePath?: string,
 ): WorkerResult {
-  if (isMalformedDecisionGate(payload)) {
-    throw new Error(
-      `family-${kind}: malformed decision gate; failing Action for mechanical redispatch`,
-    );
-  }
-  const typedBell = wellFormedDecisionBell(payload);
-  if (typedBell !== undefined) {
-    return { kind: "escalated", escalation: typedBell, sessionId };
-  }
   const tag =
     kind === "verify" ||
     kind === "fixer" ||
@@ -3956,27 +3958,39 @@ function reviewLoopResultFromTypedPayload(
     kind === "docRelease"
       ? kind
       : "verify";
-  let body: string;
-  try {
-    body = JSON.stringify(payload ?? null);
-  } catch {
+  // Read cargo, strip fate keys, re-decode without escalate so a spoofed
+  // sidecar bell cannot mask legitimate delivery cargo.
+  const raw = parseOutcomePayload(stdout, tag, outcomePath);
+  if ("error" in raw || !isJsonRecord(raw.parsed)) {
     return {
       kind: "completed",
       output: { kind: "coder", committed: false, commitsAdded: 0 },
       sessionId,
     };
   }
-  // Cargo-only decode from the typed payload (no outcomePath → no sidecar).
-  const stdout = `<${tag}>${body}</${tag}>`;
-  const parsed =
-    kind === "verify"
-      ? parseVerifyOutcome(stdout)
-      : kind === "fixer"
-        ? parseFixerOutcome(stdout)
-        : kind === "cleanup"
-          ? parseCleanupOutcome(stdout)
-          : parseDocReleaseOutcome(stdout);
-  // Typed already ruled out escalate; refuse any re-derived bell from cargo parse.
+  const cargo: Record<string, unknown> = { ...raw.parsed };
+  delete cargo.escalate;
+  const cargoStdout = `<${tag}>${JSON.stringify(cargo)}</${tag}>`;
+  let parsed: VerifyResult | FixerResult | CleanupResult | DocReleaseResult | ReceiptDecisionBell | ReceiptCargo;
+  try {
+    parsed =
+      kind === "verify"
+        ? parseVerifyOutcome(cargoStdout)
+        : kind === "fixer"
+          ? parseFixerOutcome(cargoStdout)
+          : kind === "cleanup"
+            ? parseCleanupOutcome(cargoStdout)
+            : parseDocReleaseOutcome(cargoStdout);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("malformed decision gate")) {
+      return {
+        kind: "completed",
+        output: { kind: "coder", committed: false, commitsAdded: 0 },
+        sessionId,
+      };
+    }
+    throw err;
+  }
   if (parsed.kind === "escalate" || parsed.kind === "cargo") {
     return {
       kind: "completed",

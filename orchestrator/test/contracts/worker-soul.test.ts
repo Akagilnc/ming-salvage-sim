@@ -342,21 +342,26 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     // Shared sidecar hygiene lives in the baked output protocol, not repeated
     // across every prompt entrypoint.
     const prompts = [
-      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/],
-      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/],
-      ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/],
-      ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/],
-      ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
-      ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
-      ["merger_resolve_conflict.md", /<merger>/, /MERGER_STEP_COMPLETE/],
+      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/, true],
+      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/, true],
+      ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/, false],
+      ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/, true],
+      ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
+      ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
+      ["merger_resolve_conflict.md", /<merger>/, /MERGER_STEP_COMPLETE/, true],
     ] as const;
 
-    for (const [promptName, tag, signal] of prompts) {
+    for (const [promptName, tag, signal, needsDecisionTag] of prompts) {
       const prompt = read(promptName);
       expect(prompt).toMatch(tag);
       expect(prompt).toMatch(signal);
       expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
       expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
+      // #899: optional decision-gate seats always emit a dedicated <decision> tag
+      // so ordinary cargo stays outside Output.object.
+      if (needsDecisionTag) {
+        expect(prompt).toMatch(/<decision>/);
+      }
     }
   });
 

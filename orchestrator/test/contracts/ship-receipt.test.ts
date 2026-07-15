@@ -289,12 +289,15 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
   });
 
   it("does not let sidecar bells override a schema-validated typed ship receipt", () => {
-    // #899: when typed Output.object exists it is the sole fate channel.
+    // #899: typed decision signal is the sole fate channel. A no-gate typed
+    // signal (`{}`) blocks sidecar escalate; delivery cargo still enriches.
     const dir = mkdtempSync(join(tmpdir(), "ship-typed-vs-sidecar-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
       outcomePath,
       JSON.stringify({
+        status: "pushed",
+        branch: "feat/typed-wins",
         escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
       }),
       "utf8",
@@ -302,7 +305,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
 
     expect(
       shipOutcomeFromResult({
-        output: { status: "pushed", branch: "feat/typed-wins" },
+        output: {},
         outcomePath,
         stdout: "",
       }),
@@ -371,6 +374,26 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       completionSignal: "SOME_OTHER_SIGNAL",
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
+    expect(o.kind).toBe("completed");
+  });
+
+  it("does not admit a sidecar decision bell into fate when typed output is absent", () => {
+    // #899: escalate is a typed-only fate signal; sidecar is delivery cargo only.
+    const dir = mkdtempSync(join(tmpdir(), "ship-sidecar-bell-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        escalate: { reason: "owner choice", diagnosis: "must not park from cargo" },
+      }),
+      "utf8",
+    );
+
+    const o = shipOutcomeFromResult({
+      stdout: "",
+      outcomePath,
+    });
+
     expect(o.kind).toBe("completed");
   });
 

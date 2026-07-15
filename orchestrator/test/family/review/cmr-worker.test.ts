@@ -738,13 +738,14 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
     const result = {
       completionSignal: SIGNAL,
       cmrReviewLegs: FROZEN_NORMAL_CMR_REVIEW_LEGS,
-      // #899: findingsCount lives on the receipt payload, not a stdout sentinel.
-      stdout: `<cmr>${JSON.stringify({
+      // #899: findingsCount lives on the typed Output.object receipt only.
+      output: {
         converged: true,
         findingsCount: 0,
         successfulLegs: DEFAULT_CMR_LEGS,
         ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>\n`,
+      },
+      stdout: "findings = 99\n",
     };
     vi.stubEnv("ORCHESTRATOR_ROUTE", "claude-tight");
 
@@ -2394,7 +2395,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     });
     expect(be.calls).toHaveLength(1);
     expect(be.calls[0]!.output).toMatchObject({
-      tag: "coder",
+      tag: "decision",
       maxRetries: 2,
     });
     expect(be.calls[0]!.resumeSession).toBeUndefined();

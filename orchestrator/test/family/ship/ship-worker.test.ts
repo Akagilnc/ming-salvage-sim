@@ -654,8 +654,9 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 
-  it("attaches signal-only decision Output.object for family ship without cargo-shape re-ask", async () => {
-    // #899: ship decision gates use Output.object(maxRetries:2); PR/URL cargo stays opaque.
+  it("attaches dedicated decision Output.object for family ship without cargo-shape re-ask", async () => {
+    // #899: decision gates use Output.object on the dedicated `decision` tag;
+    // PR/URL cargo stays on the opaque `<ship>`/sidecar channel (never SO).
     class CaptureShipBackend extends RealFamilyBackend {
       public calls: Parameters<typeof sc.run>[0][] = [];
       protected override sh(): string {
@@ -664,21 +665,26 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       protected override mountShipAuth(): ShipAuth {
         return { claudeToken: "tok", ghToken: "gho_ok" };
       }
+      /** Typed public probe — no `as unknown as` cast. */
+      public probeRunShipWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<ShipWorkerOutcome> {
+        return this.runShipWorker(spec, ctx);
+      }
       protected override async runAgentSandbox(
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         this.calls.push(options);
+        // Typed decision signal only (`{}` = no gate). Delivery cargo is
+        // sidecar-only and is not required to assert the SO binding.
         return {
           branch: FAMILY_BASE,
-          stdout: "<ship>{}</ship>",
+          stdout: "<decision>{}</decision>\n<ship>{}</ship>",
           completionSignal: "SHIP_STEP_COMPLETE",
           commits: [],
           iterations: [],
-          output: {
-            status: "pr_opened",
-            branch: FAMILY_BASE,
-            pr: "https://example.test/pr/1",
-          },
+          output: {},
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -693,14 +699,15 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       imageName: "img",
     });
 
-    const out = await (
-      b as unknown as { runShipWorker(s: WorkerSpec, c: DispatchContext): Promise<ShipWorkerOutcome> }
-    ).runShipWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
+    const out = await b.probeRunShipWorker(familyShipWorkerSpec(), {
+      familyBase: FAMILY_BASE,
+    });
 
-    expect(out.kind).toBe("shipped");
+    // No gate + empty sidecar cargo → completed (exit code is the success channel).
+    expect(out.kind).toBe("completed");
     expect(b.calls).toHaveLength(1);
     expect(b.calls[0]!.output).toMatchObject({
-      tag: "ship",
+      tag: "decision",
       maxRetries: 2,
     });
   });

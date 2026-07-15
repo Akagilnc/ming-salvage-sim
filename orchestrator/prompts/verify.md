@@ -12,7 +12,9 @@ PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 
 ## Output
 
-Emit `<verify>` JSON. Shape:
+Always emit a typed `<decision>` signal first (`{}` when not escalating, or
+`{"escalate":{"reason":"...","diagnosis":"..."}}` when pressing a gate), then
+opaque `<verify>` cargo JSON. Shape of the cargo:
 
 For optional telemetry, you may print VERIFY_STEP_COMPLETE on its own final line.
 

@@ -109,4 +109,18 @@ describe("ADR 0131 / #899 reviewer self-declared count", () => {
     ).toThrow(/malformed decision gate/);
   });
 
+  it("does not route on sidecar findingsCount or escalate when typed is absent", () => {
+    // #899: findingsCount + decision gate are typed-only fate signals.
+    const outcome = cmrOutcomeFromResult({
+      outcomePath: sidecar({
+        ...base,
+        findingsCount: 7,
+        escalate: { reason: "owner", diagnosis: "must not park from cargo" },
+      }),
+    });
+    expect(outcome).toMatchObject({ kind: "verdict" });
+    expect(outcome).not.toHaveProperty("findingsCount");
+    expect(outcome.kind).not.toBe("escalate");
+  });
+
 });
