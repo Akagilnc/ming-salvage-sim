@@ -1528,7 +1528,10 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
     }
   });
 
-  it("matches broad file scope against path-line findings without resetting sibling findings", async () => {
+  it("transports broad file scope without cargo matching; multi-sibling stay on full findings cargo", async () => {
+    // #899 / ADR 0131: runner does not match location scope against findings
+    // cargo or refuse multi-sibling broad scopes. Explicit human continue-
+    // fixing + non-empty findingScope resumes S5; the fixer owns scope taste.
     const runnerFinding: Finding = {
       severity: "high",
       category: "correctness",
@@ -1606,12 +1609,28 @@ describe("#427 ADR0030 claimed-fixed adjudication", () => {
         },
       ],
     };
-    const backend = new RetryReviewBackend([], resumeState);
+    const backend = new RetryReviewBackend(
+      [
+        {
+          kind: "completed",
+          output: {
+            kind: "reviewer",
+            findings: [],
+            findingsCount: 0,
+            priorFindingDispositions: [
+              { identityKey: runnerFindingKey, status: "verified-closed" },
+              { identityKey: siblingFindingKey, status: "verified-closed" },
+            ],
+          },
+        },
+      ],
+      resumeState,
+    );
 
     const result = await runOrchestrator({ issueNumber: 446, backend });
 
-    expect(result.status).toBe("escalate");
-    expect(backend.dispatched).toEqual([]);
+    expect(result.status).toBe("success");
+    expect(backend.dispatched).toEqual(["S5:coder", "S6:reviewer"]);
   });
 
   it("matches broad file scope against path-line-symbol findings", async () => {

@@ -36,10 +36,11 @@ export type ShipWorkerOutcome =
       readonly kind: "shipped";
       readonly branch?: string;
       /**
-       * Opaque delivery status token from cargo — free-form string, not a
-       * process-fate enum. Fate is exit code + typed decision gate only (#899).
+       * Opaque delivery status token from cargo when present — free-form
+       * string, never synthesized. Fate is exit code + typed decision gate
+       * only (#899 / ADR 0131).
        */
-      readonly status: string;
+      readonly status?: string;
       /** Optional delivery cargo — never gates clean exit (#899). */
       readonly pr?: string;
     }
@@ -145,17 +146,18 @@ function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
 
 /**
  * Delivery-cargo only: opaque sidecar transport. No status enum court, no
- * trim-based discard, no required-sibling gate — process fate is exit code +
- * typed decision gate only (#899 / ADR 0131). Known delivery fields are copied
- * as-is when present so missing/off-shape cargo never becomes a fourth channel.
+ * trim-based discard, no required-sibling gate, no synthesized status —
+ * process fate is exit code + typed decision gate only (#899 / ADR 0131).
+ * Known delivery fields are copied as-is when present; missing fields stay
+ * missing so off-shape cargo never becomes a fourth channel.
  */
 function classifyShipCargoPayload(parsed: unknown): ShipWorkerOutcome {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { kind: "completed" };
   }
   const cargo = parsed as Record<string, unknown>;
-  // Opaque transport: no closed status whitelist. Any string status + optional
-  // branch/pr ride through; absence of all delivery fields stays completed.
+  // Opaque transport: no closed status whitelist, no default status. Any
+  // string status + optional branch/pr ride through when present.
   const status = typeof cargo.status === "string" ? cargo.status : undefined;
   const branch = typeof cargo.branch === "string" ? cargo.branch : undefined;
   const pr = typeof cargo.pr === "string" ? cargo.pr : undefined;
@@ -164,8 +166,7 @@ function classifyShipCargoPayload(parsed: unknown): ShipWorkerOutcome {
   }
   return {
     kind: "shipped",
-    // Prefer worker-written status; only invent a label when branch/pr alone.
-    status: status ?? "completed",
+    ...(status !== undefined ? { status } : {}),
     ...(branch !== undefined ? { branch } : {}),
     ...(pr !== undefined ? { pr } : {}),
   };

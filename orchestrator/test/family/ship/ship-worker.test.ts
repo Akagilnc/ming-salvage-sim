@@ -171,13 +171,14 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
 
   it("completed cargo (no delivery fields) is still a clean ship success, not coder no-commit", async () => {
     // #899 / ADR 0131: exit 0 + no decision gate = success. Missing status/pr
-    // cargo must not rewrite the worker into a coder committed:false report.
+    // cargo must not rewrite the worker into a coder committed:false report,
+    // and must not invent a status token.
     const be = fixtured();
     be.outcome = { kind: "completed" };
     const res = await be.dispatchWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE });
     expect(res).toEqual({
       kind: "completed",
-      output: { kind: "ship", branch: FAMILY_BASE, status: "completed" },
+      output: { kind: "ship", branch: FAMILY_BASE },
     });
   });
 
