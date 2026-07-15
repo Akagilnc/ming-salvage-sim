@@ -87,7 +87,19 @@ export function route(ctx: RouteContext): RouteDecision {
         // ADR 0131 / #899: findingsCount is authenticated at the typed worker
         // boundary (schema + decode). Runner only compares the count with zero —
         // never re-validates shape and never reads findings-array cargo length.
-        return ctx.output.findingsCount > 0
+        //
+        // Legacy ledger rows may still be kind:"reviewer" without findingsCount
+        // (pre-#899). `undefined > 0` is false and would wrongly S7/success —
+        // missing count is unusable envelope → S5, never silent clean (codex R2).
+        const count = ctx.output.findingsCount;
+        if (
+          typeof count !== "number" ||
+          !Number.isSafeInteger(count) ||
+          count < 0
+        ) {
+          return { kind: "next", step: "S5" };
+        }
+        return count > 0
           ? { kind: "next", step: "S5" }
           : { kind: "next", step: "S7" };
       }

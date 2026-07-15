@@ -55,6 +55,17 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
       from: "S4",
       output: { kind: "fixer", committed: false },
     })).toEqual({ kind: "next", step: "S5" });
+    // Pre-#899 ledger rows may still be kind:"reviewer" without findingsCount.
+    // Missing count must NOT S7 clean (undefined > 0 is false) — unusable → S5.
+    expect(
+      route({
+        from: "S4",
+        output: {
+          kind: "reviewer",
+          findings: [{ severity: "high", action: "fix_now" }],
+        } as any,
+      }),
+    ).toEqual({ kind: "next", step: "S5" });
   });
 
   it("routes every completed coder report directly to the next reviewer", () => {

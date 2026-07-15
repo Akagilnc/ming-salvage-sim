@@ -258,12 +258,22 @@ function* walkErrorChain(error: unknown): Generator<unknown> {
   }
 }
 
+/** True when node is a StructuredOutputError by instanceof or Error.name. */
+function isStructuredOutputErrorNode(node: unknown): boolean {
+  if (node instanceof sc.StructuredOutputError) return true;
+  // Duplicate @ai-hero/sandcastle installs break instanceof across package
+  // copies; name matches the prior runner-side pattern (gemini R2).
+  return node instanceof Error && node.name === "StructuredOutputError";
+}
+
 /** Locate a nested StructuredOutputError, if any, inside wrapper errors. */
 export function nestedStructuredOutputError(
   error: unknown,
 ): sc.StructuredOutputError | undefined {
   for (const node of walkErrorChain(error)) {
-    if (node instanceof sc.StructuredOutputError) return node;
+    if (isStructuredOutputErrorNode(node)) {
+      return node as sc.StructuredOutputError;
+    }
   }
   return undefined;
 }
@@ -271,7 +281,7 @@ export function nestedStructuredOutputError(
 /** A native receipt retry that must fail the Action for #598 mechanical redispatch. */
 export function isReceiptRecoveryFailure(error: unknown): boolean {
   for (const node of walkErrorChain(error)) {
-    if (node instanceof sc.StructuredOutputError) return true;
+    if (isStructuredOutputErrorNode(node)) return true;
     if (node instanceof Error && RECEIPT_RECOVERY_MESSAGE.test(node.message)) {
       return true;
     }
