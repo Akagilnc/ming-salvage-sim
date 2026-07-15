@@ -70,6 +70,7 @@ import {
   classifyDecisionGate,
   decisionGateOutput,
   decodeReviewerOpenCountReceipt,
+  isReceiptRecoveryFailure,
   logAndRethrowReceiptFailure,
   requireTypedTrafficSignal,
   workerReceiptOutput,
@@ -3181,12 +3182,10 @@ export class RealBackend implements Backend {
       );
     } catch (err) {
       // Typed receipt exhaust on resume: propagate SOE for #598 (same class as
-      // fresh-run typed seats). Dead-session only falls back to a fresh run.
-      if (err instanceof sc.StructuredOutputError) {
-        console.warn(
-          `[orchestrator] ${spec.id}-${spec.role} resumed receipt recovery exhausted; propagating for mechanical redispatch`,
-        );
-        throw err;
+      // fresh-run typed seats). Nested / name-only SOE must not fall through to
+      // dead-session fresh-run — walk the cause chain like the fresh path.
+      if (isReceiptRecoveryFailure(err)) {
+        logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}-resume`);
       }
       // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
       // session falls back to a fresh run() (keep committed worktree progress,

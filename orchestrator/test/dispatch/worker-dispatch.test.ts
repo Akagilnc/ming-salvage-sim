@@ -728,6 +728,352 @@ describe("ADR 0131 reviewer count envelope", () => {
       },
     });
   });
+
+  it("rebinds S5 raw artifacts to S6 r2 after dual-round resume without second S4 (C-R4-1)", async () => {
+    // S3 r1 → S4 → S5 → S6 r2 crash before second S4. Earlier S4 left r1 raw
+    // pointers; pre-S4 rebind must always overwrite from last reviewer (r2).
+    const findingR1 = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "round one finding",
+      location: "src/a.ts:1",
+      suggested_fix: "fix r1",
+      action: "fix_now" as const,
+    };
+    const findingR2 = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "round two finding",
+      location: "src/b.ts:2",
+      suggested_fix: "fix r2",
+      action: "fix_now" as const,
+    };
+    const monitorR1 = {
+      pid: 1001,
+      logPath: "/host/ledger/S3.stdout",
+      resultPath: "/host/ledger/S3.sidecar.json",
+      poolId: "claude/sonnet",
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stepId: "S3",
+      dispatchedAt: "2026-07-15T00:00:00.000Z",
+      instanceId: "spawned:1001:2026-07-15T00:00:00.000Z",
+    };
+    const monitorR2 = {
+      pid: 2002,
+      logPath: "/host/ledger/S6.stdout",
+      resultPath: "/host/ledger/S6.sidecar.json",
+      poolId: "claude/sonnet",
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stepId: "S6",
+      dispatchedAt: "2026-07-15T00:00:10.000Z",
+      instanceId: "spawned:2002:2026-07-15T00:00:10.000Z",
+    };
+    class DualRoundResumeBackend extends DispatchBackend {
+      readonly landings: Array<WorkerLandingPayload | undefined> = [];
+      override async findResumeState(): Promise<
+        | undefined
+        | {
+            worktree: WorktreeHandle;
+            stateDir: string;
+            ledger: PersistentLedgerEntry[];
+          }
+      > {
+        return {
+          worktree: this.worktree,
+          stateDir: "/resident/worktrees/.ledger-899-dual-round",
+          ledger: [
+            {
+              step: "S0",
+              sessionId: "run",
+              prompt_hash: "h0",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:00.000Z",
+            },
+            {
+              step: "S1",
+              sessionId: "run",
+              prompt_hash: "h1",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:01.000Z",
+            },
+            {
+              step: "S2",
+              sessionId: "coder-s2",
+              prompt_hash: "h2",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:02.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S3",
+              sessionId: "reviewer-session-r1",
+              prompt_hash: "h3",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:03.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 1,
+                findings: [findingR1],
+              },
+              monitorHandle: monitorR1,
+            },
+            {
+              step: "S4",
+              sessionId: "run",
+              prompt_hash: "h4",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:04.000Z",
+            },
+            {
+              step: "S5",
+              sessionId: "fixer-s5",
+              prompt_hash: "h5",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:05.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S6",
+              sessionId: "reviewer-session-r2",
+              prompt_hash: "h6",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:06.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 1,
+                findings: [findingR2],
+              },
+              monitorHandle: monitorR2,
+            },
+          ],
+        };
+      }
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        this.landings.push(landing);
+        this.specs.push(spec);
+        this.ctxs.push(ctx);
+        this.dispatched.push(
+          `${spec.id}:${spec.kind}:${spec.role}:${spec.session}:${spec.contextRetention}:${spec.skill ?? "—"}`,
+        );
+        if (spec.id === "S5") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          };
+        }
+        if (spec.kind === "coder") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: false, commitsAdded: 0 },
+        };
+      }
+    }
+
+    const backend = new DualRoundResumeBackend();
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+
+    expect(result.status).toBe("success");
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThan(-1);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
+    expect(backend.landings[s5Index]).toMatchObject({
+      blockingFindings: [findingR2],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "reviewer-session-r2",
+        stdoutPath: "/host/ledger/S6.stdout",
+        sidecarPath: "/host/ledger/S6.sidecar.json",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
+    // Must not still point at r1.
+    expect(backend.landings[s5Index]?.rawReviewerArtifacts?.reviewerSessionId).not.toBe(
+      "reviewer-session-r1",
+    );
+  });
+
+  it("transports broad findingScope on continue_fixing S5 landing without filtering findings (C-R4-2A)", async () => {
+    const findingA = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "sibling A",
+      location: "src/a.ts:1",
+      suggested_fix: "fix A",
+      action: "fix_now" as const,
+    };
+    const findingB = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "sibling B",
+      location: "src/b.ts:2",
+      suggested_fix: "fix B",
+      action: "fix_now" as const,
+    };
+    const broadScope = { locations: ["src"] as const };
+    class ContinueFixingScopeBackend extends DispatchBackend {
+      readonly landings: Array<WorkerLandingPayload | undefined> = [];
+      override async findResumeState(): Promise<
+        | undefined
+        | {
+            worktree: WorktreeHandle;
+            stateDir: string;
+            ledger: PersistentLedgerEntry[];
+          }
+      > {
+        return {
+          worktree: this.worktree,
+          stateDir: "/resident/worktrees/.ledger-899-scope",
+          ledger: [
+            {
+              step: "S0",
+              sessionId: "run",
+              prompt_hash: "h0",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:00.000Z",
+            },
+            {
+              step: "S1",
+              sessionId: "run",
+              prompt_hash: "h1",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:01.000Z",
+            },
+            {
+              step: "S2",
+              sessionId: "coder-s2",
+              prompt_hash: "h2",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:02.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S3",
+              sessionId: "reviewer-session-scope",
+              prompt_hash: "h3",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:03.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 2,
+                findings: [findingA, findingB],
+              },
+            },
+            {
+              step: "S4",
+              sessionId: "run",
+              prompt_hash: "h4",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:04.000Z",
+            },
+            {
+              step: "S5",
+              sessionId: "fixer-1",
+              prompt_hash: "h5",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:05.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S6",
+              sessionId: "reviewer-session-scope-2",
+              prompt_hash: "h6",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:06.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 2,
+                findings: [findingA, findingB],
+              },
+            },
+            {
+              step: "S4",
+              sessionId: "run",
+              prompt_hash: "h4b",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:07.000Z",
+            },
+            {
+              step: "S8",
+              handoffStatus: "escalate",
+              escalationKind: "decision",
+              sessionId: "run",
+              prompt_hash: "h8",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:08.000Z",
+            },
+            {
+              step: "S4",
+              event: "runner_bookkeeping",
+              intent: "continue_fixing",
+              findingScope: broadScope,
+              source: "resume_input",
+              ts: "2026-07-15T00:00:09.000Z",
+              sessionId: "run",
+              prompt_hash: "h-cf",
+              branchHEAD: "abc",
+            },
+          ],
+        };
+      }
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        this.landings.push(landing);
+        this.specs.push(spec);
+        this.ctxs.push(ctx);
+        this.dispatched.push(
+          `${spec.id}:${spec.kind}:${spec.role}:${spec.session}:${spec.contextRetention}:${spec.skill ?? "—"}`,
+        );
+        if (spec.id === "S5") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+    }
+
+    const backend = new ContinueFixingScopeBackend();
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+
+    expect(result.status).toBe("success");
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThan(-1);
+    // Full cargo — runner does not filter by scope.
+    expect(backend.landings[s5Index]?.blockingFindings).toEqual([
+      findingA,
+      findingB,
+    ]);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);
+    // Opaque findingScope on the S5 landing.
+    expect(backend.landings[s5Index]?.findingScope).toEqual(broadScope);
+  });
 });
 
 describe("#331 an escalated agent worker preserves its sessionId in the ledger (codex R4)", () => {

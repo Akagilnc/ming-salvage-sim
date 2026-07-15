@@ -263,6 +263,11 @@ function writeFixFindingsLandingFile(
         ...(rawReviewerArtifacts !== undefined
           ? { rawReviewerArtifacts }
           : {}),
+        // Opaque transport only — runner does not filter findings by scope
+        // (#899 / ADR 0131 / C-R4-2A).
+        ...(landing?.findingScope !== undefined
+          ? { findingScope: landing.findingScope }
+          : {}),
         blockingFindingIdentityKeys: identityKeys,
         ...(ctx.preexistingAssertionTouched === true
           ? { preexistingAssertionTouched: true }

@@ -1775,6 +1775,64 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-coder-session");
   });
 
+  it("propagates nested StructuredOutputError on resume without dead-session fresh-run (G-R4-1)", async () => {
+    // Outer wrapper message looks like dead-session, but cause is SOE.
+    // Resume must walk the chain (isReceiptRecoveryFailure) — not classify outer
+    // as fresh-run and mask the receipt exhaust.
+    const backend = makeBackend();
+    const soe = new StructuredOutputError("bad output", {
+      tag: "decision",
+      rawMatched: undefined,
+      commits: [],
+      branch: "feat/x",
+      sessionId: "sess-nested-resume",
+    });
+    const wrapped = new Error(
+      'resumeSession "prior-coder-session" not found under /tmp/sc',
+    );
+    (wrapped as Error & { cause: unknown }).cause = soe;
+    backend.agentFailures.push(wrapped);
+
+    await expect(
+      backend.resumeSession(
+        coderSpec,
+        {
+          branch: "feat/issue-899",
+          base: "main",
+          path: "/tmp/worktree/issue-899",
+        },
+        "prior-coder-session",
+      ),
+    ).rejects.toBe(wrapped);
+    expect(isReceiptRecoveryFailure(wrapped)).toBe(true);
+    // One sandbox attempt only — no dead-session fresh-run fallback.
+    expect(backend.agentOptions).toHaveLength(1);
+    expect(backend.agentOptions[0]!.resumeSession).toBe("prior-coder-session");
+  });
+
+  it("propagates name-only StructuredOutputError on resume (G-R4-1)", async () => {
+    // Duplicate sandcastle installs break instanceof; name matches the fresh path.
+    const backend = makeBackend();
+    const err = new Error("bad output");
+    err.name = "StructuredOutputError";
+    backend.agentFailures.push(err);
+
+    await expect(
+      backend.resumeSession(
+        coderSpec,
+        {
+          branch: "feat/issue-899",
+          base: "main",
+          path: "/tmp/worktree/issue-899",
+        },
+        "prior-coder-session",
+      ),
+    ).rejects.toBe(err);
+    expect(isReceiptRecoveryFailure(err)).toBe(true);
+    expect(backend.agentOptions).toHaveLength(1);
+    expect(backend.agentOptions[0]!.resumeSession).toBe("prior-coder-session");
+  });
+
   it("does not derive open-count from findings-array cargo when findingsCount is missing", () => {
     // #899 / ADR 0131: missing findingsCount is unusable review paper — never
     // synthesize findings.length, never invent findingsCount:0, never mint a
