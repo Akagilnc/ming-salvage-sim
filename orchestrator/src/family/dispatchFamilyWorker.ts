@@ -17,8 +17,8 @@
  * NOTE the DispatchContext for a family worker carries `familyBase` (the caller
  * has only the base string, no single-slice worktree path — PRD #330 R2);
  * `worktree` is optional / backend-inferred. The WorkerResult is the same
- * discriminated union: a cmr `red` verdict is `completed` (with a CmrResult
- * payload), NOT `failed`.
+ * discriminated union: a cmr residual red is `completed` with
+ * {@link unusableResidualOpenCountPaper} (kind:"reviewer"), NOT `failed`.
  */
 
 import type { ChildProcess } from "node:child_process";
@@ -168,7 +168,8 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
  *
  * Returns the discriminated {@link WorkerResult}. The legacy review wrapper
  * yields `completed` from `runIntegratedCmr`:
- *   - cmr → `completed` with a {@link CmrResult} payload (`red` IS `completed`).
+ *   - cmr residual → `completed` + {@link unusableResidualOpenCountPaper}
+ *     (kind:"reviewer"; never kind:"cmr" dual).
  *   - coder-fix → requires a backend implementing the unified seam (no legacy
  *     family method can safely make persistent fix commits).
  *   - family ship → requires the unified seam.
