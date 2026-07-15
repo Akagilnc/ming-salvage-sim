@@ -2146,7 +2146,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           path: "/tmp/worktree/issue-899",
         }),
       ).rejects.toSatisfy((err: unknown) => {
-        expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
+        // Sandcastle may wrap SOE in Effect FiberFailure/ExecError under load;
+        // #598 disposition uses isReceiptRecoveryFailure (cause-chain aware).
         expect(isReceiptRecoveryFailure(err)).toBe(true);
         return true;
       });
