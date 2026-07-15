@@ -118,6 +118,10 @@ import {
   type ModelRouteSlot,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import {
+  billingPoolForFamilyWorker,
+  familyWorkerSlotForDispatch,
+} from "./familyWorkerSlots.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { isQuotaWaitForResetError } from "../quotaProbe.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
@@ -179,6 +183,9 @@ import {
   stageFailureStopSummary,
   type FamilyStageFailureStatus,
 } from "./familyTerminal.js";
+
+// #919 F4: re-export slot helpers so existing import sites stay stable.
+export { billingPoolForFamilyWorker, familyWorkerSlotForDispatch };
 
 /** Which of the two ADR 0022 decision-3 verify points is running. */
 export type VerifyCmrPhase = "wave" | "final";
@@ -293,53 +300,6 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
 /** Stage-tagged red barrier result (#922 — no umbrella verify_failed mash). */
 function stageGate(status: FamilyStageFailureStatus): VerifyCmrResult {
   return { ok: false, ran: true, failedStatus: status };
-}
-
-/**
- * Map a family worker kind (+ optional cmr pass) to the route slot it consumes.
- * Used to scope baton billingPool to wall roles only (F2).
- */
-export function familyWorkerSlotForDispatch(
-  kind: WorkerSpec["kind"],
-  cmrPass?: IntegratedCmrPass | string,
-): ModelRouteSlot | undefined {
-  switch (kind) {
-    case "cmr":
-      return cmrPass === "correctness" ? "cmrCorrectness" : "cmrCompleteness";
-    case "ship":
-      return "ship";
-    case "coder":
-      return "coderFix";
-    case "verify":
-      return "verify";
-    case "fixer":
-      return "fixer";
-    case "docRelease":
-      return "docRelease";
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Resolve DispatchContext.billingPool for a family worker.
- * - No pool → undefined
- * - Pool without slots (explicit test / unscoped) → pool for every worker
- * - Pool + slots → only wall-role workers on listed slots get the rewrite
- */
-export function billingPoolForFamilyWorker(opts: {
-  readonly billingPool?: string;
-  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
-  readonly kind: WorkerSpec["kind"];
-  readonly cmrPass?: IntegratedCmrPass | string;
-}): string | undefined {
-  if (opts.billingPool === undefined) return undefined;
-  if (opts.billingPoolSlots === undefined || opts.billingPoolSlots.length === 0) {
-    return opts.billingPool;
-  }
-  const slot = familyWorkerSlotForDispatch(opts.kind, opts.cmrPass);
-  if (slot === undefined) return undefined;
-  return opts.billingPoolSlots.includes(slot) ? opts.billingPool : undefined;
 }
 
 async function runFamilyVerifyOrAbort(input: {
@@ -2137,23 +2097,44 @@ async function runIntegratedCmrPass(input: {
     };
   }
 
-  // continue | unusable → coder-fix (or abort when fix disabled)
-  const isUnusable = closure.action === "unusable";
-  const blockingFindings =
-    closure.action === "continue" ? closure.blocking : [];
-  const blockingFindingIdentityKeys =
-    closure.action === "continue" ? closure.blockingIdentityKeys : [];
-  const blockingFindingCount =
-    closure.action === "continue" ? closure.blockingFindingCount : 0;
-  const reason = isUnusable
-    ? `integrated cmr ${pass} ${closure.reason}`
-    : `integrated cmr ${pass} judge continue with ${blockingFindingCount} live finding(s)`;
+  // #919 M1 / #930 AC: unusable / bad shape is NOT family coder-fix.
+  // Official typed re-furnace = seat-side SO re-ask (RECEIPT_MAX_RETRIES).
+  // Runner never uses fixer/coder-fix as a schema court.
+  if (closure.action === "unusable") {
+    const reason = `integrated cmr ${pass} ${closure.reason}`;
+    const stopSummary: StopSummary = stageFailureStopSummary({
+      status: "cmr_failed",
+      summary: reason,
+      repairHint:
+        "unusable family judge envelope after seat-side typed SO re-ask " +
+        "(RECEIPT_MAX_RETRIES); re-open the same family judge seat or repair " +
+        "the seat receipt contract — do not route bad shape through coder-fix",
+    });
+    await persistFinalReviewRound("accepted", () =>
+      recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        blockingFindingIdentityKeys: [],
+        stopSummary,
+      }),
+    );
+    return {
+      result: stageGate("cmr_failed"),
+      familyHeadAfter: postWorkerFamilyHead,
+    };
+  }
+
+  // continue + live findings → coder-fix (or abort when fix disabled)
+  const blockingFindings = closure.blocking;
+  const blockingFindingIdentityKeys = closure.blockingIdentityKeys;
+  const blockingFindingCount = closure.blockingFindingCount;
+  const reason = `integrated cmr ${pass} judge continue with ${blockingFindingCount} live finding(s)`;
   const stopSummary: StopSummary = stageFailureStopSummary({
     status: "cmr_failed",
     summary: reason,
-    repairHint: isUnusable
-      ? "send the raw judge/reviewer artifacts to coder-fix, then re-open the family judge"
-      : "send live findings to coder-fix, then resume the family judge",
+    repairHint: "send live findings to coder-fix, then resume the family judge",
   });
 
   if (allowCoderFix) {
@@ -2168,9 +2149,7 @@ async function runIntegratedCmrPass(input: {
           : {}),
         ...(judgeStatusForLedger !== undefined
           ? { judgeStatus: judgeStatusForLedger }
-          : isUnusable
-            ? {}
-            : { judgeStatus: "continue" }),
+          : { judgeStatus: "continue" }),
         ...(judgeDispositionsForLedger !== undefined
           ? { findingDispositions: judgeDispositionsForLedger }
           : {}),
@@ -2394,7 +2373,8 @@ export async function runVerifyCmr(
     Record<IntegratedCmrPass, readonly string[]>
   > = {};
 
-  // Completeness court: loop continue/unusable → fix → resume judge until pass.
+  // Completeness court: loop continue → fix → resume judge until pass.
+  // Unusable is fail-loud (seat SO re-ask owns typed re-furnace; no coder-fix).
   let completenessFamilyHeadAfter = familyHeadAfter;
   let completenessPriorKeysByPass = activePriorKeysByPass;
   for (;;) {

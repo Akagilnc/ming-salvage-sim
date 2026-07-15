@@ -734,9 +734,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     runCmrCalls: { spec: ReturnType<typeof cmrWorkerSpec>; ctx: DispatchContext }[] = [];
     runCoderFixCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
     runShipCalls: { spec: WorkerSpec; ctx: DispatchContext }[] = [];
+    // #919 M1/M2 / #930: default Fixtured happy path is live T2 judge green.
+    // Residual kind:verdict without open-count is unusable (never silent clean).
     outcome: CmrWorkerOutcome = {
-      kind: "verdict",
-      converged: true,
+      kind: "judge",
+      status: "converged",
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
@@ -795,7 +797,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     // The pass worker is a clean reviewer boundary; blocking findings return to the
     // runner, which dispatches a separate coder-fix worker.
     expect(spec.contextRetention).toBe("clean");
-    expect(spec.role).toBe("reviewer");
+    // #919 S2: family CMR pass seat identity is verify (kind stays cmr).
+    expect(spec.role).toBe("verify");
     expect(spec.maxIter).toBe(1);
     expect(spec.soul).toBe("verify");
   });
@@ -1871,9 +1874,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
   it("a converged verdict ⇒ WorkerResult.completed with T2 judge converged (#930)", async () => {
     const be = fixtured();
+    // Live seat green is kind:judge status:converged (not residual boolean paper).
     be.outcome = {
-      kind: "verdict",
-      converged: true,
+      kind: "judge",
+      status: "converged",
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
@@ -1967,9 +1971,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     // ship contract — gstack-ship routing, pr_opened narrowing, branch identity — is
     // covered by ship-worker-336.test.ts; here we only assert the cmr seam is untouched.)
     const be = fixtured();
+    // Outcome unused for ship routing — keep live-green default (no residual paper).
     be.outcome = {
-      kind: "verdict",
-      converged: true,
+      kind: "judge",
+      status: "converged",
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };

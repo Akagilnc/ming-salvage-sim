@@ -145,7 +145,7 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(spec.maxIter).toBe(1);
     // The cmr pass worker is a clean reviewer boundary. A red outcome returns to
     // the runner, which dispatches coder-fix separately.
-    expect(cmrWorkerSpec().role).toBe("reviewer");
+    expect(cmrWorkerSpec().role).toBe("verify");
     expect(cmrWorkerSpec().contextRetention).toBe("clean");
     expect(cmrWorkerSpec().maxIter).toBe(1);
   });

@@ -129,7 +129,7 @@ import {
   type QuotaPoolId,
   type QuotaProbeResult,
 } from "../quotaProbe.js";
-import { withMonitorStreamHeartbeat } from "../sandboxStreamHeartbeat.js";
+import { withSandcastleInvokeDefaults } from "../sandboxStreamHeartbeat.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   attachSanitizedFindingFamilies,
@@ -1554,7 +1554,7 @@ export class RealFamilyBackend implements FamilyBackend {
           : {}),
       };
     }
-    // Residual zero/missing open-count → non-judge unusable paper (re-furnace).
+    // Residual zero/missing open-count → non-judge unusable paper (court fail-loud).
     return {
       kind: "completed",
       output: {
@@ -1815,19 +1815,8 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    // #899 hotfix: same monitored-bridge liveness forwarding as the
-    // single-slice seam (see sandboxStreamHeartbeat.ts).
-    //
-    // #928: sandcastle defaults `completionSignal` to
-    // `"<promise>COMPLETE</promise>"` when omitted. Empty array is the only
-    // API-supported disable — omit is NOT off. Production completion is clean
-    // exit + legal sidecar / typed envelope (same as RealBackend).
-    return await sc.run(
-      withMonitorStreamHeartbeat({
-        ...options,
-        completionSignal: [],
-      }),
-    );
+    // #899 / #928 / #919 F2: shared wrap — same helper as RealBackend.
+    return await sc.run(withSandcastleInvokeDefaults(options));
   }
 
   /**
@@ -2373,7 +2362,9 @@ export class RealFamilyBackend implements FamilyBackend {
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
+    // #919 R8: pass id so isJudgeSeat (S3/S6 step/id only) is correct for family seats.
     const soul = soulForStep({
+      id: spec.id,
       role: spec.role,
       soul: spec.soul,
     });

@@ -268,7 +268,7 @@ describe("#930 pure family judge closure", () => {
     expect(outcome.findingFamilies?.[0]?.family).toBe("open-pattern");
   });
 
-  it("residual open-count: positive → continue; 0 → undefined (never silent clean)", () => {
+  it("residual open-count: positive → continue; 0/missing/legacy-green → undefined (never silent clean)", () => {
     expect(
       residualIntegratedCmrToJudgeOutput({
         findingsCount: 2,
@@ -282,10 +282,17 @@ describe("#930 pure family judge closure", () => {
         converged: true,
       }),
     ).toBeUndefined();
-    // Legacy IntegratedCmrResult without open-count may still use boolean green.
+    // #919 M2: legacy converged:true without open-count is NOT silent clean —
+    // official green is typed kind:"judge" status:"converged" only.
     expect(
-      residualIntegratedCmrToJudgeOutput({ converged: true })?.status,
-    ).toBe("converged");
+      residualIntegratedCmrToJudgeOutput({ converged: true }),
+    ).toBeUndefined();
+    expect(
+      residualIntegratedCmrToJudgeOutput({
+        converged: false,
+        findings: [FINDING],
+      }),
+    ).toBeUndefined();
   });
 
   it("S2: prior ledger row shape matches single-slice priorJudgeVerdicts", () => {
@@ -539,25 +546,23 @@ describe("#930 runVerifyCmr family judge courts", () => {
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it("residual kind:cmr+findingsCount:0 is unusable re-furnace (never silent clean)", async () => {
-    // Shared residual semantics: 0/missing open-count → unusable, not converged.
-    // Positive count projects once to continue; topology has no second closer.
+  it("residual kind:cmr+findingsCount:0 is unusable fail-loud (never silent clean, never coder-fix)", async () => {
+    // #919 M1/M2: 0 open-count residual → unusable. Official typed re-furnace is
+    // seat-side SO maxRetries — runner must NOT dispatch family coder-fix as a
+    // schema court, and must NOT invent a clean pass.
     let opens = 0;
     const backend = new FamilyJudgeBackend({
       completeness: () => {
         opens += 1;
-        if (opens === 1) {
-          return {
-            kind: "completed",
-            output: {
-              kind: "cmr",
-              converged: true,
-              findingsCount: 0,
-              successfulLegs: ["opus"],
-            },
-          };
-        }
-        return completedJudge(judgeConverged(), "after-residual-refurnace");
+        return {
+          kind: "completed",
+          output: {
+            kind: "cmr",
+            converged: true,
+            findingsCount: 0,
+            successfulLegs: ["opus"],
+          },
+        };
       },
     });
     const result = await runVerifyCmr({
@@ -565,10 +570,16 @@ describe("#930 runVerifyCmr family judge courts", () => {
       familyBase: "family/919-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: true, ran: true });
-    // First residual open-count:0 must re-furnace via coder, not silent pass.
-    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
-    expect(opens).toBeGreaterThanOrEqual(2);
+    expect(result.ok).toBe(false);
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
+    expect(backend.prCalls).toEqual([]);
+    // Single court open — no re-furnace loop via coder-fix.
+    expect(opens).toBe(1);
+    expect(
+      backend.ledger.some(
+        (e) => e.status === "aborted" || e.event === "aborted",
+      ),
+    ).toBe(true);
   });
 
   it("S1: typed station:judge continues/converges without open-count decode", async () => {
@@ -612,18 +623,37 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
   });
 
-  it("negative: non-judge non-cmr envelope is unusable re-furnace (not silent pass)", async () => {
+  it("negative: non-judge non-cmr envelope is unusable fail-loud (not coder-fix schema court)", async () => {
+    // #919 M1: bad shape → fail-loud. Seat SO re-ask owns typed re-furnace;
+    // family coder-fix is not a schema tribunal.
     let opens = 0;
     const backend = new FamilyJudgeBackend({
       completeness: () => {
         opens += 1;
-        if (opens === 1) {
-          return {
-            kind: "completed",
-            output: { kind: "fixer", committed: false },
-          };
+        return {
+          kind: "completed",
+          output: { kind: "fixer", committed: false },
+        };
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result.ok).toBe(false);
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
+    expect(backend.prCalls).toEqual([]);
+    expect(opens).toBe(1);
+  });
+
+  it("M1: continue with live findings still dispatches coder-fix (unusable path only is blocked)", async () => {
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) => {
+        if (round === 0) {
+          return completedJudge(judgeContinue([FINDING]), "live-continue");
         }
-        return completedJudge(judgeConverged(), "after-refurnace");
+        return completedJudge(judgeConverged(), "live-continue");
       },
     });
     const result = await runVerifyCmr({
@@ -633,7 +663,6 @@ describe("#930 runVerifyCmr family judge courts", () => {
     });
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
-    expect(opens).toBeGreaterThanOrEqual(2);
   });
 
   it("ADR 0030 order: correctness court not opened until completeness converged", async () => {

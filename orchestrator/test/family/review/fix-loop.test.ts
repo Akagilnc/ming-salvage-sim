@@ -68,12 +68,13 @@ describe("review-round persistence immunity", () => {
 
     async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
       if (spec.kind !== "cmr") throw new Error(`unexpected worker kind ${spec.kind}`);
+      // terminal-record: live judge green so durable cmr_passed is attempted.
+      // helper-record: fail earlier on HEAD/ledger; residual unusable is not needed.
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: this.failure === "terminal-record",
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           reason: "stop after one review round",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
@@ -227,9 +228,8 @@ class SchedulerFamilyBackend implements FamilyBackend {
         this.script.cmr?.() ?? {
           kind: "completed",
           output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
+            kind: "judge",
+            status: "converged",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             ...CMR_EVIDENCE,
           },
@@ -394,9 +394,8 @@ class ReviewFixRereviewBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys:
             ctx.cmrPass === "completeness" ? [BLOCKING_FAMILY_CMR_KEY] : [],
@@ -494,9 +493,8 @@ class CountChannelFixBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
@@ -594,9 +592,8 @@ class OwningIssueStillRedThenGoodBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys:
             ctx.cmrPass === "completeness" ? [this.blockingKey] : [],
@@ -708,9 +705,8 @@ class CorrectnessReviewFixRestartsBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys:
             ctx.cmrPass === "correctness" ? [BLOCKING_FAMILY_CMR_KEY] : [],
@@ -838,9 +834,8 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
         return {
           kind: "completed",
           output: {
-            kind: "cmr",
-            converged: true,
-            findingsCount: 0,
+            kind: "judge",
+            status: "converged",
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             claimedFixedFindingIdentityKeys: [
               BLOCKING_FAMILY_CMR_KEY,
@@ -865,9 +860,8 @@ class RepeatedReviewFixRereviewBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
@@ -966,9 +960,8 @@ class ExcessiveReviewFixRestartsBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           // #597: the converged response is pass-aware — completeness closes its
           // OWN accumulated keys; correctness starts with an empty protected prior
@@ -1107,9 +1100,8 @@ class Dogfood272ReviewFixRereviewBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys:
             ctx.cmrPass === "completeness" ? DOGFOOD_272_KEYS : [],
@@ -1255,9 +1247,8 @@ class EscalateOnNonConvergenceBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
@@ -1573,9 +1564,8 @@ class ReviewerChecksOutOtherHeadBackend implements FamilyBackend {
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
@@ -1611,7 +1601,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
     expect(backend.dispatches).toEqual([
       expect.objectContaining({
         kind: "cmr",
-        role: "reviewer",
+        role: "verify",
         session: "fresh",
         contextRetention: "clean",
         promptFile: "integrated_cmr_completeness.md",
@@ -1627,7 +1617,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       }),
       expect.objectContaining({
         kind: "cmr",
-        role: "reviewer",
+        role: "verify",
         session: "fresh",
         contextRetention: "clean",
         promptFile: "integrated_cmr_completeness.md",
@@ -1636,7 +1626,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       }),
       expect.objectContaining({
         kind: "cmr",
-        role: "reviewer",
+        role: "verify",
         session: "fresh",
         contextRetention: "clean",
         promptFile: "integrated_cmr_correctness.md",
@@ -2222,9 +2212,8 @@ it("#876 keeps the CMR loop alive when the reviewer moves family HEAD before fin
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
@@ -2274,9 +2263,8 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|fake closure"],
           ...CMR_EVIDENCE,
@@ -2304,9 +2292,8 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|stale.ts:1|not supplied by runner"],
           priorFindingDispositions: [
@@ -2339,9 +2326,8 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [
             "correctness|src/x.ts:1|real closure",
@@ -2379,9 +2365,8 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [
@@ -2411,9 +2396,8 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: ["correctness|src/x.ts:1|real closure"],
           priorFindingDispositions: [
@@ -2548,9 +2532,8 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [priorKey],
           priorFindingDispositions: [
@@ -2592,9 +2575,8 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [priorKey],
           priorFindingDispositions: [
@@ -2663,13 +2645,12 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
           ...CMR_EVIDENCE,
-          findingsCount: 0,
           findings: [findingWithDisposition],
         },
       }),
@@ -2727,9 +2708,8 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
       cmr: () => ({
         kind: "completed",
         output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
+          kind: "judge",
+          status: "converged",
           successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
           ...CMR_EVIDENCE,
         },
@@ -2831,10 +2811,9 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
       kind: "completed",
       sessionId: "cmr-reviewer-red-zero",
       output: {
-        kind: "cmr",
-        converged: false,
+        kind: "judge",
+        status: "converged",
         reason: "reviewer explicitly reports that the pass has not converged",
-        findingsCount: 0,
         findings: [],
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         ...CMR_EVIDENCE,
@@ -2895,9 +2874,8 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     const backend = new CountChannelFixBackend({
       kind: "completed",
       output: {
-        kind: "cmr",
-        converged: true,
-        findingsCount: 0,
+        kind: "judge",
+        status: "converged",
         findings: [],
         successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
         ...CMR_EVIDENCE,
@@ -2917,7 +2895,9 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     );
   });
 
-  it("routes a completed reviewer carrying a non-cmr shape to coder-fix as raw artifacts", async () => {
+  it("non-cmr/non-judge reviewer envelope is unusable fail-loud (never coder-fix schema court)", async () => {
+    // #919 M1: bad shape after seat-side SO re-ask is fail-loud. Family coder-fix
+    // is not a schema tribunal — runner must not hand raw wrong-shape paper to fix.
     const backend = new CountChannelFixBackend({
       kind: "completed",
       sessionId: "cmr-reviewer-wrong-shape",
@@ -2930,16 +2910,18 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: true, ran: true });
-    const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
-    expect(backend.landings[coderIndex]).toMatchObject({
-      blockingFindings: [],
-      rawReviewerArtifacts: {
-        reviewerSessionId: "cmr-reviewer-wrong-shape",
-        statement: "the previous reviewer raw artifacts are here",
-      },
+    expect(result).toEqual({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
     });
-    expect(backend.ledger.some((entry) => entry.status === "aborted")).toBe(false);
+    expect(backend.dispatches.some((dispatch) => dispatch.kind === "coder")).toBe(
+      false,
+    );
+    expect(backend.dispatches.some((dispatch) => dispatch.kind === "ship")).toBe(
+      false,
+    );
+    expect(backend.ledger.some((entry) => entry.status === "aborted")).toBe(true);
   });
 
   it("sends a completed coder carrying a non-coder shape to a fresh reviewer", async () => {
@@ -2975,10 +2957,10 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
     expect(backend.ledger.some((entry) => entry.status === "aborted")).toBe(false);
   });
 
-  it("residual cmr missing findingsCount with finding cargo projects to judge continue (live findings to fix)", async () => {
-    // #930: residual kind:cmr without findingsCount is projected once into
-    // judge form. Findings cargo becomes live dispositions — not a second
-    // open-count closer, and not silent empty re-furnace.
+  it("residual cmr missing findingsCount is unusable fail-loud even with finding cargo (never silent continue)", async () => {
+    // #919 M2 / #930: residual open-count missing → undefined projection →
+    // unusable. Finding cargo alone does not open continue; official green /
+    // continue is typed kind:judge only. No coder-fix as schema court.
     const backend = new CountChannelFixBackend({
       kind: "completed",
       sessionId: "cmr-reviewer-missing-count",
@@ -2998,16 +2980,18 @@ it("cmr worker returned failed ⇒ records the failure before cmr_failed gate", 
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: true, ran: true });
-    const coderIndex = backend.dispatches.findIndex((dispatch) => dispatch.kind === "coder");
-    expect(coderIndex).toBeGreaterThan(0);
-    expect(backend.landings[coderIndex]).toMatchObject({
-      blockingFindings: [BLOCKING_FAMILY_CMR_FINDING],
-      rawReviewerArtifacts: {
-        reviewerSessionId: "cmr-reviewer-missing-count",
-        statement: "the previous reviewer raw artifacts are here",
-      },
+    expect(result).toEqual({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
     });
+    expect(backend.dispatches.some((dispatch) => dispatch.kind === "coder")).toBe(
+      false,
+    );
+    expect(backend.dispatches.some((dispatch) => dispatch.kind === "ship")).toBe(
+      false,
+    );
     expect(backend.escalations).toEqual([]);
+    expect(backend.ledger.some((entry) => entry.status === "aborted")).toBe(true);
   });
 });

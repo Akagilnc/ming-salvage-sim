@@ -16,6 +16,7 @@ import type {
   JudgeResult,
   JudgeVerdictStatus,
   LedgerEntry,
+  StepOutput,
   WorkerSessionMode,
 } from "./types.js";
 import { findingIdentityKey } from "./findings.js";
@@ -127,47 +128,135 @@ export function liveFindingIdentityKeys(
     .map((d) => d.identityKey);
 }
 
-/**
- * Extract prior judge verdict rows from a ledger for a new judge after
- * session loss. Runner transports these rows as-is — never synthesises a
- * narrative summary (AC: runner 不生成摘要).
- */
-export function priorJudgeVerdictRowsFromLedger(
-  ledger: ReadonlyArray<LedgerEntry>,
-): ReadonlyArray<{
+/** Prior judge-verdict transport row (single-slice + family share this shape). */
+export type PriorJudgeVerdictRow = {
   readonly step: string;
   readonly status: JudgeVerdictStatus;
   readonly advanceCoder?: string;
   readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
   readonly sessionId?: string;
-}> {
-  const rows: Array<{
-    readonly step: string;
-    readonly status: JudgeVerdictStatus;
+};
+
+/**
+ * Heterogeneous ledger entry fields accepted by the unified prior-row scan
+ * (single-slice S3/S6 output rows + family cmr_reviewed / cmr_passed rows).
+ * Structural fields only — callers pass full ledger unions via cast at the
+ * thin wrappers so WorkerOutput / family disposition variance does not fight
+ * the scan signature.
+ */
+type PriorJudgeLedgerEntry = {
+  readonly event?: string;
+  readonly step?: string;
+  readonly sessionId?: string;
+  readonly output?: {
+    readonly kind?: string;
+    readonly status?: string;
     readonly advanceCoder?: string;
     readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
-    readonly sessionId?: string;
-  }> = [];
+  };
+  readonly status?: string;
+  readonly cmrPass?: string;
+  readonly judgeStatus?: string;
+  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
+  readonly advanceCoder?: string;
+};
+
+function isJudgeVerdictStatus(value: unknown): value is JudgeVerdictStatus {
+  return value === "converged" || value === "continue" || value === "escalate";
+}
+
+function pushPriorJudgeRow(
+  rows: PriorJudgeVerdictRow[],
+  row: PriorJudgeVerdictRow,
+): void {
+  rows.push(row);
+}
+
+/**
+ * One scan, two sources (#919 S3):
+ *   - slice: S3/S6 ledger steps with `output.kind:"judge"`
+ *   - family: cmr_reviewed / cmr_passed rows with `judgeStatus` tri-state
+ *
+ * Runner transports rows as-is — never synthesises a narrative summary.
+ */
+export function priorJudgeVerdictRowsFromSources(
+  ledger: ReadonlyArray<PriorJudgeLedgerEntry>,
+  options?: {
+    readonly sources?: ReadonlyArray<"slice" | "family">;
+    readonly familyPass?: string;
+  },
+): ReadonlyArray<PriorJudgeVerdictRow> {
+  const sources = options?.sources ?? (["slice", "family"] as const);
+  const wantSlice = sources.includes("slice");
+  const wantFamily = sources.includes("family");
+  const familyPass = options?.familyPass;
+  const rows: PriorJudgeVerdictRow[] = [];
+
   for (const entry of ledger) {
-    if (entry.event !== undefined) continue;
-    if (entry.step !== "S3" && entry.step !== "S6") continue;
-    const out = entry.output;
-    if (out?.kind !== "judge") continue;
-    rows.push({
-      step: entry.step,
-      status: out.status,
-      ...(out.advanceCoder !== undefined
-        ? { advanceCoder: out.advanceCoder }
-        : {}),
-      ...(out.findingDispositions !== undefined
-        ? { findingDispositions: out.findingDispositions }
-        : {}),
-      ...(typeof entry.sessionId === "string"
-        ? { sessionId: entry.sessionId }
-        : {}),
-    });
+    if (wantSlice) {
+      // Slice steps never carry family event markers.
+      if (
+        entry.event === undefined &&
+        (entry.step === "S3" || entry.step === "S6") &&
+        entry.output?.kind === "judge" &&
+        isJudgeVerdictStatus(entry.output.status)
+      ) {
+        const out = entry.output;
+        pushPriorJudgeRow(rows, {
+          step: entry.step,
+          status: out.status as JudgeVerdictStatus,
+          ...(out.advanceCoder !== undefined
+            ? { advanceCoder: out.advanceCoder }
+            : {}),
+          ...(out.findingDispositions !== undefined
+            ? { findingDispositions: out.findingDispositions }
+            : {}),
+          ...(typeof entry.sessionId === "string"
+            ? { sessionId: entry.sessionId }
+            : {}),
+        });
+        continue;
+      }
+    }
+
+    if (wantFamily) {
+      const isFamilyCourtRow =
+        entry.status === "cmr_reviewed" ||
+        entry.status === "cmr_passed" ||
+        entry.event === "cmr_reviewed" ||
+        entry.event === "cmr_passed";
+      if (!isFamilyCourtRow) continue;
+      if (familyPass !== undefined && entry.cmrPass !== familyPass) continue;
+      if (!isJudgeVerdictStatus(entry.judgeStatus)) continue;
+      pushPriorJudgeRow(rows, {
+        step: `family-cmr:${entry.cmrPass ?? "unknown"}`,
+        status: entry.judgeStatus,
+        ...(entry.advanceCoder !== undefined
+          ? { advanceCoder: entry.advanceCoder }
+          : {}),
+        ...(entry.findingDispositions !== undefined
+          ? { findingDispositions: entry.findingDispositions }
+          : {}),
+        ...(typeof entry.sessionId === "string"
+          ? { sessionId: entry.sessionId }
+          : {}),
+      });
+    }
   }
   return rows;
+}
+
+/**
+ * Extract prior judge verdict rows from a single-slice ledger for a new judge
+ * after session loss.
+ */
+export function priorJudgeVerdictRowsFromLedger(
+  ledger: ReadonlyArray<LedgerEntry>,
+): ReadonlyArray<PriorJudgeVerdictRow> {
+  return priorJudgeVerdictRowsFromSources(
+    ledger as ReadonlyArray<PriorJudgeLedgerEntry>,
+    { sources: ["slice"] },
+  );
 }
 
 /**
@@ -344,8 +433,9 @@ export function projectJudgeContinueBlocking(output: {
  *
  * One judgment function, two ordered courts (completeness / correctness). The
  * family path must NOT read open-count / findingsCount as a second closer.
- * Unusable / non-judge envelopes route to typed re-furnace (fixer with raw
- * artifacts) — runner does not invent a clean pass.
+ * Unusable / non-judge envelopes are fail-loud at the family court (#919 M1):
+ * official typed re-furnace is seat-side SO re-ask — runner never invents a
+ * clean pass and never routes bad shape through family coder-fix.
  *
  * Live+converged is an envelope-consistency negative for seats/tests
  * ({@link liveFindingsBlockConverged}); topology still trusts the status enum
@@ -451,9 +541,8 @@ export function closeFamilyCourtFromJudgeOutput(
 
 /**
  * #930 — prior family-court judge rows for session-loss recovery.
- * Runner transports ledger rows as-is; never synthesises a narrative summary.
- * Shape matches single-slice {@link priorJudgeVerdictRowsFromLedger} so the
- * family court reuses the same priorJudgeVerdicts landing field.
+ * Thin wrapper over {@link priorJudgeVerdictRowsFromSources} (family source).
+ * Shape matches single-slice {@link priorJudgeVerdictRowsFromLedger}.
  */
 export function priorFamilyJudgeVerdictRowsFromLedger(
   ledger: ReadonlyArray<{
@@ -466,50 +555,94 @@ export function priorFamilyJudgeVerdictRowsFromLedger(
     readonly advanceCoder?: string;
   }>,
   pass?: string,
-): ReadonlyArray<{
-  readonly step: string;
-  readonly status: JudgeVerdictStatus;
-  readonly advanceCoder?: string;
-  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
-  readonly sessionId?: string;
-}> {
-  const rows: Array<{
-    readonly step: string;
-    readonly status: JudgeVerdictStatus;
-    readonly advanceCoder?: string;
-    readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
-    readonly sessionId?: string;
-  }> = [];
-  for (const entry of ledger) {
-    if (
-      entry.status !== "cmr_reviewed" &&
-      entry.status !== "cmr_passed" &&
-      entry.event !== "cmr_reviewed" &&
-      entry.event !== "cmr_passed"
-    ) {
-      continue;
-    }
-    if (pass !== undefined && entry.cmrPass !== pass) continue;
-    if (
-      entry.judgeStatus !== "converged" &&
-      entry.judgeStatus !== "continue" &&
-      entry.judgeStatus !== "escalate"
-    ) {
-      continue;
-    }
-    rows.push({
-      step: `family-cmr:${entry.cmrPass ?? "unknown"}`,
-      status: entry.judgeStatus,
-      ...(entry.advanceCoder !== undefined
-        ? { advanceCoder: entry.advanceCoder }
-        : {}),
-      ...(entry.findingDispositions !== undefined
-        ? { findingDispositions: entry.findingDispositions }
-        : {}),
-      ...(typeof entry.sessionId === "string"
-        ? { sessionId: entry.sessionId }
-        : {}),
-    });
+): ReadonlyArray<PriorJudgeVerdictRow> {
+  return priorJudgeVerdictRowsFromSources(
+    ledger as ReadonlyArray<PriorJudgeLedgerEntry>,
+    {
+      sources: ["family"],
+      ...(pass !== undefined ? { familyPass: pass } : {}),
+    },
+  );
+}
+
+/**
+ * #919 AS4 — honest unusable residual open-count paper.
+ *
+ * Not a fixer/coder seat report. Route maps residual open-count 0 via
+ * {@link projectResidualReviewerToJudge} → undefined → unusable → S5
+ * (never silent clean, never `kind:"fixer"` placeholder).
+ */
+export function unusableResidualOpenCountPaper(): {
+  readonly kind: "reviewer";
+  readonly findingsCount: 0;
+  readonly findings: readonly [];
+} {
+  return { kind: "reviewer", findingsCount: 0, findings: [] };
+}
+
+/**
+ * #919 S1 — sole residual→judge seat projection used by both runner normalize
+ * and route topology status collapse. Production decode already emits
+ * `kind:"judge"`; residual open-count paper projects once here.
+ *
+ * #919 AS5: no `kind:"verify"+converged` arm on the judge seat. Online-review
+ * S9 uses kind:verify on its own stage; S3/S6 fixtures must emit kind:judge.
+ * Leftover verify paper on a judge seat stays as-is → unusable → S5.
+ *
+ * - kind:judge → as-is
+ * - kind:reviewer residual → projectResidualReviewerToJudge or leave as-is
+ * - else → as-is (caller maps unusable)
+ */
+export function projectJudgeSeatOutput(output: StepOutput): StepOutput {
+  if (output.kind === "judge") return output;
+  if (output.kind === "reviewer") {
+    const projected = projectResidualReviewerToJudge(output);
+    // Leave residual paper as-is when unusable → route → S5 / fail-loud.
+    return projected ?? output;
   }
-  return rows;
+  return output;
+}
+
+/**
+ * #919 S1 — sole judge-status collapse for topology (route) and callers that
+ * only need the tri-state (+ unusable). Always goes through
+ * {@link projectJudgeSeatOutput} first so normalize and status cannot drift.
+ */
+export function judgeStatusFromOutput(
+  output: StepOutput | undefined,
+): "converged" | "continue" | "escalate" | "unusable" {
+  if (output == null) return "unusable";
+  const projected = projectJudgeSeatOutput(output);
+  if (projected.kind === "judge") {
+    if (projected.status === "converged") return "converged";
+    if (projected.status === "continue") return "continue";
+    return "escalate";
+  }
+  return "unusable";
+}
+
+/**
+ * #919 S2 / R7 — single judge-seat predicate for topology / decision_gate /
+ * soul selection / receipt extract.
+ *
+ * Only S3/S6 are judge seats. Family online-review S9 (`verifyWorkerSpec`:
+ * kind/role/soul `"verify"`) is **not** a judge — it keeps the verify receipt
+ * channel, never the judge receipt tag.
+ *
+ * Seat identity is the step/id only. Never treat `kind|role|soul === "verify"`
+ * alone as judge (that falsely claimed S9). Production S3/S6 specs use
+ * role+soul `"verify"`; residual dual-spell `role:"reviewer"+soul:"verify"` on
+ * S3/S6 still matches via the step/id arm. (`#923` only merged the model-route
+ * *slot* into verify — not a forever pin that seat role must remain
+ * `"reviewer"`. Leg soul `"reviewer"` is multi-model review-leg vocabulary only.)
+ */
+export function isJudgeSeat(input: {
+  readonly step?: string;
+  readonly id?: string;
+  readonly kind?: string;
+  readonly role?: string;
+  readonly soul?: string;
+}): boolean {
+  const seat = input.step ?? input.id;
+  return seat === "S3" || seat === "S6";
 }
