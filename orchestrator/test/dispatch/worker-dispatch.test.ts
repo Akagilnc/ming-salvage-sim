@@ -1084,6 +1084,53 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     }
   });
 
+  it("derives fixer identity keys from findings cargo at the landing writer", async () => {
+    // #899: runner pass-throughs findings rows; dispatchWorker derives keys
+    // for the fixer landing — not a runner identity-key court.
+    const worktreePath = mkdtempSync(join(tmpdir(), "dispatch-identity-worktree-"));
+    const stateDir = mkdtempSync(join(tmpdir(), "dispatch-identity-state-"));
+    try {
+      execFileSync("git", ["init"], { cwd: worktreePath, stdio: "ignore" });
+
+      const be = new LegacyBackend();
+      const worktree = { ...be.worktree, path: worktreePath };
+      const finding = {
+        severity: "high" as const,
+        category: "Correctness",
+        claim_quote: "derive me at the landing writer",
+        location: "src/x.ts:1",
+        suggested_fix: "fix",
+        action: "fix_now" as const,
+      };
+      await legacyDispatchWorker(
+        be as unknown as Backend,
+        { ...coderWorker, id: "S5", session: "fresh" },
+        {
+          worktree,
+          stateDir,
+          // Empty envelope keys: landing writer must derive from cargo.
+          blockingFindingIdentityKeys: [],
+          blockingFindingCount: 1,
+        },
+        {
+          blockingFindings: [finding],
+        },
+      );
+
+      // stateDir path keeps the landing (no post-dispatch cleanup).
+      const landing = JSON.parse(
+        readFileSync(join(stateDir, "fix-findings.json"), "utf8"),
+      );
+      expect(landing.blockingFindings).toEqual([finding]);
+      expect(landing.blockingFindingIdentityKeys).toEqual([
+        "correctness|src/x.ts:1|derive me at the landing writer",
+      ]);
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not expose unsupported outcome sidecars to fresh coder/reviewer workers", async () => {
     const worktreePath = mkdtempSync(join(tmpdir(), "dispatch-outcome-worktree-"));
     const stateDir = mkdtempSync(join(tmpdir(), "dispatch-outcome-state-"));

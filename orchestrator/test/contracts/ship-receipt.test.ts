@@ -433,6 +433,58 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     });
   });
 
+  it("transports free-form status and branch without a closed status court", () => {
+    // #899: ordinary ship cargo stays opaque — no whitelist on status tokens.
+    const dir = mkdtempSync(join(tmpdir(), "ship-freeform-status-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        status: "already_open",
+        branch: "feat/freeform",
+        pr: "https://gh/pr/99",
+        extra: "kept-out-of-fate",
+      }),
+      "utf8",
+    );
+
+    expect(
+      shipOutcomeFromResult({
+        output: {},
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({
+      kind: "shipped",
+      status: "already_open",
+      branch: "feat/freeform",
+      pr: "https://gh/pr/99",
+    });
+  });
+
+  it("branch/pr alone still enrich delivery without inventing a status court", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ship-branch-only-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ branch: "feat/branch-only", pr: "https://gh/pr/1" }),
+      "utf8",
+    );
+
+    expect(
+      shipOutcomeFromResult({
+        output: {},
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({
+      kind: "shipped",
+      status: "completed",
+      branch: "feat/branch-only",
+      pr: "https://gh/pr/1",
+    });
+  });
+
   it("a signal alone is not a machine outcome", () => {
     const o = shipOutcomeFromResult({
       completionSignal: "SHIP_STEP_COMPLETE",

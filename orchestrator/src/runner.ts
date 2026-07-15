@@ -40,7 +40,7 @@ import {
   reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
-import { fixLandingFromReviewerFindings } from "./findings.js";
+import { findingIdentityKeys, opaqueFindingsCargo } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY child worker step (S2/S3/S5/S6) through ONE free function
 // instead of reaching for runStep/resumeSession directly.
@@ -1077,10 +1077,12 @@ function continueRepairFromEvent(
   event: ContinueFixingEvent,
   replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
 ): ContinueFixingRepair | undefined {
+  // Keys for human-scope matching are derived from opaque findings cargo at
+  // the bookkeeping edge — not stored as a runner-owned identity court.
   const matchingIdentityKeys = matchingContinueFixingKeys(
     event,
     replay.blocking,
-    replay.blockingIdentityKeys,
+    findingIdentityKeys(replay.blocking),
   );
   if (matchingIdentityKeys.length === 0) return undefined;
   return { event, matchingIdentityKeys };
@@ -1109,7 +1111,7 @@ function continueRepairFromAnswer(
         : {}),
     },
     replay.blocking,
-    replay.blockingIdentityKeys,
+    findingIdentityKeys(replay.blocking),
   );
   if (matchingIdentityKeys.length === 0) return undefined;
   return { event: answer, matchingIdentityKeys };
@@ -1259,15 +1261,15 @@ function replayS4FindingsCountState(
     // reopen / no-progress courts demolished. Prior keys absent from findings[]
     // are closed by the three-channel envelope; the runner does not inspect prose.
     // Findings rows are opaque cargo: typed ReviewerOutput already decoded them
-    // at the worker boundary; runner only pass-through + count routing (ADR 0131 / #899).
-    const landing = fixLandingFromReviewerFindings(
-      lastReviewerOutputForS4.findings,
-    );
+    // at the worker boundary; runner only pass-through + count routing. Identity
+    // keys are derived at the fixer landing writer, not here (ADR 0131 / #899).
     findingDispositions = [
       ...(entry.findingDispositions ?? []),
     ];
-    pendingBlockingFindings = landing.findings;
-    pendingBlockingFindingIdentityKeys = landing.identityKeys;
+    pendingBlockingFindings = opaqueFindingsCargo(
+      lastReviewerOutputForS4.findings,
+    );
+    pendingBlockingFindingIdentityKeys = [];
     // Count is the typed open-count, never cargo-array length.
     pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
     // Live path attaches raw pointers on every positive open-count → S5 edge;
@@ -2168,11 +2170,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     _afterFix: boolean,
   ): string[] {
     if (reviewerOutput?.kind !== "reviewer") return [];
-    // Opaque cargo pass-through only. Shape handling + identity-key derivation
-    // live on the decode / landing helpers — not a runner shape court (ADR 0131 / #899).
-    const landing = fixLandingFromReviewerFindings(reviewerOutput.findings);
-    pendingBlockingFindings = landing.findings;
-    pendingBlockingFindingIdentityKeys = landing.identityKeys;
+    // Opaque cargo pass-through only. Runner routes by findingsCount and
+    // transports findings rows as-is; identity-key derivation is the landing
+    // writer's job (dispatchWorker → fixer), not a runner court (ADR 0131 / #899).
+    pendingBlockingFindings = opaqueFindingsCargo(reviewerOutput.findings);
+    pendingBlockingFindingIdentityKeys = [];
     // ADR 0131: declared count is the control signal; findings rows are cargo.
     pendingBlockingFindingCount = reviewerOutput.findingsCount;
     return [];
