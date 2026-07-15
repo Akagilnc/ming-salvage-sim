@@ -1931,13 +1931,14 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     }
   });
 
-  it("a red verdict ⇒ WorkerResult.completed judge continue (NOT failed) (#930)", async () => {
+  it("a live red judge verdict ⇒ WorkerResult.completed judge continue (NOT failed) (#930)", async () => {
+    // Live seat continue is typed kind:judge — residual open-count is not a closer.
     const be = fixtured();
     be.outcome = {
-      kind: "verdict",
-      converged: false,
-      reason: "seam mismatch",
-      findingsCount: 1,
+      kind: "judge",
+      status: "continue",
+      findingDispositions: [{ identityKey: "__open_1", action: "live" as const }],
+      findings: [],
       successfulLegs: STRONG_LEGS,
       ...CMR_EVIDENCE,
     };
@@ -1950,7 +1951,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     }
   });
 
-  it("projects residual red outcome to judge continue traffic (#930)", async () => {
+  it("residual kind:verdict never mints continue — shared unusable paper only (#919 CR S1)", async () => {
     const be = fixtured();
     be.outcome = {
       kind: "verdict",
@@ -1963,23 +1964,16 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
     const res = await be.dispatchWorker(cmrWorkerSpec(), { familyBase: "fb" });
 
-    expect(res).toMatchObject({
+    // One shared fail-loud paper (kind:reviewer+findingsCount:0) — never
+    // kind:cmr+findingsCount dual and never count-minted judge continue.
+    expect(res).toEqual({
       kind: "completed",
       output: {
-        kind: "judge",
-        status: "continue",
-        findingDispositions: [
-          { identityKey: "__open_1", action: "live" },
-        ],
+        kind: "reviewer",
+        findingsCount: 0,
         findings: [],
       },
     });
-    // Cargo siblings (legs / evidence) may ride on the judge envelope (S3).
-    if (res.kind === "completed" && res.output.kind === "judge") {
-      expect(
-        (res.output as { successfulLegs?: string[] }).successfulLegs,
-      ).toEqual(STRONG_LEGS);
-    }
   });
 
   it("an escalate outcome ⇒ WorkerResult.escalated (model-stuck, not a verdict)", async () => {

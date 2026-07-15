@@ -357,7 +357,17 @@ export function liveDispositionsForOpenCount(
 }
 
 /**
- * Residual open-count paper → sole judge continue form.
+ * **Single-slice historical residual resume only** — open-count → continue.
+ *
+ * Scope (crystal clear, #919 CR N4 / ADR 0131):
+ *   - LIVE production seats emit typed `kind:"judge"`; they never call this.
+ *   - Family court MUST NOT use this as a closer (family residual →
+ *     {@link unusableResidualOpenCountPaper} only; see closeFamilyCourtFromJudgeOutput).
+ *   - Allowed callers: pre-#925 ledger residual rebuild
+ *     (`applyHistoricalResidualOpenSet` / residual open-count decode for
+ *     historical single-slice paper). Positive count → continue is resume
+ *     compatibility only — not a second live court.
+ *
  * Returns undefined when count is not a positive open-count (caller maps
  * zero / escalate / unusable separately).
  */
@@ -382,11 +392,15 @@ export function judgeContinueFromOpenCount(
 }
 
 /**
- * Residual open-count reviewer paper → sole judge form (#919 CR U3).
+ * **Single-slice historical residual paper → sole judge form** (#919 CR U3 / N4).
  *
- * Shared by runner normalize, realBackend residual decode, and route
- * judgeStatusOf so escalate / positive-continue / non-positive-unusable are
- * one predicate — not three parallel arms.
+ * Shared by runner normalize residual path, realBackend residual decode, and
+ * route judgeStatusOf so escalate / positive-continue / non-positive-unusable
+ * are one predicate — not three parallel arms.
+ *
+ * Scope: historical residual open-count paper only. Live family court never
+ * closes on this projection (non-judge → unusable / cmr_failed). Live seats
+ * emit T2 `kind:"judge"` tri-state directly.
  *
  * - escalate present → T2 kind:"judge" status:"escalate" (wins over count)
  * - positive open-count → continue (via {@link judgeContinueFromOpenCount})

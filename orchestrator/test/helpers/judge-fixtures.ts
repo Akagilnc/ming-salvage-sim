@@ -3,12 +3,12 @@
  * hand-copying disposition tables in every fake backend.
  */
 
-import { residualIntegratedCmrToJudgeOutput } from "../../src/family/dispatchFamilyWorker.js";
 import type { IntegratedCmrResult } from "../../src/family/types.js";
 import { findingIdentityKey } from "../../src/findings.js";
 import {
   liveDispositionsForFindings,
   liveDispositionsForOpenCount,
+  unusableResidualOpenCountPaper,
 } from "../../src/judgeStation.js";
 import type {
   Finding,
@@ -166,15 +166,15 @@ export function liveCmrJudgeContinue(
 }
 
 /**
- * Test-fake boundary only (#919 E / R7).
+ * Test-fake boundary only (#919 E / R7 / CR N2).
  *
  * Scripts may still *declare* positive findingsCount as an intent to continue;
  * this helper mints **live** `kind:judge` continue at the fake boundary
- * (not production residual projection — {@link residualIntegratedCmrToJudgeOutput}
- * always returns undefined).
+ * (not production residual — family residual is
+ * {@link unusableResidualOpenCountPaper} only).
  *
  * - findingsCount > 0 → live kind:judge continue (from findings cargo / synthetic)
- * - findingsCount === 0 → residual kind:cmr unusable (never silent clean)
+ * - findingsCount === 0 → shared unusable residual paper (never silent clean)
  * - boolean green WITHOUT findingsCount → live kind:judge converged
  *
  * Prefer {@link judgeContinue} / {@link liveCmrJudgeGreen} for new fixtures.
@@ -182,10 +182,7 @@ export function liveCmrJudgeContinue(
  */
 export function legacyCmrScriptToWorkerOutput(
   cmr: IntegratedCmrResult,
-): JudgeResult | (IntegratedCmrResult & { readonly kind: "cmr" }) {
-  // Production residual projector is a no-op for family (never mint continue).
-  void residualIntegratedCmrToJudgeOutput(cmr);
-
+): JudgeResult | ReturnType<typeof unusableResidualOpenCountPaper> {
   // Script intent: positive open-count → live judge continue (fake boundary only).
   if (
     typeof cmr.findingsCount === "number" &&
@@ -230,29 +227,6 @@ export function legacyCmrScriptToWorkerOutput(
     });
   }
 
-  // findingsCount:0 / missing-non-green residual stays kind:cmr unusable.
-  return {
-    kind: "cmr",
-    converged: cmr.converged,
-    ...(cmr.findingsCount !== undefined
-      ? { findingsCount: cmr.findingsCount }
-      : {}),
-    ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
-    ...(cmr.successfulLegs !== undefined
-      ? { successfulLegs: cmr.successfulLegs }
-      : {}),
-    ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
-    ...(cmr.evidencePaths !== undefined
-      ? { evidencePaths: cmr.evidencePaths }
-      : {}),
-    ...(cmr.claimedFixedFindingIdentityKeys !== undefined
-      ? {
-          claimedFixedFindingIdentityKeys: cmr.claimedFixedFindingIdentityKeys,
-        }
-      : {}),
-    ...(cmr.priorFindingDispositions !== undefined
-      ? { priorFindingDispositions: cmr.priorFindingDispositions }
-      : {}),
-    ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-  };
+  // findingsCount:0 / missing-non-green residual → shared unusable paper only.
+  return unusableResidualOpenCountPaper();
 }

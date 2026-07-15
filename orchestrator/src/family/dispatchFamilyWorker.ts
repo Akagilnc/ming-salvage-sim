@@ -36,7 +36,6 @@ import {
 } from "../workerMonitor.js";
 import type {
   DispatchContext,
-  JudgeResult,
   WorkerLandingPayload,
   WorkerMonitorHandle,
   WorkerResult,
@@ -51,35 +50,17 @@ import {
 } from "../modelRoutes.js";
 import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
 import { skeletonReviewLoopWorkerResult } from "../reviewLoopOutcome.js";
+import { unusableResidualOpenCountPaper } from "../judgeStation.js";
 import type {
   FamilyBackend,
   IntegratedCmrPass,
   IntegratedCmrResult,
 } from "./types.js";
-import type { CmrResult } from "../types.js";
 
-/**
- * #930 / #919 E — family residual IntegratedCmrResult / kind:cmr paper.
- *
- * Family live court must **never** mint `status:"continue"` from open-count /
- * findingsCount (ADR 0131 / #930: open-count is not a closer). Always returns
- * `undefined` so callers fail-loud as unusable / cmr_failed.
- *
- * Official continue is typed `kind:"judge"` with live identity keys only.
- * Single-slice historical residual still uses
- * {@link projectResidualReviewerToJudge} — that path is not family court.
- */
-export function residualIntegratedCmrToJudgeOutput(
-  cmr:
-    | Pick<IntegratedCmrResult, "findingsCount" | "findings" | "converged">
-    | Pick<CmrResult, "findingsCount" | "findings" | "converged">,
-): JudgeResult | undefined {
-  // Family residual never projects count → continue (any findingsCount shape).
-  void cmr.findingsCount;
-  void cmr.findings;
-  void cmr.converged;
-  return undefined;
-}
+// #919 CR N2: residualIntegratedCmrToJudgeOutput DELETED — it always returned
+// undefined (family residual never mints continue). Production residual maps
+// to unusableResidualOpenCountPaper at cmrOutcomeToWorkerResult; single-slice
+// historical resume alone uses projectResidualReviewerToJudge.
 
 const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
   "python",
@@ -461,36 +442,12 @@ export async function legacyDispatchFamilyWorker(
         ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
         : {}),
     });
-    // #919 E: residual IntegratedCmrResult never becomes judge continue via
-    // open-count. Always residual kind:cmr unusable paper (court fail-loud;
-    // seat SO owns typed re-furnace). Live green/continue is kind:judge only.
+    // #919 E / CR S1: residual IntegratedCmrResult never becomes judge continue.
+    // One shared unusable paper only (court fail-loud; seat SO owns re-furnace).
+    void cmr;
     return {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: cmr.converged,
-        ...(cmr.findingsCount !== undefined
-          ? { findingsCount: cmr.findingsCount }
-          : {}),
-        ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-        ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
-        ...(cmr.successfulLegs !== undefined
-          ? { successfulLegs: cmr.successfulLegs }
-          : {}),
-        ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
-        ...(cmr.claimedFixedFindingIdentityKeys !== undefined
-          ? {
-              claimedFixedFindingIdentityKeys:
-                cmr.claimedFixedFindingIdentityKeys,
-            }
-          : {}),
-        ...(cmr.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: cmr.priorFindingDispositions }
-          : {}),
-        ...(cmr.evidencePaths !== undefined
-          ? { evidencePaths: cmr.evidencePaths }
-          : {}),
-      },
+      output: unusableResidualOpenCountPaper(),
     };
   }
 
