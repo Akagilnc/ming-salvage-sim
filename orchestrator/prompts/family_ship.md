@@ -13,35 +13,39 @@ those runner parameters. The soul and skill own all delivery method and checks.
 ## Required output
 
 The real completion evidence is the single JSON object written to
-`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set, the typed `<ship>` outcome,
-and the actual family branch/PR git state. For compatibility with older runners,
-emit a single `<ship>` tag on its own line containing the same single JSON object.
-The multi-iter completion signal is a required sandcastle terminator on the
-final step (not optional telemetry).
+`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set, the always-emitted typed
+`<decision>` signal, the opaque `<ship>` cargo tag, and the actual family
+branch/PR git state.
 
-PR opened:
+**Always emit both tags** (order: decision, then cargo):
+
+PR opened (no gate):
 
 ```text
+<decision>{}</decision>
 <ship>{"status": "pr_opened", "branch": "<the family base branch>", "pr": "<the PR url>"}</ship>
 ```
 
 Escalation:
 
 ```text
-<ship>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>"}}</ship>
+<decision>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>"}}</decision>
+<ship>{"status": "pr_opened", "branch": "<the family base branch>", "pr": "<the PR url>"}</ship>
 ```
 
-Failure:
+(If no PR was opened before escalating, cargo may be `{}` or a failure report.)
+
+Failure cargo (no gate):
 
 ```text
+<decision>{}</decision>
 <ship>{"failed": {"reason": "<short>", "diagnosis": "<the hard failure>"}}</ship>
 ```
 
 Rules:
 
-- The JSON must match one of the shapes above exactly.
-- `status` is `pr_opened` and must include `pr`.
-- Emit the `<ship>` tag as the last typed tag; if you iterate, the last typed
-  `<ship>` tag is the one that counts. On the final multi-iter step you MUST
-  print SHIP_STEP_COMPLETE on its own final line (sandcastle iteration
-  terminator — not optional telemetry).
+- Always emit `<decision>` (even `{}`) — typed gate only; never bind cargo shape to SO.
+- `status` is `pr_opened` and must include `pr` on successful delivery cargo.
+- Emit `<ship>` as the last cargo tag; if you iterate, the last pair counts.
+- On the final multi-iter step you MUST print SHIP_STEP_COMPLETE on its own
+  final line (sandcastle iteration terminator — not optional telemetry).

@@ -99,7 +99,7 @@ class HappyPathBackend implements Backend {
     this.calls.push(`runStep(${spec.id}:${spec.role}:${spec.promptFile})`);
     this.runStepIds.push(spec.id);
     if (spec.role === "reviewer") {
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
@@ -347,7 +347,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
               prompt_hash: "hash-S3",
               branchHEAD: "head",
               ts: "2026-07-02T00:00:01.000Z",
-              output: { kind: "reviewer", findings: [] },
+              output: { kind: "reviewer", findings: [], findingsCount: 0 },
             },
             {
               step: "S4",

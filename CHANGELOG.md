@@ -4,6 +4,22 @@
 
 ## [未发布]
 
+## [0.28.0.0] — 2026-07-15
+
+### Added
+- **编排器 #899 交通信号原生回炉**：reviewer open-count 与 decision gate 走 Sandcastle `Output.object` + `maxRetries: 2`；同 session 结构化重交归底层。
+- 生产边界四案矩阵（首次合格 / bad→good / 耗尽 / 不可恢复）：single-slice、family CMR/coder-fix、ship decision-gate。
+- `receiptRecovery` 统一 typed 收据契约；SOE 经 cause 链识别，兼容 Effect FiberFailure 包装后仍走 #598。
+
+### Changed
+- coder/ship 普通 cargo 保持 opaque：不绑 SO 形状修复；命运只认 exit + typed 信号。
+- 不可用 open-count 不再合成 `findingsCount: 0` 或假 coder 席；按固定拓扑递 raw 给 fixer 路径。
+- review-loop sparse cargo 完成 Action，不把 cargo 形态当 #598 形状 lane。
+
+### Fixed
+- SO 耗尽后 reviewer 同位机械重调，不发明 S5 fixer 派发。
+- 并发环境下 StructuredOutputError 被 FiberFailure/ExecError 包装时，#598 仍正确归类。
+
 ## [0.27.0.0] — 2026-07-15
 
 ### Added

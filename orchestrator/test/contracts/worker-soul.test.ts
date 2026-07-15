@@ -290,21 +290,43 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     // Thinning the METHOD must not drop the output contract route()/the seam
     // decode against — each worker must still emit its tag + completion signal.
     const prompts = [
-      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/],
-      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/],
-      ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/],
-      ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/],
-      ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
-      ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/],
-      ["merger_resolve_conflict.md", /<merger>/, /MERGER_STEP_COMPLETE/],
+      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/, true],
+      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/, true],
+      ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/, false],
+      ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/, true],
+      ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
+      ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
+      ["merger_resolve_conflict.md", /<merger>/, /MERGER_STEP_COMPLETE/, true],
     ] as const;
 
-    for (const [promptName, tag, signal] of prompts) {
+    for (const [promptName, tag, signal, needsDecisionTag] of prompts) {
       const prompt = read(promptName);
       expect(prompt).toMatch(tag);
       expect(prompt).toMatch(signal);
       expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
       expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
+      // #899: optional decision-gate seats always emit a dedicated <decision> tag
+      // so ordinary cargo stays outside Output.object.
+      if (needsDecisionTag) {
+        expect(prompt).toMatch(/<decision>/);
+      }
+    }
+  });
+
+  it("production CMR prompts always require the configured <cmr> Output.object tag", () => {
+    // #899: production CMR mounts outcome sidecar AND Output.object({tag:"cmr"}).
+    // The prompt must require the cmr tag even when ORCHESTRATOR_OUTCOME_PATH is set,
+    // otherwise Sandcastle has nothing to validate / re-ask.
+    for (const promptName of [
+      "integrated_cmr_completeness.md",
+      "integrated_cmr_correctness.md",
+    ] as const) {
+      const prompt = read(promptName);
+      expect(prompt).toMatch(/Always emit the typed `<cmr>` tag/);
+      expect(prompt).toMatch(/Output\.object/);
+      expect(prompt).not.toMatch(
+        /Without \$ORCHESTRATOR_OUTCOME_PATH.*emit the `<cmr>` tag/,
+      );
     }
   });
 
@@ -384,8 +406,11 @@ class ReviewWorkerBackend implements Backend {
     }
     if (spec.kind === "reviewer") {
       this.reviewCount += 1;
+      // Explicit open-count declaration for the fixture (ADR 0131 / #899): never
+      // derive findingsCount from findings.length as if that were production law.
+      const findingsCount = this.reviewCount === 1 ? 1 : 0;
       const findings: Finding[] =
-        this.reviewCount === 1
+        findingsCount === 1
           ? [
               {
                 severity: "high",
@@ -404,6 +429,7 @@ class ReviewWorkerBackend implements Backend {
         output: {
           kind: "reviewer",
           findings,
+          findingsCount,
           ...(this.reviewCount > 1
             ? {
                 priorFindingDispositions: [

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
+import { decodeReviewerOpenCountReceipt } from "../../src/receiptRecovery.js";
 import {
   dispatchWorker,
   docReleaseWorkerSpec,
@@ -79,7 +80,14 @@ class DispatchBackend implements Backend {
     path: "/resident/worktrees/issue-331",
   };
 
-  async findResumeState(): Promise<undefined> {
+  async findResumeState(): Promise<
+    | undefined
+    | {
+        worktree: WorktreeHandle;
+        stateDir: string;
+        ledger: PersistentLedgerEntry[];
+      }
+  > {
     return undefined;
   }
   async resumeSession(): Promise<StepOutput> {
@@ -136,7 +144,7 @@ class DispatchBackend implements Backend {
       };
     }
     if (spec.kind === "reviewer") {
-      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
     throw new Error(`unexpected child worker kind: ${spec.kind}`);
   }
@@ -252,7 +260,8 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     }
   });
 
-  it("continues to S3 without a git verdict when the coder receipt is malformed", async () => {
+  it("mechanical-retries StructuredOutputError at S2 then continues without a decision park", async () => {
+    // #899: SOE exhaust is process-level #598 redispatch, not silent advance.
     const root = mkdtempSync(join(tmpdir(), "orch-786-malformed-coder-"));
     const telemetryDir = join(root, ".ledger-786");
     execFileSync("git", ["init", "--initial-branch=main", root]);
@@ -261,6 +270,7 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
     execFileSync("git", ["-C", root, "commit", "--allow-empty", "-m", "initial"]);
 
     class MalformedCoderTelemetryBackend extends DispatchBackend {
+      private coderAttempts = 0;
       override readonly worktree: WorktreeHandle = {
         branch: "feat/orchestrator/issue-786",
         base: "main",
@@ -280,14 +290,21 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
         this.specs.push(spec);
         this.ctxs.push(ctx);
         if (spec.kind === "coder") {
+          this.coderAttempts += 1;
           execFileSync("git", ["-C", root, "commit", "--allow-empty", "-m", "worker commit"]);
-          const err = new Error("coder outcome JSON was truncated");
-          err.name = "StructuredOutputError";
-          throw err;
+          if (this.coderAttempts === 1) {
+            const err = new Error("coder outcome JSON was truncated");
+            err.name = "StructuredOutputError";
+            throw err;
+          }
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
         }
         return {
           kind: "completed",
-          output: { kind: "reviewer", findings: [] },
+          output: { kind: "reviewer", findings: [], findingsCount: 0 },
         };
       }
     }
@@ -296,16 +313,16 @@ describe("#331 unified worker-dispatch seam — happy path", () => {
       const backend = new MalformedCoderTelemetryBackend();
       const result = await runOrchestrator({ issueNumber: 786, backend });
       expect(result.status).toBe("success");
-      expect(backend.specs.filter((spec) => spec.id === "S2")).toHaveLength(1);
+      expect(backend.specs.filter((spec) => spec.id === "S2").length).toBeGreaterThanOrEqual(2);
       expect(backend.specs.filter((spec) => spec.id === "S3")).toHaveLength(1);
       expect(result.stepLedger.find((entry) => entry.step === "S2")?.output)
-        .toMatchObject({ kind: "coder", committed: false });
+        .toMatchObject({ kind: "coder", committed: true, commitsAdded: 1 });
       let commits: TelemetryCommitRecord[] = [];
       await vi.waitFor(() => {
         commits = readTelemetryRecords(telemetryDir).filter(
           (record): record is TelemetryCommitRecord => record.phase === "commit",
         );
-        expect(commits).toHaveLength(1);
+        expect(commits.length).toBeGreaterThanOrEqual(1);
       });
       expect(commits[0]).toMatchObject({ issue: 786, runId: backend.ctxs[0]?.runId });
     } finally {
@@ -329,7 +346,7 @@ describe("#331 non-completed WorkerResult routing", () => {
           escalation: { reason: "design blocker", diagnosis: "need a human" },
         };
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
   }
 
@@ -351,7 +368,7 @@ describe("#331 non-completed WorkerResult routing", () => {
       if (spec.kind === "coder") {
         return { kind: "failed", reason: "container crashed" };
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
   }
 
@@ -364,7 +381,21 @@ describe("#331 non-completed WorkerResult routing", () => {
 });
 
 describe("ADR 0131 reviewer count envelope", () => {
-  it("dispatches S5 with the reviewer's raw artifact facts when findings are not countable", async () => {
+  it("routes by findingsCount when findings cargo is non-array (no shape court)", async () => {
+    // #899 / ADR 0131: runner never re-dispatches from findings-array shape.
+    // Illegal cargo enters through the real decode boundary (unknown → typed);
+    // non-array findings become empty landing cargo; positive count still opens S5.
+    const decodedNonArrayCargo = decodeReviewerOpenCountReceipt({
+      findingsCount: 1,
+      // Illegal cargo shape at the untyped boundary — decoder empties rows.
+      findings: "not-an-array",
+    });
+    expect(decodedNonArrayCargo).toEqual({
+      kind: "reviewer",
+      findings: [],
+      findingsCount: 1,
+    });
+
     class NonArrayFindingsBackend extends DispatchBackend {
       readonly landings: Array<WorkerLandingPayload | undefined> = [];
       reviewerCalls = 0;
@@ -381,8 +412,8 @@ describe("ADR 0131 reviewer count envelope", () => {
           this.ctxs.push(ctx);
           return {
             kind: "completed",
-            // Deliberately inject an illegal reviewer shape to exercise raw-artifact fallback.
-            output: { kind: "reviewer", findings: "not-an-array" } as unknown as StepOutput,
+            // Typed output only — no `as unknown as` type escape hatch.
+            output: decodedNonArrayCargo!,
             sessionId: "reviewer-session-non-array",
           };
         }
@@ -405,11 +436,134 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(backend.specs.filter((spec) => spec.kind === "reviewer")).toHaveLength(2);
     const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
     expect(s5Index).toBeGreaterThan(-1);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
     expect(backend.landings[s5Index]).toMatchObject({
       blockingFindings: [],
       rawReviewerArtifacts: { reviewerSessionId: "reviewer-session-non-array" },
     });
     expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
+  });
+
+  it.each([
+    ["missing findings cargo", undefined],
+    ["empty findings cargo", [] as const],
+  ])(
+    "positive findingsCount with %s still hands raw reviewer artifacts to S5",
+    async (_label, findings) => {
+      class PositiveCountMissingCargoBackend extends DispatchBackend {
+        readonly landings: Array<WorkerLandingPayload | undefined> = [];
+        reviewerCalls = 0;
+        override async dispatchWorker(
+          spec: WorkerSpec,
+          ctx: DispatchContext,
+          landing?: WorkerLandingPayload,
+        ): Promise<WorkerResult> {
+          this.landings.push(landing);
+          if (spec.kind === "reviewer") {
+            this.reviewerCalls += 1;
+            if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
+            this.specs.push(spec);
+            this.ctxs.push(ctx);
+            return {
+              kind: "completed",
+              // Legal open-count with sparse/missing findings rows — fixer must
+              // still receive raw artifact pointers (not an empty no-op landing).
+              output: {
+                kind: "reviewer",
+                findingsCount: 2,
+                ...(findings !== undefined ? { findings: [...findings] } : { findings: [] }),
+              },
+              sessionId: "reviewer-session-positive-missing-cargo",
+            };
+          }
+          if (spec.id === "S5") {
+            this.specs.push(spec);
+            this.ctxs.push(ctx);
+            return {
+              kind: "completed",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            };
+          }
+          return super.dispatchWorker(spec, ctx);
+        }
+      }
+
+      const backend = new PositiveCountMissingCargoBackend();
+      const result = await runOrchestrator({ issueNumber: 899, backend });
+
+      expect(result.status).toBe("success");
+      const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+      expect(s5Index).toBeGreaterThan(-1);
+      expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);
+      expect(backend.landings[s5Index]).toMatchObject({
+        blockingFindings: [],
+        rawReviewerArtifacts: {
+          reviewerSessionId: "reviewer-session-positive-missing-cargo",
+          statement: "the previous reviewer raw artifacts are here",
+        },
+      });
+    },
+  );
+
+  it("positive findingsCount with structured cargo still preserves raw reviewer artifacts", async () => {
+    const finding = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "structured row survives",
+      location: "src/a.ts:1",
+      suggested_fix: "keep raw pointers too",
+      action: "fix_now" as const,
+    };
+    class PositiveCountWithCargoBackend extends DispatchBackend {
+      readonly landings: Array<WorkerLandingPayload | undefined> = [];
+      reviewerCalls = 0;
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        this.landings.push(landing);
+        if (spec.kind === "reviewer") {
+          this.reviewerCalls += 1;
+          if (this.reviewerCalls > 1) return super.dispatchWorker(spec, ctx);
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: {
+              kind: "reviewer",
+              findingsCount: 1,
+              findings: [finding],
+            },
+            sessionId: "reviewer-session-positive-with-cargo",
+          };
+        }
+        if (spec.id === "S5") {
+          this.specs.push(spec);
+          this.ctxs.push(ctx);
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        return super.dispatchWorker(spec, ctx);
+      }
+    }
+
+    const backend = new PositiveCountWithCargoBackend();
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+
+    expect(result.status).toBe("success");
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThan(-1);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
+    expect(backend.landings[s5Index]).toMatchObject({
+      blockingFindings: [finding],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "reviewer-session-positive-with-cargo",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
   });
 
   it("dispatches S5 when the reviewer returns the wrong role kind", async () => {
@@ -437,6 +591,488 @@ describe("ADR 0131 reviewer count envelope", () => {
     expect(result.status).toBe("success");
     expect(backend.specs.some((spec) => spec.id === "S5")).toBe(true);
     expect(JSON.stringify(backend.persistedLedger)).not.toContain('"escalationKind":"decision"');
+  });
+
+  it("rebuilds raw reviewer artifact pointers when resuming after a persisted S4 boundary", async () => {
+    // #899: positive open-count artifacts live only in process memory during a
+    // live run; crash/resume after S4 must rebuild them from the preceding
+    // reviewer ledger row so sparse cargo cannot produce a no-op fixer landing.
+    const finding = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "resume must keep raw pointers",
+      location: "src/runner.ts:2731",
+      suggested_fix: "rebuild from reviewer ledger entry",
+      action: "fix_now" as const,
+    };
+    const monitorHandle = {
+      pid: 4242,
+      logPath: "/host/ledger/S3.stdout",
+      resultPath: "/host/ledger/S3.sidecar.json",
+      poolId: "claude/sonnet",
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stepId: "S3",
+      dispatchedAt: "2026-07-15T00:00:00.000Z",
+      instanceId: "spawned:4242:2026-07-15T00:00:00.000Z",
+    };
+    class ResumeAfterS4Backend extends DispatchBackend {
+      readonly landings: Array<WorkerLandingPayload | undefined> = [];
+      // Widen the base's Promise<undefined> return so resume fixtures typecheck.
+      override async findResumeState(): Promise<
+        | undefined
+        | {
+            worktree: WorktreeHandle;
+            stateDir: string;
+            ledger: PersistentLedgerEntry[];
+          }
+      > {
+        return {
+          worktree: this.worktree,
+          stateDir: "/resident/worktrees/.ledger-899-s4-resume",
+          ledger: [
+            {
+              step: "S0",
+              sessionId: "run",
+              prompt_hash: "h0",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:00.000Z",
+            },
+            {
+              step: "S1",
+              sessionId: "run",
+              prompt_hash: "h1",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:01.000Z",
+            },
+            {
+              step: "S2",
+              sessionId: "coder-s2",
+              prompt_hash: "h2",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:02.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S3",
+              sessionId: "reviewer-session-s4-resume",
+              prompt_hash: "h3",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:03.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 1,
+                findings: [finding],
+              },
+              monitorHandle,
+            },
+            {
+              step: "S4",
+              sessionId: "run",
+              prompt_hash: "h4",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:04.000Z",
+            },
+          ],
+        };
+      }
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        this.landings.push(landing);
+        this.specs.push(spec);
+        this.ctxs.push(ctx);
+        this.dispatched.push(
+          `${spec.id}:${spec.kind}:${spec.role}:${spec.session}:${spec.contextRetention}:${spec.skill ?? "—"}`,
+        );
+        if (spec.id === "S5") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          };
+        }
+        if (spec.kind === "coder") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: false, commitsAdded: 0 },
+        };
+      }
+    }
+
+    const backend = new ResumeAfterS4Backend();
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+
+    expect(result.status).toBe("success");
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThan(-1);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
+    expect(backend.landings[s5Index]).toMatchObject({
+      blockingFindings: [finding],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "reviewer-session-s4-resume",
+        stdoutPath: "/host/ledger/S3.stdout",
+        sidecarPath: "/host/ledger/S3.sidecar.json",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
+  });
+
+  it("rebinds S5 raw artifacts to S6 r2 after dual-round resume without second S4 (C-R4-1)", async () => {
+    // S3 r1 → S4 → S5 → S6 r2 crash before second S4. Earlier S4 left r1 raw
+    // pointers; pre-S4 rebind must always overwrite from last reviewer (r2).
+    const findingR1 = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "round one finding",
+      location: "src/a.ts:1",
+      suggested_fix: "fix r1",
+      action: "fix_now" as const,
+    };
+    const findingR2 = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "round two finding",
+      location: "src/b.ts:2",
+      suggested_fix: "fix r2",
+      action: "fix_now" as const,
+    };
+    const monitorR1 = {
+      pid: 1001,
+      logPath: "/host/ledger/S3.stdout",
+      resultPath: "/host/ledger/S3.sidecar.json",
+      poolId: "claude/sonnet",
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stepId: "S3",
+      dispatchedAt: "2026-07-15T00:00:00.000Z",
+      instanceId: "spawned:1001:2026-07-15T00:00:00.000Z",
+    };
+    const monitorR2 = {
+      pid: 2002,
+      logPath: "/host/ledger/S6.stdout",
+      resultPath: "/host/ledger/S6.sidecar.json",
+      poolId: "claude/sonnet",
+      completionSignal: "REVIEWER_STEP_COMPLETE",
+      stepId: "S6",
+      dispatchedAt: "2026-07-15T00:00:10.000Z",
+      instanceId: "spawned:2002:2026-07-15T00:00:10.000Z",
+    };
+    class DualRoundResumeBackend extends DispatchBackend {
+      readonly landings: Array<WorkerLandingPayload | undefined> = [];
+      override async findResumeState(): Promise<
+        | undefined
+        | {
+            worktree: WorktreeHandle;
+            stateDir: string;
+            ledger: PersistentLedgerEntry[];
+          }
+      > {
+        return {
+          worktree: this.worktree,
+          stateDir: "/resident/worktrees/.ledger-899-dual-round",
+          ledger: [
+            {
+              step: "S0",
+              sessionId: "run",
+              prompt_hash: "h0",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:00.000Z",
+            },
+            {
+              step: "S1",
+              sessionId: "run",
+              prompt_hash: "h1",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:01.000Z",
+            },
+            {
+              step: "S2",
+              sessionId: "coder-s2",
+              prompt_hash: "h2",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:02.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S3",
+              sessionId: "reviewer-session-r1",
+              prompt_hash: "h3",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:03.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 1,
+                findings: [findingR1],
+              },
+              monitorHandle: monitorR1,
+            },
+            {
+              step: "S4",
+              sessionId: "run",
+              prompt_hash: "h4",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:04.000Z",
+            },
+            {
+              step: "S5",
+              sessionId: "fixer-s5",
+              prompt_hash: "h5",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:05.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S6",
+              sessionId: "reviewer-session-r2",
+              prompt_hash: "h6",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:06.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 1,
+                findings: [findingR2],
+              },
+              monitorHandle: monitorR2,
+            },
+          ],
+        };
+      }
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        this.landings.push(landing);
+        this.specs.push(spec);
+        this.ctxs.push(ctx);
+        this.dispatched.push(
+          `${spec.id}:${spec.kind}:${spec.role}:${spec.session}:${spec.contextRetention}:${spec.skill ?? "—"}`,
+        );
+        if (spec.id === "S5") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          };
+        }
+        if (spec.kind === "coder") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: false, commitsAdded: 0 },
+        };
+      }
+    }
+
+    const backend = new DualRoundResumeBackend();
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+
+    expect(result.status).toBe("success");
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThan(-1);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(1);
+    expect(backend.landings[s5Index]).toMatchObject({
+      blockingFindings: [findingR2],
+      rawReviewerArtifacts: {
+        reviewerSessionId: "reviewer-session-r2",
+        stdoutPath: "/host/ledger/S6.stdout",
+        sidecarPath: "/host/ledger/S6.sidecar.json",
+        statement: "the previous reviewer raw artifacts are here",
+      },
+    });
+    // Must not still point at r1.
+    expect(backend.landings[s5Index]?.rawReviewerArtifacts?.reviewerSessionId).not.toBe(
+      "reviewer-session-r1",
+    );
+  });
+
+  it("transports broad findingScope on continue_fixing S5 landing without filtering findings (C-R4-2A)", async () => {
+    const findingA = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "sibling A",
+      location: "src/a.ts:1",
+      suggested_fix: "fix A",
+      action: "fix_now" as const,
+    };
+    const findingB = {
+      severity: "high" as const,
+      category: "correctness" as const,
+      claim_quote: "sibling B",
+      location: "src/b.ts:2",
+      suggested_fix: "fix B",
+      action: "fix_now" as const,
+    };
+    const broadScope = { locations: ["src"] as const };
+    class ContinueFixingScopeBackend extends DispatchBackend {
+      readonly landings: Array<WorkerLandingPayload | undefined> = [];
+      override async findResumeState(): Promise<
+        | undefined
+        | {
+            worktree: WorktreeHandle;
+            stateDir: string;
+            ledger: PersistentLedgerEntry[];
+          }
+      > {
+        return {
+          worktree: this.worktree,
+          stateDir: "/resident/worktrees/.ledger-899-scope",
+          ledger: [
+            {
+              step: "S0",
+              sessionId: "run",
+              prompt_hash: "h0",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:00.000Z",
+            },
+            {
+              step: "S1",
+              sessionId: "run",
+              prompt_hash: "h1",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:01.000Z",
+            },
+            {
+              step: "S2",
+              sessionId: "coder-s2",
+              prompt_hash: "h2",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:02.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S3",
+              sessionId: "reviewer-session-scope",
+              prompt_hash: "h3",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:03.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 2,
+                findings: [findingA, findingB],
+              },
+            },
+            {
+              step: "S4",
+              sessionId: "run",
+              prompt_hash: "h4",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:04.000Z",
+            },
+            {
+              step: "S5",
+              sessionId: "fixer-1",
+              prompt_hash: "h5",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:05.000Z",
+              output: { kind: "coder", committed: true, commitsAdded: 1 },
+            },
+            {
+              step: "S6",
+              sessionId: "reviewer-session-scope-2",
+              prompt_hash: "h6",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:06.000Z",
+              output: {
+                kind: "reviewer",
+                findingsCount: 2,
+                findings: [findingA, findingB],
+              },
+            },
+            {
+              step: "S4",
+              sessionId: "run",
+              prompt_hash: "h4b",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:07.000Z",
+            },
+            {
+              step: "S8",
+              handoffStatus: "escalate",
+              escalationKind: "decision",
+              sessionId: "run",
+              prompt_hash: "h8",
+              branchHEAD: "abc",
+              ts: "2026-07-15T00:00:08.000Z",
+            },
+            {
+              step: "S4",
+              event: "runner_bookkeeping",
+              intent: "continue_fixing",
+              findingScope: broadScope,
+              source: "resume_input",
+              ts: "2026-07-15T00:00:09.000Z",
+              sessionId: "run",
+              prompt_hash: "h-cf",
+              branchHEAD: "abc",
+            },
+          ],
+        };
+      }
+      override async dispatchWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+        landing?: WorkerLandingPayload,
+      ): Promise<WorkerResult> {
+        this.landings.push(landing);
+        this.specs.push(spec);
+        this.ctxs.push(ctx);
+        this.dispatched.push(
+          `${spec.id}:${spec.kind}:${spec.role}:${spec.session}:${spec.contextRetention}:${spec.skill ?? "—"}`,
+        );
+        if (spec.id === "S5") {
+          return {
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          };
+        }
+        if (spec.kind === "reviewer") {
+          return {
+            kind: "completed",
+            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+          };
+        }
+        return {
+          kind: "completed",
+          output: { kind: "coder", committed: true, commitsAdded: 1 },
+        };
+      }
+    }
+
+    const backend = new ContinueFixingScopeBackend();
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+
+    expect(result.status).toBe("success");
+    const s5Index = backend.specs.findIndex((spec) => spec.id === "S5");
+    expect(s5Index).toBeGreaterThan(-1);
+    // Full cargo — runner does not filter by scope.
+    expect(backend.landings[s5Index]?.blockingFindings).toEqual([
+      findingA,
+      findingB,
+    ]);
+    expect(backend.ctxs[s5Index]?.blockingFindingCount).toBe(2);
+    // Opaque findingScope on the S5 landing.
+    expect(backend.landings[s5Index]?.findingScope).toEqual(broadScope);
   });
 });
 
@@ -728,7 +1364,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       this.runStepOutcomeLandings.push(options?.outcomeLanding);
       return spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
-        : { kind: "reviewer", findings: [] };
+        : { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     async resumeSession(
       _spec: StepSpec,
@@ -760,7 +1396,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
 
   it("forwards a coder worker to runStep and wraps the output as completed", async () => {
     const be = new LegacyBackend();
-    const res = await legacyDispatchWorker(be as unknown as Backend, coderWorker, {
+    const res = await legacyDispatchWorker(be, coderWorker, {
       worktree: be.worktree,
     });
     expect(be.runStepCalls.length).toBe(1);
@@ -781,7 +1417,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       const be = new LegacyBackend();
       const worktree = { ...be.worktree, path: worktreePath };
       await legacyDispatchWorker(
-        be as unknown as Backend,
+        be,
         { ...coderWorker, id: "S5", session: "fresh" },
         {
           worktree,
@@ -802,6 +1438,53 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     }
   });
 
+  it("derives fixer identity keys from findings cargo at the landing writer", async () => {
+    // #899: runner pass-throughs findings rows; dispatchWorker derives keys
+    // for the fixer landing — not a runner identity-key court.
+    const worktreePath = mkdtempSync(join(tmpdir(), "dispatch-identity-worktree-"));
+    const stateDir = mkdtempSync(join(tmpdir(), "dispatch-identity-state-"));
+    try {
+      execFileSync("git", ["init"], { cwd: worktreePath, stdio: "ignore" });
+
+      const be = new LegacyBackend();
+      const worktree = { ...be.worktree, path: worktreePath };
+      const finding = {
+        severity: "high" as const,
+        category: "Correctness",
+        claim_quote: "derive me at the landing writer",
+        location: "src/x.ts:1",
+        suggested_fix: "fix",
+        action: "fix_now" as const,
+      };
+      await legacyDispatchWorker(
+        be,
+        { ...coderWorker, id: "S5", session: "fresh" },
+        {
+          worktree,
+          stateDir,
+          // Empty envelope keys: landing writer must derive from cargo.
+          blockingFindingIdentityKeys: [],
+          blockingFindingCount: 1,
+        },
+        {
+          blockingFindings: [finding],
+        },
+      );
+
+      // stateDir path keeps the landing (no post-dispatch cleanup).
+      const landing = JSON.parse(
+        readFileSync(join(stateDir, "fix-findings.json"), "utf8"),
+      );
+      expect(landing.blockingFindings).toEqual([finding]);
+      expect(landing.blockingFindingIdentityKeys).toEqual([
+        "correctness|src/x.ts:1|derive me at the landing writer",
+      ]);
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not expose unsupported outcome sidecars to fresh coder/reviewer workers", async () => {
     const worktreePath = mkdtempSync(join(tmpdir(), "dispatch-outcome-worktree-"));
     const stateDir = mkdtempSync(join(tmpdir(), "dispatch-outcome-state-"));
@@ -810,7 +1493,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       const be = new LegacyBackend();
       const worktree = { ...be.worktree, path: worktreePath };
 
-      await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, session: "fresh" }, {
+      await legacyDispatchWorker(be, { ...coderWorker, session: "fresh" }, {
         worktree,
         stateDir,
       });
@@ -829,7 +1512,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       execFileSync("git", ["init"], { cwd: worktreePath, stdio: "ignore" });
       const be = new LegacyBackend();
 
-      await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S5" }, {
+      await legacyDispatchWorker(be, { ...coderWorker, id: "S5" }, {
         worktree: { ...be.worktree, path: worktreePath },
         stateDir,
         resumeSessionId: "sess-abc",
@@ -848,7 +1531,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     // The resume path is keyed by resumeSessionId. ADR 0030 uses separate
     // runner-visible worker steps for build/review/fix; this assertion only
     // covers forwarding one recorded worker session id through the legacy seam.
-    await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S2" }, {
+    await legacyDispatchWorker(be, { ...coderWorker, id: "S2" }, {
       worktree: be.worktree,
       resumeSessionId: "sess-abc",
     });
@@ -868,7 +1551,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       // type-checks; the kind (not the id) is what the fail-closed guard rejects.
       await expect(
         legacyDispatchWorker(
-          be as unknown as Backend,
+          be,
           { ...coderWorker, id: "S2", kind },
           { worktree: be.worktree },
         ),

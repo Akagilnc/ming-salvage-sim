@@ -29,9 +29,10 @@ push failure → `released: false` (or no valid tag). Auto-merge must not procee
 
 ## Output
 
-When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same terminal JSON object
-directly to that path (sidecar is authoritative for the runner). For
-compatibility, also emit `<docRelease>` JSON. Thin schema only:
+Always emit `<decision>{}</decision>` (or with `escalate`) before the role cargo tag.
+When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same cargo JSON object
+directly to that path (sidecar is cargo transport for the runner). Also emit
+`<docRelease>` cargo JSON. Thin schema only:
 
 ```json
 {"released": true}

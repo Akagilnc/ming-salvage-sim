@@ -53,12 +53,11 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
           ],
@@ -66,8 +65,7 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
           ],
@@ -417,12 +415,11 @@ describe("#439 decision-escalate answer channel", () => {
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
           ],

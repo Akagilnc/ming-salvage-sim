@@ -96,7 +96,7 @@ class ConfigurableBackend implements Backend {
     if (override !== undefined) return override;
 
     if (spec.role === "reviewer") {
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     // Default output: the coder worker committed.
     return { kind: "coder", committed: true, commitsAdded: 1 };

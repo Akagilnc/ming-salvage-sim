@@ -40,7 +40,6 @@ import {
   reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
 import { route } from "./route.js";
-import { findingIdentityKey } from "./findings.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY child worker step (S2/S3/S5/S6) through ONE free function
 // instead of reaching for runStep/resumeSession directly.
@@ -139,6 +138,7 @@ import type {
   EscalationKind,
   Finding,
   FindingDisposition,
+  FindingRepairScope,
   HandoffStatus,
   IssueMeta,
   IssueSnapshot,
@@ -502,10 +502,6 @@ function latestAnswerAfter(
   return undefined;
 }
 
-function normaliseScopePart(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 function isBookkeepingSource(
   value: unknown,
 ): value is ContinueFixingEvent["source"] {
@@ -554,83 +550,6 @@ function isFindingRepairScope(
   );
 }
 
-function stripLocationLine(value: string): string {
-  const withoutLineColumn = value
-    .trim()
-    .replace(/:\d+(?::\d+)?(?::[^:/\\]+)?$/, "");
-  const withoutSymbol = withoutLineColumn.replace(/:[^:/\\]+$/, "").trim();
-  if (/^[A-Za-z]$/.test(withoutSymbol) && /^[A-Za-z]:$/.test(withoutLineColumn)) {
-    return `${withoutSymbol}:`;
-  }
-  return withoutSymbol;
-}
-
-function locationScopeMatches(scope: string, location: string): boolean {
-  const normalisedScope = normaliseScopePart(stripLocationLine(scope));
-  const normalisedLocation = normaliseScopePart(location);
-  const normalisedLocationPath = normaliseScopePart(stripLocationLine(location));
-  if (
-    normalisedScope === normalisedLocation ||
-    normalisedScope === normalisedLocationPath
-  ) {
-    return true;
-  }
-  return (
-    normalisedLocationPath.startsWith(`${normalisedScope}/`) ||
-    normalisedLocationPath.endsWith(`/${normalisedScope}`) ||
-    normalisedLocationPath.includes(`/${normalisedScope}/`)
-  );
-}
-
-function textScopeMatches(scope: string, values: ReadonlyArray<string>): boolean {
-  const normalisedScope = normaliseScopePart(scope);
-  return values.some((value) => normaliseScopePart(value) === normalisedScope);
-}
-
-function findingMatchesBroadScope(
-  finding: Finding,
-  key: string,
-  scope: NonNullable<ContinueFixingEvent["findingScope"]>,
-): boolean {
-  const locationScopes = scope.locations ?? [];
-  const categoryScopes = scope.categories ?? [];
-  const groupScope = scope.findingGroup;
-  const contextScope = scope.reviewContext;
-  const featureScope = scope.featureArea;
-  const textualValues = [finding.category, finding.claim_quote, key];
-
-  const locationMatches =
-    locationScopes.length === 0 ||
-    locationScopes.some((location) =>
-      locationScopeMatches(location, finding.location),
-    );
-  const categoryMatches =
-    categoryScopes.length === 0 ||
-    categoryScopes.some((category) =>
-      textScopeMatches(category, [finding.category]),
-    );
-  const groupMatches =
-    groupScope === undefined ||
-    locationScopeMatches(groupScope, finding.location) ||
-    textScopeMatches(groupScope, textualValues);
-  const contextMatches =
-    contextScope === undefined ||
-    locationScopeMatches(contextScope, finding.location) ||
-    textScopeMatches(contextScope, textualValues);
-  const featureMatches =
-    featureScope === undefined ||
-    locationScopeMatches(featureScope, finding.location) ||
-    textScopeMatches(featureScope, textualValues);
-
-  return (
-    locationMatches &&
-    categoryMatches &&
-    groupMatches &&
-    contextMatches &&
-    featureMatches
-  );
-}
-
 function isContinueFixingEntry(
   entry: LedgerEntry,
 ): entry is LedgerEntry & ContinueFixingEvent {
@@ -661,42 +580,39 @@ function answerMapsToContinueFixing(answer: EscalationAnswerEvent): boolean {
   );
 }
 
-function matchingContinueFixingKeys(
+/**
+ * Explicit identity keys written on the human continue-fixing signal.
+ * Never derived from findings cargo (ADR 0131 / #899).
+ */
+function explicitContinueFixingKeys(
   event: ContinueFixingEvent,
-  activeFindings: ReadonlyArray<Finding>,
-  activeIdentityKeys: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
-  const exactKeys = new Set<string>();
+  const keys: string[] = [];
   const addKey = (key: string | undefined) => {
-    if (key !== undefined && key.trim().length > 0) exactKeys.add(key);
+    if (key !== undefined && key.trim().length > 0) keys.push(key);
   };
   addKey(event.findingIdentityKey);
   for (const key of event.findingScope?.identityKeys ?? []) addKey(key);
+  return keys;
+}
 
-  const exactMatches = activeIdentityKeys.filter((key) => exactKeys.has(key));
-  if (exactMatches.length > 0) return exactMatches;
-
+/**
+ * Whether the human continue-fixing event carries an actionable explicit
+ * signal (exact identity key and/or non-empty findingScope fields). Runner
+ * does NOT match that signal against findings cargo — scope filtering is the
+ * fixer's job (#899 / ADR 0131).
+ */
+function hasContinueFixingSignal(event: ContinueFixingEvent): boolean {
+  if (explicitContinueFixingKeys(event).length > 0) return true;
   const scope = event.findingScope;
-  if (scope === undefined) return [];
-  const hasBroadScope =
+  if (scope === undefined) return false;
+  return (
     (scope.locations?.length ?? 0) > 0 ||
     (scope.categories?.length ?? 0) > 0 ||
     (scope.findingGroup?.trim().length ?? 0) > 0 ||
     (scope.reviewContext?.trim().length ?? 0) > 0 ||
-    (scope.featureArea?.trim().length ?? 0) > 0;
-  if (!hasBroadScope) return [];
-
-  const broadMatches = activeFindings
-    .map((finding, index) => ({ finding, key: activeIdentityKeys[index] }))
-    .filter(({ finding, key }) => {
-      if (key === undefined) return false;
-      return findingMatchesBroadScope(finding, key, scope);
-    })
-    .map(({ key }) => key!);
-
-  // Broad module/file scopes must not reset sibling findings together. Without
-  // a durable exact identity/group key, only a single active match is safe.
-  return broadMatches.length === 1 ? broadMatches : [];
+    (scope.featureArea?.trim().length ?? 0) > 0
+  );
 }
 
 export function normalizeGitOutputLines(output: string): string[] {
@@ -825,27 +741,30 @@ interface ContinueFixingRepair {
 
 function continueRepairFromEvent(
   event: ContinueFixingEvent,
-  replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
+  openCount: number,
 ): ContinueFixingRepair | undefined {
-  const matchingIdentityKeys = matchingContinueFixingKeys(
+  // Explicit human signal only. Do not read findings cargo or derive identity
+  // keys here — landing/fixer owns cargo identity materialization (#899).
+  if (!hasContinueFixingSignal(event)) return undefined;
+  // Channel (b): reopen only when the reviewer declared open findings.
+  // Disposition prose / cargo-row key matching is not a runner court (#877/#899).
+  if (openCount <= 0) return undefined;
+  return {
     event,
-    replay.blocking,
-    replay.blockingIdentityKeys,
-  );
-  if (matchingIdentityKeys.length === 0) return undefined;
-  return { event, matchingIdentityKeys };
+    matchingIdentityKeys: explicitContinueFixingKeys(event),
+  };
 }
 
 function continueRepairFromAnswer(
   answer: EscalationAnswerEvent | undefined,
-  replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
+  openCount: number,
 ): ContinueFixingRepair | undefined {
   if (answer === undefined || !answerMapsToContinueFixing(answer)) {
     return undefined;
   }
   const source = answer.source;
   if (!isExecutableEscalationAnswerSource(source)) return undefined;
-  const matchingIdentityKeys = matchingContinueFixingKeys(
+  return continueRepairFromEvent(
     {
       event: "runner_bookkeeping",
       intent: "continue_fixing",
@@ -858,22 +777,19 @@ function continueRepairFromAnswer(
         ? { findingScope: answer.findingScope }
         : {}),
     },
-    replay.blocking,
-    replay.blockingIdentityKeys,
+    openCount,
   );
-  if (matchingIdentityKeys.length === 0) return undefined;
-  return { event: answer, matchingIdentityKeys };
 }
 
 function latestContinueFixingAfter(
   ledger: ReadonlyArray<PersistentLedgerEntry>,
   index: number,
-  replay: Pick<S4FindingsCountReplay, "blocking" | "blockingIdentityKeys">,
+  openCount: number,
 ): ContinueFixingRepair | undefined {
   for (let i = ledger.length - 1; i > index; i--) {
     const entry = ledger[i]!;
     if (!isContinueFixingEntry(entry)) continue;
-    const repair = continueRepairFromEvent(entry, replay);
+    const repair = continueRepairFromEvent(entry, openCount);
     if (repair !== undefined) return repair;
   }
   return undefined;
@@ -950,7 +866,31 @@ function lastReviewerStep(
 interface S4FindingsCountReplay {
   readonly blocking: ReadonlyArray<Finding>;
   readonly blockingIdentityKeys: ReadonlyArray<string>;
+  /** Reviewer-declared open-count (ADR 0131), not findings-array length. */
+  readonly blockingFindingCount: number;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
+  /**
+   * Rebuilt raw artifact pointers for the positive-count → S5 edge after an S4
+   * resume boundary (host paths; materialised into the fixer sandbox at landing).
+   */
+  readonly rawReviewerArtifacts?: WorkerLandingPayload["rawReviewerArtifacts"];
+}
+
+/**
+ * Opaque pointers to the preceding reviewer's raw products. Always attached on
+ * the positive-count → S5 edge so sparse/missing findings cargo cannot produce
+ * a no-op fixer landing (ADR 0131 / #899).
+ */
+function reviewerRawArtifactPointers(
+  handle: import("./types.js").WorkerMonitorHandle | undefined,
+  sessionId: string | undefined,
+): NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]> {
+  return {
+    ...(handle?.logPath !== undefined ? { stdoutPath: handle.logPath } : {}),
+    ...(handle?.resultPath !== undefined ? { sidecarPath: handle.resultPath } : {}),
+    ...(sessionId !== undefined ? { reviewerSessionId: sessionId } : {}),
+    statement: "the previous reviewer raw artifacts are here",
+  };
 }
 
 function replayS4FindingsCountState(
@@ -958,8 +898,12 @@ function replayS4FindingsCountState(
 ): S4FindingsCountReplay {
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  let pendingBlockingFindingCount = 0;
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerOutputForS4: StepOutput | undefined;
+  let lastReviewerSessionId: string | undefined;
+  let lastReviewerMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
+  let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
 
   for (const entry of ledger) {
     if (isBookkeepingEntry(entry)) {
@@ -968,6 +912,9 @@ function replayS4FindingsCountState(
     if (entry.output?.kind === "reviewer") {
       if (!isStepId(entry.step)) continue;
       lastReviewerOutputForS4 = entry.output;
+      lastReviewerSessionId =
+        typeof entry.sessionId === "string" ? entry.sessionId : undefined;
+      lastReviewerMonitorHandle = entry.monitorHandle;
       continue;
     }
     if (entry.step !== "S4" || lastReviewerOutputForS4?.kind !== "reviewer") {
@@ -977,19 +924,57 @@ function replayS4FindingsCountState(
     // #877: findings-count channel only — disposition prose / still-active
     // reopen / no-progress courts demolished. Prior keys absent from findings[]
     // are closed by the three-channel envelope; the runner does not inspect prose.
-    const blocking = [...lastReviewerOutputForS4.findings];
-    const blockingIdentityKeys = blocking.map(findingIdentityKey);
+    // Findings rows are opaque cargo: typed ReviewerOutput already decoded them
+    // at the worker boundary; runner only shallow-copies + count-routes. Identity
+    // keys are derived at the fixer landing writer, not here (ADR 0131 / #899).
     findingDispositions = [
       ...(entry.findingDispositions ?? []),
     ];
-    pendingBlockingFindings = blocking;
-    pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
+    // Opaque cargo copy only — not a decode/validation boundary.
+    pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
+    pendingBlockingFindingIdentityKeys = [];
+    // Count is the typed open-count, never cargo-array length.
+    pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
+    // Live path attaches raw pointers on every positive open-count → S5 edge;
+    // resume after the persisted S4 boundary must rebuild them from the
+    // preceding reviewer ledger row (sessionId + monitor handle paths).
+    pendingRawReviewerArtifacts =
+      lastReviewerOutputForS4.findingsCount > 0
+        ? reviewerRawArtifactPointers(
+            lastReviewerMonitorHandle,
+            lastReviewerSessionId,
+          )
+        : undefined;
+  }
+
+  // Pre-S4 crash window (codex R3 / C-R4-1): last reviewer has positive open-
+  // count but either no S4 row yet, or an earlier S4 left stale raw pointers
+  // from a prior round (S3 r1 → S4 → S5 → S6 r2, crash before the second S4).
+  // Always rebind findings/count/raw from the last reviewer so S5 does not
+  // inherit r1 artifacts when r2 is the open review.
+  if (
+    lastReviewerOutputForS4?.kind === "reviewer" &&
+    typeof lastReviewerOutputForS4.findingsCount === "number" &&
+    Number.isSafeInteger(lastReviewerOutputForS4.findingsCount) &&
+    lastReviewerOutputForS4.findingsCount > 0
+  ) {
+    pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
+    pendingBlockingFindingIdentityKeys = [];
+    pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
+    pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+      lastReviewerMonitorHandle,
+      lastReviewerSessionId,
+    );
   }
 
   return {
     blocking: pendingBlockingFindings,
     blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
+    blockingFindingCount: pendingBlockingFindingCount,
     findingDispositions,
+    ...(pendingRawReviewerArtifacts !== undefined
+      ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
+      : {}),
   };
 }
 
@@ -1067,9 +1052,16 @@ function planResume(
     const continueFixingRepair =
       decisionStep === "S4"
         ? repairIntent !== undefined
-          ? continueRepairFromEvent(repairIntent, replayedS4)
-          : latestContinueFixingAfter(ledger, lastEntryIndex, replayedS4) ??
-            continueRepairFromAnswer(answer, replayedS4)
+          ? continueRepairFromEvent(
+              repairIntent,
+              replayedS4.blockingFindingCount,
+            )
+          : latestContinueFixingAfter(
+              ledger,
+              lastEntryIndex,
+              replayedS4.blockingFindingCount,
+            ) ??
+            continueRepairFromAnswer(answer, replayedS4.blockingFindingCount)
         : undefined;
     if (
       decisionStep === undefined ||
@@ -1277,13 +1269,14 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * S5 fixes blocking findings, and S6 performs the fresh full-diff re-review.
  *
  * #253 fields: model (CLI slug), completionSignal (Sandcastle run() API), maxIter
- * (the WITHIN-STEP Ralph retry budget — NOT a fix-loop give-up counter), soul,
+ * (per-seat Sandcastle iteration budget — NOT a fix-loop give-up counter), soul,
  * toolchain.
  *
- * maxIter SEMANTICS: the WITHIN-STEP agent (Ralph) retry budget for one
- * `sandbox.run()`, NOT a give-up counter. Hitting it = the step ends normally; it
- * is NEVER the orchestrator giving up (that only happens on a MODEL escalate
- * signal — US#18/US#19, never by counting). See StepSpec.maxIter.
+ * maxIter SEMANTICS (#899 / ADR 0128): every selected seat is single-iteration
+ * (`maxIter: 1`). The skill finishes inside that one `sandbox.run()`; native
+ * structured-output re-asks are in-session, not outer iterations. Hitting
+ * maxIter ends the step normally — never "orchestrator gives up" (that only
+ * happens on a MODEL escalate — US#18/US#19). See StepSpec.maxIter.
  *
  * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
  * with single-slot overrides (see {@link coderModel}); no image rebuild, no
@@ -1319,7 +1312,9 @@ export function stepSpecsForRoute(
       // alone — no image rebuild, no StepSpec shape change.
       model: route.slots.coder,
       completionSignal: "CODER_STEP_COMPLETE",
-      maxIter: 5,
+      // #899 / ADR 0128: one single-iteration Sandcastle run per seat; the skill
+      // finishes inside that invocation (no outer Ralph multi-iter).
+      maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
     },
@@ -1339,7 +1334,8 @@ export function stepSpecsForRoute(
       promptFile: "coder_fix.md",
       model: route.slots.coderFix,
       completionSignal: "CODER_STEP_COMPLETE",
-      maxIter: 5,
+      // #899 / ADR 0128: single-iteration seat (same as S2).
+      maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
     },
@@ -1488,10 +1484,6 @@ function latestLedgerStopSummary(
     if (stopSummary != null) return stopSummary;
   }
   return undefined;
-}
-
-function isStructuredOutputError(err: unknown): boolean {
-  return err instanceof Error && err.name === "StructuredOutputError";
 }
 
 export async function runOrchestrator(input: RunInput): Promise<RunResult> {
@@ -1902,7 +1894,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastOutput: StepOutput | undefined;
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
+  /** Reviewer-declared open-count for S5/S6 (not findings-array length). */
+  let pendingBlockingFindingCount = 0;
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
+  /** Opaque continue_fixing scope for S5 landing (C-R4-2A); never filters cargo. */
+  let pendingFixerFindingScope: FindingRepairScope | undefined;
   let findingDispositions: FindingDisposition[] = [];
   let lastReviewerStepId: StepId | undefined;
   let preexistingAssertionTouchedForReverify = false;
@@ -1915,10 +1911,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     _afterFix: boolean,
   ): string[] {
     if (reviewerOutput?.kind !== "reviewer") return [];
-    const blocking = [...reviewerOutput.findings];
-    const blockingIdentityKeys = blocking.map(findingIdentityKey);
-    pendingBlockingFindings = blocking;
-    pendingBlockingFindingIdentityKeys = blockingIdentityKeys;
+    // Opaque cargo copy only — not a decode/validation boundary. Runner routes
+    // by findingsCount and transports findings rows as-is; identity-key
+    // derivation is the landing writer's job (dispatchWorker → fixer), not a
+    // runner court (ADR 0131 / #899).
+    pendingBlockingFindings = [...reviewerOutput.findings];
+    pendingBlockingFindingIdentityKeys = [];
+    // ADR 0131: declared count is the control signal; findings rows are cargo.
+    pendingBlockingFindingCount = reviewerOutput.findingsCount;
     return [];
   }
 
@@ -2500,10 +2500,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #877: persisted S4 boundaries are replayed from reviewer findings-count
     // only. Each S4 replaces the pending blocker set with that reviewer's
     // `findings[]`; prose dispositions do not preserve or reopen findings.
+    // #899: also rebuild raw reviewer artifact pointers so a crash/resume after
+    // S4 still hands the fixer host paths (materialised at landing).
     const replayedS4 = replayS4FindingsCountState(plan.priorLedger);
     pendingBlockingFindings = [...replayedS4.blocking];
     pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
+    pendingBlockingFindingCount = replayedS4.blockingFindingCount;
     findingDispositions = [...replayedS4.findingDispositions];
+    pendingRawReviewerArtifacts = replayedS4.rawReviewerArtifacts;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;
@@ -2574,6 +2578,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
     }
     resumedEscalationAnswer = plan.escalationAnswer;
+    // C-R4-2A / #899: consume plan.continueFixingRepair — opaque findingScope
+    // into S5 landing only. Runner still does not filter blockingFindings.
+    const repairScope = plan.continueFixingRepair?.event.findingScope;
+    if (repairScope !== undefined) {
+      pendingFixerFindingScope = repairScope;
+    }
 
     // #767: resume skips S0/S1, so re-fetch the issue body and apply Coder-Rec
     // (including the S6-count advance position from the restored ledger) before
@@ -2890,7 +2900,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             let result: Awaited<
               ReturnType<typeof dispatchWorkerWithMonitor>
             >["result"];
-            try {
+            {
               const billingPool = relayBillingPoolForDispatch(step);
               const workerSpec = stepSpecToWorkerSpec(
                 stepSpecs[step],
@@ -2924,7 +2934,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ? {
                       blockingFindingIdentityKeys:
                         pendingBlockingFindingIdentityKeys,
-                      blockingFindingCount: pendingBlockingFindings.length,
+                      // Declared open-count, never cargo-array length (sparse
+                      // findings[] must not zero out the control envelope).
+                      blockingFindingCount: pendingBlockingFindingCount,
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
                         : {}),
@@ -2941,9 +2953,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               const landingPayload =
                 step === "S5" || step === "S6"
                   ? {
+                      // Full findings cargo always — never scope-filtered (#899).
                       blockingFindings: pendingBlockingFindings,
                       ...(step === "S5" && pendingRawReviewerArtifacts !== undefined
                         ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
+                        : {}),
+                      ...(step === "S5" && pendingFixerFindingScope !== undefined
+                        ? { findingScope: pendingFixerFindingScope }
                         : {}),
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
@@ -2958,15 +2974,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     }
                   : undefined;
               // #598: the generic mechanical retry re-dispatches a process-level
-              // crash (`failed` / non-structured throw) with a fresh
-              // worker. This loop dispatches the agent worker steps S2/S3/S5/S6.
+              // crash (`failed` / throw, including StructuredOutputError after
+              // Sandcastle maxRetries exhaust) with a fresh worker at the same
+              // fixed position (#899). This loop dispatches agent steps S2/S3/S5/S6.
               // S7 is only the local child handoff handled by the loop below; it
               // dispatches no worker and has no retry predicate.
               //
-              //  - CODER (S2/S5): only process failure enters this retry. Completed
-              //    receipt content never changes routing.
-              //  - REVIEWER (S3/S6): completed receipt cargo goes to the fixer;
-              //    only a non-structured process crash enters this retry layer.
+              //  - CODER (S2/S5): process failure + typed-signal SOE enter retry.
+              //    Completed opaque cargo never changes routing.
+              //  - REVIEWER (S3/S6): completed open-count cargo goes to the fixer;
+              //    SOE exhaust does NOT feed empty findings to the fixer (#899).
               //
               // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
               // current scene — do NOT pass a cleanup hook into withMechanicalRetry.
@@ -2974,17 +2991,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // HEADs is legal, destroying scenes is not. (resetBeforeRetry remains an
               // optional hook for non-runner callers; this site intentionally omits it.)
               //
-              // Structured-output throws are completed receipt failures, so the
-              // reviewer path catches them and forwards raw artifacts to the fixer.
-              const retryOpts: MechanicalRetryOptions =
+              // Reviewer: rethrow on throw-exhaust so S8(error) surfaces process
+              // crashes and SOE exhaust alike — never feed empty cargo to fixer.
+              // Coder keeps default failed→durable abort (existing escalate path).
+              const durableRetryOpts = durableMechanicalRetryOptions(
+                step,
                 expectedKind === "reviewer"
-                  ? {
-                      callerOwns: (outcome) =>
-                        "error" in outcome && isStructuredOutputError(outcome.error),
-                      rethrowOnExhaustion: true,
-                    }
-                  : {};
-              const durableRetryOpts = durableMechanicalRetryOptions(step, retryOpts);
+                  ? { rethrowOnExhaustion: true }
+                  : {},
+              );
               result = await withMechanicalRetry(
                 workerSpec,
                 dispatchCtx,
@@ -2993,40 +3008,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   // dispatchMonitoredCliWorker atomically via
                   // dispatchWorkerWithMonitor; RealBackend hooks make this the
                   // production branch. Handle persisted AT SPAWN (not post-exit).
-                  let outcome: Awaited<ReturnType<typeof dispatchWorkerWithMonitor>>;
-                  try {
-                    outcome = await dispatchWorkerWithMonitor(
-                      backend,
-                      s,
-                      c,
-                      landingPayload,
-                      {
-                        onMonitorHandleSpawned: async (handle) => {
-                          stepMonitorHandle = handle;
-                          try {
-                            if (isValidStepId(s.id)) {
-                              await persistMonitorHandleAtSpawn(s.id, handle);
-                            }
-                          } catch {
-                            // Best-effort: spawn-time ledger write must not abort
-                            // the worker; post-step emitLedger still records it.
+                  const outcome = await dispatchWorkerWithMonitor(
+                    backend,
+                    s,
+                    c,
+                    landingPayload,
+                    {
+                      onMonitorHandleSpawned: async (handle) => {
+                        stepMonitorHandle = handle;
+                        try {
+                          if (isValidStepId(s.id)) {
+                            await persistMonitorHandleAtSpawn(s.id, handle);
                           }
-                        },
+                        } catch {
+                          // Best-effort: spawn-time ledger write must not abort
+                          // the worker; post-step emitLedger still records it.
+                        }
                       },
-                    );
-                  } catch (err) {
-                    if (expectedKind !== "coder" || !isStructuredOutputError(err)) {
-                      throw err;
-                    }
-                    return {
-                      kind: "completed" as const,
-                      output: {
-                        kind: "coder" as const,
-                        committed: false,
-                        commitsAdded: 0,
-                      },
-                    };
-                  }
+                    },
+                  );
                   if (outcome.monitorHandle !== undefined) {
                     stepMonitorHandle = outcome.monitorHandle;
                   }
@@ -3047,23 +3047,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 durableRetryOpts,
               );
               if (result.kind === "completed") completeMechanicalRetryInvocation(step);
-            } catch (err) {
-              if (expectedKind === "reviewer" && isStructuredOutputError(err)) {
-                pendingBlockingFindings = [];
-                pendingBlockingFindingIdentityKeys = [];
-                pendingRawReviewerArtifacts = {
-                  ...(stepMonitorHandle?.logPath !== undefined
-                    ? { stdoutPath: stepMonitorHandle.logPath }
-                    : {}),
-                  ...(stepMonitorHandle?.resultPath !== undefined
-                    ? { sidecarPath: stepMonitorHandle.resultPath }
-                    : {}),
-                  statement: "the previous reviewer raw artifacts are here",
-                };
-                step = "S5";
-                continue orchestratorStepLoop;
-              }
-              throw err;
             }
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 
@@ -3207,7 +3190,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     commitsAdded: 0,
                     escalate: escalation,
                   }
-                : { kind: "reviewer", findings: [], escalate: escalation };
+                : { kind: "reviewer", findings: [], findingsCount: 0, escalate: escalation };
             return await escalateTermination(
               step,
               escalation,
@@ -3410,40 +3393,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             // Control envelope only: role kind so findings-count channel can run.
             // Do not inspect individual finding fields (findings schema court).
             if (output?.kind !== "reviewer") {
+              // Unusable review envelope (not a typed open-count receipt) →
+              // fixer path with raw artifact pointers. Do NOT inspect findings
+              // cargo shape here (ADR 0131 / #899).
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
-              pendingRawReviewerArtifacts = {
-                ...(stepMonitorHandle?.logPath !== undefined
-                  ? { stdoutPath: stepMonitorHandle.logPath }
-                  : {}),
-                ...(stepMonitorHandle?.resultPath !== undefined
-                  ? { sidecarPath: stepMonitorHandle.resultPath }
-                  : {}),
-                ...(stepSessionId !== undefined
-                  ? { reviewerSessionId: stepSessionId }
-                  : {}),
-                statement: "the previous reviewer raw artifacts are here",
-              };
+              pendingBlockingFindingCount = 0;
+              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                stepMonitorHandle,
+                stepSessionId,
+              );
               step = "S5";
               continue orchestratorStepLoop;
             }
-            if (!Array.isArray(output.findings)) {
-              pendingBlockingFindings = [];
-              pendingBlockingFindingIdentityKeys = [];
-              pendingRawReviewerArtifacts = {
-                ...(stepMonitorHandle?.logPath !== undefined
-                  ? { stdoutPath: stepMonitorHandle.logPath }
-                  : {}),
-                ...(stepMonitorHandle?.resultPath !== undefined
-                  ? { sidecarPath: stepMonitorHandle.resultPath }
-                  : {}),
-                ...(stepSessionId !== undefined
-                  ? { reviewerSessionId: stepSessionId }
-                  : {}),
-                statement: "the previous reviewer raw artifacts are here",
-              };
-              step = "S5";
-              continue orchestratorStepLoop;
+            // Typed findingsCount only: positive open-count always preserves
+            // raw artifact pointers for S5. Findings rows are opaque cargo —
+            // never re-dispatch or zero the count based on array shape.
+            if (output.findingsCount > 0) {
+              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                stepMonitorHandle,
+                stepSessionId,
+              );
             }
           }
         }
@@ -3479,7 +3449,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
         }
         if (step === "S3" || step === "S6") lastReviewerStepId = step;
-        if (step === "S5") pendingRawReviewerArtifacts = undefined;
+        if (step === "S5") {
+          pendingRawReviewerArtifacts = undefined;
+          pendingFixerFindingScope = undefined;
+        }
         break;
       }
 

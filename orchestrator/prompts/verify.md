@@ -12,9 +12,11 @@ PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 
 ## Output
 
-When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same terminal JSON object
-directly to that path (sidecar is authoritative for the runner). For
-compatibility, also emit `<verify>` JSON. Shape:
+Always emit a typed `<decision>` signal first (`{}` when not escalating, or
+`{"escalate":{"reason":"...","diagnosis":"..."}}` when pressing a gate), then
+opaque `<verify>` cargo JSON. When `$ORCHESTRATOR_OUTCOME_PATH` is set, write
+the same cargo JSON object directly to that path (sidecar is cargo transport).
+Shape of the cargo:
 
 On the final multi-iter step you MUST print VERIFY_STEP_COMPLETE on its own
 final line (sandcastle iteration terminator — not optional telemetry).

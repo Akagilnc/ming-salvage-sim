@@ -924,23 +924,14 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     ).resolves.toMatchObject({ conflicted: true });
   });
 
-  it("a sparse merger decision bell parks instead of becoming a conflicted retry", async () => {
-    const b = new FakeSeamsBackend(opts(trackRepo()));
-    b.mergerOutcome = mergerOutcomeFromResult({
-      stdout: '<merger>{"resolved":false,"escalate":{}}</merger>',
-    });
-
-    await expect(
-      b.resolveMergeConflict({ childIssue: 111, childBranch: "feat/child-111" }),
-    ).resolves.toMatchObject({
-      escalation: {
-        reason: "",
-        diagnosis: "",
-        escalationKind: "decision",
-        phase: "wave",
-      },
-    });
-    expect(b.mergerCalls).toHaveLength(1);
+  it("a sparse merger decision bell fails the Action instead of inventing a park", () => {
+    // #899: empty escalate on the typed decision signal fails closed for #598.
+    expect(() =>
+      mergerOutcomeFromResult({
+        output: { escalate: {} },
+        stdout: "",
+      }),
+    ).toThrow(/malformed decision gate/);
   });
 
   it("agent CLAIMED resolved but left the merge in-progress → still-conflicted result (never looks clean)", async () => {
@@ -1164,6 +1155,11 @@ describe("parseMergerOutcome (#291 pure)", () => {
     });
     expect(parseMergerOutcome("<merger>true</merger>").resolved).toBe(false);
     expect(parseMergerOutcome("<merger>42</merger>").resolved).toBe(false);
+    // typeof [] === "object" — must not coerce array cargo into a resolve path.
+    expect(parseMergerOutcome("<merger>[]</merger>")).toEqual({
+      resolved: false,
+      reason: "merger agent <merger> tag was not a JSON object",
+    });
   });
 
   // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
@@ -1284,20 +1280,312 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     ).toEqual({ kind: "docRelease", released: true });
   });
 
-  it("rings a review-loop stdout decision bell before parseable sidecar cargo", async () => {
+  it("prefers readable sidecar cargo over a stdout decision bell (no bell-shop)", async () => {
+    // #899 H2: cargo source selection is not a gate court. Prefer sidecar when
+    // present; do not shop stdout because it carries escalate. Fate is typed SO.
     const mod = await import("../../../src/family/realFamilyBackend.js");
     const dir = trackTempDir("review-loop-outcome-bell-");
     const outcomePath = join(dir, "outcome.json");
-    writeFileSync(outcomePath, JSON.stringify({ unrelatedCargo: true }), "utf8");
+    writeFileSync(outcomePath, JSON.stringify({ converged: true }), "utf8");
 
     expect(mod.parseVerifyOutcome(
       '<verify>{"bad": 1, "escalate": {"reason": "owner choice", "diagnosis": "review fork"}}</verify>',
       outcomePath,
-    )).toMatchObject({
-      kind: "escalate",
-      escalation: { reason: "owner choice", diagnosis: "review fork" },
-    });
+    )).toEqual({ kind: "verify", converged: true });
   });
+
+  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+    "fails family %s when typed decision Output.object is absent",
+    async (role) => {
+      // #899: SO seat without result.output must not become cargo/no-gate success.
+      const reviewLoopSpec = (kind: typeof role): WorkerSpec => ({
+        id: "S9",
+        kind,
+        role: "coder",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "clean",
+        promptFile: "x.md",
+        completionSignal: "X",
+        maxIter: 1,
+        model: "sonnet",
+        soul: "coder",
+        toolchain: [],
+      });
+      class Harness extends RealFamilyBackend {
+        public classify(
+          result: {
+            output?: unknown;
+            stdout: string;
+            iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+          },
+          kind: typeof role,
+          outcomePath: string,
+        ) {
+          return this.familyReviewLoopResultFromRun(
+            {
+              stdout: result.stdout,
+              iterations: [...(result.iterations ?? [])],
+              ...(result.output !== undefined ? { output: result.output } : {}),
+            },
+            reviewLoopSpec(kind),
+            outcomePath,
+          );
+        }
+      }
+      const dir = trackTempDir(`review-loop-missing-typed-${role}-`);
+      const outcomePath = join(dir, "outcome.json");
+      writeFileSync(outcomePath, JSON.stringify({ converged: true }), "utf8");
+      const be = new Harness({
+        workingRepo: dir,
+        familyBase: "fb",
+        ledgerDir: dir,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc",
+      });
+      expect(() =>
+        be.classify({ stdout: "" }, role, outcomePath),
+      ).toThrow(/typed traffic signal missing/);
+    },
+  );
+
+  it("does not let family coder-fix cargo escalate after a no-gate typed decision", async () => {
+    // #899: opaque sidecar cargo must not reintroduce escalate after a validated
+    // no-gate typed decision (fourth routing channel ban).
+    class Harness extends RealFamilyBackend {
+      public classify(
+        result: {
+          output?: unknown;
+          stdout: string;
+          iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+        },
+        outcomePath: string,
+      ) {
+        return this.familyCoderResultFromRun(
+          {
+            stdout: result.stdout,
+            commits: [],
+            iterations: [...(result.iterations ?? [])],
+            ...(result.output !== undefined ? { output: result.output } : {}),
+          },
+          {
+            id: "S5",
+            kind: "coder",
+            role: "coder",
+            host: "claude",
+            session: "fresh",
+            contextRetention: "clean",
+            promptFile: "x.md",
+            completionSignal: "CODER_STEP_COMPLETE",
+            maxIter: 1,
+            model: "sonnet",
+            soul: "coder",
+            toolchain: [],
+          },
+          outcomePath,
+        );
+      }
+    }
+    const dir = trackTempDir(`family-coder-spoof-escalate-`);
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        committed: true,
+        commitsAdded: 1,
+        escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+      }),
+      "utf8",
+    );
+    const be = new Harness({
+      workingRepo: dir,
+      familyBase: "fb",
+      ledgerDir: dir,
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc",
+    });
+    const out = be.classify({ output: {}, stdout: "" }, outcomePath);
+    expect(out.kind).toBe("completed");
+    if (out.kind === "completed") {
+      expect(out.output).toEqual({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+      });
+      expect("escalate" in out.output).toBe(false);
+    }
+  });
+
+  it("preserves family coder-fix commit cargo when the typed decision gate escalates", async () => {
+    // #899: typed escalate is fate; committed/commitsAdded stay real cargo.
+    class Harness extends RealFamilyBackend {
+      public classify(
+        result: {
+          output?: unknown;
+          stdout: string;
+          iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+        },
+        outcomePath: string,
+      ) {
+        return this.familyCoderResultFromRun(
+          {
+            stdout: result.stdout,
+            commits: [],
+            iterations: [...(result.iterations ?? [])],
+            ...(result.output !== undefined ? { output: result.output } : {}),
+          },
+          {
+            id: "S5",
+            kind: "coder",
+            role: "coder",
+            host: "claude",
+            session: "fresh",
+            contextRetention: "clean",
+            promptFile: "x.md",
+            completionSignal: "CODER_STEP_COMPLETE",
+            maxIter: 1,
+            model: "sonnet",
+            soul: "coder",
+            toolchain: [],
+          },
+          outcomePath,
+        );
+      }
+    }
+    const dir = trackTempDir(`family-coder-bell-cargo-`);
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ committed: true, commitsAdded: 3 }),
+      "utf8",
+    );
+    const be = new Harness({
+      workingRepo: dir,
+      familyBase: "fb",
+      ledgerDir: dir,
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc",
+    });
+    const out = be.classify(
+      {
+        output: {
+          escalate: {
+            reason: "design fork",
+            diagnosis: "owner must choose the contract",
+          },
+        },
+        stdout: "",
+      },
+      outcomePath,
+    );
+    expect(out.kind).toBe("completed");
+    if (out.kind === "completed") {
+      expect(out.output).toEqual({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 3,
+        escalate: {
+          reason: "design fork",
+          diagnosis: "owner must choose the contract",
+        },
+      });
+    }
+  });
+
+  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+    "does not let sidecar bells override a schema-validated typed %s decision signal",
+    async (role) => {
+      // #899 finding: when typed Output.object exists it is the sole fate channel;
+      // sidecar escalate must not enter the human loop for any review-loop role.
+      const reviewLoopSpec = (kind: typeof role): WorkerSpec => ({
+        id: "S9",
+        kind,
+        role: "coder",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "clean",
+        promptFile: "x.md",
+        completionSignal: "X",
+        maxIter: 1,
+        model: "sonnet",
+        soul: "coder",
+        toolchain: [],
+      });
+      class Harness extends RealFamilyBackend {
+        public classify(
+          result: {
+            output?: unknown;
+            stdout: string;
+            iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+          },
+          kind: typeof role,
+          outcomePath: string,
+        ) {
+          return this.familyReviewLoopResultFromRun(
+            {
+              stdout: result.stdout,
+              iterations: [...(result.iterations ?? [])],
+              ...(result.output !== undefined ? { output: result.output } : {}),
+            },
+            reviewLoopSpec(kind),
+            outcomePath,
+          );
+        }
+      }
+      const dir = trackTempDir(`review-loop-typed-vs-sidecar-${role}-`);
+      const outcomePath = join(dir, "outcome.json");
+      // Typed decision signal is no-gate (`{}`). Role cargo + a spoof escalate
+      // ride on the sidecar; only cargo is admitted (escalate cannot override).
+      const cargo: Record<string, unknown> =
+        role === "verify"
+          ? { converged: true }
+          : role === "fixer"
+            ? { committed: true }
+            : role === "cleanup"
+              ? { terminal: true, ok: true }
+              : { released: true };
+      writeFileSync(
+        outcomePath,
+        JSON.stringify({
+          ...cargo,
+          escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+        }),
+        "utf8",
+      );
+      const be = new Harness({
+        workingRepo: dir,
+        familyBase: "fb",
+        ledgerDir: dir,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc",
+      });
+      const out = be.classify(
+        { output: {}, stdout: "" },
+        role,
+        outcomePath,
+      );
+      expect(out.kind).toBe("completed");
+      if (out.kind === "completed") {
+        expect(out.output.kind).toBe(role);
+      }
+    },
+  );
 
   it("keeps fixer completion even when fixCommitSha cargo is absent", async () => {
     const mod = await import("../../../src/family/realFamilyBackend.js");
@@ -1406,17 +1694,20 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     expect(outcome).not.toHaveProperty("findingsCount");
   });
 
-  it("preserves cmr verdict and findings sentinel semantics after trimming CRLF stdout", () => {
+  it("preserves cmr verdict and findingsCount after trimming CRLF stdout", () => {
+    // #899: open-count is the typed receipt's findingsCount field only.
+    const receipt = {
+      converged: false,
+      reason: "two findings remain",
+      findingsCount: 2,
+      successfulLegs: ["gpt-5.6-sol"],
+      claimedFixedFindingIdentityKeys: [],
+      priorFindingDispositions: [],
+      evidencePaths: ["cmr/review.json"],
+    };
     const outcome = cmrOutcomeFromResult({
-      stdout:
-        "\r\n  <cmr>" + JSON.stringify({
-          converged: false,
-          reason: "two findings remain",
-          successfulLegs: ["gpt-5.6-sol"],
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
-          evidencePaths: ["cmr/review.json"],
-        }) + "</cmr>\r\nfindings = 2\r\n  ",
+      output: receipt,
+      stdout: "\r\n  <cmr>" + JSON.stringify(receipt) + "</cmr>\r\n  ",
     });
 
     expect(outcome).toMatchObject({
@@ -1516,24 +1807,17 @@ describe("parseCmrOutcome accepted suppression contract", () => {
   });
 
   it("parses cmr sidecar payloads directly when free-form text contains a cmr tag delimiter", () => {
-    const dir = trackTempDir("cmr-outcome-delimiter-");
-    const outcomePath = join(dir, "outcome.json");
-    writeFileSync(
-      outcomePath,
-      JSON.stringify({
-        escalate: {
-          reason: "review unavailable",
-          diagnosis: "diagnosis quoted the literal </cmr> delimiter",
-          escalationKind: "decision",
-        },
-      }) + "\n",
-      "utf8",
-    );
-
+    // #899: decision bells enter fate only via typed Output.object; sidecar is
+    // cargo. Typed escalate still works when free-form text quotes </cmr>.
     const outcome = cmrOutcomeFromResult({
       completionSignal: "CMR_STEP_COMPLETE",
       stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
-      outcomePath,
+      output: {
+        escalate: {
+          reason: "review unavailable",
+          diagnosis: "diagnosis quoted the literal </cmr> delimiter",
+        },
+      },
     });
 
     expect(outcome).toEqual({
@@ -2063,8 +2347,13 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         writeFileSync(outcomePathAtRun, JSON.stringify({ resolved: true }), "utf8");
         return {
+          branch: "family/293-base",
           completionSignal: "MERGER_STEP_COMPLETE",
           stdout: "<merger>{}</merger>",
+          commits: [],
+          iterations: [],
+          // Typed no-gate decision signal (SO was attached on this seat).
+          output: {},
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -2074,6 +2363,36 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
     expect(out.resolved).toBe(true);
     expect(outcomePathAtRun).toBeDefined();
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
+  });
+
+  it("fails merger when typed decision Output.object is absent", async () => {
+    // #899: SO seat without result.output must not complete from cargo alone.
+    const repo = trackRepo();
+    const ledgerDir = mkdtempSync(join(tmpdir(), "merger-missing-typed-ledger-"));
+    ledgerDirs.push(ledgerDir);
+    class MissingTypedMergerBackend extends RealFamilyBackend {
+      public run(req: ConflictResolveRequest) {
+        return this.runMergerAgent(req);
+      }
+      protected override mountMergerAuth(): MergerAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        return {
+          branch: "family/293-base",
+          completionSignal: "MERGER_STEP_COMPLETE",
+          stdout: '<merger>{"resolved": true}</merger>',
+          commits: [],
+          iterations: [],
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const b = new MissingTypedMergerBackend(opts(repo, { ledgerDir }));
+    await expect(
+      b.run({ childIssue: 496, childBranch: "feat/child" }),
+    ).rejects.toThrow(/typed traffic signal missing/);
   });
 });
 

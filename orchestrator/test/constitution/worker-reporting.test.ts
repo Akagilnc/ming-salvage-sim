@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { runOrchestrator } from "../../src/runner.js";
 import { mergeChild } from "../../src/family/merger.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
@@ -86,7 +87,7 @@ class ScriptedRunnerBackend implements Backend {
 
 function validWorkerResult(spec: WorkerSpec): WorkerResult {
   if (spec.kind === "reviewer") {
-    return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+    return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
   }
   const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
   if (skeleton !== undefined) return skeleton;
@@ -126,7 +127,9 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     expect(result.stepLedger.find((row) => row.step === "S2")?.output).toMatchObject({ committed: true });
   });
 
-  it("coder StructuredOutputError cargo advances without git adjudication or decision park", async () => {
+  it("coder StructuredOutputError is mechanical-retried at the same step without decision park", async () => {
+    // #899: typed-signal SOE exhaust is process-level #598 redispatch, not
+    // silent advance as committed:0 and not a decision-gate park.
     const backend = new ScriptedRunnerBackend((spec, attempt) => {
       if (spec.id === "S2" && attempt === 1) {
         const err = new Error("coder outcome JSON was truncated");
@@ -139,7 +142,30 @@ describe("#825 Group A/B — real runner defective-report and exit retry behavio
     const result = await runOrchestrator({ issueNumber: 825, backend });
 
     expect(result.status).toBe("success");
-    expect(backend.dispatches.filter((row) => row.startsWith("S2:"))).toHaveLength(1);
+    expect(backend.dispatches.filter((row) => row.startsWith("S2:")).length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
+  });
+
+  it("reviewer StructuredOutputError exhaust redispatches S3 only — zero S5 fixer", async () => {
+    // #899 / R2 Spec: pure reviewer SOE exhaust is process-level #598 at the
+    // same seat. Runner must NOT invent an S5 fixer dispatch from SOE throw.
+    const backend = new ScriptedRunnerBackend((spec) => {
+      if (spec.id === "S3") {
+        const err = new Error("reviewer open-count SO exhausted");
+        err.name = "StructuredOutputError";
+        throw err;
+      }
+      return validWorkerResult(spec);
+    });
+
+    const result = await runOrchestrator({ issueNumber: 825, backend });
+
+    expect(result.status).toBe("error");
+    expect(backend.dispatches.filter((row) => row.startsWith("S3:"))).toHaveLength(
+      MAX_DISPATCH_ATTEMPTS,
+    );
+    expect(backend.dispatches.filter((row) => row.startsWith("S5:"))).toHaveLength(0);
+    expect(backend.dispatches.filter((row) => row.startsWith("S6:"))).toHaveLength(0);
     expect(JSON.stringify(result.stepLedger)).not.toContain('"escalationKind":"decision"');
   });
 

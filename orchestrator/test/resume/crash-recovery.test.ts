@@ -125,7 +125,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           branchHEAD: beforeFixHead,
         },
         {
-          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
           branchHEAD: beforeFixHead,
         },
         { ...entry("S4"), branchHEAD: beforeFixHead },
@@ -226,7 +226,7 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
           branchHEAD: beforeFixHead,
         },
         {
-          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+          ...entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
           branchHEAD: beforeFixHead,
         },
         { ...entry("S4"), branchHEAD: beforeFixHead },
@@ -414,7 +414,7 @@ describe("#824 durable mechanical redispatch budget", () => {
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       if (spec.role === "coder") throw new Error("coder process crashed");
-      return { kind: "reviewer", findings: [] };
+      return { kind: "reviewer", findings: [], findingsCount: 0 };
     };
 
     const result = await runOrchestrator({ issueNumber: 255, backend });
@@ -450,7 +450,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
 
     expect(route({
       from: "S4",
-      output: { kind: "reviewer", findings: [opaqueFinding] },
+      output: { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1 },
     })).toEqual({ kind: "next", step: "S5" });
 
     const backend = new ResumeBackend({
@@ -460,7 +460,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [opaqueFinding] }),
+        entry("S3", { kind: "reviewer", findings: [opaqueFinding], findingsCount: 1 }),
         entry("S4"),
       ],
     });
@@ -479,12 +479,11 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S0"),
         entry("S1"),
         entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
-        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING] }),
+        entry("S3", { kind: "reviewer", findings: [CLAIMED_FIXED_FINDING], findingsCount: 1 }),
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
           ],
@@ -492,8 +491,7 @@ describe("crash-resume: S4 replay preserves ADR0030 claimed-fixed adjudication",
         entry("S4"),
         entry("S5", { kind: "coder", committed: true, commitsAdded: 1 }),
         entry("S6", {
-          kind: "reviewer",
-          findings: [],
+          kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [
             { identityKey: CLAIMED_FIXED_KEY, status: "still-active" },
           ],
