@@ -865,6 +865,43 @@ function reviewerRawArtifactPointers(
 }
 
 /**
+ * Historical residual open-set projection (pre-#925 open-count paper).
+ *
+ * Shared by the S4-attached residual arm and the pre-S4 crash residual arm in
+ * {@link rebuildBlockingFromLedger}. Cargo keeps raw findings + declared count
+ * with empty identity keys (lossless vs inventing `__open_N`); raw artifacts
+ * attach only when residual→judge projects continue.
+ */
+function applyHistoricalResidualOpenSet(
+  lastReviewerOutput: Extract<StepOutput, { kind: "reviewer" }>,
+  monitor: import("./types.js").WorkerMonitorHandle | undefined,
+  sessionId: string | undefined,
+): {
+  readonly blocking: Finding[];
+  readonly blockingIdentityKeys: string[];
+  readonly blockingFindingCount: number;
+  readonly rawReviewerArtifacts?: NonNullable<
+    WorkerLandingPayload["rawReviewerArtifacts"]
+  >;
+} {
+  const projectsContinue =
+    projectResidualReviewerToJudge(lastReviewerOutput)?.status === "continue";
+  return {
+    blocking: [...lastReviewerOutput.findings],
+    blockingIdentityKeys: [],
+    blockingFindingCount: lastReviewerOutput.findingsCount,
+    ...(projectsContinue
+      ? {
+          rawReviewerArtifacts: reviewerRawArtifactPointers(
+            monitor,
+            sessionId,
+          ),
+        }
+      : {}),
+  };
+}
+
+/**
  * Rebuild the S5 open-set / kill flips / raw-artifact pointers from a
  * persisted ledger (crash/resume seed).
  *
@@ -943,44 +980,41 @@ function rebuildBlockingFromLedger(
       continue;
     }
 
-    // Historical residual only (pre-#925 S4 + open-count paper). Cargo keeps
-    // raw findings + count with empty identity keys — lossless vs inventing
-    // __open_N via projectJudgeContinueBlocking. Artifact attach uses the
-    // shared residual→judge continue predicate (no third count arm).
+    // Historical residual only (pre-#925 S4 + open-count paper).
     findingDispositions = [...(entry.findingDispositions ?? [])];
-    pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
-    pendingBlockingFindingIdentityKeys = [];
-    pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
-    pendingRawReviewerArtifacts =
-      projectResidualReviewerToJudge(lastReviewerOutputForS4)?.status ===
-      "continue"
-        ? reviewerRawArtifactPointers(
-            lastReviewerMonitorHandle,
-            lastReviewerSessionId,
-          )
-        : undefined;
+    {
+      const residualOpen = applyHistoricalResidualOpenSet(
+        lastReviewerOutputForS4,
+        lastReviewerMonitorHandle,
+        lastReviewerSessionId,
+      );
+      pendingBlockingFindings = residualOpen.blocking;
+      pendingBlockingFindingIdentityKeys = residualOpen.blockingIdentityKeys;
+      pendingBlockingFindingCount = residualOpen.blockingFindingCount;
+      pendingRawReviewerArtifacts = residualOpen.rawReviewerArtifacts;
+    }
     lastJudgeContinueIndex = -1;
   }
 
   // Historical residual only — pre-S4 crash window: last reviewer has positive
-  // open-count but no S4 yet / stale earlier S4. Positive-count predicate is
-  // projectResidualReviewerToJudge (no third count arm). Skip when a later
-  // judge continue already projected the live open set (new path has no S4).
+  // open-count but no S4 yet / stale earlier S4. Skip when a later judge
+  // continue already projected the live open set (new path has no S4).
   if (
     lastJudgeContinueIndex < 0 &&
     lastReviewerOutputForS4?.kind === "reviewer"
   ) {
-    const residualContinue = projectResidualReviewerToJudge(
+    const residualOpen = applyHistoricalResidualOpenSet(
       lastReviewerOutputForS4,
+      lastReviewerMonitorHandle,
+      lastReviewerSessionId,
     );
-    if (residualContinue?.status === "continue") {
-      pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
-      pendingBlockingFindingIdentityKeys = [];
-      pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
-      pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-        lastReviewerMonitorHandle,
-        lastReviewerSessionId,
-      );
+    // Pre-S4 crash rebind only when residual→judge projects continue
+    // (raw artifacts present by construction of applyHistoricalResidualOpenSet).
+    if (residualOpen.rawReviewerArtifacts !== undefined) {
+      pendingBlockingFindings = residualOpen.blocking;
+      pendingBlockingFindingIdentityKeys = residualOpen.blockingIdentityKeys;
+      pendingBlockingFindingCount = residualOpen.blockingFindingCount;
+      pendingRawReviewerArtifacts = residualOpen.rawReviewerArtifacts;
     }
   }
 
