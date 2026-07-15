@@ -27,19 +27,16 @@ export type { JudgeFindingDisposition, JudgeVerdictStatus };
 // ───────────────────────────── step identifiers ─────────────────────────────
 
 /**
- * The child-slice step sequence (ADR 0030): the runner owns the visible
+ * The child-slice step sequence (ADR 0030 / #925): the runner owns the visible
  * per-slice review/fix loop.
  *
- *   S0 gate → S1 context → S2 implement → S3 review → S4 classify
- *     → S7 local handoff when clean
- *     → S5 fix → S6 fresh full-diff review → S4 re-check while blocking remains
- *     → S8 handoff
+ *   S0 gate → S1 context → S2 implement → S3 judge establish
+ *     converged → S7 local handoff → S8 handoff
+ *     continue  → S5 fix → S6 judge resume → (verdict again)
+ *     escalate  → decision park
  *
- * S2 and S5 are coder workers. S3 and S6 are fresh read-only reviewer workers.
- * S4 is the runner-owned ENVELOPE boundary (信封宪法, ADR 0062): it reads only the
- * blocking findings COUNT (0 → pass, non-0 → fix loop), never the finding content,
- * making per-round verdicts visible in the ledger instead of hiding the loop inside
- * one coder session.
+ * S2 and S5 are coder workers. S3 and S6 are the persistent verify judge.
+ * S4 mechanical open-count classification is dissolved (legacy resume residual).
  */
 /** Executable child-slice topology. The runner routes only these steps. */
 export type SliceStepId =

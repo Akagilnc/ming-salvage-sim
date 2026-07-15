@@ -78,30 +78,6 @@ export function sampleFinding(
   };
 }
 
-/**
- * Migrate legacy open-count fixtures to a judge verdict without inventing
- * dual routing. findingsCount > 0 → continue+live; 0 → converged.
- */
-export function openCountToJudgeResult(
-  findingsCount: number,
-  findings: ReadonlyArray<Finding> = [],
-): JudgeResult {
-  if (
-    typeof findingsCount === "number" &&
-    Number.isSafeInteger(findingsCount) &&
-    findingsCount > 0
-  ) {
-    const cargo =
-      findings.length > 0
-        ? findings
-        : Array.from({ length: findingsCount }, (_, i) =>
-            sampleFinding(`open-${i + 1}`, `legacy.ts:${i + 1}`),
-          );
-    return judgeContinue(cargo);
-  }
-  return judgeConverged();
-}
-
 /** True for S3/S6 judge seats after #925 (kind verify; residual reviewer kind). */
 export function isJudgeSeat(spec: {
   readonly kind?: string;

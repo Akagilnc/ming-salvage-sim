@@ -1864,7 +1864,7 @@ describe("#920 same-model cross-role is legal (ex-#686 conflict filter)", () => 
 
   it("admits sol on roster select and relay baton when every judging seat shares its slug", () => {
     // Pre-#920 pool separation vetoed sol whenever review/CMR seats shared its slug.
-    expect(selectCoderRecEntry([sol], 0).id).toBe("sol@med");
+    expect(selectCoderRecEntry([sol]).id).toBe("sol@med");
     expect(
       selectNextRelayBaton({
         currentModelId: "grok-4.5",
