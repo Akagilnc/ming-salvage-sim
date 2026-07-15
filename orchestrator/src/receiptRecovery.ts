@@ -80,13 +80,76 @@ function rejectMalformedEscalateAlongsideCount(
 }
 
 /**
+ * Levenshtein distance (small keys only). Used to catch near-miss spellings of
+ * the decision-gate key so `{ findingsCount, escalte: … }` fails schema and
+ * Sandcastle re-asks rather than treating the typo as opaque cargo (#899).
+ */
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const prev = new Array<number>(b.length + 1);
+  const curr = new Array<number>(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) prev[j] = curr[j]!;
+  }
+  return prev[b.length]!;
+}
+
+/**
+ * Keys within edit distance 2 of `escalate` (but not exact) are treated as
+ * misspelled decision-gate attempts on combined open-count receipts. Exact
+ * `escalate` is validated by {@link rejectMalformedEscalateAlongsideCount};
+ * ordinary cargo keys (findings, findingFamilies, …) stay free.
+ */
+function isMisspelledEscalateKey(key: string): boolean {
+  if (key === "escalate") return false;
+  const normalized = key.toLowerCase();
+  if (normalized === "escalate") return false;
+  // Bound the check: only near-length keys can be typos of "escalate".
+  if (Math.abs(normalized.length - "escalate".length) > 2) return false;
+  return editDistance(normalized, "escalate") <= 2;
+}
+
+/**
+ * Reject near-miss spellings of the decision-gate key on open-count receipts
+ * so a legal findingsCount cannot mask a typo'd gate as no-gate cargo (#899).
+ */
+function rejectMisspelledEscalateKeys(
+  value: unknown,
+  ctx: z.RefinementCtx,
+): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return;
+  }
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    if (isMisspelledEscalateKey(key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `misspelled decision-gate key ${JSON.stringify(key)}; use escalate`,
+        path: [key],
+      });
+    }
+  }
+}
+
+/**
  * Shared open-count receipt for reviewer and CMR seats (#899). Both roles use
  * the same findingsCount + optional decision-gate contract until their typed
  * boundaries genuinely diverge — introduce role dispatch only then.
  */
 const openCountReceiptSchema = z.object({
   findingsCount: z.number().int().nonnegative(),
-}).passthrough().superRefine(rejectMalformedEscalateAlongsideCount);
+}).passthrough().superRefine((value, ctx) => {
+  rejectMalformedEscalateAlongsideCount(value, ctx);
+  rejectMisspelledEscalateKeys(value, ctx);
+});
 
 /**
  * Signal-level schema for the always-emitted {@link DECISION_GATE_TAG} tag.

@@ -434,8 +434,15 @@ export function docReleaseWorkerSpec(
  * This wrapper yields `completed`; unified real workers produce process `failed`
  * and worker-declared `escalated` results directly.
  */
+/**
+ * Surface used by {@link legacyDispatchWorker}: only the pre-unified child
+ * agent methods. Production backends implement full {@link Backend}; tests may
+ * supply a minimal adapter without double-casting to Backend.
+ */
+export type LegacyDispatchBackend = Pick<Backend, "runStep" | "resumeSession">;
+
 export async function legacyDispatchWorker(
-  backend: Backend,
+  backend: LegacyDispatchBackend,
   spec: WorkerSpec,
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,

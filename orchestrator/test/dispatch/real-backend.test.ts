@@ -1929,6 +1929,22 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       findingsCount: 1,
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
+    // Misspelled gate keys on combined receipts must also re-ask (#899) —
+    // findingsCount alone must not treat escalte/escalatee as no-gate cargo.
+    expect(receipt.safeParse({
+      findingsCount: 0,
+      escalte: { reason: "typo key", diagnosis: "must re-ask" },
+    }).success).toBe(false);
+    expect(receipt.safeParse({
+      findingsCount: 2,
+      escalatee: { reason: "misspelled", diagnosis: "must re-ask" },
+    }).success).toBe(false);
+    // Ordinary cargo keys remain free.
+    expect(receipt.safeParse({
+      findingsCount: 0,
+      findings: [],
+      findingFamilies: [{ identityKeys: ["c|l|q"] }],
+    }).success).toBe(true);
   });
 
   it("prefers typed Output.object over sidecar/stdout for reviewer receipts", () => {

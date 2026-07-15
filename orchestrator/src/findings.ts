@@ -42,12 +42,14 @@ export function findingIdentityKeys(
 
 /**
  * Opaque pass-through of typed reviewer findings cargo for the fixer landing.
- * Shape tolerance for untyped raw receipts belongs at the decode boundary
- * ({@link decodeReviewerOpenCountReceipt}), not in the runner. Identity keys
- * are NOT derived here — {@link findingIdentityKeys} at the landing writer.
+ * Callers must already hold a typed {@link Finding} array (from
+ * {@link decodeReviewerOpenCountReceipt} or a typed ReviewerOutput). Shape
+ * tolerance for untyped raw receipts stays at the decode boundary only —
+ * this helper never re-decodes. Identity keys are NOT derived here —
+ * {@link findingIdentityKeys} at the landing writer.
  */
 export function opaqueFindingsCargo(
-  findings: ReadonlyArray<Finding> | unknown,
+  findings: ReadonlyArray<Finding>,
 ): Finding[] {
-  return Array.isArray(findings) ? [...(findings as Finding[])] : [];
+  return [...findings];
 }

@@ -1062,6 +1062,44 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(agent.resumedSessions).toEqual([undefined, "same-decision-session"]);
   });
 
+  it("recovers combined open-count+gate when escalate key is misspelled (bad→good)", async () => {
+    // #899: misspelled gate keys on a findingsCount receipt must fail schema so
+    // Sandcastle same-session re-asks the original author — not silent no-gate.
+    const good = {
+      findingsCount: 1,
+      findings: [],
+      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      ...VALID_CMR_VERDICT_FIELDS,
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: "cmr",
+      schema: workerReceiptSchema(),
+      emissions: [
+        {
+          body: JSON.stringify({
+            findingsCount: 1,
+            escalte: { reason: "typo", diagnosis: "key" },
+          }),
+        },
+        { body: JSON.stringify(good) },
+      ],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "same-cmr-combined-misspell-session",
+      cleanups,
+    });
+    expect(result.output).toMatchObject({
+      findingsCount: 1,
+      escalate: good.escalate,
+    });
+    expect(agent.callCount).toBe(2);
+    expect(agent.resumedSessions).toEqual([
+      undefined,
+      "same-cmr-combined-misspell-session",
+    ]);
+  });
+
   it("exhausts decision-gate maxRetries via real sc.run without inventing a gate", async () => {
     const agentOut: { agent?: ScriptedAgent } = {};
     try {
@@ -1652,6 +1690,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       findingsCount: 2,
       escalate: { reason: "owner decision", diagnosis: "design fork" },
     }).success).toBe(true);
+    // Misspelled gate keys on combined open-count receipts must re-ask too.
+    expect(workerReceiptSchema().safeParse({
+      findingsCount: 0,
+      escalte: { reason: "typo", diagnosis: "key" },
+    }).success).toBe(false);
+    expect(workerReceiptSchema().safeParse({
+      findingsCount: 1,
+      escalatee: { reason: "misspelled", diagnosis: "must re-ask" },
+    }).success).toBe(false);
   });
 
   it("keeps approved finding-family cargo on an otherwise typed CMR verdict", () => {

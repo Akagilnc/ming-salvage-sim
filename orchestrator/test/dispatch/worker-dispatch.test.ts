@@ -1042,7 +1042,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
 
   it("forwards a coder worker to runStep and wraps the output as completed", async () => {
     const be = new LegacyBackend();
-    const res = await legacyDispatchWorker(be as unknown as Backend, coderWorker, {
+    const res = await legacyDispatchWorker(be, coderWorker, {
       worktree: be.worktree,
     });
     expect(be.runStepCalls.length).toBe(1);
@@ -1063,7 +1063,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       const be = new LegacyBackend();
       const worktree = { ...be.worktree, path: worktreePath };
       await legacyDispatchWorker(
-        be as unknown as Backend,
+        be,
         { ...coderWorker, id: "S5", session: "fresh" },
         {
           worktree,
@@ -1103,7 +1103,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
         action: "fix_now" as const,
       };
       await legacyDispatchWorker(
-        be as unknown as Backend,
+        be,
         { ...coderWorker, id: "S5", session: "fresh" },
         {
           worktree,
@@ -1139,7 +1139,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       const be = new LegacyBackend();
       const worktree = { ...be.worktree, path: worktreePath };
 
-      await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, session: "fresh" }, {
+      await legacyDispatchWorker(be, { ...coderWorker, session: "fresh" }, {
         worktree,
         stateDir,
       });
@@ -1158,7 +1158,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       execFileSync("git", ["init"], { cwd: worktreePath, stdio: "ignore" });
       const be = new LegacyBackend();
 
-      await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S5" }, {
+      await legacyDispatchWorker(be, { ...coderWorker, id: "S5" }, {
         worktree: { ...be.worktree, path: worktreePath },
         stateDir,
         resumeSessionId: "sess-abc",
@@ -1177,7 +1177,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     // The resume path is keyed by resumeSessionId. ADR 0030 uses separate
     // runner-visible worker steps for build/review/fix; this assertion only
     // covers forwarding one recorded worker session id through the legacy seam.
-    await legacyDispatchWorker(be as unknown as Backend, { ...coderWorker, id: "S2" }, {
+    await legacyDispatchWorker(be, { ...coderWorker, id: "S2" }, {
       worktree: be.worktree,
       resumeSessionId: "sess-abc",
     });
@@ -1197,7 +1197,7 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
       // type-checks; the kind (not the id) is what the fail-closed guard rejects.
       await expect(
         legacyDispatchWorker(
-          be as unknown as Backend,
+          be,
           { ...coderWorker, id: "S2", kind },
           { worktree: be.worktree },
         ),
