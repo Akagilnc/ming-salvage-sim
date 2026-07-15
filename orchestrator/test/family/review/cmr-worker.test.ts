@@ -63,6 +63,10 @@ import {
   workerReceiptSchema,
 } from "../../../src/receiptRecovery.js";
 import {
+  CODER_RECEIPT_TAG,
+  coderStationReceiptSchema,
+} from "../../../src/stationReceiptContracts.js";
+import {
   MAX_DISPATCH_ATTEMPTS,
   withMechanicalRetry,
 } from "../../../src/dispatchRetry.js";
@@ -1365,10 +1369,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
   });
 
-  it("#598 same-position redispatch on decision-gate SOE exhaust; zero next-gate", async () => {
-    // #899 four-case matrix (production): decision-gate SO on the family
-    // coder-fix seat exhausts via real sc.run → Action throw → #598 mechanical
-    // redispatch at the same fixed position. No human-loop park; no next-gate.
+  it("#598 same-position redispatch on T2 coder SOE exhaust; zero next-gate", async () => {
+    // #899 / #919 M1: T2 coder station receipt SO on the family coder-fix seat
+    // exhausts via real sc.run → Action throw → #598 mechanical redispatch at the
+    // same fixed position. No human-loop park; no next-gate.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1378,7 +1382,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let nextGateCalls = 0;
     let lastExhaustError: unknown;
     class Backend extends RealFamilyBackend {
-      /** Expose the production coder-fix seat that binds decisionGateOutput(). */
+      /** Expose the production coder-fix seat that binds T2 coder receipt SO. */
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
         return this.runFamilyCoderFixWorker(spec, ctx);
       }
@@ -1390,23 +1394,44 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: DECISION_GATE_TAG,
+          tag: CODER_RECEIPT_TAG,
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         try {
           await runScriptedStructuredOutput({
-            tag: DECISION_GATE_TAG,
-            schema: decisionGateSignalSchema,
+            tag: CODER_RECEIPT_TAG,
+            schema: coderStationReceiptSchema(),
             emissions: [
-              { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
-              { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
-              { body: JSON.stringify({ escalate: { reason: "r", diagnosis: "" } }) },
+              {
+                body: JSON.stringify({
+                  station: "familyCoderFix",
+                  status: "escalate",
+                  reason: "",
+                  diagnosis: "",
+                }),
+              },
+              {
+                body: JSON.stringify({
+                  station: "familyCoderFix",
+                  status: "escalate",
+                  reason: "",
+                  diagnosis: "x",
+                }),
+              },
+              {
+                body: JSON.stringify({
+                  station: "familyCoderFix",
+                  status: "escalate",
+                  reason: "r",
+                  diagnosis: "",
+                }),
+              },
             ],
             maxRetries: RECEIPT_MAX_RETRIES,
-            sessionId: `sess-decision-soe-598-${sandcastleCalls}`,
+            sessionId: `sess-coder-soe-598-${sandcastleCalls}`,
             cleanups,
           });
-          throw new Error("expected StructuredOutputError after decision-gate exhaust");
+          throw new Error("expected StructuredOutputError after T2 coder SO exhaust");
         } catch (err) {
           lastExhaustError = err;
           throw err;
@@ -1414,11 +1439,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       }
       protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
         nextGateCalls += 1;
-        throw new Error("next CMR gate must not run after decision-gate SOE");
+        throw new Error("next CMR gate must not run after coder T2 SOE");
       }
       protected override async runShipWorker(): Promise<ReturnType<typeof shipOutcomeFromResult>> {
         nextGateCalls += 1;
-        throw new Error("ship gate must not run after decision-gate SOE");
+        throw new Error("ship gate must not run after coder T2 SOE");
       }
     }
     const be = new Backend({
@@ -1444,9 +1469,9 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(lastExhaustError).toBeInstanceOf(sc.StructuredOutputError);
   });
 
-  it("accepts initial-good decision-gate at the family coder-fix production seam", async () => {
-    // #899 four-case matrix (production): first-good decision gate through
-    // production seat + real sc.run — one agent emission, no repair.
+  it("accepts initial-good T2 coder receipt at the family coder-fix production seam", async () => {
+    // #899 / #919 M1: first-good T2 coder station receipt through production
+    // seat + real sc.run — one agent emission, no repair.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1456,7 +1481,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let nextGateCalls = 0;
     const agentOut: { agent?: ScriptedAgent } = {};
     const good = {
-      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      station: "familyCoderFix",
+      status: "escalate",
+      reason: "owner choice",
+      diagnosis: "contract fork",
     };
     class Backend extends RealFamilyBackend {
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
@@ -1470,15 +1498,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: DECISION_GATE_TAG,
+          tag: CODER_RECEIPT_TAG,
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         const run = await runScriptedStructuredOutput({
-          tag: DECISION_GATE_TAG,
-          schema: decisionGateSignalSchema,
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
           emissions: [{ body: JSON.stringify(good) }],
           maxRetries: RECEIPT_MAX_RETRIES,
-          sessionId: "prod-decision-initial-good-session",
+          sessionId: "prod-coder-initial-good-session",
           cleanups,
           agentOut,
         });
@@ -1486,11 +1514,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       }
       protected override async runCmrWorker(): Promise<CmrWorkerOutcome> {
         nextGateCalls += 1;
-        throw new Error("next CMR gate must not run on initial-good decision gate");
+        throw new Error("next CMR gate must not run on initial-good T2 coder receipt");
       }
     }
     const be = new Backend({
-      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-initial-good-ledger-"),
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("coder-initial-good-ledger-"),
       repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
       soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
     });
@@ -1507,8 +1535,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(nextGateCalls).toBe(0);
   });
 
-  it("recovers decision-gate via production coder-fix + real sc.run (bad→good)", async () => {
-    // #899: decision-gate four-case matrix through production seat + real sc.run.
+  it("recovers T2 coder receipt via production coder-fix + real sc.run (bad→good)", async () => {
+    // #899 / #919 M1: T2 coder receipt re-ask through production seat + real sc.run.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1517,7 +1545,10 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     let sandcastleCalls = 0;
     const agentOut: { agent?: ScriptedAgent } = {};
     const good = {
-      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      station: "familyCoderFix",
+      status: "escalate",
+      reason: "owner choice",
+      diagnosis: "contract fork",
     };
     class Backend extends RealFamilyBackend {
       public runFix(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
@@ -1531,18 +1562,25 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: DECISION_GATE_TAG,
+          tag: CODER_RECEIPT_TAG,
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         const run = await runScriptedStructuredOutput({
-          tag: DECISION_GATE_TAG,
-          schema: decisionGateSignalSchema,
+          tag: CODER_RECEIPT_TAG,
+          schema: coderStationReceiptSchema(),
           emissions: [
-            { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+            {
+              body: JSON.stringify({
+                station: "familyCoderFix",
+                status: "escalate",
+                reason: "",
+                diagnosis: "",
+              }),
+            },
             { body: JSON.stringify(good) },
           ],
           maxRetries: RECEIPT_MAX_RETRIES,
-          sessionId: "prod-decision-recover-session",
+          sessionId: "prod-coder-recover-session",
           cleanups,
           agentOut,
         });
@@ -1550,7 +1588,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       }
     }
     const be = new Backend({
-      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-prod-recover-ledger-"),
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("coder-prod-recover-ledger-"),
       repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
       soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
     });
@@ -1566,11 +1604,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(agentOut.agent?.callCount).toBe(2);
     expect(agentOut.agent?.resumedSessions).toEqual([
       undefined,
-      "prod-decision-recover-session",
+      "prod-coder-recover-session",
     ]);
   });
 
-  it("fails decision-gate non-resumable provider via production coder-fix + real sc.run", async () => {
+  it("fails T2 coder receipt non-resumable provider via production coder-fix + real sc.run", async () => {
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -1590,16 +1628,19 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
         expect(options.output).toEqual(expect.objectContaining({
-          tag: DECISION_GATE_TAG,
+          tag: CODER_RECEIPT_TAG,
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
         return (
           await runScriptedStructuredOutput({
-            tag: DECISION_GATE_TAG,
-            schema: decisionGateSignalSchema,
+            tag: CODER_RECEIPT_TAG,
+            schema: coderStationReceiptSchema(),
             emissions: [{
               body: JSON.stringify({
-                escalate: { reason: "r", diagnosis: "d" },
+                station: "familyCoderFix",
+                status: "escalate",
+                reason: "r",
+                diagnosis: "d",
               }),
             }],
             maxRetries: RECEIPT_MAX_RETRIES,
@@ -1615,7 +1656,7 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       }
     }
     const be = new Backend({
-      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("decision-prod-nonresumable-ledger-"),
+      workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("coder-prod-nonresumable-ledger-"),
       repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir,
       soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123",
     });
@@ -3048,9 +3089,9 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
   });
 
-  it("attaches signal-only decision Output.object for family coder without cargo-shape re-ask", async () => {
-    // #899: decision-gate Output.object is attached; malformed committed cargo is
-    // still opaque and does not force a second cargo-shape invocation.
+  it("attaches T2 coder station receipt SO for family coder; cargo stays opaque", async () => {
+    // #899 / #919 M1: T2 coderStationReceiptSchema is attached; malformed
+    // committed cargo siblings stay opaque and do not invent refuse traffic.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -3080,8 +3121,8 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
           stdout: "family coder finished with opaque sidecar cargo",
           commits: [],
           iterations: [{ sessionId: "family-coder-malformed" }],
-          // Typed validated "no escalate" with opaque cargo fields.
-          output: { committed: "not-a-boolean" },
+          // Valid T2 completed traffic; committed cargo remains opaque/tolerant.
+          output: { station: "familyCoderFix", status: "completed" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -3104,7 +3145,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     });
     expect(be.calls).toHaveLength(1);
     expect(be.calls[0]!.output).toMatchObject({
-      tag: "decision",
+      tag: CODER_RECEIPT_TAG,
       maxRetries: 2,
     });
     expect(be.calls[0]!.resumeSession).toBeUndefined();
@@ -3124,8 +3165,11 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       protected override mountShipAuth(): ShipAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
         this.calls += 1;
-        // Typed no-gate signal present; cargo sidecar may still be empty.
-        return typedSandboxRunResult({});
+        // Legal T2 completed traffic; cargo sidecar may still be empty.
+        return typedSandboxRunResult({
+          station: "familyCoderFix",
+          status: "completed",
+        });
       }
     }
     const be = new NoSessionBackend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("family-coder-no-session-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });

@@ -37,9 +37,9 @@
  *     / required-leg degradation floor. #875 demolished the accounting court
  *     (leg-accounting death, claimed-fixed coverage audit, disposition-enum kill):
  *     envelope prose no longer aborts a live run. #930: family court closure is
- *     the shared T2 judge tri-state (converged|continue|escalate) — open-count
- *     as a second closer is deleted. Three-channel routing stays
- *     (exit / judge status / decision gate) plus real infra durable abort.
+ *     the shared T2 judge tri-state (converged|continue|escalate) — residual
+ *     open-count is boundary-only transport (never a second closer). Three-channel
+ *     routing stays (exit / judge status / decision gate) plus real infra durable abort.
  *
  * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
  * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,
@@ -144,7 +144,7 @@ import {
   priorFamilyJudgeVerdictRowsFromLedger,
 } from "../judgeStation.js";
 import { residualIntegratedCmrToJudgeOutput } from "./dispatchFamilyWorker.js";
-import { reviewFixDecisionGate } from "../reviewFixAssertionGate.js";
+import { coderRefuseTrafficKeys } from "../coderRefuseExit.js";
 import {
   buildReviewRoundStamp,
   readTelemetryRecords,
@@ -262,7 +262,7 @@ export interface VerifyCmrInput {
    * worker as artifact pointers (ADR 0130 case handoff). #875 demolished the
    * verifyCmr accounting court: the runner does NOT parse claim/disposition
    * coverage of these keys to abort a live run. Three-channel routing only
-   * (exit / findings count / decision gate), plus real infra durable abort.
+   * (exit / judge status / decision gate), plus real infra durable abort.
    */
   readonly priorCmrFindingIdentityKeys?: readonly string[];
   /** Pass-scoped prior finding identity keys; preferred over the legacy flat set. */
@@ -832,14 +832,10 @@ async function runCmrCoderFix(input: {
     return { result: { ok: false, ran: true }, familyHeadAfter };
   }
 
-  // #930: legal refuse is a completion, not a terminal / idle death — blind-route
-  // keys back to the family judge for re-ruling (same contract as single-slice).
-  const refuseRecords = fixResult.output.refuseRecords ?? [];
-  const refusedFindingIdentityKeys =
-    refuseRecords.length > 0
-      ? (reviewFixDecisionGate({ records: refuseRecords })
-          ?.refusedFindingIdentityKeys ?? [])
-      : (fixResult.output.refusedFindingIdentityKeys ?? []);
+  // #930 / #919 M1: legal refuse is a completion, not a terminal / idle death —
+  // blind-route keys back to the family judge (same contract as single-slice
+  // {@link coderRefuseTrafficKeys}: envelope keys first, refuseRecords fallback).
+  const refusedFindingIdentityKeys = coderRefuseTrafficKeys(fixResult.output);
 
   await recordCmrFixCommitted(familyBackend, {
     cmrPass: pass,
@@ -919,7 +915,7 @@ async function readPostCmrCurrentHead(
  *
  * Head position + tracked residue are **routing / advisory plumbing**, never a
  * capital crime. Mismatches are ledger-visible so operators can see them, but
- * the pass continues on the three channels (exit / findings count / decision
+ * the pass continues on the three channels (exit / judge status / decision
  * gate). Reader and ledger failures are also telemetry-only: git state never
  * decides whether a completed reviewer receipt is accepted.
  */

@@ -59,13 +59,16 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import {
   classifyDecisionGate,
+  coderReceiptOutput,
   decisionGateOutput,
   logAndRethrowReceiptFailure,
   requireTypedTrafficSignal,
   workerReceiptOutput,
 } from "../receiptRecovery.js";
 import {
+  CODER_RECEIPT_TAG,
   JUDGE_RECEIPT_TAG,
+  coderStationReceiptSchema,
   decodeJudgeVerdict,
   judgeStationReceiptSchema,
   type JudgeVerdict,
@@ -94,7 +97,7 @@ import {
   agentForSlug,
   candidateBranches,
   lastSessionId,
-  coderCargoFields,
+  projectCoderStationReceipt,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   appendAgyAuthMount,
@@ -191,7 +194,6 @@ import {
 import type {
   CleanupResult,
   CliMonitorSpawnSpec,
-  CoderResult,
   DispatchContext,
   DocReleaseResult,
   Escalation,
@@ -1393,7 +1395,7 @@ export class RealFamilyBackend implements FamilyBackend {
    * reviewer for ONE ADR 0030 pass (completeness or correctness). It
    * `Skill`-invokes ak-cross-m-review in-container and returns a TERMINAL review
    * verdict. The runner (`verifyCmr.ts`) owns pass order, ADR0032 strong-leg /
-   * required-leg floor, three-channel routing (exit / findings count / decision
+   * required-leg floor, three-channel routing (exit / judge status / decision
    * gate), coder-fix dispatch, and fresh re-review before ship. #875 demolished
    * the accounting court (leg-accounting death / claimed-fixed coverage /
    * disposition-enum kill). A non-converged review outcome is a completed CMR
@@ -1958,7 +1960,13 @@ export class RealFamilyBackend implements FamilyBackend {
             maxIterations: spec.maxIter,
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
-            output: decisionGateOutput(),
+            // #919 post-R8 M1: same T2 coder station receipt as single-slice
+            // (#924 / coderStationReceiptSchema) — refuse traffic must survive
+            // the family decode path (not decision-gate dual-channel).
+            output: coderReceiptOutput(
+              coderStationReceiptSchema(),
+              CODER_RECEIPT_TAG,
+            ),
             // #909: shared sandbox quota-probe.
             quotaProbe: this.familyQuotaProbeContext(spec, ctx),
           });
@@ -2145,6 +2153,11 @@ export class RealFamilyBackend implements FamilyBackend {
     return { imageName: this.opts.imageName, env, mounts };
   }
 
+  /**
+   * #919 post-R8 M1 — family coder-fix uses the same T2 projection as
+   * single-slice {@link projectCoderStationReceipt}: status:refused + keys
+   * survive; cargo refuseRecords are opaque; cargo never invents refuse traffic.
+   */
   protected familyCoderResultFromRun(
     result: Pick<
       Awaited<ReturnType<typeof sc.run>>,
@@ -2153,37 +2166,33 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     outcomePath: string,
   ): WorkerResult {
+    void spec;
     // Output.object was attached for this seat: absent typed signal fails for
     // #598 — never treat missing SO as cargo/no-gate completion (#899).
     const typed = requireTypedTrafficSignal(result.output, "family-coder-fix");
-    const gate = classifyDecisionGate(typed, "family-coder-fix");
-    // Sidecar cargo is always enrich-only. On a typed bell, preserve real
-    // committed/commitsAdded (escalate is orthogonal to the commit report).
-    const cargoOutput = this.familyCoderCargoOutput(outcomePath);
-    if (gate.kind === "bell") {
+    const cargo = this.familyCoderCargoRaw(outcomePath);
+    try {
       return {
         kind: "completed",
-        output: {
-          ...cargoOutput,
-          escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
-        },
+        output: projectCoderStationReceipt(typed, cargo),
         sessionId: lastSessionId(result),
       };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        reason.startsWith("illegal coder station receipt")
+          ? `family-coder-fix: ${reason}`
+          : `family-coder-fix: illegal coder station receipt: ${reason}`,
+      );
     }
-    // No-gate typed signal (`{}`): cargo never reintroduces escalate.
-    return {
-      kind: "completed",
-      output: cargoOutput,
-      sessionId: lastSessionId(result),
-    };
   }
 
   /**
-   * Family coder-fix cargo from the sidecar only. Tolerant field reads — no
-   * Zod/schema gate on ordinary cargo. Fate keys are stripped so a spoofed
-   * escalate cannot override a validated typed decision (#899 / ADR 0131).
+   * Family coder-fix cargo from the sidecar only. Tolerant reads — no
+   * Zod/schema gate on ordinary cargo. Fate keys (escalate) are stripped so
+   * a spoofed sidecar cannot override a validated typed T2 receipt (#899).
    */
-  private familyCoderCargoOutput(outcomePath: string): CoderResult {
+  private familyCoderCargoRaw(outcomePath: string): unknown | undefined {
     try {
       const cargo = (() => {
         try {
@@ -2192,22 +2201,17 @@ export class RealFamilyBackend implements FamilyBackend {
           return undefined;
         }
       })();
-      if (cargo === undefined) {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
+      if (cargo === undefined) return undefined;
+      if (cargo !== null && typeof cargo === "object" && !Array.isArray(cargo)) {
+        const stripped: Record<string, unknown> = {
+          ...(cargo as Record<string, unknown>),
+        };
+        delete stripped.escalate;
+        return stripped;
       }
-      const stripped: Record<string, unknown> =
-        cargo !== null && typeof cargo === "object" && !Array.isArray(cargo)
-          ? { ...(cargo as Record<string, unknown>) }
-          : {};
-      delete stripped.escalate;
-      const fields = coderCargoFields(stripped);
-      return {
-        kind: "coder",
-        committed: fields.committed,
-        commitsAdded: fields.commitsAdded,
-      };
+      return cargo;
     } catch {
-      return { kind: "coder", committed: false, commitsAdded: 0 };
+      return undefined;
     }
   }
 
@@ -3573,10 +3577,11 @@ export interface MergerAuth {
 }
 
 /**
- * Prefer Sandcastle typed receipt for fate signals (decision gate + findingsCount).
+ * Prefer Sandcastle typed receipt for fate signals (T2 judge + decision gate).
  * #928: completion is clean exit + typed envelope / legal sidecar — no signal.
- * Sidecar/stdout are cargo only — never override a schema-validated count or
- * admit an unvalidated decision bell into the human loop (#899).
+ * Sidecar/stdout are cargo only — never override a schema-validated judge
+ * envelope or admit an unvalidated decision bell into the human loop (#899).
+ * Residual open-count paper is transport-only (project at worker boundary).
  */
 export function cmrOutcomeFromResult(result: {
   cmrReviewLegs?: ReadonlyArray<{ readonly slug: string }>;
@@ -3585,12 +3590,12 @@ export function cmrOutcomeFromResult(result: {
   stdout?: string;
 }): CmrWorkerOutcome {
   const stdout = (result.stdout ?? "").trim();
-  // Typed Output.object is the sole fate channel (findingsCount + decision gate).
+  // Typed Output.object is the sole live fate channel (judge tri-state + gate).
   if (result.output !== undefined) {
     return classifyCmrOutcomePayload(result.output, "CMR typed receipt");
   }
-  // Cargo-only fallbacks: sidecar then stdout tags. Never admit findingsCount or
-  // escalate as process fate from untyped transports (#899).
+  // Cargo-only fallbacks: sidecar then stdout tags. Never admit residual
+  // findingsCount or escalate as process fate from untyped transports (#899).
   if (result.outcomePath !== undefined) {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
@@ -3871,7 +3876,10 @@ function classifyCmrOutcomePayload(
     };
   }
 
-  // Residual open-count / legacy cmr paper — transport only (project at boundary).
+  // #919 S2: residual open-count / legacy cmr paper is BOUNDARY-ONLY transport.
+  // Typed judge failed above → never treat open-count as live fate here; project
+  // once at cmrOutcomeToWorkerResult / residualIntegratedCmrToJudgeOutput
+  // (never silent clean; never a second closer).
   return residualCmrVerdictCargo(normalizedParsed);
 }
 

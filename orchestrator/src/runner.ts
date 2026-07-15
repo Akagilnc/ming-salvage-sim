@@ -1237,14 +1237,15 @@ function buildErrorReason(step: StepId, _output: StepOutput | undefined): string
 }
 
 /**
- * #925 / #919 S1: S3/S6 seats collapse residual paper via the sole
+ * #925 / #919 S1: judge seats collapse residual paper via the sole
  * {@link projectJudgeSeatOutput} helper (shared with route topology).
+ * Seat membership = sole {@link isJudgeSeat} (no hand-written S3||S6 OR).
  */
 function normalizeJudgeSeatOutput(
   step: SliceStepId,
   output: StepOutput,
 ): StepOutput {
-  if (step !== "S3" && step !== "S6") return output;
+  if (!isJudgeSeat({ step })) return output;
   return projectJudgeSeatOutput(output);
 }
 
@@ -2602,11 +2603,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         break;
       }
     }
-    // #925: rebuild judge session continuity from the last S3/S6 ledger row.
+    // #925 / #919 S1: rebuild judge session from last judge-seat ledger row.
     for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
       const entry = plan.priorLedger[i]!;
       if (
-        (entry.step === "S3" || entry.step === "S6") &&
+        isJudgeSeat({ step: entry.step }) &&
         typeof entry.sessionId === "string"
       ) {
         judgeSessionId = entry.sessionId;
@@ -2998,8 +2999,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           ) {
             resumeSessionId = coderSessionId;
           } else if (
-            // #925: S3→S6 (and multi-round S6) resumes the retained judge session.
-            (step === "S3" || step === "S6") &&
+            // #925 / #919 S1: S3→S6 (and multi-round S6) resumes retained judge session.
+            isJudgeSeat({ step }) &&
             typeof judgeSessionId === "string" &&
             judgeSessionModel !== undefined &&
             stepSpecs[step].model === judgeSessionModel
@@ -3034,10 +3035,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 };
               }
               const focusPath = relayFocusForDispatch(step);
-              const priorJudgeVerdicts =
-                step === "S3" || step === "S6"
-                  ? priorJudgeVerdictRowsFromLedger(ledger)
-                  : undefined;
+              const priorJudgeVerdicts = isJudgeSeat({ step })
+                ? priorJudgeVerdictRowsFromLedger(ledger)
+                : undefined;
               const dispatchCtx = {
                 runId,
                 worktree,
@@ -3318,11 +3318,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               coderSessionId = stepSessionId;
               coderSessionModel = stepSpecs[step].model;
             }
-            // #925: retain judge session for S6 continuity (and multi-round S6).
-            if (
-              (step === "S3" || step === "S6") &&
-              typeof stepSessionId === "string"
-            ) {
+            // #925 / #919 S1: retain judge session for S6 continuity.
+            if (isJudgeSeat({ step }) && typeof stepSessionId === "string") {
               judgeSessionId = stepSessionId;
               judgeSessionModel = stepSpecs[step].model;
             }
@@ -3626,7 +3623,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             refuseRecordsForReverify = refuseLanding.refuseRecords;
           }
         }
-        if (step === "S3" || step === "S6") lastReviewerStepId = step;
+        if (isJudgeSeat({ step })) lastReviewerStepId = step;
         if (step === "S5") {
           pendingRawReviewerArtifacts = undefined;
           pendingFixerFindingScope = undefined;
@@ -3662,12 +3659,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
-    // #925: verdict + kill flips land on S3/S6 rows (S4 dissolved). Residual
-    // S4 still accepts dispositions if a legacy path writes them.
+    // #925 / #919 S1: verdict + kill flips land on judge seats (S4 residual).
+    // Residual S4 still accepts dispositions if a legacy path writes them.
     const stepFindingDispositions =
-      step === "S3" || step === "S6" || step === "S4"
-        ? findingDispositions
-        : undefined;
+      isJudgeSeat({ step }) || step === "S4" ? findingDispositions : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
@@ -3729,11 +3724,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #926: after a judge continue row is durably recorded, execute optional
     // advanceCoder (or stay-put + audit). Never terminals for roster unusability.
     if (
+      isJudgeSeat({ step }) &&
       (step === "S3" || step === "S6") &&
       output?.kind === "judge" &&
       output.status === "continue" &&
       typeof output.advanceCoder === "string"
     ) {
+      // step narrowed to S3|S6 for applyJudgeAdvanceCoder; membership = isJudgeSeat.
       await applyJudgeAdvanceCoder(output.advanceCoder, step);
     }
 

@@ -195,15 +195,17 @@ export function priorJudgeVerdictRowsFromSources(
   for (const entry of ledger) {
     if (wantSlice) {
       // Slice steps never carry family event markers.
+      const seatStep = entry.step;
       if (
         entry.event === undefined &&
-        (entry.step === "S3" || entry.step === "S6") &&
+        seatStep !== undefined &&
+        isJudgeSeat({ step: seatStep }) &&
         entry.output?.kind === "judge" &&
         isJudgeVerdictStatus(entry.output.status)
       ) {
         const out = entry.output;
         pushPriorJudgeRow(rows, {
-          step: entry.step,
+          step: seatStep,
           status: out.status as JudgeVerdictStatus,
           ...(out.advanceCoder !== undefined
             ? { advanceCoder: out.advanceCoder }
