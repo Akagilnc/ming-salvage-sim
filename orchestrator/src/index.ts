@@ -82,7 +82,6 @@ export type {
 export {
   collectPidTree,
   dispatchMonitoredCliWorker,
-  hasCompletionSignalInLog,
   instanceMatchesHandle,
   isWorkerAlive,
   isWorkerIdle,

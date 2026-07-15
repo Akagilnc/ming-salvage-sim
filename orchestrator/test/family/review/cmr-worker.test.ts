@@ -13,8 +13,8 @@
  *
  * Tested WITHOUT a real container:
  *   - parseCmrOutcome: the `<cmr>` tag → converged / red / escalate / sparse cargo;
- *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion signals
- *     remain compatibility telemetry, not a verdict gate;
+ *   - cmrOutcomeFromResult: sidecar/structured outcome parsing; completion is
+ *     clean exit + legal sidecar / typed envelope (no password gate);
  *   - RealFamilyBackend.dispatchWorker(cmr): routes ak-cross-m-review + FRESH +
  *     clean cmr reviewer soul through the injected `runCmrWorker` seam and wraps the verdict
  *     into a WorkerResult (converged → completed; red → completed; escalate →
@@ -120,20 +120,18 @@ const DERIVED_EMPTY_FINDINGS_COUNT = { findingsCount: 0 } as const;
 /** A Sandcastle result fixture with the public result shape, not a partial cast. */
 function sandboxRunResult({
   branch = "fb",
-  completionSignal,
   stdout = "",
   commits = [],
   sessionId,
 }: {
   readonly branch?: string;
-  readonly completionSignal?: string;
   readonly stdout?: string;
   readonly commits?: ReadonlyArray<{ readonly sha: string }>;
   readonly sessionId?: string;
 } = {}): RunResult {
+  // #928: do not feed completionSignal — completion is exit + legal sidecar.
   return {
     branch,
-    completionSignal,
     stdout,
     commits: [...commits],
     iterations: sessionId === undefined ? [] : [{ sessionId }],
@@ -672,11 +670,8 @@ describe("integrated CMR pass prompt closure contract", () => {
 // ═══════════════════════ 2. cmrOutcomeFromResult (structured outcome) ═══════════════════════
 
 describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
-  const SIGNAL = cmrWorkerSpec().completionSignal;
-
-  it("a signaled converged run ⇒ a verdict outcome", () => {
+  it("a clean-exit typed/stdout verdict parses without any STEP_COMPLETE password", () => {
     const o = cmrOutcomeFromResult({
-      completionSignal: SIGNAL,
       stdout: `<cmr>${JSON.stringify({
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
@@ -687,26 +682,14 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
     if (o.kind === "verdict") expect(o.converged).toBe(true);
   });
 
-  it("an UNSIGNALED run still parses the structured verdict (signal is telemetry)", () => {
+  it("typed Output.object is the fate channel when present (#928 no signal gate)", () => {
     const o = cmrOutcomeFromResult({
-      completionSignal: undefined,
-      stdout: `<cmr>${JSON.stringify({
+      output: {
         converged: true,
         successfulLegs: DEFAULT_CMR_LEGS,
         ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>\nfindings = 0\n`,
-    });
-    expect(o.kind).toBe("verdict");
-  });
-
-  it("a wrong signal does not override the structured verdict", () => {
-    const o = cmrOutcomeFromResult({
-      completionSignal: "SOME_OTHER_SIGNAL",
-      stdout: `<cmr>${JSON.stringify({
-        converged: true,
-        successfulLegs: DEFAULT_CMR_LEGS,
-        ...VALID_CMR_VERDICT_FIELDS,
-      })}</cmr>\nfindings = 0\n`,
+      },
+      stdout: "noise without password",
     });
     expect(o.kind).toBe("verdict");
   });
@@ -714,7 +697,6 @@ describe("#335 cmrOutcomeFromResult — structured outcome parsing", () => {
   it("accounts worker verdict legs against the frozen worker route, not later process env", () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const result = {
-      completionSignal: SIGNAL,
       cmrReviewLegs: FROZEN_NORMAL_CMR_REVIEW_LEGS,
       // #899: findingsCount lives on the typed Output.object receipt only.
       output: {
@@ -832,7 +814,6 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           ...VALID_CMR_VERDICT_FIELDS,
         };
         return typedSandboxRunResult(verdict, {
-          completionSignal: "CMR_STEP_COMPLETE",
           stdout: `<cmr>${JSON.stringify(verdict)}</cmr>`,
         });
       }
@@ -3023,7 +3004,6 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
           successfulLegs: DEFAULT_CMR_LEGS,
           ...VALID_CMR_VERDICT_FIELDS,
         }, {
-          completionSignal: "CMR_STEP_COMPLETE",
           stdout: "compatibility tag intentionally absent",
         });
       }
@@ -3081,7 +3061,6 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         writeFileSync(outcomePathAtRun, JSON.stringify({ committed: "not-a-boolean" }), "utf8");
         return {
           branch: "fb",
-          completionSignal: "CODER_STEP_COMPLETE",
           stdout: "family coder finished with opaque sidecar cargo",
           commits: [],
           iterations: [{ sessionId: "family-coder-malformed" }],
@@ -3213,7 +3192,6 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
         );
         // Sidecar cargo present but typed SO missing → fail for #598.
         return sandboxRunResult({
-          completionSignal: "CMR_STEP_COMPLETE",
           stdout: `<cmr>${JSON.stringify({
             converged: true,
             successfulLegs: DEFAULT_CMR_LEGS,
@@ -3276,7 +3254,6 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
           ...VALID_CMR_VERDICT_FIELDS,
         };
         return typedSandboxRunResult(verdict, {
-          completionSignal: "CMR_STEP_COMPLETE",
           stdout: `<cmr>${JSON.stringify(verdict)}</cmr>\nfindings = 0\nCMR_STEP_COMPLETE`,
         });
       }

@@ -25,8 +25,8 @@ Always emit the official station envelope on the `<judge>` tag (Sandcastle
 <judge>{"station":"judge","status":"converged"}</judge>
 ```
 
-On the final single-iter step you MUST print `JUDGE_STEP_COMPLETE` on its own
-final line.
+Completion is clean exit + legal typed envelope / sidecar — no STEP_COMPLETE
+password. Finish inside the single iteration.
 
 ### Converged (no further fix rounds)
 

@@ -18,9 +18,6 @@ opaque `<verify>` cargo JSON. When `$ORCHESTRATOR_OUTCOME_PATH` is set, write
 the same cargo JSON object directly to that path (sidecar is cargo transport).
 Shape of the cargo:
 
-On the final multi-iter step you MUST print VERIFY_STEP_COMPLETE on its own
-final line (sandcastle iteration terminator — not optional telemetry).
-
 ```json
 {"converged": true}
 ```
@@ -51,3 +48,5 @@ they never block your verdict.
 On a post-fixer fresh re-check include `isRecheck: true` and echo every
 `fixMarkedFindingIdentityKeys` value from the landing file before returning
 `converged:true`; otherwise return `converged:false`.
+
+This seat is single-iteration. Completion is clean exit + legal sidecar / typed receipt — no STEP_COMPLETE password.

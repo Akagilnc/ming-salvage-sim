@@ -141,7 +141,7 @@ export interface PollPrReviewInput {
   readonly pollCount: number;
   /** Round freshness anchor — required for admissible bot/check evidence (#600 r4). */
   readonly roundTrigger: RoundTrigger;
-  /** Per-bot poll counts without a completion signal — used to drop overdue bots. */
+  /** Per-bot poll counts without a finished bot verdict — used to drop overdue bots. */
   readonly botPendingPolls?: Readonly<Partial<Record<OnlineReviewBotId, number>>>;
   /**
    * Optional clock for fail-closed head-drift re-anchor (online R2 Codex P2).
