@@ -95,8 +95,11 @@ class SeamOnlyBackend implements Backend {
     }
     if (spec.kind === "reviewer") {
       this.reviewCount += 1;
+      // Explicit open-count declaration for the fixture (ADR 0131 / #899): never
+      // derive findingsCount from findings.length as if that were production law.
+      const findingsCount = this.reviewCount === 1 ? 1 : 0;
       const findings: Finding[] =
-        this.reviewCount === 1
+        findingsCount === 1
           ? [
               {
                 severity: "high",
@@ -113,6 +116,7 @@ class SeamOnlyBackend implements Backend {
         output: {
           kind: "reviewer",
           findings,
+          findingsCount,
           ...(this.reviewCount > 1
             ? {
                 priorFindingDispositions: [
@@ -166,17 +170,17 @@ describe("#337 runner-visible per-slice review/fix worker dispatch", () => {
     expect(coderDispatches.map((s) => s.skill)).toEqual(["/tdd", "/tdd"]);
   });
 
-  it("the build worker spec carries the iterative maxIter (>1) and retains implementation context", async () => {
+  it("the build worker spec is a single-iteration seat and retains implementation context", async () => {
     // Assert on the spec the RUNNER ACTUALLY DISPATCHES (S2 worker spec → the build
-    // worker). S2 keeps the implementation-step iterative budget and retained
-    // context, while ADR 0030 dispatches per-slice review/fix as visible S3/S5/S6
-    // worker steps. This is a NORMAL fresh dispatch (NOT the crash/escalate resume
-    // path).
+    // worker). #899 / ADR 0128: one single-iteration Sandcastle run per seat; skill
+    // work finishes inside that invocation. ADR 0030 still dispatches per-slice
+    // review/fix as visible S3/S5/S6 worker steps. This is a NORMAL fresh dispatch
+    // (NOT the crash/escalate resume path).
     const backend = new SeamOnlyBackend();
     await runOrchestrator({ issueNumber: 337, backend });
     const s2 = backend.specs.find((s) => s.id === "S2");
     expect(s2).toBeDefined();
-    expect(s2!.maxIter).toBeGreaterThan(1);
+    expect(s2!.maxIter).toBe(1);
     expect(s2!.session).toBe("fresh");
     expect(s2!.contextRetention).toBe("retain"); // production worker retains context
     expect(s2!.skill).toBe("/tdd");

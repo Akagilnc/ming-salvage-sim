@@ -16,9 +16,9 @@
  * The family ship worker (RealFamilyBackend) emits this `<ship>` tag.
  */
 
-import { z } from "zod";
+import { parseLastTaggedJsonSoft } from "./lastTaggedJson.js";
+import { classifyDecisionGate } from "./receiptRecovery.js";
 import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
-import { probeWorkerDecisionBell } from "./workerReceipt.js";
 import type { Escalation } from "./types.js";
 
 /**
@@ -35,14 +35,14 @@ export type ShipWorkerOutcome =
   | {
       readonly kind: "shipped";
       readonly branch?: string;
-      readonly status: "pushed";
-      readonly pr?: never;
-    }
-  | {
-      readonly kind: "shipped";
-      readonly branch?: string;
-      readonly status: "pr_opened";
-      readonly pr: string;
+      /**
+       * Opaque delivery status token from cargo when present — free-form
+       * string, never synthesized. Fate is exit code + typed decision gate
+       * only (#899 / ADR 0131).
+       */
+      readonly status?: string;
+      /** Optional delivery cargo — never gates clean exit (#899). */
+      readonly pr?: string;
     }
   | {
       readonly kind: "escalate";
@@ -60,61 +60,50 @@ export function isFilledString(v: unknown): v is string {
 }
 
 /**
- * A genuinely non-empty string at the SCHEMA layer (cmr S336 r3): trimmed,
- * min-length 1 — rejects `""` and whitespace-only delivery cargo.
- */
-const nonEmpty = z.string().trim().min(1);
-
-/**
- * Cargo decoding for the non-bell `<ship>` shapes. The independent escalation
- * probe runs first and tolerates every sibling key; these schemas only enrich
- * transported cargo and never decide whether a clean worker process may continue.
- *
- * Mirrors family_ship.md:
- *   1. `{status:"pushed",    branch}`            — shipped, no pr (pr MUST be absent);
- *   2. `{status:"pr_opened", branch, pr}`        — shipped, pr REQUIRED;
- *   3. `{escalate:{reason, diagnosis}}` — a genuine decision bell.
- * Known success fields are non-empty when present. Unknown sibling fields remain
- * cargo.
- */
-const pushedSchema = z
-  .object({ status: z.literal("pushed"), branch: nonEmpty.optional() })
-  .passthrough();
-const prOpenedSchema = z
-  .object({
-    status: z.literal("pr_opened"),
-    branch: nonEmpty.optional(),
-    pr: nonEmpty,
-  })
-  .passthrough();
-/**
- * Read the runner-owned machine sidecar for a process that already exited cleanly.
- * `completionSignal` and `stdout` remain in the input shape as worker telemetry,
- * but neither can decide the route (ADR 0062 / #820). The bell is probed across
- * sidecar and stdout independently; everything else is best-effort cargo.
+ * Prefer Sandcastle typed decision signal for gates (#899). Machine sidecar is
+ * the opaque delivery-cargo channel only — never promotes escalation into fate
+ * when typed output is absent (#899). Stdout is telemetry only.
+ * Ordinary status/pr cargo is transported with tolerant field reads only — no
+ * Zod/schema gate and no SO re-ask on cargo shape (PRD #899 / ADR 0131).
  */
 export function shipOutcomeFromResult(result: {
   completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
+  output?: unknown;
 }): ShipWorkerOutcome {
+  // Typed Output.object is the sole fate channel for decision gates.
+  if (result.output !== undefined) {
+    const gate = classifyDecisionGate(result.output, "ship");
+    if (gate.kind === "bell") {
+      return {
+        kind: "escalate",
+        reason: gate.reason,
+        diagnosis: gate.diagnosis,
+      };
+    }
+    // Signal present with no gate (`{}`): enrich delivery cargo from sidecar only.
+    // Do not re-parse escalate from cargo (fourth channel).
+    return shipCargoFromSidecar(result.outcomePath);
+  }
+  // No typed signal: exit code is enough for process success. Sidecar may still
+  // enrich delivery cargo (status/pr) but MUST NOT supply escalate (#899).
+  return shipCargoFromSidecar(result.outcomePath);
+}
+
+function shipCargoFromSidecar(outcomePath: string | undefined): ShipWorkerOutcome {
   try {
-    if (result.outcomePath !== undefined) {
-      const sidecar = readWorkerOutcomeSidecar(result.outcomePath);
+    if (outcomePath !== undefined) {
+      const sidecar = readWorkerOutcomeSidecar(outcomePath);
       if (sidecar !== undefined) {
-        const classified = classifyShipOutcomePayload(sidecar);
-        if (classified.kind === "escalate") return classified;
-        const stdoutBell = parseShipOutcome(result.stdout);
-        if (stdoutBell.kind === "escalate") return stdoutBell;
-        return classified.kind === "shipped" ? classified : { kind: "completed" };
+        return classifyShipCargoPayload(sidecar);
       }
     }
-  } catch (err) {
-    const stdoutBell = parseShipOutcome(result.stdout);
-    return stdoutBell.kind === "escalate" ? stdoutBell : { kind: "completed" };
+  } catch {
+    // Unreadable sidecar: do not promote stdout delivery or bells into fate.
+    return { kind: "completed" };
   }
-  const stdoutBell = parseShipOutcome(result.stdout);
-  return stdoutBell.kind === "escalate" ? stdoutBell : { kind: "completed" };
+  return { kind: "completed" };
 }
 
 /**
@@ -127,52 +116,58 @@ export function shipOutcomeFromResult(result: {
  * The escalation block is probed before cargo parsing and accepts unknown sibling
  * fields. A cargo parse miss cannot override the clean exit or suppress a bell.
  * Only the LAST `<ship>` tag is read (the worker may iterate / self-rerun).
+ *
+ * @deprecated Prefer {@link shipOutcomeFromResult}. Stdout is not a fate channel
+ * for production ship seats (#820 / #899); kept for unit tests of tag shapes.
  */
 export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
-  const re = /<ship>([\s\S]*?)<\/ship>/g;
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  if (last === undefined) {
-    return { kind: "completed" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { kind: "completed" };
-  }
+  const parsed = parseLastTaggedJsonSoft(stdout, "ship");
+  if (parsed === undefined) return { kind: "completed" };
   return classifyShipOutcomePayload(parsed);
 }
 
+/** Full classify including decision-gate fate (typed channel / unit tests). */
 function classifyShipOutcomePayload(parsed: unknown): ShipWorkerOutcome {
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "completed" };
   }
-  const decisionBell = probeWorkerDecisionBell(parsed);
-  if (decisionBell !== undefined) {
+  // Malformed decision gates fail the Action for #598 — never enter the human
+  // loop as empty bells and never silently degrade to completed (#899).
+  const gate = classifyDecisionGate(parsed, "ship");
+  if (gate.kind === "bell") {
     return {
       kind: "escalate",
-      ...decisionBell,
+      reason: gate.reason,
+      diagnosis: gate.diagnosis,
     };
   }
-  // Best-effort cargo enrichment after the independent bell probe. A parse miss
-  // may reduce cargo richness, but shipOutcomeFromResult never lets it change fate.
-  const pushed = pushedSchema.safeParse(parsed);
-  if (pushed.success) {
-    return {
-      kind: "shipped",
-      status: "pushed",
-      ...(pushed.data.branch !== undefined ? { branch: pushed.data.branch } : {}),
-    };
+  return classifyShipCargoPayload(parsed);
+}
+
+/**
+ * Delivery-cargo only: opaque sidecar transport. No status enum court, no
+ * trim-based discard, no required-sibling gate, no synthesized status —
+ * process fate is exit code + typed decision gate only (#899 / ADR 0131).
+ * Known delivery fields are copied as-is when present; missing fields stay
+ * missing so off-shape cargo never becomes a fourth channel.
+ */
+function classifyShipCargoPayload(parsed: unknown): ShipWorkerOutcome {
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { kind: "completed" };
   }
-  const prOpened = prOpenedSchema.safeParse(parsed);
-  if (prOpened.success) {
-    return {
-      kind: "shipped",
-      status: "pr_opened",
-      ...(prOpened.data.branch !== undefined ? { branch: prOpened.data.branch } : {}),
-      pr: prOpened.data.pr,
-    };
+  const cargo = parsed as Record<string, unknown>;
+  // Opaque transport: no closed status whitelist, no default status. Any
+  // string status + optional branch/pr ride through when present.
+  const status = typeof cargo.status === "string" ? cargo.status : undefined;
+  const branch = typeof cargo.branch === "string" ? cargo.branch : undefined;
+  const pr = typeof cargo.pr === "string" ? cargo.pr : undefined;
+  if (status === undefined && branch === undefined && pr === undefined) {
+    return { kind: "completed" };
   }
-  return { kind: "completed" };
+  return {
+    kind: "shipped",
+    ...(status !== undefined ? { status } : {}),
+    ...(branch !== undefined ? { branch } : {}),
+    ...(pr !== undefined ? { pr } : {}),
+  };
 }

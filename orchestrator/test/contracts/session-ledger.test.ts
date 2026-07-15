@@ -70,7 +70,7 @@ class SeamExtensionBackend implements Backend {
     const output: StepOutput =
       spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }
-        : { kind: "reviewer", findings: [] };
+        : { kind: "reviewer", findings: [], findingsCount: 0 };
     if (!this.returnStepResult) return output; // bare StepOutput path
     // Real per-step session id keyed on the step id so each step is distinct.
     return { output, sessionId: `sess-${spec.id}` };

@@ -164,22 +164,18 @@ export interface StepSpec {
    */
   readonly completionSignal: string;
   /**
-   * Per-step iteration cap = the WITHIN-STEP agent (Ralph) retry budget for a
-   * single `sandbox.run()`. NOT the fix-loop convergence round limit.
+   * Per-seat Sandcastle iteration budget for a single `sandbox.run()`.
+   * NOT the fix-loop convergence round limit (runner topology owns that).
    *
-   * - coder / fix steps: > 1 (the agent iterates within the one step until the
-   *   step's work is done or it escalates).
-   * - reviewer steps: exactly 1 (single pass — reviewer never self-edits).
+   * #899 / ADR 0128: every selected seat is a single-iteration run (`maxIter: 1`).
+   * The skill finishes inside that one invocation; native structured-output
+   * re-asks (`Output.object` maxRetries) happen in-session and are not extra
+   * outer iterations. There is no outer Ralph multi-iter budget on worker seats.
    *
    * SEMANTICS (堵 #256 misuse): hitting maxIter means THAT step ends normally —
    * the outer `route()` loop then continues as usual. It is NEVER "the
    * orchestrator gives up": the orchestrator only stops when the MODEL emits an
    * `escalate` signal (US#18/US#19), never by counting iterations/rounds.
-   *
-   * v0.1: the runner does NOT enforce maxIter (lazy field on worker specs).
-   * When #256 wires Sandcastle, maxIter MUST be implemented with exactly this
-   * semantics (within-step retry budget) and MUST NOT degrade into a
-   * "count-to-N-then-give-up" fix-loop cap, which would violate US#18.
    */
   readonly maxIter: number;
   /**
@@ -313,10 +309,17 @@ export interface CoderOutput {
   readonly escalate?: Escalation;
 }
 
-/** Output of a reviewer step (S3/S6). `findings` is the reviewer's declared open-item cargo. */
+/**
+ * Output of a reviewer step (S3/S6). `findingsCount` is the self-reported open
+ * count (ADR 0131 / #899 routing signal); `findings` rows are cargo for the fixer.
+ * Count is required on this envelope — missing/invalid counts never become
+ * `kind: "reviewer"` (typed boundary maps them to unusable cargo).
+ */
 export interface ReviewerOutput {
   readonly kind: "reviewer";
   readonly findings: ReadonlyArray<Finding>;
+  /** Reviewer-declared open count; validated at the typed worker boundary. */
+  readonly findingsCount: number;
   readonly priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
@@ -337,9 +340,10 @@ export type EscalationKind = "decision" | "failure";
  * Minimal JSONL shape for recording the answer:
  * `{ "step":"S4", "event":"escalation_answered", "forStep":"S4", "answer":"..." }`
  * If the answer means "continue fixing" after an S4 no-progress decision, it is
- * executable only when it also carries `findingIdentityKey` or a `findingScope`
- * that matches the active finding; unscoped continue answers stay paused rather
- * than guessing which finding to reopen.
+ * executable only when it also carries an explicit `findingIdentityKey` or a
+ * non-empty `findingScope` (opaque transport to the fixer). Runner does not
+ * match scope against findings cargo (#899 / ADR 0131); unscoped continue
+ * answers stay paused rather than guessing which finding to reopen.
  *
  * It intentionally remains a ledger row, not an edit to the prior S8 boundary.
  */
@@ -364,11 +368,17 @@ export interface EscalationAnswerEvent extends EscalationAnswerPayload {
 
 /** Scope carried by runner bookkeeping events that target active findings. */
 export interface FindingRepairScope {
-  /** Exact runner identity keys for the finding lineage, when available. */
+  /** Exact identity keys for the finding lineage, when available. */
   readonly identityKeys?: ReadonlyArray<string>;
-  /** Broader path/location scope; only used when it maps to one active finding. */
+  /**
+   * Broader path/location scope. Opaque transport for the fixer — runner does
+   * not match this against findings cargo (#899 / ADR 0131).
+   */
   readonly locations?: ReadonlyArray<string>;
-  /** Broader category scope; only used when it maps to one active finding. */
+  /**
+   * Broader category scope. Opaque transport for the fixer — runner does not
+   * match this against findings cargo (#899 / ADR 0131).
+   */
   readonly categories?: ReadonlyArray<string>;
   /** Optional durable grouping label from a review thread / finding group. */
   readonly findingGroup?: string;
@@ -624,7 +634,11 @@ export interface WorkerSpec {
   readonly promptArgs?: Readonly<Record<string, string>>;
   /** Signal the worker emits to mark completion (Sandcastle `run()` API). */
   readonly completionSignal: string;
-  /** Within-step Ralph retry budget (NOT the fix-loop round cap — see {@link StepSpec.maxIter}). */
+  /**
+   * Per-seat Sandcastle iteration budget (NOT the fix-loop round cap).
+   * #899 / ADR 0128: production seats use `1`; SO re-asks are in-session.
+   * See {@link StepSpec.maxIter}.
+   */
   readonly maxIter: number;
   /** Short model slug the runtime maps to a baked-in CLI (PRD #244). */
   readonly model: string;
@@ -738,9 +752,17 @@ export interface WorkerLandingPayload {
    */
   readonly blockingFindings?: ReadonlyArray<Finding>;
   /**
-   * S5 only: opaque pointers to the preceding reviewer's raw products when no
-   * countable findings envelope was available. The runner transports these
-   * facts; the fixer reads the artifacts and decides what they mean.
+   * S5 only: opaque human/coordinator finding scope from continue_fixing /
+   * repair intent. Runner transports only — never filters blockingFindings by
+   * scope (#899 / ADR 0131). Fixer owns scope taste (C-R4-2B).
+   */
+  readonly findingScope?: FindingRepairScope;
+  /**
+   * S5 only: opaque pointers to the preceding reviewer's raw products. Attached
+   * on every positive open-count → S5 edge (and on unusable review shapes),
+   * independently of whether structured findings cargo is present. The runner
+   * transports these facts; the fixer reads the artifacts and decides what
+   * they mean (ADR 0131 / #899 — no empty no-op fix landing).
    */
   readonly rawReviewerArtifacts?: {
     readonly stdoutPath?: string;
@@ -762,7 +784,8 @@ export interface WorkerLandingPayload {
     readonly branch: string;
     readonly pr?: string;
     readonly prHead?: string;
-    readonly status: string;
+    /** Opaque cargo when present; never required for process success (#899). */
+    readonly status?: string;
   };
   /** 1-based family online review round (runner-enforced cap). */
   readonly onlineReviewRound?: number;
@@ -999,8 +1022,13 @@ export interface ShipResult {
   readonly pr?: string;
   /** The PR head commit SHA/OID verified by the host, when available. */
   readonly prHead?: string;
-  /** A short status string (e.g. "pushed" | "pr_opened"). Values: #336. */
-  readonly status: string;
+  /**
+   * Opaque delivery status token from worker cargo when present
+   * (e.g. "pushed" | "pr_opened"). Optional — missing cargo status must not
+   * be synthesized into process fate (#899 / ADR 0131). Clean exit alone is
+   * success; status is presentation cargo only.
+   */
+  readonly status?: string;
   /** Nonblocking ship-side review degradation metadata, if gstack-ship reports it. */
   readonly degradedReviews?: ReadonlyArray<ProviderDegradationSummary>;
   // NOTE: a ship worker that STOPS for a human (gstack-ship STOP/HITL) is the

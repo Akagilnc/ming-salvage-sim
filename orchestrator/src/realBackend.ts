@@ -63,7 +63,19 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
-import { z } from "zod";
+import {
+  extractLastTagBody,
+} from "./lastTaggedJson.js";
+import {
+  classifyDecisionGate,
+  decisionGateOutput,
+  decodeReviewerOpenCountReceipt,
+  isReceiptRecoveryFailure,
+  logAndRethrowReceiptFailure,
+  requireTypedTrafficSignal,
+  workerReceiptOutput,
+  workerReceiptSchema,
+} from "./receiptRecovery.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
@@ -250,14 +262,12 @@ import {
   readWorkerOutcomeSidecar as readOutcomeSidecar,
   stripJsonFence as stripOutcomeJsonFence,
 } from "./workerOutcomeSidecar.js";
-import { probeWorkerDecisionBell } from "./workerReceipt.js";
+
 import type {
   AgentStepRunOptions,
   Backend,
   CliMonitorSpawnSpec,
   DispatchContext,
-  Finding,
-  PriorFindingDisposition,
   IssueMeta,
   IssueSnapshot,
   IssueSnapshotMeta,
@@ -1198,52 +1208,27 @@ export function lastSessionId(
 // ── coder structured output from stdout (integ-cmr 256 r1) ──────────────────
 
 /**
- * Extract + JSON-parse the LAST `<coder>…</coder>` tag from a coder step's
- * stdout.
+ * Extract + JSON-parse the LAST `<tag>…</tag>` from a worker step's stdout.
  *
- * WHY a stdout tag (not Sandcastle's typed `output`): a coder step runs with
- * `maxIterations = StepSpec.maxIter > 1` (the within-step Ralph retry budget),
- * but Sandcastle's `output` definition REQUIRES `maxIterations === 1`
- * (d.ts: "maxIterations must be 1"). So the coder step cannot use the typed
- * `output` path — `result.output` is `undefined` and `coderOutputSchema.parse`
- * would throw a ZodError on every coder step (the wiring bug this fixes). The
- * coder instead emits its structured result in a `<coder>` tag in stdout, mirroring
- * Sandcastle's own tag-in-stdout extraction (fence-aware JSON unwrapping).
+ * #899 / ADR 0131: production single-slice seats attach Sandcastle
+ * `Output.object` (maxRetries:2) for typed traffic signals — reviewer
+ * open-count and optional decision gate. Ordinary cargo stays opaque inside
+ * those schemas. This stdout extractor is the **compatibility cargo channel**
+ * when typed output is absent (legacy prompts, telemetry, non-typed seats);
+ * it is never a second fate-signal parser and never triggers cargo-shape re-ask.
  *
- * The LAST tag wins so a multi-iteration coder reports its FINAL state.
- *
- * Pure: parses a string only — unit-tested without a container. Returns the raw
- * parsed object for {@link RealBackend}'s `decodeOutput` (coderOutputSchema) to
- * validate. Missing tags are advisory compatibility misses; malformed present
- * tags still throw rather than being mistaken for a valid machine outcome.
+ * The LAST tag wins so a worker that emits multiple tags reports its FINAL
+ * payload. Pure: parses a string only — unit-tested without a container.
+ * Missing tags are advisory compatibility misses; malformed present tags still
+ * throw rather than being mistaken for a valid machine outcome.
  */
 function extractTaggedJson(
   stdout: string,
   tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease",
 ): unknown | undefined {
-  const open = `<${tag}>`;
-  const close = `</${tag}>`;
-  const starts: number[] = [];
-  for (
-    let idx = stdout.indexOf(open);
-    idx !== -1;
-    idx = stdout.indexOf(open, idx + open.length)
-  ) {
-    starts.push(idx);
-  }
-  if (starts.length === 0) {
-    return undefined;
-  }
-
-  for (let i = starts.length - 1; i >= 0; i -= 1) {
-    const bodyStart = starts[i] + open.length;
-    const end = stdout.indexOf(close, bodyStart);
-    if (end === -1) continue;
-    const body = stdout.slice(bodyStart, end).trim();
-    return parseTaggedJsonBody(body);
-  }
-
-  return undefined;
+  const body = extractLastTagBody(stdout, tag);
+  if (body === undefined) return undefined;
+  return parseTaggedJsonBody(body.trim());
 }
 
 function parseTaggedJsonBody(body: string): unknown {
@@ -1337,11 +1322,28 @@ export function stripJsonFence(s: string): string {
   return stripOutcomeJsonFence(s);
 }
 
-/** The self-reported coder JSON a step emits (already shape-validated). */
-export interface SelfReportedCoder {
+/**
+ * Tolerant coder cargo fields (committed / commitsAdded). Missing or off-shape
+ * values default to the no-commit report — never invent escalate from cargo,
+ * never schema-reject ordinary cargo (#899 / ADR 0131).
+ */
+export function coderCargoFields(body: unknown): {
   readonly committed: boolean;
   readonly commitsAdded: number;
-  readonly escalate?: { readonly reason: string; readonly diagnosis: string };
+} {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return { committed: false, commitsAdded: 0 };
+  }
+  const receipt = body as Record<string, unknown>;
+  return {
+    committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
+    commitsAdded:
+      typeof receipt.commitsAdded === "number" &&
+      Number.isInteger(receipt.commitsAdded) &&
+      receipt.commitsAdded >= 0
+        ? receipt.commitsAdded
+        : 0,
+  };
 }
 
 /**
@@ -1762,33 +1764,6 @@ export interface RealBackendOptions {
    * as `origin/main`.
    */
   readonly familyBase?: string;
-}
-
-/**
- * zod schema for the reviewer step's structured output (route() consumes it).
- *
- * #604 slice 4 (ADR 0062): the reviewer contract no longer carries routing
- * disposition kinds — the only disposition a reviewer may emit is the
- * accepted-suppression governance carrier.
- */
-const coderOutputSchema = z.object({
-  committed: z.boolean(),
-  commitsAdded: z.number().int().nonnegative(),
-  escalate: z
-    .object({
-      reason: z.string(),
-      diagnosis: z.string(),
-    })
-    .optional(),
-});
-
-// Typed extraction may locate a receipt, but it must not judge the receipt
-// before decodeOutput gets the independent decision-bell probe.
-const workerReceiptSchema = z.unknown();
-
-/** Parse a coder worker self-report with the same schema the single-slice path uses. */
-export function parseCoderSelfReport(raw: unknown): SelfReportedCoder {
-  return coderOutputSchema.parse(raw);
 }
 
 /**
@@ -2897,116 +2872,179 @@ export class RealBackend implements Backend {
     };
   }
 
-  /** Build the output definition for a step's role. */
-  private outputFor(spec: StepSpec): sc.OutputDefinition {
-    const tag = spec.role === "reviewer" ? "review" : spec.role;
-    return sc.Output.object({ tag, schema: workerReceiptSchema });
+  /**
+   * Typed Sandcastle output for ADR 0131 traffic signals (#899):
+   * - reviewer: open-count receipt on the `review` tag (`findingsCount` + optional bell)
+   * - coder: always-emitted {@link decisionGateOutput} on the dedicated `decision`
+   *   tag so ordinary `<coder>` cargo stays outside Output.object (missing /
+   *   malformed cargo never forces SO re-ask; ADR 0131).
+   */
+  private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
+    if (spec.role === "reviewer") {
+      return workerReceiptOutput("review", workerReceiptSchema());
+    }
+    if (spec.role === "coder") {
+      return decisionGateOutput();
+    }
+    return undefined;
   }
 
   /**
-   * Resolve the raw structured payload to decode for a step.
-   *
-   * - `typedOutputUsed` (reviewer single-pass, OR any resume — both run
-   *   maxIterations:1): Sandcastle parsed the tag into `result.output`, so read
-   *   it directly.
-   * - otherwise (a coder step with maxIter>1, where Sandcastle's typed `output`
-   *   is forbidden): extract the `<coder>` tag from `result.stdout` ourselves
-   *   (integ-cmr 256 r1, F2 — the coder path produced no `result.output`, so the
-   *   old `coderOutputSchema.parse(undefined)` threw on EVERY coder step).
+   * Opaque cargo channel (stdout role tag / sidecar). Never a fate source for
+   * decision gates or open-count (#899) — sidecar/stdout only enrich cargo fields.
    */
-  private rawOutputFor(
-    result: { output?: unknown; stdout: string },
+  /** Protected so test subclasses can probe the cargo channel without casts. */
+  protected cargoRawFor(
+    result: { stdout: string },
     spec: StepSpec,
-    typedOutputUsed: boolean,
     options?: AgentStepRunOptions,
   ): unknown | undefined {
     const compatibility = extractRoleReceipt(result.stdout, spec.role);
-    const compatibilityBell = probeWorkerDecisionBell(compatibility);
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
-        if (sidecar !== undefined) {
-          if (probeWorkerDecisionBell(sidecar) !== undefined) return sidecar;
-          if (compatibilityBell !== undefined) return compatibility;
-          return sidecar;
-        }
+        if (sidecar !== undefined) return sidecar;
       }
     } catch (err) {
       console.warn(
         `[orchestrator] telemetry: ${spec.id}-${spec.role} outcome sidecar is unreadable cargo: ` +
           `${err instanceof Error ? err.message : String(err)}`,
       );
-      return compatibilityBell !== undefined ? compatibility : undefined;
-    }
-    if (typedOutputUsed && result.output !== undefined) {
-      if (probeWorkerDecisionBell(result.output) !== undefined) return result.output;
-      if (compatibilityBell !== undefined) return compatibility;
-      return result.output;
-    }
-    // Stdout tags are the primary machine channel for multi-iteration coders;
-    // elsewhere they are compatibility for a missing typed result.
-    if (compatibility !== undefined) {
-      if (typedOutputUsed) {
-        console.warn(
-          `[orchestrator] telemetry: ${spec.id}-${spec.role} used legacy stdout tag compatibility fallback`,
-        );
-      }
       return compatibility;
     }
-    // No receipt channel means no cargo. Do not synthesize worker output from Git.
-    return undefined;
+    return compatibility;
   }
 
-  private decodeOutput(
+  /**
+   * Resolve the raw structured payload to decode for a step.
+   *
+   * - Reviewer: typed open-count is the sole fate channel when present.
+   * - Coder: typed decision signal is the sole fate channel; cargo is separate.
+   * - When typed Output.object was configured, missing `result.output` fails
+   *   the Action for #598 — sidecar/stdout never supply escalate / findingsCount
+   *   as a fourth channel (#899).
+   */
+  /** Protected so test subclasses can probe the typed vs cargo channel without casts. */
+  protected rawOutputFor(
+    result: { output?: unknown; stdout: string },
+    spec: StepSpec,
+    typedOutputUsed: boolean,
+    options?: AgentStepRunOptions,
+  ): unknown | undefined {
+    // Typed receipt owns fate signals. Missing typed output is not a cargo
+    // fallback — that would re-open escalate / findingsCount as a fourth channel.
+    if (typedOutputUsed) {
+      return requireTypedTrafficSignal(
+        result.output,
+        `${spec.id}-${spec.role}`,
+      );
+    }
+    return this.cargoRawFor(result, spec, options);
+  }
+
+  /**
+   * Shared typed-output attach policy for fresh and resumed agent seats (#899).
+   * Traffic-signal Output.object attaches whenever {@link outputFor} supplies a
+   * definition for a single-iter seat. Cargo sidecars (`outcomeLanding`) stay
+   * cargo-only and never suppress typed fate signals.
+   */
+  private typedOutputPolicy(
+    spec: StepSpec,
+    options?: AgentStepRunOptions,
+    opts?: { readonly requireSingleIter?: boolean },
+  ): {
+    readonly typedOutput: sc.OutputDefinition | undefined;
+    readonly typedOutputUsed: boolean;
+  } {
+    void options;
+    const typedOutput = this.outputFor(spec);
+    const singleIterOk =
+      opts?.requireSingleIter !== true || spec.maxIter === 1;
+    const typedOutputUsed = typedOutput !== undefined && singleIterOk;
+    return { typedOutput, typedOutputUsed };
+  }
+
+  /**
+   * Decode a finished Sandcastle run into StepResult (typed signal + cargo).
+   * Shared by fresh and resume so selection/decoding cannot drift.
+   */
+  private stepResultFromRun(
+    result: Awaited<ReturnType<typeof sc.run>>,
+    spec: StepSpec,
+    typedOutputUsed: boolean,
+    options?: AgentStepRunOptions,
+    sessionIdFallback?: string,
+  ): StepResult {
+    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
+    const cargo =
+      typedOutputUsed && spec.role === "coder"
+        ? this.cargoRawFor(result, spec, options)
+        : undefined;
+    const output = this.decodeOutput(spec, raw, cargo);
+    return {
+      output,
+      sessionId: lastSessionId(result) ?? sessionIdFallback,
+    };
+  }
+
+  /** Protected so test subclasses can probe receipt decode without casts. */
+  protected decodeOutput(
     spec: StepSpec,
     raw: unknown,
+    cargo?: unknown,
   ): StepOutput {
-    const decisionBell = probeWorkerDecisionBell(raw);
-    if (decisionBell !== undefined) {
-      return spec.role === "coder"
-        ? {
-            kind: "coder",
-            committed: false,
-            commitsAdded: 0,
-            escalate: decisionBell,
-          }
-        : { kind: "reviewer", findings: [], escalate: decisionBell };
-    }
-    if (spec.role === "reviewer") {
-      if (
-        raw === null ||
-        typeof raw !== "object" ||
-        !Array.isArray((raw as { findings?: unknown }).findings)
-      ) {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
+    // Fate from typed signal only. Cargo may ride along for enrichment but
+    // never supplies escalate / findingsCount when typed was the seat policy.
+    const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
+    if (gate.kind === "bell") {
+      if (spec.role === "coder") {
+        // Escalate is orthogonal to commit cargo (#384 / #899): preserve real
+        // committed/commitsAdded from the cargo channel (or legacy combined raw).
+        const fields = coderCargoFields(cargo !== undefined ? cargo : raw);
+        return {
+          kind: "coder",
+          committed: fields.committed,
+          commitsAdded: fields.commitsAdded,
+          escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
+        };
       }
-      const receipt = raw as {
-        findings: ReadonlyArray<Finding>;
-        priorFindingDispositions?: ReadonlyArray<PriorFindingDisposition>;
-      };
       return {
         kind: "reviewer",
-        findings: receipt.findings,
-        ...(Array.isArray(receipt.priorFindingDispositions)
-          ? { priorFindingDispositions: receipt.priorFindingDispositions }
-          : {}),
+        findings: [],
+        findingsCount: 0,
+        escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
       };
     }
-    // Coder completion is worker-authored. The next reviewer judges the diff.
-    if (spec.role === "coder") {
-      if (raw === null || typeof raw !== "object") {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
+    if (spec.role === "reviewer") {
+      // Open-count fate only from the typed/raw channel — never from a separate
+      // cargo fallback that could reintroduce findingsCount as a fourth channel.
+      // Shape handling for findings cargo lives on the shared decode boundary
+      // (ADR 0131 / #899) — not a second court in the runner.
+      const decoded = decodeReviewerOpenCountReceipt(raw);
+      if (decoded === undefined) {
+        // Process-clean unusable open-count is not findingsCount=0 and not a
+        // #598 shape-lane throw (ADR 0131 / #899). Typed SO already fails closed
+        // at Sandcastle when the schema is the seat policy; remaining unusable
+        // paper follows the runner's non-reviewer envelope → S5 + raw artifacts.
+        //
+        // TOPOLOGY PIN (not a claim that "this worker was a fixer"):
+        // `kind:"fixer"` is the existing non-reviewer envelope the S4→S5 route
+        // already understands (route table sends non-reviewer at S4 to S5). Do
+        // NOT "fix" this back to kind:"coder" (fake coder seat) and do NOT
+        // throw for abolished cargo-shape #598 — inventing a new envelope kind
+        // or reopening shape courts is out of scope here.
+        return { kind: "fixer", committed: false };
       }
-      const receipt = raw as Record<string, unknown>;
+      return decoded;
+    }
+    // Coder: decision signal may be `{}` (no gate). Cargo comes from the
+    // ordinary `<coder>` tag / sidecar — never re-read escalate from cargo.
+    if (spec.role === "coder") {
+      const fields = coderCargoFields(cargo !== undefined ? cargo : raw);
       return {
         kind: "coder",
-        committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
-        commitsAdded:
-          typeof receipt.commitsAdded === "number" &&
-          Number.isInteger(receipt.commitsAdded) &&
-          receipt.commitsAdded >= 0
-            ? receipt.commitsAdded
-            : 0,
+        committed: fields.committed,
+        commitsAdded: fields.commitsAdded,
       };
     }
 
@@ -3025,13 +3063,18 @@ export class RealBackend implements Backend {
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
-    const typedOutputUsed =
-      spec.maxIter === 1 && options?.outcomeLanding === undefined;
+    const { typedOutput, typedOutputUsed } = this.typedOutputPolicy(
+      spec,
+      options,
+      { requireSingleIter: true },
+    );
     const box = this.box(issueNumber, spec, options);
     try {
     const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
     this.assertProviderAuth(spec.model, pool, box.providerAuth);
-    const result = await this.runAgentSandbox({
+    let result: Awaited<ReturnType<typeof sc.run>>;
+    try {
+      result = await this.runAgentSandbox({
       name: `${spec.id}-${spec.role}`,
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
       cwd: worktree.path,
@@ -3045,19 +3088,17 @@ export class RealBackend implements Backend {
         effortForLiveOfficer(spec.model, spec),
         pool,
       ),
-      // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
-      // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
-      // normally — route() continues — it is NEVER the orchestrator giving up
-      // (StepSpec.maxIter semantics; the only give-up is a model escalate).
+      // #899 / ADR 0128: every selected seat is single-iteration (maxIter:1).
+      // Native SO re-asks (Output.object maxRetries) stay in-session and are
+      // not outer Sandcastle iterations. Hitting maxIter ends THE STEP normally.
       maxIterations: spec.maxIter,
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // Structured output only when Sandcastle should own tag parsing. When the
-      // runner supplied an outcome sidecar, do not pass `output`: Sandcastle
-      // would throw on a bad/missing compatibility tag before the backend can
-      // read the sidecar machine protocol.
-      ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
+      // #899: traffic signals attach Output.object(+maxRetries). Reviewer uses
+      // open-count schema; coder uses dedicated decision-gate tag so ordinary
+      // `<coder>` cargo stays outside SO (no cargo-shape re-ask).
+      ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.
       quotaProbe: {
@@ -3066,10 +3107,14 @@ export class RealBackend implements Backend {
         worktreePath: worktree.path,
         issueNumber,
       },
-    });
-    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-    const output = this.decodeOutput(spec, raw);
-    return { output, sessionId: lastSessionId(result) };
+      });
+    } catch (err) {
+      // Typed traffic-signal seats: exhaust / non-resumable must exit non-zero
+      // so #598 re-dispatches at this fixed position (#899). Never convert SOE
+      // into a success empty-cargo fallback that would feed the fixer.
+      logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}`);
+    }
+    return this.stepResultFromRun(result, spec, typedOutputUsed, options);
     } finally {
       box.cleanup();
     }
@@ -3096,7 +3141,9 @@ export class RealBackend implements Backend {
     try {
       const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
       this.assertProviderAuth(spec.model, pool, box.providerAuth);
-      const typedOutputUsed = options?.outcomeLanding === undefined;
+      // Resume is always maxIterations:1 (Sandcastle constraint); no extra
+      // single-iter gate beyond the shared attach policy.
+      const { typedOutput, typedOutputUsed } = this.typedOutputPolicy(spec, options);
       const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -3116,11 +3163,8 @@ export class RealBackend implements Backend {
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
-        // A resume runs maxIterations:1, so typed output is valid unless the
-        // outcome sidecar is mounted. With a sidecar, keep Sandcastle from
-        // pre-parsing the compatibility tag before rawOutputFor can read the
-        // runner-owned file.
-        ...(typedOutputUsed ? { output: this.outputFor(spec) } : {}),
+        // Resume is single-iter; attach the same traffic-signal Output.object policy.
+        ...(typedOutputUsed ? { output: typedOutput } : {}),
         // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
         quotaProbe: {
           modelRef: spec.model,
@@ -3129,12 +3173,20 @@ export class RealBackend implements Backend {
           issueNumber,
         },
       });
-      const output = this.decodeOutput(
+      return this.stepResultFromRun(
+        result,
         spec,
-        this.rawOutputFor(result, spec, typedOutputUsed, options),
+        typedOutputUsed,
+        options,
+        sessionId,
       );
-      return { output, sessionId: lastSessionId(result) ?? sessionId };
     } catch (err) {
+      // Typed receipt exhaust on resume: propagate SOE for #598 (same class as
+      // fresh-run typed seats). Nested / name-only SOE must not fall through to
+      // dead-session fresh-run — walk the cause chain like the fresh path.
+      if (isReceiptRecoveryFailure(err)) {
+        logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}-resume`);
+      }
       // Dead-session fallback (#256/#285): ONLY a clearly missing/dead prior
       // session falls back to a fresh run() (keep committed worktree progress,
       // lose in-session memory). Signal mismatches, schema parse failures, auth

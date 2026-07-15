@@ -20,9 +20,10 @@ The `<fixer>` outcome remains only the JSON envelope defined below.
 
 ## Output
 
-When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same terminal JSON object
-directly to that path (sidecar is authoritative for the runner). For
-compatibility, also emit `<fixer>` JSON:
+Always emit `<decision>{}</decision>` (or with `escalate`) before the role cargo tag.
+When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same cargo JSON object
+directly to that path (sidecar is cargo transport for the runner). Also emit
+`<fixer>` cargo JSON:
 
 On the final multi-iter step you MUST print FIXER_STEP_COMPLETE on its own
 final line (sandcastle iteration terminator — not optional telemetry).

@@ -106,7 +106,7 @@ class SessionSurfacingChildBackend implements Backend {
       return { output, sessionId: SURFACED_SESSION_ID };
     }
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [] };
+    return { kind: "reviewer", findings: [], findingsCount: 0 };
   }
   async writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void> {
     const issue = issueOfStateDir(stateDir);

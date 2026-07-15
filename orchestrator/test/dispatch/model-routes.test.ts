@@ -375,7 +375,7 @@ describe("#422 model route presets", () => {
           };
         }
         if (spec.kind === "reviewer") {
-          return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+          return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
         }
         const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
         if (skeleton !== undefined) {

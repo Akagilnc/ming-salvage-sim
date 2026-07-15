@@ -106,26 +106,41 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
     );
   });
 
-  // ADR 0131: the escalate block's presence is the decision bell. Its fields are
-  // cargo; missing, blank, or mistyped cargo does not unpress the bell.
-  describe("decision bell presence is independent of escalate cargo quality", () => {
-    it("escalate:{} (empty) ⇒ escalate", () => {
-      expect(parseShipOutcome('<ship>{"escalate": {}}</ship>').kind).toBe("escalate");
+  it("pr_opened without pr remains shipped cargo (no required-field discard)", () => {
+    // #899: ordinary delivery cargo is not schema-gated — missing pr must not
+    // demote a clean ship report to completed / discarded.
+    const o = parseShipOutcome(
+      '<ship>{"status": "pr_opened", "branch": "feat/no-pr-url"}</ship>',
+    );
+    expect(o).toEqual({
+      kind: "shipped",
+      status: "pr_opened",
+      branch: "feat/no-pr-url",
     });
-    it("escalate with non-string reason ⇒ escalate", () => {
-      expect(
-        parseShipOutcome('<ship>{"escalate": {"reason": 123, "diagnosis": "x"}}</ship>').kind,
-      ).toBe("escalate");
-    });
-    it("escalate missing diagnosis ⇒ escalate", () => {
-      expect(parseShipOutcome('<ship>{"escalate": {"reason": "stuck"}}</ship>').kind).toBe(
-        "escalate",
+  });
+
+  // #899: only well-formed bells (non-empty reason+diagnosis) are fate signals.
+  // Malformed escalate fails the Action for #598 — never invents a park.
+  describe("malformed decision bells fail the Action", () => {
+    it("escalate:{} (empty) throws", () => {
+      expect(() => parseShipOutcome('<ship>{"escalate": {}}</ship>')).toThrow(
+        /malformed decision gate/,
       );
     });
-    it("escalate with empty-string fields ⇒ escalate", () => {
-      expect(
-        parseShipOutcome('<ship>{"escalate": {"reason": "", "diagnosis": "   "}}</ship>').kind,
-      ).toBe("escalate");
+    it("escalate with non-string reason throws", () => {
+      expect(() =>
+        parseShipOutcome('<ship>{"escalate": {"reason": 123, "diagnosis": "x"}}</ship>'),
+      ).toThrow(/malformed decision gate/);
+    });
+    it("escalate missing diagnosis throws", () => {
+      expect(() =>
+        parseShipOutcome('<ship>{"escalate": {"reason": "stuck"}}</ship>'),
+      ).toThrow(/malformed decision gate/);
+    });
+    it("escalate with empty-string fields throws", () => {
+      expect(() =>
+        parseShipOutcome('<ship>{"escalate": {"reason": "", "diagnosis": "   "}}</ship>'),
+      ).toThrow(/malformed decision gate/);
     });
   });
 
@@ -142,12 +157,14 @@ describe("#336 parseShipOutcome — the <ship> verdict tag", () => {
         ).kind,
       ).toBe("shipped");
     });
-    it('pr_opened carrying an `escalate` string key remains shipped cargo', () => {
-      expect(
+    it('pr_opened carrying a malformed `escalate` string key fails the Action', () => {
+      // #899: present-but-malformed escalate is never silent cargo — Action fails
+      // for #598 rather than shipping with a half-pressed gate.
+      expect(() =>
         parseShipOutcome(
           '<ship>{"status": "pr_opened", "branch": "b", "pr": "u", "escalate": "stuck"}</ship>',
-        ).kind,
-      ).toBe("shipped");
+        ),
+      ).toThrow(/malformed decision gate/);
     });
     it('pushed carrying a `pr` key remains pushed cargo', () => {
       expect(
@@ -255,7 +272,7 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     expect(o).toEqual({ kind: "completed" });
   });
 
-  it("keeps malformed sidecar text as non-fateful cargo while still probing stdout for a bell", () => {
+  it("keeps malformed sidecar text as non-fateful cargo without promoting stdout", () => {
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
@@ -269,7 +286,9 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
     expect(o.kind).toBe("completed");
   });
 
-  it("rings a stdout decision bell before unrelated parseable sidecar cargo", () => {
+  it("does not let stdout decision bells override non-bell sidecar cargo", () => {
+    // #899: decision gates come only from Output.object / machine sidecar payload,
+    // never from a stdout compatibility tag that bypasses schema validation.
     const dir = mkdtempSync(join(tmpdir(), "ship-outcome-bad-bell-"));
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, JSON.stringify({ unrelatedCargo: true }), "utf8");
@@ -279,10 +298,34 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       outcomePath,
     });
 
-    expect(o).toMatchObject({
-      kind: "escalate",
-      reason: "owner choice",
-      diagnosis: "ship fork",
+    expect(o.kind).toBe("completed");
+  });
+
+  it("does not let sidecar bells override a schema-validated typed ship receipt", () => {
+    // #899: typed decision signal is the sole fate channel. A no-gate typed
+    // signal (`{}`) blocks sidecar escalate; delivery cargo still enriches.
+    const dir = mkdtempSync(join(tmpdir(), "ship-typed-vs-sidecar-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        status: "pushed",
+        branch: "feat/typed-wins",
+        escalate: { reason: "sidecar spoof", diagnosis: "must not win" },
+      }),
+      "utf8",
+    );
+
+    expect(
+      shipOutcomeFromResult({
+        output: {},
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({
+      kind: "shipped",
+      status: "pushed",
+      branch: "feat/typed-wins",
     });
   });
 
@@ -345,6 +388,101 @@ describe("#820 shipOutcomeFromResult — machine sidecar only", () => {
       stdout: '<ship>{"status": "pr_opened", "branch": "b", "pr": "u"}</ship>',
     });
     expect(o.kind).toBe("completed");
+  });
+
+  it("does not admit a sidecar decision bell into fate when typed output is absent", () => {
+    // #899: escalate is a typed-only fate signal; sidecar is delivery cargo only.
+    const dir = mkdtempSync(join(tmpdir(), "ship-sidecar-bell-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        escalate: { reason: "owner choice", diagnosis: "must not park from cargo" },
+      }),
+      "utf8",
+    );
+
+    const o = shipOutcomeFromResult({
+      stdout: "",
+      outcomePath,
+    });
+
+    expect(o.kind).toBe("completed");
+  });
+
+  it("sidecar pr_opened without pr stays shipped delivery cargo", () => {
+    // #899: do not discard incomplete pr_opened for a missing pr URL.
+    const dir = mkdtempSync(join(tmpdir(), "ship-pr-opened-no-pr-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ status: "pr_opened", branch: "feat/opaque" }),
+      "utf8",
+    );
+
+    expect(
+      shipOutcomeFromResult({
+        output: {},
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({
+      kind: "shipped",
+      status: "pr_opened",
+      branch: "feat/opaque",
+    });
+  });
+
+  it("transports free-form status and branch without a closed status court", () => {
+    // #899: ordinary ship cargo stays opaque — no whitelist on status tokens.
+    const dir = mkdtempSync(join(tmpdir(), "ship-freeform-status-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        status: "already_open",
+        branch: "feat/freeform",
+        pr: "https://gh/pr/99",
+        extra: "kept-out-of-fate",
+      }),
+      "utf8",
+    );
+
+    expect(
+      shipOutcomeFromResult({
+        output: {},
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({
+      kind: "shipped",
+      status: "already_open",
+      branch: "feat/freeform",
+      pr: "https://gh/pr/99",
+    });
+  });
+
+  it("branch/pr alone still enrich delivery without inventing a status token", () => {
+    // #899: opaque cargo — missing status stays missing; never synthesize.
+    const dir = mkdtempSync(join(tmpdir(), "ship-branch-only-"));
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ branch: "feat/branch-only", pr: "https://gh/pr/1" }),
+      "utf8",
+    );
+
+    expect(
+      shipOutcomeFromResult({
+        output: {},
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({
+      kind: "shipped",
+      branch: "feat/branch-only",
+      pr: "https://gh/pr/1",
+    });
   });
 
   it("a signal alone is not a machine outcome", () => {

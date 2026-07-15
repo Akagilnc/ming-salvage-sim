@@ -443,8 +443,7 @@ describe("#884 driver stage line logs", () => {
           this.reviewerCalls += 1;
           if (this.reviewerCalls === 1) {
             return {
-              kind: "reviewer",
-              findings: [
+              kind: "reviewer", findings: [
                 {
                   severity: "critical",
                   category: "bug",
@@ -453,10 +452,10 @@ describe("#884 driver stage line logs", () => {
                   suggested_fix: "stop",
                   action: "fix_now",
                 },
-              ],
+              ], findingsCount: 1,
             };
           }
-          return { kind: "reviewer", findings: [] };
+          return { kind: "reviewer", findings: [], findingsCount: 0 };
         }
         // Any remaining role (verify/fixer/cleanup/docRelease): keep the loop moving.
         return { kind: "coder", committed: true, commitsAdded: 1 };

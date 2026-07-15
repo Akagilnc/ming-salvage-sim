@@ -587,7 +587,7 @@ export function buildOnlineReviewLanding(
       branch: ship.branch,
       pr: ship.pr,
       ...(prHead !== undefined && prHead.length > 0 ? { prHead } : {}),
-      status: ship.status,
+      ...(ship.status !== undefined ? { status: ship.status } : {}),
     },
     onlineReviewRound: round,
   };

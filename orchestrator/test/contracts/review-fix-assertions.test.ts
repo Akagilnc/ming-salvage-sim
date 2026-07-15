@@ -329,13 +329,12 @@ describe("#677 legal refuse one finding, fix the others", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: { kind: "reviewer", findings: [overturn, realBug] },
+          output: { kind: "reviewer", findings: [overturn, realBug], findingsCount: 1 },
         },
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [overturn],
+            kind: "reviewer", findings: [overturn], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: refuseKey, status: "still-active" },
               { identityKey: otherKey, status: "verified-closed" },
@@ -346,8 +345,7 @@ describe("#677 legal refuse one finding, fix the others", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               {
                 identityKey: refuseKey,
@@ -419,13 +417,12 @@ describe("#677 real S5 fix-commit path wiring", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: { kind: "reviewer", findings: [finding] },
+          output: { kind: "reviewer", findings: [finding], findingsCount: 1 },
         },
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: findingKey, status: "verified-closed" },
             ],
@@ -448,13 +445,12 @@ describe("#677 real S5 fix-commit path wiring", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: { kind: "reviewer", findings: [finding] },
+          output: { kind: "reviewer", findings: [finding], findingsCount: 1 },
         },
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: findingKey, status: "verified-closed" },
             ],
@@ -569,12 +565,11 @@ describe("#677 real S5 fix-commit path wiring", () => {
     const backend = new NoWorktreeHeadTelemetryBackend({
       worktree,
       reviewerResults: [
-        { kind: "completed", output: { kind: "reviewer", findings: [finding] } },
+        { kind: "completed", output: { kind: "reviewer", findings: [finding], findingsCount: 1 } },
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: findingKey, status: "verified-closed" },
             ],
@@ -643,13 +638,12 @@ describe("#677 real S5 fix-commit path wiring", () => {
       reviewerResults: [
         {
           kind: "completed",
-          output: { kind: "reviewer", findings: [overturn, realBug] },
+          output: { kind: "reviewer", findings: [overturn, realBug], findingsCount: 1 },
         },
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [overturn],
+            kind: "reviewer", findings: [overturn], findingsCount: 1,
             priorFindingDispositions: [
               { identityKey: refuseKey, status: "still-active" },
               { identityKey: otherKey, status: "verified-closed" },
@@ -659,8 +653,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: refuseKey, status: "verified-closed" },
             ],
@@ -815,8 +808,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
           commitsAdded: 1,
         }),
         persistent("S3", beforeFix, {
-          kind: "reviewer",
-          findings: [overturn],
+          kind: "reviewer", findings: [overturn], findingsCount: 1,
         }),
         persistent("S4", beforeFix),
         persistent("S5", afterFix, {
@@ -836,8 +828,7 @@ describe("#677 real S5 fix-commit path wiring", () => {
         {
           kind: "completed",
           output: {
-            kind: "reviewer",
-            findings: [],
+            kind: "reviewer", findings: [], findingsCount: 0,
             priorFindingDispositions: [
               { identityKey: refuseKey, status: "verified-closed" },
             ],
@@ -997,7 +988,7 @@ class FixLoopBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
-    if (spec.role === "reviewer") return { kind: "reviewer", findings: [] };
+    if (spec.role === "reviewer") return { kind: "reviewer", findings: [], findingsCount: 0 };
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
   async writeLedger(
@@ -1033,7 +1024,7 @@ class FixLoopBackend implements Backend {
       const result = this.opts.reviewerResults[this.reviewerAttempts];
       this.reviewerAttempts += 1;
       return (
-        result ?? { kind: "completed", output: { kind: "reviewer", findings: [] } }
+        result ?? { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } }
       );
     }
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);

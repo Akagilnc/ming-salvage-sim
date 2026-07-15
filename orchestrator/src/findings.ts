@@ -28,3 +28,14 @@ export function findingIdentityKey(finding: Finding): string {
     encodeFindingPart(finding.claim_quote),
   ].join("|");
 }
+
+/**
+ * Identity keys for a findings cargo list. Landing / fixer materialization
+ * derives keys here — the runner only pass-through findings rows and routes
+ * by findingsCount (ADR 0131 / #899).
+ */
+export function findingIdentityKeys(
+  findings: ReadonlyArray<Finding>,
+): string[] {
+  return findings.map(findingIdentityKey);
+}

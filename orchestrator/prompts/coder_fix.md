@@ -45,15 +45,15 @@ sends fresh re-review). Do not amend; new commit only.
 
 When you are done (or are escalating), the real completion evidence is the
 single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
-set, the typed `<coder>` outcome, and the worker's actual git state. For
-compatibility with older runners, emit EXACTLY ONE `<coder>` tag
-on its own containing the same single JSON object. On the final multi-iter step
-you MUST print CODER_STEP_COMPLETE on its own final line (sandcastle iteration
-terminator — not optional telemetry).
+set, the always-emitted typed `<decision>` signal, the opaque `<coder>` cargo
+tag, and the worker's actual git state.
 
-Success:
+**Always emit both tags** (order: decision, then cargo):
+
+Success (no gate):
 
 ```text
+<decision>{}</decision>
 <coder>{"committed": true, "commitsAdded": 1}</coder>
 ```
 
@@ -63,5 +63,11 @@ this worker run; if you made multiple commits, report the full count.
 Escalation:
 
 ```text
-<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<what blocks the fix>"}}</coder>
+<decision>{"escalate": {"reason": "<short>", "diagnosis": "<what blocks the fix>"}}</decision>
+<coder>{"committed": false, "commitsAdded": 0}</coder>
 ```
+
+Always emit `<decision>` (even `{}`) so the optional gate uses a dedicated
+typed tag; keep ordinary cargo outside that tag. On the final multi-iter step
+you MUST print CODER_STEP_COMPLETE on its own final line (sandcastle iteration
+terminator — not optional telemetry).

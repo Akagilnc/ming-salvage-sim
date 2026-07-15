@@ -35,6 +35,12 @@ import {
   FIX_FOCUS_LANDING_FILE,
   formatFixFocusMarkdown,
 } from "./findingFamilies.js";
+import { findingIdentityKeys } from "./findings.js";
+import {
+  materializeRawReviewerArtifactsForSandbox,
+  RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
+  RAW_REVIEWER_STDOUT_SANDBOX_FILE,
+} from "./rawReviewerArtifacts.js";
 import {
   modelForSlot,
   routeSmokeFailure,
@@ -227,17 +233,42 @@ function writeFixFindingsLandingFile(
   } else {
     ensureGitExcluded(ctx.worktree.path, FIX_FINDINGS_LANDING_FILE);
   }
+  // Host monitor paths are not visible inside the fixer container. Copy
+  // readable raw products into the sandbox cwd and rewrite pointers (#899).
+  const rawReviewerArtifacts =
+    landing?.rawReviewerArtifacts !== undefined
+      ? materializeRawReviewerArtifactsForSandbox(
+          landing.rawReviewerArtifacts,
+          ctx.worktree.path,
+        )
+      : undefined;
+  ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+  ensureGitExcluded(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
+  // Identity keys are derived here at the fixer-landing boundary from opaque
+  // findings cargo — not by the runner reading cargo fields (ADR 0131 / #899).
+  // Prefer cargo-derived keys; fall back to ctx keys when findings rows are
+  // sparse (family envelope / count-only reopen may still carry prior keys).
+  const findingsRows = landing?.blockingFindings ?? [];
+  const identityKeys =
+    findingsRows.length > 0
+      ? findingIdentityKeys(findingsRows)
+      : [...(ctx.blockingFindingIdentityKeys ?? [])];
   writeFileSync(
     landingPath,
     `${JSON.stringify(
       {
         // Rich finding CONTENT comes from the SEPARATE landing payload (信封宪法,
         // ADR 0062) — never from the runner's thin DispatchContext.
-        blockingFindings: landing?.blockingFindings ?? [],
-        ...(landing?.rawReviewerArtifacts !== undefined
-          ? { rawReviewerArtifacts: landing.rawReviewerArtifacts }
+        blockingFindings: findingsRows,
+        ...(rawReviewerArtifacts !== undefined
+          ? { rawReviewerArtifacts }
           : {}),
-        blockingFindingIdentityKeys: ctx.blockingFindingIdentityKeys ?? [],
+        // Opaque transport only — runner does not filter findings by scope
+        // (#899 / ADR 0131 / C-R4-2A).
+        ...(landing?.findingScope !== undefined
+          ? { findingScope: landing.findingScope }
+          : {}),
+        blockingFindingIdentityKeys: identityKeys,
         ...(ctx.preexistingAssertionTouched === true
           ? { preexistingAssertionTouched: true }
           : {}),
@@ -361,7 +392,8 @@ export function fixerWorkerSpec(
     skill: SKILL_FOR_KIND.fixer,
     promptFile: FIXER_PROMPT_FILE,
     completionSignal: "FIXER_STEP_COMPLETE",
-    maxIter: 5,
+    // #899 / ADR 0128: one single-iteration Sandcastle run per selected seat.
+    maxIter: 1,
     model,
     soul: "fixer",
     toolchain: [],
@@ -407,8 +439,15 @@ export function docReleaseWorkerSpec(
  * This wrapper yields `completed`; unified real workers produce process `failed`
  * and worker-declared `escalated` results directly.
  */
+/**
+ * Surface used by {@link legacyDispatchWorker}: only the pre-unified child
+ * agent methods. Production backends implement full {@link Backend}; tests may
+ * supply a minimal adapter without double-casting to Backend.
+ */
+export type LegacyDispatchBackend = Pick<Backend, "runStep" | "resumeSession">;
+
 export async function legacyDispatchWorker(
-  backend: Backend,
+  backend: LegacyDispatchBackend,
   spec: WorkerSpec,
   ctx: DispatchContext,
   landing?: WorkerLandingPayload,
@@ -490,6 +529,16 @@ export async function legacyDispatchWorker(
   } finally {
     if (fixFindingsLanding?.cleanup) {
       rmSync(fixFindingsLanding.path, { force: true });
+    }
+    if (ctx.worktree !== undefined) {
+      // Materialised host artifacts live next to the worktree cwd; always
+      // best-effort remove so a crash mid-fix does not leave host copies.
+      rmSync(join(ctx.worktree.path, RAW_REVIEWER_STDOUT_SANDBOX_FILE), {
+        force: true,
+      });
+      rmSync(join(ctx.worktree.path, RAW_REVIEWER_SIDECAR_SANDBOX_FILE), {
+        force: true,
+      });
     }
     if (fixFocusLanding?.cleanup) {
       rmSync(fixFocusLanding.path, { force: true });
@@ -1019,7 +1068,7 @@ export function workerResultToStep(
             commitsAdded: 0,
             escalate: result.escalation,
           }
-        : { kind: "reviewer", findings: [], escalate: result.escalation };
+        : { kind: "reviewer", findings: [], findingsCount: 0, escalate: result.escalation };
     // PRESERVE the worker's sessionId on the escalate path (codex cmr R4 finding):
     // the human-answer resume (planResume → resumeSession) resumes the recorded
     // ledger sessionId; dropping it here would resume the wrong (run-level UUID)

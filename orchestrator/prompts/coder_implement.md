@@ -51,36 +51,44 @@ unless the answer leaves a concrete blocker unresolved.
 
 When you are done (or are escalating), the real completion evidence is the
 single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
-set, together with the typed `<coder>` outcome and the worker's actual git
-state. For compatibility with older runners, emit EXACTLY ONE `<coder>` tag on
-its own containing the same single JSON object. The multi-iter completion
-signal is a required sandcastle terminator on the final step (not optional
-telemetry).
+set, the always-emitted typed `<decision>` signal, the opaque `<coder>` cargo
+tag, and the worker's actual git state.
 
-Success:
+**Always emit both tags** (order: decision, then cargo):
+
+1. `<decision>` — typed traffic signal only. `{}` when not escalating; or
+   `{"escalate":{"reason":"...","diagnosis":"..."}}` when pressing the gate.
+2. `<coder>` — opaque cargo (`committed` / `commitsAdded`). Never put
+   `escalate` only in cargo and omit `<decision>`.
+
+Success (no gate):
 
 ```text
+<decision>{}</decision>
 <coder>{"committed": true, "commitsAdded": 3}</coder>
 ```
 
 Escalation (example shows escalating BEFORE any commit — committed:false, commitsAdded:0):
 
 ```text
-<coder>{"committed": false, "commitsAdded": 0, "escalate": {"reason": "<short>", "diagnosis": "<what is wrong and why you cannot proceed>"}}</coder>
+<decision>{"escalate": {"reason": "<short>", "diagnosis": "<what is wrong and why you cannot proceed>"}}</decision>
+<coder>{"committed": false, "commitsAdded": 0}</coder>
 ```
 
 Rules:
 
+- Always emit `<decision>` (even when empty `{}`) so Sandcastle can validate the
+  optional gate without binding Output.object to ordinary cargo.
 - `committed` is a boolean and `commitsAdded` is an integer >= 0.
 - **`committed` / `commitsAdded` must ALWAYS reflect the REAL git state, even when
   escalating.** `commitsAdded` must equal the number of `git commit` commands you
   actually made in this worker run; if you make multiple commits, report the full
   count. The runner transports your report without adjudicating it. So
   if you already made a baseline / fix commit and THEN hit an escalating blocker in
-  the second review, report `committed:true` with the real count PLUS `escalate` —
-  NOT `committed:false, commitsAdded:0`. `escalate` is orthogonal to the count.
-- `escalate`, when present, contains `reason` and `diagnosis`.
-- Emit the `<coder>` tag as the last typed tag; if you iterate, the last typed
-  `<coder>` tag is the one that counts. On the final multi-iter step you MUST
-  print CODER_STEP_COMPLETE on its own final line (sandcastle iteration
-  terminator — not optional telemetry).
+  the second review, report `committed:true` with the real count on `<coder>` and
+  press the gate on `<decision>` — NOT `committed:false, commitsAdded:0`.
+  `escalate` is orthogonal to the commit count.
+- `escalate`, when present on `<decision>`, contains non-empty `reason` and `diagnosis`.
+- Emit `<coder>` as the last cargo tag; if you iterate, the last pair counts.
+- On the final multi-iter step you MUST print CODER_STEP_COMPLETE on its own
+  final line (sandcastle iteration terminator — not optional telemetry).

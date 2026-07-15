@@ -308,7 +308,7 @@ class CoderCrashBackend implements Backend {
       return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
     }
     if (spec.kind === "reviewer") {
-      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
     if (spec.kind === "ship") {
       return { kind: "completed", output: { kind: "ship", branch: RUN_WORKTREE.branch, status: "pushed" } };
@@ -370,7 +370,7 @@ class ReviewerCrashBackend implements Backend {
       if (this.reviewerDispatches <= this.reviewerFailures) {
         throw new Error("reviewer container connection dropped mid-run");
       }
-      return { kind: "completed", output: { kind: "reviewer", findings: [] } };
+      return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
     if (spec.kind === "ship") {
       return { kind: "completed", output: { kind: "ship", branch: RUN_WORKTREE.branch, status: "pushed" } };
