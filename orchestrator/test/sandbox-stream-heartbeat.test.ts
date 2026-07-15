@@ -136,4 +136,21 @@ describe("withMonitorStreamHeartbeat", () => {
       join("/w", ".sandcastle", "logs", "agent.log"),
     );
   });
+
+  it("falls back to sandcastle default logging when the log dir cannot be created (online r1)", () => {
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (m?: unknown) => { warns.push(String(m)); };
+    try {
+      const options = { cwd: "/w", name: "S2-coder" };
+      const out = withMonitorStreamHeartbeat(options, {
+        ensureDir: () => { throw new Error("EACCES"); },
+      });
+      expect(out).toBe(options);
+      expect((out as { logging?: unknown }).logging).toBeUndefined();
+      expect(warns.some((w) => w.includes("heartbeat disabled"))).toBe(true);
+    } finally {
+      console.warn = orig;
+    }
+  });
 });
