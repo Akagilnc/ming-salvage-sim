@@ -12,40 +12,81 @@ those runner parameters. The soul and skill own all delivery method and checks.
 
 ## Required output
 
-The real completion evidence is the single JSON object written to
-`$ORCHESTRATOR_OUTCOME_PATH` when that env var is set, the always-emitted typed
-`<decision>` signal, the opaque `<ship>` cargo tag, and the actual family
-branch/PR git state.
+When you are done (or are escalating), the real completion evidence is the
+single JSON object written to `$ORCHESTRATOR_OUTCOME_PATH` when that env var is
+set (delivery cargo only), the always-emitted typed `<ship>` station-receipt
+envelope, and the actual family branch/PR git state.
 
-**Always emit both tags** (order: decision, then cargo):
+Emit **one** typed `<ship>` station-receipt envelope. Sandcastle validates the
+traffic shape via `Output.object` against the T2 contract in
+`orchestrator/src/stationReceiptContracts.ts` (`shipStationReceiptSchema` /
+`decodeShipEnvelope`, tag `ship` / `SHIP_RECEIPT_TAG`) — **do not invent a
+second field vocabulary** and **do not emit a separate decision-gate dual tag**.
 
-PR opened (no gate):
+### Envelope traffic fields (schema-validated)
+
+| field | meaning |
+| --- | --- |
+| `station` | `"ship"` |
+| `status` | `"shipped"` \| `"completed"` \| `"escalate"` |
+| `cargoPointer` | optional non-empty path/URI to opaque cargo body |
+| `reason` / `diagnosis` | required non-empty when `status:"escalate"` |
+
+- `shipped` — a PR was opened (or equivalent delivery landed).
+- `completed` — clean exit with no useful delivery cargo (no PR / no push cargo).
+- `escalate` — genuine block a human must decide (not a re-runnable flake).
+
+### Delivery cargo (opaque; not SO-validated)
+
+Write delivery cargo to `$ORCHESTRATOR_OUTCOME_PATH` when set. Cargo is **not**
+the fate channel — process fate is exit code + the typed `<ship>` envelope only.
+Do not put cargo `status` on the envelope object (that key is reserved for
+traffic `shipped|completed|escalate`).
+
+Successful PR open (sidecar):
+
+```json
+{"status": "pr_opened", "branch": "<the family base branch>", "pr": "<the PR url>"}
+```
+
+Failure / no-PR report (sidecar; pair with envelope `completed` or `escalate`
+as appropriate):
+
+```json
+{"failed": {"reason": "<short>", "diagnosis": "<the hard failure>"}}
+```
+
+or `{}` when there is nothing useful to report.
+
+### Examples
+
+Shipped (PR opened):
 
 ```text
-<decision>{}</decision>
-<ship>{"status": "pr_opened", "branch": "<the family base branch>", "pr": "<the PR url>"}</ship>
+<ship>{"station":"ship","status":"shipped"}</ship>
+```
+
+(+ sidecar `{"status":"pr_opened","branch":"...","pr":"..."}` when
+`$ORCHESTRATOR_OUTCOME_PATH` is set)
+
+Completed (no delivery cargo):
+
+```text
+<ship>{"station":"ship","status":"completed"}</ship>
 ```
 
 Escalation:
 
 ```text
-<decision>{"escalate": {"reason": "<short>", "diagnosis": "<what a human must decide>"}}</decision>
-<ship>{"status": "pr_opened", "branch": "<the family base branch>", "pr": "<the PR url>"}</ship>
-```
-
-(If no PR was opened before escalating, cargo may be `{}` or a failure report.)
-
-Failure cargo (no gate):
-
-```text
-<decision>{}</decision>
-<ship>{"failed": {"reason": "<short>", "diagnosis": "<the hard failure>"}}</ship>
+<ship>{"station":"ship","status":"escalate","reason":"<short>","diagnosis":"<what a human must decide>"}</ship>
 ```
 
 Rules:
 
-- Always emit `<decision>` (even `{}`) — typed gate only; never bind cargo shape to SO.
-- `status` is `pr_opened` and must include `pr` on successful delivery cargo.
-- Emit `<ship>` as the last cargo tag; if you iterate, the last pair counts.
-- This seat is single-iteration. Completion is clean exit + legal sidecar /
-  typed gate — no STEP_COMPLETE password.
+- Emit exactly one final `<ship>` envelope (last wins if you iterate).
+- Traffic `status` is only `shipped` \| `completed` \| `escalate` — never
+  `pr_opened` / `failed` on the envelope (those are cargo tokens).
+- Illegal traffic shape is re-asked in-session by Sandcastle; do not rely on the
+  runner to guess a status.
+- This seat is single-iteration. Completion is clean exit + legal typed
+  envelope / sidecar — no STEP_COMPLETE password.
