@@ -122,10 +122,11 @@ Rules:
   MUST be paired with `action:"wont_fix"` or `action:"rejected"` — never with
   `action:"fix_now"` (that would silently turn the governance suppression into a
   blocker).
-- Always emit the typed `<cmr>` tag (even when `$ORCHESTRATOR_OUTCOME_PATH` is
-  set and you write the same JSON object to the sidecar). Production CMR seats
-  bind Sandcastle `Output.object` to the `cmr` tag with `maxRetries`; the tag is
-  the traffic-signal channel, not an optional compatibility fallback. If you
-  iterate, the last typed `<cmr>` tag is the one that counts.
+- Always emit the typed `<judge>` tag (even when `$ORCHESTRATOR_OUTCOME_PATH` is
+  set and you write cargo siblings to the sidecar). Production family courts
+  bind Sandcastle `Output.object` to the `judge` tag with the T2 station schema
+  (`station:"judge"` + status tri-state) — same live seat as single-slice S3/S6.
+  Residual open-count / `<cmr>` shapes are not family closers. If you iterate,
+  the last typed `<judge>` tag is the one that counts.
 
 This seat is single-iteration. Completion is clean exit + legal sidecar / typed receipt — no STEP_COMPLETE password.

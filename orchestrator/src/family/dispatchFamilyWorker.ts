@@ -50,60 +50,49 @@ import {
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
-import {
-  judgeContinueFromOpenCount,
-  liveDispositionsForFindings,
-} from "../judgeStation.js";
+import { projectResidualReviewerToJudge } from "../judgeStation.js";
 import { skeletonReviewLoopWorkerResult } from "../reviewLoopOutcome.js";
 import type {
   FamilyBackend,
   IntegratedCmrPass,
   IntegratedCmrResult,
 } from "./types.js";
+import type { CmrResult } from "../types.js";
 
 /**
- * #930 — map a legacy IntegratedCmrResult (pre-judge residual API) into the
- * sole family-court traffic form `kind:"judge"`. Topology never reads
- * findingsCount; this boundary is the only place residual count may project.
+ * #930 — residual IntegratedCmrResult / kind:cmr paper → sole judge form once.
+ *
+ * Open-count residual (findingsCount is a safe integer):
+ *   same as single-slice {@link projectResidualReviewerToJudge} —
+ *   positive → continue; **zero → undefined (never silent converged)**.
+ *
+ * Legacy IntegratedCmrResult without an open-count field may still carry the
+ * explicit `converged` boolean green (pre-judge residual API). That is NOT
+ * open-count zero inventing a pass.
+ *
+ * Live production traffic is typed `station:judge` (see realFamilyBackend);
+ * this helper is residual boundary only.
  */
-export function legacyIntegratedCmrToJudgeOutput(
-  cmr: IntegratedCmrResult,
-): JudgeResult {
-  const findings = cmr.findings ?? [];
-  const count = cmr.findingsCount;
-  if (typeof count === "number" && Number.isSafeInteger(count) && count > 0) {
-    return (
-      judgeContinueFromOpenCount(count, findings) ?? {
-        kind: "judge",
-        status: "continue",
-        findingDispositions: liveDispositionsForFindings(findings),
-        findings,
-      }
-    );
+export function residualIntegratedCmrToJudgeOutput(
+  cmr:
+    | Pick<IntegratedCmrResult, "findingsCount" | "findings" | "converged">
+    | Pick<CmrResult, "findingsCount" | "findings" | "converged">,
+): JudgeResult | undefined {
+  if (
+    typeof cmr.findingsCount === "number" &&
+    Number.isSafeInteger(cmr.findingsCount)
+  ) {
+    // Open-count residual paper — 0/non-positive never becomes converged.
+    return projectResidualReviewerToJudge({
+      findingsCount: cmr.findingsCount,
+      findings: cmr.findings,
+    });
   }
-  if (cmr.converged === true || count === 0) {
+  // No open-count field: honor explicit legacy boolean green only.
+  if (cmr.converged === true) {
     return { kind: "judge", status: "converged" };
   }
-  // Residual red without a positive count → unusable at topology is preferred
-  // over inventing continue. Emit continue with empty live set so the fixed
-  // re-furnace path still runs when findings cargo exists.
-  if (findings.length > 0) {
-    return {
-      kind: "judge",
-      status: "continue",
-      findingDispositions: liveDispositionsForFindings(findings),
-      findings,
-    };
-  }
-  // No count, not converged, no findings — unusable non-judge would be ideal,
-  // but the legacy API always returned a boolean. Map soft-red to continue empty
-  // so the barrier re-opens the court rather than silent pass.
-  return {
-    kind: "judge",
-    status: "continue",
-    findingDispositions: [],
-    findings: [],
-  };
+  return undefined;
 }
 
 const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
@@ -151,7 +140,9 @@ export function cmrWorkerSpec(
     maxIter: 1,
     model,
     cmrReviewLegs: route?.legCollections.cmrReview ?? activeCmrReviewLegs(),
-    soul: "cmr",
+    // #930: family court is verify-judge traffic (same soul as single-slice S3/S6).
+    // kind stays "cmr" for dispatch/routing; soul is the judge traffic identity.
+    soul: "verify",
     toolchain: [],
   };
 }
@@ -483,12 +474,40 @@ export async function legacyDispatchFamilyWorker(
         ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
         : {}),
     });
-    // #930: legacy IntegratedCmrResult → shared T2 judge form at the boundary
-    // (topology never reads findingsCount). Prefer explicit status when present;
-    // else map residual converged/count into judge tri-state once here.
+    // #930: residual IntegratedCmrResult open-count projects once (shared
+    // residual semantics). Zero/missing count → residual kind:cmr unusable
+    // paper (re-furnace), never silent converged.
+    const projected = residualIntegratedCmrToJudgeOutput(cmr);
+    if (projected !== undefined) {
+      return { kind: "completed", output: projected };
+    }
     return {
       kind: "completed",
-      output: legacyIntegratedCmrToJudgeOutput(cmr),
+      output: {
+        kind: "cmr",
+        converged: cmr.converged,
+        ...(cmr.findingsCount !== undefined
+          ? { findingsCount: cmr.findingsCount }
+          : {}),
+        ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
+        ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
+        ...(cmr.successfulLegs !== undefined
+          ? { successfulLegs: cmr.successfulLegs }
+          : {}),
+        ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
+        ...(cmr.claimedFixedFindingIdentityKeys !== undefined
+          ? {
+              claimedFixedFindingIdentityKeys:
+                cmr.claimedFixedFindingIdentityKeys,
+            }
+          : {}),
+        ...(cmr.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: cmr.priorFindingDispositions }
+          : {}),
+        ...(cmr.evidencePaths !== undefined
+          ? { evidencePaths: cmr.evidencePaths }
+          : {}),
+      },
     };
   }
 

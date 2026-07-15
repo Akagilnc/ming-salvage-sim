@@ -63,8 +63,14 @@ import {
   logAndRethrowReceiptFailure,
   requireTypedTrafficSignal,
   workerReceiptOutput,
-  workerReceiptSchema,
 } from "../receiptRecovery.js";
+import {
+  JUDGE_RECEIPT_TAG,
+  decodeJudgeVerdict,
+  judgeStationReceiptSchema,
+  type JudgeVerdict,
+} from "../stationReceiptContracts.js";
+import { judgeResultFromVerdict } from "../judgeStation.js";
 
 import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
@@ -162,7 +168,7 @@ import {
 } from "../cliMonitorHooks.js";
 import {
   legacyDispatchFamilyWorker,
-  legacyIntegratedCmrToJudgeOutput,
+  residualIntegratedCmrToJudgeOutput,
 } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
 import {
@@ -249,11 +255,10 @@ export const FAMILY_FIX_FINDINGS_FILENAME = ".orchestrator-fix-findings.json";
 export const SHIP_FOCUS_FILENAME = ".ship-focus.md";
 
 /**
- * The integrated-cmr reviewer soul (ADR 0030). It invokes `ak-cross-m-review` for
- * one selected gate and returns runner-visible review outcomes; persistent repairs
- * are made only by the separate family coder-fix worker.
+ * #930: family integrated-cmr court soul = verify judge (same as single-slice
+ * S3/S6). kind remains "cmr" for dispatch; traffic/soul is the convergence judge.
  */
-const CMR_SOUL = "cmr";
+const CMR_SOUL: StepSoul = "verify";
 
 /**
  * The WRITE soul the ship worker runs under (it commits the bump + pushes). A
@@ -1500,39 +1505,93 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
       };
     }
-    // #930: family court traffic is T2 judge tri-state. Residual open-count
-    // cargo is projected once at this boundary; verifyCmr never reads count.
+    // #930: live typed path is already kind:"judge"; residual open-count
+    // projects once here via shared residual semantics (never silent clean).
     void ctx;
-    const judge = legacyIntegratedCmrToJudgeOutput({
-      converged: outcome.converged ?? false,
+    if (outcome.kind === "judge") {
+      const verdict: JudgeVerdict =
+        outcome.status === "converged"
+          ? { station: "judge", status: "converged" }
+          : outcome.status === "escalate"
+            ? {
+                station: "judge",
+                status: "escalate",
+                reason: outcome.reason ?? "family judge escalate",
+                diagnosis: outcome.diagnosis ?? "judge declared escalate",
+              }
+            : {
+                station: "judge",
+                status: "continue",
+                findingDispositions: outcome.findingDispositions ?? [],
+                ...(outcome.advanceCoder !== undefined
+                  ? { advanceCoder: outcome.advanceCoder }
+                  : {}),
+              };
+      const judge = judgeResultFromVerdict(verdict, outcome.findings);
+      return {
+        kind: "completed",
+        output: withFamilyJudgeCargo(judge, outcome),
+        ...(outcome.sessionId !== undefined
+          ? { sessionId: outcome.sessionId }
+          : {}),
+      };
+    }
+    const projected = residualIntegratedCmrToJudgeOutput({
+      ...(outcome.converged !== undefined
+        ? { converged: outcome.converged }
+        : {}),
       ...(outcome.findingsCount !== undefined
         ? { findingsCount: outcome.findingsCount }
         : {}),
-      ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
       ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
-      ...(outcome.successfulLegs !== undefined
-        ? { successfulLegs: outcome.successfulLegs }
-        : {}),
-      ...(outcome.skippedLegs !== undefined
-        ? { skippedLegs: outcome.skippedLegs }
-        : {}),
-      ...(outcome.claimedFixedFindingIdentityKeys !== undefined
-        ? {
-            claimedFixedFindingIdentityKeys:
-              outcome.claimedFixedFindingIdentityKeys,
-          }
-        : {}),
-      ...(outcome.priorFindingDispositions !== undefined
-        ? { priorFindingDispositions: outcome.priorFindingDispositions }
-        : {}),
-      ...(outcome.evidencePaths !== undefined
-        ? { evidencePaths: outcome.evidencePaths }
-        : {}),
     });
+    if (projected !== undefined) {
+      return {
+        kind: "completed",
+        output: withFamilyJudgeCargo(projected, outcome),
+        ...(outcome.sessionId !== undefined
+          ? { sessionId: outcome.sessionId }
+          : {}),
+      };
+    }
+    // Residual zero/missing open-count → non-judge unusable paper (re-furnace).
     return {
       kind: "completed",
-      output: judge,
-      ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
+      output: {
+        kind: "cmr",
+        ...(outcome.converged !== undefined
+          ? { converged: outcome.converged }
+          : {}),
+        ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+        ...(outcome.findingsCount !== undefined
+          ? { findingsCount: outcome.findingsCount }
+          : {}),
+        ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
+        ...(outcome.successfulLegs !== undefined
+          ? { successfulLegs: outcome.successfulLegs }
+          : {}),
+        ...(outcome.skippedLegs !== undefined
+          ? { skippedLegs: outcome.skippedLegs }
+          : {}),
+        ...(outcome.claimedFixedFindingIdentityKeys !== undefined
+          ? {
+              claimedFixedFindingIdentityKeys:
+                outcome.claimedFixedFindingIdentityKeys,
+            }
+          : {}),
+        ...(outcome.priorFindingDispositions !== undefined
+          ? { priorFindingDispositions: outcome.priorFindingDispositions }
+          : {}),
+        ...(outcome.findingFamilies !== undefined
+          ? { findingFamilies: outcome.findingFamilies }
+          : {}),
+        ...(outcome.evidencePaths !== undefined
+          ? { evidencePaths: outcome.evidencePaths }
+          : { evidencePaths: [] }),
+      },
+      ...(outcome.sessionId !== undefined
+        ? { sessionId: outcome.sessionId }
+        : {}),
     };
   }
 
@@ -1708,10 +1767,13 @@ export class RealFamilyBackend implements FamilyBackend {
             // separate family coder-fix worker.
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
-            // Sandcastle owns malformed-receipt recovery.  The sidecar remains
-            // cargo for cmrOutcomeFromResult; it is never a runner validation
-            // gate or a second receipt parser.
-            output: workerReceiptOutput("cmr", workerReceiptSchema()),
+            // #930: same live judge seat as single-slice S3/S6 — T2 station
+            // receipt on JUDGE_RECEIPT_TAG (not open-count `cmr` workerReceipt).
+            // Sandcastle owns malformed-receipt recovery; sidecar stays cargo.
+            output: workerReceiptOutput(
+              JUDGE_RECEIPT_TAG,
+              judgeStationReceiptSchema(),
+            ),
             // #909: shared sandbox quota-probe (billing pool when relayed).
             quotaProbe: this.familyQuotaProbeContext(spec, ctx),
           });
@@ -3340,16 +3402,31 @@ export class RealFamilyBackend implements FamilyBackend {
 // ─────────────────────────── cmr worker outcome (#335) ───────────────────────────
 
 /**
- * The classified outcome of the integrated cmr WORKER's run (#335). One of:
- *   - `verdict`   — the worker produced a `{converged, reason?, successfulLegs}`
- *     verdict plus reviewer-reported leg evidence (the normal case; route smoke
- *     has already checked required-leg availability before worker dispatch);
- *   - `escalate`  — the worker is model-stuck (skill missing / no leg ran / it
- *     could not produce a verdict) ⇒ the runner's escalate续跑 fork, NOT a pass;
- * Deliberately NOT the bare {@link IntegratedCmrResult}: a cmr worker also has the
- * escalate WorkerResult-level case the bare verdict cannot carry.
+ * The classified outcome of the integrated cmr WORKER's run (#335 / #930).
+ *   - `judge`    — live T2 tri-state verdict (sole production traffic after #930);
+ *   - `verdict`  — residual open-count / legacy cargo paper (project once at
+ *     {@link RealFamilyBackend.cmrOutcomeToWorkerResult} boundary);
+ *   - `escalate` — model-stuck ⇒ WorkerResult-level escalate 续跑 fork.
  */
 export type CmrWorkerOutcome =
+  | {
+      readonly kind: "judge";
+      readonly status: "converged" | "continue" | "escalate";
+      readonly findingDispositions?: ReadonlyArray<
+        import("../types.js").JudgeFindingDisposition
+      >;
+      readonly advanceCoder?: string;
+      readonly findings?: readonly Finding[];
+      readonly reason?: string;
+      readonly diagnosis?: string;
+      readonly successfulLegs?: readonly string[];
+      readonly skippedLegs?: readonly CmrSkippedLeg[];
+      readonly claimedFixedFindingIdentityKeys?: readonly string[];
+      readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+      readonly findingFamilies?: readonly FindingFamily[];
+      readonly evidencePaths?: readonly string[];
+      readonly sessionId?: string;
+    }
   | {
       readonly kind: "verdict";
       readonly converged?: boolean;
@@ -3371,6 +3448,42 @@ export type CmrWorkerOutcome =
       readonly escalation?: Escalation;
       readonly sessionId?: string;
     };
+
+/** Ride family cargo siblings on kind:judge without inventing a second closer. */
+function withFamilyJudgeCargo(
+  judge: import("../types.js").JudgeResult,
+  cargo: {
+    readonly findingFamilies?: readonly FindingFamily[];
+    readonly skippedLegs?: readonly CmrSkippedLeg[];
+    readonly successfulLegs?: readonly string[];
+    readonly evidencePaths?: readonly string[];
+    readonly claimedFixedFindingIdentityKeys?: readonly string[];
+    readonly priorFindingDispositions?: readonly PriorFindingDisposition[];
+  },
+): import("../types.js").JudgeResult {
+  return {
+    ...judge,
+    ...(cargo.findingFamilies !== undefined
+      ? { findingFamilies: cargo.findingFamilies }
+      : {}),
+    ...(cargo.skippedLegs !== undefined ? { skippedLegs: cargo.skippedLegs } : {}),
+    ...(cargo.successfulLegs !== undefined
+      ? { successfulLegs: cargo.successfulLegs }
+      : {}),
+    ...(cargo.evidencePaths !== undefined
+      ? { evidencePaths: cargo.evidencePaths }
+      : {}),
+    ...(cargo.claimedFixedFindingIdentityKeys !== undefined
+      ? {
+          claimedFixedFindingIdentityKeys:
+            cargo.claimedFixedFindingIdentityKeys,
+        }
+      : {}),
+    ...(cargo.priorFindingDispositions !== undefined
+      ? { priorFindingDispositions: cargo.priorFindingDispositions }
+      : {}),
+  } as import("../types.js").JudgeResult;
+}
 
 interface CmrSkippedLeg {
   readonly slug: string;
@@ -3738,6 +3851,71 @@ function classifyCmrOutcomePayload(
       diagnosis: gate.diagnosis,
     };
   }
+
+  // #930 live path: T2 judge verdict (same decode as single-slice S3/S6).
+  // Strip cargo siblings before strict decode (findings / findingFamilies ride
+  // as opaque cargo — same class as coder pickCoderTraffic).
+  const envelope = decodeJudgeVerdict(pickJudgeTraffic(normalizedParsed));
+  if (envelope.ok) {
+    const cargo = extractCmrCargoFields(normalizedParsed);
+    const v = envelope.value;
+    if (v.status === "converged") {
+      return { kind: "judge", status: "converged", ...cargo };
+    }
+    if (v.status === "escalate") {
+      return {
+        kind: "judge",
+        status: "escalate",
+        reason: v.reason,
+        diagnosis: v.diagnosis,
+        ...cargo,
+      };
+    }
+    return {
+      kind: "judge",
+      status: "continue",
+      findingDispositions: v.findingDispositions,
+      ...(v.advanceCoder !== undefined ? { advanceCoder: v.advanceCoder } : {}),
+      ...cargo,
+    };
+  }
+
+  // Residual open-count / legacy cmr paper — transport only (project at boundary).
+  return residualCmrVerdictCargo(normalizedParsed);
+}
+
+/** Traffic keys for T2 judge envelopes — cargo siblings stay off the strict decode. */
+const JUDGE_TRAFFIC_KEYS = new Set([
+  "station",
+  "status",
+  "cargoPointer",
+  "findingDispositions",
+  "advanceCoder",
+  "reason",
+  "diagnosis",
+]);
+
+function pickJudgeTraffic(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const traffic: Record<string, unknown> = {};
+  for (const key of JUDGE_TRAFFIC_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      traffic[key] = record[key];
+    }
+  }
+  return traffic;
+}
+
+function extractCmrCargoFields(normalizedParsed: Record<string, unknown>): {
+  readonly findings?: Finding[];
+  readonly successfulLegs?: string[];
+  readonly skippedLegs?: Array<{ slug: string; reason: string }>;
+  readonly claimedFixedFindingIdentityKeys?: string[];
+  readonly priorFindingDispositions?: PriorFindingDisposition[];
+  readonly findingFamilies?: readonly FindingFamily[];
+  readonly evidencePaths?: string[];
+} {
   const findings = Array.isArray(normalizedParsed.findings)
     ? normalizedParsed.findings.flatMap((rawFinding) => {
         const candidate = cmrReviewerFindingSchema.safeParse(rawFinding);
@@ -3748,9 +3926,10 @@ function classifyCmrOutcomePayload(
     : undefined;
   const evidencePaths = Array.isArray(normalizedParsed.evidencePaths)
     ? normalizedParsed.evidencePaths.filter(
-        (path): path is string => typeof path === "string" && path.trim().length > 0,
+        (path): path is string =>
+          typeof path === "string" && path.trim().length > 0,
       )
-    : [];
+    : undefined;
   const skippedLegs = softParseSkippedLegs(normalizedParsed.skippedLegs);
   const claimedFixedFindingIdentityKeys =
     softParseClaimedFixedFindingIdentityKeys(
@@ -3759,11 +3938,35 @@ function classifyCmrOutcomePayload(
   const priorFindingDispositions = softParsePriorFindingDispositions(
     normalizedParsed.priorFindingDispositions,
   );
-  const findingsCount = typeof normalizedParsed.findingsCount === "number" &&
+  const families = attachSanitizedFindingFamilies(
+    {},
+    normalizedParsed.findingFamilies,
+  );
+  return {
+    ...(findings !== undefined ? { findings } : {}),
+    successfulLegs: softParseSuccessfulLegs(normalizedParsed.successfulLegs),
+    ...(skippedLegs !== undefined ? { skippedLegs } : {}),
+    ...(claimedFixedFindingIdentityKeys !== undefined
+      ? { claimedFixedFindingIdentityKeys }
+      : {}),
+    ...(priorFindingDispositions !== undefined
+      ? { priorFindingDispositions }
+      : {}),
+    ...families,
+    ...(evidencePaths !== undefined ? { evidencePaths } : {}),
+  };
+}
+
+function residualCmrVerdictCargo(
+  normalizedParsed: Record<string, unknown>,
+): Extract<CmrWorkerOutcome, { readonly kind: "verdict" }> {
+  const cargo = extractCmrCargoFields(normalizedParsed);
+  const findingsCount =
+    typeof normalizedParsed.findingsCount === "number" &&
     Number.isSafeInteger(normalizedParsed.findingsCount) &&
     normalizedParsed.findingsCount >= 0
-    ? normalizedParsed.findingsCount
-    : undefined;
+      ? normalizedParsed.findingsCount
+      : undefined;
   return {
     kind: "verdict",
     ...(typeof normalizedParsed.converged === "boolean"
@@ -3773,18 +3976,23 @@ function classifyCmrOutcomePayload(
     normalizedParsed.reason.trim().length > 0
       ? { reason: normalizedParsed.reason }
       : {}),
-    successfulLegs: softParseSuccessfulLegs(normalizedParsed.successfulLegs),
-    ...(skippedLegs !== undefined ? { skippedLegs } : {}),
-    ...(claimedFixedFindingIdentityKeys !== undefined
-      ? { claimedFixedFindingIdentityKeys }
+    successfulLegs: cargo.successfulLegs ?? [],
+    ...(cargo.skippedLegs !== undefined ? { skippedLegs: cargo.skippedLegs } : {}),
+    ...(cargo.claimedFixedFindingIdentityKeys !== undefined
+      ? {
+          claimedFixedFindingIdentityKeys:
+            cargo.claimedFixedFindingIdentityKeys,
+        }
       : {}),
-    ...(priorFindingDispositions !== undefined
-      ? { priorFindingDispositions }
+    ...(cargo.priorFindingDispositions !== undefined
+      ? { priorFindingDispositions: cargo.priorFindingDispositions }
       : {}),
-    ...(findings !== undefined ? { findings } : {}),
+    ...(cargo.findings !== undefined ? { findings: cargo.findings } : {}),
     ...(findingsCount !== undefined ? { findingsCount } : {}),
-    ...attachSanitizedFindingFamilies({}, normalizedParsed.findingFamilies),
-    evidencePaths,
+    ...(cargo.findingFamilies !== undefined
+      ? { findingFamilies: cargo.findingFamilies }
+      : {}),
+    evidencePaths: cargo.evidencePaths ?? [],
   };
 }
 
