@@ -9,6 +9,7 @@
  */
 
 import type {
+  Escalation,
   Finding,
   FindingDisposition,
   JudgeFindingDisposition,
@@ -170,6 +171,27 @@ export function priorJudgeVerdictRowsFromLedger(
 }
 
 /**
+ * Mint the canonical T2 judge escalate envelope (status + reason/diagnosis +
+ * escalate payload). Shared by gate bells, residual projection, and verdict
+ * projection so three hand-copied objects cannot drift.
+ */
+export function mintJudgeEscalate(
+  escalation: Escalation | { readonly reason: string; readonly diagnosis: string },
+): JudgeResult {
+  const escalate: Escalation = {
+    reason: escalation.reason,
+    diagnosis: escalation.diagnosis,
+  };
+  return {
+    kind: "judge",
+    status: "escalate",
+    reason: escalate.reason,
+    diagnosis: escalate.diagnosis,
+    escalate,
+  };
+}
+
+/**
  * Project a decoded T2 judge verdict + optional findings cargo into the
  * runner-facing {@link JudgeResult} step output.
  */
@@ -181,13 +203,10 @@ export function judgeResultFromVerdict(
     return { kind: "judge", status: "converged" };
   }
   if (verdict.status === "escalate") {
-    return {
-      kind: "judge",
-      status: "escalate",
+    return mintJudgeEscalate({
       reason: verdict.reason,
       diagnosis: verdict.diagnosis,
-      escalate: { reason: verdict.reason, diagnosis: verdict.diagnosis },
-    };
+    });
   }
   // continue
   return {
@@ -214,17 +233,27 @@ export function liveDispositionsForFindings(
 /**
  * Residual open-count paper only — not ADR 0131 channel (b), not the preferred
  * production S3/S6 path. One projection for runner normalize + realBackend
- * residual decode: mint opaque `__open_N` live keys when cargo is sparse so a
- * positive residual count can still land on S5. Main path uses typed judge
- * dispositions instead.
+ * residual decode: mint opaque `__open_N` live keys when cargo is sparse or
+ * lacks identity fields so a positive residual count can still land on S5
+ * (count owns the edge; incomplete rows never crash projection). Main path
+ * uses typed judge dispositions instead.
  */
 export function liveDispositionsForOpenCount(
   findingsCount: number,
   findings: ReadonlyArray<Finding> = [],
 ): JudgeFindingDisposition[] {
-  if (findings.length > 0) {
+  if (
+    findings.length > 0 &&
+    findings.every(
+      (f) =>
+        typeof f.category === "string" &&
+        typeof f.location === "string" &&
+        typeof f.claim_quote === "string",
+    )
+  ) {
     return liveDispositionsForFindings(findings);
   }
+  // Sparse / opaque residual cargo → count-sized synthetic live keys.
   return Array.from({ length: findingsCount }, (_, i) => ({
     identityKey: `__open_${i + 1}`,
     action: "live" as const,
@@ -254,6 +283,31 @@ export function judgeContinueFromOpenCount(
     findingDispositions: liveDispositionsForOpenCount(findingsCount, cargo),
     findings: cargo,
   };
+}
+
+/**
+ * Residual open-count reviewer paper → sole judge form (#919 CR U3).
+ *
+ * Shared by runner normalize, realBackend residual decode, and route
+ * judgeStatusOf so escalate / positive-continue / non-positive-unusable are
+ * one predicate — not three parallel arms.
+ *
+ * - escalate present → T2 kind:"judge" status:"escalate" (wins over count)
+ * - positive open-count → continue (via {@link judgeContinueFromOpenCount})
+ * - zero / missing / non-integer → undefined (caller maps unusable; never silent clean)
+ */
+export function projectResidualReviewerToJudge(residual: {
+  readonly findingsCount: number;
+  readonly findings?: ReadonlyArray<Finding>;
+  readonly escalate?: Escalation;
+}): JudgeResult | undefined {
+  if (residual.escalate !== undefined) {
+    return mintJudgeEscalate(residual.escalate);
+  }
+  return judgeContinueFromOpenCount(
+    residual.findingsCount,
+    residual.findings ?? [],
+  );
 }
 
 /**

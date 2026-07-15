@@ -8,13 +8,16 @@
  * Every non-success terminal owns a unique non-zero code (no collisions).
  */
 
+import { FAMILY_STAGE_FAILURE_STATUSES } from "./family/familyTerminal.js";
 import type { FamilyRunResult, FamilyRunStatus } from "./family/types.js";
 import type { HandoffStatus, RunResult } from "./types.js";
 
 /**
  * Full terminal vocabulary the exit-code map covers.
- * Family stage names (#922) + outcome classes (escalated / incomplete / error)
- * + success class (success / already_done).
+ * Outcome classes (escalated / incomplete / error) + success class
+ * (success / already_done) + family stage names derived from the single
+ * canonical {@link FAMILY_STAGE_FAILURE_STATUSES} (#922) — do not re-list
+ * stage tokens here.
  */
 export const TERMINAL_EXIT_STATUSES = [
   "success",
@@ -22,12 +25,7 @@ export const TERMINAL_EXIT_STATUSES = [
   "escalated",
   "incomplete",
   "error",
-  "verify_failed",
-  "cmr_failed",
-  "ship_failed",
-  "online_review_failed",
-  "merge_failed",
-  "cleanup_failed",
+  ...FAMILY_STAGE_FAILURE_STATUSES,
 ] as const;
 
 export type TerminalExitStatus = (typeof TERMINAL_EXIT_STATUSES)[number];

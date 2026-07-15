@@ -85,8 +85,9 @@ import {
   judgeStationReceiptSchema,
 } from "./stationReceiptContracts.js";
 import {
-  judgeContinueFromOpenCount,
   judgeResultFromVerdict,
+  mintJudgeEscalate,
+  projectResidualReviewerToJudge,
 } from "./judgeStation.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
@@ -3068,14 +3069,17 @@ export class RealBackend implements Backend {
     if (spec.id === "S3" || spec.id === "S6") {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
+    // #919 CR: decision_gate bell must not mint residual open-count paper
+    // (same dual-shape landmine runner R1 deleted). Prefer T2 judge escalate —
+    // same fields as runner isJudgeSeat path. S3/S6 never reach here (early
+    // return above); residual non-S3/S6 reviewer / legacy decode still must
+    // not re-open kind:"reviewer"+findingsCount:0 as a gate envelope.
     const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
     if (gate.kind === "bell") {
-      return {
-        kind: "reviewer",
-        findings: [],
-        findingsCount: 0,
-        escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
-      };
+      return mintJudgeEscalate({
+        reason: gate.reason,
+        diagnosis: gate.diagnosis,
+      });
     }
     if (spec.role === "reviewer") {
       // Open-count fate only from the typed/raw channel — never from a separate
@@ -3128,28 +3132,16 @@ export class RealBackend implements Backend {
     }
 
     // Residual open-count paper (legacy fixtures / pre-#925 ledger replay):
-    // project to the sole judge form via the shared F3 helper — never re-open
-    // a second open-count routing path.
+    // project to the sole judge form via shared residual→judge helper — never
+    // re-open a second open-count routing path (#919 CR U3).
     const openCount = decodeReviewerOpenCountReceipt(raw);
     if (openCount !== undefined) {
-      if (openCount.escalate !== undefined) {
-        return {
-          kind: "judge",
-          status: "escalate",
-          reason: openCount.escalate.reason,
-          diagnosis: openCount.escalate.diagnosis,
-          escalate: openCount.escalate,
-        };
-      }
-      const projected = judgeContinueFromOpenCount(
-        openCount.findingsCount,
-        openCount.findings,
-      );
+      const projected = projectResidualReviewerToJudge(openCount);
       if (projected !== undefined) {
         return projected;
       }
       // Residual open-count present but not positive continue (0 / non-routeable)
-      // → unusable, never silent converged (#925 AC / #919 CR P1).
+      // and no escalate → unusable, never silent converged (#925 AC / #919 CR P1).
     }
 
     // Missing/unusable residual paper → same non-judge unusable envelope the

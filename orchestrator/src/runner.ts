@@ -117,9 +117,10 @@ import {
   isValidEscalation,
 } from "./validate.js";
 import {
-  judgeContinueFromOpenCount,
+  mintJudgeEscalate,
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
+  projectResidualReviewerToJudge,
 } from "./judgeStation.js";
 import {
   contractDriftStopSummary,
@@ -942,15 +943,17 @@ function rebuildBlockingFromLedger(
       continue;
     }
 
-    // Residual S4 + reviewer open-count (historical ledgers).
-    findingDispositions = [
-      ...(entry.findingDispositions ?? []),
-    ];
+    // Historical residual only (pre-#925 S4 + open-count paper). Cargo keeps
+    // raw findings + count with empty identity keys — lossless vs inventing
+    // __open_N via projectJudgeContinueBlocking. Artifact attach uses the
+    // shared residual→judge continue predicate (no third count arm).
+    findingDispositions = [...(entry.findingDispositions ?? [])];
     pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
     pendingBlockingFindingIdentityKeys = [];
     pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
     pendingRawReviewerArtifacts =
-      lastReviewerOutputForS4.findingsCount > 0
+      projectResidualReviewerToJudge(lastReviewerOutputForS4)?.status ===
+      "continue"
         ? reviewerRawArtifactPointers(
             lastReviewerMonitorHandle,
             lastReviewerSessionId,
@@ -959,23 +962,26 @@ function rebuildBlockingFromLedger(
     lastJudgeContinueIndex = -1;
   }
 
-  // Pre-S4 crash window residual: last reviewer has positive open-count but
-  // no S4 yet / stale earlier S4. Skip when a later judge continue already
-  // projected the live open set (new path has no S4).
+  // Historical residual only — pre-S4 crash window: last reviewer has positive
+  // open-count but no S4 yet / stale earlier S4. Positive-count predicate is
+  // projectResidualReviewerToJudge (no third count arm). Skip when a later
+  // judge continue already projected the live open set (new path has no S4).
   if (
     lastJudgeContinueIndex < 0 &&
-    lastReviewerOutputForS4?.kind === "reviewer" &&
-    typeof lastReviewerOutputForS4.findingsCount === "number" &&
-    Number.isSafeInteger(lastReviewerOutputForS4.findingsCount) &&
-    lastReviewerOutputForS4.findingsCount > 0
+    lastReviewerOutputForS4?.kind === "reviewer"
   ) {
-    pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
-    pendingBlockingFindingIdentityKeys = [];
-    pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
-    pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-      lastReviewerMonitorHandle,
-      lastReviewerSessionId,
+    const residualContinue = projectResidualReviewerToJudge(
+      lastReviewerOutputForS4,
     );
+    if (residualContinue?.status === "continue") {
+      pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
+      pendingBlockingFindingIdentityKeys = [];
+      pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
+      pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+        lastReviewerMonitorHandle,
+        lastReviewerSessionId,
+      );
+    }
   }
 
   return {
@@ -1270,7 +1276,7 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
 
 // #873 / ADR 0062: runner has NO authority to judge reviewer output format
 // (findings schema, tags, zod). Format belongs at write-point / worker.
-// Runner only: process exit / open findings count / worker-raised decision gate.
+// Runner only: process exit / judge status tri-state / worker-raised decision gate.
 
 /**
  * The fixed StepSpecs for child-slice worker steps. Versioned promptFiles,
@@ -1395,7 +1401,7 @@ function buildErrorReason(step: StepId, _output: StepOutput | undefined): string
  * judge-verdict form before topology runs. Production decode already emits
  * `kind:"judge"`; this normaliser exists so legacy fixtures / residual paper
  * cannot re-open a second open-count routing path — route() only ever sees
- * judge status enums.
+ * judge status enums (via {@link projectResidualReviewerToJudge}).
  */
 function normalizeJudgeSeatOutput(
   step: SliceStepId,
@@ -1404,31 +1410,12 @@ function normalizeJudgeSeatOutput(
   if (step !== "S3" && step !== "S6") return output;
   if (output.kind === "judge") return output;
 
-  // Residual open-count reviewer paper → sole judge continue form when count
-  // is positive (shared F3 helper). Zero / missing / non-integer residual is
-  // unusable (#925 AC / #919 CR P1): never mint silent converged.
+  // Residual open-count reviewer paper → shared residual→judge projection
+  // (escalate / positive continue / non-positive unusable). Never silent clean.
   if (output.kind === "reviewer") {
-    const projected = judgeContinueFromOpenCount(
-      output.findingsCount,
-      output.findings,
-    );
-    if (projected !== undefined) {
-      return {
-        ...projected,
-        ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
-      };
-    }
-    if (output.escalate !== undefined) {
-      return {
-        kind: "judge",
-        status: "escalate",
-        reason: output.escalate.reason,
-        diagnosis: output.escalate.diagnosis,
-        escalate: output.escalate,
-      };
-    }
-    // Leave residual paper as-is → route judgeStatusOf → unusable → S5.
-    return output;
+    const projected = projectResidualReviewerToJudge(output);
+    // Leave residual paper as-is when unusable → route → S5.
+    return projected ?? output;
   }
 
   // Offline skeleton / residual online-review VerifyResult on the judge seat
@@ -1522,13 +1509,16 @@ function untrustedExecutableInstructionSummary(
   return undefined;
 }
 
+/**
+ * Decision-kind escalate park stop summary.
+ * #925 / ADR 0132 / #919 CR U2: typed judge escalate and decision_gate share
+ * the same park family (`decision_gate_park`) — no third stop token.
+ */
 function stopSummaryForEscalation(escalation: Escalation): StopSummary {
-  const reason = `${escalation.reason}: ${escalation.diagnosis}`;
-  return {
-    reason: "spec_conflict",
-    summary: reason,
+  return decisionGateParkStopSummary({
+    summary: `${escalation.reason}: ${escalation.diagnosis}`,
     repairHint: "answer the decision escalation and rerun",
-  };
+  });
 }
 
 function stopSummaryForStartupRouteFailure(escalation: Escalation): StopSummary {
@@ -1978,22 +1968,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let refusedFindingIdentityKeysForReverify: readonly string[] = [];
   // Preserve the full ledger for relay and resume accounting.
   let resumeHistoryLedger: ReadonlyArray<LedgerEntry> = [];
-
-  function seedClassificationFromReviewerOutput(
-    reviewerOutput: StepOutput | undefined,
-    _afterFix: boolean,
-  ): string[] {
-    if (reviewerOutput?.kind !== "reviewer") return [];
-    // Residual kind:"reviewer" paper only — not the S3/S6 main path.
-    // Main single-slice topology reads judge status enum (ADR 0131 channel (b)
-    // / #925). Opaque cargo copy: findings rows pass through as-is; identity-key
-    // derivation is the landing writer's job (dispatchWorker → fixer).
-    pendingBlockingFindings = [...reviewerOutput.findings];
-    pendingBlockingFindingIdentityKeys = [];
-    // Residual open-count bookkeeping for rebuild/landing — not channel (b).
-    pendingBlockingFindingCount = reviewerOutput.findingsCount;
-    return [];
-  }
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
   // sessionId: a stable identifier for this orchestrator invocation.
@@ -3116,8 +3090,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //
               //  - CODER (S2/S5): process failure + typed-signal SOE enter retry.
               //    Completed opaque cargo never changes routing.
-              //  - REVIEWER (S3/S6): completed open-count cargo goes to the fixer;
-              //    SOE exhaust does NOT feed empty findings to the fixer (#899).
+              //  - JUDGE (S3/S6): typed status tri-state is the sole routing
+              //    signal; SOE exhaust does NOT feed empty cargo to the fixer (#899).
               //
               // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
               // current scene — do NOT pass a cleanup hook into withMechanicalRetry.
@@ -3330,23 +3304,31 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               reason: `${step} worker raised a decision gate`,
               diagnosis: err.tag.state_summary,
             };
-            const decisionOutput: StepOutput =
-              expectedKind === "coder"
-                ? {
-                    kind: "coder",
-                    committed: false,
-                    commitsAdded: 0,
-                    escalate: escalation,
-                  }
-                : expectedKind === "verify"
-                  ? {
-                      kind: "judge",
-                      status: "escalate",
-                      reason: escalation.reason,
-                      diagnosis: escalation.diagnosis,
-                      escalate: escalation,
-                    }
-                : { kind: "reviewer", findings: [], findingsCount: 0, escalate: escalation };
+            // #919 CR U1 + residual R1: single-slice agent seats are only
+            // coder (S2/S5) or judge (S3/S6 — role still "reviewer", soul
+            // verify). Always mint T2 kind:"judge" escalate on the judge seat;
+            // never residual open-count kind:"reviewer" paper (deleted dead arm).
+            const isJudgeSeat =
+              step === "S3" ||
+              step === "S6" ||
+              expectedKind === "verify" ||
+              stepSpecs[step].soul === "verify";
+            let decisionOutput: StepOutput;
+            if (expectedKind === "coder") {
+              decisionOutput = {
+                kind: "coder",
+                committed: false,
+                commitsAdded: 0,
+                escalate: escalation,
+              };
+            } else if (isJudgeSeat) {
+              decisionOutput = mintJudgeEscalate(escalation);
+            } else {
+              // Exhaustive: topology has no third agent seat kind.
+              throw new Error(
+                `runner: decision_gate on non-coder non-judge seat ${step} (expectedKind=${expectedKind})`,
+              );
+            }
             return await escalateTermination(
               step,
               escalation,
@@ -3659,16 +3641,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       step === "S3" || step === "S6" || step === "S4"
         ? findingDispositions
         : undefined;
-    const stepAdvanceCoder =
-      (step === "S3" || step === "S6") &&
-      output?.kind === "judge" &&
-      output.status === "continue" &&
-      typeof output.advanceCoder === "string"
-        ? output.advanceCoder
-        : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
+    // #919 CR U7/R2: advanceCoder sole source = output.advanceCoder (recovery /
+    // priorJudgeVerdictRowsFromLedger). Top-level LedgerEntry.advanceCoder deleted
+    // (zero readers; dual-write already gone). #926 owns any roster consumption.
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
@@ -3681,9 +3659,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(stepSessionId !== undefined ? { sessionId: stepSessionId } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
-        : {}),
-      ...(stepAdvanceCoder !== undefined
-        ? { advanceCoder: stepAdvanceCoder }
         : {}),
       // #684: surface the CLI monitor handle in-memory too (resume rebuild parity).
       ...(stepMonitorHandle !== undefined
@@ -3729,8 +3704,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     clearCompletedRelayState(step, output);
 
     // The runner — not the agent — decides the next step.
-    // The fixed review/fix topology advances from the reviewer's self-reported
-    // findings count and explicit escalation; receipt cargo is not a fate input.
+    // #925 / ADR 0132: topology advances from the judge status tri-state
+    // (converged|continue|escalate) and explicit escalation; receipt cargo is
+    // not a fate input. Residual open-count paper is projected before route().
     const decision = route({
       from: step,
       output: lastOutput,

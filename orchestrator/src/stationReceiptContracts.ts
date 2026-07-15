@@ -35,6 +35,11 @@
 
 import { z } from "zod";
 
+/** Local JSON-safe structural clone (no third-party dep; encode only). */
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 // ─── Result type (never throw bare exceptions from decode/parse) ─────────────
 
 /**
@@ -381,7 +386,7 @@ const judgeVerdictSchema = z.discriminatedUnion("status", [
 /** Encode a validated judge verdict into its canonical JSON shape. */
 export function encodeJudgeVerdict(verdict: JudgeVerdict): JudgeVerdict {
   // Already typed; return a plain JSON-safe clone of the canonical shape.
-  return JSON.parse(JSON.stringify(verdict)) as JudgeVerdict;
+  return cloneJson(verdict);
 }
 
 /** Decode + validate a judge verdict envelope. Never throws on bad shape. */
@@ -602,7 +607,7 @@ function pickCoderTraffic(record: Record<string, unknown>): Record<string, unkno
 export function encodeCoderEnvelope(
   envelope: CoderStationEnvelope,
 ): CoderStationEnvelope {
-  return JSON.parse(JSON.stringify(envelope)) as CoderStationEnvelope;
+  return cloneJson(envelope);
 }
 
 /**
@@ -711,7 +716,7 @@ const shipEnvelopeSchema = z.discriminatedUnion("status", [
 export function encodeShipEnvelope(
   envelope: ShipStationEnvelope,
 ): ShipStationEnvelope {
-  return JSON.parse(JSON.stringify(envelope)) as ShipStationEnvelope;
+  return cloneJson(envelope);
 }
 
 /** Decode + validate a ship station envelope. Never throws on bad shape. */

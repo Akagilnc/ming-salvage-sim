@@ -36,6 +36,7 @@ import {
   formatFixFocusMarkdown,
 } from "./findingFamilies.js";
 import { findingIdentityKeys } from "./findings.js";
+import { mintJudgeEscalate } from "./judgeStation.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -1084,6 +1085,8 @@ export function workerResultToStep(
     // Attach the escalate to a minimal role-shaped output so route()'s
     // escalate-first edge fires (the runner checks `output.escalate` before the
     // full role schema).
+    // #919 CR U1: S3/S6 seat role stays "reviewer" but always mints T2
+    // kind:"judge" escalate — never residual open-count reviewer paper.
     const output: StepOutput =
       expectedKind === "coder"
         ? {
@@ -1092,15 +1095,7 @@ export function workerResultToStep(
             commitsAdded: 0,
             escalate: result.escalation,
           }
-        : expectedKind === "verify"
-          ? {
-              kind: "judge",
-              status: "escalate",
-              reason: result.escalation.reason,
-              diagnosis: result.escalation.diagnosis,
-              escalate: result.escalation,
-            }
-        : { kind: "reviewer", findings: [], findingsCount: 0, escalate: result.escalation };
+        : mintJudgeEscalate(result.escalation);
     // PRESERVE the worker's sessionId on the escalate path (codex cmr R4 finding):
     // the human-answer resume (planResume → resumeSession) resumes the recorded
     // ledger sessionId; dropping it here would resume the wrong (run-level UUID)
