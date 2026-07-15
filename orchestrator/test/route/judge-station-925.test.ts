@@ -278,6 +278,26 @@ describe("#925 pure: route tri-state", () => {
     });
   });
 
+  it("S3/S6/S4 share the same judge-status edge table", () => {
+    // S-A: one helper; residual S4 must not fork a second status→edge copy.
+    for (const from of ["S3", "S6", "S4"] as const) {
+      expect(route({ from, output: judgeConverged() })).toEqual({
+        kind: "next",
+        step: "S7",
+      });
+      expect(
+        route({ from, output: judgeContinue([sampleFinding()]) }),
+      ).toEqual({ kind: "next", step: "S5" });
+      expect(route({ from, output: judgeEscalate() })).toEqual({
+        kind: "handoff",
+        status: "escalate",
+      });
+      expect(
+        route({ from, output: { kind: "fixer", committed: false } }),
+      ).toEqual({ kind: "next", step: "S5" });
+    }
+  });
+
   it("negative: live continue must not route to S7", () => {
     const decision = route({
       from: "S6",
