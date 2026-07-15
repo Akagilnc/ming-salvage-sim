@@ -9,6 +9,7 @@
  */
 
 import type {
+  Escalation,
   Finding,
   FindingDisposition,
   JudgeFindingDisposition,
@@ -254,6 +255,37 @@ export function judgeContinueFromOpenCount(
     findingDispositions: liveDispositionsForOpenCount(findingsCount, cargo),
     findings: cargo,
   };
+}
+
+/**
+ * Residual open-count reviewer paper → sole judge form (#919 CR U3).
+ *
+ * Shared by runner normalize, realBackend residual decode, and route
+ * judgeStatusOf so escalate / positive-continue / non-positive-unusable are
+ * one predicate — not three parallel arms.
+ *
+ * - escalate present → T2 kind:"judge" status:"escalate" (wins over count)
+ * - positive open-count → continue (via {@link judgeContinueFromOpenCount})
+ * - zero / missing / non-integer → undefined (caller maps unusable; never silent clean)
+ */
+export function projectResidualReviewerToJudge(residual: {
+  readonly findingsCount: number;
+  readonly findings?: ReadonlyArray<Finding>;
+  readonly escalate?: Escalation;
+}): JudgeResult | undefined {
+  if (residual.escalate !== undefined) {
+    return {
+      kind: "judge",
+      status: "escalate",
+      reason: residual.escalate.reason,
+      diagnosis: residual.escalate.diagnosis,
+      escalate: residual.escalate,
+    };
+  }
+  return judgeContinueFromOpenCount(
+    residual.findingsCount,
+    residual.findings ?? [],
+  );
 }
 
 /**

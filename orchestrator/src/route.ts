@@ -19,6 +19,7 @@
  */
 
 import type { SliceStepId, StepOutput } from "./types.js";
+import { projectResidualReviewerToJudge } from "./judgeStation.js";
 import { escalateOf } from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
@@ -47,6 +48,9 @@ export interface RouteContext {
  * into the sole judge-status form used by topology. Production decode already
  * emits `kind:"judge"`; this keeps resume of pre-#925 ledger rows and test
  * fixtures on one routing path (no parallel open-count station).
+ *
+ * Residual fate is delegated to {@link projectResidualReviewerToJudge} so
+ * normalize / decode / route share one escalate+continue+unusable predicate.
  */
 function judgeStatusOf(output: StepOutput | undefined):
   | "converged"
@@ -60,17 +64,10 @@ function judgeStatusOf(output: StepOutput | undefined):
     return "escalate";
   }
   if (output.kind === "reviewer") {
-    if (output.escalate != null) return "escalate";
-    // Positive residual open-count only → continue. Zero / missing / non-integer
-    // count is unusable residual paper (#925 AC / #919 CR P1): never silent clean.
-    if (
-      typeof output.findingsCount === "number" &&
-      Number.isSafeInteger(output.findingsCount) &&
-      output.findingsCount > 0
-    ) {
-      return "continue";
-    }
-    return "unusable";
+    const projected = projectResidualReviewerToJudge(output);
+    if (projected === undefined) return "unusable";
+    if (projected.status === "continue") return "continue";
+    return "escalate";
   }
   if (output.kind === "verify" && typeof output.converged === "boolean") {
     return output.converged ? "converged" : "continue";
