@@ -17,6 +17,7 @@
  */
 
 import { z } from "zod";
+import { parseLastTaggedJsonSoft } from "./lastTaggedJson.js";
 import { classifyDecisionGate } from "./receiptRecovery.js";
 import { readWorkerOutcomeSidecar } from "./workerOutcomeSidecar.js";
 import type { Escalation } from "./types.js";
@@ -148,18 +149,8 @@ function shipCargoFromSidecar(outcomePath: string | undefined): ShipWorkerOutcom
  * for production ship seats (#820 / #899); kept for unit tests of tag shapes.
  */
 export function parseShipOutcome(stdout: string): ShipWorkerOutcome {
-  const re = /<ship>([\s\S]*?)<\/ship>/g;
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  if (last === undefined) {
-    return { kind: "completed" };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return { kind: "completed" };
-  }
+  const parsed = parseLastTaggedJsonSoft(stdout, "ship");
+  if (parsed === undefined) return { kind: "completed" };
   return classifyShipOutcomePayload(parsed);
 }
 

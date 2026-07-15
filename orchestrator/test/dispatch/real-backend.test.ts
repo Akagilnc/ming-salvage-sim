@@ -1221,8 +1221,8 @@ describe("RealBackend reviewer output contract", () => {
       throw new Error(`unexpected shell call: ${file} ${args.join(" ")}`);
     }
     /** Typed probe for private-ish receipt decode (no `as unknown as`). */
-    public probeDecodeOutput(spec: StepSpec, raw: unknown): StepOutput {
-      return this.decodeOutput(spec, raw);
+    public probeDecodeOutput(spec: StepSpec, raw: unknown, cargo?: unknown): StepOutput {
+      return this.decodeOutput(spec, raw, cargo);
     }
     /** Typed probe for typed vs cargo channel selection. */
     public probeRawOutputFor(
@@ -1277,6 +1277,38 @@ describe("RealBackend reviewer output contract", () => {
 
     expect(decoded).toMatchObject({
       escalate: { reason: "owner decision needed", diagnosis: "contract conflict" },
+    });
+  });
+
+  it("preserves real coder commit cargo when the typed decision gate escalates", () => {
+    // #899 / #384: escalate is orthogonal to committed/commitsAdded — a baseline
+    // commit that already landed must not be rewritten as zero by the gate path.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const backend = new DecodeOnlyBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 899,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: join(here, "..", "..", "prompts"),
+      soulsDir: join(here, "..", "..", "image", "souls"),
+      home: tempHome("rb-home-coder-bell-cargo-"),
+    });
+
+    const decoded = backend.probeDecodeOutput(
+      coderSpec,
+      { escalate: { reason: "design fork", diagnosis: "owner must choose the contract" } },
+      { committed: true, commitsAdded: 2 },
+    );
+
+    expect(decoded).toEqual({
+      kind: "coder",
+      committed: true,
+      commitsAdded: 2,
+      escalate: {
+        reason: "design fork",
+        diagnosis: "owner must choose the contract",
+      },
     });
   });
 
@@ -1493,8 +1525,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     }
 
     /** Typed probe for receipt decode (no `as unknown as`). */
-    public probeDecodeOutput(spec: StepSpec, raw: unknown): StepOutput {
-      return this.decodeOutput(spec, raw);
+    public probeDecodeOutput(spec: StepSpec, raw: unknown, cargo?: unknown): StepOutput {
+      return this.decodeOutput(spec, raw, cargo);
     }
     /** Typed probe for typed vs cargo channel selection. */
     public probeRawOutputFor(

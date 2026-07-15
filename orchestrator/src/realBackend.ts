@@ -65,6 +65,9 @@ import * as sc from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
+  extractLastTagBody,
+} from "./lastTaggedJson.js";
+import {
   classifyDecisionGate,
   decisionGateOutput,
   logAndRethrowReceiptFailure,
@@ -1157,29 +1160,9 @@ function extractTaggedJson(
   stdout: string,
   tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease",
 ): unknown | undefined {
-  const open = `<${tag}>`;
-  const close = `</${tag}>`;
-  const starts: number[] = [];
-  for (
-    let idx = stdout.indexOf(open);
-    idx !== -1;
-    idx = stdout.indexOf(open, idx + open.length)
-  ) {
-    starts.push(idx);
-  }
-  if (starts.length === 0) {
-    return undefined;
-  }
-
-  for (let i = starts.length - 1; i >= 0; i -= 1) {
-    const bodyStart = starts[i] + open.length;
-    const end = stdout.indexOf(close, bodyStart);
-    if (end === -1) continue;
-    const body = stdout.slice(bodyStart, end).trim();
-    return parseTaggedJsonBody(body);
-  }
-
-  return undefined;
+  const body = extractLastTagBody(stdout, tag);
+  if (body === undefined) return undefined;
+  return parseTaggedJsonBody(body.trim());
 }
 
 function parseTaggedJsonBody(body: string): unknown {
@@ -1278,6 +1261,29 @@ export interface SelfReportedCoder {
   readonly committed: boolean;
   readonly commitsAdded: number;
   readonly escalate?: { readonly reason: string; readonly diagnosis: string };
+}
+
+/**
+ * Tolerant coder cargo fields (committed / commitsAdded). Missing or off-shape
+ * values default to the no-commit report — never invent escalate from cargo.
+ */
+function coderCargoFields(body: unknown): {
+  readonly committed: boolean;
+  readonly commitsAdded: number;
+} {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return { committed: false, commitsAdded: 0 };
+  }
+  const receipt = body as Record<string, unknown>;
+  return {
+    committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
+    commitsAdded:
+      typeof receipt.commitsAdded === "number" &&
+      Number.isInteger(receipt.commitsAdded) &&
+      receipt.commitsAdded >= 0
+        ? receipt.commitsAdded
+        : 0,
+  };
 }
 
 /**
@@ -2909,19 +2915,23 @@ export class RealBackend implements Backend {
     // never supplies escalate / findingsCount when typed was the seat policy.
     const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
     if (gate.kind === "bell") {
-      return spec.role === "coder"
-        ? {
-            kind: "coder",
-            committed: false,
-            commitsAdded: 0,
-            escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
-          }
-        : {
-            kind: "reviewer",
-            findings: [],
-            findingsCount: 0,
-            escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
-          };
+      if (spec.role === "coder") {
+        // Escalate is orthogonal to commit cargo (#384 / #899): preserve real
+        // committed/commitsAdded from the cargo channel (or legacy combined raw).
+        const fields = coderCargoFields(cargo !== undefined ? cargo : raw);
+        return {
+          kind: "coder",
+          committed: fields.committed,
+          commitsAdded: fields.commitsAdded,
+          escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
+        };
+      }
+      return {
+        kind: "reviewer",
+        findings: [],
+        findingsCount: 0,
+        escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
+      };
     }
     if (spec.role === "reviewer") {
       // Open-count fate only from the typed/raw channel — never from a separate
@@ -2961,20 +2971,11 @@ export class RealBackend implements Backend {
     // Coder: decision signal may be `{}` (no gate). Cargo comes from the
     // ordinary `<coder>` tag / sidecar — never re-read escalate from cargo.
     if (spec.role === "coder") {
-      const cargoBody = cargo !== undefined ? cargo : raw;
-      if (cargoBody === null || typeof cargoBody !== "object" || Array.isArray(cargoBody)) {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
-      }
-      const receipt = cargoBody as Record<string, unknown>;
+      const fields = coderCargoFields(cargo !== undefined ? cargo : raw);
       return {
         kind: "coder",
-        committed: typeof receipt.committed === "boolean" ? receipt.committed : false,
-        commitsAdded:
-          typeof receipt.commitsAdded === "number" &&
-          Number.isInteger(receipt.commitsAdded) &&
-          receipt.commitsAdded >= 0
-            ? receipt.commitsAdded
-            : 0,
+        committed: fields.committed,
+        commitsAdded: fields.commitsAdded,
       };
     }
 
