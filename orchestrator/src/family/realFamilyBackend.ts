@@ -1747,7 +1747,17 @@ export class RealFamilyBackend implements FamilyBackend {
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
     // #899 hotfix: same monitored-bridge liveness forwarding as the
     // single-slice seam (see sandboxStreamHeartbeat.ts).
-    return await sc.run(withMonitorStreamHeartbeat(options));
+    //
+    // #928: sandcastle defaults `completionSignal` to
+    // `"<promise>COMPLETE</promise>"` when omitted. Empty array is the only
+    // API-supported disable — omit is NOT off. Production completion is clean
+    // exit + legal sidecar / typed envelope (same as RealBackend).
+    return await sc.run(
+      withMonitorStreamHeartbeat({
+        ...options,
+        completionSignal: [],
+      }),
+    );
   }
 
   /**

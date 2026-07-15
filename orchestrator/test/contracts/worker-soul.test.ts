@@ -117,7 +117,7 @@ describe("#334 RealBackend.boxConfig uses baked skills", () => {
     role: "coder",
     promptFile: "coder_implement.md",
     model: "sonnet",
-    maxIter: 5,
+    maxIter: 1,
     soul: "coder",
     toolchain: ["python"],
   };
