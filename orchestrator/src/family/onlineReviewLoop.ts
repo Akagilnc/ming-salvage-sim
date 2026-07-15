@@ -49,10 +49,8 @@ import {
   fixMarkedKeysFromVerify,
 } from "../onlineReviewSideEffects.js";
 import type { StopSummary } from "../stopSummary.js";
-import {
-  decisionGateParkStopSummary,
-  infraFailureStopSummary,
-} from "../stopSummary.js";
+import { decisionGateParkStopSummary } from "../stopSummary.js";
+import { stageFailureStopSummary } from "./familyTerminal.js";
 
 /** Hard cap on online review rounds — runner-enforced (ADR 0061). */
 export const MAX_ONLINE_REVIEW_ROUNDS = 3;
@@ -470,7 +468,10 @@ export function onlineReviewFixerNothingToFixStopSummary(): StopSummary {
 /** Stop summary when host GitHub verify side effects fail closed (#600 r18). */
 export function verifySideEffectFailureStopSummary(err: unknown): StopSummary {
   const detail = err instanceof Error ? err.message : String(err);
-  return infraFailureStopSummary({
+  // #922: family surface terminal owns online_review_failed at the source —
+  // do not emit infra_failure for callers to restamp.
+  return stageFailureStopSummary({
+    status: "online_review_failed",
     summary: `online review verify side effects failed: ${detail}`,
     repairHint:
       "fix GitHub side-effect preconditions (valid PR ref, recheck fixing commit, defer issue creation) and rerun the online review loop",
@@ -491,7 +492,8 @@ export function onlineReviewDispatchFailureStopSummary(
       : phase === "verify"
         ? "verify dispatch"
         : "fixer dispatch";
-  return infraFailureStopSummary({
+  return stageFailureStopSummary({
+    status: "online_review_failed",
     summary: `online review ${label} failed: ${detail}`,
     repairHint:
       "repair the online review loop infrastructure failure and rerun the online review loop",
@@ -897,13 +899,13 @@ export async function runOnlineReviewLoopStage(
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: {
-            reason: "infra_failure",
+          stopSummary: stageFailureStopSummary({
+            status: "online_review_failed",
             summary:
               "online review verify is green but CI check-runs stayed non-terminal past the overdue poll window",
             repairHint:
               "wait for CI to complete (or fail) on the PR head, then re-run online review",
-          },
+          }),
         };
       }
       // Bots may already be quiescent — poll returns immediately. Shared delay
@@ -951,13 +953,13 @@ export async function runOnlineReviewLoopStage(
           ok: false,
           terminalState: "decision_gate_raised",
           round,
-          stopSummary: {
-            reason: "infra_failure",
+          stopSummary: stageFailureStopSummary({
+            status: "online_review_failed",
             summary:
               "family 文档发布 returned released:false — skill fail / hang / required push fail",
             repairHint:
               "fix the docRelease skill or push failure and re-feed the family run",
-          },
+          }),
         };
       }
       return { ok: true, terminalState: "mergeable", round };
@@ -973,13 +975,13 @@ export async function runOnlineReviewLoopStage(
         ok: false,
         terminalState: "decision_gate_raised",
         round,
-        stopSummary: {
-          reason: "infra_failure",
+        stopSummary: stageFailureStopSummary({
+          status: "online_review_failed",
           summary:
             "online review bots are clean but CI check-runs failed on the PR head",
           repairHint:
             "fix the CI failures on the PR head and re-run the online review loop",
-        },
+        }),
       };
     }
     }

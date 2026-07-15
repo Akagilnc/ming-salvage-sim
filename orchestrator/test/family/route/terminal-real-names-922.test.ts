@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
 import {
   FAMILY_STAGE_FAILURE_STATUSES,
+  familyTerminalFromStopSummary,
   isFamilyStageFailureStatus,
   resolveFamilyStageTerminal,
   stageFailureStopSummary,
@@ -150,6 +151,48 @@ describe("#922 pure terminal helpers", () => {
         repairHint: "answer gate",
       },
     });
+  });
+
+  it("familyTerminalFromStopSummary is the single park-vs-stage seam", () => {
+    const park = familyTerminalFromStopSummary({
+      stage: "merge_failed",
+      stopSummary: {
+        reason: "decision_gate_park",
+        summary: "merge needs human",
+        repairHint: "answer gate",
+      },
+    });
+    expect(park).toEqual({
+      status: "escalated",
+      stopSummary: {
+        reason: "decision_gate_park",
+        summary: "merge needs human",
+        repairHint: "answer gate",
+      },
+    });
+
+    const merge = familyTerminalFromStopSummary({
+      stage: "merge_failed",
+      stopSummary: {
+        reason: "infra_failure",
+        summary: "auto-merge blocked",
+        repairHint: "unblock merge",
+      },
+    });
+    expect(merge.status).toBe("merge_failed");
+    expect(merge.stopSummary.reason).toBe("merge_failed");
+    expect(merge.stopSummary.summary).toBe("auto-merge blocked");
+
+    const online = familyTerminalFromStopSummary({
+      stage: "online_review_failed",
+      stopSummary: {
+        reason: "infra_failure",
+        summary: "bots stuck",
+      },
+    });
+    expect(online.status).toBe("online_review_failed");
+    expect(online.stopSummary.reason).toBe("online_review_failed");
+    expect(online.stopSummary.summary).toBe("bots stuck");
   });
 });
 
