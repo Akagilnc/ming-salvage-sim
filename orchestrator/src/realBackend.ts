@@ -3068,12 +3068,18 @@ export class RealBackend implements Backend {
     if (spec.id === "S3" || spec.id === "S6") {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
+    // #919 CR: decision_gate bell must not mint residual open-count paper
+    // (same dual-shape landmine runner R1 deleted). Prefer T2 judge escalate —
+    // same fields as runner isJudgeSeat path. S3/S6 never reach here (early
+    // return above); residual non-S3/S6 reviewer / legacy decode still must
+    // not re-open kind:"reviewer"+findingsCount:0 as a gate envelope.
     const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
     if (gate.kind === "bell") {
       return {
-        kind: "reviewer",
-        findings: [],
-        findingsCount: 0,
+        kind: "judge",
+        status: "escalate",
+        reason: gate.reason,
+        diagnosis: gate.diagnosis,
         escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
       };
     }
