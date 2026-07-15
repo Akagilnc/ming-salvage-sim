@@ -1,3 +1,5 @@
+> **修订预告（2026-07-15）**：本 ADR 之〔「未决行数作关环取数」条款：判词三态取代（毙单 refuted = 与 fresh 终翻并列的合法终翻）〕经 #919（Accepted，见 ADR 0132）拍定修订，随对应切片落地生效；落地前按现文执行，评审时勿以现文否决 #919 已拍方向。
+
 Status: Proposed
 
 > **限缩（ADR 0131，2026-07-13 owner 裁决；#899 typed-signal 终局）**：findings 状态库是 reviewer / fixer 之间的专业材料与状态真源，不是 Runner 的信号来源。reviewer 自己读取库并自报 open-count；Runner 说几条就是几条，不查询、不派生、不对账。写入错误由写入 worker / Action 当场自纠；Action-owned structured retry 耗尽则当前 Action 非零退出。格式或写入失败不得变成 decision gate；只有 worker 成功提交的真实专业、设计或范围决策请求才走 decision gate。Runner 仍只消费三通道，fresh 终翻规则不变。

@@ -36,7 +36,8 @@ export interface GrokAgentOptions {
 }
 
 /**
- * Map grok headless `streaming-json` lines into sandcastle ParsedStreamEvent.
+ * Stateful mapper from grok headless `streaming-json` lines to sandcastle
+ * ParsedStreamEvent.
  *
  * Documented event shapes (host probe 2026-07-11, grok 0.2.93):
  *   {"type":"text","data":"…"}
@@ -45,24 +46,34 @@ export interface GrokAgentOptions {
  *
  * Headless streaming-json does NOT emit tool_call events even when tools run
  * (probe: echo OK via bash succeeded; stream only showed thought/text/end).
- * Completion signals still flow through text; route smoke adapts accordingly.
+ *
+ * `result` semantics (#899 hotfix, 2026-07-15): sandcastle keeps only the
+ * LAST result event's payload as the iteration's `result`/`stdout` — that is
+ * what the completion-signal check and the coder `<coder>` receipt extraction
+ * read. Grok emits text in per-message chunks, so mapping every chunk to a
+ * result event made those checks a last-chunk roulette: on #899 the coder's
+ * receipt + CODER_STEP_COMPLETE lived in earlier chunks, iterations never
+ * stopped (5× token burn per step) and escalate cargo degraded to
+ * committed:false. Chunks now emit text events only and accumulate; the
+ * single result event is emitted on `end` with the full turn (codex parity,
+ * whose CLI emits one final result record natively).
  */
-export function parseGrokStreamLine(line: string): Array<
+export function createGrokStreamParser(): (line: string) => Array<
   | { type: "text"; text: string }
   | { type: "result"; result: string }
   | { type: "tool_call"; name: string; args: string }
   | { type: "session_id"; sessionId: string }
 > {
+  let accumulated = "";
+  return (line) => {
   const trimmed = line.trim();
   if (!trimmed.startsWith("{")) return [];
   try {
     const obj = JSON.parse(trimmed) as Record<string, unknown>;
     const type = obj.type;
     if (type === "text" && typeof obj.data === "string") {
-      return [
-        { type: "text", text: obj.data },
-        { type: "result", result: obj.data },
-      ];
+      accumulated += obj.data;
+      return [{ type: "text", text: obj.data }];
     }
     if (type === "end") {
       const events: Array<
@@ -72,10 +83,17 @@ export function parseGrokStreamLine(line: string): Array<
       if (typeof obj.sessionId === "string") {
         events.push({ type: "session_id", sessionId: obj.sessionId });
       }
-      // Final json-mode object sometimes embeds full text on the end event in
-      // future versions; accept it when present.
-      if (typeof obj.text === "string" && obj.text.length > 0) {
-        events.push({ type: "result", result: obj.text });
+      // The accumulated turn is the result; an end event's own embedded text
+      // is only a fallback for streams that never chunked any text.
+      const turn =
+        accumulated.length > 0
+          ? accumulated
+          : typeof obj.text === "string"
+            ? obj.text
+            : "";
+      accumulated = "";
+      if (turn.length > 0) {
+        events.push({ type: "result", result: turn });
       }
       return events;
     }
@@ -105,6 +123,7 @@ export function parseGrokStreamLine(line: string): Array<
     // Non-JSON line — ignore (same as other sandcastle providers).
   }
   return [];
+  };
 }
 
 /**
@@ -142,8 +161,8 @@ export function grokAgent(
       if (prompt) args.push(prompt);
       return args;
     },
-    parseStreamLine(line) {
-      return parseGrokStreamLine(line);
-    },
+    // Per-provider accumulator: each dispatch builds its own provider via
+    // agentForSlug, so turns never bleed across concurrent workers.
+    parseStreamLine: createGrokStreamParser(),
   };
 }
