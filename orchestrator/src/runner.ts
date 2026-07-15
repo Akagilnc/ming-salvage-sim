@@ -2150,6 +2150,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
     const stopSummary = opts?.stopSummary ?? stopSummaryForErrorPackage(errorPackage);
 
+    // #929 — non-success terminals must speak externally (not only return
+    // errorPackage). stopForCoderRec already console.errors; keep the same
+    // invariant on the shared errorTermination helper so mid-run crashes are
+    // visible without parsing the RunResult.
+    console.error(`[orchestrator] ${failedStep} failed: ${reason}`);
+
     // Record the failing step. The in-memory push is skipped when the caller
     // already pushed it (recordInMemory:false) or it is S8 itself; the
     // best-effort persist is still attempted so disk and memory agree (D),
@@ -2219,6 +2225,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     stopSummaryOverride?: StopSummary,
   ): Promise<RunResult> {
     const stopSummary = stopSummaryOverride ?? stopSummaryForEscalation(escalation);
+    // #929 — same non-success loudness invariant as errorTermination /
+    // stopForCoderRec: operators must see the park without parsing RunResult.
+    console.error(
+      `[orchestrator] ${failedStep} escalated: ${escalation.reason} — ${escalation.diagnosis}`,
+    );
     if (failedStep !== "S8") {
       ledger.push({
         step: failedStep,
@@ -3575,6 +3586,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason: `writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
           branchHead: worktree?.branch,
         };
+        // #929 — speak before best-effort re-persist (same loudness class as
+        // errorTermination; this path does not call that helper).
+        console.error(
+          `[orchestrator] S8 failed: writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
+        );
         const stopSummary = stopSummaryForErrorPackage(errorPackage);
         // persistBestEffort swallows a secondary write fault — we already return
         // status:error, a second ledger fault must not mask the original cause.
