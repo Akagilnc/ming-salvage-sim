@@ -177,9 +177,9 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
         { claudeToken: "tok" },
         {
           id: "S3",
-          kind: "reviewer",
-          role: "reviewer",
-          soul: "READ-ONLY",
+          kind: "verify",
+          role: "verify",
+          soul: "verify",
           host: "claude",
           session: "fresh",
           contextRetention: "clean",

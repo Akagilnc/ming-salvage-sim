@@ -452,10 +452,11 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
 
     const resolvedRoute = resolveActiveModelRoute();
     const declared = resolvedRoute.legCollections.cmrReview.map((l: { slug: string }) => l.slug);
+    // #919 R7: live green is kind:judge status:converged (residual
+    // kind:cmr + findingsCount:0 is unusable fail-loud, never silent clean).
     const cmrOutput = {
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
+      kind: "judge",
+      status: "converged",
       successfulLegs: declared.length > 0 ? declared : ["opus"],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],

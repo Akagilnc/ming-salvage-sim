@@ -399,10 +399,10 @@ describe("#927 AC: refuse receipt → judge re-adjudicate (uphold / reverse)", (
     const result = await runOrchestrator({ issueNumber: 927, backend });
     expect(result.status).toBe("success");
     expect(backend.dispatched).toEqual(
-      expect.arrayContaining(["S5:coder", "S6:reviewer"]),
+      expect.arrayContaining(["S5:coder", "S6:verify"]),
     );
     const s5 = backend.dispatched.indexOf("S5:coder");
-    const s6 = backend.dispatched.indexOf("S6:reviewer");
+    const s6 = backend.dispatched.indexOf("S6:verify");
     expect(s5).toBeGreaterThan(-1);
     expect(s6).toBeGreaterThan(s5);
     expect(backend.s5Count).toBe(1);
@@ -452,9 +452,9 @@ describe("#927 AC: refuse receipt → judge re-adjudicate (uphold / reverse)", (
     );
     expect(path).toEqual([
       "S5:coder",
-      "S6:reviewer",
+      "S6:verify",
       "S5:coder",
-      "S6:reviewer",
+      "S6:verify",
     ]);
   });
 });
@@ -560,7 +560,7 @@ describe("#927 AC: four legal reasons each reach judge re-adjudicate", () => {
       // Topology: S5 refuse → S6 (no S4 mechanical station)
       expect(backend.dispatched.some((d) => d.startsWith("S4:"))).toBe(false);
       const s5 = backend.dispatched.indexOf("S5:coder");
-      const s6 = backend.dispatched.indexOf("S6:reviewer");
+      const s6 = backend.dispatched.indexOf("S6:verify");
       expect(s6).toBeGreaterThan(s5);
     });
   }
@@ -609,9 +609,9 @@ describe("#927 AC: S4 dissolved — fixer refuse second gate still reachable", (
     );
     expect(agentPath).toEqual([
       "S2:coder",
-      "S3:reviewer",
+      "S3:verify",
       "S5:coder",
-      "S6:reviewer",
+      "S6:verify",
     ]);
     // Second gate: refuse cargo reached the judge seat
     expect(backend.firstS6RefuseLanding()?.landing?.refuseRecords).toHaveLength(

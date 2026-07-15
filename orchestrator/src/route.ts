@@ -19,7 +19,7 @@
  */
 
 import type { SliceStepId, StepOutput } from "./types.js";
-import { projectResidualReviewerToJudge } from "./judgeStation.js";
+import { judgeStatusFromOutput } from "./judgeStation.js";
 import { escalateOf } from "./validate.js";
 
 /** What route() decides: the next step to run, or a terminal handoff. */
@@ -44,44 +44,11 @@ export interface RouteContext {
 }
 
 /**
- * Collapse residual open-count reviewer paper (and offline verify skeletons)
- * into the sole judge-status form used by topology. Production decode already
- * emits `kind:"judge"`; this keeps resume of pre-#925 ledger rows and test
- * fixtures on one routing path (no parallel open-count station).
- *
- * Live topology invariant: after runner normalize, S3/S6 seats carry
- * `kind:"judge"` (or unusable non-judge envelopes). Route never reads raw
- * reviewer open-count fate for edge choice — residual paper here only goes
- * through {@link projectResidualReviewerToJudge} (shared with normalize /
- * decode). No second count predicate, no prose parsing.
- */
-function judgeStatusOf(output: StepOutput | undefined):
-  | "converged"
-  | "continue"
-  | "escalate"
-  | "unusable" {
-  if (output == null) return "unusable";
-  if (output.kind === "judge") {
-    if (output.status === "converged") return "converged";
-    if (output.status === "continue") return "continue";
-    return "escalate";
-  }
-  // Residual historical / fixture paper only — sole projection, no parallel predicate.
-  if (output.kind === "reviewer") {
-    const projected = projectResidualReviewerToJudge(output);
-    if (projected === undefined) return "unusable";
-    if (projected.status === "continue") return "continue";
-    return "escalate";
-  }
-  if (output.kind === "verify" && typeof output.converged === "boolean") {
-    return output.converged ? "converged" : "continue";
-  }
-  return "unusable";
-}
-
-/**
  * S3 / S6 / residual-S4 status → edge table (single copy).
  * Unusable and continue both go to S5 (never silent clean / S7).
+ *
+ * Status collapse itself is {@link judgeStatusFromOutput} in judgeStation
+ * (#919 S1 — shared with runner normalize; no parallel predicate here).
  */
 function routeEdgesFromJudgeStatus(
   status: "converged" | "continue" | "escalate" | "unusable",
@@ -128,7 +95,7 @@ export function route(ctx: RouteContext): RouteDecision {
       // #925: judge verdict tri-state is the sole convergence signal.
       // S4 is dissolved open-count station — residual historical ledgers only;
       // same edge helper as live S3/S6 (no second status→edge table).
-      return routeEdgesFromJudgeStatus(judgeStatusOf(ctx.output));
+      return routeEdgesFromJudgeStatus(judgeStatusFromOutput(ctx.output));
     }
 
     case "S5": {

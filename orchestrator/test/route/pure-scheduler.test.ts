@@ -147,9 +147,9 @@ describe("#337 runner is a pure scheduler — no inline productive work (BEHAVIO
     // seam, and the review/fix loop is visible at runner boundaries.
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
-      "S3:reviewer:/code-review",
+      "S3:verify:/verify",
       "S5:coder:/tdd",
-      "S6:reviewer:/code-review",
+      "S6:verify:/verify",
     ]);
   });
 });

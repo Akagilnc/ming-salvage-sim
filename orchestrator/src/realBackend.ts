@@ -85,9 +85,11 @@ import {
   judgeStationReceiptSchema,
 } from "./stationReceiptContracts.js";
 import {
+  isJudgeSeat,
   judgeResultFromVerdict,
   mintJudgeEscalate,
   projectResidualReviewerToJudge,
+  unusableResidualOpenCountPaper,
 } from "./judgeStation.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
@@ -266,7 +268,7 @@ import {
   type QuotaPoolId,
   type QuotaProbeResult,
 } from "./quotaProbe.js";
-import { withMonitorStreamHeartbeat } from "./sandboxStreamHeartbeat.js";
+import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   readRequiredWorkerOutcomeSidecar as readRequiredOutcomeSidecar,
@@ -1166,12 +1168,11 @@ export function checkOwnGitDir(
 export function soulForStep(
   spec: Pick<StepSpec, "role" | "soul"> & { readonly id?: string },
 ): StepSoul {
-  // #925: S3/S6 judge seats pin the verify soul while WorkerKind stays
-  // `reviewer` (child dispatch seam). Reviewer.md remains the leg soul only.
+  // #925 / #919 S2/R7: judge seats (S3/S6 only) force verify soul via the
+  // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
   if (
-    (spec.id === "S3" || spec.id === "S6") &&
     spec.soul === "verify" &&
-    (spec.role === "reviewer" || spec.role === "verify")
+    isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })
   ) {
     return "verify";
   }
@@ -1316,14 +1317,31 @@ function extractJudgeTag(stdout: string): unknown | undefined {
   return extractTaggedJson(stdout, JUDGE_RECEIPT_TAG);
 }
 
-function extractRoleReceipt(stdout: string, role: StepSpec["role"]): unknown | undefined {
+function extractVerifyTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "verify");
+}
+
+/**
+ * Cargo/stdout tag extract for a seat. Judge seats (#919 S2/R7: S3/S6 only)
+ * always take the judge tag — never the residual open-count `<review>` dual
+ * channel, even when a fixture still spells role as `"reviewer"`. Non-judge
+ * role `"verify"` (family S9 online-review) keeps the verify receipt tag —
+ * never {@link JUDGE_RECEIPT_TAG}.
+ */
+function extractRoleReceipt(
+  stdout: string,
+  spec: Pick<StepSpec, "role" | "id" | "soul">,
+): unknown | undefined {
   try {
-    return role === "coder"
+    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
+      return extractJudgeTag(stdout);
+    }
+    return spec.role === "coder"
       ? extractCoderTag(stdout)
-      : role === "reviewer"
+      : spec.role === "reviewer"
         ? extractReviewerTag(stdout)
-        : role === "verify"
-          ? extractJudgeTag(stdout)
+        : spec.role === "verify"
+          ? extractVerifyTag(stdout)
           : undefined;
   } catch {
     return undefined;
@@ -2933,13 +2951,16 @@ export class RealBackend implements Backend {
 
   /**
    * Typed Sandcastle output for ADR 0131 / #924 / #925 traffic signals:
-   * - verify (S3/S6 judge): T2 judge verdict on {@link JUDGE_RECEIPT_TAG}
+   * - S3/S6 judge: T2 judge verdict on {@link JUDGE_RECEIPT_TAG}
    * - reviewer (legacy residual): open-count receipt on the `review` tag
    * - coder: T2 station receipt on {@link CODER_RECEIPT_TAG}
+   * - non-judge role verify (S9 online-review): not configured here — family
+   *   review-loop workers own the verify receipt channel on RealFamilyBackend
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
-    // #925: S3/S6 judge station — T2 verdict (regardless of role spelling).
-    if (spec.id === "S3" || spec.id === "S6") {
+    // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
+    // S9 online-review must not take JUDGE_RECEIPT.
+    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
       return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
     }
     if (spec.role === "reviewer") {
@@ -2961,7 +2982,7 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     options?: AgentStepRunOptions,
   ): unknown | undefined {
-    const compatibility = extractRoleReceipt(result.stdout, spec.role);
+    const compatibility = extractRoleReceipt(result.stdout, spec);
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
@@ -3042,7 +3063,8 @@ export class RealBackend implements Backend {
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     const cargo =
       typedOutputUsed &&
-      (spec.role === "coder" || spec.id === "S3" || spec.id === "S6")
+      (spec.role === "coder" ||
+        isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul }))
         ? this.cargoRawFor(result, spec, options)
         : undefined;
     const output = this.decodeOutput(spec, raw, cargo);
@@ -3063,8 +3085,10 @@ export class RealBackend implements Backend {
     if (spec.role === "coder") {
       return this.decodeCoderStationOutput(spec, raw, cargo);
     }
-    // #925: S3/S6 judge — T2 verdict is the sole topology signal.
-    if (spec.id === "S3" || spec.id === "S6") {
+    // #925 / #919 S2/R7: S3/S6 judge seats — T2 verdict is the sole topology signal.
+    // S9 online-review is not a judge seat (isJudgeSeat false) and never lands
+    // here on RealBackend (family review-loop owns verify decode).
+    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
     // #919 CR: decision_gate bell must not mint residual open-count paper
@@ -3091,13 +3115,8 @@ export class RealBackend implements Backend {
         // at Sandcastle when the schema is the seat policy; remaining unusable
         // paper follows the runner's non-reviewer envelope → S5 + raw artifacts.
         //
-        // TOPOLOGY PIN (not a claim that "this worker was a fixer"):
-        // `kind:"fixer"` is the existing non-reviewer envelope the S4→S5 route
-        // already understands (route table sends non-reviewer at S4 to S5). Do
-        // NOT "fix" this back to kind:"coder" (fake coder seat) and do NOT
-        // throw for abolished cargo-shape #598 — inventing a new envelope kind
-        // or reopening shape courts is out of scope here.
-        return { kind: "fixer", committed: false };
+        // #919 AS4: honest residual unusable paper; never kind:fixer placeholder.
+        return unusableResidualOpenCountPaper();
       }
       return decoded;
     }
@@ -3138,15 +3157,15 @@ export class RealBackend implements Backend {
       if (projected !== undefined) {
         return projected;
       }
-      // Residual open-count present but not positive continue (0 / non-routeable)
-      // and no escalate → unusable, never silent converged (#925 AC / #919 CR P1).
+      // Residual open-count present but not positive continue → honest residual
+      // unusable paper (#919 AS4). Never kind:fixer placeholder.
+      return unusableResidualOpenCountPaper();
     }
 
-    // Missing/unusable residual paper → same non-judge unusable envelope the
-    // pre-#925 open-count seat used (route → S5 + raw artifacts), never a
-    // silent converged.
+    // Missing/unusable residual paper → honest residual unusable (#919 AS4),
+    // never silent converged / never kind:fixer placeholder.
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-      return { kind: "fixer", committed: false };
+      return unusableResidualOpenCountPaper();
     }
 
     throw new Error(
@@ -3412,21 +3431,8 @@ export class RealBackend implements Backend {
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    // #899 hotfix: the #684 monitor only sees the bridge's stdout; forward
-    // agent-stream liveness as a throttled heartbeat so healthy long steps
-    // are not idle-killed (see sandboxStreamHeartbeat.ts).
-    //
-    // #928: sandcastle defaults `completionSignal` to
-    // `"<promise>COMPLETE</promise>"` when the option is omitted
-    // (`DEFAULT_COMPLETION_SIGNAL` in @ai-hero/sandcastle). Empty array is the
-    // only API-supported disable — omit is NOT off. Production completion is
-    // clean process exit + legal sidecar / typed envelope, never a password.
-    return await sc.run(
-      withMonitorStreamHeartbeat({
-        ...options,
-        completionSignal: [],
-      }),
-    );
+    // #899 / #928 / #919 F2: shared wrap — completionSignal:[] + monitor heartbeat.
+    return await sc.run(withSandcastleInvokeDefaults(options));
   }
 
   /**
