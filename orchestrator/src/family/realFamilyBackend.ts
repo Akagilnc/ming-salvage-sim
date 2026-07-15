@@ -3844,12 +3844,15 @@ function gitExitStatus(err: unknown): number | undefined {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// #596 F2: family-side real decode/transport path for the 4 review-loop kinds.
-// Mirror cmr/ship/merger parse style (last <tag> wins, JSON, explicit malformed on
-// bad shape). Use isValid*Result guards (from reviewLoopOutcome) as decode validation.
-// Raw (tag string) fed in tests — not fake WorkerOutput construction. Shape-valid
-// false flags pass (no semantic branching). Malformed fails closed.
-// Single-slice uses RealBackend outputFor/decodeOutput + extract*Tag; this is family eqv.
+// #596 F2 / #899 / ADR 0131: family-side cargo transport for the 4 review-loop
+// kinds (verify / fixer / cleanup / docRelease). Sidecar-prefer + last <tag>
+// JSON enrich delivery cargo only — never a fate court.
+// Law: cargo is opaque. Sparse / unreadable / off-shape cargo completes the
+// Action as best-effort (sparseReviewLoopCompleted); it does NOT throw for
+// abolished #598 shape-lane and does NOT mint a fake kind:"coder" seat.
+// Fate is exit code + typed decision-gate Output.object only. SOE exhaust is
+// the sole process-level #598 redispatch channel (handled at the sc.run seat).
+// Single-slice uses RealBackend outputFor/decodeOutput; this is the family eqv.
 // ════════════════════════════════════════════════════════════════════════════
 
 function parseOutcomePayload(

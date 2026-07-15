@@ -1823,6 +1823,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     // synthesize findings.length, never invent findingsCount:0, never mint a
     // fake kind:"coder" seat, and never throw for abolished #598 shape lane.
     // Non-reviewer envelope → runner unusable path (S5 + raw artifacts).
+    //
+    // TOPOLOGY PIN: decode returns `{kind:"fixer", committed:false}` as the
+    // existing non-reviewer envelope that S4→S5 already routes — not "this
+    // worker was a fixer". Do not "fix" it to kind:"coder" or a throw.
     const backend = makeBackend();
 
     expect(

@@ -44,10 +44,13 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
       output: { kind: "reviewer", findings: [], findingsCount: 0 },
     })).toEqual({ kind: "next", step: "S7" });
     // Count is authenticated at the typed boundary: missing findingsCount never
-    // becomes kind:"reviewer". If a non-reviewer envelope somehow reaches S4,
-    // topology still sends it to the fixer path (never derive open-count from
-    // findings.length). Decode maps unusable open-count to a non-reviewer
+    // becomes kind:"reviewer". Decode maps unusable open-count to a non-reviewer
     // opaque-miss envelope (not findingsCount:0, not #598 shape throw).
+    //
+    // TOPOLOGY PIN: `kind:"fixer"` here is the existing non-reviewer envelope
+    // RealBackend.decodeOutput uses so S4→S5 still fires with raw artifacts —
+    // NOT a claim that "the reviewer worker was a fixer". Do not rewrite this
+    // pin to kind:"coder" (fake coder seat) or re-open cargo-shape #598 throws.
     expect(route({
       from: "S4",
       output: { kind: "fixer", committed: false },
