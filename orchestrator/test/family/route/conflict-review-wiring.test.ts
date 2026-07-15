@@ -26,6 +26,7 @@
 import { describe, expect, it } from "vitest";
 import { runFamily } from "../../../src/family/runner.js";
 import { legacyDispatchFamilyWorker } from "../../../src/family/dispatchFamilyWorker.js";
+import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
 import type {
   Backend,
   DispatchContext,
@@ -127,16 +128,38 @@ class ConflictCmrFamilyBackend implements FamilyBackend {
   }
   async runIntegratedCmr(req: IntegratedCmrRequest): Promise<IntegratedCmrResult> {
     this.cmrCalls.push(req);
+    // #919 R8: happy script is boolean green WITHOUT findingsCount.
+    // residual findingsCount:0 is unusable (never silent clean / never ship).
+    // dispatchWorker promotes via legacyCmrScriptToWorkerOutput → live kind:judge.
     return {
       converged: true,
-      findingsCount: 0,
       successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
       findings: [],
     };
   }
   async dispatchWorker(spec: WorkerSpec, ctx: DispatchContext): Promise<WorkerResult> {
     if (spec.kind === "cmr") {
-      return legacyDispatchFamilyWorker(this, spec, ctx);
+      // Record IntegratedCmrRequest via runIntegratedCmr (llmResolvedChildren pin),
+      // then emit live judge green at the test-fake boundary (#919 R8).
+      const cmr = await this.runIntegratedCmr({
+        familyBase: ctx.familyBase!,
+        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
+        ...(ctx.llmResolvedChildren !== undefined &&
+        ctx.llmResolvedChildren.length > 0
+          ? { llmResolvedChildren: ctx.llmResolvedChildren }
+          : {}),
+        ...(ctx.escalationAnswer !== undefined
+          ? { escalationAnswer: ctx.escalationAnswer }
+          : {}),
+        ...(ctx.moduleContext !== undefined ? { moduleContext: ctx.moduleContext } : {}),
+        ...(ctx.priorCmrFindingIdentityKeys !== undefined
+          ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
+          : {}),
+      });
+      return {
+        kind: "completed",
+        output: legacyCmrScriptToWorkerOutput(cmr),
+      };
     }
     if (spec.kind === "ship") {
       const familyBase = ctx.familyBase!;
