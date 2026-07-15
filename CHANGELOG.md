@@ -4,6 +4,24 @@
 
 ## [未发布]
 
+## [0.27.0.0] — 2026-07-15
+
+### Added
+- **编排器 #905 路由正名**：`agy` 恢复为真 agy CLI；`grok-4.5` 一律走 SuperGrok；opencode 从 registry / 路由 / 镜像 / auth 全线拆除。
+- **编排器 #906 Coder-Rec**：issue body 经 remark/GFM 剥净再解析；坏标记或未注册模型 admission fail-closed，禁止静默回落默认 coder。
+- **编排器 #909 family 额度韧性**：family 沙箱与单切片共用 quota/idle/429 wrap；`QuotaWait` 不 leg-kill；park/relay 与 baton 真接线。
+- **编排器 #911 soul 战役**：中文角色 soul 定稿落盘；容器 home 环境 dual-mount（Claude `CLAUDE.md` + Codex `AGENTS.md`）；skills 进 `~/.agents/skills` 并兼容 symlink。
+
+### Fixed
+- agy 多行 stdout 在 Sandcastle last-wins 下保留全文；跨 maxIter 累加器在每次 print/interactive 入口重置。
+- agy headless `--print ''` + stdin 与 interactive `--prompt-interactive` 分缝；`--print-timeout` 使用 Go duration（`15m`）。
+- family open-shipped / S3 cmrPass 单槽 / wall-hit knownLive / endgame wall 槽映射等 correctness 接线修复。
+- grok bare-ping 与 worker 一致走 stdin prompt。
+
+### Changed
+- 去掉为过审而加的 live-pool 完备扩表与 prompt 真空回灌；#902 额度完备性缓交。
+- 删除 soul/prompt 散文 inventory 类测试，只保留 dual-mount 等行为钉。
+
 ## [0.26.0.0] — 2026-07-13
 
 ### Added / Changed

@@ -38,6 +38,46 @@ methods live in versioned souls/skills/actions. Read live #869 for the target
 delivery topology; its Testing Decisions identify the implementation tickets
 that will land the executable pins.
 
+Corollaries are locked by positive routing tests under `test/constitution/`,
+not by forbidden-source-text sweeps. In particular see
+`reviewer-open-count.test.ts`, `review-closure-behavior.test.ts`, and
+`worker-reporting.test.ts`:
+
+- A worker whose **envelope cannot be extracted** (no kind, no count,
+  undecodable output) is never judged, never mechanically redispatched, and
+  never dressed up as a process failure — and the runner never presses the
+  decision gate for it either. Deeming a paper "unusable" is itself a judgment
+  the runner has no authority to make; the decision gate only relays a gate a
+  worker itself pressed, and a runner pressing it is a forged doorbell.
+  Disposition splits by the worker's source of truth. **Reviewer/verify**
+  (their output IS the paper): the runner makes zero judgment and zero park and
+  hands the raw artifact pointers down the fixed topology to the fixer, who
+  reads what it can, bounces the rest back to the reviewer, or raises.
+  **Coder/ship**: exit-zero completion proceeds to the next worker; the runner
+  neither reads the receipt nor queries git/host to adjudicate it. The next
+  reviewer judges an empty or incorrect delivery (bounce or raise).
+  Only repeated process crashes (#598 — no work, no paper to judge) still take
+  the infra park. A readable-but-wrong submission is likewise the next wisdom's
+  problem (the fixer bounces it back to the reviewer or raises).
+  `synthesizedFailure` may only ever be derived from channel-1 process facts
+  (the git/host external-truth source was revoked 2026-07-13: three channels,
+  no exceptions), and a missing reviewer result is never synthesized into
+  success (`findings: []` / `converged: true`) — nor into failure.
+- **The worker's OK is OK — no git verdicts.** A coder or ship worker's
+  exit-zero completion routes forward as-is; self-verification (real commit /
+  PR exists) and idempotency live in the worker soul, an empty diff is judged
+  by the next reviewer, and any reported PR URL is cargo for downstream
+  workers, not a runner verdict input. The runner never runs
+  `git rev-list` / `ls-remote` / `gh pr view` to adjudicate a worker.
+- **`*_STEP_COMPLETE` sentinels are multi-iter terminators** (required final line for sandcastle iteration end; not optional telemetry — #899/#911). Process and receipt
+  routing tests prove that their prose placement cannot become a runner fate
+  channel; no source-text ban is used as the lock.
+- **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the
+   runner dispatches ship again. The worker verifies whether the branch's exact
+   delivery already exists and returns success without duplicate push, PR, or
+   version bump. Process failures use durable `mechanical_redispatch_attempt`
+   rows; decision gates are transported unchanged.
+
 ## Igniting a family run (cold start — everything a fresh session needs)
 
 ### 0. Prerequisites
@@ -295,19 +335,12 @@ Providers with unavailable auth (e.g. grok without a mounted `auth.json`) are
 rejected **before** dispatch — fail-closed preflight, never an unauthenticated
 launch.
 
-OpenCode is baked into the worker image and the route-selectable `glm-5.2`
-slug resolves to `opencode-go/glm-5.2`. Its Go-subscription credential remains
-on the host at `~/.local/share/opencode/auth.json` and is mounted read-only at
-runtime. Only that file is shared: OpenCode's SQLite database, WAL, logs, and
-other writable state live in each container's isolated ephemeral home, avoiding
-the CLI's concurrent shared-data-dir lock crash. Credential provisioning is
-uniform across worker roles and routes: when host `auth.json` and `GLM_KEY` are
-present, every sandbox receives the same read-only mount and environment value.
-The dispatcher never inspects credential metadata or contents. Every ignition
-runs a fresh route smoke with the provisioned credentials; that live call is the
-only credential oracle. Expiry, rate limits, and server failures after startup
-flow through the ordinary leg degrade/park paths. `GLM_KEY` is never baked into
-the image or written to orchestrator state.
+OpenCode is **not** an orchestrator transport (#905): it is not baked into the
+worker image, has no registry slug (`glm-5.2` / `opencode-grok` removed), and
+receives no auth mount. The optional CMR `agy` leg runs the real Antigravity /
+Gemini CLI; when that leg is dead, optional-leg degrade applies — never a
+substituted vendor model under the `agy` name. `grok-4.5` always dispatches via
+the SuperGrok CLI (`provider: "grok"`).
 
 ## Review roles
 

@@ -16,7 +16,8 @@ The real completion evidence is the single JSON object written to
 `$ORCHESTRATOR_OUTCOME_PATH` when that env var is set, the typed `<ship>` outcome,
 and the actual family branch/PR git state. For compatibility with older runners,
 emit a single `<ship>` tag on its own line containing the same single JSON object.
-The completion signal is optional telemetry and may be printed as an extra line.
+The multi-iter completion signal is a required sandcastle terminator on the
+final step (not optional telemetry).
 
 PR opened:
 
@@ -41,5 +42,6 @@ Rules:
 - The JSON must match one of the shapes above exactly.
 - `status` is `pr_opened` and must include `pr`.
 - Emit the `<ship>` tag as the last typed tag; if you iterate, the last typed
-  `<ship>` tag is the one that counts. The optional telemetry line below may follow it.
-- For optional telemetry, you may print SHIP_STEP_COMPLETE on its own final line.
+  `<ship>` tag is the one that counts. On the final multi-iter step you MUST
+  print SHIP_STEP_COMPLETE on its own final line (sandcastle iteration
+  terminator — not optional telemetry).

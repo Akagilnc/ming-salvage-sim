@@ -362,7 +362,7 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
     expect(md.toLowerCase()).not.toMatch(/same-type sweep|run same-type|per family/);
   });
 
-  it("coder_fix prompt is pure data; same-type sweep method lives in coder soul", () => {
+  it("#911 coder_fix prompt carries fix-focus family sweep; soul owns character", () => {
     const prompt = readFileSync(
       resolve(process.cwd(), "prompts/coder_fix.md"),
       "utf8",
@@ -371,14 +371,13 @@ describe("#711 prior round findings + fix-focus forwarding", () => {
       resolve(process.cwd(), "image/souls/coder.md"),
       "utf8",
     );
-    // Runner-owned prompt file must not carry workflow method (#711 R2).
-    expect(prompt.toLowerCase()).not.toMatch(
-      /same-type sweep|run same-type|per family/,
-    );
-    // Online fixer already has this in souls/fixer.md; per-slice coder-fix
-    // mirrors it in the coder soul.
-    expect(soul).toMatch(/same-type sweeps?\s+\*\*per family\*\*/i);
-    expect(soul).toMatch(/\.fix-focus\.md/);
+    // Vacuum fill (#911 §三): mechanical fix-focus family scope lives in the
+    // dispatch prompt after souls became character editions.
+    expect(prompt).toMatch(/\.fix-focus\.md/);
+    expect(prompt.toLowerCase()).toMatch(/same-type sweeps?|per family|family/);
+    // Soul keeps adjudication taste, not the fix-focus file protocol.
+    expect(soul).toMatch(/coder-fix|被派修 finding/);
+    expect(soul).toMatch(/横切一缝|简洁是第一美德/);
   });
 
 });

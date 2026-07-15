@@ -188,6 +188,8 @@ export {
   serializeQuotaWaitForResetBridge,
   tryParseQuotaWaitForResetBridge,
   isQuotaWaitForResetError,
+  withIdleQuotaProbeDisposition,
+  resolveSandboxIdleAfterQuotaProbe,
 } from "./quotaProbe.js";
 export type {
   ApplyIdleDispositionResult,
@@ -254,6 +256,7 @@ export {
   CODER_REC_FALLBACK_AFTER_ROUNDS,
   CODER_ROSTER,
   CODER_ROSTER_VERSION,
+  CoderRecError,
   DEFAULT_CODER_REC_ORDER,
   lookupCoderRosterEntry,
   parseCoderRec,
@@ -263,7 +266,14 @@ export {
   selectCoderRecEntry,
 } from "./coderRoster.js";
 export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./coderRoster.js";
-export { applyCoderRecToRoute, withCoderSlot } from "./modelRoutes.js";
+export {
+  applyCoderRecToRoute,
+  applyRelayBatonToRoute,
+  familyRelaySlotsForWall,
+  knownLiveBillingPoolsFromRoute,
+  relaySlotForSingleSliceWallStep,
+  withCoderSlot,
+} from "./modelRoutes.js";
 
 // ── relay dispatch (#686 / ADR 0124–0126) ───────────────────────────────────
 export {
@@ -273,6 +283,7 @@ export {
   buildDefaultBillingPools,
   decideParkOrRelay,
   hasLiveRelayBaton,
+  resolveRelayPools,
   selectCapacityRelayBaton,
   selectNextRelayBaton,
 } from "./quotaPoolTable.js";
@@ -283,6 +294,7 @@ export type {
   NextRelayBaton,
   ParkOrRelayDecision,
   PoolTable,
+  RelayPoolOverride,
   SelectNextRelayBatonInput,
 } from "./quotaPoolTable.js";
 export {

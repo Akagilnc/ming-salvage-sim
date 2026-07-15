@@ -96,12 +96,12 @@ describe("#422 model route presets", () => {
 
   it("drops only failed optional smoke legs from the effective lineup", () => {
     const route = resolveRouteModels("normal", {}, {}, {
-      "cmrReview:agy": { state: "failed", at: "2026-07-11T00:00:00.000Z", error: "opencode unavailable" },
+      "cmrReview:agy": { state: "failed", at: "2026-07-11T00:00:00.000Z", error: "agy unavailable" },
     });
 
     const degraded = degradeOptionalRouteSmokeFailures(route);
 
-    expect(degraded.dropped).toEqual([{ slug: "agy", reason: "opencode unavailable" }]);
+    expect(degraded.dropped).toEqual([{ slug: "agy", reason: "agy unavailable" }]);
     expect(degraded.route.legCollections.cmrReview.map((leg) => leg.slug)).toEqual(["gpt-5.6-sol", "opus"]);
     expect(printableRouteLineup(degraded.route)).toContain("cmrReview=[codex:gpt-5.6-sol,claude:opus]");
   });
@@ -113,7 +113,7 @@ describe("#422 model route presets", () => {
     expect(degradeOptionalRouteSmokeFailures(anchor).dropped).toEqual([]);
 
     const overridden = resolveRouteModels("normal", {}, { cmrReview: ["gpt-5.6-sol", "opus", "agy"] }, {
-      "cmrReview:agy": { state: "failed", at: "2026-07-11T00:00:00.000Z", error: "opencode unavailable" },
+      "cmrReview:agy": { state: "failed", at: "2026-07-11T00:00:00.000Z", error: "agy unavailable" },
     });
     expect(degradeOptionalRouteSmokeFailures(overridden).dropped).toEqual([]);
   });
