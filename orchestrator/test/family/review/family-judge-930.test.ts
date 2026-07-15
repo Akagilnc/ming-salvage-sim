@@ -533,11 +533,12 @@ describe("#930 runVerifyCmr family judge courts", () => {
         if (round === 0) {
           return completedJudge(judgeContinue([FINDING]), "judge-refuse");
         }
-        // Second open must see refused keys for re-ruling.
+        // Second open must see refused keys for re-ruling (ctx only — M3).
         expect(ctx.refusedFindingIdentityKeys).toEqual([FINDING_KEY]);
-        // #919 R2 / #927 isomorphic: opaque refuseRecords land on re-open.
+        // #919 M3 / #927: opaque refuseRecords land on re-open; keys not dual-written.
         expect(landing?.refuseRecords).toEqual([refuseRecord]);
-        expect(landing?.refusedFindingIdentityKeys).toEqual([FINDING_KEY]);
+        // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+        expect(landing).not.toHaveProperty("refusedFindingIdentityKeys");
         return completedJudge(judgeConverged(), "judge-refuse");
       },
       coder: () => ({
@@ -691,6 +692,45 @@ describe("#930 runVerifyCmr family judge courts", () => {
     });
     expect(result).toEqual({ ok: true, ran: true });
     expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
+  });
+
+  it("M1: empty continue (0 live keys) fails loud — never empty-spins coder-fix", async () => {
+    // #919 M1 / #930 AC: status:continue with empty live open set is court
+    // contract drift. openFindingsForFixer may yield [] for cargo filter; that
+    // does not authorize a family fix loop with zero identity keys.
+    let opens = 0;
+    const backend = new FamilyJudgeBackend({
+      completeness: () => {
+        opens += 1;
+        return completedJudge(
+          {
+            kind: "judge",
+            status: "continue",
+            findingDispositions: [],
+            findings: [],
+          },
+          "empty-continue",
+        );
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({
+      ok: false,
+      ran: true,
+      failedStatus: "cmr_failed",
+    });
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
+    expect(backend.prCalls).toEqual([]);
+    expect(opens).toBe(1);
+    expect(
+      backend.ledger.some(
+        (e) => e.status === "aborted" || e.event === "aborted",
+      ),
+    ).toBe(true);
   });
 
   it("ADR 0030 order: correctness court not opened until completeness converged", async () => {

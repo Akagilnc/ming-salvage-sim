@@ -476,6 +476,43 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     );
   });
 
+  it("M6: empty continue (0 live keys) fails loud — never empty-spins S5 coder-fix", async () => {
+    // #919 M6 / family M1 isomorphic: status:continue with empty live open set
+    // is court contract drift. openFindingsForFixer may yield [] for cargo filter;
+    // that does NOT authorize single-slice S5 with zero identity keys.
+    const backend = new JudgeBackend([{ kind: "continue", findings: [] }]);
+    const result = await runOrchestrator({ issueNumber: 9196, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary?.reason).toBe("contract_drift");
+    expect(result.stopSummary?.summary).toMatch(
+      /0 live findings|court contract drift|empty continue/i,
+    );
+    expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
+    expect(backend.dispatched.some((d) => d.startsWith("S5:"))).toBe(false);
+    expect(backend.specs.some((s) => s.id === "S7")).toBe(false);
+    // Judge seat itself ran once; fail-loud after continue projection.
+    expect(backend.specs.filter((s) => s.id === "S3")).toHaveLength(1);
+  });
+
+  it("M6: all-refute continue fails loud after kill flips — never empty S5", async () => {
+    const dead = sampleFinding("all-dead", "dead.ts:9");
+    const deadKey = findingIdentityKey(dead);
+    const backend = new JudgeBackend([
+      { kind: "continue", findings: [dead], killKey: deadKey },
+    ]);
+    const result = await runOrchestrator({ issueNumber: 91961, backend });
+
+    expect(result.status).toBe("error");
+    expect(result.stopSummary?.reason).toBe("contract_drift");
+    expect(backend.specs.some((s) => s.id === "S5")).toBe(false);
+    // Kills still land on the S3 ledger row before the empty-live gate.
+    const s3Row = result.stepLedger.find((e) => e.step === "S3");
+    expect(s3Row?.findingDispositions?.some((d) => d.status === "refuted")).toBe(
+      true,
+    );
+  });
+
   it("advanceCoder lands on the S3 ledger output (single source of truth)", async () => {
     const backend = new JudgeBackend([
       {

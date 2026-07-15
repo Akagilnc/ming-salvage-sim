@@ -185,7 +185,7 @@ class RefuseExitBackend implements Backend {
     return this.s5DispatchCount;
   }
 
-  /** First S6 landing that carried refuse keys (judge re-adjudicate cargo). */
+  /** First S6 that carried refuse traffic keys on thin ctx (M3: keys not on landing). */
   firstS6RefuseLanding(): {
     readonly ctx: DispatchContext;
     readonly landing: WorkerLandingPayload | undefined;
@@ -194,8 +194,8 @@ class RefuseExitBackend implements Backend {
       if (this.specs[i]!.id !== "S6") continue;
       const ctx = this.ctxs[i]!;
       const landing = this.landings[i];
-      const keys =
-        landing?.refusedFindingIdentityKeys ?? ctx.refusedFindingIdentityKeys;
+      // #919 M3: refuse traffic keys sole on thin ctx; landing = refuseRecords only.
+      const keys = ctx.refusedFindingIdentityKeys;
       if (keys !== undefined && keys.length > 0) {
         return { ctx, landing };
       }
@@ -252,8 +252,34 @@ describe("#927 pure: refuse traffic keys (envelope wins, blind to reasons)", () 
     ).toEqual([key]);
   });
 
+  it("M2: refuseRecords-only (no envelope keys) yields empty traffic keys", () => {
+    // 信封宪法: cargo never invents traffic keys — even well-shaped #677 rows.
+    expect(
+      coderRefuseTrafficKeys({
+        refuseRecords: [
+          mintFourReasonRefuseRecord({
+            identityKey: key,
+            reason: "unconstitutional",
+            evidence: "contradicts accepted ADR",
+          }),
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      coderRefuseReverifyLanding({
+        refuseRecords: [
+          mintFourReasonRefuseRecord({
+            identityKey: key,
+            reason: "unconstitutional",
+            evidence: "contradicts accepted ADR",
+          }),
+        ],
+      }).refusedFindingIdentityKeys,
+    ).toEqual([]);
+  });
+
   it("does not drop envelope keys when refuseRecords are non-#677 cargo (regression)", () => {
-    // Pre-#927: gate-only path zeroed keys when records lacked AC fields.
+    // Envelope still wins even when cargo shape is non-#677.
     const landing = coderRefuseReverifyLanding({
       refusedFindingIdentityKeys: [key],
       refuseRecords: [
@@ -409,7 +435,10 @@ describe("#927 AC: refuse receipt → judge re-adjudicate (uphold / reverse)", (
 
     const refuseLanding = backend.firstS6RefuseLanding();
     expect(refuseLanding).toBeDefined();
-    expect(refuseLanding!.landing?.refusedFindingIdentityKeys).toEqual([key]);
+    // #919 M3: keys on thin ctx only; landing carries refuseRecords cargo.
+    expect(refuseLanding!.ctx.refusedFindingIdentityKeys).toEqual([key]);
+    // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(refuseLanding!.landing).not.toHaveProperty("refusedFindingIdentityKeys");
     expect(refuseLanding!.landing?.refuseRecords?.[0]?.reason).toBe(
       "unconstitutional",
     );
@@ -443,9 +472,11 @@ describe("#927 AC: refuse receipt → judge re-adjudicate (uphold / reverse)", (
     const result = await runOrchestrator({ issueNumber: 927, backend });
     expect(result.status).toBe("success");
     expect(backend.s5Count).toBe(2);
-    // First S6 saw refuse keys
+    // First S6 saw refuse keys on thin ctx (M3: not dual-written on landing)
     const refuseLanding = backend.firstS6RefuseLanding();
-    expect(refuseLanding?.landing?.refusedFindingIdentityKeys).toEqual([key]);
+    expect(refuseLanding?.ctx.refusedFindingIdentityKeys).toEqual([key]);
+    // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(refuseLanding?.landing).not.toHaveProperty("refusedFindingIdentityKeys");
     // Sequence includes S5 → S6 → S5 → S6
     const path = backend.dispatched.filter(
       (d) => d.startsWith("S5:") || d.startsWith("S6:"),
@@ -550,8 +581,10 @@ describe("#927 AC: four legal reasons each reach judge re-adjudicate", () => {
 
       const refuseLanding = backend.firstS6RefuseLanding();
       expect(refuseLanding).toBeDefined();
-      // Traffic keys
-      expect(refuseLanding!.landing?.refusedFindingIdentityKeys).toEqual([key]);
+      // Traffic keys sole on thin ctx (M3)
+      expect(refuseLanding!.ctx.refusedFindingIdentityKeys).toEqual([key]);
+      // #919 M7: landing type no longer carries refuse keys (thin ctx only).
+    expect(refuseLanding!.landing).not.toHaveProperty("refusedFindingIdentityKeys");
       // Opaque cargo — runner transported reason without routing on it
       expect(refuseLanding!.landing?.refuseRecords?.[0]?.reason).toBe(reason);
       expect(refuseLanding!.landing?.refuseRecords?.[0]?.evidence).toBe(

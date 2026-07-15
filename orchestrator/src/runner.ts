@@ -662,8 +662,7 @@ export function rebuildS5ReverifySignalsFromLedger(
 
   const s5 = ledger[s5Index]!;
   const output = s5.output as Extract<StepOutput, { kind: "coder" }>;
-  // #927: shared traffic extract (envelope keys win; never drops keys when
-  // refuseRecords shape is non-#677 cargo).
+  // #927 / #919 M2: envelope keys only (cargo refuseRecords never invents keys).
   const refuseLanding = coderRefuseReverifyLanding(output);
   const refusedFindingIdentityKeys = refuseLanding.refusedFindingIdentityKeys;
 
@@ -1237,16 +1236,14 @@ function buildErrorReason(step: StepId, _output: StepOutput | undefined): string
 }
 
 /**
- * #925 / #919 S1: judge seats collapse residual paper via the sole
- * {@link projectJudgeSeatOutput} helper (shared with route topology).
- * Seat membership = sole {@link isJudgeSeat} (no hand-written S3||S6 OR).
+ * #925 / #919 S1/M5: judge seats collapse residual paper via the sole
+ * {@link projectJudgeSeatOutput} helper. Membership = {@link isJudgeSeat}.
  */
 function normalizeJudgeSeatOutput(
   step: SliceStepId,
   output: StepOutput,
 ): StepOutput {
-  if (!isJudgeSeat({ step })) return output;
-  return projectJudgeSeatOutput(output);
+  return isJudgeSeat({ step }) ? projectJudgeSeatOutput(output) : output;
 }
 
 function acceptedSuppressionsFromDispositions(
@@ -3095,13 +3092,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
                         : {}),
-                      ...(step === "S6" &&
-                      refusedFindingIdentityKeysForReverify.length > 0
-                        ? {
-                            refusedFindingIdentityKeys:
-                              refusedFindingIdentityKeysForReverify,
-                          }
-                        : {}),
+                      // #919 M3 / #927: refuse traffic keys sole on thin ctx
+                      // (above); landing carries opaque refuseRecords only.
                       // #927: four-reason + evidence cargo for judge re-adjudicate
                       // (landing only — never mirrored onto thin DispatchContext).
                       ...(step === "S6" &&
@@ -3132,9 +3124,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // Reviewer: rethrow on throw-exhaust so S8(error) surfaces process
               // crashes and SOE exhaust alike — never feed empty cargo to fixer.
               // Coder keeps default failed→durable abort (existing escalate path).
+              // #919 M4/M7: live judge seats are isJudgeSeat S3/S6 only
+              // (role is always "verify" on those seats; dual-OR deleted).
               const durableRetryOpts = durableMechanicalRetryOptions(
                 step,
-                expectedKind === "reviewer" || expectedKind === "verify"
+                isJudgeSeat({ step })
                   ? { rethrowOnExhaustion: true }
                   : {},
               );
@@ -3546,7 +3540,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
         if (!carriesEscalate) {
-          if (expectedKind === "verify" || expectedKind === "reviewer") {
+          // #919 M4/M7: live open-set projection is sole isJudgeSeat (S3/S6).
+          // Production role is always "verify" on those seats; expectedKind OR
+          // was redundant. Residual role:"reviewer" is not live here.
+          if (isJudgeSeat({ step })) {
             // #925: judge typed verdict is the sole routing signal. Unusable
             // envelope → fixer path with raw artifact pointers (never silent clean).
             if (output?.kind !== "judge") {
@@ -3566,6 +3563,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             if (output.status === "continue") {
               const projected = projectJudgeContinueBlocking(output);
               if (projected !== undefined) {
+                // Apply kill flips first, then gate empty live set (#919 M6).
                 if (projected.killDispositions.length > 0) {
                   findingDispositions = [
                     ...findingDispositions,
@@ -3581,6 +3579,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     stepMonitorHandle,
                     stepSessionId,
                   );
+                } else if (projected.blockingIdentityKeys.length === 0) {
+                  // #919 M6 / family M1 isomorphic: empty continue is court
+                  // contract drift — never empty-spin S5. Unusable (non-judge)
+                  // still routes to S5 above; route() continue→S5 stays for
+                  // non-empty live sets only.
+                  const reason =
+                    `judge ${step} continue with 0 live findings ` +
+                    `(court contract drift; empty continue must not spin coder-fix)`;
+                  return await errorTermination(step, new Error(reason), {
+                    output,
+                    findingDispositions,
+                    stopSummary: contractDriftStopSummary({
+                      summary: reason,
+                      repairHint:
+                        "judge status:continue requires non-empty live identity keys; " +
+                        "re-open the same judge seat or repair the seat envelope — " +
+                        "do not empty-spin S5 coder-fix",
+                    }),
+                  });
                 }
               }
             } else {

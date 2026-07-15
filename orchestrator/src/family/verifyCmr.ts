@@ -1862,22 +1862,11 @@ async function runIntegratedCmrPass(input: {
       ? { refusedFindingIdentityKeys }
       : {}),
   };
-  // #919 R2 / #927 isomorphic: refuseRecords cargo is landing-only (信封宪法).
-  // Keys already ride on thin dispatchCtx; mirror keys onto landing for parity
-  // with single-slice S6 reverify landing shape.
+  // #919 M3 / #927 isomorphic: refuse traffic keys sole on thin dispatchCtx;
+  // landing carries opaque refuseRecords cargo only (信封宪法 — no dual key write).
   const refuseReopenLanding: WorkerLandingPayload | undefined =
-    (refusedFindingIdentityKeys !== undefined &&
-      refusedFindingIdentityKeys.length > 0) ||
-    (refuseRecords !== undefined && refuseRecords.length > 0)
-      ? {
-          ...(refusedFindingIdentityKeys !== undefined &&
-          refusedFindingIdentityKeys.length > 0
-            ? { refusedFindingIdentityKeys }
-            : {}),
-          ...(refuseRecords !== undefined && refuseRecords.length > 0
-            ? { refuseRecords }
-            : {}),
-        }
+    refuseRecords !== undefined && refuseRecords.length > 0
+      ? { refuseRecords }
       : undefined;
   const stampReviewRound = (
     result: WorkerResult,
@@ -2172,6 +2161,41 @@ async function runIntegratedCmrPass(input: {
   const blockingFindings = closure.blocking;
   const blockingFindingIdentityKeys = closure.blockingIdentityKeys;
   const blockingFindingCount = closure.blockingFindingCount;
+
+  // #919 M1 / #930 AC: empty continue is court contract drift — never empty-spin
+  // family coder-fix. openFindingsForFixer may yield [] for cargo filter; that
+  // does NOT authorize a topology fix loop with zero live identity keys.
+  if (
+    blockingFindingCount === 0 &&
+    blockingFindingIdentityKeys.length === 0
+  ) {
+    const reason =
+      `integrated cmr ${pass} judge continue with 0 live findings ` +
+      `(court contract drift; empty continue must not spin coder-fix)`;
+    const stopSummary: StopSummary = stageFailureStopSummary({
+      status: "cmr_failed",
+      summary: reason,
+      repairHint:
+        "family judge status:continue requires non-empty live identity keys; " +
+        "re-open the same family judge seat or repair the seat envelope — " +
+        "do not empty-spin coder-fix",
+    });
+    await persistFinalReviewRound("accepted", () =>
+      recordDurableAbort(familyBackend, {
+        phase: "final",
+        cmrPass: pass,
+        reason,
+        familyHeadAfter: postWorkerFamilyHead,
+        blockingFindingIdentityKeys: [],
+        stopSummary,
+      }),
+    );
+    return {
+      result: stageGate("cmr_failed"),
+      familyHeadAfter: postWorkerFamilyHead,
+    };
+  }
+
   const reason = `integrated cmr ${pass} judge continue with ${blockingFindingCount} live finding(s)`;
   const stopSummary: StopSummary = stageFailureStopSummary({
     status: "cmr_failed",
