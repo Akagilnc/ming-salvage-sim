@@ -372,7 +372,7 @@ export interface JudgeResult {
   readonly status: JudgeVerdictStatus;
   /** Present on continue: kill + live rows (schema-fixed). */
   readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
-  /** Optional continue suggestion to switch coder roster entry (#926 consumes). */
+  /** Optional continue suggestion to switch coder roster entry (#926 executes). */
   readonly advanceCoder?: string;
   /** Opaque findings cargo for S5 landing (filtered to live keys by runner). */
   readonly findings?: ReadonlyArray<Finding>;
@@ -519,6 +519,36 @@ export interface RouteDegradedEvent {
   readonly reason: string;
 }
 
+/**
+ * #926 — judge `advanceCoder` executed: coder slot switched; prior session retired.
+ * `fromModelId` / `toModelId` are runnable slugs (or the pre-switch seat token).
+ */
+export interface CoderAdvanceEvent {
+  readonly event: "coder_advance";
+  readonly fromModelId: string;
+  readonly toModelId: string;
+  /** Original judge suggestion token (id / alias / slug). */
+  readonly state_summary?: string;
+  readonly ts: string;
+}
+
+/**
+ * #926 — judge `advanceCoder` target unusable: stay on the current coder.
+ * Never a terminal — result returns to the judge desk on the normal continue path.
+ */
+export interface CoderAdvanceStayPutEvent {
+  readonly event: "coder_advance_stay_put";
+  /** Why the advance was refused (`unknown_target`, …). */
+  readonly reason: string;
+  /** Current coder seat (unchanged). */
+  readonly fromModelId: string;
+  /** Same as from — stay-put does not move. */
+  readonly toModelId: string;
+  /** Original judge suggestion (audit). */
+  readonly state_summary?: string;
+  readonly ts: string;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -526,7 +556,9 @@ export type LedgerBookkeepingEvent =
   | RelayBatonHandoffEvent
   | WorkerMonitorSpawnedEvent
   | MechanicalRedispatchAttemptEvent
-  | RouteDegradedEvent;
+  | RouteDegradedEvent
+  | CoderAdvanceEvent
+  | CoderAdvanceStayPutEvent;
 
 /**
  * The structured output of any worker step.
