@@ -186,13 +186,11 @@ export function barePingArgv(
       };
     case "agy": {
       // #905 / #915: shared helper with agyAgent — prompt is the --print value
-      // (agy 1.1.2 rejects empty --print; stdin is not a fallthrough).
+      // only (agy 1.1.2 rejects empty --print; no stdin delivery channel).
       const inv = agyPrintInvocation(model, prompt);
       return {
         file: "agy",
         args: inv.args,
-        // stdin empty on purpose — see agyPrintInvocation.
-        ...(inv.stdin !== "" ? { input: inv.stdin } : {}),
       };
     }
     case "grok":

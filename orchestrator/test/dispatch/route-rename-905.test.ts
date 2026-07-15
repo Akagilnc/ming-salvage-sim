@@ -195,6 +195,9 @@ describe("#915 agy print prompt delivery (real CLI form)", () => {
     expect(built.args).toEqual([...shared.args]);
     expect(built.args[built.args.indexOf("--print") + 1]).toBe(prompt);
     expect(built.args).toContain(prompt);
+    // #915 dead-channel delete: print delivery is argv-only (no stdin dual path).
+    expect(built.input).toBeUndefined();
+    expect(agent.stdin).toBeUndefined();
     // Same shape as production AgentProvider (shared helper, no second clone).
     expect(agent.command).toContain("--print");
     expect(agent.command).toContain(prompt);
