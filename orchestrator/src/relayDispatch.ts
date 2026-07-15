@@ -574,10 +574,6 @@ export interface DecideRelayAfterIdleInput {
   readonly currentPool: BillingPoolId;
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
-  readonly reviewerSlugs?: ReadonlyArray<string>;
-  readonly reviewerSlugsForCandidate?: (
-    candidate: CoderRosterEntry,
-  ) => ReadonlyArray<string>;
   readonly workerPid: number;
   readonly killPidTree: (pid: number) => void | Promise<void>;
   readonly state_summary?: string;
@@ -599,10 +595,6 @@ export function forkQuotaWallAt683Point(input: {
   readonly currentPool: BillingPoolId;
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
-  readonly reviewerSlugs?: ReadonlyArray<string>;
-  readonly reviewerSlugsForCandidate?: (
-    candidate: CoderRosterEntry,
-  ) => ReadonlyArray<string>;
   readonly state_summary?: string;
   readonly remaining?: string;
   readonly step?: StepId;
@@ -616,8 +608,6 @@ export function forkQuotaWallAt683Point(input: {
     currentPool: input.currentPool,
     rosterOrder: input.rosterOrder,
     pools: input.pools,
-    reviewerSlugs: input.reviewerSlugs,
-    reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
   };
   const live = hasLiveRelayBaton(batonInput);
   const tier = decideParkOrRelay({
@@ -666,8 +656,6 @@ export async function decideRelayAfterIdle(
     currentPool: input.currentPool,
     rosterOrder: input.rosterOrder,
     pools: input.pools,
-    reviewerSlugs: input.reviewerSlugs,
-    reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
   };
 
   if (input.probeKind === "quota_limited") {
@@ -685,8 +673,6 @@ export async function decideRelayAfterIdle(
       currentPool: input.currentPool,
       rosterOrder: input.rosterOrder,
       pools: input.pools,
-      reviewerSlugs: input.reviewerSlugs,
-      reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
       state_summary: input.state_summary,
       remaining: input.remaining,
       step: input.step,
@@ -777,10 +763,6 @@ export interface ApplyResourceFailureHandoffInput {
   readonly currentPool: BillingPoolId;
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
-  readonly reviewerSlugs?: ReadonlyArray<string>;
-  readonly reviewerSlugsForCandidate?: (
-    candidate: CoderRosterEntry,
-  ) => ReadonlyArray<string>;
   readonly resetBeforeRetry?: () => void | Promise<void>;
   readonly now: Date;
   readonly step?: StepId;
@@ -801,8 +783,6 @@ export async function applyResourceFailureHandoff(
     currentPool: input.currentPool,
     rosterOrder: input.rosterOrder,
     pools: input.pools,
-    reviewerSlugs: input.reviewerSlugs,
-    reviewerSlugsForCandidate: input.reviewerSlugsForCandidate,
   };
   const next =
     input.trigger === "capacity"

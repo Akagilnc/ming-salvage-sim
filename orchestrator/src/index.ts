@@ -261,9 +261,7 @@ export {
   DEFAULT_CODER_REC_ORDER,
   lookupCoderRosterEntry,
   parseCoderRec,
-  poolSeparationViolation,
   resolveCoderRecOrder,
-  reviewerSlugsFromRoute,
   selectCoderRecEntry,
 } from "./coderRoster.js";
 export type { CoderPoolId, CoderRosterEntry, SelectCoderRecOptions } from "./coderRoster.js";

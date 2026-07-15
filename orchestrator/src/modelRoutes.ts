@@ -2,7 +2,6 @@ import { createInterface } from "node:readline/promises";
 
 import {
   parseCoderRec,
-  reviewerOverrideForCoderSlug,
   resolveCoderRecOrder,
   selectCoderRecEntry,
   type CoderRosterEntry,
@@ -439,8 +438,8 @@ export function degradeOptionalRouteSmokeFailures(route: ResolvedModelRoute): {
 
 /**
  * Override the coder slot (and coderFix unless explicitly env-overridden) for
- * design-time Coder-Rec (#767). Sol's owner-ratified route also moves the
- * per-slice reviewer to Opus, so the selected coder never self-reviews.
+ * design-time Coder-Rec (#767). #920: same-model cross-role is legal — does not
+ * rewrite reviewer / cmrReview when the coder slug overlaps those seats.
  * Preserves prior smoke status for the new slug when the same slug was already
  * smoked under another key; otherwise marks the new keys unverified so the
  * runner's route-smoke gate can (re)verify before dispatch.
@@ -452,27 +451,12 @@ export function withCoderSlot(
 ): ResolvedModelRoute {
   const trimmed = coderSlug.trim();
   assertKnownWorkerSlug(trimmed);
-  const reviewerOverride = reviewerOverrideForCoderSlug(trimmed);
   const slots: ModelSlotMap = {
     ...route.slots,
     coder: trimmed,
     ...(opts.preserveCoderFix ? {} : { coderFix: trimmed }),
-    ...(reviewerOverride !== undefined ? { reviewer: reviewerOverride } : {}),
   };
-  // Sol is an owner-approved coder only when Opus remains the primary reviewer
-  // throughout the review loop. Remove Sol's default CMR review leg as well as
-  // replacing the per-slice reviewer, otherwise the final route fails the
-  // #767 pool-separation gate against its own CMR checkpoint.
-  const legCollections: ModelRouteLegCollectionMap = {
-    ...route.legCollections,
-    ...(reviewerOverride !== undefined
-      ? {
-          cmrReview: route.legCollections.cmrReview.filter(
-            (leg) => leg.slug !== trimmed,
-          ),
-        }
-      : {}),
-  };
+  const legCollections = route.legCollections;
   const next: Pick<ResolvedModelRoute, "slots" | "legCollections"> = {
     slots,
     legCollections,
@@ -901,9 +885,8 @@ async function askContinue(message: string): Promise<boolean> {
  * route's coder slot — unmarked issues keep the route preset. A present but
  * broken / unregistered marking throws (fail-closed; #906) — never silent
  * fallthrough to the default order.
- * Entries are checked against every complete-route peer other than the coder
- * slot they replace. Sol's resulting per-slice reviewer pairing is still
- * modeled by {@link withCoderSlot}; it does not exempt any CMR checkpoint.
+ * #920: no review/CMR conflict filter — selection is pure roster position;
+ * {@link withCoderSlot} only rewrites coder (+ coderFix unless preserved).
  */
 export function applyCoderRecToRoute(
   route: ResolvedModelRoute,
@@ -949,14 +932,8 @@ export function applyCoderRecToRoute(
     };
   }
   const order = resolveCoderRecOrder(issueBody);
-  const entry = selectCoderRecEntry(order, nonConvergingRounds, {
-    reviewerSlugsForCandidate: (candidate) => {
-      const candidateRoute = withCoderSlot(route, candidate.slug, {
-        preserveCoderFix,
-      });
-      return routeConflictSlugsExcluding(candidateRoute, "coder");
-    },
-  });
+  // #920: no reviewer/CMR conflict filter — pick purely by roster position.
+  const entry = selectCoderRecEntry(order, nonConvergingRounds);
   if (
     route.slots.coder === entry.slug &&
     (preserveCoderFix || route.slots.coderFix === entry.slug)
