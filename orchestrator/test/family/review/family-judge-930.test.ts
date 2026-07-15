@@ -64,6 +64,7 @@ class FamilyJudgeBackend implements FamilyBackend {
   readonly dispatches: Array<{
     readonly kind: string;
     readonly session: string;
+    readonly model?: string;
     readonly cmrPass?: string;
     readonly resumeSessionId?: string;
     readonly priorJudgeVerdicts?: DispatchContext["priorJudgeVerdicts"];
@@ -123,6 +124,7 @@ class FamilyJudgeBackend implements FamilyBackend {
     this.dispatches.push({
       kind: spec.kind,
       session: spec.session,
+      ...(typeof spec.model === "string" ? { model: spec.model } : {}),
       ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
       ...(ctx.resumeSessionId !== undefined
         ? { resumeSessionId: ctx.resumeSessionId }
@@ -757,5 +759,114 @@ describe("#930 runVerifyCmr family judge courts", () => {
     expect(ordered.slice(0, firstCorrectness).every((p) => p === "completeness")).toBe(
       true,
     );
+  });
+
+  it("#919 advanceCoder: continue + live + advance uses advanced coderFix model", async () => {
+    // Default route coderFix is gpt-5.6-terra; advance to sol@med → gpt-5.6-sol.
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) => {
+        if (round === 0) {
+          return completedJudge(
+            judgeContinue([FINDING], { advanceCoder: "sol@med" }),
+            "judge-advance",
+          );
+        }
+        return completedJudge(judgeConverged(), "judge-advance");
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    const coder = backend.dispatches.find((d) => d.kind === "coder");
+    expect(coder?.model).toBe("gpt-5.6-sol");
+    expect(
+      backend.ledger.some(
+        (e) =>
+          e.status === "coder_advance" || e.event === "coder_advance",
+      ),
+    ).toBe(true);
+  });
+
+  it("#919 advanceCoder: invalid token stay-put — original coderFix, never terminal", async () => {
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) => {
+        if (round === 0) {
+          return completedJudge(
+            judgeContinue([FINDING], {
+              advanceCoder: "claude-opus-not-on-roster",
+            }),
+            "judge-stay-put",
+          );
+        }
+        return completedJudge(judgeConverged(), "judge-stay-put");
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    // Negative: roster failure must not end the family run.
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(result.ok).not.toBe(false);
+    const coder = backend.dispatches.find((d) => d.kind === "coder");
+    // Default normal route coderFix stays gpt-5.6-terra.
+    expect(coder?.model).toBe("gpt-5.6-terra");
+    const stayPut = backend.ledger.filter(
+      (e) =>
+        e.status === "coder_advance_stay_put" ||
+        e.event === "coder_advance_stay_put",
+    );
+    expect(stayPut.length).toBe(1);
+    expect(stayPut[0]).toMatchObject({
+      reason: "unknown_target",
+    });
+    expect(
+      stayPut[0]!.message ?? stayPut[0]!.advanceCoder ?? "",
+    ).toMatch(/claude-opus-not-on-roster/);
+    // Verdict cargo still recorded on cmr_reviewed.
+    expect(
+      backend.ledger.some(
+        (e) =>
+          e.status === "cmr_reviewed" &&
+          e.advanceCoder === "claude-opus-not-on-roster",
+      ),
+    ).toBe(true);
+  });
+
+  it("#919 advanceCoder sticky: next court/fix sees advanced coderFix", async () => {
+    // Round 0 advances; round 1 continue without advanceCoder; second fix must
+    // still use the advanced seat (sticky outer resolvedRoute).
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) => {
+        if (round === 0) {
+          return completedJudge(
+            judgeContinue([FINDING], { advanceCoder: "sol@med" }),
+            "judge-sticky",
+          );
+        }
+        if (round === 1) {
+          return completedJudge(
+            judgeContinue([FINDING]),
+            "judge-sticky",
+          );
+        }
+        return completedJudge(judgeConverged(), "judge-sticky");
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    const coderModels = backend.dispatches
+      .filter((d) => d.kind === "coder")
+      .map((d) => d.model);
+    expect(coderModels.length).toBeGreaterThanOrEqual(2);
+    expect(coderModels.every((m) => m === "gpt-5.6-sol")).toBe(true);
   });
 });

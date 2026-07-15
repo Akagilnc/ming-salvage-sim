@@ -287,6 +287,12 @@ export type {
   CoderPoolId,
   CoderRosterEntry,
 } from "./coderRoster.js";
+// ── #919 / #926 one advanceCoder execution path (slice + family) ────────────
+export { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
+export type {
+  AdvanceCoderEffectResult,
+  AdvanceCoderProbe,
+} from "./advanceCoderEffect.js";
 export {
   applyCoderRecToRoute,
   applyRelayBatonToRoute,
