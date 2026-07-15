@@ -4,7 +4,7 @@ Status: Accepted（2026-06-29；本地 cmr 8 轮[完整性 4 + 正确性 4] + �
 
 ## 决定
 
-家族 integrated cmr 承重闸的硬底线 = **至少一条「撑底线强腿」实际跑成**。**撑底线强腿只认 opus 或 codex**（单 opus 或单 codex 都算达标）；**agy/gemini 不撑底线，只是 bonus 腿**（有它更好、跨家族多一票，但不可靠、不能单独托起承重闸）。路线显式声明本路线想要哪几腿；声明的腿运行时死了 = **带 flag 跳过、不阻塞**。跌破底线（opus 与 codex 都没跑成）= **escalate，不跑没牙的 cmr** —— **即便 agy 还活也 escalate**（把整道闸托给一条爱挂的 gemini 不稳）。**便宜实验模型（glm/haiku/spark…）默认不当 cmr 腿**（它们是 coder 槽的；要当腿须显式提升）。
+家族 integrated cmr 承重闸的硬底线 = **至少一条「撑底线强腿」实际跑成**。**撑底线强腿只认 opus 或 codex**（单 opus 或单 codex 都算达标）；**agy/gemini 不撑底线，只是 bonus 腿**（有它更好、跨家族多一票，但不可靠、不能单独托起承重闸）。路线显式声明本路线想要哪几腿；声明的腿运行时死了 = **带 flag 跳过、不阻塞**。跌破底线（opus 与 codex 都没跑成）= **escalate，不跑没牙的 cmr** —— **即便 agy 还活也 escalate**（把整道闸托给一条爱挂的 gemini 不稳）。**便宜实验模型（haiku/spark…）默认不当 cmr 腿**（它们是 coder 槽的；要当腿须显式提升）。
 
 ## 为什么
 

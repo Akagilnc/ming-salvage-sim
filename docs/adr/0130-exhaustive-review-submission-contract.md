@@ -4,7 +4,7 @@ Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive c
 
 ## 决定
 
-评审腿的交付标准从「挖到可钉死的发现即可收工」改为**穷尽本轮可见面**：一轮内把看见的**所有发现**（不限严重度——严重度是行属性，不是入库门槛）逐条写入 findings 状态库（ADR 0129）后才算交付完成；不分「已演练/未演练」档。每个 review Action 按其 versioned review authority 自己标记 blocking 与 non-blocking terminal；后者不进修复环，也不计入 reviewer 自报的 open-count。具体等级与 terminal 口径归该 authority，不复制 CMR 模式矩阵到 Runner 或本 ADR。评审腿退出前必须自报阻塞未决数；无法完成交卷时只能由该 worker 自按 decision gate，或让自身 invocation 非零退出，不给 Runner 增设“卷面不可用”第四通道。**fixer 的第一个任务是对 blocking open 行逐条实证真伪**：真→修 + 同类横扫后翻 fixed，伪→翻 refuted + 证据留言，由下轮 fresh 复审员验证后终翻。本契约适用**一切评审模式**（家族 completeness / correctness、per-slice、doc 模式），契约真源就是本 ADR；各评审 Action 由各自 versioned role / skill 消费，per-slice 不因此调用 `ak-cross-m-review`，Runner 只保留指针、不复写第二份。
+评审腿的交付标准从「挖到可钉死的发现即可收工」改为**穷尽本轮可见面**：一轮内把看见的**所有发现**（不限严重度——严重度是行属性，不是入库门槛）逐条写入 findings 状态库（ADR 0129）后才算交付完成；不分「已演练/未演练」档。每个 review Action 按其 versioned review authority 自己标记 blocking 与 non-blocking terminal；后者不进修复环，也不计入 reviewer 自报的 open-count。具体等级与 terminal 口径归该 authority，不复制 CMR 模式矩阵到 Runner 或本 ADR。评审腿退出前必须自报阻塞未决数；typed open-count / findings 写入由 Action 当场纠错并按 #899 structured retry，耗尽时当前 Action 非零退出。格式或写入失败不得变成 decision gate；只有 worker 成功提交的真实专业、设计或范围决策请求才走 decision gate。Runner 不增设“卷面不可用”第四通道。**fixer 的第一个任务是对 blocking open 行逐条实证真伪**：真→修 + 同类横扫后翻 fixed，伪→翻 refuted + 证据留言，由下轮 fresh 复审员验证后终翻。本契约适用**一切评审模式**（家族 completeness / correctness、per-slice、doc 模式），契约真源就是本 ADR；各评审 Action 由各自 versioned role / skill 消费，per-slice 不因此调用 `ak-cross-m-review`，Runner 只保留指针、不复写第二份。
 
 ## 根因（实证数据与出处：#860 正文与 grill 评论、#861 裁决串；EXAM-818 对照见 #856）
 

@@ -26,7 +26,7 @@
 
 **编排器实跑默认先起一个顶层隔离 worktree（当前实现沿用 `family worktree` 名称）。** 这是代码隔离边界，不是把单 issue 伪装成 family-of-one：single 把它作为唯一 scene/worktree，不建立 parent base、child worktree 或 child merge；family 才建立父集成面与子工作树。两种模式的 slice、merge（如适用）、integrated CMR 与 ship 都留在各自顶层隔离代码真源里，不在主工作区或临时散 worktree 上直接跑。
 
-**`sc.run()` 严禁 `prompt` 参数；传指令只准用 `promptFile`**（指向版本化、可评审的 `.md`），且内容必须 **thin**：只准「读 baked soul / 触发对应 skill（`/tdd`、`/ak-cross-m-review`、`gstack-ship`…）+ 指向落盘运行参数文件 + 输出契约」，**绝不写 method**。怎么 review / 怎么 fix / 怎么收敛、各家 CLI 怎么 invoke skill，全住在 versioned soul / skill / 镜像里；runner 不感知、不每轮换 prompt。实证：本仓三道 cmr 闸全栽在 promptFile 手搓「review-only / no-loop」。**promptFile 长成 mini-wiki = 回归。**
+**`sc.run()` 严禁 `prompt` 参数；传指令只准用 `promptFile`**（指向版本化、可评审的 `.md`），且内容必须 **thin**：只准「读 baked soul / 触发对应 skill（`/tdd`、integrated completeness 的 `ak-cmr-completeness`、integrated correctness 的 `ak-cmr-correctness`、`gstack-ship`…）+ 指向落盘运行参数文件 + 输出契约」，**绝不写 method**。generic `ak-cross-m-review` 只由两个具名 wrapper 内部共享，不能作为编排器 integrated Action 的直接入口。怎么 review / 怎么 fix / 怎么收敛、各家 CLI 怎么 invoke skill，全住在 versioned soul / skill / 镜像里；runner 不感知、不每轮换 prompt。实证：本仓三道 cmr 闸全栽在 promptFile 手搓「review-only / no-loop」。**promptFile 长成 mini-wiki = 回归。**
 
 **ADR 只定决策/要求，编码细节归 issue 验收点。** ADR 写不可逆决策 / 不变式 / 契约（薄，1-3 句单决策）；算法、数值、重试上限、身份匹配方式等「怎么实现」一律归对应子 issue 的验收点。改每条评审 finding 前自问「这是**决策**还是**编码**？」——编码默认归 issue，ADR 顶多留一句要求 + 指针「细节归 #N」。实证：#425 把「优先显式 `tightFamilies`、前缀 fallback」塞进 ADR 0031 被纠，移到 #422。
 

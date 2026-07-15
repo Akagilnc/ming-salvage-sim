@@ -1,6 +1,6 @@
 Status: Accepted（2026-07-13；证据：#871 doc-mode CMR R15/R16 consecutive clear）
 
-> **限缩（ADR 0131，2026-07-13 owner 裁决）**：findings 状态库是 reviewer / fixer 之间的专业材料与状态真源，不是 Runner 的信号来源。reviewer 自己读取库并自报 open-count；Runner 说几条就是几条，不查询、不派生、不对账。写入错误由写入 worker / Action 当场自纠；无法完成交卷时由该 worker 自按 decision gate 或让 invocation 非零退出，不新增 Runner 第四通道。fresh 终翻规则不变。
+> **限缩（ADR 0131，2026-07-13 owner 裁决；#899 typed-signal 终局）**：findings 状态库是 reviewer / fixer 之间的专业材料与状态真源，不是 Runner 的信号来源。reviewer 自己读取库并自报 open-count；Runner 说几条就是几条，不查询、不派生、不对账。写入错误由写入 worker / Action 当场自纠；Action-owned structured retry 耗尽则当前 Action 非零退出。格式或写入失败不得变成 decision gate；只有 worker 成功提交的真实专业、设计或范围决策请求才走 decision gate。Runner 仍只消费三通道，fresh 终翻规则不变。
 
 # 0129: findings 状态库——复审写行、修复翻状态、复审再验再翻；纠错在写入点
 
