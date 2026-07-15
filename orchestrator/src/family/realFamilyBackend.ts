@@ -3872,7 +3872,9 @@ function classifyMergerCargoOnly(
   parsed: unknown,
   source: string,
 ): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
-  if (parsed === null || typeof parsed !== "object") {
+  // Arrays are typeof "object" in JS — reject them at the cargo boundary so
+  // spread does not invent numeric keys from a JSON array payload.
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return {
       resolved: false,
       reason: parsed === undefined
@@ -3920,10 +3922,10 @@ function classifyMergerOutcomePayload(
   parsed: unknown,
   source: string,
 ): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
-  // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"`; the
-  // strict resolved schema rejects every non-object, but guard explicitly so the message
-  // stays specific (agy R1: a non-object must never crash or coerce to resolved).
-  if (parsed === null || typeof parsed !== "object") {
+  // `JSON.parse` succeeds on the bare literals `null` / `true` / `5` / `"x"` / `[]`;
+  // arrays are typeof "object" — reject them here so messages stay specific and
+  // we never treat an array payload as merger cargo (agy R1 / gemini R1).
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { resolved: false, reason: `${source} was not a JSON object` };
   }
   const gate = classifyDecisionGate(parsed, "merger");

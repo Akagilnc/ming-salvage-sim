@@ -1155,6 +1155,11 @@ describe("parseMergerOutcome (#291 pure)", () => {
     });
     expect(parseMergerOutcome("<merger>true</merger>").resolved).toBe(false);
     expect(parseMergerOutcome("<merger>42</merger>").resolved).toBe(false);
+    // typeof [] === "object" — must not coerce array cargo into a resolve path.
+    expect(parseMergerOutcome("<merger>[]</merger>")).toEqual({
+      resolved: false,
+      reason: "merger agent <merger> tag was not a JSON object",
+    });
   });
 
   // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
