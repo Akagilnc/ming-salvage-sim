@@ -1527,13 +1527,14 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * S5 fixes blocking findings, and S6 performs the fresh full-diff re-review.
  *
  * #253 fields: model (CLI slug), completionSignal (Sandcastle run() API), maxIter
- * (the WITHIN-STEP Ralph retry budget — NOT a fix-loop give-up counter), soul,
+ * (per-seat Sandcastle iteration budget — NOT a fix-loop give-up counter), soul,
  * toolchain.
  *
- * maxIter SEMANTICS: the WITHIN-STEP agent (Ralph) retry budget for one
- * `sandbox.run()`, NOT a give-up counter. Hitting it = the step ends normally; it
- * is NEVER the orchestrator giving up (that only happens on a MODEL escalate
- * signal — US#18/US#19, never by counting). See StepSpec.maxIter.
+ * maxIter SEMANTICS (#899 / ADR 0128): every selected seat is single-iteration
+ * (`maxIter: 1`). The skill finishes inside that one `sandbox.run()`; native
+ * structured-output re-asks are in-session, not outer iterations. Hitting
+ * maxIter ends the step normally — never "orchestrator gives up" (that only
+ * happens on a MODEL escalate — US#18/US#19). See StepSpec.maxIter.
  *
  * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
  * with single-slot overrides (see {@link coderModel}); no image rebuild, no

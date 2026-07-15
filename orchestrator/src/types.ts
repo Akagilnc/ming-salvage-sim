@@ -612,7 +612,11 @@ export interface WorkerSpec {
   readonly promptArgs?: Readonly<Record<string, string>>;
   /** Signal the worker emits to mark completion (Sandcastle `run()` API). */
   readonly completionSignal: string;
-  /** Within-step Ralph retry budget (NOT the fix-loop round cap — see {@link StepSpec.maxIter}). */
+  /**
+   * Per-seat Sandcastle iteration budget (NOT the fix-loop round cap).
+   * #899 / ADR 0128: production seats use `1`; SO re-asks are in-session.
+   * See {@link StepSpec.maxIter}.
+   */
   readonly maxIter: number;
   /** Short model slug the runtime maps to a baked-in CLI (PRD #244). */
   readonly model: string;

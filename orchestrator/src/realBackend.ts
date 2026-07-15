@@ -1139,24 +1139,19 @@ export function lastSessionId(
 // ── coder structured output from stdout (integ-cmr 256 r1) ──────────────────
 
 /**
- * Extract + JSON-parse the LAST `<coder>…</coder>` tag from a coder step's
- * stdout.
+ * Extract + JSON-parse the LAST `<tag>…</tag>` from a worker step's stdout.
  *
- * WHY a stdout tag (not Sandcastle's typed `output`): a coder step runs with
- * `maxIterations = StepSpec.maxIter > 1` (the within-step Ralph retry budget),
- * but Sandcastle's `output` definition REQUIRES `maxIterations === 1`
- * (d.ts: "maxIterations must be 1"). So the coder step cannot use the typed
- * `output` path — `result.output` is `undefined` and `coderOutputSchema.parse`
- * would throw a ZodError on every coder step (the wiring bug this fixes). The
- * coder instead emits its structured result in a `<coder>` tag in stdout, mirroring
- * Sandcastle's own tag-in-stdout extraction (fence-aware JSON unwrapping).
+ * #899 / ADR 0131: production single-slice seats attach Sandcastle
+ * `Output.object` (maxRetries:2) for typed traffic signals — reviewer
+ * open-count and optional decision gate. Ordinary cargo stays opaque inside
+ * those schemas. This stdout extractor is the **compatibility cargo channel**
+ * when typed output is absent (legacy prompts, telemetry, non-typed seats);
+ * it is never a second fate-signal parser and never triggers cargo-shape re-ask.
  *
- * The LAST tag wins so a multi-iteration coder reports its FINAL state.
- *
- * Pure: parses a string only — unit-tested without a container. Returns the raw
- * parsed object for {@link RealBackend}'s `decodeOutput` (coderOutputSchema) to
- * validate. Missing tags are advisory compatibility misses; malformed present
- * tags still throw rather than being mistaken for a valid machine outcome.
+ * The LAST tag wins so a worker that emits multiple tags reports its FINAL
+ * payload. Pure: parses a string only — unit-tested without a container.
+ * Missing tags are advisory compatibility misses; malformed present tags still
+ * throw rather than being mistaken for a valid machine outcome.
  */
 function extractTaggedJson(
   stdout: string,
@@ -2966,10 +2961,9 @@ export class RealBackend implements Backend {
         effortForLiveOfficer(spec.model, spec),
         pool,
       ),
-      // #7 maxIter: enforce the WITHIN-STEP Ralph retry budget = StepSpec.maxIter
-      // (reviewer = 1 single pass; coder/fix > 1). Hitting it ends THE STEP
-      // normally — route() continues — it is NEVER the orchestrator giving up
-      // (StepSpec.maxIter semantics; the only give-up is a model escalate).
+      // #899 / ADR 0128: every selected seat is single-iteration (maxIter:1).
+      // Native SO re-asks (Output.object maxRetries) stay in-session and are
+      // not outer Sandcastle iterations. Hitting maxIter ends THE STEP normally.
       maxIterations: spec.maxIter,
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
