@@ -56,11 +56,16 @@ import {
   type ShipAuth,
 } from "../../../src/family/realFamilyBackend.js";
 import {
+  DECISION_GATE_TAG,
   decisionGateSignalSchema,
   isReceiptRecoveryFailure,
   RECEIPT_MAX_RETRIES,
   workerReceiptSchema,
 } from "../../../src/receiptRecovery.js";
+import {
+  runScriptedStructuredOutput,
+  type ScriptedAgent,
+} from "../../helpers/scripted-sandcastle-run.js";
 import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GH_TOKEN_ENV,
@@ -836,15 +841,67 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     });
   });
 
-  it("falls back when Sandcastle reports its actual non-resumable maxRetries error", () => {
+  it("classifies Sandcastle's real non-resumable maxRetries error as recovery failure", async () => {
+    // #899: real sc.run rejects maxRetries>0 on providers without sessionStorage.
+    await expect(
+      runScriptedStructuredOutput({
+        tag: "cmr",
+        schema: workerReceiptSchema(),
+        emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        resumable: false,
+        name: "grok",
+        cleanups,
+      }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(
+        /output\.maxRetries requires an agent provider that supports session resumption/i,
+      );
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      return true;
+    });
+    // String-shape contract remains stable for #598 classification.
     expect(isReceiptRecoveryFailure(new Error(
       'output.maxRetries requires an agent provider that supports session resumption. The "grok" provider does not. Use claudeCode, codex, or pi, or set maxRetries to 0.',
     ))).toBe(true);
   });
 
   it("propagates StructuredOutputError when native CMR receipt retries are exhausted", async () => {
-    // #899: Sandcastle owns same-session maxRetries; at our production seam
-    // exhaust surfaces as one sc.run call throwing StructuredOutputError → #598.
+    // #899: real sc.run exhaust (initial + maxRetries) throws StructuredOutputError;
+    // the production seam surfaces that single throw → #598 (no fixer).
+    const agentOut: { agent?: ScriptedAgent } = {};
+    try {
+      await runScriptedStructuredOutput({
+        tag: "cmr",
+        schema: workerReceiptSchema(),
+        emissions: [
+          { body: JSON.stringify({ findingsCount: -1 }) },
+          { body: JSON.stringify({ findingsCount: -2 }) },
+          { body: JSON.stringify({ findingsCount: -3 }) },
+        ],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        sessionId: "sess-cmr-exhausted",
+        cleanups,
+        agentOut,
+      });
+      expect.unreachable("expected StructuredOutputError after maxRetries exhaust");
+    } catch (err) {
+      expect(err).toBeInstanceOf(sc.StructuredOutputError);
+      const soe = err as sc.StructuredOutputError;
+      expect(soe.tag).toBe("cmr");
+      expect(soe.sessionId).toBe("sess-cmr-exhausted");
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      // initial attempt + RECEIPT_MAX_RETRIES same-session resumes
+      expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
+      expect(agentOut.agent?.resumedSessions).toEqual([
+        undefined,
+        "sess-cmr-exhausted",
+        "sess-cmr-exhausted",
+      ]);
+    }
+
+    // Production boundary: after Sandcastle exhausts, the Action sees one throw.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -881,8 +938,6 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           tag: "cmr",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
-        // Production boundary: after Sandcastle's native same-session retries
-        // exhaust, the Action sees only this StructuredOutputError (no fixer).
         throw exhausted;
       }
     }
@@ -892,10 +947,83 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
     expect(sandcastleCalls).toBe(1);
   });
 
-  it("accepts a Sandcastle-recovered CMR verdict after a same-session native re-ask", async () => {
-    // #899: bad→good recovery is owned by Sandcastle Output.object maxRetries.
-    // Our production seam sees ONE sc.run call that returns the recovered typed
-    // verdict (intermediate malformed receipts never re-enter the runner).
+  it("recovers open-count via real Sandcastle same-session maxRetries (bad→good)", async () => {
+    // #899 Testing Decisions: inject recovery sequence at the real sc.run
+    // boundary — first emission fails production schema; same session re-asks
+    // and the second emission succeeds. Intermediate receipts never re-enter
+    // the runner (one sc.run invocation from production's POV).
+    const good = {
+      findingsCount: 0,
+      findings: [],
+      converged: true,
+      successfulLegs: [...DEFAULT_CMR_LEGS],
+      ...VALID_CMR_VERDICT_FIELDS,
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: "cmr",
+      schema: workerReceiptSchema(),
+      emissions: [
+        { body: JSON.stringify({ findingsCount: undefined }) },
+        { body: JSON.stringify(good) },
+      ],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "same-cmr-reviewer-session",
+      cleanups,
+    });
+    expect(result.output).toMatchObject({ findingsCount: 0 });
+    // initial attempt + one same-session resume
+    expect(agent.callCount).toBe(2);
+    expect(agent.resumedSessions).toEqual([undefined, "same-cmr-reviewer-session"]);
+  });
+
+  it("recovers decision-gate via real Sandcastle same-session maxRetries (bad→good)", async () => {
+    // #899: both typed traffic signals share Output.object maxRetries.
+    const good = {
+      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+    };
+    const { agent, result } = await runScriptedStructuredOutput({
+      tag: DECISION_GATE_TAG,
+      schema: decisionGateSignalSchema,
+      emissions: [
+        { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+        { body: JSON.stringify(good) },
+      ],
+      maxRetries: RECEIPT_MAX_RETRIES,
+      sessionId: "same-decision-session",
+      cleanups,
+    });
+    expect(result.output).toEqual(good);
+    expect(agent.callCount).toBe(2);
+    expect(agent.resumedSessions).toEqual([undefined, "same-decision-session"]);
+  });
+
+  it("exhausts decision-gate maxRetries via real sc.run without inventing a gate", async () => {
+    const agentOut: { agent?: ScriptedAgent } = {};
+    try {
+      await runScriptedStructuredOutput({
+        tag: DECISION_GATE_TAG,
+        schema: decisionGateSignalSchema,
+        emissions: [
+          { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
+          { body: JSON.stringify({ escalate: { reason: "r" } }) },
+          { body: JSON.stringify({ escalte: { reason: "typo", diagnosis: "key" } }) },
+        ],
+        maxRetries: RECEIPT_MAX_RETRIES,
+        sessionId: "sess-decision-exhausted",
+        cleanups,
+        agentOut,
+      });
+      expect.unreachable("expected StructuredOutputError after decision-gate exhaust");
+    } catch (err) {
+      expect(err).toBeInstanceOf(sc.StructuredOutputError);
+      expect((err as sc.StructuredOutputError).tag).toBe(DECISION_GATE_TAG);
+      expect(isReceiptRecoveryFailure(err)).toBe(true);
+      expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
+    }
+  });
+
+  it("accepts a recovered open-count at the family CMR production seam", async () => {
+    // Production seam after native recovery: one sc.run result, typed output only.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
@@ -908,11 +1036,6 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       successfulLegs: [...DEFAULT_CMR_LEGS],
       ...VALID_CMR_VERDICT_FIELDS,
     };
-    // Prove the recovery sequence at the public SO schema seam Sandcastle uses:
-    // first emission fails schema; second (same session) passes.
-    const schema = workerReceiptSchema();
-    expect(schema.safeParse({ ...completeVerdict, findingsCount: undefined }).success).toBe(false);
-    expect(schema.safeParse(completeVerdict).success).toBe(true);
     class Backend extends RealFamilyBackend {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
@@ -924,8 +1047,6 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           tag: "cmr",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
-        // After Sandcastle's native re-ask, only the recovered typed verdict
-        // is visible on the production call boundary.
         return typedSandboxRunResult(completeVerdict, {
           sessionId: "same-cmr-reviewer-session",
         });
