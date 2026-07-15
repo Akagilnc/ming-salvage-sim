@@ -370,7 +370,7 @@ describe("#422 model route presets", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
         }
         const skeleton = skeletonReviewLoopWorkerResult(spec.kind);

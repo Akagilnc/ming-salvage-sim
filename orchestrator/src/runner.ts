@@ -6,15 +6,15 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * ADR 0030: the child runner owns the visible per-slice review/fix loop:
+ * ADR 0030 / #925: the child runner owns the visible per-slice review/fix loop:
  *
- *   S0(gate) → S1(context) → S2(implement) → S3(review) → S4(classify)
- *     clean/deferred only → S7(local handoff) → S8(handoff)
- *     blocking → S5(fix) → S6(fresh full-diff review) → S4(classify)
+ *   S0(gate) → S1(context) → S2(implement) → S3(judge establish)
+ *     converged → S7(local handoff) → S8(handoff)
+ *     continue  → S5(fix) → S6(judge resume) → (verdict again)
+ *     escalate  → decision-kind park (answer → 原地 resume)
  *
- * S2/S5 are coder workers. S3/S6 are fresh read-only reviewer workers. S4 is a
- * runner-action classification boundary so findings and per-round outcomes are
- * visible in ledger state instead of hidden inside a coder session.
+ * S2/S5 are coder workers. S3/S6 are the persistent verify judge. S4 mechanical
+ * open-count classification is dissolved into the judge verdict tri-state.
  *
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
@@ -118,6 +118,13 @@ import {
   escalateOf,
   isValidEscalation,
 } from "./validate.js";
+import {
+  judgeKillsToLedgerDispositions,
+  liveDispositionsForFindings,
+  liveFindingIdentityKeys,
+  openFindingsForFixer,
+  priorJudgeVerdictRowsFromLedger,
+} from "./judgeStation.js";
 import {
   contractDriftStopSummary,
   decisionGateParkStopSummary,
@@ -1231,18 +1238,13 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * The fixed StepSpecs for child-slice worker steps. Versioned promptFiles,
  * never assembled inline (ADR 0018 决定#4).
  *
- * ADR 0030 makes the per-slice loop runner-visible: S2 implements, S3 reviews,
- * S5 fixes blocking findings, and S6 performs the fresh full-diff re-review.
+ * #925 / ADR 0132: S2 implements, S3 establishes the verify judge, S5 fixes
+ * live findings, S6 resumes the same judge session. maxIter is 1 on every seat
+ * (Ralph outer multi-iter retired; typed SO re-asks are in-session).
  *
  * #253 fields: model (CLI slug), completionSignal (Sandcastle run() API), maxIter
  * (per-seat Sandcastle iteration budget — NOT a fix-loop give-up counter), soul,
  * toolchain.
- *
- * maxIter SEMANTICS (#899 / ADR 0128): every selected seat is single-iteration
- * (`maxIter: 1`). The skill finishes inside that one `sandbox.run()`; native
- * structured-output re-asks are in-session, not outer iterations. Hitting
- * maxIter ends the step normally — never "orchestrator gives up" (that only
- * happens on a MODEL escalate — US#18/US#19). See StepSpec.maxIter.
  *
  * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
  * with single-slot overrides (see {@link coderModel}); no image rebuild, no
@@ -1282,13 +1284,16 @@ export function stepSpecsForRoute(
     },
     S3: {
       id: "S3",
+      // #925: persistent verify judge. WorkerKind stays `reviewer` so the
+      // child dispatch seam / legacy fixtures keep a single productive kind;
+      // seat identity is the verify model + verify soul (#923 merge).
+      // `reviewer` as a soul name remains only on fresh review legs.
       role: "reviewer",
-      promptFile: "reviewer_review.md",
-      // #923: judge identity is the verify slot (ORCHESTRATOR_VERIFY_MODEL).
+      promptFile: "judge_station.md",
       model: route.slots.verify,
-      completionSignal: "REVIEWER_STEP_COMPLETE",
+      completionSignal: "JUDGE_STEP_COMPLETE",
       maxIter: 1,
-      soul: "READ-ONLY",
+      soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S5: {
@@ -1304,13 +1309,13 @@ export function stepSpecsForRoute(
     },
     S6: {
       id: "S6",
+      // #925: same judge seat as S3 — resume the S3 session each round.
       role: "reviewer",
-      promptFile: "reviewer_review.md",
-      // #923: judge identity is the verify slot (ORCHESTRATOR_VERIFY_MODEL).
+      promptFile: "judge_station.md",
       model: route.slots.verify,
-      completionSignal: "REVIEWER_STEP_COMPLETE",
+      completionSignal: "JUDGE_STEP_COMPLETE",
       maxIter: 1,
-      soul: "READ-ONLY",
+      soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,
     },
   };
@@ -1337,14 +1342,82 @@ export function stepSpecsForEnv(
 
 export const WORKER_PROMPT_FILES: Readonly<Record<WorkerStepId, string>> = {
   S2: "coder_implement.md",
-  S3: "reviewer_review.md",
+  S3: "judge_station.md",
   S5: "coder_fix.md",
-  S6: "reviewer_review.md",
+  S6: "judge_station.md",
 };
 
 /** Synthesise a human-readable reason for a route-owned error edge. */
 function buildErrorReason(step: StepId, _output: StepOutput | undefined): string {
   return `step ${step} routed to error handoff`;
+}
+
+/**
+ * #925: collapse residual `kind:"reviewer"` open-count cargo into the sole
+ * judge-verdict form before topology runs. Production decode already emits
+ * `kind:"judge"`; this normaliser exists so legacy fixtures / residual paper
+ * cannot re-open a second open-count routing path — route() only ever sees
+ * judge status enums.
+ */
+function normalizeJudgeSeatOutput(
+  step: SliceStepId,
+  output: StepOutput,
+): StepOutput {
+  if (step !== "S3" && step !== "S6") return output;
+  if (output.kind === "judge") return output;
+
+  // Residual open-count reviewer paper → sole judge form.
+  if (output.kind === "reviewer") {
+    if (
+      typeof output.findingsCount === "number" &&
+      Number.isSafeInteger(output.findingsCount) &&
+      output.findingsCount > 0
+    ) {
+      const findings = [...output.findings];
+      // Positive open-count with sparse/empty cargo still continues: mint
+      // opaque live keys so S5 receives count + raw artifacts (ADR 0131).
+      const dispositions =
+        findings.length > 0
+          ? liveDispositionsForFindings(findings)
+          : Array.from({ length: output.findingsCount }, (_, i) => ({
+              identityKey: `__open_${i + 1}`,
+              action: "live" as const,
+            }));
+      return {
+        kind: "judge",
+        status: "continue",
+        findingDispositions: dispositions,
+        findings,
+        ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
+      };
+    }
+    if (output.escalate !== undefined) {
+      return {
+        kind: "judge",
+        status: "escalate",
+        reason: output.escalate.reason,
+        diagnosis: output.escalate.diagnosis,
+        escalate: output.escalate,
+      };
+    }
+    return { kind: "judge", status: "converged" };
+  }
+
+  // Offline skeleton / residual online-review VerifyResult on the judge seat
+  // (kind:"verify"+converged) — map boolean to tri-state; never re-enter
+  // open-count routing.
+  if (output.kind === "verify" && typeof output.converged === "boolean") {
+    return output.converged
+      ? { kind: "judge", status: "converged" }
+      : {
+          kind: "judge",
+          status: "continue",
+          findingDispositions: [],
+          findings: [],
+        };
+  }
+
+  return output;
 }
 
 function acceptedSuppressionsFromDispositions(
@@ -1524,6 +1597,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // Coder-Rec model advances can invalidate it before the next dispatch).
   let coderSessionId: string | undefined;
   let coderSessionModel: string | undefined;
+  // #925: judge persistent session across S3 → S6 rounds (same model).
+  let judgeSessionId: string | undefined;
+  let judgeSessionModel: string | undefined;
 
   const applyCoderRecSelection = async (
     nonConvergingRounds: number,
@@ -2537,6 +2613,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         break;
       }
     }
+    // #925: rebuild judge session continuity from the last S3/S6 ledger row.
+    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+      const entry = plan.priorLedger[i]!;
+      if (
+        (entry.step === "S3" || entry.step === "S6") &&
+        typeof entry.sessionId === "string"
+      ) {
+        judgeSessionId = entry.sessionId;
+        judgeSessionModel =
+          entry.step === "S6" ? stepSpecs.S6.model : stepSpecs.S3.model;
+        break;
+      }
+    }
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -2850,12 +2939,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S3":
       case "S5":
       case "S6": {
-        // ADR 0030 productive steps:
-        //   S2 coder implement, S3 fresh read-only review, S5 coder fix,
-        //   S6 fresh read-only full-diff re-review.
+        // Productive steps:
+        //   S2 coder implement, S3 judge establish, S5 coder fix,
+        //   S6 judge resume (#925).
         // #924: S2 establishes a coder session; S5 rounds resume it (same
-        // model). Crash/escalate `resumeFor` still wins when set. Reviewer
-        // seats (S3/S6) stay fresh every round.
+        // model). #925: S3 establishes a judge session; S6 rounds resume it.
+        // Crash/escalate `resumeFor` still wins when set.
         if (!dispatchStageLogged) {
           logDriverStage("dispatch", `step=${step}`);
           dispatchStageLogged = true;
@@ -2880,7 +2969,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
         }
         promptFile = stepSpecs[step].promptFile;
-        const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
+        const expectedKind = stepSpecs[step].role as "coder" | "reviewer" | "verify";
         let stepTelemetryDir: string | undefined;
         try {
           stepTelemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
@@ -2911,6 +3000,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             stepSpecs[step].model === coderSessionModel
           ) {
             resumeSessionId = coderSessionId;
+          } else if (
+            // #925: S3→S6 (and multi-round S6) resumes the retained judge session.
+            (step === "S3" || step === "S6") &&
+            typeof judgeSessionId === "string" &&
+            judgeSessionModel !== undefined &&
+            stepSpecs[step].model === judgeSessionModel
+          ) {
+            resumeSessionId = judgeSessionId;
           }
           const escalationAnswerForStep =
             resumedEscalationAnswer !== undefined &&
@@ -2940,6 +3037,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 };
               }
               const focusPath = relayFocusForDispatch(step);
+              const priorJudgeVerdicts =
+                step === "S3" || step === "S6"
+                  ? priorJudgeVerdictRowsFromLedger(ledger)
+                  : undefined;
               const dispatchCtx = {
                 runId,
                 worktree,
@@ -2953,6 +3054,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ? { billingPool }
                   : {}),
                 ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
+                // #925: prior judge verdict rows for session-loss recovery /
+                // trajectory (runner never synthesises a narrative summary).
+                ...(priorJudgeVerdicts !== undefined &&
+                priorJudgeVerdicts.length > 0
+                  ? { priorJudgeVerdicts }
+                  : {}),
                 // 信封宪法 (ADR 0062): the dispatch structure carries only the
                 // identity keys + count; the rich finding content travels in the
                 // separate landing payload below.
@@ -3022,7 +3129,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // Coder keeps default failed→durable abort (existing escalate path).
               const durableRetryOpts = durableMechanicalRetryOptions(
                 step,
-                expectedKind === "reviewer"
+                expectedKind === "reviewer" || expectedKind === "verify"
                   ? { rethrowOnExhaustion: true }
                   : {},
               );
@@ -3196,7 +3303,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               "output" in unwrapped && !("kind" in unwrapped)
                 ? { output: unwrapped.output, sessionId: unwrapped.sessionId }
                 : { output: unwrapped as StepOutput, sessionId: undefined };
-            output = normalized.output;
+            output = normalizeJudgeSeatOutput(step, normalized.output);
             stepSessionId = normalized.sessionId;
             // #924: retain coder session for S5 continuity (and multi-round S5).
             if (
@@ -3205,6 +3312,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             ) {
               coderSessionId = stepSessionId;
               coderSessionModel = stepSpecs[step].model;
+            }
+            // #925: retain judge session for S6 continuity (and multi-round S6).
+            if (
+              (step === "S3" || step === "S6") &&
+              typeof stepSessionId === "string"
+            ) {
+              judgeSessionId = stepSessionId;
+              judgeSessionModel = stepSpecs[step].model;
             }
             break;
           }
@@ -3222,6 +3337,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     commitsAdded: 0,
                     escalate: escalation,
                   }
+                : expectedKind === "verify"
+                  ? {
+                      kind: "judge",
+                      status: "escalate",
+                      reason: escalation.reason,
+                      diagnosis: escalation.diagnosis,
+                      escalate: escalation,
+                    }
                 : { kind: "reviewer", findings: [], findingsCount: 0, escalate: escalation };
             return await escalateTermination(
               step,
@@ -3417,13 +3540,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
         if (!carriesEscalate) {
-          if (expectedKind === "reviewer") {
-            // Control envelope only: role kind so findings-count channel can run.
-            // Do not inspect individual finding fields (findings schema court).
-            if (output?.kind !== "reviewer") {
-              // Unusable review envelope (not a typed open-count receipt) →
-              // fixer path with raw artifact pointers. Do NOT inspect findings
-              // cargo shape here (ADR 0131 / #899).
+          if (expectedKind === "verify" || expectedKind === "reviewer") {
+            // #925: judge typed verdict is the sole routing signal. Unusable
+            // envelope → fixer path with raw artifact pointers (never silent clean).
+            if (output?.kind !== "judge") {
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
               pendingBlockingFindingCount = 0;
@@ -3431,17 +3551,34 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stepMonitorHandle,
                 stepSessionId,
               );
-              step = "S5";
-              continue orchestratorStepLoop;
+              // Seed findingDispositions empty; route() will send unusable → S5.
+              lastOutput = output;
+              break;
             }
-            // Typed findingsCount only: positive open-count always preserves
-            // raw artifact pointers for S5. Findings rows are opaque cargo —
-            // never re-dispatch or zero the count based on array shape.
-            if (output.findingsCount > 0) {
-              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-                stepMonitorHandle,
-                stepSessionId,
-              );
+            // Apply continue dispositions: kill → refuted ledger flips; live → S5.
+            if (output.status === "continue") {
+              const dispositions = output.findingDispositions ?? [];
+              const kills = judgeKillsToLedgerDispositions(dispositions);
+              if (kills.length > 0) {
+                findingDispositions = [...findingDispositions, ...kills];
+              }
+              const cargo = output.findings ?? [];
+              pendingBlockingFindings = openFindingsForFixer(cargo, dispositions);
+              pendingBlockingFindingIdentityKeys =
+                liveFindingIdentityKeys(dispositions);
+              pendingBlockingFindingCount =
+                pendingBlockingFindingIdentityKeys.length;
+              if (pendingBlockingFindingCount > 0) {
+                pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                  stepMonitorHandle,
+                  stepSessionId,
+                );
+              }
+            } else {
+              // converged / escalate: no open findings for S5.
+              pendingBlockingFindings = [];
+              pendingBlockingFindingIdentityKeys = [];
+              pendingBlockingFindingCount = 0;
             }
           }
         }
@@ -3485,11 +3622,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S4": {
-        // #877: findings-count channel only — no disposition/no-progress court.
-        seedClassificationFromReviewerOutput(
-          lastOutput,
-          lastReviewerStepId === "S6",
-        );
+        // #925: S4 mechanical open-count station dissolved. Residual path for
+        // legacy ledgers only — classification already applied at S3/S6.
         break;
       }
 
@@ -3515,8 +3649,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
+    // #925: verdict + kill flips land on S3/S6 rows (S4 dissolved). Residual
+    // S4 still accepts dispositions if a legacy path writes them.
     const stepFindingDispositions =
-      step === "S4" ? findingDispositions : undefined;
+      step === "S3" || step === "S6" || step === "S4"
+        ? findingDispositions
+        : undefined;
+    const stepAdvanceCoder =
+      (step === "S3" || step === "S6") &&
+      output?.kind === "judge" &&
+      output.status === "continue" &&
+      typeof output.advanceCoder === "string"
+        ? output.advanceCoder
+        : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
@@ -3532,6 +3677,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(stepSessionId !== undefined ? { sessionId: stepSessionId } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
+        : {}),
+      ...(stepAdvanceCoder !== undefined
+        ? { advanceCoder: stepAdvanceCoder }
         : {}),
       // #684: surface the CLI monitor handle in-memory too (resume rebuild parity).
       ...(stepMonitorHandle !== undefined

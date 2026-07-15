@@ -399,7 +399,7 @@ class DogfoodSingleSliceBackend implements Backend {
 
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.runStepCalls.push(spec.id);
-    if (spec.role === "reviewer") {
+    if ((spec.role === "reviewer" || spec.role === "verify")) {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
       return scripted ?? { kind: "reviewer", findings: [], findingsCount: 0 };
@@ -418,7 +418,7 @@ class DogfoodSingleSliceBackend implements Backend {
   ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.dispatchedModels.push(`${spec.id}:${spec.model}`);
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
       return {

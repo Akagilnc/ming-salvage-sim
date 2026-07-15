@@ -307,7 +307,7 @@ class CoderCrashBackend implements Backend {
       }
       return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
     }
     if (spec.kind === "ship") {
@@ -365,7 +365,7 @@ class ReviewerCrashBackend implements Backend {
   async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
     const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
     if (skeleton !== undefined) return skeleton;
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       this.reviewerDispatches += 1;
       if (this.reviewerDispatches <= this.reviewerFailures) {
         throw new Error("reviewer container connection dropped mid-run");

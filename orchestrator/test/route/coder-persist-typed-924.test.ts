@@ -128,7 +128,7 @@ class PersistCoderBackend implements Backend {
       };
     }
 
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       this.reviewCount += 1;
       const findingsCount = this.reviewCount === 1 ? 1 : 0;
       const findings: Finding[] =
@@ -214,7 +214,7 @@ describe("#924 S2/S5 single-iter + S5 resumes coder session", () => {
         spec: WorkerSpec,
         ctx: DispatchContext,
       ): Promise<WorkerResult> {
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           this.dispatched.push(`${spec.id}:${spec.kind}:${spec.session}`);
           this.specs.push(spec);
           this.ctxs.push(ctx);

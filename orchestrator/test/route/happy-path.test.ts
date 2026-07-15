@@ -98,7 +98,7 @@ class HappyPathBackend implements Backend {
     this.markRunStep();
     this.calls.push(`runStep(${spec.id}:${spec.role}:${spec.promptFile})`);
     this.runStepIds.push(spec.id);
-    if (spec.role === "reviewer") {
+    if ((spec.role === "reviewer" || spec.role === "verify")) {
       return { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -184,13 +184,12 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     // The child runner never pushes; family merge/ship owns remote delivery.
 
     // The step ledger records the runner's decisions in canonical order —
-    // S3 is the fresh full-diff reviewer and S4 records the runner classification.
+    // S3 is the judge establish seat; S4 mechanical classify is dissolved (#925).
     expect(result.stepLedger.map((e) => e.step)).toEqual([
       "S0",
       "S1",
       "S2",
       "S3",
-      "S4",
       "S7",
       "S8",
     ]);
@@ -216,7 +215,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       "prepareWorktree(247, main)", // S1 resident worktree, base=main
       "writeSnapshot(feat/orchestrator/issue-247, #247)", // S1 clean-room snapshot
       "runStep(S2:coder:coder_implement.md)", // S2 implementation
-      "runStep(S3:reviewer:reviewer_review.md)", // S3 fresh full-diff review
+      "runStep(S3:reviewer:judge_station.md)", // S3 fresh full-diff review
       // S4 classify, S7 local handoff, S8 success are pure TS.
     ]);
   });
@@ -244,7 +243,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
     const runCalls = backend.calls.filter((c) => c.startsWith("runStep("));
     expect(runCalls).toEqual([
       "runStep(S2:coder:coder_implement.md)",
-      "runStep(S3:reviewer:reviewer_review.md)",
+      "runStep(S3:reviewer:judge_station.md)",
     ]);
   });
 

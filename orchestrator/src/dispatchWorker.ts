@@ -147,8 +147,11 @@ function workerKindForRole(role: StepSpec["role"]): WorkerKind {
  */
 function retentionForKind(kind: WorkerKind): WorkerContextRetention {
   // Production workers (coder + post-review fixer) retain context across rounds;
-  // review-like workers start each round clean.
-  return kind === "coder" || kind === "fixer" ? "retain" : "clean";
+  // #925: verify judge also retains (persistent S3→S6 session memory).
+  // Other review-like workers start each round clean.
+  return kind === "coder" || kind === "fixer" || kind === "verify"
+    ? "retain"
+    : "clean";
 }
 
 function ensureGitExcluded(worktreePath: string, pattern: string): void {
@@ -217,7 +220,9 @@ function writeFixFindingsLandingFile(
 ): (FixFindingsLandingFile & { cleanup: boolean }) | undefined {
   const needsFindingsLanding =
     (spec.id === "S5" && spec.kind === "coder") ||
-    (spec.id === "S6" && spec.kind === "reviewer") ||
+    // #925: S6 is the verify judge (kind verify); still needs fix-findings landing
+    // for re-adjudication of prior open rows.
+    (spec.id === "S6" && (spec.kind === "reviewer" || spec.kind === "verify")) ||
     ctx.escalationAnswer !== undefined;
   if (!needsFindingsLanding || ctx.worktree === undefined) {
     return undefined;
@@ -1047,7 +1052,7 @@ function firstOutputBaselineBytes(handle: WorkerMonitorHandle): number {
  */
 export function workerResultToStep(
   result: WorkerResult,
-  expectedKind: "coder" | "reviewer",
+  expectedKind: "coder" | "reviewer" | "verify",
 ): { unwrapped: StepOutput | StepResult | undefined; reason?: string } {
   if (result.kind === "completed") {
     return {
@@ -1069,6 +1074,14 @@ export function workerResultToStep(
             commitsAdded: 0,
             escalate: result.escalation,
           }
+        : expectedKind === "verify"
+          ? {
+              kind: "judge",
+              status: "escalate",
+              reason: result.escalation.reason,
+              diagnosis: result.escalation.diagnosis,
+              escalate: result.escalation,
+            }
         : { kind: "reviewer", findings: [], findingsCount: 0, escalate: result.escalation };
     // PRESERVE the worker's sessionId on the escalate path (codex cmr R4 finding):
     // the human-answer resume (planResume → resumeSession) resumes the recorded
