@@ -131,7 +131,7 @@ describe("RealFamilyBackend live officer effort", () => {
     promptFile: "integrated_cmr_completeness.md",
     maxIter: 1,
     model: "gpt-5.6-sol",
-    soul: "cmr",
+    soul: "verify",
     toolchain: [],
     ...overrides,
   });
@@ -141,7 +141,7 @@ describe("RealFamilyBackend live officer effort", () => {
     const commandFor = (spec: WorkerSpec) =>
       backend.agentForLiveSpec(spec).buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
 
-    expect(commandFor(liveSpec({ soul: "cmr" }))).toContain(
+    expect(commandFor(liveSpec({ soul: "verify" }))).toContain(
       'model_reasoning_effort="xhigh"',
     );
     expect(

@@ -14,10 +14,13 @@ import {
   closeFamilyCourtFromJudgeOutput,
   liveFindingsBlockConverged,
   priorFamilyJudgeVerdictRowsFromLedger,
+  priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
 } from "../../../src/judgeStation.js";
 import { findingIdentityKey } from "../../../src/findings.js";
 import { runVerifyCmr } from "../../../src/family/verifyCmr.js";
+import { residualIntegratedCmrToJudgeOutput } from "../../../src/family/dispatchFamilyWorker.js";
+import { cmrOutcomeFromResult } from "../../../src/family/realFamilyBackend.js";
 import { skeletonReviewLoopWorkerResult } from "../../../src/reviewLoopOutcome.js";
 import type {
   FamilyBackend,
@@ -30,6 +33,7 @@ import type {
 import type {
   DispatchContext,
   JudgeResult,
+  LedgerEntry,
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
@@ -242,6 +246,90 @@ describe("#930 pure family judge closure", () => {
     expect(projected?.blockingIdentityKeys).toEqual([FINDING_KEY]);
   });
 
+  it("S1: typed station:judge SO payload decodes to kind:judge (not open-count)", () => {
+    const outcome = cmrOutcomeFromResult({
+      output: {
+        station: "judge",
+        status: "converged",
+        findingFamilies: [
+          {
+            family: "open-pattern",
+            members: [FINDING_KEY],
+            recurringFromRounds: [1],
+            brief: "cargo rides",
+          },
+        ],
+      },
+    });
+    expect(outcome.kind).toBe("judge");
+    if (outcome.kind !== "judge") return;
+    expect(outcome.status).toBe("converged");
+    // S3: findingFamilies not dropped on kind:judge path.
+    expect(outcome.findingFamilies?.[0]?.family).toBe("open-pattern");
+  });
+
+  it("residual open-count: positive → continue; 0 → undefined (never silent clean)", () => {
+    expect(
+      residualIntegratedCmrToJudgeOutput({
+        findingsCount: 2,
+        findings: [FINDING],
+      })?.status,
+    ).toBe("continue");
+    expect(
+      residualIntegratedCmrToJudgeOutput({
+        findingsCount: 0,
+        findings: [],
+        converged: true,
+      }),
+    ).toBeUndefined();
+    // Legacy IntegratedCmrResult without open-count may still use boolean green.
+    expect(
+      residualIntegratedCmrToJudgeOutput({ converged: true })?.status,
+    ).toBe("converged");
+  });
+
+  it("S2: prior ledger row shape matches single-slice priorJudgeVerdicts", () => {
+    // Family/single ledger sources differ (family events vs S3/S6 steps) but
+    // the priorJudgeVerdicts landing row shape is isomorphic — both feed
+    // DispatchContext.priorJudgeVerdicts with the same fields.
+    const familyRows = priorFamilyJudgeVerdictRowsFromLedger(
+      [
+        {
+          status: "cmr_reviewed",
+          event: "cmr_reviewed",
+          cmrPass: "completeness",
+          judgeStatus: "continue",
+          sessionId: "fam-sess",
+          findingDispositions: [{ identityKey: FINDING_KEY, action: "live" }],
+        },
+      ],
+      "completeness",
+    );
+    const singleRows = priorJudgeVerdictRowsFromLedger([
+      {
+        step: "S3",
+        sessionId: "slice-sess",
+        output: {
+          kind: "judge",
+          status: "continue",
+          findingDispositions: [{ identityKey: FINDING_KEY, action: "live" }],
+        },
+      } as LedgerEntry,
+    ]);
+    expect(Object.keys(familyRows[0]!).sort()).toEqual(
+      Object.keys(singleRows[0]!).sort(),
+    );
+    expect(familyRows[0]).toMatchObject({
+      status: "continue",
+      sessionId: "fam-sess",
+    });
+    expect(singleRows[0]).toMatchObject({
+      status: "continue",
+      sessionId: "slice-sess",
+      step: "S3",
+    });
+  });
+
   it("priorFamilyJudgeVerdictRowsFromLedger filters by pass and status", () => {
     const rows = priorFamilyJudgeVerdictRowsFromLedger(
       [
@@ -451,20 +539,26 @@ describe("#930 runVerifyCmr family judge courts", () => {
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it("residual kind:cmr projects once into judge form (no parallel open-count closer)", async () => {
-    // Residual paper may still arrive as kind:cmr+findingsCount from legacy
-    // fixtures; the boundary projects it to kind:judge once. Topology never
-    // has a second `if findingsCount > 0` branch.
+  it("residual kind:cmr+findingsCount:0 is unusable re-furnace (never silent clean)", async () => {
+    // Shared residual semantics: 0/missing open-count → unusable, not converged.
+    // Positive count projects once to continue; topology has no second closer.
+    let opens = 0;
     const backend = new FamilyJudgeBackend({
-      completeness: () => ({
-        kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
-          successfulLegs: ["opus"],
-        },
-      }),
+      completeness: () => {
+        opens += 1;
+        if (opens === 1) {
+          return {
+            kind: "completed",
+            output: {
+              kind: "cmr",
+              converged: true,
+              findingsCount: 0,
+              successfulLegs: ["opus"],
+            },
+          };
+        }
+        return completedJudge(judgeConverged(), "after-residual-refurnace");
+      },
     });
     const result = await runVerifyCmr({
       phase: "final",
@@ -472,13 +566,50 @@ describe("#930 runVerifyCmr family judge courts", () => {
       familyBackend: backend,
     });
     expect(result).toEqual({ ok: true, ran: true });
-    expect(
-      backend.ledger.some(
-        (e) => e.status === "cmr_passed" && e.judgeStatus === "converged",
-      ),
-    ).toBe(true);
-    // Residual green did not require a fix round.
-    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(false);
+    // First residual open-count:0 must re-furnace via coder, not silent pass.
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
+    expect(opens).toBeGreaterThanOrEqual(2);
+  });
+
+  it("S1: typed station:judge continues/converges without open-count decode", async () => {
+    // Live production traffic is kind:judge tri-state — not findingsCount.
+    // S3: findingFamilies cargo siblings ride on the judge envelope.
+    let cRound = 0;
+    const backend = new FamilyJudgeBackend({
+      completeness: (round) => {
+        cRound = round;
+        if (round === 0) {
+          return completedJudge(
+            {
+              kind: "judge",
+              status: "continue",
+              findingDispositions: [
+                { identityKey: FINDING_KEY, action: "live" },
+              ],
+              findings: [FINDING],
+              findingFamilies: [
+                {
+                  family: "open-pattern",
+                  members: [FINDING_KEY],
+                  recurringFromRounds: [1],
+                  brief: "still open after fix",
+                },
+              ],
+            } as JudgeResult,
+            "judge-typed-live",
+          );
+        }
+        return completedJudge(judgeConverged(), "judge-typed-live");
+      },
+    });
+    const result = await runVerifyCmr({
+      phase: "final",
+      familyBase: "family/919-base",
+      familyBackend: backend,
+    });
+    expect(result).toEqual({ ok: true, ran: true });
+    expect(cRound).toBeGreaterThanOrEqual(1);
+    expect(backend.dispatches.some((d) => d.kind === "coder")).toBe(true);
   });
 
   it("negative: non-judge non-cmr envelope is unusable re-furnace (not silent pass)", async () => {

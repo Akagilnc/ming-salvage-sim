@@ -139,7 +139,7 @@ import {
   closeFamilyCourtFromJudgeOutput,
   priorFamilyJudgeVerdictRowsFromLedger,
 } from "../judgeStation.js";
-import { legacyIntegratedCmrToJudgeOutput } from "./dispatchFamilyWorker.js";
+import { residualIntegratedCmrToJudgeOutput } from "./dispatchFamilyWorker.js";
 import { reviewFixDecisionGate } from "../reviewFixAssertionGate.js";
 import {
   buildReviewRoundStamp,
@@ -2021,44 +2021,14 @@ async function runIntegratedCmrPass(input: {
   }
   // #930: family court closes on shared T2 judge tri-state only. Residual
   // kind:"cmr" paper (legacy fixtures / pre-judge seat) is projected ONCE into
-  // judge form at this boundary — same class as single-slice residual→judge.
-  // There is no parallel open-count closer (no if findingsCount > 0 branch).
+  // judge form at this boundary — same class as single-slice residual→judge
+  // (0/missing → unusable, never silent clean). Live kind:"judge" is direct.
   const rawOutput = cmrResult.output;
-  const residualCmrCargo = rawOutput.kind === "cmr" ? rawOutput : undefined;
   const judgeTraffic =
     rawOutput.kind === "judge"
       ? rawOutput
       : rawOutput.kind === "cmr"
-        ? legacyIntegratedCmrToJudgeOutput({
-            converged: rawOutput.converged ?? false,
-            ...(rawOutput.findingsCount !== undefined
-              ? { findingsCount: rawOutput.findingsCount }
-              : {}),
-            ...(rawOutput.reason !== undefined ? { reason: rawOutput.reason } : {}),
-            ...(rawOutput.findings !== undefined
-              ? { findings: rawOutput.findings }
-              : {}),
-            ...(rawOutput.successfulLegs !== undefined
-              ? { successfulLegs: rawOutput.successfulLegs }
-              : {}),
-            ...(rawOutput.skippedLegs !== undefined
-              ? { skippedLegs: rawOutput.skippedLegs }
-              : {}),
-            ...(rawOutput.claimedFixedFindingIdentityKeys !== undefined
-              ? {
-                  claimedFixedFindingIdentityKeys:
-                    rawOutput.claimedFixedFindingIdentityKeys,
-                }
-              : {}),
-            ...(rawOutput.priorFindingDispositions !== undefined
-              ? {
-                  priorFindingDispositions: rawOutput.priorFindingDispositions,
-                }
-              : {}),
-            ...(rawOutput.evidencePaths !== undefined
-              ? { evidencePaths: rawOutput.evidencePaths }
-              : {}),
-          })
+        ? residualIntegratedCmrToJudgeOutput(rawOutput) ?? rawOutput
         : rawOutput;
   const closure = closeFamilyCourtFromJudgeOutput(judgeTraffic);
   const openedJudgeSessionId =
@@ -2071,8 +2041,19 @@ async function runIntegratedCmrPass(input: {
     judgeTraffic.kind === "judge" ? judgeTraffic.findingDispositions : undefined;
   const advanceCoderForLedger =
     judgeTraffic.kind === "judge" ? judgeTraffic.advanceCoder : undefined;
-  const skippedLegs = residualCmrCargo?.skippedLegs;
-  const findingFamilies = residualCmrCargo?.findingFamilies;
+  // S3: findingFamilies / skippedLegs must not drop on kind:judge (cargo rides).
+  const cargoSource =
+    rawOutput !== null && typeof rawOutput === "object"
+      ? (rawOutput as {
+          readonly skippedLegs?: ReadonlyArray<{
+            readonly slug: string;
+            readonly reason: string;
+          }>;
+          readonly findingFamilies?: ReadonlyArray<FindingFamily>;
+        })
+      : undefined;
+  const skippedLegs = cargoSource?.skippedLegs;
+  const findingFamilies = cargoSource?.findingFamilies;
 
   const mergeRestart = (
     base: NonNullable<IntegratedCmrPassOutcome["restartFinalBarrier"]>,

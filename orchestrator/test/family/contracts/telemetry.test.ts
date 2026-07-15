@@ -85,7 +85,7 @@ function familySpec(kind: WorkerSpec["kind"]): WorkerSpec {
     promptFile: `${kind}.md`,
     maxIter: 1,
     model: "gpt-5.6-terra",
-    soul: kind === "cmr" ? "cmr" : "verify",
+    soul: "verify",
     toolchain: [],
   };
 }
