@@ -48,21 +48,39 @@ export function materializeRawReviewerArtifactsForSandbox(
   if (artifacts.reviewerSessionId !== undefined) {
     out.reviewerSessionId = artifacts.reviewerSessionId;
   }
+  // Best-effort copies: permission / ENOSPC / TOCTOU must not crash the
+  // orchestrator (gemini R3). Missing/failed copies simply omit the pointer.
   if (
     artifacts.stdoutPath !== undefined &&
     isReadableFile(artifacts.stdoutPath)
   ) {
-    const dest = join(sandboxCwd, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
-    copyFileSync(artifacts.stdoutPath, dest);
-    out.stdoutPath = RAW_REVIEWER_STDOUT_SANDBOX_FILE;
+    try {
+      const dest = join(sandboxCwd, RAW_REVIEWER_STDOUT_SANDBOX_FILE);
+      copyFileSync(artifacts.stdoutPath, dest);
+      out.stdoutPath = RAW_REVIEWER_STDOUT_SANDBOX_FILE;
+    } catch (err) {
+      console.warn(
+        `[orchestrator] failed to copy raw reviewer stdout: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
   if (
     artifacts.sidecarPath !== undefined &&
     isReadableFile(artifacts.sidecarPath)
   ) {
-    const dest = join(sandboxCwd, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
-    copyFileSync(artifacts.sidecarPath, dest);
-    out.sidecarPath = RAW_REVIEWER_SIDECAR_SANDBOX_FILE;
+    try {
+      const dest = join(sandboxCwd, RAW_REVIEWER_SIDECAR_SANDBOX_FILE);
+      copyFileSync(artifacts.sidecarPath, dest);
+      out.sidecarPath = RAW_REVIEWER_SIDECAR_SANDBOX_FILE;
+    } catch (err) {
+      console.warn(
+        `[orchestrator] failed to copy raw reviewer sidecar: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
   return out;
 }

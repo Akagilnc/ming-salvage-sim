@@ -946,6 +946,26 @@ function replayS4FindingsCountState(
         : undefined;
   }
 
+  // Pre-S4 crash window (codex R3): positive-count reviewer row persisted, S4
+  // bookkeeping row not yet written → planResume resumes at S4 with that
+  // reviewer as lastOutput, but the loop above never fired. Seed count + cargo
+  // + raw artifact pointers from the last reviewer so S5 still gets logs.
+  if (
+    pendingRawReviewerArtifacts === undefined &&
+    lastReviewerOutputForS4?.kind === "reviewer" &&
+    typeof lastReviewerOutputForS4.findingsCount === "number" &&
+    Number.isSafeInteger(lastReviewerOutputForS4.findingsCount) &&
+    lastReviewerOutputForS4.findingsCount > 0
+  ) {
+    pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
+    pendingBlockingFindingIdentityKeys = [];
+    pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
+    pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+      lastReviewerMonitorHandle,
+      lastReviewerSessionId,
+    );
+  }
+
   return {
     blocking: pendingBlockingFindings,
     blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
