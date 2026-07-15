@@ -8,14 +8,26 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import * as sc from "@ai-hero/sandcastle";
 import type { AgentProvider, RunResult } from "@ai-hero/sandcastle";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import type { z } from "zod";
+
+/**
+ * Versioned thin promptFile template — never inline `prompt` (orchestrator/CLAUDE.md).
+ * Sandcastle requires the Output.object tag to appear in the resolved prompt; the
+ * harness materialises a per-run copy that names the concrete tag under test.
+ */
+const SCRIPTED_STRUCTURED_OUTPUT_PROMPT_TEMPLATE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "fixtures",
+  "scripted-structured-output.md",
+);
 
 export type ScriptedEmission = {
   /** JSON payload placed inside `<tag>…</tag>` (or raw text if already tagged). */
@@ -173,11 +185,18 @@ export async function runScriptedStructuredOutput(opts: {
   agent.setSessionRoot(join(repo, ".fake-sessions"));
   if (opts.agentOut !== undefined) opts.agentOut.agent = agent;
 
+  // Materialise versioned thin template with the concrete Output.object tag so
+  // Sandcastle's tag-in-prompt check passes without an inline `prompt` string.
+  const template = readFileSync(SCRIPTED_STRUCTURED_OUTPUT_PROMPT_TEMPLATE, "utf8");
+  const promptFile = join(repo, "scripted-structured-output.md");
+  writeFileSync(promptFile, template.replaceAll("{{TAG}}", opts.tag), "utf8");
+
   const result = (await sc.run({
     agent,
     sandbox: noSandbox(),
     cwd: repo,
-    prompt: `Emit a corrected <${opts.tag}> JSON block only.`,
+    // Absolute path: Sandcastle resolves promptFile against process.cwd().
+    promptFile,
     maxIterations: 1,
     output: sc.Output.object({
       tag: opts.tag,

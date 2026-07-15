@@ -1265,9 +1265,10 @@ export interface SelfReportedCoder {
 
 /**
  * Tolerant coder cargo fields (committed / commitsAdded). Missing or off-shape
- * values default to the no-commit report — never invent escalate from cargo.
+ * values default to the no-commit report — never invent escalate from cargo,
+ * never schema-reject ordinary cargo (#899 / ADR 0131).
  */
-function coderCargoFields(body: unknown): {
+export function coderCargoFields(body: unknown): {
   readonly committed: boolean;
   readonly commitsAdded: number;
 } {

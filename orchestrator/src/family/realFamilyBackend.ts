@@ -90,7 +90,7 @@ import {
   hostOpenCodeAuthFile,
   candidateBranches,
   lastSessionId,
-  parseCoderSelfReport,
+  coderCargoFields,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
@@ -108,7 +108,6 @@ import {
   soulsMount,
   REQUIRED_SOUL_FILES,
   soulsDirError,
-  type SelfReportedCoder,
   SANDBOX_FIX_FOCUS_PATH_ENV,
 } from "../realBackend.js";
 import {
@@ -1952,8 +1951,9 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Family coder-fix cargo from the sidecar only. Fate keys are stripped so a
-   * spoofed escalate cannot override a validated typed decision (#899).
+   * Family coder-fix cargo from the sidecar only. Tolerant field reads — no
+   * Zod/schema gate on ordinary cargo. Fate keys are stripped so a spoofed
+   * escalate cannot override a validated typed decision (#899 / ADR 0131).
    */
   private familyCoderCargoOutput(outcomePath: string): CoderResult {
     try {
@@ -1972,23 +1972,15 @@ export class RealFamilyBackend implements FamilyBackend {
           ? { ...(cargo as Record<string, unknown>) }
           : {};
       delete stripped.escalate;
-      try {
-        return this.familyCoderOutput(parseCoderSelfReport(stripped));
-      } catch {
-        return { kind: "coder", committed: false, commitsAdded: 0 };
-      }
+      const fields = coderCargoFields(stripped);
+      return {
+        kind: "coder",
+        committed: fields.committed,
+        commitsAdded: fields.commitsAdded,
+      };
     } catch {
       return { kind: "coder", committed: false, commitsAdded: 0 };
     }
-  }
-
-  /** Delivery cargo only — never re-reads escalate after a no-gate typed signal. */
-  private familyCoderOutput(output: SelfReportedCoder): CoderResult {
-    return {
-      kind: "coder",
-      committed: output.committed,
-      commitsAdded: output.commitsAdded,
-    };
   }
 
   protected async runFamilyReviewLoopWorker(
