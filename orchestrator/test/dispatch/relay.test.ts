@@ -23,7 +23,6 @@ import {
   selectCoderRecEntry,
 } from "../../src/coderRoster.js";
 import { modelIdForSlug } from "../../src/modelRegistry.js";
-import { resolveRouteModels } from "../../src/modelRoutes.js";
 import {
   DEFAULT_PARK_THRESHOLD_MS,
   DEFAULT_POOL_MODELS,
