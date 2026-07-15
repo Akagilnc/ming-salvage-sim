@@ -16,6 +16,7 @@ import type {
   JudgeResult,
   JudgeVerdictStatus,
   LedgerEntry,
+  StepOutput,
   WorkerSessionMode,
 } from "./types.js";
 import { findingIdentityKey } from "./findings.js";
@@ -565,29 +566,67 @@ export function priorFamilyJudgeVerdictRowsFromLedger(
 }
 
 /**
- * #919 S1 — offline / residual `kind:"verify"+converged` boolean → sole T2
- * judge form. Shared by route topology and runner normalize so the dual
- * boolean maps cannot drift (#914 AS5 keeps the semantic arm; this only DRY).
+ * #919 AS4 — honest unusable residual open-count paper.
+ *
+ * Not a fixer/coder seat report. Route maps residual open-count 0 via
+ * {@link projectResidualReviewerToJudge} → undefined → unusable → S5
+ * (never silent clean, never `kind:"fixer"` placeholder).
  */
-export function projectVerifyConvergedBooleanToJudge(
-  converged: boolean,
-): JudgeResult {
-  if (converged) {
-    return { kind: "judge", status: "converged" };
+export function unusableResidualOpenCountPaper(): {
+  readonly kind: "reviewer";
+  readonly findingsCount: 0;
+  readonly findings: readonly [];
+} {
+  return { kind: "reviewer", findingsCount: 0, findings: [] };
+}
+
+/**
+ * #919 S1 — sole residual→judge seat projection used by both runner normalize
+ * and route topology status collapse. Production decode already emits
+ * `kind:"judge"`; residual open-count paper projects once here.
+ *
+ * #919 AS5: no `kind:"verify"+converged` arm on the judge seat. Online-review
+ * S9 uses kind:verify on its own stage; S3/S6 fixtures must emit kind:judge.
+ * Leftover verify paper on a judge seat stays as-is → unusable → S5.
+ *
+ * - kind:judge → as-is
+ * - kind:reviewer residual → projectResidualReviewerToJudge or leave as-is
+ * - else → as-is (caller maps unusable)
+ */
+export function projectJudgeSeatOutput(output: StepOutput): StepOutput {
+  if (output.kind === "judge") return output;
+  if (output.kind === "reviewer") {
+    const projected = projectResidualReviewerToJudge(output);
+    // Leave residual paper as-is when unusable → route → S5 / fail-loud.
+    return projected ?? output;
   }
-  return {
-    kind: "judge",
-    status: "continue",
-    findingDispositions: [],
-    findings: [],
-  };
+  return output;
+}
+
+/**
+ * #919 S1 — sole judge-status collapse for topology (route) and callers that
+ * only need the tri-state (+ unusable). Always goes through
+ * {@link projectJudgeSeatOutput} first so normalize and status cannot drift.
+ */
+export function judgeStatusFromOutput(
+  output: StepOutput | undefined,
+): "converged" | "continue" | "escalate" | "unusable" {
+  if (output == null) return "unusable";
+  const projected = projectJudgeSeatOutput(output);
+  if (projected.kind === "judge") {
+    if (projected.status === "converged") return "converged";
+    if (projected.status === "continue") return "continue";
+    return "escalate";
+  }
+  return "unusable";
 }
 
 /**
  * #919 S2 — single judge-seat predicate for topology / decision_gate / soul
- * selection. S3/S6 step ids, role/kind/soul `"verify"` all count; role may
- * still be `"reviewer"` on S3/S6 (#923 design pin — this does not migrate
- * WorkerKind).
+ * selection. S3/S6 step ids and role/kind/soul `"verify"` all count.
+ * `#923`: `reviewer` remains leg-soul + WorkerKind vocabulary (cannot be
+ * role:verify without colliding with online-review S9 kind:verify); seat
+ * identity is soul:"verify" + isJudgeSeat.
  */
 export function isJudgeSeat(input: {
   readonly step?: string;
@@ -601,5 +640,6 @@ export function isJudgeSeat(input: {
   if (input.kind === "verify") return true;
   if (input.role === "verify") return true;
   if (input.soul === "verify") return true;
+  if (input.role === "reviewer" && input.soul === "verify") return true;
   return false;
 }

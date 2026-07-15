@@ -118,6 +118,10 @@ import {
   type ModelRouteSlot,
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
+import {
+  billingPoolForFamilyWorker,
+  familyWorkerSlotForDispatch,
+} from "./familyWorkerSlots.js";
 import { modelFamilyForCmrReviewLeg } from "../modelRegistry.js";
 import { isQuotaWaitForResetError } from "../quotaProbe.js";
 import { isRunnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
@@ -179,6 +183,9 @@ import {
   stageFailureStopSummary,
   type FamilyStageFailureStatus,
 } from "./familyTerminal.js";
+
+// #919 F4: re-export slot helpers so existing import sites stay stable.
+export { billingPoolForFamilyWorker, familyWorkerSlotForDispatch };
 
 /** Which of the two ADR 0022 decision-3 verify points is running. */
 export type VerifyCmrPhase = "wave" | "final";
@@ -293,53 +300,6 @@ const NOOP: VerifyCmrResult = { ok: true, ran: false };
 /** Stage-tagged red barrier result (#922 — no umbrella verify_failed mash). */
 function stageGate(status: FamilyStageFailureStatus): VerifyCmrResult {
   return { ok: false, ran: true, failedStatus: status };
-}
-
-/**
- * Map a family worker kind (+ optional cmr pass) to the route slot it consumes.
- * Used to scope baton billingPool to wall roles only (F2).
- */
-export function familyWorkerSlotForDispatch(
-  kind: WorkerSpec["kind"],
-  cmrPass?: IntegratedCmrPass | string,
-): ModelRouteSlot | undefined {
-  switch (kind) {
-    case "cmr":
-      return cmrPass === "correctness" ? "cmrCorrectness" : "cmrCompleteness";
-    case "ship":
-      return "ship";
-    case "coder":
-      return "coderFix";
-    case "verify":
-      return "verify";
-    case "fixer":
-      return "fixer";
-    case "docRelease":
-      return "docRelease";
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Resolve DispatchContext.billingPool for a family worker.
- * - No pool → undefined
- * - Pool without slots (explicit test / unscoped) → pool for every worker
- * - Pool + slots → only wall-role workers on listed slots get the rewrite
- */
-export function billingPoolForFamilyWorker(opts: {
-  readonly billingPool?: string;
-  readonly billingPoolSlots?: ReadonlyArray<ModelRouteSlot>;
-  readonly kind: WorkerSpec["kind"];
-  readonly cmrPass?: IntegratedCmrPass | string;
-}): string | undefined {
-  if (opts.billingPool === undefined) return undefined;
-  if (opts.billingPoolSlots === undefined || opts.billingPoolSlots.length === 0) {
-    return opts.billingPool;
-  }
-  const slot = familyWorkerSlotForDispatch(opts.kind, opts.cmrPass);
-  if (slot === undefined) return undefined;
-  return opts.billingPoolSlots.includes(slot) ? opts.billingPool : undefined;
 }
 
 async function runFamilyVerifyOrAbort(input: {
