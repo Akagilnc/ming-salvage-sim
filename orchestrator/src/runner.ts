@@ -1660,6 +1660,60 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let judgeSessionId: string | undefined;
   let judgeSessionModel: string | undefined;
 
+  /**
+   * Hold a sticky coder seat against Coder-Rec snap-back: rewrite coder
+   * (+coderFix), refresh stepSpecs, invalidate smoke, and retire the session
+   * when the runnable model actually changed.
+   */
+  const holdCoderSticky = (
+    slug: string,
+    opts?: { readonly preserveCoderFix?: boolean },
+  ): void => {
+    if (modelRoute.slots.coder === slug) return;
+    modelRoute = withCoderSlot(modelRoute, slug, opts);
+    stepSpecs = stepSpecsForRoute(modelRoute);
+    routeSmokeChecked = false;
+    if (
+      coderSessionModel !== undefined &&
+      stepSpecs.S2.model !== coderSessionModel &&
+      stepSpecs.S5.model !== coderSessionModel
+    ) {
+      coderSessionId = undefined;
+      coderSessionModel = undefined;
+    }
+  };
+
+  /**
+   * #926 — single bookkeeping write path for advance / stay-put markers.
+   * Disk write is fail-open: in-memory ledger already carries the event.
+   */
+  const persistAdvanceBookkeeping = async (
+    marker: LedgerEntry,
+    forStep: "S3" | "S6",
+    failOpenLabel: string,
+  ): Promise<void> => {
+    ledger.push(marker);
+    if (stateDir === undefined) return;
+    try {
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await hashPrompt(undefined, forStep, backend),
+          branchHEAD: await resolveBranchHEAD(),
+          ts: marker.ts ?? new Date().toISOString(),
+        },
+        stateDir,
+      );
+    } catch (err) {
+      console.warn(
+        `[orchestrator] #926 ${failOpenLabel} ledger write failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+
   /** Apply Coder-Rec first-seat stay-put (no round-threshold rotation). */
   const applyCoderRecSelection = async (): Promise<
     ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined
@@ -1668,20 +1722,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // Resource-relay stickiness: hold the baton for the run. ADR 0132 deleted
     // round-threshold quality advance. Do NOT set coderRecEnvSkipped.
     if (stickyRelayCoderSlug !== undefined) {
-      if (modelRoute.slots.coder !== stickyRelayCoderSlug) {
-        modelRoute = withCoderSlot(modelRoute, stickyRelayCoderSlug);
-        stepSpecs = stepSpecsForRoute(modelRoute);
-        routeSmokeChecked = false;
-        // #924: relay model change drops the prior coder session.
-        if (
-          coderSessionModel !== undefined &&
-          stepSpecs.S2.model !== coderSessionModel &&
-          stepSpecs.S5.model !== coderSessionModel
-        ) {
-          coderSessionId = undefined;
-          coderSessionModel = undefined;
-        }
-      }
+      holdCoderSticky(stickyRelayCoderSlug);
       return undefined;
     }
     if (stickyRelayCoderFixSlug !== undefined) {
@@ -1705,19 +1746,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     // #926: judge-advanced seat holds against Coder-Rec first-seat re-apply.
     if (stickyJudgeAdvanceCoderSlug !== undefined) {
-      if (modelRoute.slots.coder !== stickyJudgeAdvanceCoderSlug) {
-        modelRoute = withCoderSlot(modelRoute, stickyJudgeAdvanceCoderSlug);
-        stepSpecs = stepSpecsForRoute(modelRoute);
-        routeSmokeChecked = false;
-        if (
-          coderSessionModel !== undefined &&
-          stepSpecs.S2.model !== coderSessionModel &&
-          stepSpecs.S5.model !== coderSessionModel
-        ) {
-          coderSessionId = undefined;
-          coderSessionModel = undefined;
-        }
-      }
+      holdCoderSticky(stickyJudgeAdvanceCoderSlug);
       return undefined;
     }
     let applied: ReturnType<typeof applyCoderRecToRoute>;
@@ -1807,8 +1836,61 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   };
 
   /**
+   * Probe a candidate route for assignability (smoke) without terminalising.
+   * Used by judge advance so an unassignable roster-legal seat stays put.
+   */
+  const probeRouteSmoke = async (
+    candidate: ResolvedModelRoute,
+  ): Promise<
+    | { readonly ok: true; readonly route: ResolvedModelRoute }
+    | { readonly ok: false; readonly reason: string }
+  > => {
+    if (typeof backend.smokeModelRoute !== "function") {
+      return {
+        ok: false,
+        reason:
+          "route smoke executor is required before dispatch; backend did not provide smokeModelRoute",
+      };
+    }
+    try {
+      const currentCliVersions = backend.currentCliVersions
+        ? await backend.currentCliVersions(
+            candidate,
+            activeRelayStep === undefined ? undefined : currentBillingPool,
+            activeRelaySmokeEntryKey(activeRelayStep, candidate),
+          )
+        : {};
+      let smoked = await backend.smokeModelRoute(
+        candidate,
+        currentCliVersions,
+        activeRelayStep === undefined ? undefined : currentBillingPool,
+        activeRelaySmokeEntryKey(activeRelayStep, candidate),
+      );
+      smoked = degradeOptionalRouteSmokeFailures(smoked).route;
+      const failure = routeSmokeFailure(
+        smoked,
+        Date.now(),
+        undefined,
+        currentCliVersions,
+      );
+      if (failure !== undefined) {
+        return { ok: false, reason: failure };
+      }
+      return { ok: true, route: smoked };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `route smoke failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+  };
+
+  /**
    * #926 — execute a judge `advanceCoder` suggestion (or stay-put + audit).
    * Never terminals the run for roster unusability — continue path stays open.
+   * Roster-legal but unassignable (smoke fail) stays put the same way.
    */
   const applyJudgeAdvanceCoder = async (
     suggestion: string,
@@ -1822,56 +1904,53 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       return;
     }
 
-    if (decision.kind === "stay_put") {
-      const marker: LedgerEntry = {
-        step: forStep,
-        event: "coder_advance_stay_put",
-        reason: decision.reason,
-        fromModelId: decision.currentSlug,
-        toModelId: decision.currentSlug,
-        state_summary: decision.suggestion,
-        ts,
-      };
-      ledger.push(marker);
-      if (stateDir !== undefined) {
-        try {
-          await backend.writeLedger(
-            {
-              ...marker,
-              sessionId,
-              prompt_hash: await hashPrompt(undefined, forStep, backend),
-              branchHEAD: await resolveBranchHEAD(),
-              ts,
-            },
-            stateDir,
-          );
-        } catch (err) {
-          // Audit write failure must not kill the run for roster reasons —
-          // in-memory marker already carries the stay-put for this process.
-          console.warn(
-            `[orchestrator] #926 stay-put ledger write failed (fail-open): ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
-      console.info(
-        `[orchestrator] #926 advanceCoder stay-put (${decision.reason}): ` +
-          `kept ${decision.currentSlug}; suggestion=${decision.suggestion}`,
+    const recordStayPut = async (
+      reason: string,
+      suggestionToken: string,
+    ): Promise<void> => {
+      await persistAdvanceBookkeeping(
+        {
+          step: forStep,
+          event: "coder_advance_stay_put",
+          reason,
+          fromModelId: currentSlug,
+          toModelId: currentSlug,
+          state_summary: suggestionToken,
+          ts,
+        },
+        forStep,
+        "stay-put",
       );
+      console.info(
+        `[orchestrator] #926 advanceCoder stay-put (${reason}): ` +
+          `kept ${currentSlug}; suggestion=${suggestionToken}`,
+      );
+    };
+
+    if (decision.kind === "stay_put") {
+      await recordStayPut(decision.reason, decision.suggestion);
       return;
     }
 
-    // advanced
+    // advanced — probe assignability before committing the seat switch.
     const preserveCoderFix =
       process.env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
       process.env.ORCHESTRATOR_CODER_FIX_MODEL.trim() !== "";
-    modelRoute = withCoderSlot(modelRoute, decision.entry.slug, {
+    const candidate = withCoderSlot(modelRoute, decision.entry.slug, {
       preserveCoderFix,
     });
+    const probe = await probeRouteSmoke(candidate);
+    if (!probe.ok) {
+      // AC 不可派: roster-legal but unusable → stay put, never terminal.
+      await recordStayPut("unassignable_target", suggestion.trim());
+      return;
+    }
+
+    modelRoute = probe.route;
     stickyJudgeAdvanceCoderSlug = decision.entry.slug;
     stepSpecs = stepSpecsForRoute(modelRoute);
-    routeSmokeChecked = false;
+    // Candidate already smoked — skip the next ensureRouteSmoke gate.
+    routeSmokeChecked = true;
     // New coder: fresh session (memory = worktree git history + ledger only).
     coderSessionId = undefined;
     coderSessionModel = undefined;
@@ -1880,35 +1959,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       poolForModelRef(modelRoute.slots.coder),
     );
 
-    const marker: LedgerEntry = {
-      step: forStep,
-      event: "coder_advance",
-      fromModelId: decision.fromSlug,
-      toModelId: decision.entry.slug,
-      state_summary: suggestion.trim(),
-      ts,
-    };
-    ledger.push(marker);
-    if (stateDir !== undefined) {
-      try {
-        await backend.writeLedger(
-          {
-            ...marker,
-            sessionId,
-            prompt_hash: await hashPrompt(undefined, forStep, backend),
-            branchHEAD: await resolveBranchHEAD(),
-            ts,
-          },
-          stateDir,
-        );
-      } catch (err) {
-        console.warn(
-          `[orchestrator] #926 advance ledger write failed (fail-open): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-    }
+    await persistAdvanceBookkeeping(
+      {
+        step: forStep,
+        event: "coder_advance",
+        fromModelId: decision.fromSlug,
+        toModelId: decision.entry.slug,
+        state_summary: suggestion.trim(),
+        ts,
+      },
+      forStep,
+      "advance",
+    );
     console.info(
       `[orchestrator] #926 advanceCoder → ${decision.entry.id} (${decision.entry.slug}) ` +
         `from ${decision.fromSlug}; prior coder session retired`,
@@ -2881,20 +2943,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const advanced = lookupCoderRosterEntry(row.toModelId);
         const slug = advanced?.slug ?? row.toModelId;
         stickyJudgeAdvanceCoderSlug = slug;
-        if (modelRoute.slots.coder !== slug) {
-          modelRoute = withCoderSlot(modelRoute, slug);
-          stepSpecs = stepSpecsForRoute(modelRoute);
-          routeSmokeChecked = false;
-          // Advanced seat is a different model — do not resume the old session.
-          if (
-            coderSessionModel !== undefined &&
-            stepSpecs.S2.model !== coderSessionModel &&
-            stepSpecs.S5.model !== coderSessionModel
-          ) {
-            coderSessionId = undefined;
-            coderSessionModel = undefined;
-          }
-        }
+        holdCoderSticky(slug);
         break;
       }
     }
