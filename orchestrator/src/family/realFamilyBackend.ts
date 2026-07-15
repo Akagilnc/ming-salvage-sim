@@ -61,6 +61,7 @@ import {
   classifyDecisionGate,
   decisionGateOutput,
   logAndRethrowReceiptFailure,
+  requireTypedTrafficSignal,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "../receiptRecovery.js";
@@ -886,10 +887,15 @@ export class RealFamilyBackend implements FamilyBackend {
             // #899: dedicated decision-gate tag; resolve cargo stays opaque.
             output: decisionGateOutput(),
           });
+          // Output.object was attached: absent typed signal → #598, not cargo.
+          const typed = requireTypedTrafficSignal(
+            (result as { readonly output?: unknown }).output,
+            "merger",
+          );
           const outcome = mergerOutcomeFromResult({
             ...result,
             outcomePath: outcomeLanding.path,
-            output: (result as { readonly output?: unknown }).output,
+            output: typed,
           });
           telemetry.stampCollect({
             kind: "result",
@@ -1615,9 +1621,16 @@ export class RealFamilyBackend implements FamilyBackend {
           // convert SOE into a sparse success verdict that feeds the fixer.
           logAndRethrowReceiptFailure(err, "family CMR");
         }
+        // Output.object was attached: absent typed signal → #598, not cargo
+        // no-gate completion (same class as realBackend.rawOutputFor).
+        const typed = requireTypedTrafficSignal(
+          (result as { readonly output?: unknown }).output,
+          "family CMR",
+        );
         return withCmrSession(
           cmrOutcomeFromResult({
             ...result,
+            output: typed,
             cmrReviewLegs: frozenReviewLegs,
             outcomePath: outcomeLanding.path,
           }),
@@ -1887,20 +1900,20 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     outcomePath: string,
   ): WorkerResult {
+    // Output.object was attached for this seat: absent typed signal fails for
+    // #598 — never treat missing SO as cargo/no-gate completion (#899).
+    const typed = requireTypedTrafficSignal(result.output, "family-coder-fix");
+    const gate = classifyDecisionGate(typed, "family-coder-fix");
+    if (gate.kind === "bell") {
+      return {
+        kind: "escalated",
+        escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
+        sessionId: lastSessionId(result),
+      };
+    }
+    // No-gate typed signal (`{}`): cargo comes from the sidecar only and never
+    // reintroduces escalate (fourth channel).
     try {
-      // Typed decision signal is the sole fate channel (#899). Cargo comes from
-      // the sidecar and never reintroduces escalate when typed is absent or is
-      // a no-gate `{}` signal.
-      if (result.output !== undefined) {
-        const gate = classifyDecisionGate(result.output, "family-coder-fix");
-        if (gate.kind === "bell") {
-          return {
-            kind: "escalated",
-            escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
-            sessionId: lastSessionId(result),
-          };
-        }
-      }
       const cargo = (() => {
         try {
           return readRequiredWorkerOutcomeSidecar(outcomePath);
@@ -1923,11 +1936,7 @@ export class RealFamilyBackend implements FamilyBackend {
             : { kind: "coder", committed: false, commitsAdded: 0 },
         sessionId: lastSessionId(result),
       };
-    } catch (err) {
-      // Malformed decision gates must not become empty success cargo.
-      if (err instanceof Error && err.message.includes("malformed decision gate")) {
-        throw err;
-      }
+    } catch {
       return {
         kind: "completed",
         output: { kind: "coder", committed: false, commitsAdded: 0 },
@@ -2163,31 +2172,28 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     outcomePath?: string,
   ): WorkerResult {
+    const sessionId = lastSessionIdIfPresent(result);
+    // Output.object was attached: absent typed signal → #598, not cargo/no-gate.
+    const typed = requireTypedTrafficSignal(
+      result.output,
+      `family-${spec.kind}`,
+    );
+    const gate = classifyDecisionGate(typed, `family-${spec.kind}`);
+    if (gate.kind === "bell") {
+      return {
+        kind: "escalated",
+        escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
+        sessionId,
+      };
+    }
+    // No-gate typed signal: sidecar/stdout enrich cargo only — never escalate.
     try {
-      const sessionId = lastSessionIdIfPresent(result);
-      // Typed decision signal is the sole fate channel (#899). When present with
-      // a well-formed gate, escalate; when present as no-gate `{}` or absent,
-      // sidecar/stdout enrich cargo only — never reintroduce escalate.
-      if (result.output !== undefined) {
-        const gate = classifyDecisionGate(result.output, `family-${spec.kind}`);
-        if (gate.kind === "bell") {
-          return {
-            kind: "escalated",
-            escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
-            sessionId,
-          };
-        }
-      }
       return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
-    } catch (err) {
-      // Malformed decision gates must not become empty success cargo.
-      if (err instanceof Error && err.message.includes("malformed decision gate")) {
-        throw err;
-      }
+    } catch {
       return {
         kind: "completed",
         output: { kind: "coder", committed: false, commitsAdded: 0 },
-        sessionId: lastSessionIdIfPresent(result),
+        sessionId,
       };
     }
   }
@@ -2732,11 +2738,15 @@ export class RealFamilyBackend implements FamilyBackend {
       const outcomeLanding = this.prepareFamilyShipOutcomeLanding();
       try {
         const result = await this.shipContainerRun(spec, auth, outcomeLanding, ctx);
-        const typedOutput = (result as { readonly output?: unknown }).output;
+        // Output.object was attached: absent typed signal → #598, not cargo.
+        const typed = requireTypedTrafficSignal(
+          (result as { readonly output?: unknown }).output,
+          "family-ship",
+        );
         return shipOutcomeFromResult({
           ...result,
           outcomePath: outcomeLanding.path,
-          ...(typedOutput !== undefined ? { output: typedOutput } : {}),
+          output: typed,
         });
       } finally {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
@@ -3638,6 +3648,10 @@ function parseCmrStdoutCargo(stdout: string): unknown {
  * Parse the merger's structured result for telemetry. The caller does not use
  * this self-report as proof of a landed merge: the post-run git state must show
  * a two-parent merge commit with no in-progress conflict.
+ *
+ * #899: typed Output.object is decision-gate only. Resolve cargo rides on
+ * sidecar/stdout and never reintroduces escalate when the typed signal is
+ * no-gate `{}` (same class as shipOutcomeFromResult).
  */
 export function mergerOutcomeFromResult(result: {
   completionSignal?: string | string[];
@@ -3645,12 +3659,33 @@ export function mergerOutcomeFromResult(result: {
   stdout: string;
   output?: unknown;
 }): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
-  // Typed Output.object is the sole fate channel when present (#899).
+  // Typed decision signal is the sole fate channel for gates.
   if (result.output !== undefined) {
-    return classifyMergerOutcomePayload(result.output, "merger typed receipt");
+    const gate = classifyDecisionGate(result.output, "merger");
+    if (gate.kind === "bell") {
+      return {
+        resolved: false,
+        reason: gate.reason,
+        escalation: {
+          reason: gate.reason,
+          diagnosis: gate.diagnosis,
+          escalationKind: "decision",
+          phase: "wave",
+        },
+      };
+    }
+    // No-gate typed signal: resolve status from cargo only (never escalate).
+    return mergerResolveCargoFromResult(result);
   }
-  // Cargo-only: resolve status may be enriched, but escalate must not enter the
-  // human loop from an untyped sidecar/stdout (#899).
+  // No typed signal (pure unit-test cargo path): resolve may enrich, escalate must not.
+  return mergerResolveCargoFromResult(result);
+}
+
+/** Sidecar/stdout resolve cargo with escalate stripped (not a fate channel). */
+function mergerResolveCargoFromResult(result: {
+  outcomePath?: string;
+  stdout: string;
+}): { resolved: boolean; reason?: string; escalation?: FamilyEscalation } {
   if (result.outcomePath !== undefined) {
     try {
       const sidecar = readWorkerOutcomeSidecar(result.outcomePath);

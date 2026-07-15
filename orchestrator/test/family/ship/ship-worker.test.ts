@@ -631,6 +631,8 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
         return {
           stdout: "<ship>{}</ship>",
           completionSignal: "SHIP_STEP_COMPLETE",
+          // Typed no-gate decision signal (SO was attached on this seat).
+          output: {},
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -652,6 +654,59 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     expect(out.kind).toBe("shipped");
     expect(outcomePathAtRun).toBeDefined();
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
+  });
+
+  it("fails family ship when typed decision Output.object is absent", async () => {
+    // #899: SO seat without result.output must not fall through to cargo success.
+    class MissingTypedShipBackend extends RealFamilyBackend {
+      protected override sh(): string {
+        return "";
+      }
+      protected override mountShipAuth(): ShipAuth {
+        return { claudeToken: "tok", ghToken: "gho_ok" };
+      }
+      public probeRunShipWorker(
+        spec: WorkerSpec,
+        ctx: DispatchContext,
+      ): Promise<ShipWorkerOutcome> {
+        return this.runShipWorker(spec, ctx);
+      }
+      protected override async shipContainerRun(
+        _spec: WorkerSpec,
+        _auth: ShipAuth,
+        outcomeLanding?: { path: string; sandboxPath: string },
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomeLanding !== undefined) {
+          writeFileSync(
+            outcomeLanding.path,
+            JSON.stringify({
+              status: "pr_opened",
+              branch: FAMILY_BASE,
+              pr: "https://github.com/Akagilnc/ming-salvage-sim/pull/999",
+            }),
+            "utf8",
+          );
+        }
+        return {
+          stdout: "<ship>{}</ship>",
+          completionSignal: "SHIP_STEP_COMPLETE",
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const b = new MissingTypedShipBackend({
+      workingRepo: realRepo(),
+      familyBase: FAMILY_BASE,
+      ledgerDir: mkDir("ship-missing-typed-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+    });
+
+    await expect(
+      b.probeRunShipWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE }),
+    ).rejects.toThrow(/typed traffic signal missing/);
   });
 
   it("attaches dedicated decision Output.object for family ship without cargo-shape re-ask", async () => {

@@ -68,6 +68,7 @@ import {
   classifyDecisionGate,
   decisionGateOutput,
   logAndRethrowReceiptFailure,
+  requireTypedTrafficSignal,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
@@ -2844,14 +2845,58 @@ export class RealBackend implements Backend {
     // Typed receipt owns fate signals. Missing typed output is not a cargo
     // fallback — that would re-open escalate / findingsCount as a fourth channel.
     if (typedOutputUsed) {
-      if (result.output === undefined) {
-        throw new Error(
-          `${spec.id}-${spec.role}: typed traffic signal missing; failing Action for mechanical redispatch`,
-        );
-      }
-      return result.output;
+      return requireTypedTrafficSignal(
+        result.output,
+        `${spec.id}-${spec.role}`,
+      );
     }
     return this.cargoRawFor(result, spec, options);
+  }
+
+  /**
+   * Shared typed-output attach policy for fresh and resumed agent seats (#899).
+   * Reviewer/coder traffic signals only attach when the seat is single-iter and
+   * not outcome-sidecar-gated.
+   */
+  private typedOutputPolicy(
+    spec: StepSpec,
+    options?: AgentStepRunOptions,
+    opts?: { readonly requireSingleIter?: boolean },
+  ): {
+    readonly typedOutput: sc.OutputDefinition | undefined;
+    readonly typedOutputUsed: boolean;
+  } {
+    const typedOutput = this.outputFor(spec);
+    const singleIterOk =
+      opts?.requireSingleIter !== true || spec.maxIter === 1;
+    const typedOutputUsed =
+      typedOutput !== undefined &&
+      singleIterOk &&
+      options?.outcomeLanding === undefined;
+    return { typedOutput, typedOutputUsed };
+  }
+
+  /**
+   * Decode a finished Sandcastle run into StepResult (typed signal + cargo).
+   * Shared by fresh and resume so selection/decoding cannot drift.
+   */
+  private stepResultFromRun(
+    result: Awaited<ReturnType<typeof sc.run>>,
+    spec: StepSpec,
+    typedOutputUsed: boolean,
+    options?: AgentStepRunOptions,
+    sessionIdFallback?: string,
+  ): StepResult {
+    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
+    const cargo =
+      typedOutputUsed && spec.role === "coder"
+        ? this.cargoRawFor(result, spec, options)
+        : undefined;
+    const output = this.decodeOutput(spec, raw, cargo);
+    return {
+      output,
+      sessionId: lastSessionId(result) ?? sessionIdFallback,
+    };
   }
 
   /** Protected so test subclasses can probe receipt decode without casts. */
@@ -2948,11 +2993,11 @@ export class RealBackend implements Backend {
   ): Promise<StepResult> {
     const issueNumber = this.issueOf(worktree);
     await this.preflightToolchain(spec);
-    const typedOutput = this.outputFor(spec);
-    const typedOutputUsed =
-      typedOutput !== undefined &&
-      spec.maxIter === 1 &&
-      options?.outcomeLanding === undefined;
+    const { typedOutput, typedOutputUsed } = this.typedOutputPolicy(
+      spec,
+      options,
+      { requireSingleIter: true },
+    );
     const box = this.box(issueNumber, spec, options);
     try {
     const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
@@ -2999,13 +3044,7 @@ export class RealBackend implements Backend {
       // into a success empty-cargo fallback that would feed the fixer.
       logAndRethrowReceiptFailure(err, `${spec.id}-${spec.role}`);
     }
-    const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-    const cargo =
-      typedOutputUsed && spec.role === "coder"
-        ? this.cargoRawFor(result, spec, options)
-        : undefined;
-    const output = this.decodeOutput(spec, raw, cargo);
-    return { output, sessionId: lastSessionId(result) };
+    return this.stepResultFromRun(result, spec, typedOutputUsed, options);
     } finally {
       box.cleanup();
     }
@@ -3032,9 +3071,9 @@ export class RealBackend implements Backend {
     try {
       const pool = isBillingPoolDispatchId(options?.billingPool) ? options.billingPool : undefined;
       this.assertProviderAuth(spec.model, pool, box.providerAuth);
-      const typedOutput = this.outputFor(spec);
-      const typedOutputUsed =
-        typedOutput !== undefined && options?.outcomeLanding === undefined;
+      // Resume is always maxIterations:1 (Sandcastle constraint); no extra
+      // single-iter gate beyond the shared attach policy.
+      const { typedOutput, typedOutputUsed } = this.typedOutputPolicy(spec, options);
       const result = await this.runAgentSandbox({
         name: `${spec.id}-${spec.role}-resume`,
         idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -3064,13 +3103,13 @@ export class RealBackend implements Backend {
           issueNumber,
         },
       });
-      const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
-      const cargo =
-        typedOutputUsed && spec.role === "coder"
-          ? this.cargoRawFor(result, spec, options)
-          : undefined;
-      const output = this.decodeOutput(spec, raw, cargo);
-      return { output, sessionId: lastSessionId(result) ?? sessionId };
+      return this.stepResultFromRun(
+        result,
+        spec,
+        typedOutputUsed,
+        options,
+        sessionId,
+      );
     } catch (err) {
       // Typed receipt exhaust on resume: propagate SOE for #598 (same class as
       // fresh-run typed seats). Dead-session only falls back to a fresh run.

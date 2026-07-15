@@ -1296,6 +1296,65 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
   });
 
   it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+    "fails family %s when typed decision Output.object is absent",
+    async (role) => {
+      // #899: SO seat without result.output must not become cargo/no-gate success.
+      const reviewLoopSpec = (kind: typeof role): WorkerSpec => ({
+        id: "S9",
+        kind,
+        role: "coder",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "clean",
+        promptFile: "x.md",
+        completionSignal: "X",
+        maxIter: 1,
+        model: "sonnet",
+        soul: "coder",
+        toolchain: [],
+      });
+      class Harness extends RealFamilyBackend {
+        public classify(
+          result: {
+            output?: unknown;
+            stdout: string;
+            iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+          },
+          kind: typeof role,
+          outcomePath: string,
+        ) {
+          return this.familyReviewLoopResultFromRun(
+            {
+              stdout: result.stdout,
+              iterations: [...(result.iterations ?? [])],
+              ...(result.output !== undefined ? { output: result.output } : {}),
+            },
+            reviewLoopSpec(kind),
+            outcomePath,
+          );
+        }
+      }
+      const dir = trackTempDir(`review-loop-missing-typed-${role}-`);
+      const outcomePath = join(dir, "outcome.json");
+      writeFileSync(outcomePath, JSON.stringify({ converged: true }), "utf8");
+      const be = new Harness({
+        workingRepo: dir,
+        familyBase: "fb",
+        ledgerDir: dir,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc",
+      });
+      expect(() =>
+        be.classify({ stdout: "" }, role, outcomePath),
+      ).toThrow(/typed traffic signal missing/);
+    },
+  );
+
+  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
     "does not let sidecar bells override a schema-validated typed %s decision signal",
     async (role) => {
       // #899 finding: when typed Output.object exists it is the sole fate channel;
@@ -2140,6 +2199,8 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
         return {
           completionSignal: "MERGER_STEP_COMPLETE",
           stdout: "<merger>{}</merger>",
+          // Typed no-gate decision signal (SO was attached on this seat).
+          output: {},
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -2149,6 +2210,33 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
     expect(out.resolved).toBe(true);
     expect(outcomePathAtRun).toBeDefined();
     expect(existsSync(dirname(outcomePathAtRun as string))).toBe(false);
+  });
+
+  it("fails merger when typed decision Output.object is absent", async () => {
+    // #899: SO seat without result.output must not complete from cargo alone.
+    const repo = trackRepo();
+    const ledgerDir = mkdtempSync(join(tmpdir(), "merger-missing-typed-ledger-"));
+    ledgerDirs.push(ledgerDir);
+    class MissingTypedMergerBackend extends RealFamilyBackend {
+      public run(req: ConflictResolveRequest) {
+        return this.runMergerAgent(req);
+      }
+      protected override mountMergerAuth(): MergerAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        return {
+          completionSignal: "MERGER_STEP_COMPLETE",
+          stdout: '<merger>{"resolved": true}</merger>',
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const b = new MissingTypedMergerBackend(opts(repo, { ledgerDir }));
+    await expect(
+      b.run({ childIssue: 496, childBranch: "feat/child" }),
+    ).rejects.toThrow(/typed traffic signal missing/);
   });
 });
 

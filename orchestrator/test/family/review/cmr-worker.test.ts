@@ -847,7 +847,16 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(options: Parameters<typeof sc.run>[0]): Promise<Awaited<ReturnType<typeof sc.run>>> {
         runs.push(options);
-        return { completionSignal: "CMR_STEP_COMPLETE", stdout: `<cmr>${JSON.stringify({ converged: true, successfulLegs: DEFAULT_CMR_LEGS, ...VALID_CMR_VERDICT_FIELDS })}</cmr>` } as Awaited<ReturnType<typeof sc.run>>;
+        const verdict = {
+          converged: true,
+          findingsCount: 0,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+        };
+        return typedSandboxRunResult(verdict, {
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: `<cmr>${JSON.stringify(verdict)}</cmr>`,
+        });
       }
     }
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-receipt-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
@@ -1315,7 +1324,12 @@ describe("#850 review r5 — production CMR dispatch applies OpenCode auth", () 
         successfulLegs: DEFAULT_CMR_LEGS,
         ...CMR_EVIDENCE,
       }));
-      return { stdout: "", commits: [], iterations: [] } as unknown as Awaited<ReturnType<typeof sc.run>>;
+      return typedSandboxRunResult({
+        converged: true,
+        findingsCount: 0,
+        successfulLegs: DEFAULT_CMR_LEGS,
+        ...VALID_CMR_VERDICT_FIELDS,
+      });
     }
   }
 
@@ -2415,7 +2429,8 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       protected override mountShipAuth(): ShipAuth { return { claudeToken: "tok" }; }
       protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
         this.calls += 1;
-        return sandboxRunResult();
+        // Typed no-gate signal present; cargo sidecar may still be empty.
+        return typedSandboxRunResult({});
       }
     }
     const be = new NoSessionBackend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("family-coder-no-session-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
@@ -2426,7 +2441,107 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(be.calls).toBe(1);
   });
 
-  it("a prepared but blank CMR outcome sidecar falls back to legacy stdout", async () => {
+  it("fails family coder-fix when typed decision Output.object is absent", async () => {
+    // #899: SO seat without result.output must not become cargo/no-gate success.
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    class MissingTypedBackend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof familyCoderFixWorkerSpec>, ctx: DispatchContext) {
+        return this.runFamilyCoderFixWorker(spec, ctx);
+      }
+      protected override mountShipAuth(): ShipAuth { return { claudeToken: "tok" }; }
+      protected override async runAgentSandbox(): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        return sandboxRunResult();
+      }
+    }
+    const be = new MissingTypedBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("family-coder-missing-typed-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    await expect(be.run(familyCoderFixWorkerSpec(), { familyBase: "fb" })).rejects.toThrow(
+      /typed traffic signal missing/,
+    );
+  });
+
+  it("fails family CMR when typed open-count Output.object is absent", async () => {
+    // #899: cargo/sidecar must not substitute for a missing typed receipt.
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    const repo = realRepo335();
+    execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
+    execFileSync("git", ["checkout", "-b", "fb"], { cwd: repo });
+    let outcomePathAtRun: string | undefined;
+
+    class MissingTypedCmrBackend extends RealFamilyBackend {
+      public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) {
+        return this.runCmrWorker(spec, ctx);
+      }
+      protected override mountCmrAuth(): CmrAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override prepareCmrOutcomeLanding(
+        ctx: DispatchContext,
+      ): { path: string; sandboxPath: string } {
+        const landing = super.prepareCmrOutcomeLanding(ctx);
+        outcomePathAtRun = landing.path;
+        return landing;
+      }
+      protected override async runAgentSandbox(
+        _options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
+        writeFileSync(
+          outcomePathAtRun,
+          JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          }),
+          "utf8",
+        );
+        // Sidecar cargo present but typed SO missing → fail for #598.
+        return sandboxRunResult({
+          completionSignal: "CMR_STEP_COMPLETE",
+          stdout: `<cmr>${JSON.stringify({
+            converged: true,
+            successfulLegs: DEFAULT_CMR_LEGS,
+            ...VALID_CMR_VERDICT_FIELDS,
+          })}</cmr>`,
+        });
+      }
+    }
+
+    const be = new MissingTypedCmrBackend({
+      workingRepo: repo,
+      familyBase: "fb",
+      ledgerDir: mkDir("cmr-missing-typed-ledger-"),
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc123",
+    });
+
+    await expect(
+      be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" }),
+    ).rejects.toThrow(/typed traffic signal missing/);
+  });
+
+  it("a prepared but blank CMR outcome sidecar still uses the typed receipt", async () => {
+    // #899: blank sidecar is cargo-only; fate comes from typed Output.object.
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
@@ -2454,14 +2569,16 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         if (outcomePathAtRun === undefined) throw new Error("missing outcome sidecar path");
         expect(readFileSync(outcomePathAtRun, "utf8")).toBe("");
-        return {
+        const verdict = {
+          converged: true,
+          findingsCount: 0,
+          successfulLegs: DEFAULT_CMR_LEGS,
+          ...VALID_CMR_VERDICT_FIELDS,
+        };
+        return typedSandboxRunResult(verdict, {
           completionSignal: "CMR_STEP_COMPLETE",
-          stdout: `<cmr>${JSON.stringify({
-            converged: true,
-            successfulLegs: DEFAULT_CMR_LEGS,
-            ...VALID_CMR_VERDICT_FIELDS,
-          })}</cmr>\nfindings = 0\nCMR_STEP_COMPLETE`,
-        } as Awaited<ReturnType<typeof sc.run>>;
+          stdout: `<cmr>${JSON.stringify(verdict)}</cmr>\nfindings = 0\nCMR_STEP_COMPLETE`,
+        });
       }
     }
 
@@ -2482,6 +2599,7 @@ describe("#335 runCmrWorker — reclaims the per-run temp auth dirs (no leak)", 
     expect(outcome).toMatchObject({
       kind: "verdict",
       converged: true,
+      findingsCount: 0,
       successfulLegs: DEFAULT_CMR_LEGS,
     });
   });

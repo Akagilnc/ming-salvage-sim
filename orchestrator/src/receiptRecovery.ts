@@ -27,6 +27,34 @@ const decisionBellSchema = z.object({
 }).passthrough();
 
 /**
+ * Single shared probe for the optional `escalate` key on any receipt/signal
+ * payload. Schema refinement, well-formed-bell helpers, and runtime
+ * classification all route through this so none/malformed/bell stay one parse.
+ */
+type EscalateProbe =
+  | { readonly kind: "absent" }
+  | { readonly kind: "malformed" }
+  | { readonly kind: "bell"; readonly reason: string; readonly diagnosis: string };
+
+function probeEscalate(value: unknown): EscalateProbe {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { kind: "absent" };
+  }
+  if (!Object.prototype.hasOwnProperty.call(value, "escalate")) {
+    return { kind: "absent" };
+  }
+  const parsed = decisionEscalateSchema.safeParse(
+    (value as { escalate: unknown }).escalate,
+  );
+  if (!parsed.success) return { kind: "malformed" };
+  return {
+    kind: "bell",
+    reason: parsed.data.reason,
+    diagnosis: parsed.data.diagnosis,
+  };
+}
+
+/**
  * When `escalate` is present on an open-count receipt it must be a well-formed
  * bell — otherwise a legal findingsCount would mask a bad gate via union
  * short-circuit (#899 S6 finding 1).
@@ -35,16 +63,7 @@ function rejectMalformedEscalateAlongsideCount(
   value: unknown,
   ctx: z.RefinementCtx,
 ): void {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return;
-  }
-  if (!Object.prototype.hasOwnProperty.call(value, "escalate")) {
-    return;
-  }
-  const parsed = decisionEscalateSchema.safeParse(
-    (value as { escalate: unknown }).escalate,
-  );
-  if (!parsed.success) {
+  if (probeEscalate(value).kind === "malformed") {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "malformed decision gate alongside open-count",
@@ -94,10 +113,10 @@ export function workerReceiptSchema(): z.ZodType {
   ]);
 }
 
-/** One typed receipt definition for every worker path. */
+/** One typed receipt definition for every worker path. Callers must pass schema. */
 export function workerReceiptOutput(
   tag: string,
-  schema: z.ZodType = z.unknown(),
+  schema: z.ZodType,
 ): sc.OutputDefinition {
   return sc.Output.object({ tag, schema, maxRetries: RECEIPT_MAX_RETRIES });
 }
@@ -111,6 +130,23 @@ export function decisionGateOutput(): sc.OutputDefinition {
 }
 
 /**
+ * Production seats that attach Output.object must receive a typed signal.
+ * Absent `result.output` fails the Action for #598 — never fall through to
+ * cargo as a no-gate completion (#899).
+ */
+export function requireTypedTrafficSignal(
+  output: unknown | undefined,
+  label: string,
+): unknown {
+  if (output === undefined) {
+    throw new Error(
+      `${label}: typed traffic signal missing; failing Action for mechanical redispatch`,
+    );
+  }
+  return output;
+}
+
+/**
  * Shared well-formed decision-bell probe for production parsers (#899 seam).
  * Returns the bell only when reason and diagnosis are both non-empty after trim;
  * present-but-malformed escalate is {@link isMalformedDecisionGate}.
@@ -118,17 +154,9 @@ export function decisionGateOutput(): sc.OutputDefinition {
 export function wellFormedDecisionBell(
   receipt: unknown,
 ): { reason: string; diagnosis: string } | undefined {
-  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) {
-    return undefined;
-  }
-  if (!Object.prototype.hasOwnProperty.call(receipt, "escalate")) {
-    return undefined;
-  }
-  const parsed = decisionEscalateSchema.safeParse(
-    (receipt as { escalate: unknown }).escalate,
-  );
-  if (!parsed.success) return undefined;
-  return parsed.data;
+  const probe = probeEscalate(receipt);
+  if (probe.kind !== "bell") return undefined;
+  return { reason: probe.reason, diagnosis: probe.diagnosis };
 }
 
 /**
@@ -136,15 +164,7 @@ export function wellFormedDecisionBell(
  * decision-gate contract (empty reason/diagnosis, wrong shape, etc.).
  */
 export function isMalformedDecisionGate(receipt: unknown): boolean {
-  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) {
-    return false;
-  }
-  if (!Object.prototype.hasOwnProperty.call(receipt, "escalate")) {
-    return false;
-  }
-  return decisionEscalateSchema.safeParse(
-    (receipt as { escalate: unknown }).escalate,
-  ).success === false;
+  return probeEscalate(receipt).kind === "malformed";
 }
 
 /**
@@ -160,19 +180,20 @@ export type DecisionGateClassification =
  * Central malformed-gate validation + bell classification for production parsers.
  * Present-but-malformed `escalate` throws so the Action exits non-zero for #598;
  * well-formed bells and no-gate payloads are returned as a discriminated result.
+ * Single probe pass — no double-parse of the same escalate payload.
  */
 export function classifyDecisionGate(
   receipt: unknown,
   label: string,
 ): DecisionGateClassification {
-  if (isMalformedDecisionGate(receipt)) {
+  const probe = probeEscalate(receipt);
+  if (probe.kind === "malformed") {
     throw new Error(
       `${label}: malformed decision gate (empty or non-string reason/diagnosis); failing Action for mechanical redispatch`,
     );
   }
-  const bell = wellFormedDecisionBell(receipt);
-  if (bell !== undefined) {
-    return { kind: "bell", reason: bell.reason, diagnosis: bell.diagnosis };
+  if (probe.kind === "bell") {
+    return { kind: "bell", reason: probe.reason, diagnosis: probe.diagnosis };
   }
   return { kind: "none" };
 }
