@@ -138,6 +138,10 @@ import {
   readWorkerOutcomeSidecar,
   readRequiredWorkerOutcomeSidecar,
 } from "../workerOutcomeSidecar.js";
+import {
+  extractLastTagBody,
+  parseLastTaggedJsonSoft,
+} from "../lastTaggedJson.js";
 import { probeWorkerDecisionBell } from "../workerReceipt.js";
 import { modelForSlot } from "../modelRoutes.js";
 import {
@@ -1926,15 +1930,32 @@ export class RealFamilyBackend implements FamilyBackend {
     // #598 — never treat missing SO as cargo/no-gate completion (#899).
     const typed = requireTypedTrafficSignal(result.output, "family-coder-fix");
     const gate = classifyDecisionGate(typed, "family-coder-fix");
+    // Sidecar cargo is always enrich-only. On a typed bell, preserve real
+    // committed/commitsAdded (escalate is orthogonal to the commit report).
+    const cargoOutput = this.familyCoderCargoOutput(outcomePath);
     if (gate.kind === "bell") {
       return {
-        kind: "escalated",
-        escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
+        kind: "completed",
+        output: {
+          ...cargoOutput,
+          escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
+        },
         sessionId: lastSessionId(result),
       };
     }
-    // No-gate typed signal (`{}`): cargo comes from the sidecar only and never
-    // reintroduces escalate (fourth channel — strip before / after parse).
+    // No-gate typed signal (`{}`): cargo never reintroduces escalate.
+    return {
+      kind: "completed",
+      output: cargoOutput,
+      sessionId: lastSessionId(result),
+    };
+  }
+
+  /**
+   * Family coder-fix cargo from the sidecar only. Fate keys are stripped so a
+   * spoofed escalate cannot override a validated typed decision (#899).
+   */
+  private familyCoderCargoOutput(outcomePath: string): CoderResult {
     try {
       const cargo = (() => {
         try {
@@ -1943,35 +1964,21 @@ export class RealFamilyBackend implements FamilyBackend {
           return undefined;
         }
       })();
-      const parsed = (() => {
-        try {
-          if (cargo === undefined) return undefined;
-          // Strip fate keys before schema parse so opaque cargo cannot supply
-          // escalate after a validated no-gate typed decision (#899).
-          const stripped: Record<string, unknown> =
-            cargo !== null && typeof cargo === "object" && !Array.isArray(cargo)
-              ? { ...(cargo as Record<string, unknown>) }
-              : {};
-          delete stripped.escalate;
-          return parseCoderSelfReport(stripped);
-        } catch {
-          return undefined;
-        }
-      })();
-      return {
-        kind: "completed",
-        output:
-          parsed !== undefined
-            ? this.familyCoderOutput(parsed)
-            : { kind: "coder", committed: false, commitsAdded: 0 },
-        sessionId: lastSessionId(result),
-      };
+      if (cargo === undefined) {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
+      const stripped: Record<string, unknown> =
+        cargo !== null && typeof cargo === "object" && !Array.isArray(cargo)
+          ? { ...(cargo as Record<string, unknown>) }
+          : {};
+      delete stripped.escalate;
+      try {
+        return this.familyCoderOutput(parseCoderSelfReport(stripped));
+      } catch {
+        return { kind: "coder", committed: false, commitsAdded: 0 };
+      }
     } catch {
-      return {
-        kind: "completed",
-        output: { kind: "coder", committed: false, commitsAdded: 0 },
-        sessionId: lastSessionId(result),
-      };
+      return { kind: "coder", committed: false, commitsAdded: 0 };
     }
   }
 
@@ -3563,18 +3570,8 @@ function normalizeKnownCmrAliases(parsed: Record<string, unknown>): Record<strin
  * reviewer fate comes from its declared count. Only the LAST `<cmr>` tag is read.
  */
 export function parseCmrOutcome(stdout: string): CmrWorkerOutcome {
-  const re = /<cmr>([\s\S]*?)<\/cmr>/g;
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  if (last === undefined) {
-    return sparseCmrCargo();
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(last.trim());
-  } catch {
-    return sparseCmrCargo();
-  }
+  const parsed = parseLastTaggedJsonSoft(stdout, "cmr");
+  if (parsed === undefined) return sparseCmrCargo();
   return classifyCmrOutcomePayload(parsed, "cmr worker <cmr> tag");
 }
 
@@ -3663,15 +3660,7 @@ function classifyCmrCargoOnly(parsed: unknown): CmrWorkerOutcome {
 
 /** Parse `<cmr>` stdout as opaque cargo JSON (no fate probes). */
 function parseCmrStdoutCargo(stdout: string): unknown {
-  const re = /<cmr>([\s\S]*?)<\/cmr>/g;
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  if (last === undefined) return undefined;
-  try {
-    return JSON.parse(last.trim());
-  } catch {
-    return undefined;
-  }
+  return parseLastTaggedJsonSoft(stdout, "cmr");
 }
 
 /**
@@ -3730,17 +3719,7 @@ function mergerResolveCargoFromResult(result: {
     }
   }
   return classifyMergerCargoOnly(
-    (() => {
-      const re = /<merger>([\s\S]*?)<\/merger>/g;
-      let last: string | undefined;
-      for (let m = re.exec(result.stdout); m !== null; m = re.exec(result.stdout)) last = m[1];
-      if (last === undefined) return undefined;
-      try {
-        return JSON.parse(last.trim());
-      } catch {
-        return undefined;
-      }
-    })(),
+    parseLastTaggedJsonSoft(result.stdout, "merger"),
     "merger agent <merger> tag",
   );
 }
@@ -3780,15 +3759,13 @@ export function parseMergerOutcome(stdout: string): {
   resolved: boolean;
   reason?: string;
 } {
-  const re = /<merger>([\s\S]*?)<\/merger>/g;
-  let last: string | undefined;
-  for (let m = re.exec(stdout); m !== null; m = re.exec(stdout)) last = m[1];
-  if (last === undefined) {
+  const body = extractLastTagBody(stdout, "merger");
+  if (body === undefined) {
     return { resolved: false, reason: "merger agent emitted no <merger> tag" };
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(last.trim());
+    parsed = JSON.parse(body.trim());
   } catch {
     return { resolved: false, reason: "merger agent <merger> tag was not valid JSON" };
   }
@@ -3891,36 +3868,6 @@ function gitExitStatus(err: unknown): number | undefined {
 // Single-slice uses RealBackend outputFor/decodeOutput + extract*Tag; this is family eqv.
 // ════════════════════════════════════════════════════════════════════════════
 
-function extractLastTag(stdout: string, tag: string): string | undefined {
-  // Mirror single-slice extractTaggedJson semantics exactly (indexOf collection +
-  // backward scan for last start that has a close after it). This avoids:
-  // (1) prose/conversational <tag> mentions before the real block poisoning the
-  //     span (regex from mention open to first close), (2) regex perf on large
-  //     stdout, (3) divergence from the realBackend.ts side of the seam.
-  // lastIndexOf alone is insufficient (must fallback from unclosed trailing opens).
-  const open = `<${tag}>`;
-  const close = `</${tag}>`;
-  const starts: number[] = [];
-  for (
-    let idx = stdout.indexOf(open);
-    idx !== -1;
-    idx = stdout.indexOf(open, idx + open.length)
-  ) {
-    starts.push(idx);
-  }
-  if (starts.length === 0) {
-    return undefined;
-  }
-  for (let i = starts.length - 1; i >= 0; i -= 1) {
-    const bodyStart = starts[i] + open.length;
-    const end = stdout.indexOf(close, bodyStart);
-    if (end === -1) continue;
-    const body = stdout.slice(bodyStart, end);
-    return body;
-  }
-  return undefined;
-}
-
 function parseOutcomePayload(
   stdout: string,
   tag: string,
@@ -3931,7 +3878,7 @@ function parseOutcomePayload(
       const sidecar = readWorkerOutcomeSidecar(outcomePath);
       if (sidecar !== undefined) {
         if (probeWorkerDecisionBell(sidecar) === undefined) {
-          const last = extractLastTag(stdout, tag);
+          const last = extractLastTagBody(stdout, tag);
           if (last !== undefined) {
             try {
               const compatibility = JSON.parse(last.trim());
@@ -3946,7 +3893,7 @@ function parseOutcomePayload(
         return { parsed: sidecar, source: `${tag} worker outcome sidecar` };
       }
     } catch (err) {
-      const last = extractLastTag(stdout, tag);
+      const last = extractLastTagBody(stdout, tag);
       if (last !== undefined) {
         try {
           const parsed = JSON.parse(last.trim());
@@ -3960,7 +3907,7 @@ function parseOutcomePayload(
       };
     }
   }
-  const last = extractLastTag(stdout, tag);
+  const last = extractLastTagBody(stdout, tag);
   if (last === undefined) {
     return { error: `${tag} worker emitted no <${tag}> tag` };
   }

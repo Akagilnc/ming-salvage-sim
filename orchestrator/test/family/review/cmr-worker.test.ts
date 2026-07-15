@@ -56,6 +56,7 @@ import {
   type ShipAuth,
 } from "../../../src/family/realFamilyBackend.js";
 import {
+  decisionGateSignalSchema,
   isReceiptRecoveryFailure,
   RECEIPT_MAX_RETRIES,
   workerReceiptSchema,
@@ -136,37 +137,6 @@ function typedSandboxRunResult<T>(
   fields: Parameters<typeof sandboxRunResult>[0] = {},
 ): RunResult & { readonly output: T } {
   return { ...sandboxRunResult(fields), output };
-}
-
-/**
- * Models Sandcastle's native typed-output transport at the public sandbox seam:
- * one initial submission, then up to `maxRetries` resumes of that exact agent
- * session after schema failures.  The backend must make only this one call;
- * Sandcastle owns the re-ask loop rather than the runner replaying a reviewer.
- */
-function fakeNativeReceiptReask<T>(
-  output: { readonly maxRetries?: number },
-  receipts: readonly unknown[],
-  schema: { safeParse(value: unknown): { success: boolean } },
-  sessionId: string,
-): {
-  readonly attempts: ReadonlyArray<{ readonly sessionId: string; readonly receipt: unknown }>;
-  readonly resumes: ReadonlyArray<{ readonly sessionId: string; readonly feedback: string }>;
-  readonly result?: T;
-} {
-  const attempts: Array<{ readonly sessionId: string; readonly receipt: unknown }> = [];
-  const resumes: Array<{ readonly sessionId: string; readonly feedback: string }> = [];
-  const maxRetries = output.maxRetries ?? 0;
-  for (const [index, receipt] of receipts.entries()) {
-    attempts.push({ sessionId, receipt });
-    if (schema.safeParse(receipt).success) return { attempts, resumes, result: receipt as T };
-    if (index === maxRetries) break;
-    resumes.push({
-      sessionId,
-      feedback: "The typed CMR receipt was malformed; re-emit only a valid <cmr> receipt.",
-    });
-  }
-  return { attempts, resumes };
 }
 
 const cleanups: string[] = [];
@@ -873,15 +843,13 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
   });
 
   it("propagates StructuredOutputError when native CMR receipt retries are exhausted", async () => {
-    // #899: exhaust exits non-zero for #598; never preserve bad cargo as success.
+    // #899: Sandcastle owns same-session maxRetries; at our production seam
+    // exhaust surfaces as one sc.run call throwing StructuredOutputError → #598.
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
-    let nativeReask:
-      | ReturnType<typeof fakeNativeReceiptReask>
-      | undefined;
     let sandcastleCalls = 0;
     const exhausted = new sc.StructuredOutputError("bad output", {
       tag: "cmr",
@@ -913,15 +881,8 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
           tag: "cmr",
           maxRetries: RECEIPT_MAX_RETRIES,
         }));
-        // Fake Sandcastle consumes the initial receipt plus two same-session
-        // resumes before reporting the framework's normal exhaustion error.
-        nativeReask = fakeNativeReceiptReask(
-          options.output!,
-          [{ converged: true }, { converged: true }, { converged: true }],
-          workerReceiptSchema(),
-          "sess-cmr-exhausted",
-        );
-        expect(nativeReask.result).toBeUndefined();
+        // Production boundary: after Sandcastle's native same-session retries
+        // exhaust, the Action sees only this StructuredOutputError (no fixer).
         throw exhausted;
       }
     }
@@ -929,27 +890,17 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
 
     await expect(be.run(cmrWorkerSpec(), { familyBase: "fb", cmrPass: "completeness" })).rejects.toBe(exhausted);
     expect(sandcastleCalls).toBe(1);
-    expect(nativeReask?.attempts).toHaveLength(RECEIPT_MAX_RETRIES + 1);
-    expect(nativeReask?.attempts).toEqual([
-      { sessionId: "sess-cmr-exhausted", receipt: { converged: true } },
-      { sessionId: "sess-cmr-exhausted", receipt: { converged: true } },
-      { sessionId: "sess-cmr-exhausted", receipt: { converged: true } },
-    ]);
-    expect(nativeReask?.resumes).toEqual([
-      { sessionId: "sess-cmr-exhausted", feedback: expect.any(String) },
-      { sessionId: "sess-cmr-exhausted", feedback: expect.any(String) },
-    ]);
   });
 
-  it("delegates a malformed CMR receipt's bad-to-good retry sequence to Sandcastle", async () => {
+  it("accepts a Sandcastle-recovered CMR verdict after a same-session native re-ask", async () => {
+    // #899: bad→good recovery is owned by Sandcastle Output.object maxRetries.
+    // Our production seam sees ONE sc.run call that returns the recovered typed
+    // verdict (intermediate malformed receipts never re-enter the runner).
     const repo = realRepo335();
     execFileSync("git", ["config", "user.email", "t@t.t"], { cwd: repo });
     execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
     execFileSync("git", ["commit", "--allow-empty", "-q", "-m", "root"], { cwd: repo });
     execFileSync("git", ["checkout", "-q", "-b", "fb"], { cwd: repo });
-    let nativeReask:
-      | ReturnType<typeof fakeNativeReceiptReask<typeof completeVerdict>>
-      | undefined;
     let sandcastleCalls = 0;
     const completeVerdict = {
       converged: true,
@@ -957,6 +908,11 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       successfulLegs: [...DEFAULT_CMR_LEGS],
       ...VALID_CMR_VERDICT_FIELDS,
     };
+    // Prove the recovery sequence at the public SO schema seam Sandcastle uses:
+    // first emission fails schema; second (same session) passes.
+    const schema = workerReceiptSchema();
+    expect(schema.safeParse({ ...completeVerdict, findingsCount: undefined }).success).toBe(false);
+    expect(schema.safeParse(completeVerdict).success).toBe(true);
     class Backend extends RealFamilyBackend {
       public run(spec: ReturnType<typeof cmrWorkerSpec>, ctx: DispatchContext) { return this.runCmrWorker(spec, ctx); }
       protected override mountCmrAuth(): CmrAuth { return { claudeToken: "tok" }; }
@@ -964,17 +920,15 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         sandcastleCalls += 1;
-        // Fake Sandcastle: its retry loop owns the retries. The runner gets one
-        // call and supplies only the typed-output policy.
-        expect(options.output).toEqual(expect.objectContaining({ tag: "cmr", maxRetries: 2 }));
-        nativeReask = fakeNativeReceiptReask<typeof completeVerdict>(
-          options.output!,
-          [{ ...completeVerdict, findingsCount: undefined }, completeVerdict],
-          workerReceiptSchema(),
-          "same-cmr-reviewer-session",
-        );
-        if (nativeReask.result === undefined) throw new Error("fake Sandcastle should recover the second receipt");
-        return typedSandboxRunResult(nativeReask.result, { sessionId: "same-cmr-reviewer-session" });
+        expect(options.output).toEqual(expect.objectContaining({
+          tag: "cmr",
+          maxRetries: RECEIPT_MAX_RETRIES,
+        }));
+        // After Sandcastle's native re-ask, only the recovered typed verdict
+        // is visible on the production call boundary.
+        return typedSandboxRunResult(completeVerdict, {
+          sessionId: "same-cmr-reviewer-session",
+        });
       }
     }
     const be = new Backend({ workingRepo: repo, familyBase: "fb", ledgerDir: mkDir("cmr-native-retry-ledger-"), repo: "Akagilnc/ming-salvage-sim", base: "main", promptsDir: realPromptsDir, soulsDir: realSoulsDir, imageName: "img", familyBaseStartHead: "abc123" });
@@ -984,15 +938,27 @@ describe("#335 RealFamilyBackend.dispatchWorker — the cmr worker", () => {
       converged: true,
       findingsCount: 0,
     });
-    expect(nativeReask?.attempts).toEqual([
-      { sessionId: "same-cmr-reviewer-session", receipt: { ...completeVerdict, findingsCount: undefined } },
-      { sessionId: "same-cmr-reviewer-session", receipt: completeVerdict },
-    ]);
-    expect(nativeReask?.resumes).toEqual([
-      { sessionId: "same-cmr-reviewer-session", feedback: expect.any(String) },
-    ]);
     expect(sandcastleCalls).toBe(1);
-    expect(nativeReask?.attempts).toHaveLength(2);
+  });
+
+  it("rejects malformed decision-gate and open-count receipts at the Sandcastle schema seam", () => {
+    // #899 Testing Decisions: recovery/exhaust sequences are SO schema + maxRetries.
+    // These safeParse cases are the exact validation Sandcastle runs on each emission.
+    const openCount = workerReceiptSchema();
+    const decision = decisionGateSignalSchema;
+    // First (malformed) emission would force a same-session re-ask.
+    expect(openCount.safeParse({ findings: [] }).success).toBe(false);
+    expect(openCount.safeParse({ findingsCount: -1 }).success).toBe(false);
+    expect(decision.safeParse({ escalate: { reason: "", diagnosis: "" } }).success).toBe(false);
+    expect(decision.safeParse({ escalate: { reason: "r" } }).success).toBe(false);
+    // Recovered second emission succeeds.
+    expect(openCount.safeParse({ findingsCount: 0, findings: [] }).success).toBe(true);
+    expect(
+      decision.safeParse({
+        escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      }).success,
+    ).toBe(true);
+    expect(decision.safeParse({}).success).toBe(true);
   });
 
   it("rejects malformed decision gates so Sandcastle re-asks the CMR author", () => {
