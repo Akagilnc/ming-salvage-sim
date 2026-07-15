@@ -29,7 +29,8 @@ describe("#451 dogfood replay fixture", () => {
           id: "287-same-module-cmr-gap",
           issue: 287,
           classification: "blocking",
-          stopReason: "same_module_still_red",
+          // #922: family CMR stage death is cmr_failed (no same_module_still_red umbrella).
+          stopReason: "cmr_failed",
         }),
         expect.objectContaining({
           id: "258-cmr-reviewer-self-fix-attempt",
@@ -43,7 +44,7 @@ describe("#451 dogfood replay fixture", () => {
           id: "287-declared-target-follow-up-blocking",
           issue: 287,
           classification: "blocking",
-          stopReason: "same_module_still_red",
+          stopReason: "cmr_failed",
         }),
         expect.objectContaining({
           id: "287-known-hub-loss-suppression",
@@ -76,13 +77,16 @@ describe("#451 dogfood replay fixture", () => {
           id: "440-module-not-found",
           issue: 440,
           classification: "infra_failure",
+          // Runner (single-slice) MODULE_NOT_FOUND stays infra_failure; family
+          // verify stage death is `405-module-not-found-final-verify` → verify_failed.
           stopReason: "infra_failure",
         }),
         expect.objectContaining({
           id: "405-ship-worker-malformed-after-final-cmr",
           issue: 405,
           classification: "infra_failure",
-          stopReason: "infra_failure",
+          // #922: ship stage failure token.
+          stopReason: "ship_failed",
           metadata: {
             ship: expect.objectContaining({
               latestVerifiedCmrHead: "family-head",
@@ -165,20 +169,22 @@ describe("#451 dogfood replay fixture", () => {
     });
 
     // #604 slice 4 (ADR 0062): the `cross_module_defer` and `owning_issue_still_red`
-    // stop reasons are no longer produced by any replay scenario — blocking family
-    // findings all stop with the retained `same_module_still_red` word.
+    // stop reasons are no longer produced by any replay scenario.
+    // #922: blocking family CMR aborts use `cmr_failed` (stage real name).
     // #877: residual read-word contract_drift courts demolished (disposition /
     // fix-marked echo / no-progress); no dogfood scenario produces contract_drift.
     expect(replay.coveredStopReasons).toEqual([
       "already_done",
+      "cmr_failed",
       "infra_failure",
       "provider_degraded",
-      "same_module_still_red",
+      "ship_failed",
       "spec_conflict",
       "success",
+      "verify_failed",
     ]);
     // #877: contract_drift no longer covered by dogfood scenarios.
-    expect(replay.summary).toContain("6 stop reasons");
+    expect(replay.summary).toContain("8 stop reasons");
   });
 
   it("keeps scripted family CMR finding fixtures valid for the real worker parser", async () => {
@@ -430,9 +436,9 @@ describe("#451 dogfood replay fixture", () => {
     expect(rowsById.get("287-same-module-cmr-gap")).toMatchObject({
       source: "family",
       // #604 slice 4 (ADR 0062): the classifier now reports the single `blocking`
-      // value; the stop summary keeps the retained `same_module_still_red` word.
+      // value; #922 stop summary uses the stage real name `cmr_failed`.
       classification: "blocking",
-      stopReason: "same_module_still_red",
+      stopReason: "cmr_failed",
       sourceEvidence: expect.objectContaining({
         seam: "family_verify_cmr",
         runStatus: "success",
@@ -454,9 +460,10 @@ describe("#451 dogfood replay fixture", () => {
     expect(rowsById.get("376-route-env-format-mismatch")).toMatchObject({
       source: "family",
       classification: "infra_failure",
-      stopReason: "infra_failure",
+      // #922: route env mismatch aborts during CMR setup → cmr_failed.
+      stopReason: "cmr_failed",
       sourceStopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "cmr_failed",
         repairHint: expect.stringContaining("route environment"),
       }),
       sourceEvidence: expect.objectContaining({

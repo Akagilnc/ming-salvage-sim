@@ -160,7 +160,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
       priorCmrFindingIdentityKeys: [PROTECTED_PRIOR_KEY],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(isCourtAbort(backend.ledger)).toBe(false);
   });
@@ -339,7 +339,7 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(isCourtAbort(backend.ledger)).toBe(false);
     expect(

@@ -1805,7 +1805,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
 
     // Removing the round cap did NOT make a non-converging loop unbounded: the
     // fresh reviewer's own escalate is the stop. The run halts as escalated.
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("not converging");
     // Exactly the two committed fix rounds ran before the escalate — bounded,
@@ -1871,7 +1871,7 @@ describe("family integrated-cmr gate = PURE SCHEDULER (runner-visible review/fix
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.verifyRequests).toEqual([
       { phase: "final", familyBase: "family/550-base" },
       { phase: "final", familyBase: "family/550-base" },
@@ -2256,7 +2256,7 @@ it("#876 keeps the CMR loop alive when the reviewer moves family HEAD before fin
       familyBase: "family/291-base",
       familyBackend: backend,
     });
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.escalations).toHaveLength(1);
     expect(backend.escalations[0]?.reason).toContain("region.cannon");
     // The runner escalated WITHOUT ever dispatching a fix or a ship.
@@ -2508,7 +2508,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
       },
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.ledger).toContainEqual(expect.objectContaining({
       status: "cmr_reviewed",
       event: "cmr_reviewed",
@@ -2517,7 +2517,7 @@ it("#875: converged cmr with claimed-fixed keys but no dispositions still ships 
         findingIdentityKey(blocker),
       ],
       stopSummary: expect.objectContaining({
-        reason: "same_module_still_red",
+        reason: "cmr_failed",
       }),
     }));
     const reviewedRow = backend.ledger.find(
@@ -2702,7 +2702,7 @@ it("cmr worker returned failed ⇒ records the failure before INCOMPLETE_GATE", 
       familyBackend: backend,
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.aborted[0]?.errorPackage.reason).toMatch(/sandbox exited 1/);
     expect(backend.ledger.some((e) => e.status === "aborted")).toBe(true);
     expect(backend.dispatches.filter((d) => d.kind === "ship")).toEqual([]);

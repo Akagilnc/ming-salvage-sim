@@ -1022,15 +1022,21 @@ export interface FamilyChildResult {
 }
 
 /**
- * The family-run outcome (ADR 0022 decision 3④/⑤/⑥).
+ * The family-run outcome (ADR 0022 decision 3④/⑤/⑥ + #922 terminal real names).
  *
  * - `"success"` — every verify barrier passed AND every epic child is merged into
  *   the family base. Only a fully-closed family run is `"success"` (in #293 the
  *   no-op verify always passes, so N independent children that all merge ⇒
  *   `"success"`).
- * - `"verify_failed"` — a verify-cmr barrier returned `ok:false`; `failedPhase`
- *   says which. The spine fails-fast (decision 3④) and returns this so the caller
- *   can distinguish a red run from a clean one (decision 3⑤ "不静默吞").
+ * - Stage failures (#922) — the post-wave final barrier used to mash every stage
+ *   death into `"verify_failed"`. Each stage now has its own terminal name, and
+ *   `stopSummary.reason` uses the same token:
+ *   - `"verify_failed"` — pure verify red (wave barrier, or final-suite verify)
+ *   - `"cmr_failed"` — integrated CMR / missing CMR capability
+ *   - `"ship_failed"` — family ship worker / ship capability
+ *   - `"online_review_failed"` — online review loop did not converge
+ *   - `"merge_failed"` — auto-merge did not complete (non-decision hard fail)
+ *   - `"cleanup_failed"` — post-merge cleanup did not reach terminal success
  * - `"incomplete"` — every verify barrier passed but NOT every child merged: a
  *   child's single-slice run did not succeed (`"failed"`) or stayed blocked
  *   (`"skipped"`). The run did not silently look like success (decision 3⑤
@@ -1039,30 +1045,39 @@ export interface FamilyChildResult {
  *
  * - `"escalated"` — (#298) the crash-window reconcile found the live family-base
  *   HEAD INCONSISTENT with the ledger末条 (diverged / behind / unrelated — ADR
- *   0022 decision 5 branch ③) and bailed fail-closed BEFORE the wave loop. The
- *   run did not merge anything this invocation; a human must triage / answer (the
- *   escalate-resume mechanism, decision 4). Distinct from `verify_failed` (a red
- *   barrier mid-run) — escalation is the resume-entry fail-closed.
+ *   0022 decision 5 branch ③) and bailed fail-closed BEFORE the wave loop; OR a
+ *   human decision gate parked the run (`decision_gate_park`). Distinct from
+ *   stage failures — escalation is the answerable / resume-entry pause.
  *
- * Precedence when more than one applies: `"escalated"` (resume-entry, most
- * urgent) > `"verify_failed"` > `"incomplete"` > `"success"`.
+ * Precedence when more than one applies: `"escalated"` (resume-entry / park, most
+ * urgent) > stage failures > `"incomplete"` > `"success"`.
  */
 export type FamilyRunStatus =
   | "success"
-  | "verify_failed"
   | "incomplete"
-  | "escalated";
+  | "escalated"
+  | "verify_failed"
+  | "cmr_failed"
+  | "ship_failed"
+  | "online_review_failed"
+  | "merge_failed"
+  | "cleanup_failed";
 
 /** The family run result. */
 export interface FamilyRunResult {
   /**
-   * The family-run outcome. `"verify_failed"` ⇒ a verify-cmr barrier was red (see
-   * `failedPhase`); the caller MUST NOT treat the run as shippable. #293's no-op
-   * verify always passes, so a complete #293 run is `"success"`; the failure path
-   * is wired + tested (via an injected `verifyCmr`) for #296.
+   * The family-run outcome. Stage-failure statuses (#922) mean a post-child
+   * barrier died at that named stage; the caller MUST NOT treat the run as
+   * shippable. #293's no-op verify always passes, so a complete #293 run is
+   * `"success"`; failure paths are wired + tested (via injected `verifyCmr`
+   * and real `runVerifyCmr`) for #296 / #922.
    */
   readonly status: FamilyRunStatus;
-  /** Which verify-cmr barrier was red (only set when `status==="verify_failed"`). */
+  /**
+   * Which verify barrier phase was red (`wave` | `final`). Set for stage
+   * failures that originated from a verify/cmr barrier call; omitted for
+   * resume-path stage failures that never re-entered the barrier hook.
+   */
   readonly failedPhase?: VerifyCmrPhase;
   /** The family base branch the children were merged onto. */
   readonly familyBase: string;

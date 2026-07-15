@@ -13,7 +13,16 @@ export type StopReason =
   | "provider_degraded"
   | "contract_drift"
   | "already_done"
-  | "resumed";
+  | "resumed"
+  // #922 — per-stage family terminal real names (also FamilyRunStatus tokens).
+  // Replaces the umbrella `verify_failed`/`infra_failure` mash for post-wave
+  // stages. Family aggregation status and stopSummary.reason use the same word.
+  | "verify_failed"
+  | "cmr_failed"
+  | "ship_failed"
+  | "online_review_failed"
+  | "merge_failed"
+  | "cleanup_failed";
 
 export interface StopSummary {
   readonly reason: StopReason;

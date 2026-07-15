@@ -150,6 +150,14 @@ export type {
   VerifyCmrPhase,
   VerifyCmrResult,
 } from "./family/verifyCmr.js";
+export {
+  FAMILY_STAGE_FAILURE_STATUSES,
+  isFamilyStageFailureStatus,
+  resolveFamilyStageTerminal,
+  stageFailureStopSummary,
+  syncStopSummaryToStageFailure,
+} from "./family/familyTerminal.js";
+export type { FamilyStageFailureStatus } from "./family/familyTerminal.js";
 export type {
   ChildSlice,
   ConflictResolveRequest,
