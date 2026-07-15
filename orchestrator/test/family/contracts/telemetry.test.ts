@@ -160,13 +160,14 @@ class FamilyTelemetryBackend implements FamilyBackend {
     this.ctxs.push(ctx);
     if (spec.kind === "cmr") {
       const cmrPass = ctx.cmrPass ?? "correctness";
+      // #919 M1/M2: live ship green is typed kind:judge status:converged.
+      // Residual findingsCount:0 is unusable (never silent clean / never ship).
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
+          kind: "judge",
+          status: "converged",
           cmrPass,
-          converged: true,
-          findingsCount: 0,
           successfulLegs: [...COMPLETE_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],

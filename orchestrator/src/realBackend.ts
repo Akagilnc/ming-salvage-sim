@@ -1168,12 +1168,12 @@ export function checkOwnGitDir(
 export function soulForStep(
   spec: Pick<StepSpec, "role" | "soul"> & { readonly id?: string },
 ): StepSoul {
-  // #925 / #919 S2: S3/S6 judge seats are role+soul verify. Residual
-  // role:"reviewer"+soul:"verify" still accepted for older fixtures.
+  // #925 / #919 S2: judge seats force verify soul via the sole isJudgeSeat
+  // predicate (S3/S6 ids, role/kind/soul verify, residual dual-spell rows).
+  // Avoid re-coding S3/S6 OR here.
   if (
-    (spec.id === "S3" || spec.id === "S6") &&
     spec.soul === "verify" &&
-    (spec.role === "reviewer" || spec.role === "verify")
+    isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })
   ) {
     return "verify";
   }
@@ -2951,8 +2951,8 @@ export class RealBackend implements Backend {
    * - coder: T2 station receipt on {@link CODER_RECEIPT_TAG}
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
-    // #925: S3/S6 judge station — T2 verdict (regardless of role spelling).
-    if (spec.id === "S3" || spec.id === "S6") {
+    // #925 / #919 S2: judge seats — T2 verdict via sole isJudgeSeat predicate.
+    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
       return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
     }
     if (spec.role === "reviewer") {
@@ -3055,7 +3055,8 @@ export class RealBackend implements Backend {
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     const cargo =
       typedOutputUsed &&
-      (spec.role === "coder" || spec.id === "S3" || spec.id === "S6")
+      (spec.role === "coder" ||
+        isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul }))
         ? this.cargoRawFor(result, spec, options)
         : undefined;
     const output = this.decodeOutput(spec, raw, cargo);
@@ -3076,8 +3077,8 @@ export class RealBackend implements Backend {
     if (spec.role === "coder") {
       return this.decodeCoderStationOutput(spec, raw, cargo);
     }
-    // #925: S3/S6 judge — T2 verdict is the sole topology signal.
-    if (spec.id === "S3" || spec.id === "S6") {
+    // #925 / #919 S2: judge seats — T2 verdict is the sole topology signal.
+    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
       return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
     // #919 CR: decision_gate bell must not mint residual open-count paper

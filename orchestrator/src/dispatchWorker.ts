@@ -36,7 +36,7 @@ import {
   formatFixFocusMarkdown,
 } from "./findingFamilies.js";
 import { findingIdentityKeys } from "./findings.js";
-import { mintJudgeEscalate } from "./judgeStation.js";
+import { isJudgeSeat, mintJudgeEscalate } from "./judgeStation.js";
 import {
   materializeRawReviewerArtifactsForSandbox,
   RAW_REVIEWER_SIDECAR_SANDBOX_FILE,
@@ -229,15 +229,21 @@ function writeFixFindingsLandingFile(
     ctx.priorJudgeVerdicts !== undefined && ctx.priorJudgeVerdicts.length > 0
       ? ctx.priorJudgeVerdicts
       : undefined;
+  const judgeSeat = isJudgeSeat({
+    id: spec.id,
+    kind: spec.kind,
+    role: spec.role,
+    soul: spec.soul,
+  });
   const needsFindingsLanding =
     (spec.id === "S5" && spec.kind === "coder") ||
-    // #925: S6 is the verify judge (kind verify/reviewer); still needs
-    // fix-findings landing for re-adjudication of prior open rows.
-    (spec.id === "S6" && (spec.kind === "reviewer" || spec.kind === "verify")) ||
+    // #925 / #919 S2: S6 judge seat still needs fix-findings landing for
+    // re-adjudication of prior open rows (sole isJudgeSeat predicate).
+    (spec.id === "S6" && judgeSeat) ||
     ctx.escalationAnswer !== undefined ||
     // #925 F1: prior judge verdict rows must reach the worker via the same
     // fix-findings landing seam (session-loss / fresh-after-dead-session).
-    ((spec.id === "S3" || spec.id === "S6") && priorJudgeVerdicts !== undefined);
+    (judgeSeat && priorJudgeVerdicts !== undefined);
   if (!needsFindingsLanding || ctx.worktree === undefined) {
     return undefined;
   }
@@ -360,10 +366,15 @@ export function stepSpecToWorkerSpec(
   billingPool?: BillingPoolId,
 ): WorkerSpec {
   const kind = workerKindForRole(spec.role);
-  // #919 S2: S3/S6 judge seats are clean-eyes verify; promptFile is the station
-  // contract (judge_station.md). Skill for kind:verify is online-review /verify
-  // and is unused by RealBackend.runStep (promptFile+soul drive the seat).
-  const judgeSeat = spec.id === "S3" || spec.id === "S6";
+  // #919 S2: judge seats are clean-eyes verify via sole isJudgeSeat predicate
+  // (promptFile is the station contract). Skill for kind:verify is online-review
+  // /verify and is unused by RealBackend.runStep (promptFile+soul drive the seat).
+  const judgeSeat = isJudgeSeat({
+    id: spec.id,
+    kind,
+    role: spec.role,
+    soul: spec.soul,
+  });
   return {
     id: spec.id,
     kind,

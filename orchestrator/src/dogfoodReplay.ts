@@ -18,6 +18,7 @@ import type {
   MergeRequest,
 } from "./family/types.js";
 import { findingIdentityKey } from "./findings.js";
+import { isJudgeSeat } from "./judgeStation.js";
 import {
   applyTightRoutePolicy,
   resolveRouteModels,
@@ -428,7 +429,8 @@ class DogfoodSingleSliceBackend implements Backend {
 
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.runStepCalls.push(spec.id);
-    if ((spec.role === "reviewer" || spec.role === "verify")) {
+    // #919 S2: sole isJudgeSeat predicate (not role reviewer|verify OR).
+    if (isJudgeSeat({ id: spec.id, role: spec.role, soul: spec.soul })) {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
       return scripted ?? { kind: "judge", status: "converged" };
