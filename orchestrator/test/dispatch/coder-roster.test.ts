@@ -1,18 +1,18 @@
 /**
  * #767 — design-time Coder-Rec roster lookup.
+ * #920 — pool isolation removed: same model may occupy coder + review/CMR seats.
  *
  * Seams under test:
  *   1. parseCoderRec(issueBody) — read the designer marking line
  *   2. resolveCoderRecOrder — roster-valid fallback order (or default)
  *   3. selectCoderRecEntry — advance after N non-converging review rounds
- *   4. poolSeparationViolation — coder roster entry must not double as a reviewer leg
+ *   4. #920 pool isolation gone — no review-slot conflict filter / exhaust throw
  *   5. applyCoderRecToRoute / runner dispatch — first valid entry on S2, advance on S5
- *   6. reviewerSlugsFromRoute — includes CMR gate slots (completeness/correctness/verify)
- *   7. runner mid-loop advance — re-smoke before first dispatch of advanced slug
- *   8. runner ledger wiring — 2 completed S6 rounds advance the DISPATCHED coder
- *   9. resume re-fetches issue body so Coder-Rec (+ advance position) survives
- *  10. S0 smokes the final Coder-Rec route once (not preset-then-override)
- *  11. resume Coder-Rec re-fetch degrades safely (meta throw → snapshot;
+ *   6. runner mid-loop advance — re-smoke before first dispatch of advanced slug
+ *   7. runner ledger wiring — 2 completed S6 rounds advance the DISPATCHED coder
+ *   8. resume re-fetches issue body so Coder-Rec (+ advance position) survives
+ *   9. S0 smokes the final Coder-Rec route once (not preset-then-override)
+ *  10. resume Coder-Rec re-fetch degrades safely (meta throw → snapshot;
  *      both throw → route preset + diagnostic, no error termination)
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,9 +25,7 @@ import {
   DEFAULT_CODER_REC_ORDER,
   lookupCoderRosterEntry,
   parseCoderRec,
-  poolSeparationViolation,
   resolveCoderRecOrder,
-  reviewerSlugsFromRoute,
   selectCoderRecEntry,
 } from "../../src/coderRoster.js";
 import {
@@ -262,71 +260,54 @@ describe("#767 Coder-Rec roster — fallback after non-converging rounds", () =>
   });
 });
 
-describe("#767 Coder-Rec roster — pool separation", () => {
-  it("flags a coder roster entry that doubles as an active reviewer leg", () => {
-    const terra = lookupCoderRosterEntry("terra@med");
-    expect(terra).toBeDefined();
-    expect(
-      poolSeparationViolation(terra!, ["gpt-5.6-sol", "gpt-5.6-terra"]),
-    ).toMatch(/must not double as.*reviewer/i);
-  });
-
-  it("allows a coder whose slug is not among the active reviewer legs", () => {
-    const grok = lookupCoderRosterEntry("grok-4.5");
-    expect(grok).toBeDefined();
-    expect(
-      poolSeparationViolation(grok!, ["gpt-5.6-sol", "opus", "agy"]),
-    ).toBeUndefined();
-  });
-
-  it("skips colliding entries when selecting, preferring the next roster-valid coder", () => {
+describe("#920 pool isolation removed — same model across roles is legal", () => {
+  it("selects the top roster entry even when its slug shares review / CMR seats", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: terra@med → grok-4.5 → luna@med",
     );
-    const selected = selectCoderRecEntry(order, 0, {
-      reviewerSlugs: ["gpt-5.6-terra", "gpt-5.6-sol"],
-    });
-    // terra@med doubles as reviewer → skip to grok-4.5
-    expect(selected.id).toBe("grok-4.5");
+    // Pre-#920 this skipped terra because gpt-5.6-terra was treated as a
+    // reviewer conflict; isolation is gone so the marked top entry wins.
+    expect(selectCoderRecEntry(order, 0).id).toBe("terra@med");
   });
 
-  it("rejects Sol as a Coder-Rec candidate because it occupies the review and gate seats", () => {
+  it("admits Sol as Coder-Rec even when sol occupies review and CMR seats", () => {
     for (const routeName of ["normal", "codex-cheap"] as const) {
       const base = resolveRouteModels(routeName, {});
-      expect(() => applyCoderRecToRoute(base, "Coder-Rec: sol@med", 0, {})).toThrow(
-        /no pool-separated coder roster entry/i,
-      );
+      const applied = applyCoderRecToRoute(base, "Coder-Rec: sol@med", 0, {});
+      expect(applied.entry?.id).toBe("sol@med");
+      expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
+      // #899 run8 / AC: cmrReview leg may keep the same slug as coder.
+      expect(
+        applied.route.legCollections.cmrReview.map((leg) => leg.slug),
+      ).toContain("gpt-5.6-sol");
     }
   });
 
-  it("fails closed when every remaining coder would share a reviewer checkpoint", () => {
+  it("never throws a pool-separation exhaustion path on multi-entry collision", () => {
     const order = resolveCoderRecOrder("Coder-Rec: sol@med → terra@med");
-    expect(() =>
-      selectCoderRecEntry(order, 0, {
-        reviewerSlugs: ["gpt-5.6-sol", "gpt-5.6-terra"],
-      }),
-    ).toThrow(/no pool-separated coder roster entry/i);
+    expect(selectCoderRecEntry(order, 0).id).toBe("sol@med");
+    expect(
+      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS).id,
+    ).toBe("terra@med");
   });
 
-  it("collects cmrCompleteness / cmrCorrectness / verify gate slots as reviewer pool slugs", () => {
-    const route = resolveRouteModels("normal", {
-      cmrCompleteness: "opus",
-      cmrCorrectness: "grok-4.5",
-      verify: "gpt-5.6-luna",
-    });
-    const slugs = reviewerSlugsFromRoute(route);
-    expect(slugs).toEqual(
-      expect.arrayContaining([
-        route.slots.reviewer,
-        "opus",
-        "grok-4.5",
-        "gpt-5.6-luna",
-        ...route.legCollections.cmrReview.map((leg) => leg.slug),
-      ]),
+  it("keeps a single-entry roster on the top seat at any round count (never exhausts)", () => {
+    const order = resolveCoderRecOrder("Coder-Rec: sol@med");
+    expect(order).toHaveLength(1);
+    for (const rounds of [0, 1, 2, 99, 10_000]) {
+      expect(selectCoderRecEntry(order, rounds).id).toBe("sol@med");
+    }
+    const applied = applyCoderRecToRoute(
+      resolveRouteModels("normal", {}),
+      "Coder-Rec: sol@med",
+      10_000,
+      {},
     );
+    expect(applied.entry?.id).toBe("sol@med");
+    expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
   });
 
-  it("filters a roster entry whose slug equals the cmrCorrectness gate slot", () => {
+  it("does not skip a roster entry that equals the cmrCorrectness gate slot", () => {
     const base = resolveRouteModels("normal", {
       cmrCorrectness: "grok-4.5",
     });
@@ -336,57 +317,25 @@ describe("#767 Coder-Rec roster — pool separation", () => {
       0,
       {},
     );
-    // Sol owns every default judging gate, leaving Terra available after the
-    // explicit Grok collision.
-    expect(applied.entry?.id).toBe("terra@med");
-    expect(applied.route.slots.coder).toBe("gpt-5.6-terra");
+    expect(applied.entry?.id).toBe("grok-4.5");
+    expect(applied.route.slots.coder).toBe("grok-4.5");
+    expect(applied.route.slots.cmrCorrectness).toBe("grok-4.5");
   });
 
   /**
-   * #789 — Claude coder backups (sonnet / haiku) use different runnable slugs
-   * from the cmrReview Claude leg (opus). Pool separation is slug-equality,
-   * not family-equality: same Claude pool is fine as long as slugs differ.
+   * #789 still holds as a roster fact (sonnet/haiku ≠ opus), but #920 no longer
+   * filters on slug equality — Claude backups advance purely by round count.
    */
-  it("#789 Claude coder slugs do not collide with the cmrReview opus leg", () => {
-    const sonnet = lookupCoderRosterEntry("sonnet-5");
-    const haiku = lookupCoderRosterEntry("haiku-4.5");
-    expect(sonnet).toBeDefined();
-    expect(haiku).toBeDefined();
-    expect(sonnet!.slug).toBe("sonnet");
-    expect(haiku!.slug).toBe("haiku");
-    expect(sonnet!.slug).not.toBe("opus");
-    expect(haiku!.slug).not.toBe("opus");
-
-    const normal = resolveRouteModels("normal", {});
-    const cmrClaudeSlugs = normal.legCollections.cmrReview
-      .filter((leg) => leg.family === "claude")
-      .map((leg) => leg.slug);
-    expect(cmrClaudeSlugs).toEqual(["opus"]);
-
-    const reviewerSlugs = reviewerSlugsFromRoute(normal);
-    expect(reviewerSlugs).toContain("opus");
-    expect(poolSeparationViolation(sonnet!, reviewerSlugs)).toBeUndefined();
-    expect(poolSeparationViolation(haiku!, reviewerSlugs)).toBeUndefined();
-  });
-
-  it("#789 selectCoderRecEntry keeps sonnet/haiku when only opus is on CMR", () => {
+  it("#789 selectCoderRecEntry advances sonnet/haiku by round count only", () => {
     const order = resolveCoderRecOrder(
       "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
     );
-    const normal = resolveRouteModels("normal", {});
-    const reviewerSlugs = reviewerSlugsFromRoute(normal);
-
-    // First entry free; after threshold advance to sonnet (not skipped for opus).
-    expect(selectCoderRecEntry(order, 0, { reviewerSlugs }).id).toBe("grok-4.5");
+    expect(selectCoderRecEntry(order, 0).id).toBe("grok-4.5");
     expect(
-      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS, {
-        reviewerSlugs,
-      }).id,
+      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS).id,
     ).toBe("sonnet-5");
     expect(
-      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 2, {
-        reviewerSlugs,
-      }).id,
+      selectCoderRecEntry(order, CODER_REC_FALLBACK_AFTER_ROUNDS * 2).id,
     ).toBe("haiku-4.5");
   });
 });
@@ -839,8 +788,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
 
   it("#906: bold Coder-Rec (#899 fixture) applies and dispatches the marked coder", async () => {
     vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
-    // Sol alone fails pool-separation on normal route; use a legal bold pair
-    // that still matches the #899 markdown shape (`- **Coder-Rec: …**`).
+    // #920: sol is a legal coder even when it also owns review/CMR seats.
     const backend = new CoderRecBackend(
       "- **Coder-Rec: grok-4.5 → sol@med**\n",
     );
@@ -848,6 +796,27 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     expect(result.status).toBe("success");
     expect(backend.coderModels).toEqual(["grok-4.5"]);
     expect(backend.coderModels).not.toContain("sonnet");
+  });
+
+  it("#899 run8 / #920: sol coder + sol cmrReview leg lights without rejection", async () => {
+    vi.stubEnv("ORCHESTRATOR_CODER_MODEL", "");
+    class SolSameModelBackend extends CoderRecBackend {
+      cmrReviewOnSmoke: string[] = [];
+      override async smokeModelRoute(route: any) {
+        this.cmrReviewOnSmoke = route.legCollections.cmrReview.map(
+          (leg: { slug: string }) => leg.slug,
+        );
+        // Same-model coder↔cmrReview must not be rejected at ignition.
+        expect(route.slots.coder).toBe("gpt-5.6-sol");
+        expect(this.cmrReviewOnSmoke).toContain("gpt-5.6-sol");
+        return super.smokeModelRoute(route);
+      }
+    }
+    const backend = new SolSameModelBackend("Coder-Rec: sol@med\n");
+    const result = await runOrchestrator({ issueNumber: 899, backend });
+    expect(result.status).toBe("success");
+    expect(backend.coderModels[0]).toBe("gpt-5.6-sol");
+    expect(backend.cmrReviewOnSmoke).toContain("gpt-5.6-sol");
   });
 
   it("#906: broken Coder-Rec mark fail-closes at admission with zero dispatch", async () => {
