@@ -111,9 +111,12 @@ import {
   familyShipWorkerSpec,
 } from "./dispatchFamilyWorker.js";
 import { withMechanicalRetry } from "../dispatchRetry.js";
+import { executeAdvanceCoderSuggestion } from "../advanceCoderEffect.js";
 import {
+  applyRelayBatonToRoute,
   modelRouteFingerprint,
   resolveActiveModelRoute,
+  routeSmokeFailure,
   smokeRouteModels,
   type ModelRouteSlot,
   type ResolvedModelRoute,
@@ -582,6 +585,12 @@ function familyVerifyFailureStopSummary(reason: string): StopSummary {
 interface IntegratedCmrPassOutcome {
   readonly result: VerifyCmrResult;
   readonly familyHeadAfter?: string;
+  /**
+   * #919 — sticky route after optional advanceCoder execution on continue.
+   * Outer completeness/correctness loops assign this so the next court + fix
+   * see the advanced coderFix seat (advance must not last only one dispatch).
+   */
+  readonly resolvedRoute?: ResolvedModelRoute;
   readonly restartFinalBarrier?: {
     readonly familyHeadAfter?: string;
     readonly priorCmrFindingIdentityKeysByPass: Partial<
@@ -1799,6 +1808,9 @@ async function runIntegratedCmrPass(input: {
     familyBase,
     familyHeadAfter,
   );
+  // Mutable seat route for this pass; advanced on continue before coder-fix.
+  let activeRoute = resolvedRoute;
+
   if (
     cmrPassAlreadyPassed(await familyBackend.readFamilyLedger(), {
       cmrPass: pass,
@@ -1809,6 +1821,7 @@ async function runIntegratedCmrPass(input: {
     return {
       result: { ok: true, ran: true },
       familyHeadAfter: resolvedFamilyHeadAfter,
+      resolvedRoute: activeRoute,
     };
   }
   // #930: resume the same family judge when we hold a session id; otherwise
@@ -1963,6 +1976,7 @@ async function runIntegratedCmrPass(input: {
         ? stageGate("cmr_failed")
         : { ok: false, ran: true },
       familyHeadAfter: postWorkerFamilyHead,
+      resolvedRoute: activeRoute,
     };
   }
   if (cmrResult.kind !== "completed") {
@@ -2008,6 +2022,7 @@ async function runIntegratedCmrPass(input: {
       // provider_degraded is still a stage death for the family barrier.
       result: stageGate("cmr_failed"),
       familyHeadAfter: postWorkerFamilyHead,
+      resolvedRoute: activeRoute,
     };
   }
   // #930: family court closes on shared T2 judge tri-state only. Residual
@@ -2084,6 +2099,7 @@ async function runIntegratedCmrPass(input: {
     return {
       result: { ok: true, ran: true },
       familyHeadAfter: postWorkerFamilyHead,
+      resolvedRoute: activeRoute,
     };
   }
 
@@ -2125,6 +2141,7 @@ async function runIntegratedCmrPass(input: {
     return {
       result: { ok: false, ran: true },
       familyHeadAfter: postWorkerFamilyHead,
+      resolvedRoute: activeRoute,
     };
   }
 
@@ -2154,6 +2171,7 @@ async function runIntegratedCmrPass(input: {
     return {
       result: stageGate("cmr_failed"),
       familyHeadAfter: postWorkerFamilyHead,
+      resolvedRoute: activeRoute,
     };
   }
 
@@ -2193,6 +2211,7 @@ async function runIntegratedCmrPass(input: {
     return {
       result: stageGate("cmr_failed"),
       familyHeadAfter: postWorkerFamilyHead,
+      resolvedRoute: activeRoute,
     };
   }
 
@@ -2225,6 +2244,65 @@ async function runIntegratedCmrPass(input: {
         stopSummary,
       }),
     );
+
+    // #919 / #926 / #930: execute advanceCoder on the family coderFix seat
+    // before dispatch (same effect path as single-slice; never terminal).
+    const advanceSuggestion =
+      typeof advanceCoderForLedger === "string"
+        ? advanceCoderForLedger.trim()
+        : "";
+    if (advanceSuggestion.length > 0) {
+      const effect = await executeAdvanceCoderSuggestion({
+        suggestion: advanceSuggestion,
+        currentSlug: activeRoute.slots.coderFix,
+        route: activeRoute,
+        applySlug: (route, slug) =>
+          applyRelayBatonToRoute(route, { slug }, "S5", {
+            slots: ["coderFix"],
+          }),
+        probe: async (candidate) => {
+          try {
+            const smoked = await smokeRouteModels(candidate, async () => ({
+              cliVersion: "family-advance",
+            }));
+            const failure = routeSmokeFailure(smoked);
+            if (failure !== undefined) {
+              return { ok: false as const, reason: failure };
+            }
+            return { ok: true as const, route: smoked };
+          } catch (err) {
+            return {
+              ok: false as const,
+              reason: err instanceof Error ? err.message : String(err),
+            };
+          }
+        },
+      });
+      activeRoute = effect.route;
+      if (effect.kind === "stay_put" || effect.kind === "advanced") {
+        await familyBackend.appendFamilyLedger({
+          status: effect.audit.event,
+          event: effect.audit.event,
+          phase: "final",
+          cmrPass: pass,
+          reason:
+            effect.kind === "stay_put" ? effect.reason : "coder_advance",
+          message: effect.audit.state_summary,
+          fromModelId: effect.audit.fromModelId,
+          toModelId: effect.audit.toModelId,
+          advanceCoder: advanceSuggestion,
+          ts: effect.audit.ts,
+        });
+        console.info(
+          effect.kind === "advanced"
+            ? `[family] #919 advanceCoder → ${effect.toSlug} ` +
+                `(coderFix) from ${effect.fromSlug}`
+            : `[family] #919 advanceCoder stay-put (${effect.reason}): ` +
+                `kept ${activeRoute.slots.coderFix}; suggestion=${effect.suggestion}`,
+        );
+      }
+    }
+
     const fixFamilyHeadBefore = postWorkerFamilyHead;
     const fixRound = await runCmrCoderFix({
       pass,
@@ -2242,7 +2320,7 @@ async function runIntegratedCmrPass(input: {
       familyHeadBefore: fixFamilyHeadBefore,
       escalationAnswer,
       familyIssue,
-      resolvedRoute,
+      resolvedRoute: activeRoute,
       ...(billingPool !== undefined ? { billingPool } : {}),
       ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
       ...(openedJudgeSessionId !== undefined
@@ -2253,7 +2331,9 @@ async function runIntegratedCmrPass(input: {
         : {}),
       ...(judgeSessionIdByPass !== undefined ? { judgeSessionIdByPass } : {}),
     });
-    if (!fixRound.result.ok) return fixRound;
+    if (!fixRound.result.ok) {
+      return { ...fixRound, resolvedRoute: activeRoute };
+    }
     const updatedPriorKeys = [
       ...new Set([
         ...(priorCmrFindingIdentityKeys ?? []),
@@ -2264,6 +2344,7 @@ async function runIntegratedCmrPass(input: {
     return {
       result: { ok: true, ran: true },
       familyHeadAfter: fixRound.familyHeadAfter,
+      resolvedRoute: activeRoute,
       restartFinalBarrier: mergeRestart({
         familyHeadAfter: fixRound.familyHeadAfter,
         priorCmrFindingIdentityKeysByPass: {
@@ -2300,6 +2381,7 @@ async function runIntegratedCmrPass(input: {
   return {
     result: stageGate("cmr_failed"),
     familyHeadAfter: postWorkerFamilyHead,
+    resolvedRoute: activeRoute,
   };
   } finally {
     stampReviewRound(reviewRoundResult, finalReviewRoundDisposition);
@@ -2483,6 +2565,10 @@ export async function runVerifyCmr(
       judgeSessionIdByPass,
     });
     if (!completeness.result.ok) return completeness.result;
+    // #919: sticky advanced coderFix across courts / fix rounds.
+    if (completeness.resolvedRoute !== undefined) {
+      resolvedRoute = completeness.resolvedRoute;
+    }
     if (completeness.restartFinalBarrier === undefined) {
       completenessFamilyHeadAfter = completeness.familyHeadAfter;
       break;
@@ -2558,6 +2644,10 @@ export async function runVerifyCmr(
       judgeSessionIdByPass,
     });
     if (!correctness.result.ok) return correctness.result;
+    // #919: sticky advanced coderFix across courts / fix rounds.
+    if (correctness.resolvedRoute !== undefined) {
+      resolvedRoute = correctness.resolvedRoute;
+    }
     if (correctness.restartFinalBarrier === undefined) {
       correctnessFamilyHeadAfter = correctness.familyHeadAfter;
       break;

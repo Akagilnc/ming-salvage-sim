@@ -190,7 +190,11 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "route_degraded";
+    | "route_degraded"
+    /** #919 — judge advanceCoder executed on family coderFix seat. */
+    | "coder_advance"
+    /** #919 — judge advanceCoder unusable; stay on current coderFix. */
+    | "coder_advance_stay_put";
   /**
    * Event tag.
    *   - `"reconciled"` — a crash-window補账条 (decision 5); carries
@@ -244,7 +248,11 @@ export interface FamilyLedgerEntry {
     | "online_review_fix_committed"
     | "online_review_round_retrigger"
     | "worker_dispatched"
-    | "route_degraded";
+    | "route_degraded"
+    /** #919 — paired with status coder_advance. */
+    | "coder_advance"
+    /** #919 — paired with status coder_advance_stay_put. */
+    | "coder_advance_stay_put";
   /** Monitor handle persisted at family-worker spawn time (#684). */
   readonly monitorHandle?: WorkerMonitorHandle;
   /**
@@ -356,6 +364,16 @@ export interface FamilyLedgerEntry {
   >;
   /** #930 — optional advance_coder suggestion on family court continue rows. */
   readonly advanceCoder?: string;
+  /**
+   * #919 — seat slug before advance / stay-put (coder_advance* audit rows).
+   * Mirrors single-slice LedgerEntry.fromModelId; not an unblock field.
+   */
+  readonly fromModelId?: string;
+  /**
+   * #919 — seat slug after advance, or same as from on stay-put
+   * (coder_advance* audit rows). Not an unblock field.
+   */
+  readonly toModelId?: string;
   /** Human answer payload when `event === "escalation_answered"` (#439). */
   readonly answer?: string;
   /** Required executable source for answer rows. */
