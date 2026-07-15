@@ -145,8 +145,9 @@ export type ToolchainEntry = string;
  * runner. `role` selects which soul to inject (v0.1 one image, two roles);
  * `promptFile` is a versioned file — prompts are never assembled inline.
  *
- * #247 wired `id`, `role`, `promptFile`. #253 fills the remaining fields:
- * `model`, `completionSignal`, `maxIter`, `soul`, `toolchain`.
+ * #247 wired `id`, `role`, `promptFile`. #253 filled `model` / `maxIter` /
+ * `soul` / `toolchain`. #928 retired `completionSignal` — completion is clean
+ * exit + legal sidecar / typed envelope (ADR 0131 / ADR 0132).
  */
 export interface StepSpec {
   /** Which step in the S0–S8 sequence this spec drives (agent steps only). */
@@ -163,18 +164,14 @@ export interface StepSpec {
    */
   readonly model: string;
   /**
-   * Signal the agent emits to mark the step complete (Sandcastle `run()` API).
-   * Required so the sandbox knows when to stop and collect structured output.
-   */
-  readonly completionSignal: string;
-  /**
    * Per-seat Sandcastle iteration budget for a single `sandbox.run()`.
    * NOT the fix-loop convergence round limit (runner topology owns that).
    *
-   * #899 / ADR 0128: every selected seat is a single-iteration run (`maxIter: 1`).
-   * The skill finishes inside that one invocation; native structured-output
-   * re-asks (`Output.object` maxRetries) happen in-session and are not extra
-   * outer iterations. There is no outer Ralph multi-iter budget on worker seats.
+   * #899 / ADR 0128 / #928: every selected seat is a single-iteration run
+   * (`maxIter: 1`). The skill finishes inside that one invocation; native
+   * structured-output re-asks (`Output.object` maxRetries) happen in-session
+   * and are not extra outer iterations. There is no outer Ralph multi-iter
+   * budget and no completion-signal early-stop chain on worker seats.
    *
    * SEMANTICS (堵 #256 misuse): hitting maxIter means THAT step ends normally —
    * the outer `route()` loop then continues as usual. It is NEVER "the
@@ -669,11 +666,10 @@ export interface WorkerSpec {
   readonly promptFile: string;
   /** Versioned prompt arguments substituted into the promptFile (still hashed). */
   readonly promptArgs?: Readonly<Record<string, string>>;
-  /** Signal the worker emits to mark completion (Sandcastle `run()` API). */
-  readonly completionSignal: string;
   /**
    * Per-seat Sandcastle iteration budget (NOT the fix-loop round cap).
-   * #899 / ADR 0128: production seats use `1`; SO re-asks are in-session.
+   * #899 / ADR 0128 / #928: production seats use `1`; SO re-asks are in-session.
+   * Completion is clean exit + legal sidecar / typed envelope — no signal field.
    * See {@link StepSpec.maxIter}.
    */
   readonly maxIter: number;
@@ -1401,7 +1397,6 @@ export interface WorkerMonitorHandle {
   readonly logStartOffset?: number;
   /** Pool / route identity (e.g. `grok/composer`, `zai/glm-5.2`). */
   readonly poolId: string;
-  readonly completionSignal: string;
   readonly stepId: string;
   readonly dispatchedAt: string;
   /**
@@ -1425,7 +1420,6 @@ export interface CliMonitorSpawnSpec {
   readonly args: readonly string[];
   readonly logDir: string;
   readonly poolId: string;
-  readonly completionSignal: string;
   readonly stepId: string;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;

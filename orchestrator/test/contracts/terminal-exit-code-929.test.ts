@@ -124,10 +124,16 @@ class ChildBackend implements Backend {
     const { smokeRouteModels } = await import("../../src/modelRoutes.js");
     return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
   }
-  async findResumeState(): Promise<undefined> {
+  async findResumeState(
+    _issueNumber: number,
+  ): Promise<ResumeState | undefined> {
     return undefined;
   }
-  async resumeSession(spec: StepSpec): Promise<StepOutput> {
+  async resumeSession(
+    spec: StepSpec,
+    _worktree: WorktreeHandle,
+    _sessionId: string,
+  ): Promise<StepOutput | StepResult> {
     return this.runStep(spec);
   }
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
@@ -146,7 +152,10 @@ class ChildBackend implements Backend {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
   async writeSnapshot(): Promise<void> {}
-  async runStep(spec: StepSpec): Promise<StepOutput> {
+  async runStep(
+    spec: StepSpec,
+    _worktree?: WorktreeHandle,
+  ): Promise<StepOutput | StepResult> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "judge", status: "converged" };
   }
@@ -220,11 +229,14 @@ describe("#929 family driver exit codes (representative terminals)", () => {
   it("incomplete child failure → nonzero incomplete code", async () => {
     // Force incomplete: a child whose single-slice does not succeed.
     class FailSlice extends ChildBackend {
-      override async runStep(spec: StepSpec): Promise<StepOutput> {
+      override async runStep(
+        spec: StepSpec,
+        worktree?: WorktreeHandle,
+      ): Promise<StepOutput | StepResult> {
         if (spec.role === "coder") {
           throw new Error("simulated child slice crash");
         }
-        return super.runStep(spec);
+        return super.runStep(spec, worktree);
       }
     }
     const result = await runFamily({
@@ -350,11 +362,14 @@ class DecisionEscalateChildBackend extends ChildBackend {
 
 /** Child whose coder always crashes — family completeness gate → incomplete. */
 class FailSliceBackend extends ChildBackend {
-  override async runStep(spec: StepSpec): Promise<StepOutput> {
+  override async runStep(
+    spec: StepSpec,
+    worktree?: WorktreeHandle,
+  ): Promise<StepOutput | StepResult> {
     if (spec.role === "coder") {
       throw new Error("simulated child slice crash");
     }
-    return super.runStep(spec);
+    return super.runStep(spec, worktree);
   }
 }
 

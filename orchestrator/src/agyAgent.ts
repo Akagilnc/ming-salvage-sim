@@ -45,7 +45,7 @@ type AgyParsedStreamEvent =
  *
  * Correctness B1: Sandcastle keeps only the last `{type:"result"}` as the run
  * body (`resultText = parsed.result`). Emitting a per-line result collapses
- * multi-line tags (e.g. `<merger>…</merger>` + `STEP_COMPLETE`) to the final
+ * multi-line tags (e.g. `<merger>…</merger>` spanning chunks) to the final
  * line. A stateful parser re-emits the **accumulated** body on every result so
  * last-wins still retains the full stdout.
  *

@@ -52,7 +52,7 @@ export interface GrokAgentOptions {
  * what the completion-signal check and the coder `<coder>` receipt extraction
  * read. Grok emits text in per-message chunks, so mapping every chunk to a
  * result event made those checks a last-chunk roulette: on #899 the coder's
- * receipt + CODER_STEP_COMPLETE lived in earlier chunks, iterations never
+ * receipt + trailing lines lived in earlier chunks, iterations never
  * stopped (5× token burn per step) and escalate cargo degraded to
  * committed:false. Chunks now emit text events only and accumulate; the
  * single result event is emitted on `end` with the full turn (codex parity,

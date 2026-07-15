@@ -59,9 +59,11 @@ Canonical corollaries are locked by positive routing tests under
   by the next reviewer, and any reported PR URL is cargo for downstream
   workers, not a runner verdict input. The runner never runs
   `git rev-list` / `ls-remote` / `gh pr view` to adjudicate a worker.
-- **`*_STEP_COMPLETE` sentinels are multi-iter terminators** (required final line for sandcastle iteration end; not optional telemetry — #899/#911). Process and receipt
-  routing tests prove that their prose placement cannot become a runner fate
-  channel; no source-text ban is used as the lock.
+- **Completion = clean exit + legal sidecar / typed envelope (#928 / ADR 0131).**
+  `*_STEP_COMPLETE` passwords and `completionSignal` fields are retired. All
+  seats are single-iteration (`maxIter=1`); monitor liveness is heartbeat / log
+  growth only (PR #917). Exit 0 without a usable sidecar must not masquerade as
+  completed.
 - **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the
    runner dispatches ship again. The worker verifies whether the branch's exact
    delivery already exists and returns success without duplicate push, PR, or
@@ -219,8 +221,10 @@ Startup is fail-closed: if the route smoke fails, the run records an
 phase boundaries, so a silent half-hour with a running container can be normal
 work. The current monitor uses worker-log idleness (> 15 min without growth)
 and a worker-local PID kill before relaying onto the surviving drift. This is
-not the canonical contract: Sandcastle owns idle/completion timeout and cancel,
-Policy owns relay/wait/decision, and #898 removes the PID-based path.
+not the canonical contract: Sandcastle owns idle timeout / hang cancel after the
+agent stream goes quiet, Policy owns relay/wait/decision, and #898 removes the
+PID-based path. #928: completion is clean exit + legal sidecar (heartbeat-only
+liveness; no completion-signal password).
 
 ### 6. Decision gates (parks) and answers
 
@@ -479,4 +483,4 @@ replacement Actions and Sandcastle controls land.
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
 | resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
-| worker looks hung (legacy path) | the current monitor judges by idle threshold (>15 min with no new output), then kills only that worker's own pid tree; capacity/quota errors are not hangs | current-runtime recovery is to relay a successor onto the surviving drift; the canonical target delegates idle/completion timeout and cancellation to Sandcastle, with Policy owning relay/wait/decision |
+| worker looks hung (legacy path) | the current monitor judges by heartbeat / log idle threshold (>15 min with no new output), then kills only that worker's own pid tree; capacity/quota errors are not hangs (#928: no completion-signal password) | current-runtime recovery is to relay a successor onto the surviving drift; the canonical target delegates idle timeout and cancellation to Sandcastle, with Policy owning relay/wait/decision |
