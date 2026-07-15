@@ -32,6 +32,13 @@ interface HeartbeatSandboxOptions {
   readonly logging?: unknown;
 }
 
+/** The concrete file-logging shape this helper injects (online r1: typed, not unknown). */
+export interface MonitorHeartbeatLogging {
+  readonly type: "file";
+  readonly path: string;
+  readonly onAgentStreamEvent: () => void;
+}
+
 /** Host I/O seams, injectable for tests. */
 export interface StreamHeartbeatDeps {
   readonly writeLine?: (line: string) => void;
@@ -52,6 +59,8 @@ function sanitizeName(name: string): string {
 export function withMonitorStreamHeartbeat<T extends HeartbeatSandboxOptions>(
   options: T,
   deps?: StreamHeartbeatDeps,
+  // Injected `logging` always conforms to {@link MonitorHeartbeatLogging};
+  // the loose declared type keeps passthrough (caller-owned logging) legal.
 ): T & { readonly logging?: unknown } {
   if (options.logging !== undefined) return options;
 
@@ -60,14 +69,27 @@ export function withMonitorStreamHeartbeat<T extends HeartbeatSandboxOptions>(
     ((line: string) => {
       process.stdout.write(`${line}\n`);
     });
-  const now = deps?.now ?? Date.now;
+  // Monotonic by default (online r1): a backward wall-clock jump must not
+  // suppress heartbeats within the idle window.
+  const now = deps?.now ?? (() => performance.now());
   const ensureDir =
     deps?.ensureDir ?? ((dir: string) => mkdirSync(dir, { recursive: true }));
 
   const name = options.name ?? "agent";
   // Same anchor rule as sandcastle itself: cwd option, else process.cwd().
   const logDir = join(options.cwd ?? process.cwd(), ".sandcastle", "logs");
-  ensureDir(logDir);
+  try {
+    ensureDir(logDir);
+  } catch (err) {
+    // Observability aid must not kill a healthy step (online r1): fall back
+    // to sandcastle's own default logging — no heartbeat, but alive and loud.
+    console.warn(
+      `[monitor-heartbeat] log dir unavailable, heartbeat disabled for ${name}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return options;
+  }
 
   let lastBeatMs = Number.NEGATIVE_INFINITY;
   const logging = {
