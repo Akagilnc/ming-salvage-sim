@@ -8,7 +8,7 @@ Status: Proposed
 
 ## 决定
 
-#863 第一阶段只重构唯一的 issue→merge 交付主流程，并以 ADR 0131 约束 runner；通用 Role Workflow Definition、DSL 与运行时 admission validator 延后到真实第二条流程出现后再设计。
+Issue #863 第一阶段只重构唯一的 issue→merge 交付主流程，并以 ADR 0131 约束 runner；通用 Role Workflow Definition、DSL 与运行时 admission validator 延后到真实第二条流程出现后再设计。
 
 ## 后果
 

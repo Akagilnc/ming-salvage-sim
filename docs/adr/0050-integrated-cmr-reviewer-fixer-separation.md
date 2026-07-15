@@ -10,7 +10,7 @@ Scope: this decision applies to integrated CMR passes in the shared tail for bot
 
 ## Why
 
-#258 dogfood showed the failure mode clearly: an integrated CMR worker found correctness issues and then moved into a same-session fix loop before all review legs had completed. That is fast when the finding is cheap, but it hides the review -> fix -> re-review state machine inside one agent context, erases the independent reviewer/coder boundary, and makes ledger/resume evidence too weak.
+Issue #258 dogfood showed the failure mode clearly: an integrated CMR worker found correctness issues and then moved into a same-session fix loop before all review legs had completed. That is fast when the finding is cheap, but it hides the review -> fix -> re-review state machine inside one agent context, erases the independent reviewer/coder boundary, and makes ledger/resume evidence too weak.
 
 Professional workers inspect commits, tests, and repair evidence. The Runner is not a semantic judge; it routes only on reviewer self-declared open-count or a worker-raised human-decision signal.
 
