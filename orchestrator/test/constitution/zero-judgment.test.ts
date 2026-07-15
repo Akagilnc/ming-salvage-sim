@@ -41,7 +41,7 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     })).toEqual({ kind: "next", step: "S5" });
     expect(route({
       from: "S4",
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      output: { kind: "judge", status: "converged" },
     })).toEqual({ kind: "next", step: "S7" });
     // Count is authenticated at the typed boundary: missing findingsCount never
     // becomes kind:"reviewer". Decode maps unusable open-count to a non-reviewer

@@ -19,13 +19,12 @@ import type {
 } from "./types.js";
 import { findingIdentityKey } from "./findings.js";
 import type {
-  JudgeFindingDisposition as ContractDisposition,
   JudgeVerdict,
   LegalRefuseReason,
 } from "./stationReceiptContracts.js";
 
-// Re-export the contract disposition name collision fix — types.ts mirrors the
-// same shape for StepOutput. Prefer types.JudgeFindingDisposition at call sites.
+// types.ts re-exports JudgeFindingDisposition from stationReceiptContracts
+// (single source — #919 CR P3). No dual isomorphic import needed.
 export type { LegalRefuseReason };
 
 /**
@@ -79,7 +78,7 @@ export function liveFindingsBlockConverged(
  * Live rows stay out of the terminal ledger flip set (they remain open).
  */
 export function judgeKillsToLedgerDispositions(
-  dispositions: ReadonlyArray<JudgeFindingDisposition | ContractDisposition>,
+  dispositions: ReadonlyArray<JudgeFindingDisposition>,
   severity: Finding["severity"] = "medium",
 ): FindingDisposition[] {
   const out: FindingDisposition[] = [];
@@ -105,7 +104,7 @@ export function judgeKillsToLedgerDispositions(
  */
 export function openFindingsForFixer(
   findings: ReadonlyArray<Finding>,
-  dispositions: ReadonlyArray<JudgeFindingDisposition | ContractDisposition>,
+  dispositions: ReadonlyArray<JudgeFindingDisposition>,
 ): Finding[] {
   const liveKeys = new Set(
     dispositions.filter((d) => d.action === "live").map((d) => d.identityKey),
@@ -120,7 +119,7 @@ export function openFindingsForFixer(
 
 /** Live identity keys only (control envelope for S5). */
 export function liveFindingIdentityKeys(
-  dispositions: ReadonlyArray<JudgeFindingDisposition | ContractDisposition>,
+  dispositions: ReadonlyArray<JudgeFindingDisposition>,
 ): string[] {
   return dispositions
     .filter((d) => d.action === "live")
@@ -194,7 +193,7 @@ export function judgeResultFromVerdict(
   return {
     kind: "judge",
     status: "continue",
-    findingDispositions: verdict.findingDispositions as readonly JudgeFindingDisposition[],
+    findingDispositions: verdict.findingDispositions,
     ...(verdict.advanceCoder !== undefined
       ? { advanceCoder: verdict.advanceCoder }
       : {}),
@@ -262,9 +261,7 @@ export function judgeContinueFromOpenCount(
  */
 export function projectJudgeContinueBlocking(output: {
   readonly status: string;
-  readonly findingDispositions?: ReadonlyArray<
-    JudgeFindingDisposition | ContractDisposition
-  >;
+  readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
   readonly findings?: ReadonlyArray<Finding>;
 }): {
   readonly blocking: Finding[];

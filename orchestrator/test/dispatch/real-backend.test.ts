@@ -2024,9 +2024,10 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     expect(
       backend.probeDecodeOutput(reviewerSpec, { findings: [] }),
     ).toEqual({ kind: "fixer", committed: false });
+    // #919 CR P1 / #925: residual findingsCount:0 is unusable, never silent clean.
     expect(
       backend.probeDecodeOutput(reviewerSpec, { findingsCount: 0, findings: [] }),
-    ).toEqual({ kind: "judge", status: "converged" });
+    ).toEqual({ kind: "fixer", committed: false });
   });
 
   it("fails a typed reviewer seat when Output.object is absent", async () => {
@@ -2060,6 +2061,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       stdout: '<review>{"findingsCount":0,"findings":[]}</review>',
       commits: [],
       sessionId: "sess-review-reask",
+      // Residual open-count 0 is unusable; re-ask SO still attaches for the seat.
       output: { findingsCount: 0, findings: [] },
     });
 
@@ -2070,7 +2072,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         path: "/tmp/worktree/issue-899",
       }),
     ).resolves.toMatchObject({
-      output: { kind: "judge", status: "converged" },
+      output: { kind: "fixer", committed: false },
     });
 
     expect(backend.lastAgentOptions?.output).toMatchObject({
@@ -2734,7 +2736,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     );
 
     expect(result).toEqual({
-      output: { kind: "judge", status: "converged" },
+      // Residual typed findingsCount:0 is unusable (not silent clean); cargo cannot flip fate.
+      output: { kind: "fixer", committed: false },
       sessionId: "sess-review-sidecar",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({
@@ -2777,7 +2780,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     );
 
     expect(result).toEqual({
-      output: { kind: "judge", status: "converged" },
+      output: { kind: "fixer", committed: false },
       sessionId: "sess-review-resume-sidecar",
     });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-review-session");
@@ -2855,7 +2858,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         },
       ),
     ).resolves.toMatchObject({
-      output: { kind: "judge", status: "converged" },
+      output: { kind: "fixer", committed: false },
       sessionId: "sess-review-so-landing",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({

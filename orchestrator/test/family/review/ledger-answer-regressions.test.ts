@@ -73,7 +73,7 @@ class EscalatingChildBackend implements Backend {
   }
   async resumeSession(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
     return { number: issueNumber, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
@@ -99,7 +99,7 @@ class EscalatingChildBackend implements Backend {
       return out;
     }
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(entry: PersistentLedgerEntry, stateDir: string): Promise<void> {
     const m = stateDir.match(/\.ledger-(\d+)/);

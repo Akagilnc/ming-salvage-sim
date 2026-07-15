@@ -596,7 +596,7 @@ describe("#787 capacity relay", () => {
             return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
           }
           if ((spec.kind === "reviewer" || spec.kind === "verify")) {
-            return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+            return { kind: "completed", output: { kind: "judge", status: "converged" } };
           }
           if (spec.kind === "ship") {
             return { kind: "completed", output: { kind: "ship", branch: worktree.branch, status: "pushed" } };
@@ -710,17 +710,11 @@ describe("#787 capacity relay", () => {
         if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S6") {
           return {
             kind: "completed",
-            output: {
-              kind: "reviewer", findings: [], findingsCount: 0,
-              priorFindingDispositions: [{
-                identityKey: "correctness|runner.ts:1|needs one repair pass",
-                status: "verified-closed",
-              }],
-            },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if ((spec.kind === "reviewer" || spec.kind === "verify")) {
-          return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+          return { kind: "completed", output: { kind: "judge", status: "converged" } };
         }
         if (spec.kind === "ship") {
           return {
@@ -841,18 +835,10 @@ describe("#787 capacity relay", () => {
             if (spec.id === "S6" && capacityStep === "S6") {
               return {
                 kind: "completed",
-                output: {
-                  kind: "reviewer", findings: [], findingsCount: 0,
-                  priorFindingDispositions: [
-                    {
-                      identityKey: "correctness|runner.ts:1|needs one repair pass",
-                      status: "verified-closed",
-                    },
-                  ],
-                },
+                output: { kind: "judge", status: "converged" },
               };
             }
-            return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
+            return { kind: "completed", output: { kind: "judge", status: "converged" } };
           }
           if (spec.kind === "coder") {
             return {
@@ -1416,7 +1402,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           reviewerDispatches.push({ spec, ctx });
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "ship") {
@@ -1547,7 +1533,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           reviewerModels.push(spec.model);
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "ship") {
@@ -1681,7 +1667,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           }
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
@@ -1802,7 +1788,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           if (spec.model === "opus") throw quotaWaitError("S3", resetAt);
           return {
             kind: "completed",
-            output: { kind: "reviewer", findings: [], findingsCount: 0 },
+            output: { kind: "judge", status: "converged" },
           };
         }
         if (spec.kind === "ship") {
@@ -2012,7 +1998,7 @@ describe("#686 R2 production seams", () => {
           if ((spec.kind === "reviewer" || spec.kind === "verify")) {
             return {
               kind: "completed",
-              output: { kind: "reviewer", findings: [], findingsCount: 0 },
+              output: { kind: "judge", status: "converged" },
             };
           }
           const skeleton = skeletonReviewLoopWorkerResult(spec.kind);
@@ -2284,7 +2270,7 @@ describe("#686 R2 production seams", () => {
       },
       async writeSnapshot(): Promise<void> {},
       async runStep(spec: StepSpec): Promise<StepOutput> {
-        if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "reviewer", findings: [], findingsCount: 0 };
+        if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async writeLedger(entry: PersistentLedgerEntry): Promise<void> {

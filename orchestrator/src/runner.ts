@@ -84,7 +84,6 @@ import {
   resolveCoderRecOrder,
   lookupCoderRosterEntry,
   completedS6RoundsFromLedger,
-  CODER_REC_FALLBACK_AFTER_ROUNDS,
   type CoderRosterEntry,
 } from "./coderRoster.js";
 import {
@@ -1406,7 +1405,9 @@ function normalizeJudgeSeatOutput(
   if (step !== "S3" && step !== "S6") return output;
   if (output.kind === "judge") return output;
 
-  // Residual open-count reviewer paper → sole judge form (shared F3 helper).
+  // Residual open-count reviewer paper → sole judge continue form when count
+  // is positive (shared F3 helper). Zero / missing / non-integer residual is
+  // unusable (#925 AC / #919 CR P1): never mint silent converged.
   if (output.kind === "reviewer") {
     const projected = judgeContinueFromOpenCount(
       output.findingsCount,
@@ -1427,7 +1428,8 @@ function normalizeJudgeSeatOutput(
         escalate: output.escalate,
       };
     }
-    return { kind: "judge", status: "converged" };
+    // Leave residual paper as-is → route judgeStatusOf → unusable → S5.
+    return output;
   }
 
   // Offline skeleton / residual online-review VerifyResult on the judge seat
@@ -1632,12 +1634,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     nonConvergingRounds: number,
   ): Promise<ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined> => {
     if (coderRecEnvSkipped) return undefined;
-    // Resource-relay stickiness: hold the baton until #767 quality advance
-    // would actually move (S6 rounds ≥ FALLBACK). Do NOT set coderRecEnvSkipped.
-    if (
-      stickyRelayCoderSlug !== undefined &&
-      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
-    ) {
+    // Resource-relay stickiness: hold the baton for the run. ADR 0132 abolished
+    // round-threshold quality advance (CODER_REC_FALLBACK); judge advanceCoder
+    // roster wiring is #926. Do NOT set coderRecEnvSkipped.
+    if (stickyRelayCoderSlug !== undefined) {
       if (modelRoute.slots.coder !== stickyRelayCoderSlug) {
         modelRoute = withCoderSlot(modelRoute, stickyRelayCoderSlug);
         stepSpecs = stepSpecsForRoute(modelRoute);
@@ -1654,10 +1654,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
       return undefined;
     }
-    if (
-      stickyRelayCoderFixSlug !== undefined &&
-      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
-    ) {
+    if (stickyRelayCoderFixSlug !== undefined) {
       if (modelRoute.slots.coderFix !== stickyRelayCoderFixSlug) {
         modelRoute = {
           ...modelRoute,
@@ -1675,12 +1672,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         }
       }
       return undefined;
-    }
-    if (stickyRelayCoderSlug !== undefined) {
-      stickyRelayCoderSlug = undefined;
-    }
-    if (stickyRelayCoderFixSlug !== undefined) {
-      stickyRelayCoderFixSlug = undefined;
     }
     let applied: ReturnType<typeof applyCoderRecToRoute>;
     try {

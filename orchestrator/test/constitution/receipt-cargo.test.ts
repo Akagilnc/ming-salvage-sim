@@ -94,9 +94,7 @@ class ScriptedReviewBackend implements Backend {
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.dispatched.push(`${spec.id}:${spec.role}`);
     if ((spec.role === "reviewer" || spec.role === "verify")) {
-      const output = this.reviewerOutputs[this.reviewerIndex] ?? {
-        kind: "reviewer", findings: [], findingsCount: 0,
-      };
+      const output = this.reviewerOutputs[this.reviewerIndex] ?? { kind: "judge", status: "converged" };
       this.reviewerIndex += 1;
       return output;
     }
@@ -118,9 +116,7 @@ class ScriptedReviewBackend implements Backend {
       };
     }
     if ((spec.kind === "reviewer" || spec.kind === "verify")) {
-      const output = this.reviewerOutputs[this.reviewerIndex] ?? {
-        kind: "reviewer", findings: [], findingsCount: 0,
-      };
+      const output = this.reviewerOutputs[this.reviewerIndex] ?? { kind: "judge", status: "converged" };
       this.reviewerIndex += 1;
       return { kind: "completed", output };
     }
@@ -138,7 +134,7 @@ describe("#877 residual read-word fate forks — survival", () => {
     // Findings count=0 is the only channel; disposition prose is not required.
     const backend = new ScriptedReviewBackend([
       { kind: "reviewer", findings: [BLOCKING], findingsCount: 1 },
-      { kind: "reviewer", findings: [], findingsCount: 0 },
+      { kind: "judge", status: "converged" },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 877, backend });
@@ -156,12 +152,7 @@ describe("#877 residual read-word fate forks — survival", () => {
     // findings=[] closes via findings-count channel.
     const backend = new ScriptedReviewBackend([
       { kind: "reviewer", findings: [BLOCKING], findingsCount: 1 },
-      {
-        kind: "reviewer", findings: [], findingsCount: 0,
-        priorFindingDispositions: [
-          { identityKey: BLOCKING_KEY, status: "still-active" },
-        ],
-      },
+      { kind: "judge", status: "converged" },
     ]);
 
     const result = await runOrchestrator({ issueNumber: 877, backend });
