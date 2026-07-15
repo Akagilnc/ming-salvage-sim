@@ -22,7 +22,7 @@
  * Slice #252: error edges —
  *   - any backend call throws → S8(error) + error package  [runner catch]
  *   - the S2 worker carries escalate → S8(escalate) [route() detects]
- * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
+ * Slice #253: StepSpec contract — model/maxIter/soul/toolchain (#928: no signal).
  * Slice #248: S0 input gate — three-way accept condition (rfa ∧ no sub-issues ∧
  *   blocked_by all closed); violations throw, stopping at S0. (Agent Brief was
  *   removed as a gate — design correction; the coder reads the whole issue.)
@@ -1320,9 +1320,9 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * live findings, S6 resumes the same judge session. maxIter is 1 on every seat
  * (Ralph outer multi-iter retired; typed SO re-asks are in-session).
  *
- * #253 fields: model (CLI slug), completionSignal (Sandcastle run() API), maxIter
- * (per-seat Sandcastle iteration budget — NOT a fix-loop give-up counter), soul,
- * toolchain.
+ * #253/#928 fields: model (CLI slug), maxIter (per-seat Sandcastle iteration
+ * budget — NOT a fix-loop give-up counter; always 1), soul, toolchain.
+ * Completion is clean exit + legal sidecar / typed envelope — no signal field.
  *
  * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
  * with single-slot overrides (see {@link coderModel}); no image rebuild, no
@@ -1353,9 +1353,8 @@ export function stepSpecsForRoute(
       // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
       // alone — no image rebuild, no StepSpec shape change.
       model: route.slots.coder,
-      completionSignal: "CODER_STEP_COMPLETE",
-      // #899 / ADR 0128: one single-iteration Sandcastle run per seat; the skill
-      // finishes inside that invocation (no outer Ralph multi-iter).
+      // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat;
+      // clean exit + legal sidecar / typed envelope is completion.
       maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
@@ -1369,7 +1368,6 @@ export function stepSpecsForRoute(
       role: "reviewer",
       promptFile: "judge_station.md",
       model: route.slots.verify,
-      completionSignal: "JUDGE_STEP_COMPLETE",
       maxIter: 1,
       soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,
@@ -1379,8 +1377,7 @@ export function stepSpecsForRoute(
       role: "coder",
       promptFile: "coder_fix.md",
       model: route.slots.coderFix,
-      completionSignal: "CODER_STEP_COMPLETE",
-      // #899 / ADR 0128: single-iteration seat (same as S2).
+      // #899 / ADR 0128 / #928: single-iteration seat (same as S2).
       maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
@@ -1391,7 +1388,6 @@ export function stepSpecsForRoute(
       role: "reviewer",
       promptFile: "judge_station.md",
       model: route.slots.verify,
-      completionSignal: "JUDGE_STEP_COMPLETE",
       maxIter: 1,
       soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,

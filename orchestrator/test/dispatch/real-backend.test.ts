@@ -1234,7 +1234,6 @@ describe("RealBackend reviewer output contract", () => {
     role: "reviewer",
     promptFile: "judge_station.md",
     model: "gpt-5.6-sol",
-    completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
     toolchain: ["node", "typescript"],
@@ -1244,7 +1243,6 @@ describe("RealBackend reviewer output contract", () => {
     role: "coder",
     promptFile: "coder_fix.md",
     model: "sonnet",
-    completionSignal: "CODER_STEP_COMPLETE",
     // Production SO seats are single-iter (ADR 0128 / #899). maxIter>1 would
     // suppress decision-gate Output.object and hide the production SO path.
     maxIter: 1,
@@ -1637,7 +1635,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     role: "coder",
     promptFile: "coder_implement.md",
     model: "gpt-5.6-sol",
-    completionSignal: "CODER_STEP_COMPLETE",
     // Production seats are single-iter with decision-gate SO (#899). Keep
     // fixtures aligned so maxIter>1 cannot hide the Output.object attach path.
     maxIter: 1,
@@ -1649,7 +1646,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     role: "reviewer",
     promptFile: "judge_station.md",
     model: "gpt-5.6-sol",
-    completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
     soul: "READ-ONLY",
     toolchain: ["node", "typescript"],
@@ -1751,7 +1747,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   it("continues to the agent sandbox when all declared tools exist", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-286",
@@ -1797,7 +1792,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     // a second invocation.
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: "coder completed implementation but omitted cargo siblings",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-coder-opaque",
@@ -2098,7 +2092,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   it("lets Sandcastle re-ask reviewer receipts through the shared two-retry definition", async () => {
     const backend = makeBackend();
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: '<review>{"findingsCount":0,"findings":[]}</review>',
       commits: [],
       sessionId: "sess-review-reask",
@@ -2618,7 +2611,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     writeFileSync(join(home, ".grok", "auth.json"), '{"token":"test"}\n');
     const backend = makeBackend(home);
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-grok-auth-cleanup",
@@ -2649,7 +2641,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       "utf8",
     );
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: "<coder>not json</coder>\nCODER_STEP_COMPLETE",
       commits: [{ sha: "abc123" }],
       sessionId: "sess-496",
@@ -2684,7 +2675,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     // completion report.
     backend.finalGraphCommitCount = 0;
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed":true,"commitsAdded":1}</coder>',
       commits: [{ sha: "unreachable-after-reset" }],
       sessionId: "sess-final-graph-truth",
@@ -2714,7 +2704,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const outcomePath = join(dir, "outcome.json");
     mkdirSync(outcomePath);
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": true, "commitsAdded": 1}</coder>\nCODER_STEP_COMPLETE',
       commits: [{ sha: "abc123" }],
       sessionId: "sess-dir-sidecar",
@@ -2754,7 +2743,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       "utf8",
     );
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: "no review tag here\nREVIEWER_STEP_COMPLETE",
       commits: [],
       sessionId: "sess-review-sidecar",
@@ -2797,7 +2785,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       "utf8",
     );
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: "not json in any review tag\nREVIEWER_STEP_COMPLETE",
       commits: [],
       sessionId: "sess-review-resume-sidecar",
@@ -2837,7 +2824,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-bad-sidecar",
@@ -2876,7 +2862,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       "utf8",
     );
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: '<review>{"findingsCount":9,"findings":[]}</review>',
       commits: [],
       sessionId: "sess-review-so-landing",
@@ -2916,7 +2901,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(outcomePath, "{not json", "utf8");
     backend.agentResult = agentRunResult({
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stdout: '<review>{"findingsCount":0,"findings":[]}</review>',
       commits: [],
       sessionId: "sess-review-bad-sidecar",
@@ -2952,7 +2936,6 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
     };
     backend.agentResult = agentRunResult({
-      completionSignal: "CODER_STEP_COMPLETE",
       stdout: '<coder>{"committed": false, "commitsAdded": 0}</coder>',
       commits: [],
       sessionId: "sess-286",

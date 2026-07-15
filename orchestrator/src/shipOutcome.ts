@@ -67,7 +67,6 @@ export function isFilledString(v: unknown): v is string {
  * Zod/schema gate and no SO re-ask on cargo shape (PRD #899 / ADR 0131).
  */
 export function shipOutcomeFromResult(result: {
-  completionSignal?: string | string[];
   outcomePath?: string;
   stdout: string;
   output?: unknown;

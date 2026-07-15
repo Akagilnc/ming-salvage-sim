@@ -184,7 +184,6 @@ describe("#911 family dual-mount (RealFamilyBackend)", () => {
           session: "fresh",
           contextRetention: "clean",
           promptFile: "judge_station.md",
-          completionSignal: "REVIEWER_STEP_COMPLETE",
           maxIter: 1,
           model: "sonnet",
           toolchain: [],

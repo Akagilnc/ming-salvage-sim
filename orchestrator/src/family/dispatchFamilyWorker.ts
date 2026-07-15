@@ -98,7 +98,6 @@ export function cmrWorkerSpec(
       pass === "completeness"
         ? "integrated_cmr_completeness.md"
         : "integrated_cmr_correctness.md",
-    completionSignal: "CMR_STEP_COMPLETE",
     maxIter: 1,
     model,
     cmrReviewLegs: route?.legCollections.cmrReview ?? activeCmrReviewLegs(),
@@ -119,8 +118,7 @@ export function familyCoderFixWorkerSpec(route?: ResolvedModelRoute): WorkerSpec
     contextRetention: "retain",
     skill: "/tdd",
     promptFile: "coder_fix.md",
-    completionSignal: "CODER_STEP_COMPLETE",
-    // #899 / ADR 0128: one single-iteration Sandcastle run per selected seat.
+    // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat.
     maxIter: 1,
     model,
     soul: "coder",
@@ -140,9 +138,8 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     contextRetention: "clean",
     skill: "gstack-ship",
     promptFile: "family_ship.md",
-    completionSignal: "SHIP_STEP_COMPLETE",
-    // #899 / ADR 0128: single-iteration seat; gstack-ship reruns live inside the
-    // skill invocation, not as an outer Sandcastle multi-iter budget.
+    // #899 / ADR 0128 / #928: single-iteration seat; gstack-ship reruns live
+    // inside the skill invocation, not as an outer Sandcastle multi-iter budget.
     maxIter: 1,
     model,
     // The family ship worker runs under the dedicated "ship" soul (delivery
@@ -276,7 +273,6 @@ export async function dispatchFamilyWorkerWithMonitor(
         args: cliSpec.args,
         logDir: cliSpec.logDir,
         poolId: cliSpec.poolId,
-        completionSignal: cliSpec.completionSignal,
         stepId: cliSpec.stepId,
         ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
         ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),

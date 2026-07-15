@@ -29,7 +29,6 @@ import { RealFamilyBackend } from "../../src/family/realFamilyBackend.js";
 import {
   collectPidTree,
   dispatchMonitoredCliWorker,
-  hasCompletionSignalInLog,
   instanceMatchesHandle,
   isWorkerAlive,
   isWorkerIdle,
@@ -61,7 +60,6 @@ function sleepWorker(
     args: process.platform === "win32" ? ["-n", "600"] : ["600"],
     logDir,
     poolId,
-    completionSignal: signal,
     stepId,
     logBasename: `${stepId}.log`,
     readInstanceId: () => `test-instance-${stepId}`,
@@ -90,7 +88,6 @@ function baseHandle(
 ): WorkerMonitorHandle {
   return {
     poolId: "grok/composer",
-    completionSignal: "SHIP_STEP_COMPLETE",
     stepId: "S7",
     dispatchedAt: new Date().toISOString(),
     instanceId: "test-instance",
@@ -109,7 +106,6 @@ describe("#684 worker monitor handles", () => {
       contextRetention: "retain",
       skill: "/tdd",
       promptFile: "coder.md",
-      completionSignal: "CODER_STEP_COMPLETE",
       maxIter: 1,
       model: "gpt-5.6-terra",
       soul: "coder",
@@ -137,7 +133,6 @@ describe("#684 worker monitor handles", () => {
         contextRetention: "retain",
         skill: "/tdd",
         promptFile: "coder.md",
-        completionSignal: "CODER_STEP_COMPLETE",
         maxIter: 1,
         model: "sonnet",
         soul: "coder",
@@ -149,7 +144,6 @@ describe("#684 worker monitor handles", () => {
           args: ["600"],
           logDir: dir,
           poolId: poolIdForWorker(spec),
-          completionSignal: spec.completionSignal,
           stepId: spec.id,
           readInstanceId: () => "orch-808-test-instance",
         }),
@@ -198,7 +192,7 @@ describe("#684 worker monitor handles", () => {
     }
   });
 
-  it("exit 0 without a usable sidecar remains completed without receipt cargo", () => {
+  it("exit 0 without a usable sidecar cannot masquerade as completed (#928)", () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-826-sidecar-"));
     try {
       const result = workerResultFromMonitorSidecar(
@@ -210,26 +204,28 @@ describe("#684 worker monitor handles", () => {
         0,
       );
 
-      expect(result).toMatchObject({
-        kind: "completed",
-        output: { kind: "coder", committed: false, commitsAdded: 0 },
-      });
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") {
+        expect(result.reason).toMatch(/without a WorkerResult sidecar/i);
+      }
       expect(isMissingMonitorSidecarResult(result)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("dispatchMonitoredCliWorker atomically returns pid/log/pool/signal/instance handle", async () => {
+  it("dispatchMonitoredCliWorker atomically returns pid/log/pool/instance handle", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orch-684-dispatch-"));
     try {
-      const { handle, child } = await sleepWorker(dir, "grok/composer", "CODER_STEP_COMPLETE", "S2");
+      const { handle, child } = await sleepWorker(dir, "grok/composer", "unused", "S2");
       expect(handle.pid).toBe(child.pid);
       expect(handle.pid).toBeGreaterThan(0);
       expect(handle.logPath).toBe(join(dir, "S2.log"));
       expect(existsSync(handle.logPath)).toBe(true);
       expect(handle.poolId).toBe("grok/composer");
-      expect(handle.completionSignal).toBe("CODER_STEP_COMPLETE");
+      expect(Object.prototype.hasOwnProperty.call(handle, "completionSignal")).toBe(
+        false,
+      );
       expect(handle.stepId).toBe("S2");
       expect(handle.dispatchedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(typeof handle.instanceId).toBe("string");
@@ -280,23 +276,6 @@ describe("#684 worker monitor handles", () => {
     expect(
       isWorkerIdle(handle, 60_000, { sizeBytes: 100, mtimeMs: Date.now() - 120_000 }),
     ).toBe(false);
-  });
-
-  it("hasCompletionSignalInLog detects the expected completion signal in handle log", () => {
-    const dir = mkdtempSync(join(tmpdir(), "orch-684-signal-"));
-    try {
-      const logPath = join(dir, "worker.log");
-      const handle = baseHandle({ pid: 1, logPath });
-      writeFileSync(logPath, "working...\n", "utf8");
-      expect(hasCompletionSignalInLog(handle)).toBe(false);
-      writeFileSync(logPath, "working...\nVERIFY_STEP_COMPLETE\n", "utf8");
-      // completion signal on this handle is SHIP_STEP_COMPLETE — still false
-      expect(hasCompletionSignalInLog(handle)).toBe(false);
-      writeFileSync(logPath, "working...\nSHIP_STEP_COMPLETE\n", "utf8");
-      expect(hasCompletionSignalInLog(handle)).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 
   it("killWorkerTree kills only the target pid tree — parallel workers do not cross-kill", async () => {
@@ -500,7 +479,6 @@ exit 0
         args: process.platform === "win32" ? ["/c", "ping", "-n", "2", "127.0.0.1"] : ["2"],
         logDir: dir,
         poolId: "test/injected",
-        completionSignal: "TEST_DONE",
         stepId: "injected",
         readInstanceId: () => "injected-instance",
       });
@@ -529,7 +507,6 @@ exit 0
         args: ["-c", "sleep 600 & wait"],
         logDir: dir,
         poolId: "grok/build",
-        completionSignal: "TREE_DONE",
         stepId: "tree-worker",
         readInstanceId: () => "tree-worker-instance",
       });
@@ -623,7 +600,6 @@ exit 0
       session: "fresh",
       contextRetention: "retain",
       promptFile: "coder.md",
-      completionSignal: "CODER_STEP_COMPLETE",
       maxIter: 5,
       model: "sonnet",
       soul: "coder",
@@ -649,7 +625,6 @@ exit 0
           args: process.platform === "win32" ? ["/c", "exit", "0"] : [],
           logDir: dir,
           poolId: poolIdForWorker(spec),
-          completionSignal: spec.completionSignal,
           stepId: spec.id,
           cwd: ctx.worktree?.path,
           readInstanceId: () => "injected-production-instance",
@@ -665,7 +640,6 @@ exit 0
         session: "fresh",
         contextRetention: "retain",
         promptFile: "coder.md",
-        completionSignal: "CODER_STEP_COMPLETE",
         maxIter: 5,
         model: "sonnet",
         soul: "coder",
@@ -685,7 +659,9 @@ exit 0
       expect(outcome.monitorHandle).toBeDefined();
       expect(validateMonitorHandle(outcome.monitorHandle)).toBe(true);
       expect(outcome.monitorHandle!.poolId).toBe("claude/sonnet");
-      expect(outcome.monitorHandle!.completionSignal).toBe("CODER_STEP_COMPLETE");
+      expect(
+        Object.prototype.hasOwnProperty.call(outcome.monitorHandle!, "completionSignal"),
+      ).toBe(false);
       expect(outcome.monitorHandle!.instanceId).toBe("injected-production-instance");
       expect(existsSync(outcome.monitorHandle!.logPath)).toBe(true);
       // Handle must be rebuildable from a ledger entry (resume path).
@@ -729,7 +705,6 @@ exit 0
           args: process.platform === "win32" ? ["/c", "ping", "-n", "2", "127.0.0.1"] : ["0.2"],
           logDir: dir,
           poolId: poolIdForWorker(spec),
-          completionSignal: spec.completionSignal,
           stepId: spec.id,
           readInstanceId: () => "injected-production-instance",
         }),
@@ -746,7 +721,6 @@ exit 0
         session: "fresh",
         contextRetention: "retain",
         promptFile: "coder.md",
-        completionSignal: "CODER_STEP_COMPLETE",
         maxIter: 5,
         model: "sonnet",
         soul: "coder",
@@ -817,7 +791,6 @@ exit 0
         session: "fresh",
         contextRetention: "retain",
         promptFile: "reviewer.md",
-        completionSignal: "REVIEW_STEP_COMPLETE",
         maxIter: 1,
         model: "sonnet",
         soul: "READ-ONLY",

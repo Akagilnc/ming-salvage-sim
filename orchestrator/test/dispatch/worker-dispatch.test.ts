@@ -610,7 +610,6 @@ describe("ADR 0131 reviewer count envelope", () => {
       logPath: "/host/ledger/S3.stdout",
       resultPath: "/host/ledger/S3.sidecar.json",
       poolId: "claude/sonnet",
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stepId: "S3",
       dispatchedAt: "2026-07-15T00:00:00.000Z",
       instanceId: "spawned:4242:2026-07-15T00:00:00.000Z",
@@ -753,7 +752,6 @@ describe("ADR 0131 reviewer count envelope", () => {
       logPath: "/host/ledger/S3.stdout",
       resultPath: "/host/ledger/S3.sidecar.json",
       poolId: "claude/sonnet",
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stepId: "S3",
       dispatchedAt: "2026-07-15T00:00:00.000Z",
       instanceId: "spawned:1001:2026-07-15T00:00:00.000Z",
@@ -763,7 +761,6 @@ describe("ADR 0131 reviewer count envelope", () => {
       logPath: "/host/ledger/S6.stdout",
       resultPath: "/host/ledger/S6.sidecar.json",
       poolId: "claude/sonnet",
-      completionSignal: "REVIEWER_STEP_COMPLETE",
       stepId: "S6",
       dispatchedAt: "2026-07-15T00:00:10.000Z",
       instanceId: "spawned:2002:2026-07-15T00:00:10.000Z",
@@ -1115,8 +1112,8 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
     role: "coder",
     promptFile: "coder_implement.md",
     model: "sonnet",
-    completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
+    // #928: production seats are single-iter; fixture matches that contract.
+    maxIter: 1,
     soul: "coder",
     toolchain: ["python", "typescript"],
   };
@@ -1130,7 +1127,8 @@ describe("#331 stepSpecToWorkerSpec — builds the worker spec from a StepSpec",
     expect(w.skill).toBe("/tdd");
     expect(w.host).toBe("claude");
     expect(w.promptFile).toBe("coder_implement.md");
-    expect(w.completionSignal).toBe("CODER_STEP_COMPLETE");
+    expect(Object.prototype.hasOwnProperty.call(w, "completionSignal")).toBe(false);
+    expect(w.maxIter).toBe(1);
   });
 
   it("marks session:'resume' ONLY when the runner threads a resume (crash/escalate path)", () => {
@@ -1221,7 +1219,6 @@ describe("#796 Coder-Rec host dispatch", () => {
           role: "coder",
           promptFile: "coder_implement.md",
           model,
-          completionSignal: "CODER_STEP_COMPLETE",
           maxIter: 5,
           soul: "coder",
           toolchain: [],
@@ -1387,7 +1384,6 @@ describe("#331 legacyDispatchWorker — forwards to the existing methods", () =>
     contextRetention: "retain",
     skill: "/tdd",
     promptFile: "coder_implement.md",
-    completionSignal: "CODER_STEP_COMPLETE",
     maxIter: 5,
     model: "sonnet",
     soul: "coder",

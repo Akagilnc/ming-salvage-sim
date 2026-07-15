@@ -1205,8 +1205,6 @@ export function soulForStep(
 export interface RunResultLike {
   readonly iterations: ReadonlyArray<{ readonly sessionId?: string }>;
   readonly commits: ReadonlyArray<{ readonly sha: string }>;
-  /** The completion signal observed by Sandcastle, if any. */
-  readonly completionSignal?: string;
 }
 
 /**
@@ -3254,11 +3252,10 @@ export class RealBackend implements Backend {
         effortForLiveOfficer(spec.model, spec),
         pool,
       ),
-      // #899 / ADR 0128: every selected seat is single-iteration (maxIter:1).
-      // Native SO re-asks (Output.object maxRetries) stay in-session and are
-      // not outer Sandcastle iterations. Hitting maxIter ends THE STEP normally.
+      // #899 / ADR 0128 / #928: every selected seat is single-iteration
+      // (maxIter:1). No completionSignal — clean exit + typed envelope / sidecar
+      // is completion. Native SO re-asks stay in-session.
       maxIterations: spec.maxIter,
-      completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
       // #899/#924/#925: traffic signals attach Output.object(+maxRetries).
@@ -3326,7 +3323,6 @@ export class RealBackend implements Backend {
         ),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
-        completionSignal: spec.completionSignal,
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),

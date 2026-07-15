@@ -75,7 +75,6 @@ function coderSpec(session: WorkerSpec["session"] = "fresh"): WorkerSpec {
     contextRetention: "retain",
     skill: "tdd",
     promptFile: "prompts/coder.md",
-    completionSignal: "<done>",
     maxIter: 3,
     model: "opus",
     soul: "coder",

@@ -759,7 +759,6 @@ describe("#925 F1: priorJudgeVerdicts land in fix-findings file", () => {
         contextRetention: "clean",
         skill: "/code-review",
         promptFile: "judge_station.md",
-        completionSignal: "JUDGE_STEP_COMPLETE",
         maxIter: 1,
         model: "gpt-5.4",
         soul: "verify",
@@ -1022,7 +1021,8 @@ describe("#925 verify.md 收敛判官 chapter + judge prompt", () => {
   it("judge_station prompt teaches T2 envelope fields + session-loss landing", () => {
     const text = readFileSync(join(PROMPTS, "judge_station.md"), "utf8");
     expect(text).toMatch(/stationReceiptContracts/);
-    expect(text).toMatch(/JUDGE_STEP_COMPLETE/);
+    expect(text).not.toMatch(/JUDGE_STEP_COMPLETE/);
+    expect(text).toMatch(/clean exit|single-iteration|maxIterations/);
     expect(text).toMatch(/findingDispositions/);
     expect(text).toMatch(/advanceCoder/);
     expect(text).toMatch(/maxIterations|maxIter/);
