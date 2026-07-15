@@ -291,16 +291,27 @@ export interface PriorFindingDisposition {
 
 /** Output of a coder step (S2/S5). 0 commits ⇒ committed:false (not a miss). */
 /**
- * One finding the coder-fix worker legally refused (#677).
+ * One finding the coder-fix worker legally refused (#677 / #927).
  * Prefer another repair; when a finding cannot be fixed without overturning a
- * ratified AC/assertion, refuse that identity, fix the others, commit, and
- * continue to fresh re-review — never a global escalate / decision-gate park.
+ * ratified AC/assertion — or under one of the four legal refuse reasons —
+ * refuse that identity, fix the others, commit, and continue to judge
+ * re-adjudication — never a global escalate / decision-gate park.
+ *
+ * #927: optional `reason` + `evidence` are opaque cargo for the judge
+ * (tokens from LEGAL_REFUSE_REASONS). Runner never routes on these fields.
  */
 export interface ReviewFixRefuseRecord {
   readonly identityKey: string;
   readonly finding: string;
   readonly acceptanceCriterion: string;
   readonly conflictReason: string;
+  /**
+   * #927 four-reason token (`unconstitutional` / `over_defense` /
+   * `not_established` / `scope_creep`) — opaque cargo; judge re-adjudicates.
+   */
+  readonly reason?: string;
+  /** #927 evidence prose for the judge — opaque cargo. */
+  readonly evidence?: string;
 }
 
 export interface CoderOutput {
@@ -308,12 +319,15 @@ export interface CoderOutput {
   readonly committed: boolean;
   readonly commitsAdded: number;
   /**
-   * #677 legal refuse: identity keys the coder-fix worker declined to adopt
-   * (AC/assertion conflict). Valid with a commit that fixes the other findings;
-   * runner threads these to S6 fresh re-review — not escalate/park.
+   * #677 / #927 legal refuse: identity keys the coder-fix worker declined
+   * (envelope traffic). Runner threads these to S6 judge re-adjudicate —
+   * not escalate/park; never burns multi-iter waiting for a completion signal.
    */
   readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
-  /** #677 refuse detail records paired with {@link refusedFindingIdentityKeys}. */
+  /**
+   * Opaque refuse cargo (#677 AC-conflict detail + #927 four-reason/evidence).
+   * Paired with {@link refusedFindingIdentityKeys}; runner transports only.
+   */
   readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Any agent step may signal it is stuck (route() reads this first). */
   readonly escalate?: Escalation;
@@ -355,7 +369,7 @@ export interface JudgeResult {
   readonly status: JudgeVerdictStatus;
   /** Present on continue: kill + live rows (schema-fixed). */
   readonly findingDispositions?: ReadonlyArray<JudgeFindingDisposition>;
-  /** Optional continue suggestion to switch coder roster entry (#926 consumes). */
+  /** Optional continue suggestion to switch coder roster entry (#926 executes). */
   readonly advanceCoder?: string;
   /** Opaque findings cargo for S5 landing (filtered to live keys by runner). */
   readonly findings?: ReadonlyArray<Finding>;
@@ -502,6 +516,36 @@ export interface RouteDegradedEvent {
   readonly reason: string;
 }
 
+/**
+ * #926 — judge `advanceCoder` executed: coder slot switched; prior session retired.
+ * `fromModelId` / `toModelId` are runnable slugs (or the pre-switch seat token).
+ */
+export interface CoderAdvanceEvent {
+  readonly event: "coder_advance";
+  readonly fromModelId: string;
+  readonly toModelId: string;
+  /** Original judge suggestion token (id / alias / slug). */
+  readonly state_summary?: string;
+  readonly ts: string;
+}
+
+/**
+ * #926 — judge `advanceCoder` target unusable: stay on the current coder.
+ * Never a terminal — result returns to the judge desk on the normal continue path.
+ */
+export interface CoderAdvanceStayPutEvent {
+  readonly event: "coder_advance_stay_put";
+  /** Why the advance was refused (`unknown_target`, …). */
+  readonly reason: string;
+  /** Current coder seat (unchanged). */
+  readonly fromModelId: string;
+  /** Same as from — stay-put does not move. */
+  readonly toModelId: string;
+  /** Original judge suggestion (audit). */
+  readonly state_summary?: string;
+  readonly ts: string;
+}
+
 export type LedgerBookkeepingEvent =
   | EscalationAnswerEvent
   | ContinueFixingEvent
@@ -509,7 +553,9 @@ export type LedgerBookkeepingEvent =
   | RelayBatonHandoffEvent
   | WorkerMonitorSpawnedEvent
   | MechanicalRedispatchAttemptEvent
-  | RouteDegradedEvent;
+  | RouteDegradedEvent
+  | CoderAdvanceEvent
+  | CoderAdvanceStayPutEvent;
 
 /**
  * The structured output of any worker step.
@@ -806,10 +852,15 @@ export interface WorkerLandingPayload {
   /** #677 mechanical signal; reviewer must trace the assertion to authority. */
   readonly preexistingAssertionTouched?: boolean;
   /**
-   * #677 legal refuse keys from the prior S5 coder-fix commit — still-active
-   * findings the fixer declined; fresh re-review must adjudicate them.
+   * #677 / #927 legal refuse keys from the prior S5 coder-fix commit —
+   * still-active findings the fixer declined; S6 judge re-adjudicates them.
    */
   readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
+  /**
+   * #927 opaque refuse cargo (four reasons + evidence / #677 AC detail) for
+   * the judge. Runner transports only — never validates reason tokens.
+   */
+  readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
   /** Family online review workers: paginated bot/thread snapshot. */
   readonly onlineReviewSnapshot?: OnlineReviewLandingSnapshot;
   /** Family PR delivery metadata threaded into the review loop. */
@@ -932,8 +983,10 @@ export interface DispatchContext {
   /** #677 runner fact only, never a content verdict. */
   readonly preexistingAssertionTouched?: boolean;
   /**
-   * #677 legal refuse keys from S5 — thin identity list for S6 re-review
-   * (runner does not park; fresh reviewer adjudicates still-active refuses).
+   * #677 / #927 legal refuse keys from S5 — thin identity list for S6
+   * judge re-adjudicate (runner does not park or read refuse cargo prose).
+   * Opaque refuseRecords prose rides only on {@link WorkerLandingPayload}
+   * (信封宪法 — thin ctx is traffic keys only).
    */
   readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
   /**
