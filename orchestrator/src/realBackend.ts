@@ -68,7 +68,7 @@ import {
 } from "./lastTaggedJson.js";
 import {
   classifyDecisionGate,
-  decisionGateOutput,
+  coderReceiptOutput,
   decodeReviewerOpenCountReceipt,
   isReceiptRecoveryFailure,
   logAndRethrowReceiptFailure,
@@ -76,6 +76,11 @@ import {
   workerReceiptOutput,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
+import {
+  CODER_RECEIPT_TAG,
+  coderStationReceiptSchema,
+  decodeCoderEnvelope,
+} from "./stationReceiptContracts.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
@@ -271,6 +276,7 @@ import type {
   IssueSnapshotMeta,
   PersistentLedgerEntry,
   ResumeState,
+  ReviewFixRefuseRecord,
   StepId,
   StepOutput,
   StepResult,
@@ -1341,6 +1347,36 @@ export function coderCargoFields(body: unknown): {
       receipt.commitsAdded >= 0
         ? receipt.commitsAdded
         : 0,
+  };
+}
+
+/**
+ * Opaque refuse cargo siblings (#677 / #924). Traffic `refusedFindingIdentityKeys`
+ * live on the T2 envelope; detail records stay cargo and are never SO-validated.
+ */
+export function coderRefuseCargoFields(body: unknown): {
+  readonly refusedFindingIdentityKeys?: ReadonlyArray<string>;
+  readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
+} {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return {};
+  }
+  const receipt = body as Record<string, unknown>;
+  const keys = Array.isArray(receipt.refusedFindingIdentityKeys)
+    ? receipt.refusedFindingIdentityKeys.filter(
+        (k): k is string => typeof k === "string" && k.trim().length > 0,
+      )
+    : undefined;
+  const records = Array.isArray(receipt.refuseRecords)
+    ? (receipt.refuseRecords as ReviewFixRefuseRecord[])
+    : undefined;
+  return {
+    ...(keys !== undefined && keys.length > 0
+      ? { refusedFindingIdentityKeys: keys }
+      : {}),
+    ...(records !== undefined && records.length > 0
+      ? { refuseRecords: records }
+      : {}),
   };
 }
 
@@ -2871,18 +2907,18 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Typed Sandcastle output for ADR 0131 traffic signals (#899):
+   * Typed Sandcastle output for ADR 0131 / #924 traffic signals:
    * - reviewer: open-count receipt on the `review` tag (`findingsCount` + optional bell)
-   * - coder: always-emitted {@link decisionGateOutput} on the dedicated `decision`
-   *   tag so ordinary `<coder>` cargo stays outside Output.object (missing /
-   *   malformed cargo never forces SO re-ask; ADR 0131).
+   * - coder: T2 station receipt on {@link CODER_RECEIPT_TAG} (`completed|refused|escalate`
+   *   traffic; cargo siblings passthrough — #924 replaces dedicated decision-gate tag
+   *   for single-slice coder seats).
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     if (spec.role === "reviewer") {
       return workerReceiptOutput("review", workerReceiptSchema());
     }
     if (spec.role === "coder") {
-      return decisionGateOutput();
+      return coderReceiptOutput(coderStationReceiptSchema(), CODER_RECEIPT_TAG);
     }
     return undefined;
   }
@@ -2993,19 +3029,11 @@ export class RealBackend implements Backend {
   ): StepOutput {
     // Fate from typed signal only. Cargo may ride along for enrichment but
     // never supplies escalate / findingsCount when typed was the seat policy.
+    if (spec.role === "coder") {
+      return this.decodeCoderStationOutput(spec, raw, cargo);
+    }
     const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
     if (gate.kind === "bell") {
-      if (spec.role === "coder") {
-        // Escalate is orthogonal to commit cargo (#384 / #899): preserve real
-        // committed/commitsAdded from the cargo channel (or legacy combined raw).
-        const fields = coderCargoFields(cargo !== undefined ? cargo : raw);
-        return {
-          kind: "coder",
-          committed: fields.committed,
-          commitsAdded: fields.commitsAdded,
-          escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
-        };
-      }
       return {
         kind: "reviewer",
         findings: [],
@@ -3035,10 +3063,59 @@ export class RealBackend implements Backend {
       }
       return decoded;
     }
-    // Coder: decision signal may be `{}` (no gate). Cargo comes from the
-    // ordinary `<coder>` tag / sidecar — never re-read escalate from cargo.
-    if (spec.role === "coder") {
-      const fields = coderCargoFields(cargo !== undefined ? cargo : raw);
+
+    // Family endgame roles are dispatched by RealFamilyBackend, never here.
+    throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
+  }
+
+  /**
+   * #924 — decode a T2 coder station receipt into {@link CoderOutput}.
+   * Traffic (status / refuse keys / escalate reason) from the envelope only;
+   * committed / commitsAdded / refuseRecords from cargo siblings or the cargo
+   * channel. Cargo must never invent or override traffic refuse keys.
+   * Illegal envelope after SO validation throws for #598 redispatch.
+   */
+  private decodeCoderStationOutput(
+    spec: StepSpec,
+    raw: unknown,
+    cargo?: unknown,
+  ): StepOutput {
+    const body = cargo !== undefined ? cargo : raw;
+    const fields = coderCargoFields(body);
+    // Opaque refuseRecords may live on cargo or as SO passthrough siblings on raw.
+    const refuseRecords =
+      coderRefuseCargoFields(body).refuseRecords ??
+      coderRefuseCargoFields(raw).refuseRecords;
+    const refuseRecordsExtra =
+      refuseRecords !== undefined ? { refuseRecords } : {};
+
+    // Prefer T2 station envelope when present (production SO path).
+    const envelope = decodeCoderEnvelope(raw);
+    if (envelope.ok) {
+      if (envelope.value.status === "escalate") {
+        // Escalate is orthogonal to commit cargo; refuse traffic is a different
+        // status — do not smuggle refusedFindingIdentityKeys onto a bell.
+        return {
+          kind: "coder",
+          committed: fields.committed,
+          commitsAdded: fields.commitsAdded,
+          escalate: {
+            reason: envelope.value.reason,
+            diagnosis: envelope.value.diagnosis,
+          },
+        };
+      }
+      if (envelope.value.status === "refused") {
+        // Envelope keys are the sole traffic source (never overwritten by cargo).
+        return {
+          kind: "coder",
+          committed: fields.committed,
+          commitsAdded: fields.commitsAdded,
+          refusedFindingIdentityKeys: envelope.value.refusedFindingIdentityKeys,
+          ...refuseRecordsExtra,
+        };
+      }
+      // completed — refuse keys are traffic for status:"refused" only.
       return {
         kind: "coder",
         committed: fields.committed,
@@ -3046,8 +3123,41 @@ export class RealBackend implements Backend {
       };
     }
 
-    // Family endgame roles are dispatched by RealFamilyBackend, never here.
-    throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
+    // Legacy dual-channel fallback: dedicated decision-gate `{}` / `{escalate}`
+    // payloads that pre-date #924 (tests / residual cargo). Not a production SO
+    // accept path — production attaches coderStationReceiptSchema.
+    // #677 residual: refuse keys may still ride on the cargo channel here.
+    const refuseExtras = coderRefuseCargoFields(body);
+    const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
+    if (gate.kind === "bell") {
+      return {
+        kind: "coder",
+        committed: fields.committed,
+        commitsAdded: fields.commitsAdded,
+        escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
+        ...refuseExtras,
+      };
+    }
+    if (
+      raw !== null &&
+      typeof raw === "object" &&
+      !Array.isArray(raw) &&
+      Object.keys(raw as object).length === 0
+    ) {
+      // Strict empty `{}` was the #899 no-gate decision signal.
+      return {
+        kind: "coder",
+        committed: fields.committed,
+        commitsAdded: fields.commitsAdded,
+        ...refuseExtras,
+      };
+    }
+
+    // Unusable coder paper after typed policy: fail the Action for #598 rather
+    // than invent a completed seat.
+    throw new Error(
+      `${spec.id}-coder: illegal coder station receipt: ${envelope.reason}`,
+    );
   }
 
   // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns
@@ -3093,9 +3203,9 @@ export class RealBackend implements Backend {
       completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: traffic signals attach Output.object(+maxRetries). Reviewer uses
-      // open-count schema; coder uses dedicated decision-gate tag so ordinary
-      // `<coder>` cargo stays outside SO (no cargo-shape re-ask).
+      // #899/#924: traffic signals attach Output.object(+maxRetries). Reviewer
+      // uses open-count schema; coder uses T2 station-receipt schema (cargo
+      // siblings passthrough — no cargo-shape re-ask).
       ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.
