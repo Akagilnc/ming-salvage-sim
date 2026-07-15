@@ -21,11 +21,12 @@ The `<fixer>` outcome remains only the JSON envelope defined below.
 ## Output
 
 Always emit `<decision>{}</decision>` (or with `escalate`) before the role cargo tag.
+When `$ORCHESTRATOR_OUTCOME_PATH` is set, write the same cargo JSON object
+directly to that path (sidecar is cargo transport for the runner). Also emit
+`<fixer>` cargo JSON:
 
-
-Emit `<fixer>` JSON:
-
-For optional telemetry, you may print FIXER_STEP_COMPLETE on its own final line.
+On the final multi-iter step you MUST print FIXER_STEP_COMPLETE on its own
+final line (sandcastle iteration terminator — not optional telemetry).
 
 ```json
 {"committed": true, "fixCommitSha": "<the-commit-sha-you-just-made>"}

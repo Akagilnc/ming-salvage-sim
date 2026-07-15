@@ -32,7 +32,12 @@ import {
   RealFamilyBackend,
   type RealFamilyBackendOptions,
 } from "../../../src/family/realFamilyBackend.js";
-import { SANDBOX_CODEX_DIR, SANDBOX_SOUL_ENV, SPAWNED_WORKER_ENV } from "../../../src/realBackend.js";
+import {
+  SANDBOX_AGY_DIR,
+  SANDBOX_CODEX_DIR,
+  SANDBOX_SOUL_ENV,
+  SPAWNED_WORKER_ENV,
+} from "../../../src/realBackend.js";
 import type { ConflictResolveRequest } from "../../../src/family/types.js";
 
 const here = join(import.meta.dirname ?? ".", "..", "..", "..", "prompts");
@@ -159,6 +164,70 @@ describe("integ-cmr int-r2 A-1 — mergerSandboxConfig wires CLAUDE_CODE_OAUTH_T
     const be = new CfgBackend(baseOpts());
     const cfg = be.cfg({ claudeToken: "merger-tok-xyz", codexAuthDir: "/tmp/merger-codex-auth" });
     expect(cfg.mounts.some((m) => m.sandboxPath === SANDBOX_CODEX_DIR)).toBe(false);
+  });
+
+  it("N3: mounts agy OAuth dir when provisioned (shared SANDBOX_AGY_DIR seam)", () => {
+    const be = new CfgBackend(baseOpts());
+    const cfg = be.cfg({
+      claudeToken: "merger-tok-xyz",
+      agyDir: "/tmp/merger-agy-auth",
+    });
+    expect(cfg.mounts).toContainEqual({
+      hostPath: "/tmp/merger-agy-auth",
+      sandboxPath: SANDBOX_AGY_DIR,
+    });
+  });
+});
+
+describe("correctness N3 — merger agy mount + fail-closed", () => {
+  class AuthBackend extends RealFamilyBackend {
+    public auth(): MergerAuth {
+      return this.mountMergerAuth();
+    }
+    public cfg(auth: MergerAuth) {
+      return this.mergerSandboxConfig(auth);
+    }
+    public run(req: ConflictResolveRequest) {
+      return this.runMergerAgent(req);
+    }
+    protected override mergerSandbox(): never {
+      throw new Error("mergerSandbox should not run when preflight fails");
+    }
+    protected override sh(file: string, args: string[]): string {
+      if (file === "git" && args[0] === "rev-parse") return "stub-sha";
+      return "";
+    }
+    protected override mergeInProgress(): boolean {
+      return false;
+    }
+  }
+
+  it("mountMergerAuth provisions agy dir when host token is present", () => {
+    const home = mkDir("merger-agy-home-");
+    writeFileSync(join(home, ".sc-agy-oauth-token"), "agy-oauth-secret\n");
+    writeFileSync(join(home, ".sc-claude-token"), "claude-tok\n");
+    const be = new AuthBackend(baseOpts({ home }));
+    const auth = be.auth();
+    expect(auth.agyDir).toBeTruthy();
+    expect(
+      readFileSync(join(auth.agyDir as string, "antigravity-oauth-token"), "utf8"),
+    ).toContain("agy-oauth-secret");
+    expect(be.cfg(auth).mounts.some((m) => m.sandboxPath === SANDBOX_AGY_DIR)).toBe(
+      true,
+    );
+  });
+
+  it("runMergerAgent fail-closes when merger family is agy and OAuth is absent", async () => {
+    // Force merger slot to the registry agy slug without provisioning token.
+    vi.stubEnv("ORCHESTRATOR_MERGER_MODEL", "agy");
+    const emptyHome = mkDir("merger-agy-empty-");
+    const be = new AuthBackend(baseOpts({ home: emptyHome }));
+    const outcome = await be.run({
+      childIssue: 1,
+      childBranch: "feat/1",
+    });
+    expect(outcome.resolved).toBe(false);
+    expect(outcome.reason).toMatch(/agy OAuth|agy-family|provisionAgyAuthDir/i);
   });
 });
 

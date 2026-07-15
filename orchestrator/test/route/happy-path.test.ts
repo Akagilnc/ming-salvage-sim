@@ -125,7 +125,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       override async smokeModelRoute(route: any) {
         const { smokeRouteModels } = await import("../../src/modelRoutes.js");
         return smokeRouteModels(route, async ({ slug }) => {
-          if (slug === "agy") throw new Error("opencode unavailable");
+          if (slug === "agy") throw new Error("agy unavailable");
           return { cliVersion: "test" };
         });
       }
@@ -136,7 +136,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
       step: "S0",
       event: "route_degraded",
       droppedLeg: "agy",
-      reason: "opencode unavailable",
+      reason: "agy unavailable",
     }));
   });
 

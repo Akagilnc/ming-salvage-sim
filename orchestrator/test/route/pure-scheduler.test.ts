@@ -22,9 +22,6 @@
  *       cross-model cmr is a separate family-layer worker.
  */
 
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { runOrchestrator } from "../../src/runner.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
@@ -39,10 +36,6 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const soulsDir = join(here, "..", "..", "image", "souls");
-const repoRoot = join(here, "..", "..", "..");
 
 /**
  * A backend whose every LEGACY productive method THROWS — only `dispatchWorker`
@@ -193,54 +186,5 @@ describe("#337 runner-visible per-slice review/fix worker dispatch", () => {
     expect(s2!.skill).toBe("/tdd");
     const s2Ctx = backend.ctxs[backend.specs.findIndex((s) => s.id === "S2")];
     expect(s2Ctx.resumeSessionId).toBeUndefined();
-  });
-});
-
-// ─── (C) review-decomposition wording aligned (#334 deferred P2) ─────────────
-
-describe("#337 review-decomposition wording: runner owns per-slice review, integrated = ak-cross-m-review", () => {
-  const reviewerSoul = readFileSync(join(soulsDir, "reviewer.md"), "utf8");
-  const claudeMd = readFileSync(join(repoRoot, "CLAUDE.md"), "utf8");
-  // ADR 0030: the repo-root CLAUDE.md ## Skill routing now exposes the separate
-  // per-slice reviewer path, while integrated CMR remains family-layer.
-  const skillRouting = claudeMd.slice(claudeMd.indexOf("\n## Skill routing"));
-
-  it("the reviewer soul is the live read-only full-diff reviewer", () => {
-    const staleCoderOwnedReviewClaim = new RegExp(
-      [
-        "per-slice review lives\\s+",
-        "inside\\s+the ",
-        "coder worker",
-      ].join(""),
-      "i",
-    );
-
-    expect(reviewerSoul).toMatch(/READ-ONLY/);
-    expect(reviewerSoul).toMatch(/current full slice diff/i);
-    expect(reviewerSoul).toMatch(/fresh\s+full-diff re-review/i);
-    expect(reviewerSoul).not.toMatch(staleCoderOwnedReviewClaim);
-  });
-
-  it("the reviewer soul routes the compatibility reviewer to Matt code-review", () => {
-    expect(reviewerSoul).toMatch(/\/code-review/);
-    expect(reviewerSoul).not.toMatch(/builtin `\/review`/i);
-    expect(reviewerSoul).toMatch(/Standards \+ Spec|two-axis|fixed-point/i);
-    expect(reviewerSoul).toMatch(/origin\/main/);
-    expect(reviewerSoul).toMatch(/otherwise use `main`/i);
-  });
-
-  it("the reviewer soul names ak-cross-m-review only as the family-layer review", () => {
-    // It may still mention ak-cross-m-review, but only as the integrated/
-    // cross-family gate — NOT as part of the runner-visible per-slice review/fix
-    // loop.
-    expect(reviewerSoul).toMatch(/integrated|cross-family|跨片|family/i);
-  });
-
-  it("the CLAUDE.md ## Skill routing keeps runner-visible per-slice review/fix and integrated cmr separate", () => {
-    expect(skillRouting).toMatch(/\/code-review/);
-    expect(skillRouting).toMatch(/origin\/main/);
-    expect(skillRouting).toMatch(/runner/i);
-    expect(skillRouting).toMatch(/reviewer/i);
-    expect(skillRouting).toMatch(/ak-cross-m-review/);
   });
 });

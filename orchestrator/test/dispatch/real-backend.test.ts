@@ -48,8 +48,6 @@ import {
   modelIdForSlug,
   modelFamilyForSlug,
   modelIsStrongLeg,
-  opencodeAuthMount,
-  applyUniformCredentialProvisioning,
   parseBlockedBy,
   parseSubIssueCount,
   promptsDirError,
@@ -61,7 +59,6 @@ import {
   RealBackend,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
-  SANDBOX_OPENCODE_AUTH_FILE,
   SANDBOX_SKILLS_DIR,
   SNAPSHOT_FILENAME,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
@@ -747,26 +744,24 @@ describe("realBackend modelIdForSlug", () => {
 // ─── resolveModelSlug (data-driven slug → backend registry) ──────────────────
 
 describe("realBackend resolveModelSlug", () => {
-  it("pins the OpenCode Grok routes to the live Grok 4.5 model", () => {
-    expect(resolveModelSlug("opencode-grok")).toEqual({
-      provider: "opencode",
-      model: "grok-4.5",
-    });
+  it("#905: agy is real agy CLI; grok-4.5 is SuperGrok; opencode slugs gone", () => {
     expect(resolveModelSlug("agy")).toEqual({
-      provider: "opencode",
+      provider: "agy",
+      model: "",
+    });
+    expect(resolveModelSlug("grok-4.5")).toEqual({
+      provider: "grok",
       model: "grok-4.5",
     });
-    expect(resolveModelSlug("glm-5.2")).toEqual({
-      provider: "opencode",
-      model: "opencode-go/glm-5.2",
-    });
+    expect(() => resolveModelSlug("opencode-grok")).toThrow(/unknown model slug/);
+    expect(() => resolveModelSlug("glm-5.2")).toThrow(/unknown model slug/);
   });
 
-  it("declares the provider factories the registry can target (incl. #807 grok)", () => {
+  it("declares the provider factories the registry can target (incl. #807 grok, #905 agy)", () => {
     expect(SUPPORTED_MODEL_PROVIDER_FACTORIES).toEqual([
       "claudeCode",
       "codex",
-      "opencode",
+      "agy",
       "copilot",
       "cursor",
       "pi",
@@ -811,46 +806,6 @@ describe("realBackend resolveModelSlug", () => {
 
   it("fails closed for unknown model slugs", () => {
     expect(() => resolveModelSlug("gpt")).toThrow(/unknown model slug/);
-  });
-});
-
-describe("#420 OpenCode runtime auth", () => {
-  it("mounts only auth.json read-only, leaving SQLite state container-local", () => {
-    expect(opencodeAuthMount("/home/dev")).toEqual({
-      hostPath: "/home/dev/.local/share/opencode/auth.json",
-      sandboxPath: SANDBOX_OPENCODE_AUTH_FILE,
-      readonly: true,
-    });
-  });
-
-  describe("uniform dispatch credential provisioning", () => {
-  const authFile = join(tmpdir(), "dispatch-opencode-auth.json");
-
-  afterEach(() => {
-    rmSync(authFile, { force: true });
-    vi.unstubAllEnvs();
-  });
-
-  it("injects every available credential without inspecting its contents", () => {
-    vi.stubEnv("GLM_KEY", "glm-secret");
-    writeFileSync(authFile, JSON.stringify({ "opencode-go": { type: "oauth" } }));
-    const env: Record<string, string> = {};
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-    applyUniformCredentialProvisioning({ env, mounts, opencodeAuthFile: authFile });
-    expect(env.GLM_KEY).toBe("glm-secret");
-    expect(mounts).toContainEqual({
-      hostPath: authFile, sandboxPath: SANDBOX_OPENCODE_AUTH_FILE, readonly: true,
-    });
-  });
-
-  it("tolerates absent optional credentials and leaves provisioning empty", () => {
-    vi.stubEnv("GLM_KEY", undefined);
-    const env: Record<string, string> = {};
-    const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
-    expect(() => applyUniformCredentialProvisioning({ env, mounts })).not.toThrow();
-    expect(env).toEqual({});
-    expect(mounts).toEqual([]);
-  });
   });
 });
 
@@ -1070,11 +1025,12 @@ describe("realBackend soulsDirError (#372)", () => {
 
   it("dir-exists-but-missing-souls throws with the missing filenames", () => {
     // dir exists but points at wrong/incomplete set (e.g. image/ instead of image/souls,
-    // or partial checkout missing reviewer.md / output_protocol.md etc).
-    const err = soulsDirError(abs, true, true, ["reviewer.md", "output_protocol.md"]);
+    // or partial checkout missing reviewer.md / verify.md etc).
+    const err = soulsDirError(abs, true, true, ["reviewer.md", "verify.md"]);
     expect(err).toMatch(/missing required soul file\(s\)/);
     expect(err).toMatch(/reviewer\.md/);
-    expect(err).toMatch(/output_protocol\.md/);
+    expect(err).toMatch(/verify\.md/);
+    expect(err).not.toMatch(/output_protocol\.md/);
     expect(err).toMatch(/All of \[/);
     expect(err).not.toMatch(/promptFile/); // distinct from prompts error
   });
@@ -1211,7 +1167,8 @@ describe("RealBackend construction validates promptsDir (F4)", () => {
       msg = String(e?.message ?? e);
     }
     expect(msg).toMatch(/cmr\.md/);
-    expect(msg).toMatch(/output_protocol\.md/);
+    expect(msg).toMatch(/verify\.md/);
+    expect(msg).not.toMatch(/output_protocol\.md/);
     expect(msg).toMatch(/All of \[/);
   });
 });

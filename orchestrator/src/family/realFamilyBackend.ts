@@ -86,13 +86,13 @@ import {
 } from "../modelRegistry.js";
 import {
   agentForSlug,
-  applyUniformCredentialProvisioning,
-  hostOpenCodeAuthFile,
   candidateBranches,
   lastSessionId,
   coderCargoFields,
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
+  appendAgyAuthMount,
+  provisionAgyAuthDir,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   soulForStep,
@@ -108,8 +108,22 @@ import {
   soulsMount,
   REQUIRED_SOUL_FILES,
   soulsDirError,
+  type AgentSandboxRunOptions,
+  type QuotaProbeRunContext,
   SANDBOX_FIX_FOCUS_PATH_ENV,
+  appendHomeEnvMount,
+  homeEnvFileFromSoulsDir,
+  provisionCodexHomeAgents,
 } from "../realBackend.js";
+import {
+  resolveSandboxIdleAfterQuotaProbe,
+  runPoolProbe,
+  withIdleQuotaProbeDisposition,
+  type HandleIdleThresholdResult,
+  type QuotaPoolId,
+  type QuotaProbeResult,
+} from "../quotaProbe.js";
+import { withMonitorStreamHeartbeat } from "../sandboxStreamHeartbeat.js";
 import {
   FIX_FOCUS_LANDING_FILE,
   attachSanitizedFindingFamilies,
@@ -141,7 +155,7 @@ import {
   extractLastTagBody,
   parseLastTaggedJsonSoft,
 } from "../lastTaggedJson.js";
-import { modelForSlot } from "../modelRoutes.js";
+import { modelForSlot, type ResolvedModelRoute } from "../modelRoutes.js";
 import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
@@ -207,20 +221,8 @@ export const FAMILY_LEDGER_FILENAME = "family-ledger.jsonl";
 /** Legacy durable escalate stuck-point filename, read for migration/back-compat. */
 export const FAMILY_ESCALATION_FILENAME = "family-escalations.jsonl";
 
-/**
- * Where the agy (antigravity / gemini) CLI reads its OAuth token + writes its
- * runtime config INSIDE the cmr worker container (#335 / #333 gotcha). The host
- * file `~/.sc-agy-oauth-token` is copied into a per-run dir mounted HERE as
- * `antigravity-oauth-token`. It is a WRITABLE dir (NOT read-only): the agy CLI
- * writes cache/log/state under its config dir, so a read-only mount would make the
- * agy cmr leg fail at startup and degrade the cmr to codex-only (the #333 spike's
- * agy leg only caught the injected bug WITH its file token mounted writable). The
- * path mirrors the host `~/.gemini/antigravity-cli/` exactly, the same
- * host-mirrored auth-mount pattern codex (`SANDBOX_CODEX_DIR`) uses.
- */
-export const SANDBOX_AGY_DIR = "/home/agent/.gemini/antigravity-cli";
-/** The agy OAuth token filename inside {@link SANDBOX_AGY_DIR}. */
-export const AGY_TOKEN_FILENAME = "antigravity-oauth-token";
+/** Re-export agy mount constants (canonical definitions live in realBackend). */
+export { SANDBOX_AGY_DIR, AGY_TOKEN_FILENAME } from "../realBackend.js";
 
 /**
  * The git-ignored cmr FOCUS file written into the family-base worktree (#335): it
@@ -321,6 +323,11 @@ export interface RealFamilyBackendOptions {
    * REQUIRED (souls no longer baked).
    */
   readonly soulsDir: string;
+  /**
+   * #911 — container home environment file (default: sibling image/home/CLAUDE.md).
+   * Live-mounted for Claude; content also replaces AGENTS.md in per-issue codex auth dirs.
+   */
+  readonly homeEnvFile?: string;
   /** The profile image (skills + CLIs baked in; souls mounted live #372) for the merger agent sandbox. */
   readonly imageName: string;
   /**
@@ -363,8 +370,8 @@ export const REFERENCED_FAMILY_PROMPT_FILES: ReadonlyArray<string> = [
 /** The merger agent's completion signal (matches prompts/merger_resolve_conflict.md). */
 const MERGER_COMPLETION_SIGNAL = "MERGER_STEP_COMPLETE";
 /** The merger resolver model slot, selected by the active route. */
-export function mergerModel(): string {
-  return modelForSlot("merger");
+export function mergerModel(route?: ResolvedModelRoute): string {
+  return route?.slots.merger ?? modelForSlot("merger");
 }
 
 /**
@@ -448,7 +455,7 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Fail loudly at construction if soulsDir missing or invalid or incomplete.
    * Souls are no longer baked (#372); an existing but wrong/incomplete dir
-   * (missing e.g. reviewer.md / output_protocol.md) would sail to runtime.
+   * (missing e.g. reviewer.md / verify.md) would sail to runtime.
    * Delegates to the pure {@link soulsDirError} from realBackend (single source;
    * identical messages for both backends).
    */
@@ -460,6 +467,14 @@ export class RealFamilyBackend implements FamilyBackend {
       : [];
     const err = soulsDirError(dir, isAbsolute(dir), dirExists, missing);
     if (err !== undefined) throw new Error(err);
+    const homeEnv = this.resolveHomeEnvFile();
+    // Fail-closed: path must be a regular file (directory would dual-mount as dir).
+    if (!existsSync(homeEnv) || !statSync(homeEnv).isFile()) {
+      throw new Error(
+        `RealFamilyBackend: home env file missing at "${homeEnv}" ` +
+          `(#911 dual-mount needs image/home/CLAUDE.md next to souls, or opts.homeEnvFile).`,
+      );
+    }
   }
 
   /**
@@ -504,15 +519,19 @@ export class RealFamilyBackend implements FamilyBackend {
   /** Typed provider gate shared by every family `sc.run` dispatch. */
   protected unavailableWorkerProviderAuth(
     spec: Pick<WorkerSpec, "model">,
-    auth: Pick<CmrAuth | ShipAuth, "claudeToken" | "grokAuthDir" | "providerAuth">,
+    auth: Pick<
+      CmrAuth | ShipAuth,
+      "claudeToken" | "grokAuthDir" | "agyDir" | "providerAuth"
+    >,
     ctx?: Pick<DispatchContext, "billingPool">,
-  ): "claude" | "grok" | undefined {
+  ): "claude" | "grok" | "agy" | undefined {
     const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
     return unavailableProviderAuth(
       resolveModelSlugForPool(spec.model, pool).provider,
       auth.providerAuth ?? {
         claude: auth.claudeToken !== undefined,
         grok: auth.grokAuthDir !== undefined,
+        agy: auth.agyDir !== undefined,
       },
     );
   }
@@ -833,7 +852,8 @@ export class RealFamilyBackend implements FamilyBackend {
     // the sandbox (no double-mount).
     const auth = this.mountMergerAuth();
     try {
-      if (modelFamilyForSlug(mergerModel()) === "claude" && auth.claudeToken === undefined) {
+      const model = mergerModel(req.modelRoute);
+      if (modelFamilyForSlug(model) === "claude" && auth.claudeToken === undefined) {
         return {
           resolved: false,
           reason:
@@ -845,9 +865,36 @@ export class RealFamilyBackend implements FamilyBackend {
             "semantics (a thrown sc.run startup error would surface as an opaque wave abort).",
         };
       }
+      // N3: agy-selected merger without OAuth is fail-closed (structured non-resolve).
+      if (modelFamilyForSlug(model) === "agy" && auth.agyDir === undefined) {
+        return {
+          resolved: false,
+          reason:
+            "merger worker cannot start without agy OAuth token — the merger slot is " +
+            "agy-family; host ~/.sc-agy-oauth-token must be provisioned into the " +
+            "sandbox (provisionAgyAuthDir). Without it the worker fails to start " +
+            "and never resolves; returning a structured non-resolve here keeps " +
+            "resolveMergeConflict's loud-throw semantics.",
+        };
+      }
+      // C5: merger=grok without SuperGrok creds is fail-closed (same N3 shape).
+      if (
+        modelFamilyForSlug(model) === "other" &&
+        model.startsWith("grok") &&
+        auth.grokAuthDir === undefined
+      ) {
+        return {
+          resolved: false,
+          reason:
+            "merger worker cannot start without SuperGrok auth — the merger slot is " +
+            "grok-family; host grok credentials must be provisioned into the " +
+            "sandbox (mountMergerAuth grokAuthDir). Without it the worker fails to " +
+            "start and never resolves; returning a structured non-resolve here keeps " +
+            "resolveMergeConflict's loud-throw semantics.",
+        };
+      }
       const outcomeLanding = this.prepareMergerOutcomeLanding();
       try {
-        const model = mergerModel();
         const telemetrySpec: WorkerSpec = {
           id: "S1",
           kind: "merge",
@@ -886,7 +933,7 @@ export class RealFamilyBackend implements FamilyBackend {
             name: `merger-resolve-${req.childIssue}`,
             idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
             cwd: this.opts.workingRepo,
-            sandbox: this.mergerSandbox(auth, outcomeLanding),
+            sandbox: this.mergerSandbox(auth, outcomeLanding, model),
             agent: agentForSlug(model),
             maxIterations: 1,
             completionSignal: MERGER_COMPLETION_SIGNAL,
@@ -894,6 +941,14 @@ export class RealFamilyBackend implements FamilyBackend {
             promptFile: join(this.opts.promptsDir, MERGER_CONFLICT_PROMPT),
             // #899: dedicated decision-gate tag; resolve cargo stays opaque.
             output: decisionGateOutput(),
+            // #909: same quota-probe context as single-slice runAgentSandbox.
+            // C3: step S1 maps to merger consume slot in familyRelaySlotsForWall.
+            quotaProbe: {
+              modelRef: model,
+              step: "S1",
+              worktreePath: this.opts.workingRepo,
+              issueNumber: req.childIssue,
+            },
           });
           // Output.object was attached: absent typed signal → #598, not cargo.
           const typed = requireTypedTrafficSignal(
@@ -921,7 +976,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.agyDir, auth.grokAuthDir]);
     }
   }
 
@@ -938,8 +993,9 @@ export class RealFamilyBackend implements FamilyBackend {
   protected mergerSandbox(
     auth: MergerAuth = this.mountMergerAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
+    modelSlug?: string,
   ): sc.SandboxProvider {
-    return docker(this.mergerSandboxConfig(auth, outcomeLanding));
+    return docker(this.mergerSandboxConfig(auth, outcomeLanding, modelSlug));
   }
 
   /**
@@ -961,6 +1017,8 @@ export class RealFamilyBackend implements FamilyBackend {
       copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
       chmodSync(join(tempCodexDir, "auth.json"), 0o600);
       writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
+      // #911: replace host AGENTS.md with container home environment body.
+      provisionCodexHomeAgents(tempCodexDir, this.resolveHomeEnvFile());
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ no codex mount. Reclaim the mkdtemp dir if it was
@@ -980,10 +1038,30 @@ export class RealFamilyBackend implements FamilyBackend {
       // claude token absent ⇒ the top-level merger worker degrades; the
       // runMergerAgent preflight returns a structured non-resolve.
     }
+    // N3: reuse shared agy OAuth seam (same as CMR/ship) so merger=agy can start.
+    const agyDir = provisionAgyAuthDir(home, root, "merger-agy-");
+    // C5: SuperGrok auth for merger=grok (same host mirror as CMR/ship).
+    let grokAuthDir: string | undefined;
+    let tempGrokDir: string | undefined;
+    try {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      tempGrokDir = mkdtempSync(join(root, "merger-grok-auth-"));
+      copyFileSync(
+        join(home, ".grok", "auth.json"),
+        join(tempGrokDir, "auth.json"),
+      );
+      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+      grokAuthDir = tempGrokDir;
+    } catch {
+      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+        rmSync(tempGrokDir, { recursive: true, force: true });
+      }
+    }
     return {
       codexAuthDir,
       claudeToken,
-      opencodeAuthFile: hostOpenCodeAuthFile(home),
+      agyDir,
+      grokAuthDir,
     };
   }
 
@@ -1016,11 +1094,13 @@ export class RealFamilyBackend implements FamilyBackend {
   protected mergerSandboxConfig(
     auth: MergerAuth,
     outcomeLanding?: { path: string; sandboxPath: string },
+    modelSlug?: string,
   ): {
     imageName: string;
     env: Record<string, string>;
     mounts: ReadonlyArray<{ hostPath: string; sandboxPath: string; readonly?: boolean }>;
   } {
+    const model = modelSlug ?? mergerModel();
     const env: Record<string, string> = { ...SPAWNED_WORKER_ENV, [SANDBOX_SOUL_ENV]: MERGER_SOUL };
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     if (outcomeLanding !== undefined) {
@@ -1029,15 +1109,16 @@ export class RealFamilyBackend implements FamilyBackend {
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [];
     if (
       auth.codexAuthDir !== undefined &&
-      modelFamilyForSlug(mergerModel()) === "codex"
+      modelFamilyForSlug(model) === "codex"
     ) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
-    applyUniformCredentialProvisioning({
-      env,
-      mounts,
-      opencodeAuthFile: auth.opencodeAuthFile,
-    });
+    // C5: SuperGrok auth mount when merger slot is grok-family.
+    if (auth.grokAuthDir !== undefined) {
+      mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
+    }
+    // N3: mount agy OAuth when provisioned (writable antigravity config dir).
+    appendAgyAuthMount(mounts, auth.agyDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -1047,12 +1128,19 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: souls mount live for merger worker (data files not baked).
     // Use shared helper (forces readonly:true, single hard-coded sandbox path).
     mounts.push(soulsMount(this.opts.soulsDir));
+    // #911: live-mount container home CLAUDE.md.
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return {
       imageName: this.opts.imageName,
       env,
       // #334: no skills mount — the baked image provides the merger skill.
       mounts,
     };
+  }
+
+  /** #911: container home CLAUDE.md (default sibling of soulsDir). */
+  protected resolveHomeEnvFile(): string {
+    return this.opts.homeEnvFile ?? homeEnvFileFromSoulsDir(this.opts.soulsDir);
   }
 
   /** Is a git merge in progress (MERGE_HEAD present)? */
@@ -1623,6 +1711,8 @@ export class RealFamilyBackend implements FamilyBackend {
             // cargo for cmrOutcomeFromResult; it is never a runner validation
             // gate or a second receipt parser.
             output: workerReceiptOutput("cmr", workerReceiptSchema()),
+            // #909: shared sandbox quota-probe (billing pool when relayed).
+            quotaProbe: this.familyQuotaProbeContext(spec, ctx),
           });
         } catch (err) {
           // #899: typed traffic-signal exhaust exits non-zero for #598; do not
@@ -1634,7 +1724,7 @@ export class RealFamilyBackend implements FamilyBackend {
         const typed = requireTypedTrafficSignal(
           (result as { readonly output?: unknown }).output,
           "family CMR",
-        );
+        )
         return withCmrSession(
           cmrOutcomeFromResult({
             ...result,
@@ -1653,10 +1743,88 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   // ADR 0131 removed the same-worker outcome rewrite ladder.
-  protected async runAgentSandbox(
+
+  /**
+   * Thin Sandcastle `sc.run` seam (parallel to {@link RealBackend.invokeSandcastleRun}).
+   * Unit tests override THIS method to fake container results while still
+   * exercising the shared #909 idle/quota wrap in {@link runAgentSandbox}.
+   */
+  protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    return await sc.run(options);
+    // #899 hotfix: same monitored-bridge liveness forwarding as the
+    // single-slice seam (see sandboxStreamHeartbeat.ts).
+    return await sc.run(withMonitorStreamHeartbeat(options));
+  }
+
+  /**
+   * Production family agent-sandbox entry (#909). Same shared idle → quota-probe
+   * disposition as single-slice {@link RealBackend.runAgentSandbox} via
+   * {@link withIdleQuotaProbeDisposition} — 429 parks (QuotaWaitForResetError),
+   * probe-ok/network rethrows idle (fail-safe hang). Do not re-clone the catch.
+   */
+  protected async runAgentSandbox(
+    options: AgentSandboxRunOptions,
+  ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+    const { quotaProbe, ...scOptions } = options;
+    return withIdleQuotaProbeDisposition({
+      quotaProbe,
+      run: () => this.invokeSandcastleRun(scOptions),
+      resolveIdle: (ctx) => this.resolveIdleAfterQuotaProbe(ctx),
+    });
+  }
+
+  /**
+   * #683/#909 idle disposition — same handleIdleThreshold composition as
+   * single-slice; durable park ledger is owned by the runner, not here.
+   */
+  protected async resolveIdleAfterQuotaProbe(
+    ctx: QuotaProbeRunContext,
+  ): Promise<HandleIdleThresholdResult> {
+    return resolveSandboxIdleAfterQuotaProbe({
+      modelRef: ctx.modelRef,
+      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
+      workerPid:
+        ctx.workerPid !== undefined && ctx.workerPid > 0 ? ctx.workerPid : 0,
+      runQuotaProbe: (pool) => this.runQuotaProbe(pool),
+      now: () => this.idleNow(),
+    });
+  }
+
+  /** Clock for wait-for-reset ledger `ts` (injectable via override in tests). */
+  protected idleNow(): Date {
+    return new Date();
+  }
+
+  /**
+   * Pool probe used after idle threshold (#683/#909). Default = real
+   * {@link runPoolProbe}; tests stub three outcomes.
+   */
+  protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
+    return runPoolProbe(pool);
+  }
+
+  /**
+   * Build the #909 quotaProbe context for a family productive worker.
+   * Prefer active billing pool (relay) when present — same rule as single-slice
+   * {@link RealBackend.handleMonitoredWorkerIdle}.
+   */
+  protected familyQuotaProbeContext(
+    spec: WorkerSpec,
+    ctx?: Pick<DispatchContext, "billingPool" | "familyIssue">,
+  ): QuotaProbeRunContext {
+    const modelRef =
+      ctx !== undefined && isBillingPoolDispatchId(ctx.billingPool)
+        ? ctx.billingPool
+        : spec.model;
+    return {
+      modelRef,
+      step: spec.id,
+      worktreePath: this.opts.workingRepo,
+      ...(ctx?.familyIssue !== undefined
+        ? { issueNumber: ctx.familyIssue }
+        : {}),
+    };
   }
 
   // ─────────────────────────── family coder-fix ───────────────────────────
@@ -1730,6 +1898,8 @@ export class RealFamilyBackend implements FamilyBackend {
             branchStrategy: { type: "head" },
             promptFile: join(this.opts.promptsDir, spec.promptFile),
             output: decisionGateOutput(),
+            // #909: shared sandbox quota-probe.
+            quotaProbe: this.familyQuotaProbeContext(spec, ctx),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -1748,7 +1918,7 @@ export class RealFamilyBackend implements FamilyBackend {
         }
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -1906,14 +2076,11 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyUniformCredentialProvisioning({
-      env,
-      mounts,
-      opencodeAuthFile: auth.opencodeAuthFile,
-    });
+    appendAgyAuthMount(mounts, auth.agyDir);
     // #372: mount souls live for family coder-fix worker.
     // Shared helper forces readonly:true.
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2050,6 +2217,8 @@ export class RealFamilyBackend implements FamilyBackend {
           branchStrategy: { type: "head" },
           promptFile: join(this.opts.promptsDir, spec.promptFile),
           output: decisionGateOutput(),
+          // #909: shared sandbox quota-probe.
+          quotaProbe: this.familyQuotaProbeContext(spec, ctx),
         });
         return this.familyReviewLoopResultFromRun(result, spec, outcomeLanding.path);
       } finally {
@@ -2062,7 +2231,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -2185,12 +2354,9 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyUniformCredentialProvisioning({
-      env,
-      mounts,
-      opencodeAuthFile: auth.opencodeAuthFile,
-    });
+    appendAgyAuthMount(mounts, auth.agyDir);
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2433,6 +2599,8 @@ export class RealFamilyBackend implements FamilyBackend {
       // The host config.toml is host-personal and irrelevant — only auth.json
       // crosses. Write the minimal container config (#378).
       writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
+      // #911: replace host AGENTS.md with container home environment body.
+      provisionCodexHomeAgents(tempCodexDir, this.resolveHomeEnvFile());
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
@@ -2460,29 +2628,8 @@ export class RealFamilyBackend implements FamilyBackend {
       }
     }
 
-    // agy OAuth token → a per-run WRITABLE dir mounted at the antigravity config
-    // path (the agy CLI writes cache/log under its config dir, so it must NOT be
-    // read-only — #333 gotcha).
-    let agyDir: string | undefined;
-    let tempAgyDir: string | undefined;
-    try {
-      // Per-INVOCATION unique dir (codex cmr R2): same concurrency hazard as the
-      // codex dir above — and the agy dir is mounted WRITABLE, so a shared path
-      // would also cross-talk runtime state between concurrent workers.
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempAgyDir = mkdtempSync(join(root, "cmr-agy-"));
-      copyFileSync(join(home, ".sc-agy-oauth-token"), join(tempAgyDir, AGY_TOKEN_FILENAME));
-      chmodSync(join(tempAgyDir, AGY_TOKEN_FILENAME), 0o600);
-      agyDir = tempAgyDir;
-    } catch {
-      // agy token absent ⇒ the agy leg degrades (no mount); cmr falls to the rest.
-      // Reclaim the mkdtemp dir if it was created before copy/chmod threw (online
-      // review r2, gemini): on the degrade path agyDir stays undefined, so the
-      // per-invocation dir would otherwise leak past the caller's finally cleanup.
-      if (agyDir === undefined && tempAgyDir !== undefined) {
-        rmSync(tempAgyDir, { recursive: true, force: true });
-      }
-    }
+    // agy OAuth token → shared seam (writable antigravity config dir — #333 gotcha).
+    const agyDir = provisionAgyAuthDir(home, root, "cmr-agy-");
 
     let claudeToken: string | undefined;
     try {
@@ -2503,10 +2650,13 @@ export class RealFamilyBackend implements FamilyBackend {
       codexAuthDir,
       agyDir,
       grokAuthDir,
-      opencodeAuthFile: hostOpenCodeAuthFile(home),
       claudeToken,
       ghToken: this.readGhToken(),
-      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+      providerAuth: {
+        claude: claudeToken !== undefined,
+        grok: grokAuthDir !== undefined,
+        agy: agyDir !== undefined,
+      },
     };
   }
 
@@ -2593,17 +2743,10 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.codexAuthDir !== undefined) {
       mounts.push({ hostPath: auth.codexAuthDir, sandboxPath: SANDBOX_CODEX_DIR });
     }
-    if (auth.agyDir !== undefined) {
-      mounts.push({ hostPath: auth.agyDir, sandboxPath: SANDBOX_AGY_DIR });
-    }
+    appendAgyAuthMount(mounts, auth.agyDir);
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyUniformCredentialProvisioning({
-      env,
-      mounts,
-      opencodeAuthFile: auth.opencodeAuthFile,
-    });
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -2613,6 +2756,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: souls mount live for integrated cmr worker (souls not baked).
     // Shared helper (single source for the mount + readonly:true).
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -2782,7 +2926,7 @@ export class RealFamilyBackend implements FamilyBackend {
         this.cleanupTempAuthDirs([join(outcomeLanding.path, "..")]);
       }
     } finally {
-      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir]);
+      this.cleanupTempAuthDirs([auth.codexAuthDir, auth.grokAuthDir, auth.agyDir]);
     }
   }
 
@@ -2796,10 +2940,11 @@ export class RealFamilyBackend implements FamilyBackend {
     spec: WorkerSpec,
     auth: ShipAuth = this.mountShipAuth(),
     outcomeLanding?: { path: string; sandboxPath: string },
-    ctx?: Pick<DispatchContext, "billingPool">,
+    ctx?: Pick<DispatchContext, "billingPool" | "familyIssue">,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    // Route through runAgentSandbox so tests can trap the launch options (same
-    // as coder/CMR/review-loop seats) without spying on Sandcastle ESM exports.
+    // #909: route ship through runAgentSandbox (not bare sc.run) so the shared
+    // idle → quota-probe wrap applies on the same seam as other family workers.
+    // Tests can trap launch options here without spying on Sandcastle ESM exports.
     return this.runAgentSandbox({
       name: "family-ship",
       idleTimeoutSeconds: WORKER_IDLE_TIMEOUT_SECONDS,
@@ -2816,6 +2961,7 @@ export class RealFamilyBackend implements FamilyBackend {
       promptFile: join(this.opts.promptsDir, spec.promptFile),
       // #899: dedicated decision-gate tag; PR/URL cargo stays on `<ship>` outside SO.
       output: decisionGateOutput(),
+      quotaProbe: this.familyQuotaProbeContext(spec, ctx),
     });
   }
 
@@ -2926,6 +3072,8 @@ export class RealFamilyBackend implements FamilyBackend {
       // bwrap is impossible). The host config.toml is host-personal and irrelevant
       // — only auth.json crosses. Write the minimal container config (#378).
       writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
+      // #911: replace host AGENTS.md with container home environment body.
+      provisionCodexHomeAgents(tempCodexDir, this.resolveHomeEnvFile());
       codexAuthDir = tempCodexDir;
     } catch {
       // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
@@ -2950,6 +3098,9 @@ export class RealFamilyBackend implements FamilyBackend {
         rmSync(tempGrokDir, { recursive: true, force: true });
       }
     }
+    // #905: agy OAuth for non-CMR sandboxes (ship / coder-fix / online-review) —
+    // reuse the same CMR seam so an agy-routed worker gets a real token mount.
+    const agyDir = provisionAgyAuthDir(home, root, "ship-agy-");
     let claudeToken: string | undefined;
     try {
       const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
@@ -2964,10 +3115,14 @@ export class RealFamilyBackend implements FamilyBackend {
     return {
       codexAuthDir,
       grokAuthDir,
-      opencodeAuthFile: hostOpenCodeAuthFile(home),
+      agyDir,
       claudeToken,
       ghToken: this.readGhToken(),
-      providerAuth: { claude: claudeToken !== undefined, grok: grokAuthDir !== undefined },
+      providerAuth: {
+        claude: claudeToken !== undefined,
+        grok: grokAuthDir !== undefined,
+        agy: agyDir !== undefined,
+      },
     };
   }
 
@@ -3028,11 +3183,7 @@ export class RealFamilyBackend implements FamilyBackend {
     if (auth.grokAuthDir !== undefined) {
       mounts.push({ hostPath: auth.grokAuthDir, sandboxPath: SANDBOX_GROK_DIR });
     }
-    applyUniformCredentialProvisioning({
-      env,
-      mounts,
-      opencodeAuthFile: auth.opencodeAuthFile,
-    });
+    appendAgyAuthMount(mounts, auth.agyDir);
     if (outcomeLanding !== undefined) {
       mounts.push({
         hostPath: outcomeLanding.path,
@@ -3042,6 +3193,7 @@ export class RealFamilyBackend implements FamilyBackend {
     // #372: souls mount live for family ship worker.
     // Shared helper forces readonly:true at every site.
     mounts.push(soulsMount(this.opts.soulsDir));
+    appendHomeEnvMount(mounts, this.resolveHomeEnvFile());
     return { imageName: this.opts.imageName, env, mounts };
   }
 
@@ -3243,7 +3395,6 @@ export interface CmrAuth {
   readonly agyDir?: string;
   /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
   readonly grokAuthDir?: string;
-  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3271,7 +3422,8 @@ export interface ShipAuth {
   readonly codexAuthDir?: string;
   /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
   readonly grokAuthDir?: string;
-  readonly opencodeAuthFile?: string;
+  /** Per-run agy OAuth dir (host-mirrored antigravity config), or undefined. */
+  readonly agyDir?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
   /**
@@ -3288,15 +3440,23 @@ export interface ShipAuth {
  * The merger worker's auth (integ-cmr int-r2 A-1). When the active route selects a
  * Claude-family merger slug, the claude OAuth token is its OWN auth
  * (LOAD-BEARING) — `runMergerAgent` preflights it and returns a structured
- * non-resolve when absent. The merger resolves + commits the merge in place
+ * non-resolve when absent. When the merger slot is agy, the OAuth dir is likewise
+ * load-bearing (N3: reuse provisionAgyAuthDir / appendAgyAuthMount; fail-closed
+ * without token). The merger resolves + commits the merge in place
  * (`branchStrategy:{type:"head"}`); it never pushes or opens a PR.
  */
 export interface MergerAuth {
   /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
   readonly codexAuthDir?: string;
-  readonly opencodeAuthFile?: string;
   /** The claude OAuth token (env var), or undefined if absent. */
   readonly claudeToken?: string;
+  /** Per-run agy OAuth dir (shared provisionAgyAuthDir seam), or undefined. */
+  readonly agyDir?: string;
+  /**
+   * C5 — per-run SuperGrok auth dir (same seam as CMR/ship), or undefined.
+   * Load-bearing when the merger slot is grok-family.
+   */
+  readonly grokAuthDir?: string;
 }
 
 /**

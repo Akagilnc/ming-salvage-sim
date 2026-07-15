@@ -9,8 +9,8 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  createGrokStreamParser,
   grokAgent,
-  parseGrokStreamLine,
   shellEscape,
 } from "../../src/grokAgent.js";
 import {
@@ -50,23 +50,80 @@ describe("#807 grokAgent AgentProvider", () => {
     expect(cmd.command).not.toContain("--resume");
   });
 
-  it("parses streaming-json text + end session events", () => {
-    expect(parseGrokStreamLine('{"type":"text","data":"OK"}')).toEqual([
-      { type: "text", text: "OK" },
-      { type: "result", result: "OK" },
+  it("emits text (not result) per chunk, then ONE accumulated result on end", () => {
+    // #899 hotfix regression: sandcastle's completion-signal check and
+    // result.stdout (coder-receipt extraction) read the LAST result event's
+    // payload. Per-chunk result events made that a last-chunk roulette — the
+    // receipt and CODER_STEP_COMPLETE lived in earlier chunks, so iterations
+    // never stopped and escalate cargo degraded to committed:false.
+    const parse = createGrokStreamParser();
+    expect(
+      parse('{"type":"text","data":"<coder>{\\"committed\\":false}</coder>\\n"}'),
+    ).toEqual([{ type: "text", text: '<coder>{"committed":false}</coder>\n' }]);
+    expect(parse('{"type":"text","data":"CODER_STEP_COMPLETE"}')).toEqual([
+      { type: "text", text: "CODER_STEP_COMPLETE" },
     ]);
     expect(
-      parseGrokStreamLine(
-        '{"type":"end","stopReason":"EndTurn","sessionId":"sess-1"}',
-      ),
-    ).toEqual([{ type: "session_id", sessionId: "sess-1" }]);
+      parse('{"type":"end","stopReason":"EndTurn","sessionId":"sess-1"}'),
+    ).toEqual([
+      { type: "session_id", sessionId: "sess-1" },
+      {
+        type: "result",
+        result: '<coder>{"committed":false}</coder>\nCODER_STEP_COMPLETE',
+      },
+    ]);
+  });
+
+  it("resets the accumulator after end, so a second iteration starts clean", () => {
+    const parse = createGrokStreamParser();
+    parse('{"type":"text","data":"iteration one"}');
+    parse('{"type":"end","sessionId":"sess-1"}');
+    parse('{"type":"text","data":"iteration two"}');
+    expect(parse('{"type":"end","sessionId":"sess-2"}')).toEqual([
+      { type: "session_id", sessionId: "sess-2" },
+      { type: "result", result: "iteration two" },
+    ]);
+  });
+
+  it("falls back to the end event's own text only when no chunks accumulated", () => {
+    const empty = createGrokStreamParser();
+    expect(empty('{"type":"end","sessionId":"s","text":"end-text"}')).toEqual([
+      { type: "session_id", sessionId: "s" },
+      { type: "result", result: "end-text" },
+    ]);
+
+    const buffered = createGrokStreamParser();
+    buffered('{"type":"text","data":"accumulated wins"}');
+    expect(
+      buffered('{"type":"end","sessionId":"s","text":"end-text"}'),
+    ).toEqual([
+      { type: "session_id", sessionId: "s" },
+      { type: "result", result: "accumulated wins" },
+    ]);
+  });
+
+  it("emits no result on an end with neither chunks nor text (raw-stdout fallback)", () => {
+    const parse = createGrokStreamParser();
+    expect(parse('{"type":"end","stopReason":"EndTurn"}')).toEqual([]);
+  });
+
+  it("gives each provider instance its own accumulator", () => {
+    const provider = grokAgent("grok-4.5");
+    const other = grokAgent("grok-4.5");
+    provider.parseStreamLine!('{"type":"text","data":"mine"}');
+    other.parseStreamLine!('{"type":"text","data":"theirs"}');
+    expect(
+      provider.parseStreamLine!('{"type":"end","sessionId":"a"}'),
+    ).toEqual([
+      { type: "session_id", sessionId: "a" },
+      { type: "result", result: "mine" },
+    ]);
   });
 
   it("maps run_terminal_cmd tool events to bash when present", () => {
+    const parse = createGrokStreamParser();
     expect(
-      parseGrokStreamLine(
-        '{"type":"tool_call","name":"run_terminal_cmd","args":"echo OK"}',
-      ),
+      parse('{"type":"tool_call","name":"run_terminal_cmd","args":"echo OK"}'),
     ).toEqual([{ type: "tool_call", name: "bash", args: "echo OK" }]);
   });
 
@@ -83,8 +140,8 @@ describe("#807 modelRegistry grok-build wiring", () => {
       provider: "grok",
       model: "grok-4.5",
     });
-    // Default registry alone stays on the cursor channel.
-    expect(resolveModelSlug("grok-4.5").provider).toBe("cursor");
+    // #905: default registry is SuperGrok CLI; no cursor transit.
+    expect(resolveModelSlug("grok-4.5").provider).toBe("grok");
   });
 
   it("agentForSlug(pool=grok-build) yields the grok CLI provider", () => {
@@ -97,8 +154,11 @@ describe("#807 grok bare-ping smoke wiring", () => {
   it("builds a one-shot grok CLI bare-ping argv (no docker/tool loop)", () => {
     const built = barePingArgv("grok", "grok-4.5", "Reply with exactly: nonce-807");
     expect(built.file).toBe("grok");
-    expect(built.args).toContain("-p");
-    expect(built.args).toContain("Reply with exactly: nonce-807");
+    // Same headless shape as grokAgent: prompt on stdin, not -p argv.
+    expect(built.args).toContain("--prompt-file");
+    expect(built.args).toContain("/dev/stdin");
+    expect(built.input).toBe("Reply with exactly: nonce-807");
+    expect(built.args).not.toContain("-p");
     expect(built.args).toContain("-m");
     expect(built.args).toContain("grok-4.5");
   });

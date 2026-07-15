@@ -14,9 +14,12 @@ PR URL, URL-decode `<encoded-branch>` first, then resolve the PR yourself with
 
 Always emit a typed `<decision>` signal first (`{}` when not escalating, or
 `{"escalate":{"reason":"...","diagnosis":"..."}}` when pressing a gate), then
-opaque `<verify>` cargo JSON. Shape of the cargo:
+opaque `<verify>` cargo JSON. When `$ORCHESTRATOR_OUTCOME_PATH` is set, write
+the same cargo JSON object directly to that path (sidecar is cargo transport).
+Shape of the cargo:
 
-For optional telemetry, you may print VERIFY_STEP_COMPLETE on its own final line.
+On the final multi-iter step you MUST print VERIFY_STEP_COMPLETE on its own
+final line (sandcastle iteration terminator — not optional telemetry).
 
 ```json
 {"converged": true}
