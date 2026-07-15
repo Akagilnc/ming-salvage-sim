@@ -12,4 +12,4 @@ worker 撞额度墙（#683 探针 429，带 `resetAt`）时三段式裁决：①
 
 ## Consequences
 
-#683 的 quota park 与 #686 的 relay 在同一处置点分叉：短窗口等待同一席位，长窗口沿固定顺序交棒，候选耗尽则保留现场并进入既有 decision gate；判据机械可测，不留模型自由裁量。
+Issue #683 的 quota park 与 #686 的 relay 在同一处置点分叉：短窗口等待同一席位，长窗口沿固定顺序交棒，候选耗尽则保留现场并进入既有 decision gate；判据机械可测，不留模型自由裁量。
