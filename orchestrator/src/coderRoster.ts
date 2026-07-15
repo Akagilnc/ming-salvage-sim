@@ -9,7 +9,8 @@
  * The orchestrator only READS that marking: markdown-strip → parse → filter to
  * this versioned roster → dispatch the first valid entry (sticky stay-put;
  * ADR 0132 / #919 CR). No round-threshold mechanical advance; judge
- * `advanceCoder` roster policy is #926. No runtime adaptive state machine.
+ * `advanceCoder` is executed by the runner via {@link resolveAdvanceCoderSuggestion}
+ * (#926) with stay-put when the target is unusable. No runtime adaptive state machine.
  */
 
 import type { Content, Root } from "mdast";
@@ -272,4 +273,72 @@ export function selectCoderRecEntry(
     );
   }
   return order[0]!;
+}
+
+/**
+ * #926 — pure policy for a judge `advanceCoder` suggestion.
+ *
+ * - Roster-valid target different from the active seat → `advanced`
+ * - Unknown / unregistered token → `stay_put` (runner must never exit)
+ * - Empty suggestion or already-active seat → `noop` (no ledger noise)
+ *
+ * Does not smoke, does not mutate routes — runner owns execution + audit.
+ */
+export type AdvanceCoderDecision =
+  | {
+      readonly kind: "advanced";
+      readonly entry: CoderRosterEntry;
+      readonly fromSlug: string;
+    }
+  | {
+      readonly kind: "stay_put";
+      readonly reason: "unknown_target";
+      readonly suggestion: string;
+      readonly currentSlug: string;
+    }
+  | {
+      readonly kind: "noop";
+      readonly reason: "already_active" | "empty_suggestion";
+      readonly currentSlug: string;
+    };
+
+export function resolveAdvanceCoderSuggestion(
+  suggestion: string,
+  currentCoderSlug: string,
+): AdvanceCoderDecision {
+  const trimmed = suggestion.trim();
+  if (trimmed.length === 0) {
+    return {
+      kind: "noop",
+      reason: "empty_suggestion",
+      currentSlug: currentCoderSlug,
+    };
+  }
+  const entry = lookupCoderRosterEntry(trimmed);
+  if (entry === undefined) {
+    return {
+      kind: "stay_put",
+      reason: "unknown_target",
+      suggestion: trimmed,
+      currentSlug: currentCoderSlug,
+    };
+  }
+  // Same seat via exact slug, id token, or roster alias of the current seat.
+  const currentEntry = lookupCoderRosterEntry(currentCoderSlug);
+  if (
+    entry.slug === currentCoderSlug ||
+    normalizeToken(entry.id) === normalizeToken(currentCoderSlug) ||
+    (currentEntry !== undefined && currentEntry.id === entry.id)
+  ) {
+    return {
+      kind: "noop",
+      reason: "already_active",
+      currentSlug: currentCoderSlug,
+    };
+  }
+  return {
+    kind: "advanced",
+    entry,
+    fromSlug: currentCoderSlug,
+  };
 }

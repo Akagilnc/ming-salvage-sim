@@ -1205,8 +1205,6 @@ export function soulForStep(
 export interface RunResultLike {
   readonly iterations: ReadonlyArray<{ readonly sessionId?: string }>;
   readonly commits: ReadonlyArray<{ readonly sha: string }>;
-  /** The completion signal observed by Sandcastle, if any. */
-  readonly completionSignal?: string;
 }
 
 /**
@@ -3254,11 +3252,12 @@ export class RealBackend implements Backend {
         effortForLiveOfficer(spec.model, spec),
         pool,
       ),
-      // #899 / ADR 0128: every selected seat is single-iteration (maxIter:1).
-      // Native SO re-asks (Output.object maxRetries) stay in-session and are
-      // not outer Sandcastle iterations. Hitting maxIter ends THE STEP normally.
+      // #899 / ADR 0128 / #928: every selected seat is single-iteration
+      // (maxIter:1). Sandcastle completionSignal forced off at
+      // invokeSandcastleRun (`[]` — omit falls back to default password).
+      // Completion is clean exit + typed envelope / sidecar. Native SO re-asks
+      // stay in-session.
       maxIterations: spec.maxIter,
-      completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
       // #899/#924/#925: traffic signals attach Output.object(+maxRetries).
@@ -3326,7 +3325,6 @@ export class RealBackend implements Backend {
         ),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
-        completionSignal: spec.completionSignal,
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
@@ -3417,7 +3415,18 @@ export class RealBackend implements Backend {
     // #899 hotfix: the #684 monitor only sees the bridge's stdout; forward
     // agent-stream liveness as a throttled heartbeat so healthy long steps
     // are not idle-killed (see sandboxStreamHeartbeat.ts).
-    return await sc.run(withMonitorStreamHeartbeat(options));
+    //
+    // #928: sandcastle defaults `completionSignal` to
+    // `"<promise>COMPLETE</promise>"` when the option is omitted
+    // (`DEFAULT_COMPLETION_SIGNAL` in @ai-hero/sandcastle). Empty array is the
+    // only API-supported disable — omit is NOT off. Production completion is
+    // clean process exit + legal sidecar / typed envelope, never a password.
+    return await sc.run(
+      withMonitorStreamHeartbeat({
+        ...options,
+        completionSignal: [],
+      }),
+    );
   }
 
   /**

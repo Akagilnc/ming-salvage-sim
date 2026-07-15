@@ -7,7 +7,8 @@
  * {@link dispatchMonitoredCliWorker}; the child re-enters `dispatchWorker` /
  * `dispatchFamilyWorker` with `ORCHESTRATOR_CLI_MONITOR_CHILD=1` so the hooks
  * short-circuit and the existing container seam does the work. The parent holds
- * the monitor handle (pid/log/pool/signal/instance) for hang judgment and kill.
+ * the monitor handle (pid/log/pool/instance) for hang judgment and kill.
+ * #928: completion is exit code + legal result sidecar — no completionSignal.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -153,7 +154,6 @@ export function buildCliMonitorSpawnSpec(input: {
     // pool. Monitoring must attribute the child to that active pool, not infer
     // it again from the model name.
     poolId: input.ctx.billingPool ?? poolIdForWorker(input.spec),
-    completionSignal: input.spec.completionSignal,
     stepId: input.spec.id,
     ...(input.ctx.worktree?.path !== undefined
       ? { cwd: input.ctx.worktree.path }
@@ -166,8 +166,10 @@ export function buildCliMonitorSpawnSpec(input: {
 
 /**
  * Map a finished monitored CLI child into a WorkerResult by reading the result
- * sidecar the bridge wrote. A missing sidecar is retry telemetry, not a
- * worker-outcome verdict.
+ * sidecar the bridge wrote.
+ *
+ * #928 / ADR 0131: completion requires clean exit **and** a legal sidecar.
+ * Exit 0 without a usable sidecar must not masquerade as `completed`.
  */
 export function workerResultFromMonitorSidecar(
   handle: WorkerMonitorHandle,
@@ -204,19 +206,11 @@ export function workerResultFromMonitorSidecar(
       if (isQuotaWaitForResetError(err)) {
         throw err;
       }
-      // fall through to exit-code mapping
+      // fall through to missing-sidecar mapping
     }
   }
 
-  if (exitCode === 0) {
-    return markMissingMonitorSidecarResult({
-      kind: "completed",
-      // Exit status owns process fate. This role-neutral placeholder carries no
-      // worker claim: coder/ship continue, while reviewer-shaped callers hand the
-      // raw log/sidecar pointers to the next fixer.
-      output: { kind: "coder", committed: false, commitsAdded: 0 },
-    });
-  }
+  // #928: no legal sidecar ⇒ not completed, even on exit 0.
   return markMissingMonitorSidecarResult({
     kind: "failed",
     reason:

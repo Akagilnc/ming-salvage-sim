@@ -120,13 +120,12 @@ describe("withMonitorStreamHeartbeat", () => {
     const options = {
       cwd: "/w",
       name: "S5-coder",
-      maxIterations: 5,
-      completionSignal: "CODER_STEP_COMPLETE",
+      maxIterations: 1,
     };
     const out = withMonitorStreamHeartbeat(options, h.deps);
-    expect(out.maxIterations).toBe(5);
-    expect(out.completionSignal).toBe("CODER_STEP_COMPLETE");
+    expect(out.maxIterations).toBe(1);
     expect(out.cwd).toBe("/w");
+    expect(out.name).toBe("S5-coder");
   });
 
   it("falls back to a generic name when the sandbox run is unnamed", () => {

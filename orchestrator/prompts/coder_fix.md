@@ -100,5 +100,5 @@ Rules:
 
 - Emit exactly one final `<coder>` envelope (last wins if you iterate).
 - `commitsAdded` equals the number of `git commit` commands in this worker run.
-- On the final step print `CODER_STEP_COMPLETE` on its own final line
-  (sandcastle iteration terminator — not optional telemetry).
+- This seat is single-iteration. Completion is clean exit + legal typed
+  envelope / sidecar — no STEP_COMPLETE password.
