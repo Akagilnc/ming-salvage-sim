@@ -79,8 +79,9 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
 
   it("child kind mismatch never decides redispatch or error fate", () => {
     const wrong = { kind: "coder", committed: false, commitsAdded: 0 } as const;
-    expect(route({ from: "S3", output: wrong })).toEqual({ kind: "next", step: "S4" });
-    expect(route({ from: "S6", output: wrong })).toEqual({ kind: "next", step: "S4" });
+    // #925: unusable S3/S6 envelope goes to fixer path (S5), never silent clean.
+    expect(route({ from: "S3", output: wrong })).toEqual({ kind: "next", step: "S5" });
+    expect(route({ from: "S6", output: wrong })).toEqual({ kind: "next", step: "S5" });
     expect(route({ from: "S4", output: wrong })).toEqual({ kind: "next", step: "S5" });
   });
 

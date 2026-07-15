@@ -988,7 +988,7 @@ class FixLoopBackend implements Backend {
   }
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
-    if (spec.role === "reviewer") return { kind: "reviewer", findings: [], findingsCount: 0 };
+    if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "reviewer", findings: [], findingsCount: 0 };
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
   async writeLedger(
@@ -1020,7 +1020,7 @@ class FixLoopBackend implements Backend {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       const result = this.opts.reviewerResults[this.reviewerAttempts];
       this.reviewerAttempts += 1;
       return (

@@ -617,7 +617,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         this.coderModels.push(spec.model);
         this.events.push(`dispatch:${spec.model}`);
       }
-      if (spec.role === "reviewer") {
+      if ((spec.role === "reviewer" || spec.role === "verify")) {
         return { kind: "reviewer", findings: [], findingsCount: 0 };
       }
       return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -640,7 +640,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         this.events.push(`dispatch:${spec.model}`);
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      if (spec.role === "reviewer") {
+      if ((spec.role === "reviewer" || spec.role === "verify")) {
         const attempt = this.reviewerAttempts;
         this.reviewerAttempts += 1;
         // S3: initial blocking. S6#1: still-active. S6#2: severity drop
@@ -735,7 +735,7 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         this.events.push(`dispatch:${spec.model}`);
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
-      if (spec.role === "reviewer") {
+      if ((spec.role === "reviewer" || spec.role === "verify")) {
         return {
           kind: "reviewer", findings: [], findingsCount: 0,
           priorFindingDispositions: [

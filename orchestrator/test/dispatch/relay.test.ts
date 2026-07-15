@@ -595,7 +595,7 @@ describe("#787 capacity relay", () => {
             }
             return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
           }
-          if (spec.kind === "reviewer") {
+          if ((spec.kind === "reviewer" || spec.kind === "verify")) {
             return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
           }
           if (spec.kind === "ship") {
@@ -691,7 +691,7 @@ describe("#787 capacity relay", () => {
       }
       async writeLedger(): Promise<void> {}
       async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-        if (spec.kind === "reviewer" && spec.id === "S3") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S3") {
           return {
             kind: "completed",
             output: { kind: "reviewer", findings: [blockingFinding], findingsCount: 1 },
@@ -707,7 +707,7 @@ describe("#787 capacity relay", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer" && spec.id === "S6") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S6") {
           return {
             kind: "completed",
             output: {
@@ -719,7 +719,7 @@ describe("#787 capacity relay", () => {
             },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           return { kind: "completed", output: { kind: "reviewer", findings: [], findingsCount: 0 } };
         }
         if (spec.kind === "ship") {
@@ -827,7 +827,7 @@ describe("#787 capacity relay", () => {
         }
         async writeLedger(): Promise<void> {}
         async dispatchWorker(spec: WorkerSpec): Promise<WorkerResult> {
-          if (spec.kind === "reviewer") {
+          if ((spec.kind === "reviewer" || spec.kind === "verify")) {
             reviewerModels.push(`${spec.id}:${spec.model}`);
             if (spec.id === capacityStep && spec.model === "gpt-5.6-terra") {
               return { kind: "failed", reason: "Selected model is at capacity" };
@@ -1412,7 +1412,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           reviewerDispatches.push({ spec, ctx });
           return {
             kind: "completed",
@@ -1543,7 +1543,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify")) {
           reviewerModels.push(spec.model);
           return {
             kind: "completed",
@@ -1673,7 +1673,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer" && spec.id === "S3") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S3") {
           reviewerModels.push(spec.model);
           // First S3 attempt (sol) walls; after baton→terra, terra completes.
           if (spec.model === "gpt-5.6-sol") {
@@ -1797,7 +1797,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
             output: { kind: "coder", committed: true, commitsAdded: 1 },
           };
         }
-        if (spec.kind === "reviewer" && spec.id === "S3") {
+        if ((spec.kind === "reviewer" || spec.kind === "verify") && spec.id === "S3") {
           reviewerModels.push(spec.model);
           if (spec.model === "opus") throw quotaWaitError("S3", resetAt);
           return {
@@ -2009,7 +2009,7 @@ describe("#686 R2 production seams", () => {
               output: { kind: "coder", committed: true, commitsAdded: 1 },
             };
           }
-          if (spec.kind === "reviewer") {
+          if ((spec.kind === "reviewer" || spec.kind === "verify")) {
             return {
               kind: "completed",
               output: { kind: "reviewer", findings: [], findingsCount: 0 },
@@ -2284,7 +2284,7 @@ describe("#686 R2 production seams", () => {
       },
       async writeSnapshot(): Promise<void> {},
       async runStep(spec: StepSpec): Promise<StepOutput> {
-        if (spec.role === "reviewer") return { kind: "reviewer", findings: [], findingsCount: 0 };
+        if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "reviewer", findings: [], findingsCount: 0 };
         return { kind: "coder", committed: true, commitsAdded: 1 };
       },
       async writeLedger(entry: PersistentLedgerEntry): Promise<void> {

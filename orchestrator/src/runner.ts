@@ -6,15 +6,15 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * ADR 0030: the child runner owns the visible per-slice review/fix loop:
+ * ADR 0030 / #925: the child runner owns the visible per-slice review/fix loop:
  *
- *   S0(gate) → S1(context) → S2(implement) → S3(review) → S4(classify)
- *     clean/deferred only → S7(local handoff) → S8(handoff)
- *     blocking → S5(fix) → S6(fresh full-diff review) → S4(classify)
+ *   S0(gate) → S1(context) → S2(implement) → S3(judge establish)
+ *     converged → S7(local handoff) → S8(handoff)
+ *     continue  → S5(fix) → S6(judge resume) → (verdict again)
+ *     escalate  → decision-kind park (answer → 原地 resume)
  *
- * S2/S5 are coder workers. S3/S6 are fresh read-only reviewer workers. S4 is a
- * runner-action classification boundary so findings and per-round outcomes are
- * visible in ledger state instead of hidden inside a coder session.
+ * S2/S5 are coder workers. S3/S6 are the persistent verify judge. S4 mechanical
+ * open-count classification is dissolved into the judge verdict tri-state.
  *
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
@@ -118,6 +118,11 @@ import {
   escalateOf,
   isValidEscalation,
 } from "./validate.js";
+import {
+  judgeContinueFromOpenCount,
+  priorJudgeVerdictRowsFromLedger,
+  projectJudgeContinueBlocking,
+} from "./judgeStation.js";
 import {
   contractDriftStopSummary,
   decisionGateParkStopSummary,
@@ -829,15 +834,16 @@ function lastReviewerStep(
   return undefined;
 }
 
-interface S4FindingsCountReplay {
+interface BlockingFromLedgerRebuild {
   readonly blocking: ReadonlyArray<Finding>;
   readonly blockingIdentityKeys: ReadonlyArray<string>;
   /** Reviewer-declared open-count (ADR 0131), not findings-array length. */
   readonly blockingFindingCount: number;
   readonly findingDispositions: ReadonlyArray<FindingDisposition>;
   /**
-   * Rebuilt raw artifact pointers for the positive-count → S5 edge after an S4
-   * resume boundary (host paths; materialised into the fixer sandbox at landing).
+   * Rebuilt raw artifact pointers for the positive-count → S5 edge after a
+   * judge-continue or residual S4 resume boundary (host paths; materialised
+   * into the fixer sandbox at landing).
    */
   readonly rawReviewerArtifacts?: WorkerLandingPayload["rawReviewerArtifacts"];
 }
@@ -859,9 +865,22 @@ function reviewerRawArtifactPointers(
   };
 }
 
-function replayS4FindingsCountState(
+/**
+ * Rebuild the S5 open-set / kill flips / raw-artifact pointers from a
+ * persisted ledger (crash/resume seed).
+ *
+ * Single shared projection (F2/F3) — not S4-only:
+ *   - #925 live path: S3/S6 `kind:"judge" status:"continue"` → kills + live-only
+ *     open set (same as in-process continue edge via
+ *     {@link projectJudgeContinueBlocking}).
+ *   - Residual historical path: S4 + preceding `kind:"reviewer"` open-count.
+ *
+ * Walk order: last applicable projection wins for the open set; judge kill
+ * flips accumulate across continue rounds (mirrors the live path).
+ */
+function rebuildBlockingFromLedger(
   ledger: ReadonlyArray<LedgerEntry>,
-): S4FindingsCountReplay {
+): BlockingFromLedgerRebuild {
   let pendingBlockingFindings: Finding[] = [];
   let pendingBlockingFindingIdentityKeys: string[] = [];
   let pendingBlockingFindingCount = 0;
@@ -870,11 +889,49 @@ function replayS4FindingsCountState(
   let lastReviewerSessionId: string | undefined;
   let lastReviewerMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
   let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
+  /** Index of the last judge-continue projection (suppresses stale residual rebind). */
+  let lastJudgeContinueIndex = -1;
 
-  for (const entry of ledger) {
+  for (let i = 0; i < ledger.length; i++) {
+    const entry = ledger[i]!;
     if (isBookkeepingEntry(entry)) {
       continue;
     }
+
+    // #925: judge continue rebuilds open set the same way as the live edge.
+    if (
+      (entry.step === "S3" || entry.step === "S6") &&
+      entry.output?.kind === "judge" &&
+      entry.output.status === "continue"
+    ) {
+      const projected = projectJudgeContinueBlocking(entry.output);
+      if (projected !== undefined) {
+        if (projected.killDispositions.length > 0) {
+          findingDispositions = [
+            ...findingDispositions,
+            ...projected.killDispositions,
+          ];
+        }
+        pendingBlockingFindings = projected.blocking;
+        pendingBlockingFindingIdentityKeys = projected.blockingIdentityKeys;
+        pendingBlockingFindingCount = projected.blockingFindingCount;
+        pendingRawReviewerArtifacts =
+          projected.blockingFindingCount > 0
+            ? reviewerRawArtifactPointers(
+                entry.monitorHandle,
+                typeof entry.sessionId === "string" ? entry.sessionId : undefined,
+              )
+            : undefined;
+        lastJudgeContinueIndex = i;
+        // A later residual reviewer must not clobber this open set via the
+        // pre-S4 rebind below unless a newer S4 residual follows.
+        lastReviewerOutputForS4 = undefined;
+        lastReviewerSessionId = undefined;
+        lastReviewerMonitorHandle = undefined;
+      }
+      continue;
+    }
+
     if (entry.output?.kind === "reviewer") {
       if (!isStepId(entry.step)) continue;
       lastReviewerOutputForS4 = entry.output;
@@ -887,23 +944,13 @@ function replayS4FindingsCountState(
       continue;
     }
 
-    // #877: findings-count channel only — disposition prose / still-active
-    // reopen / no-progress courts demolished. Prior keys absent from findings[]
-    // are closed by the three-channel envelope; the runner does not inspect prose.
-    // Findings rows are opaque cargo: typed ReviewerOutput already decoded them
-    // at the worker boundary; runner only shallow-copies + count-routes. Identity
-    // keys are derived at the fixer landing writer, not here (ADR 0131 / #899).
+    // Residual S4 + reviewer open-count (historical ledgers).
     findingDispositions = [
       ...(entry.findingDispositions ?? []),
     ];
-    // Opaque cargo copy only — not a decode/validation boundary.
     pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
     pendingBlockingFindingIdentityKeys = [];
-    // Count is the typed open-count, never cargo-array length.
     pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
-    // Live path attaches raw pointers on every positive open-count → S5 edge;
-    // resume after the persisted S4 boundary must rebuild them from the
-    // preceding reviewer ledger row (sessionId + monitor handle paths).
     pendingRawReviewerArtifacts =
       lastReviewerOutputForS4.findingsCount > 0
         ? reviewerRawArtifactPointers(
@@ -911,14 +958,14 @@ function replayS4FindingsCountState(
             lastReviewerSessionId,
           )
         : undefined;
+    lastJudgeContinueIndex = -1;
   }
 
-  // Pre-S4 crash window (codex R3 / C-R4-1): last reviewer has positive open-
-  // count but either no S4 row yet, or an earlier S4 left stale raw pointers
-  // from a prior round (S3 r1 → S4 → S5 → S6 r2, crash before the second S4).
-  // Always rebind findings/count/raw from the last reviewer so S5 does not
-  // inherit r1 artifacts when r2 is the open review.
+  // Pre-S4 crash window residual: last reviewer has positive open-count but
+  // no S4 yet / stale earlier S4. Skip when a later judge continue already
+  // projected the live open set (new path has no S4).
   if (
+    lastJudgeContinueIndex < 0 &&
     lastReviewerOutputForS4?.kind === "reviewer" &&
     typeof lastReviewerOutputForS4.findingsCount === "number" &&
     Number.isSafeInteger(lastReviewerOutputForS4.findingsCount) &&
@@ -1010,7 +1057,7 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
-    const replayedS4 = replayS4FindingsCountState(executableLedger);
+    const rebuiltBlocking = rebuildBlockingFromLedger(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
@@ -1020,14 +1067,14 @@ function planResume(
         ? repairIntent !== undefined
           ? continueRepairFromEvent(
               repairIntent,
-              replayedS4.blockingFindingCount,
+              rebuiltBlocking.blockingFindingCount,
             )
           : latestContinueFixingAfter(
               ledger,
               lastEntryIndex,
-              replayedS4.blockingFindingCount,
+              rebuiltBlocking.blockingFindingCount,
             ) ??
-            continueRepairFromAnswer(answer, replayedS4.blockingFindingCount)
+            continueRepairFromAnswer(answer, rebuiltBlocking.blockingFindingCount)
         : undefined;
     if (
       decisionStep === undefined ||
@@ -1231,18 +1278,13 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * The fixed StepSpecs for child-slice worker steps. Versioned promptFiles,
  * never assembled inline (ADR 0018 决定#4).
  *
- * ADR 0030 makes the per-slice loop runner-visible: S2 implements, S3 reviews,
- * S5 fixes blocking findings, and S6 performs the fresh full-diff re-review.
+ * #925 / ADR 0132: S2 implements, S3 establishes the verify judge, S5 fixes
+ * live findings, S6 resumes the same judge session. maxIter is 1 on every seat
+ * (Ralph outer multi-iter retired; typed SO re-asks are in-session).
  *
  * #253 fields: model (CLI slug), completionSignal (Sandcastle run() API), maxIter
  * (per-seat Sandcastle iteration budget — NOT a fix-loop give-up counter), soul,
  * toolchain.
- *
- * maxIter SEMANTICS (#899 / ADR 0128): every selected seat is single-iteration
- * (`maxIter: 1`). The skill finishes inside that one `sandbox.run()`; native
- * structured-output re-asks are in-session, not outer iterations. Hitting
- * maxIter ends the step normally — never "orchestrator gives up" (that only
- * happens on a MODEL escalate — US#18/US#19). See StepSpec.maxIter.
  *
  * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
  * with single-slot overrides (see {@link coderModel}); no image rebuild, no
@@ -1282,13 +1324,16 @@ export function stepSpecsForRoute(
     },
     S3: {
       id: "S3",
+      // #925: persistent verify judge. WorkerKind stays `reviewer` so the
+      // child dispatch seam / legacy fixtures keep a single productive kind;
+      // seat identity is the verify model + verify soul (#923 merge).
+      // `reviewer` as a soul name remains only on fresh review legs.
       role: "reviewer",
-      promptFile: "reviewer_review.md",
-      // #923: judge identity is the verify slot (ORCHESTRATOR_VERIFY_MODEL).
+      promptFile: "judge_station.md",
       model: route.slots.verify,
-      completionSignal: "REVIEWER_STEP_COMPLETE",
+      completionSignal: "JUDGE_STEP_COMPLETE",
       maxIter: 1,
-      soul: "READ-ONLY",
+      soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S5: {
@@ -1304,13 +1349,13 @@ export function stepSpecsForRoute(
     },
     S6: {
       id: "S6",
+      // #925: same judge seat as S3 — resume the S3 session each round.
       role: "reviewer",
-      promptFile: "reviewer_review.md",
-      // #923: judge identity is the verify slot (ORCHESTRATOR_VERIFY_MODEL).
+      promptFile: "judge_station.md",
       model: route.slots.verify,
-      completionSignal: "REVIEWER_STEP_COMPLETE",
+      completionSignal: "JUDGE_STEP_COMPLETE",
       maxIter: 1,
-      soul: "READ-ONLY",
+      soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,
     },
   };
@@ -1337,14 +1382,69 @@ export function stepSpecsForEnv(
 
 export const WORKER_PROMPT_FILES: Readonly<Record<WorkerStepId, string>> = {
   S2: "coder_implement.md",
-  S3: "reviewer_review.md",
+  S3: "judge_station.md",
   S5: "coder_fix.md",
-  S6: "reviewer_review.md",
+  S6: "judge_station.md",
 };
 
 /** Synthesise a human-readable reason for a route-owned error edge. */
 function buildErrorReason(step: StepId, _output: StepOutput | undefined): string {
   return `step ${step} routed to error handoff`;
+}
+
+/**
+ * #925: collapse residual `kind:"reviewer"` open-count cargo into the sole
+ * judge-verdict form before topology runs. Production decode already emits
+ * `kind:"judge"`; this normaliser exists so legacy fixtures / residual paper
+ * cannot re-open a second open-count routing path — route() only ever sees
+ * judge status enums.
+ */
+function normalizeJudgeSeatOutput(
+  step: SliceStepId,
+  output: StepOutput,
+): StepOutput {
+  if (step !== "S3" && step !== "S6") return output;
+  if (output.kind === "judge") return output;
+
+  // Residual open-count reviewer paper → sole judge form (shared F3 helper).
+  if (output.kind === "reviewer") {
+    const projected = judgeContinueFromOpenCount(
+      output.findingsCount,
+      output.findings,
+    );
+    if (projected !== undefined) {
+      return {
+        ...projected,
+        ...(output.escalate !== undefined ? { escalate: output.escalate } : {}),
+      };
+    }
+    if (output.escalate !== undefined) {
+      return {
+        kind: "judge",
+        status: "escalate",
+        reason: output.escalate.reason,
+        diagnosis: output.escalate.diagnosis,
+        escalate: output.escalate,
+      };
+    }
+    return { kind: "judge", status: "converged" };
+  }
+
+  // Offline skeleton / residual online-review VerifyResult on the judge seat
+  // (kind:"verify"+converged) — map boolean to tri-state; never re-enter
+  // open-count routing.
+  if (output.kind === "verify" && typeof output.converged === "boolean") {
+    return output.converged
+      ? { kind: "judge", status: "converged" }
+      : {
+          kind: "judge",
+          status: "continue",
+          findingDispositions: [],
+          findings: [],
+        };
+  }
+
+  return output;
 }
 
 function acceptedSuppressionsFromDispositions(
@@ -1524,6 +1624,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // Coder-Rec model advances can invalidate it before the next dispatch).
   let coderSessionId: string | undefined;
   let coderSessionModel: string | undefined;
+  // #925: judge persistent session across S3 → S6 rounds (same model).
+  let judgeSessionId: string | undefined;
+  let judgeSessionModel: string | undefined;
 
   const applyCoderRecSelection = async (
     nonConvergingRounds: number,
@@ -2499,17 +2602,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // #877: persisted S4 boundaries are replayed from reviewer findings-count
-    // only. Each S4 replaces the pending blocker set with that reviewer's
-    // `findings[]`; prose dispositions do not preserve or reopen findings.
-    // #899: also rebuild raw reviewer artifact pointers so a crash/resume after
-    // S4 still hands the fixer host paths (materialised at landing).
-    const replayedS4 = replayS4FindingsCountState(plan.priorLedger);
-    pendingBlockingFindings = [...replayedS4.blocking];
-    pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
-    pendingBlockingFindingCount = replayedS4.blockingFindingCount;
-    findingDispositions = [...replayedS4.findingDispositions];
-    pendingRawReviewerArtifacts = replayedS4.rawReviewerArtifacts;
+    // #925/#877: rebuild pending open-set / kill flips from the prior ledger
+    // (judge continue + residual historical S4/reviewer open-count). Each
+    // projection replaces the pending blocker set; prose dispositions do not
+    // reopen findings. #899: also rebuild raw reviewer artifact pointers so a
+    // crash/resume after S4 still hands the fixer host paths (materialised at
+    // landing).
+    const rebuiltBlocking = rebuildBlockingFromLedger(plan.priorLedger);
+    pendingBlockingFindings = [...rebuiltBlocking.blocking];
+    pendingBlockingFindingIdentityKeys = [...rebuiltBlocking.blockingIdentityKeys];
+    pendingBlockingFindingCount = rebuiltBlocking.blockingFindingCount;
+    findingDispositions = [...rebuiltBlocking.findingDispositions];
+    pendingRawReviewerArtifacts = rebuiltBlocking.rawReviewerArtifacts;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;
@@ -2534,6 +2638,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         coderSessionId = entry.sessionId;
         coderSessionModel =
           entry.step === "S5" ? stepSpecs.S5.model : stepSpecs.S2.model;
+        break;
+      }
+    }
+    // #925: rebuild judge session continuity from the last S3/S6 ledger row.
+    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+      const entry = plan.priorLedger[i]!;
+      if (
+        (entry.step === "S3" || entry.step === "S6") &&
+        typeof entry.sessionId === "string"
+      ) {
+        judgeSessionId = entry.sessionId;
+        judgeSessionModel =
+          entry.step === "S6" ? stepSpecs.S6.model : stepSpecs.S3.model;
         break;
       }
     }
@@ -2850,12 +2967,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S3":
       case "S5":
       case "S6": {
-        // ADR 0030 productive steps:
-        //   S2 coder implement, S3 fresh read-only review, S5 coder fix,
-        //   S6 fresh read-only full-diff re-review.
+        // Productive steps:
+        //   S2 coder implement, S3 judge establish, S5 coder fix,
+        //   S6 judge resume (#925).
         // #924: S2 establishes a coder session; S5 rounds resume it (same
-        // model). Crash/escalate `resumeFor` still wins when set. Reviewer
-        // seats (S3/S6) stay fresh every round.
+        // model). #925: S3 establishes a judge session; S6 rounds resume it.
+        // Crash/escalate `resumeFor` still wins when set.
         if (!dispatchStageLogged) {
           logDriverStage("dispatch", `step=${step}`);
           dispatchStageLogged = true;
@@ -2880,7 +2997,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
         }
         promptFile = stepSpecs[step].promptFile;
-        const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
+        const expectedKind = stepSpecs[step].role as "coder" | "reviewer" | "verify";
         let stepTelemetryDir: string | undefined;
         try {
           stepTelemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
@@ -2911,6 +3028,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             stepSpecs[step].model === coderSessionModel
           ) {
             resumeSessionId = coderSessionId;
+          } else if (
+            // #925: S3→S6 (and multi-round S6) resumes the retained judge session.
+            (step === "S3" || step === "S6") &&
+            typeof judgeSessionId === "string" &&
+            judgeSessionModel !== undefined &&
+            stepSpecs[step].model === judgeSessionModel
+          ) {
+            resumeSessionId = judgeSessionId;
           }
           const escalationAnswerForStep =
             resumedEscalationAnswer !== undefined &&
@@ -2940,6 +3065,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 };
               }
               const focusPath = relayFocusForDispatch(step);
+              const priorJudgeVerdicts =
+                step === "S3" || step === "S6"
+                  ? priorJudgeVerdictRowsFromLedger(ledger)
+                  : undefined;
               const dispatchCtx = {
                 runId,
                 worktree,
@@ -2953,6 +3082,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ? { billingPool }
                   : {}),
                 ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
+                // #925: prior judge verdict rows for session-loss recovery /
+                // trajectory (runner never synthesises a narrative summary).
+                ...(priorJudgeVerdicts !== undefined &&
+                priorJudgeVerdicts.length > 0
+                  ? { priorJudgeVerdicts }
+                  : {}),
                 // 信封宪法 (ADR 0062): the dispatch structure carries only the
                 // identity keys + count; the rich finding content travels in the
                 // separate landing payload below.
@@ -3022,7 +3157,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // Coder keeps default failed→durable abort (existing escalate path).
               const durableRetryOpts = durableMechanicalRetryOptions(
                 step,
-                expectedKind === "reviewer"
+                expectedKind === "reviewer" || expectedKind === "verify"
                   ? { rethrowOnExhaustion: true }
                   : {},
               );
@@ -3196,7 +3331,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               "output" in unwrapped && !("kind" in unwrapped)
                 ? { output: unwrapped.output, sessionId: unwrapped.sessionId }
                 : { output: unwrapped as StepOutput, sessionId: undefined };
-            output = normalized.output;
+            output = normalizeJudgeSeatOutput(step, normalized.output);
             stepSessionId = normalized.sessionId;
             // #924: retain coder session for S5 continuity (and multi-round S5).
             if (
@@ -3205,6 +3340,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             ) {
               coderSessionId = stepSessionId;
               coderSessionModel = stepSpecs[step].model;
+            }
+            // #925: retain judge session for S6 continuity (and multi-round S6).
+            if (
+              (step === "S3" || step === "S6") &&
+              typeof stepSessionId === "string"
+            ) {
+              judgeSessionId = stepSessionId;
+              judgeSessionModel = stepSpecs[step].model;
             }
             break;
           }
@@ -3222,6 +3365,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     commitsAdded: 0,
                     escalate: escalation,
                   }
+                : expectedKind === "verify"
+                  ? {
+                      kind: "judge",
+                      status: "escalate",
+                      reason: escalation.reason,
+                      diagnosis: escalation.diagnosis,
+                      escalate: escalation,
+                    }
                 : { kind: "reviewer", findings: [], findingsCount: 0, escalate: escalation };
             return await escalateTermination(
               step,
@@ -3417,13 +3568,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
         if (!carriesEscalate) {
-          if (expectedKind === "reviewer") {
-            // Control envelope only: role kind so findings-count channel can run.
-            // Do not inspect individual finding fields (findings schema court).
-            if (output?.kind !== "reviewer") {
-              // Unusable review envelope (not a typed open-count receipt) →
-              // fixer path with raw artifact pointers. Do NOT inspect findings
-              // cargo shape here (ADR 0131 / #899).
+          if (expectedKind === "verify" || expectedKind === "reviewer") {
+            // #925: judge typed verdict is the sole routing signal. Unusable
+            // envelope → fixer path with raw artifact pointers (never silent clean).
+            if (output?.kind !== "judge") {
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
               pendingBlockingFindingCount = 0;
@@ -3431,17 +3579,37 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stepMonitorHandle,
                 stepSessionId,
               );
-              step = "S5";
-              continue orchestratorStepLoop;
+              // Seed findingDispositions empty; route() will send unusable → S5.
+              lastOutput = output;
+              break;
             }
-            // Typed findingsCount only: positive open-count always preserves
-            // raw artifact pointers for S5. Findings rows are opaque cargo —
-            // never re-dispatch or zero the count based on array shape.
-            if (output.findingsCount > 0) {
-              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-                stepMonitorHandle,
-                stepSessionId,
-              );
+            // Apply continue dispositions via the shared projection helper
+            // (same helper resume rebuild uses — F2 single open-set seam).
+            if (output.status === "continue") {
+              const projected = projectJudgeContinueBlocking(output);
+              if (projected !== undefined) {
+                if (projected.killDispositions.length > 0) {
+                  findingDispositions = [
+                    ...findingDispositions,
+                    ...projected.killDispositions,
+                  ];
+                }
+                pendingBlockingFindings = projected.blocking;
+                pendingBlockingFindingIdentityKeys =
+                  projected.blockingIdentityKeys;
+                pendingBlockingFindingCount = projected.blockingFindingCount;
+                if (pendingBlockingFindingCount > 0) {
+                  pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                    stepMonitorHandle,
+                    stepSessionId,
+                  );
+                }
+              }
+            } else {
+              // converged / escalate: no open findings for S5.
+              pendingBlockingFindings = [];
+              pendingBlockingFindingIdentityKeys = [];
+              pendingBlockingFindingCount = 0;
             }
           }
         }
@@ -3485,11 +3653,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S4": {
-        // #877: findings-count channel only — no disposition/no-progress court.
-        seedClassificationFromReviewerOutput(
-          lastOutput,
-          lastReviewerStepId === "S6",
-        );
+        // #925: S4 mechanical open-count station dissolved. Residual path for
+        // legacy ledgers only — classification already applied at S3/S6.
         break;
       }
 
@@ -3515,8 +3680,19 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
+    // #925: verdict + kill flips land on S3/S6 rows (S4 dissolved). Residual
+    // S4 still accepts dispositions if a legacy path writes them.
     const stepFindingDispositions =
-      step === "S4" ? findingDispositions : undefined;
+      step === "S3" || step === "S6" || step === "S4"
+        ? findingDispositions
+        : undefined;
+    const stepAdvanceCoder =
+      (step === "S3" || step === "S6") &&
+      output?.kind === "judge" &&
+      output.status === "continue" &&
+      typeof output.advanceCoder === "string"
+        ? output.advanceCoder
+        : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
@@ -3532,6 +3708,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ...(stepSessionId !== undefined ? { sessionId: stepSessionId } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
+        : {}),
+      ...(stepAdvanceCoder !== undefined
+        ? { advanceCoder: stepAdvanceCoder }
         : {}),
       // #684: surface the CLI monitor handle in-memory too (resume rebuild parity).
       ...(stepMonitorHandle !== undefined

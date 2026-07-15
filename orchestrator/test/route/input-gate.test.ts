@@ -80,7 +80,7 @@ class GateTestBackend implements Backend {
 
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
-    if (spec.role === "reviewer") {
+    if ((spec.role === "reviewer" || spec.role === "verify")) {
       return { kind: "reviewer", findings: [], findingsCount: 0 };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -234,7 +234,7 @@ describe("S0 input gate — pass case (#248)", () => {
 
       override async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
-        if (spec.role === "reviewer") {
+        if ((spec.role === "reviewer" || spec.role === "verify")) {
           return { kind: "reviewer", findings: [], findingsCount: 0 };
         }
         return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -267,7 +267,7 @@ describe("S0 input gate — pass case (#248)", () => {
 
       override async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
-        if (spec.role === "reviewer") {
+        if ((spec.role === "reviewer" || spec.role === "verify")) {
           return { kind: "reviewer", findings: [], findingsCount: 0 };
         }
         return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -309,7 +309,7 @@ describe("S0 gate — #294 family-mode ledger-merged blocked_by (decision 6③)"
       }
       override async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
-        if (spec.role === "reviewer") {
+        if ((spec.role === "reviewer" || spec.role === "verify")) {
           return { kind: "reviewer", findings: [], findingsCount: 0 };
         }
         return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -368,7 +368,7 @@ describe("S0 gate — #247 happy-path regression", () => {
 
       override async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
-        if (spec.role === "reviewer") {
+        if ((spec.role === "reviewer" || spec.role === "verify")) {
           return { kind: "reviewer", findings: [], findingsCount: 0 };
         }
         return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -382,7 +382,7 @@ describe("S0 gate — #247 happy-path regression", () => {
     // ADR 0030: the runner-level ledger exposes the fresh reviewer and
     // classification boundary before ship.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S7", "S8",
     ]);
   });
 });

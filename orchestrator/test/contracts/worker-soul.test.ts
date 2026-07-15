@@ -242,12 +242,11 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(familyShip).toMatch(/gstack-ship/i);
     expect(familyShip).not.toMatch(/gh pr view|idempotent success case|version bump/i);
 
-    const review = read("reviewer_review.md");
-    expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
-    expect(review).toMatch(/role soul \(live-mounted\)|review character belongs to the role soul/i);
-    expect(review).toMatch(/escalationAnswer/i);
-    // Snapshot policy is stated as not-execution-input (allowed).
-    expect(review).toMatch(/not execution input/i);
+    const review = read("judge_station.md");
+    // #925: judge seat uses verify soul; reviewer.md is for fresh legs only.
+    expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/verify\.md/);
+    expect(review).toMatch(/reviewer\.md/);
+    expect(review).toMatch(/JUDGE_STEP_COMPLETE|stationReceiptContracts/);
   });
 
   it("the worker image bakes the Matt code-review skill for reviewer workers", () => {
@@ -294,7 +293,7 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     const prompts = [
       ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/, false],
       ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/, false],
-      ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/, false],
+      ["judge_station.md", /<judge>/, /JUDGE_STEP_COMPLETE/, false],
       ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/, true],
       ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
       ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
@@ -337,7 +336,7 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(() => readSoul("output_protocol.md")).toThrow();
     for (const promptName of [
       "coder_implement.md",
-      "reviewer_review.md",
+      "judge_station.md",
       "merger_resolve_conflict.md",
       "family_ship.md",
     ]) {
@@ -407,7 +406,7 @@ class ReviewWorkerBackend implements Backend {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       this.reviewCount += 1;
       // Explicit open-count declaration for the fixture (ADR 0131 / #899): never
       // derive findingsCount from findings.length as if that were production law.

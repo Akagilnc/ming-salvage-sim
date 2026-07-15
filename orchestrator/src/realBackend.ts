@@ -78,9 +78,16 @@ import {
 } from "./receiptRecovery.js";
 import {
   CODER_RECEIPT_TAG,
+  JUDGE_RECEIPT_TAG,
   coderStationReceiptSchema,
   decodeCoderEnvelope,
+  decodeJudgeVerdict,
+  judgeStationReceiptSchema,
 } from "./stationReceiptContracts.js";
+import {
+  judgeContinueFromOpenCount,
+  judgeResultFromVerdict,
+} from "./judgeStation.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
@@ -271,6 +278,7 @@ import type {
   Backend,
   CliMonitorSpawnSpec,
   DispatchContext,
+  Finding,
   IssueMeta,
   IssueSnapshot,
   IssueSnapshotMeta,
@@ -1154,7 +1162,18 @@ export function checkOwnGitDir(
  *
  * Pure (a check on the role/soul pair): unit-tested without a container.
  */
-export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
+export function soulForStep(
+  spec: Pick<StepSpec, "role" | "soul"> & { readonly id?: string },
+): StepSoul {
+  // #925: S3/S6 judge seats pin the verify soul while WorkerKind stays
+  // `reviewer` (child dispatch seam). Reviewer.md remains the leg soul only.
+  if (
+    (spec.id === "S3" || spec.id === "S6") &&
+    spec.soul === "verify" &&
+    (spec.role === "reviewer" || spec.role === "verify")
+  ) {
+    return "verify";
+  }
   const expected: StepSoul =
     spec.role === "reviewer"
       ? "READ-ONLY"
@@ -1228,7 +1247,7 @@ export function lastSessionId(
  */
 function extractTaggedJson(
   stdout: string,
-  tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease",
+  tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease" | "judge",
 ): unknown | undefined {
   const body = extractLastTagBody(stdout, tag);
   if (body === undefined) return undefined;
@@ -1293,13 +1312,19 @@ function extractReviewerTag(stdout: string): unknown | undefined {
   return extractTaggedJson(stdout, "review");
 }
 
+function extractJudgeTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, JUDGE_RECEIPT_TAG);
+}
+
 function extractRoleReceipt(stdout: string, role: StepSpec["role"]): unknown | undefined {
   try {
     return role === "coder"
       ? extractCoderTag(stdout)
       : role === "reviewer"
         ? extractReviewerTag(stdout)
-        : undefined;
+        : role === "verify"
+          ? extractJudgeTag(stdout)
+          : undefined;
   } catch {
     return undefined;
   }
@@ -2907,13 +2932,16 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Typed Sandcastle output for ADR 0131 / #924 traffic signals:
-   * - reviewer: open-count receipt on the `review` tag (`findingsCount` + optional bell)
-   * - coder: T2 station receipt on {@link CODER_RECEIPT_TAG} (`completed|refused|escalate`
-   *   traffic; cargo siblings passthrough — #924 replaces dedicated decision-gate tag
-   *   for single-slice coder seats).
+   * Typed Sandcastle output for ADR 0131 / #924 / #925 traffic signals:
+   * - verify (S3/S6 judge): T2 judge verdict on {@link JUDGE_RECEIPT_TAG}
+   * - reviewer (legacy residual): open-count receipt on the `review` tag
+   * - coder: T2 station receipt on {@link CODER_RECEIPT_TAG}
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
+    // #925: S3/S6 judge station — T2 verdict (regardless of role spelling).
+    if (spec.id === "S3" || spec.id === "S6") {
+      return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
+    }
     if (spec.role === "reviewer") {
       return workerReceiptOutput("review", workerReceiptSchema());
     }
@@ -3011,7 +3039,8 @@ export class RealBackend implements Backend {
   ): StepResult {
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     const cargo =
-      typedOutputUsed && spec.role === "coder"
+      typedOutputUsed &&
+      (spec.role === "coder" || spec.id === "S3" || spec.id === "S6")
         ? this.cargoRawFor(result, spec, options)
         : undefined;
     const output = this.decodeOutput(spec, raw, cargo);
@@ -3031,6 +3060,10 @@ export class RealBackend implements Backend {
     // never supplies escalate / findingsCount when typed was the seat policy.
     if (spec.role === "coder") {
       return this.decodeCoderStationOutput(spec, raw, cargo);
+    }
+    // #925: S3/S6 judge — T2 verdict is the sole topology signal.
+    if (spec.id === "S3" || spec.id === "S6") {
+      return this.decodeJudgeStationOutput(spec, raw, cargo);
     }
     const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
     if (gate.kind === "bell") {
@@ -3066,6 +3099,65 @@ export class RealBackend implements Backend {
 
     // Family endgame roles are dispatched by RealFamilyBackend, never here.
     throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
+  }
+
+  /**
+   * #925 — decode a T2 judge station receipt into {@link JudgeResult}.
+   * Traffic status from the envelope only; findings cargo is opaque and may
+   * ride as SO siblings or a separate cargo channel.
+   */
+  private decodeJudgeStationOutput(
+    spec: StepSpec,
+    raw: unknown,
+    cargo?: unknown,
+  ): StepOutput {
+    const envelope = decodeJudgeVerdict(raw);
+    if (envelope.ok) {
+      const body = cargo !== undefined ? cargo : raw;
+      let findings: Finding[] | undefined;
+      if (body !== null && typeof body === "object" && !Array.isArray(body)) {
+        const rec = body as { findings?: unknown };
+        if (Array.isArray(rec.findings)) {
+          findings = rec.findings as Finding[];
+        }
+      }
+      return judgeResultFromVerdict(envelope.value, findings);
+    }
+
+    // Residual open-count paper (legacy fixtures / pre-#925 ledger replay):
+    // project to the sole judge form via the shared F3 helper — never re-open
+    // a second open-count routing path.
+    const openCount = decodeReviewerOpenCountReceipt(raw);
+    if (openCount !== undefined) {
+      if (openCount.escalate !== undefined) {
+        return {
+          kind: "judge",
+          status: "escalate",
+          reason: openCount.escalate.reason,
+          diagnosis: openCount.escalate.diagnosis,
+          escalate: openCount.escalate,
+        };
+      }
+      const projected = judgeContinueFromOpenCount(
+        openCount.findingsCount,
+        openCount.findings,
+      );
+      if (projected !== undefined) {
+        return projected;
+      }
+      return { kind: "judge", status: "converged" };
+    }
+
+    // Missing/unusable residual paper → same non-judge unusable envelope the
+    // pre-#925 open-count seat used (route → S5 + raw artifacts), never a
+    // silent converged.
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+      return { kind: "fixer", committed: false };
+    }
+
+    throw new Error(
+      `${spec.id}-judge: illegal judge station receipt: ${envelope.reason}`,
+    );
   }
 
   /**

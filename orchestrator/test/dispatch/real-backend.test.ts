@@ -87,6 +87,8 @@ import {
 import {
   CODER_RECEIPT_TAG,
   coderStationReceiptSchema,
+  judgeStationReceiptSchema,
+  JUDGE_RECEIPT_TAG,
 } from "../../src/stationReceiptContracts.js";
 import {
   runScriptedStructuredOutput,
@@ -911,7 +913,7 @@ describe("realBackend lastSessionId", () => {
 describe("realBackend classifyResumeError", () => {
   it("propagates StructuredOutputError instead of falling back to a fresh run", () => {
     const err = new StructuredOutputError("bad output", {
-      tag: "review",
+      tag: "judge",
       rawMatched: undefined,
       commits: [],
       branch: "feat/x",
@@ -922,7 +924,7 @@ describe("realBackend classifyResumeError", () => {
 
   it("propagates schema-parse style StructuredOutputError with no sessionId", () => {
     const err = new StructuredOutputError("bad output", {
-      tag: "review",
+      tag: "judge",
       rawMatched: undefined,
       commits: [],
       branch: "feat/x",
@@ -1025,7 +1027,7 @@ describe("realBackend promptsDirError (F4)", () => {
       new Set([
         "coder_implement.md",
         "coder_fix.md",
-        "reviewer_review.md",
+        "judge_station.md",
       ]),
     );
     // No duplicates.
@@ -1230,7 +1232,7 @@ describe("RealBackend reviewer output contract", () => {
   const reviewerSpec: StepSpec = {
     id: "S6",
     role: "reviewer",
-    promptFile: "reviewer_review.md",
+    promptFile: "judge_station.md",
     model: "gpt-5.6-sol",
     completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
@@ -1408,8 +1410,10 @@ describe("RealBackend reviewer output contract", () => {
       priorFindingDispositions: [],
     });
 
+    // #925: S3/S6 decode projects residual open-count cargo onto judge form;
+    // findings rows (incl. disposition_reason) remain opaque cargo.
     expect(
-      decoded.kind === "reviewer" ? decoded.findings[0]?.disposition_reason : undefined,
+      decoded.kind === "judge" ? decoded.findings?.[0]?.disposition_reason : undefined,
     ).toBe("legacy fallback should not win");
   });
 
@@ -1602,7 +1606,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   const reviewerSpec: StepSpec = {
     id: "S3",
     role: "reviewer",
-    promptFile: "reviewer_review.md",
+    promptFile: "judge_station.md",
     model: "gpt-5.6-sol",
     completionSignal: "REVIEWER_STEP_COMPLETE",
     maxIter: 1,
@@ -1856,7 +1860,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     // #899: exhaust = Action non-zero for #598; never convert SOE into success cargo.
     const backend = makeBackend();
     const err = new StructuredOutputError("bad output", {
-      tag: "review", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "sess-review-exhausted",
+      tag: "judge", rawMatched: undefined, commits: [], branch: "feat/x", sessionId: "sess-review-exhausted",
     });
     backend.agentFailures.push(err);
 
@@ -2022,7 +2026,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     ).toEqual({ kind: "fixer", committed: false });
     expect(
       backend.probeDecodeOutput(reviewerSpec, { findingsCount: 0, findings: [] }),
-    ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
+    ).toEqual({ kind: "judge", status: "converged" });
   });
 
   it("fails a typed reviewer seat when Output.object is absent", async () => {
@@ -2044,7 +2048,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }),
     ).rejects.toThrow(/typed traffic signal missing/);
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -2066,11 +2070,11 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         path: "/tmp/worktree/issue-899",
       }),
     ).resolves.toMatchObject({
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      output: { kind: "judge", status: "converged" },
     });
 
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -2080,7 +2084,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
   // exercises RealBackend single-slice reviewer open-count + coder decision-gate
   // at the real sc.run boundary (scripted provider, no LLM).
 
-  describe("#899 single-slice production SO four-case matrix", () => {
+  // sequential: nested real sc.run races on ~/.gitconfig locks under file-parallelism.
+  describe.sequential("#899 single-slice production SO four-case matrix", () => {
     const cleanups: string[] = [];
     afterEach(() => {
       while (cleanups.length > 0) {
@@ -2089,24 +2094,25 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       }
     });
 
-    it("accepts initial-good open-count via real sc.run (no same-session resume)", async () => {
+    it("accepts initial-good judge verdict via real sc.run (no same-session resume)", async () => {
+      const good = { station: "judge", status: "converged" };
       const { agent, result } = await runScriptedStructuredOutput({
-        tag: "review",
-        schema: workerReceiptSchema(),
-        emissions: [{ body: JSON.stringify({ findingsCount: 0, findings: [] }) }],
+        tag: JUDGE_RECEIPT_TAG,
+        schema: judgeStationReceiptSchema(),
+        emissions: [{ body: JSON.stringify(good) }],
         maxRetries: RECEIPT_MAX_RETRIES,
         sessionId: "sess-ss-review-initial-good",
         cleanups,
       });
-      expect(result.output).toMatchObject({ findingsCount: 0 });
+      expect(result.output).toMatchObject(good);
       expect(agent.callCount).toBe(1);
       expect(agent.resumedSessions).toEqual([undefined]);
 
-      // Production decode path: typed open-count → kind:reviewer.
+      // Production decode path: typed judge → kind:judge.
       const backend = makeBackend();
       expect(
         backend.probeDecodeOutput(reviewerSpec, result.output),
-      ).toEqual({ kind: "reviewer", findings: [], findingsCount: 0 });
+      ).toEqual({ kind: "judge", status: "converged" });
     });
 
     it("accepts initial-good coder station receipt via real sc.run (no same-session resume)", async () => {
@@ -2135,12 +2141,19 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       });
     });
 
-    it("recovers open-count bad→good same-session via real sc.run", async () => {
+    it("recovers judge verdict bad→good same-session via real sc.run", async () => {
       const agentOut: { agent?: ScriptedAgent } = {};
-      const good = { findingsCount: 2, findings: [] };
+      const good = {
+        station: "judge",
+        status: "continue",
+        findingDispositions: [
+          { identityKey: "correctness|a.ts:1|x", action: "live" },
+          { identityKey: "correctness|b.ts:2|y", action: "live" },
+        ],
+      };
       const { agent, result } = await runScriptedStructuredOutput({
-        tag: "review",
-        schema: workerReceiptSchema(),
+        tag: JUDGE_RECEIPT_TAG,
+        schema: judgeStationReceiptSchema(),
         emissions: [
           { body: JSON.stringify({ findingsCount: -1 }) },
           { body: JSON.stringify(good) },
@@ -2150,7 +2163,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         cleanups,
         agentOut,
       });
-      expect(result.output).toMatchObject({ findingsCount: 2 });
+      expect(result.output).toMatchObject({ station: "judge", status: "continue" });
       expect(agent.callCount).toBe(2);
       expect(agent.resumedSessions).toEqual([
         undefined,
@@ -2161,7 +2174,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       const backend = makeBackend();
       expect(
         backend.probeDecodeOutput(reviewerSpec, result.output),
-      ).toMatchObject({ kind: "reviewer", findingsCount: 2 });
+      ).toMatchObject({ kind: "judge", status: "continue" });
     });
 
     it("recovers coder station-receipt bad→good same-session via real sc.run", async () => {
@@ -2190,16 +2203,16 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       ]);
     });
 
-    it("propagates StructuredOutputError when open-count maxRetries are exhausted", async () => {
+    it("propagates StructuredOutputError when judge maxRetries are exhausted", async () => {
       const agentOut: { agent?: ScriptedAgent } = {};
       try {
         await runScriptedStructuredOutput({
-          tag: "review",
-          schema: workerReceiptSchema(),
+          tag: JUDGE_RECEIPT_TAG,
+          schema: judgeStationReceiptSchema(),
           emissions: [
             { body: JSON.stringify({ findingsCount: -1 }) },
-            { body: JSON.stringify({ findingsCount: -2 }) },
-            { body: JSON.stringify({ findingsCount: -3 }) },
+            { body: JSON.stringify({ status: "maybe" }) },
+            { body: JSON.stringify({ station: "judge" }) },
           ],
           maxRetries: RECEIPT_MAX_RETRIES,
           sessionId: "sess-ss-review-exhausted",
@@ -2210,7 +2223,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       } catch (err) {
         expect(err).toBeInstanceOf(scRuntime.StructuredOutputError);
         const soe = err as scRuntime.StructuredOutputError;
-        expect(soe.tag).toBe("review");
+        expect(soe.tag).toBe(JUDGE_RECEIPT_TAG);
         expect(isReceiptRecoveryFailure(err)).toBe(true);
         expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
       }
@@ -2244,8 +2257,8 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     it("classifies non-resumable open-count maxRetries as recovery failure", async () => {
       await expect(
         runScriptedStructuredOutput({
-          tag: "review",
-          schema: workerReceiptSchema(),
+          tag: JUDGE_RECEIPT_TAG,
+          schema: judgeStationReceiptSchema(),
           emissions: [{ body: JSON.stringify({ findingsCount: 0 }) }],
           maxRetries: RECEIPT_MAX_RETRIES,
           resumable: false,
@@ -2291,13 +2304,13 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           this.lastAgentOptions = options;
           this.agentOptions.push(options);
           expect(options.output).toEqual(
-            expect.objectContaining({ tag: "review", maxRetries: RECEIPT_MAX_RETRIES }),
+            expect.objectContaining({ tag: "judge", maxRetries: RECEIPT_MAX_RETRIES }),
           );
           const run = await runScriptedStructuredOutput({
-            tag: "review",
-            schema: workerReceiptSchema(),
+            tag: JUDGE_RECEIPT_TAG,
+            schema: judgeStationReceiptSchema(),
             emissions: [
-              { body: JSON.stringify({ findingsCount: 0, findings: [] }) },
+              { body: JSON.stringify({ station: "judge", status: "converged" }) },
             ],
             maxRetries: RECEIPT_MAX_RETRIES,
             sessionId: "prod-ss-review-initial-good",
@@ -2324,7 +2337,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
           path: "/tmp/worktree/issue-899",
         }),
       ).resolves.toMatchObject({
-        output: { kind: "reviewer", findings: [], findingsCount: 0 },
+        output: { kind: "judge", status: "converged" },
       });
       expect(sandcastleCalls).toBe(1);
       expect(agentOut.agent?.callCount).toBe(1);
@@ -2721,11 +2734,11 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     );
 
     expect(result).toEqual({
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      output: { kind: "judge", status: "converged" },
       sessionId: "sess-review-sidecar",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -2764,12 +2777,12 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
     );
 
     expect(result).toEqual({
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      output: { kind: "judge", status: "converged" },
       sessionId: "sess-review-resume-sidecar",
     });
     expect(backend.lastAgentOptions?.resumeSession).toBe("prior-review-session");
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -2842,11 +2855,11 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
         },
       ),
     ).resolves.toMatchObject({
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      output: { kind: "judge", status: "converged" },
       sessionId: "sess-review-so-landing",
     });
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });
@@ -2882,7 +2895,7 @@ describe("RealBackend runStep toolchain preflight (#286)", () => {
       ),
     ).rejects.toThrow(/typed traffic signal missing/);
     expect(backend.lastAgentOptions?.output).toMatchObject({
-      tag: "review",
+      tag: "judge",
       maxRetries: 2,
     });
   });

@@ -93,7 +93,7 @@ class SeamOnlyBackend implements Backend {
     if (spec.kind === "coder") {
       return { kind: "completed", output: { kind: "coder", committed: true, commitsAdded: 1 } };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       this.reviewCount += 1;
       // Explicit open-count declaration for the fixture (ADR 0131 / #899): never
       // derive findingsCount from findings.length as if that were production law.

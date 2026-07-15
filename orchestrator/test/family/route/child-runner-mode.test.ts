@@ -103,7 +103,7 @@ describe("runner family-mode adaptations (#293)", () => {
     // It still ran the full S0→S8 sequence (S7 just no-ops). ADR 0030 keeps the
     // reviewer and classification boundaries visible before the local ship step.
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S7", "S8",
     ]);
   });
 
