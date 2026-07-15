@@ -73,13 +73,16 @@ describe("#928 completion-signal retirement", () => {
       expect((spec as { completionSignal?: unknown }).completionSignal).toBeUndefined();
     });
 
-    it("T2 station set remains the five official envelopes", () => {
+    it("T2 station set remains the seven official envelopes", () => {
+      // #919 T2 expansion: merger + onlineReview join the five base stations.
       expect([...STATION_IDS]).toEqual([
         "judge",
         "coder",
         "coderFix",
         "familyCoderFix",
         "ship",
+        "merger",
+        "onlineReview",
       ]);
     });
   });
@@ -255,10 +258,15 @@ describe("#928 completion-signal retirement", () => {
         join(import.meta.dirname, "../../src/family/realFamilyBackend.ts"),
         "utf8",
       );
-      // Lock the force-disable at invokeSandcastleRun (omit is NOT off).
-      expect(real).toMatch(/completionSignal:\s*\[\]/);
-      expect(family).toMatch(/completionSignal:\s*\[\]/);
-      // Must not rely on "no field" / undefined alone.
+      const shared = readFileSync(
+        join(import.meta.dirname, "../../src/sandboxStreamHeartbeat.ts"),
+        "utf8",
+      );
+      // #919 F2: both backends funnel sc.run through the shared wrap that
+      // force-disables the sandcastle default password (omit is NOT off).
+      expect(shared).toMatch(/completionSignal:\s*\[\s*\]/);
+      expect(shared).toMatch(/function withSandcastleInvokeDefaults/);
+      // Must not rely on "no field" / undefined alone at either chokepoint.
       const realInvoke = real.slice(
         real.indexOf("protected async invokeSandcastleRun"),
         real.indexOf("protected async runAgentSandbox"),
@@ -267,8 +275,8 @@ describe("#928 completion-signal retirement", () => {
         family.indexOf("protected async invokeSandcastleRun"),
         family.indexOf("protected async runAgentSandbox"),
       );
-      expect(realInvoke).toMatch(/completionSignal:\s*\[\]/);
-      expect(familyInvoke).toMatch(/completionSignal:\s*\[\]/);
+      expect(realInvoke).toMatch(/withSandcastleInvokeDefaults\s*\(/);
+      expect(familyInvoke).toMatch(/withSandcastleInvokeDefaults\s*\(/);
     });
   });
 });
