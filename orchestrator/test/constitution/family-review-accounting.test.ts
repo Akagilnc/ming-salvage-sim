@@ -34,6 +34,7 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
+import { liveCmrJudgeContinue } from "../helpers/judge-fixtures.js";
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -147,18 +148,16 @@ function isCourtAbort(ledger: ReadonlyArray<FamilyLedgerEntry>): boolean {
 describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope survives", () => {
   it("unaccounted protected prior + new blocker routes to coder-fix (not contract_drift court death)", async () => {
     // Pre-#875: early closure coverage audit aborted as contract_drift and
-    // starved the fix loop. Post-#875 / #919: residual positive open-count → continue → coder-fix.
-    const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: false,
-      reason: "fresh re-review found a new blocker",
-      findingsCount: 1,
-      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      claimedFixedFindingIdentityKeys: [],
-      priorFindingDispositions: [],
-      findings: [NEW_BLOCKER],
-      ...CMR_EVIDENCE,
-    });
+    // starved the fix loop. Post-#875 / #919: live kind:judge continue → coder-fix (residual count never continues).
+    const backend = new ScriptedCmrBackend(
+      liveCmrJudgeContinue([NEW_BLOCKER], {
+        reason: "fresh re-review found a new blocker",
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
+      }),
+    );
 
     const result = await runVerifyCmr({
       phase: "final",
@@ -325,16 +324,14 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
   });
 
   it("#875 Opus: the reviewer-declared count routes without array reconciliation", async () => {
-    // findingsCount=99 is residual open-count → judge continue; cargo not recounted.
-    const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: false,
-      reason: "array has one blocker",
-      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      findingsCount: 99,
-      findings: [NEW_BLOCKER],
-      ...CMR_EVIDENCE,
-    });
+    // Live judge continue from finding cargo; runner does not recount array vs essay.
+    const backend = new ScriptedCmrBackend(
+      liveCmrJudgeContinue([NEW_BLOCKER], {
+        reason: "array has one blocker",
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        ...CMR_EVIDENCE,
+      }),
+    );
 
     const result = await runVerifyCmr({
       phase: "final",

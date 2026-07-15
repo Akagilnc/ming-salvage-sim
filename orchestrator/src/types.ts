@@ -1096,8 +1096,8 @@ export interface CmrResult {
   /** Structured CMR findings passed through as worker cargo. */
   readonly findings?: readonly Finding[];
   /**
-   * Residual open-count cargo only. Not a family closer (#930) — production
-   * projects count→judge once at the backend boundary.
+   * Residual open-count cargo only. Not a family closer (#930 / #919 E) —
+   * family never mints continue from findingsCount; court fail-louds residual.
    */
   readonly findingsCount?: number;
   /** Cross-round grouped findings + recurring-class markers (#711). */

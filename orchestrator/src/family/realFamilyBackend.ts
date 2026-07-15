@@ -63,14 +63,17 @@ import {
   decisionGateOutput,
   logAndRethrowReceiptFailure,
   requireTypedTrafficSignal,
+  shipReceiptOutput,
   workerReceiptOutput,
 } from "../receiptRecovery.js";
 import {
   CODER_RECEIPT_TAG,
   JUDGE_RECEIPT_TAG,
+  SHIP_RECEIPT_TAG,
   coderStationReceiptSchema,
   decodeJudgeVerdict,
   judgeStationReceiptSchema,
+  shipStationReceiptSchema,
   type JudgeVerdict,
 } from "../stationReceiptContracts.js";
 import { judgeResultFromVerdict } from "../judgeStation.js";
@@ -169,10 +172,7 @@ import {
   buildCliMonitorSpawnSpec,
   workerResultFromMonitorSidecar,
 } from "../cliMonitorHooks.js";
-import {
-  legacyDispatchFamilyWorker,
-  residualIntegratedCmrToJudgeOutput,
-} from "./dispatchFamilyWorker.js";
+import { legacyDispatchFamilyWorker } from "./dispatchFamilyWorker.js";
 import { retryProcessCrash } from "../dispatchRetry.js";
 import {
   DOCRELEASE_PROMPT_FILE,
@@ -1509,8 +1509,9 @@ export class RealFamilyBackend implements FamilyBackend {
         ...(outcome.sessionId !== undefined ? { sessionId: outcome.sessionId } : {}),
       };
     }
-    // #930: live typed path is already kind:"judge"; residual open-count
-    // projects once here via shared residual semantics (never silent clean).
+    // #930 / #919 E: live typed path is kind:"judge" only. Residual open-count
+    // / kind:verdict never mints continue — always non-judge unusable paper
+    // (court fail-loud; never open-count second closer).
     void ctx;
     if (outcome.kind === "judge") {
       const verdict: JudgeVerdict =
@@ -1540,25 +1541,7 @@ export class RealFamilyBackend implements FamilyBackend {
           : {}),
       };
     }
-    const projected = residualIntegratedCmrToJudgeOutput({
-      ...(outcome.converged !== undefined
-        ? { converged: outcome.converged }
-        : {}),
-      ...(outcome.findingsCount !== undefined
-        ? { findingsCount: outcome.findingsCount }
-        : {}),
-      ...(outcome.findings !== undefined ? { findings: outcome.findings } : {}),
-    });
-    if (projected !== undefined) {
-      return {
-        kind: "completed",
-        output: withFamilyJudgeCargo(projected, outcome),
-        ...(outcome.sessionId !== undefined
-          ? { sessionId: outcome.sessionId }
-          : {}),
-      };
-    }
-    // Residual zero/missing open-count → non-judge unusable paper (court fail-loud).
+    // Residual (incl. positive findingsCount): never project to judge continue.
     return {
       kind: "completed",
       output: {
@@ -3076,8 +3059,9 @@ export class RealFamilyBackend implements FamilyBackend {
       maxIterations: spec.maxIter,
       branchStrategy: { type: "head" },
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: dedicated decision-gate tag; PR/URL cargo stays on `<ship>` outside SO.
-      output: decisionGateOutput(),
+      // #919 D / ADR 0132: T2 ship station receipt (SHIP_RECEIPT_TAG + schema).
+      // PR/URL delivery cargo stays on sidecar outside SO.
+      output: shipReceiptOutput(shipStationReceiptSchema(), SHIP_RECEIPT_TAG),
       quotaProbe: this.familyQuotaProbeContext(spec, ctx),
     });
   }
@@ -3927,10 +3911,10 @@ function classifyCmrOutcomePayload(
     };
   }
 
-  // #919 S2: residual open-count / legacy cmr paper is BOUNDARY-ONLY transport.
-  // Typed judge failed above → never treat open-count as live fate here; project
-  // once at cmrOutcomeToWorkerResult / residualIntegratedCmrToJudgeOutput
-  // (never silent clean; never a second closer).
+  // #919 E: residual open-count / legacy cmr paper is BOUNDARY-ONLY transport.
+  // Typed judge failed above → never treat open-count as live fate. Residual
+  // cargo rides as kind:verdict; cmrOutcomeToWorkerResult maps it to unusable
+  // kind:cmr (never mint continue from findingsCount).
   return residualCmrVerdictCargo(normalizedParsed);
 }
 

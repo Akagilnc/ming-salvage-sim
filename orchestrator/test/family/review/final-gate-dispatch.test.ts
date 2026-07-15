@@ -17,7 +17,10 @@ import type {
   WorkerResult,
   WorkerSpec,
 } from "../../../src/types.js";
-import { legacyCmrScriptToWorkerOutput } from "../../helpers/judge-fixtures.js";
+import {
+  legacyCmrScriptToWorkerOutput,
+  liveCmrJudgeContinue,
+} from "../../helpers/judge-fixtures.js";
 import type {
   FamilyBackend,
   FamilyEscalation,
@@ -345,17 +348,15 @@ describe("#331 verify-cmr runs the cmr/PR worker via the NEW seam even without l
         if (passGreen) {
           return completedJudgeGreen();
         }
-        // Residual positive open-count → judge continue (coder-fix path).
+        // Live judge continue with synthetic open key (coder-fix path).
         return {
           kind: "completed",
-          output: {
-            kind: "cmr",
-            converged: false,
+          output: liveCmrJudgeContinue([], {
             findingsCount: 1,
             successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
             reason: "family base is incomplete",
             ...CMR_EVIDENCE,
-          },
+          }),
         };
       }
       if (spec.kind === "ship") {
@@ -961,18 +962,21 @@ describe("#331 an escalated family cmr/ship worker calls escalateFamily (codex R
 });
 
 describe("#331 legacyDispatchFamilyWorker — wraps the legacy CMR return as WorkerResult", () => {
-  it("cmr worker: a red verdict is `completed` judge continue (NOT `failed`) (#930)", async () => {
+  it("cmr worker: residual red is completed kind:cmr unusable paper (NOT failed / NOT continue) (#919 E)", async () => {
     const be = new CapableFamilyBackend();
     be.cmrConverged = false;
     const res = await legacyDispatchFamilyWorker(be, cmrWorkerSpec(), {
       familyBase: "fb",
     });
+    // #919 E: residual IntegratedCmrResult never mints judge continue via
+    // findingsCount. Completed residual kind:cmr paper is court-unusable;
+    // live continue is typed kind:judge only.
     expect(res.kind).toBe("completed");
-    if (res.kind === "completed" && res.output.kind === "judge") {
-      // Residual red IntegratedCmrResult projects to judge continue at boundary.
-      expect(res.output.status).toBe("continue");
+    if (res.kind === "completed" && res.output.kind === "cmr") {
+      expect(res.output.findingsCount).toBe(1);
+      expect(res.output.converged).toBe(false);
     } else {
-      throw new Error("expected completed judge payload");
+      throw new Error("expected completed residual kind:cmr paper");
     }
   });
 

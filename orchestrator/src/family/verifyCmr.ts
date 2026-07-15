@@ -147,7 +147,6 @@ import {
   closeFamilyCourtFromJudgeOutput,
   priorFamilyJudgeVerdictRowsFromLedger,
 } from "../judgeStation.js";
-import { residualIntegratedCmrToJudgeOutput } from "./dispatchFamilyWorker.js";
 import { coderRefuseReverifyLanding } from "../coderRefuseExit.js";
 import {
   buildReviewRoundStamp,
@@ -2025,17 +2024,12 @@ async function runIntegratedCmrPass(input: {
       resolvedRoute: activeRoute,
     };
   }
-  // #930: family court closes on shared T2 judge tri-state only. Residual
-  // kind:"cmr" paper (legacy fixtures / pre-judge seat) is projected ONCE into
-  // judge form at this boundary — same class as single-slice residual→judge
-  // (0/missing → unusable, never silent clean). Live kind:"judge" is direct.
+  // #930 / #919 E: family court closes on shared T2 judge tri-state only.
+  // Residual kind:"cmr" / open-count paper is never projected to continue —
+  // closeFamilyCourtFromJudgeOutput fail-louds non-judge as unusable (no
+  // open-count second closer). Live kind:"judge" is direct.
   const rawOutput = cmrResult.output;
-  const judgeTraffic =
-    rawOutput.kind === "judge"
-      ? rawOutput
-      : rawOutput.kind === "cmr"
-        ? residualIntegratedCmrToJudgeOutput(rawOutput) ?? rawOutput
-        : rawOutput;
+  const judgeTraffic = rawOutput;
   const closure = closeFamilyCourtFromJudgeOutput(judgeTraffic);
   const openedJudgeSessionId =
     typeof cmrResult.sessionId === "string" && cmrResult.sessionId.length > 0

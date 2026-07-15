@@ -50,7 +50,6 @@ import {
   type ResolvedModelRoute,
 } from "../modelRoutes.js";
 import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
-import { projectResidualReviewerToJudge } from "../judgeStation.js";
 import { skeletonReviewLoopWorkerResult } from "../reviewLoopOutcome.js";
 import type {
   FamilyBackend,
@@ -60,32 +59,24 @@ import type {
 import type { CmrResult } from "../types.js";
 
 /**
- * #930 / #919 M2 — residual IntegratedCmrResult / kind:cmr paper → sole judge
- * form once, aligned with {@link projectResidualReviewerToJudge}:
+ * #930 / #919 E — family residual IntegratedCmrResult / kind:cmr paper.
  *
- *   - positive open-count → continue
- *   - zero / missing / non-integer / legacy-only `converged:true` → undefined
- *     (caller maps unusable; **never silent clean**)
+ * Family live court must **never** mint `status:"continue"` from open-count /
+ * findingsCount (ADR 0131 / #930: open-count is not a closer). Always returns
+ * `undefined` so callers fail-loud as unusable / cmr_failed.
  *
- * Live production green is typed `station:judge` / `kind:"judge"` only
- * (seat-side SO). This helper is residual boundary only — not a second closer.
+ * Official continue is typed `kind:"judge"` with live identity keys only.
+ * Single-slice historical residual still uses
+ * {@link projectResidualReviewerToJudge} — that path is not family court.
  */
 export function residualIntegratedCmrToJudgeOutput(
   cmr:
     | Pick<IntegratedCmrResult, "findingsCount" | "findings" | "converged">
     | Pick<CmrResult, "findingsCount" | "findings" | "converged">,
 ): JudgeResult | undefined {
-  if (
-    typeof cmr.findingsCount === "number" &&
-    Number.isSafeInteger(cmr.findingsCount)
-  ) {
-    // Open-count residual paper — same predicate as single-slice residual.
-    return projectResidualReviewerToJudge({
-      findingsCount: cmr.findingsCount,
-      findings: cmr.findings,
-    });
-  }
-  // Missing open-count (incl. legacy converged boolean alone): never silent clean.
+  // Family residual never projects count → continue (any findingsCount shape).
+  void cmr.findingsCount;
+  void cmr.findings;
   void cmr.converged;
   return undefined;
 }
@@ -470,13 +461,9 @@ export async function legacyDispatchFamilyWorker(
         ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
         : {}),
     });
-    // #930 / #919 M2: residual IntegratedCmrResult open-count projects once
-    // (shared residual semantics). Zero/missing count → residual kind:cmr
-    // unusable paper (family court fail-loud; seat SO owns typed re-furnace).
-    const projected = residualIntegratedCmrToJudgeOutput(cmr);
-    if (projected !== undefined) {
-      return { kind: "completed", output: projected };
-    }
+    // #919 E: residual IntegratedCmrResult never becomes judge continue via
+    // open-count. Always residual kind:cmr unusable paper (court fail-loud;
+    // seat SO owns typed re-furnace). Live green/continue is kind:judge only.
     return {
       kind: "completed",
       output: {
