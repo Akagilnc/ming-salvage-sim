@@ -58,10 +58,9 @@ import { isAbsolute, join } from "node:path";
 
 import { z } from "zod";
 import {
+  classifyDecisionGate,
   decisionGateOutput,
-  isMalformedDecisionGate,
   logAndRethrowReceiptFailure,
-  wellFormedDecisionBell,
   workerReceiptOutput,
   workerReceiptSchema,
 } from "../receiptRecovery.js";
@@ -1609,7 +1608,7 @@ export class RealFamilyBackend implements FamilyBackend {
             // Sandcastle owns malformed-receipt recovery.  The sidecar remains
             // cargo for cmrOutcomeFromResult; it is never a runner validation
             // gate or a second receipt parser.
-            output: workerReceiptOutput("cmr", workerReceiptSchema("cmr")),
+            output: workerReceiptOutput("cmr", workerReceiptSchema()),
           });
         } catch (err) {
           // #899: typed traffic-signal exhaust exits non-zero for #598; do not
@@ -1893,16 +1892,11 @@ export class RealFamilyBackend implements FamilyBackend {
       // the sidecar and never reintroduces escalate when typed is absent or is
       // a no-gate `{}` signal.
       if (result.output !== undefined) {
-        if (isMalformedDecisionGate(result.output)) {
-          throw new Error(
-            "family-coder-fix: malformed decision gate; failing Action for mechanical redispatch",
-          );
-        }
-        const decisionBell = wellFormedDecisionBell(result.output);
-        if (decisionBell !== undefined) {
+        const gate = classifyDecisionGate(result.output, "family-coder-fix");
+        if (gate.kind === "bell") {
           return {
             kind: "escalated",
-            escalation: decisionBell,
+            escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
             sessionId: lastSessionId(result),
           };
         }
@@ -2175,14 +2169,13 @@ export class RealFamilyBackend implements FamilyBackend {
       // a well-formed gate, escalate; when present as no-gate `{}` or absent,
       // sidecar/stdout enrich cargo only — never reintroduce escalate.
       if (result.output !== undefined) {
-        if (isMalformedDecisionGate(result.output)) {
-          throw new Error(
-            `family-${spec.kind}: malformed decision gate; failing Action for mechanical redispatch`,
-          );
-        }
-        const typedBell = wellFormedDecisionBell(result.output);
-        if (typedBell !== undefined) {
-          return { kind: "escalated", escalation: typedBell, sessionId };
+        const gate = classifyDecisionGate(result.output, `family-${spec.kind}`);
+        if (gate.kind === "bell") {
+          return {
+            kind: "escalated",
+            escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
+            sessionId,
+          };
         }
       }
       return reviewLoopCargoResult(result.stdout, spec.kind, sessionId, outcomePath);
@@ -3553,14 +3546,13 @@ function classifyCmrOutcomePayload(
   const normalizedParsed = normalizeKnownCmrAliases(parsed);
   // #899: only well-formed bells are fate signals. Present-but-malformed
   // escalate fails closed for #598 (typed seats also re-ask via schema).
-  if (isMalformedDecisionGate(normalizedParsed)) {
-    throw new Error(
-      "cmr: malformed decision gate; failing Action for mechanical redispatch",
-    );
-  }
-  const decisionBell = wellFormedDecisionBell(normalizedParsed);
-  if (decisionBell !== undefined) {
-    return { kind: "escalate", ...decisionBell };
+  const gate = classifyDecisionGate(normalizedParsed, "cmr");
+  if (gate.kind === "bell") {
+    return {
+      kind: "escalate",
+      reason: gate.reason,
+      diagnosis: gate.diagnosis,
+    };
   }
   const findings = Array.isArray(normalizedParsed.findings)
     ? normalizedParsed.findings.flatMap((rawFinding) => {
@@ -3748,18 +3740,14 @@ function classifyMergerOutcomePayload(
   if (parsed === null || typeof parsed !== "object") {
     return { resolved: false, reason: `${source} was not a JSON object` };
   }
-  if (isMalformedDecisionGate(parsed)) {
-    throw new Error(
-      "merger: malformed decision gate; failing Action for mechanical redispatch",
-    );
-  }
-  const decisionBell = wellFormedDecisionBell(parsed);
-  if (decisionBell !== undefined) {
+  const gate = classifyDecisionGate(parsed, "merger");
+  if (gate.kind === "bell") {
     return {
       resolved: false,
-      reason: decisionBell.reason,
+      reason: gate.reason,
       escalation: {
-        ...decisionBell,
+        reason: gate.reason,
+        diagnosis: gate.diagnosis,
         escalationKind: "decision",
         phase: "wave",
       },
@@ -3931,13 +3919,13 @@ type ReceiptCargo = { readonly kind: "cargo" };
 const RECEIPT_CARGO: ReceiptCargo = { kind: "cargo" };
 
 function receiptDecisionBell(parsed: unknown): ReceiptDecisionBell | undefined {
-  if (isMalformedDecisionGate(parsed)) {
-    throw new Error(
-      "review-loop: malformed decision gate; failing Action for mechanical redispatch",
-    );
-  }
-  const escalation = wellFormedDecisionBell(parsed);
-  return escalation === undefined ? undefined : { kind: "escalate", escalation };
+  const gate = classifyDecisionGate(parsed, "review-loop");
+  return gate.kind === "bell"
+    ? {
+        kind: "escalate",
+        escalation: { reason: gate.reason, diagnosis: gate.diagnosis },
+      }
+    : undefined;
 }
 
 /**

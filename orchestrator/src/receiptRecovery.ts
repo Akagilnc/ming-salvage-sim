@@ -56,7 +56,7 @@ function rejectMalformedEscalateAlongsideCount(
 /**
  * Shared open-count receipt for reviewer and CMR seats (#899). Both roles use
  * the same findingsCount + optional decision-gate contract until their typed
- * boundaries genuinely diverge.
+ * boundaries genuinely diverge — introduce role dispatch only then.
  */
 const openCountReceiptSchema = z.object({
   findingsCount: z.number().int().nonnegative(),
@@ -83,13 +83,11 @@ export const decisionGateSignalSchema: z.ZodType = z.union([
   ),
 ]);
 
-/** Typed traffic-signal seats only (#899): reviewer/CMR open-count + decision. */
-type WorkerReceiptRole = "reviewer" | "cmr";
-
-/** The role contract Sandcastle validates before deciding whether to re-ask. */
-export function workerReceiptSchema(role: WorkerReceiptRole): z.ZodType {
-  // Role is reserved for future contract divergence; open-count is shared today.
-  void role;
+/**
+ * Shared open-count + optional decision-gate schema for reviewer/CMR typed seats.
+ * No role parameter: both seats share one contract until they genuinely diverge.
+ */
+export function workerReceiptSchema(): z.ZodType {
   return z.union([
     decisionBellSchema,
     openCountReceiptSchema,
@@ -147,6 +145,36 @@ export function isMalformedDecisionGate(receipt: unknown): boolean {
   return decisionEscalateSchema.safeParse(
     (receipt as { escalate: unknown }).escalate,
   ).success === false;
+}
+
+/**
+ * Classified decision-gate signal after malformed-gate validation (#899 seam).
+ * Callers map `bell` into role-specific escalate outcomes and treat `none` as
+ * "no gate — continue with cargo".
+ */
+export type DecisionGateClassification =
+  | { readonly kind: "none" }
+  | { readonly kind: "bell"; readonly reason: string; readonly diagnosis: string };
+
+/**
+ * Central malformed-gate validation + bell classification for production parsers.
+ * Present-but-malformed `escalate` throws so the Action exits non-zero for #598;
+ * well-formed bells and no-gate payloads are returned as a discriminated result.
+ */
+export function classifyDecisionGate(
+  receipt: unknown,
+  label: string,
+): DecisionGateClassification {
+  if (isMalformedDecisionGate(receipt)) {
+    throw new Error(
+      `${label}: malformed decision gate (empty or non-string reason/diagnosis); failing Action for mechanical redispatch`,
+    );
+  }
+  const bell = wellFormedDecisionBell(receipt);
+  if (bell !== undefined) {
+    return { kind: "bell", reason: bell.reason, diagnosis: bell.diagnosis };
+  }
+  return { kind: "none" };
 }
 
 /** A native receipt retry that must fail the Action for #598 mechanical redispatch. */
