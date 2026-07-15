@@ -22,6 +22,7 @@ import type {
   EscalationAnswerPayload,
   EscalationKind,
   Finding,
+  FindingFamily,
   PriorFindingDisposition,
   StepId,
   WorkerLandingPayload,
@@ -758,6 +759,8 @@ export interface IntegratedCmrResult {
   readonly findings?: readonly Finding[];
   /** Reviewer-referenced evidence artifact pointers transported as cargo. */
   readonly evidencePaths?: readonly string[];
+  /** Cross-round grouped findings + recurring-class markers (#711); cargo only. */
+  readonly findingFamilies?: readonly FindingFamily[];
 }
 
 /**

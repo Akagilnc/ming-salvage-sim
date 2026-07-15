@@ -3510,7 +3510,7 @@ function withFamilyJudgeCargo(
     ...(cargo.priorFindingDispositions !== undefined
       ? { priorFindingDispositions: cargo.priorFindingDispositions }
       : {}),
-  } as import("../types.js").JudgeResult;
+  };
 }
 
 interface CmrSkippedLeg {
