@@ -7,15 +7,14 @@
 ## [0.30.1.0] — 2026-07-16
 
 ### Added
-- **#945 worker auth path-policy 一缝**： 共享核； 注入 family（per-run mkdtemp，无 codex 不挂）与 slice（稳定  always-mount config+AGENTS）。
+- **#945 worker auth path-policy 一缝**：`provisionWorkerAuth` 共享核；`WorkerAuthPathPolicy` 注入 family（per-run mkdtemp，无 codex 不挂）与 slice（稳定 `auth-N` always-mount config+AGENTS）。
 
 ### Changed
-- ** 收缩**为 slice 稳定 codex 路径（ + ）；materialize 全归 。
-- ** / ** 改为薄包装，不再双份内联 credential 步骤。
+- **`AuthPaths` 收缩**为 slice 稳定 codex 路径（`hostCodexAuthDir` + `srcCodexAuth`）；materialize 全归 `provisionWorkerAuth`。
+- **`provisionFamilyWorkerAuth` / `mountAuth`** 改为薄包装，不再双份内联 credential 步骤。
 
 ### Fixed
 - path-policy 边界测：always-mount AGENTS 断言；family 失败 mkdtemp 无泄漏。
-
 
 ## [0.30.0.0] — 2026-07-16
 
