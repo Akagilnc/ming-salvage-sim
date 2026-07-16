@@ -368,6 +368,92 @@ describe("#955 grok session storage — failure paths", () => {
       ),
     );
   });
+
+  /**
+   * #884 / #955 cx-r4-1: sandbox handle.exec is an external wait outside the
+   * agent idle clock. Never-settling exec must surface ExternalCallTimeoutError
+   * (classifiable transient) with stage + sessionId — not hang the seat forever.
+   */
+  it("captureToHost times out a never-settling sandbox exec with classified error", async () => {
+    const hostRoot = tmp("grok-host-");
+    const sandboxFs = tmp("grok-sbx-");
+    const sessionId = "019f-hang-export";
+    const handle: BindMountSandboxHandle = {
+      worktreePath: sandboxFs,
+      exec: () =>
+        new Promise(() => {
+          /* never settle — wall clock must fire */
+        }),
+      copyFileIn: async () => {},
+      copyFileOut: async () => {},
+      close: async () => {},
+    };
+    const storage = grokAgent("grok-4.5", {
+      sessionStorage: {
+        hostSessionsDir: hostRoot,
+        sandboxSessionsDir: join(sandboxFs, "sessions"),
+      },
+    }).sessionStorage!;
+
+    await expect(
+      storage.captureToHost({
+        hostCwd: "/host",
+        sandboxCwd: "/sbx",
+        sessionId,
+        handle,
+      }),
+    ).rejects.toMatchObject({
+      name: "ExternalCallTimeoutError",
+      stage: expect.stringMatching(
+        new RegExp(
+          `grok-session:sandbox-export.*sessionId=${sessionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+        ),
+      ),
+    });
+  });
+
+  it("resumeIntoSandbox times out a never-settling sandbox exec with classified error", async () => {
+    const hostRoot = tmp("grok-host-");
+    const sandboxFs = tmp("grok-sbx-");
+    const hostCwd = "/host/cwd";
+    const sessionId = "019f-hang-import";
+    const hostDir = join(hostRoot, encodeURIComponent(hostCwd), sessionId);
+    mkdirSync(hostDir, { recursive: true });
+    writeFileSync(join(hostDir, "chat_history.jsonl"), `{"cwd":"${hostCwd}"}\n`);
+
+    const handle: BindMountSandboxHandle = {
+      worktreePath: sandboxFs,
+      exec: () =>
+        new Promise(() => {
+          /* never settle — wall clock must fire */
+        }),
+      copyFileIn: async () => {},
+      copyFileOut: async () => {},
+      close: async () => {},
+    };
+    const storage = grokAgent("grok-4.5", {
+      sessionStorage: {
+        hostSessionsDir: hostRoot,
+        sandboxSessionsDir: join(sandboxFs, "sessions"),
+      },
+    }).sessionStorage!;
+
+    await expect(
+      storage.resumeIntoSandbox({
+        hostCwd,
+        sandboxCwd: "/sbx/cwd",
+        sessionId,
+        handle,
+      }),
+    ).rejects.toMatchObject({
+      name: "ExternalCallTimeoutError",
+      stage: expect.stringMatching(
+        new RegExp(
+          `grok-session:sandbox-import.*sessionId=${sessionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+        ),
+      ),
+    });
+  });
 });
 
 /**

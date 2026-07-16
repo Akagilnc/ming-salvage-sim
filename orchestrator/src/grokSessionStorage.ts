@@ -143,6 +143,31 @@ async function hostTar(
   });
 }
 
+/**
+ * #884 chokepoint: sandbox `handle.exec` is an external wait outside sandcastle's
+ * agent idle clock (capture/resume run after "Agent stopped"). Race the promise
+ * on the public surface (`withProviderTimeout`) — do not invent a second timer.
+ * Stage carries sessionId so timeouts stay attributable; budget matches host tar.
+ */
+async function sandboxExecWithClock<T>(
+  stage: "grok-session:sandbox-export" | "grok-session:sandbox-import",
+  sessionId: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const {
+    DEFAULT_SUBPROCESS_TIMEOUT_MS,
+    effectiveSubprocessTimeoutMs,
+    withProviderTimeout,
+  } = await import("./externalCall.js");
+  return withProviderTimeout(
+    `${stage} sessionId=${sessionId}`,
+    async () => run(),
+    {
+      timeoutMs: effectiveSubprocessTimeoutMs(DEFAULT_SUBPROCESS_TIMEOUT_MS),
+    },
+  );
+}
+
 export function makeGrokSessionStorage(
   options?: GrokSessionStorageOptions,
 ): Storage {
@@ -193,8 +218,10 @@ export function makeGrokSessionStorage(
 
     captureToHost: async ({ hostCwd, sandboxCwd, sessionId, handle }) => {
       const src = posix.join(sandboxRoot, bucketFor(sandboxCwd), sessionId);
-      const result = await handle.exec(
-        `tar -C ${shellEscape(src)} -cf - . | base64`,
+      const result = await sandboxExecWithClock(
+        "grok-session:sandbox-export",
+        sessionId,
+        () => handle.exec(`tar -C ${shellEscape(src)} -cf - . | base64`),
       );
       if (result.exitCode !== 0) {
         throw new Error(
@@ -242,9 +269,14 @@ export function makeGrokSessionStorage(
         );
         const tarBytes = await readFile(tarPath);
         const dst = posix.join(sandboxRoot, bucketFor(sandboxCwd), sessionId);
-        const push = await handle.exec(
-          `mkdir -p ${shellEscape(dst)} && base64 -d | tar -C ${shellEscape(dst)} -xf -`,
-          { stdin: tarBytes.toString("base64") },
+        const push = await sandboxExecWithClock(
+          "grok-session:sandbox-import",
+          sessionId,
+          () =>
+            handle.exec(
+              `mkdir -p ${shellEscape(dst)} && base64 -d | tar -C ${shellEscape(dst)} -xf -`,
+              { stdin: tarBytes.toString("base64") },
+            ),
         );
         if (push.exitCode !== 0) {
           throw new Error(
