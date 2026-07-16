@@ -98,7 +98,6 @@ import {
 } from "./quotaPoolTable.js";
 import {
   canRelayHandoff,
-  isRelayCandidateExhaustion,
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
   renderEphemeralRelayBrief,
@@ -3156,91 +3155,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 
             if (unwrapped === undefined) {
-              // #686 P2-b: mechanical-retry exhaustion is a relay candidate —
-              // hand off when a live baton exists; durable abort only when none.
-              if (
-                expectedKind === "coder" &&
-                isRelayCandidateExhaustion(reason) &&
-                canRelayInProcess()
-              ) {
-                const currentPool =
-                  currentBillingPool ??
-                  billingPoolFromQuotaPool(
-                    poolForModelRef(modelRoute.slots.coder),
-                  );
-                // Mark the wall-hit pool dead/limited so 换马甲 does not
-                // re-select the same model on a "different" pool forever when
-                // poolForModelRef disagrees with the baton's billing pool.
-                const pools = resolveRelayPools(currentPool, undefined).map(
-                  (p) =>
-                    p.id === currentPool
-                      ? { ...p, status: "dead" as const }
-                      : p,
-                );
-                const handoff = await applyResourceFailureHandoff({
-                  trigger: "mechanical_retry_exhausted",
-                  state_summary:
-                    reason ??
-                    `mechanical retry exhausted on ${step}; uncommitted drift preserved`,
-                  reason: reason ?? "mechanical retry exhausted",
-                  currentModelId: modelIdForWallStep(step),
-                  currentPool,
-                  rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-                  pools,
-                  now: relayNow(),
-                  step,
-                });
-                if (handoff.kind === "relay" && handoff.ledgerEntry) {
-                  const entry = handoff.ledgerEntry;
-                  const marker: LedgerEntry = {
-                    step: isValidStepId(entry.step) ? entry.step : step,
-                    event: "relay_baton_handoff",
-                    trigger: entry.trigger,
-                    state_summary: entry.state_summary,
-                    ...(entry.remaining !== undefined
-                      ? { remaining: entry.remaining }
-                      : {}),
-                    ...(entry.reason !== undefined
-                      ? { reason: entry.reason }
-                      : {}),
-                    fromModelId: entry.fromModelId,
-                    fromPool: entry.fromPool,
-                    toModelId: entry.toModelId,
-                    toPool: entry.toPool,
-                    ts: entry.ts,
-                  };
-                  if (stateDir !== undefined) {
-                    try {
-                      await backend.writeLedger(
-                        {
-                          ...marker,
-                          sessionId,
-                          prompt_hash: await hashPrompt(
-                            undefined,
-                            step,
-                            backend,
-                          ),
-                          branchHEAD: await resolveBranchHEAD(),
-                          ts: entry.ts,
-                        },
-                        stateDir,
-                      );
-                    } catch {
-                      return await errorTermination(
-                        step,
-                        new Error(
-                          `relay handoff ledger write failed after mechanical retry exhaustion`,
-                        ),
-                      );
-                    }
-                  }
-                  ledger.push(marker);
-                  activeRelayBrief = renderEphemeralRelayBrief(entry);
-                  completeMechanicalRetryInvocation(step);
-                  applyRelayBaton(handoff.nextBaton, step);
-                  continue orchestratorStepLoop;
-                }
-              }
+              // #934 ID-004 / #937: process-root exhaustion is the phase's
+              // canonical failed edge — never a baton relay / park from silence.
               const exhaustionReason =
                 reason ?? `worker ${step} returned ${result.kind} after bounded redispatch`;
               return await escalateTermination(
@@ -3286,9 +3202,20 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
           // with a live baton (ephemeral brief, apply next baton, re-enter).
           if (isQuotaWaitForResetError(err)) {
+            // #934 ID-008 / #937: review/fix seats stay on the owning coder —
+            // no-candidate must not invent park/terminal from silence or
+            // candidate exhaustion (#919 / ADR 0132 topology).
+            const reviewFixStayPut =
+              isJudgeSeat({ step }) || step === "S5";
             const currentPool =
               currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
             if (!canRelayInProcess()) {
+              if (reviewFixStayPut) {
+                // Stay-put: re-surface as process failure for same-model redispatch.
+                throw new Error(
+                  `quota wall stay-put on ${step} (no live baton): ${err.message}`,
+                );
+              }
               return await parkQuotaWaitForReset({
                 step,
                 err,
@@ -3322,7 +3249,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
               now: relayNow(),
             });
-            if (outcome.kind === "park") return outcome.result;
+            if (outcome.kind === "park") {
+              if (reviewFixStayPut) {
+                throw new Error(
+                  `quota wall stay-put on ${step} (park/no baton): ${err.message}`,
+                );
+              }
+              return outcome.result;
+            }
             if (outcome.relayBrief !== undefined) {
               activeRelayBrief = outcome.relayBrief;
             }
@@ -3333,6 +3267,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // (never mechanical-retry / never reset). Hang/self-report free-log
           // constructors deleted with ID-006/007.
           if (isCapacityRelayError(err) && canRelayInProcess()) {
+            const reviewFixStayPut =
+              isJudgeSeat({ step }) || step === "S5";
             const { currentPool, pools } = resolveResourceFailurePool({
               modelRef: modelRefForWallStep(step),
               capacity: true,
@@ -3348,6 +3284,15 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               now: relayNow(),
               step,
             });
+            if (handoff.kind !== "relay" || handoff.ledgerEntry === undefined) {
+              if (reviewFixStayPut) {
+                throw new Error(
+                  `capacity stay-put on ${step} (no live baton): ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                );
+              }
+            }
             if (handoff.kind === "relay" && handoff.ledgerEntry) {
               const entry = handoff.ledgerEntry;
               const marker: LedgerEntry = {

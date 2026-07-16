@@ -120,8 +120,11 @@ export interface QuotaWaitForResetLedgerEvent {
   readonly ts: string;
 }
 
-/** Actions the disposition applier needs from the runner host. */
-export interface IdleHangActions {
+/**
+ * Ledger-only actions for Sandcastle-idle → quota-probe disposition (#937).
+ * Host kill is not part of this surface (silence sentencing deleted).
+ */
+export interface IdleQuotaActions {
   /** Persist the wait-for-reset ledger row. */
   readonly recordLedger: (
     entry: QuotaWaitForResetLedgerEvent,
@@ -130,6 +133,9 @@ export interface IdleHangActions {
   readonly now?: () => Date;
 }
 
+/** @deprecated #937 alias — use {@link IdleQuotaActions}. */
+export type IdleHangActions = IdleQuotaActions;
+
 export interface IdleWorkerHandle {
   /** OS pid of the worker process (monitor handle; see also #684). */
   readonly pid: number;
@@ -137,7 +143,6 @@ export interface IdleWorkerHandle {
 }
 
 export interface ApplyIdleDispositionResult {
-  readonly killed: boolean;
   readonly ledgerEntry?: QuotaWaitForResetLedgerEvent;
 }
 
@@ -272,11 +277,11 @@ export function buildQuotaWaitForResetLedgerEntry(input: {
 export async function applyIdleDisposition(
   disposition: IdleDisposition,
   worker: IdleWorkerHandle,
-  actions: IdleHangActions,
+  actions: IdleQuotaActions,
 ): Promise<ApplyIdleDispositionResult> {
   if (disposition.kind === "hang") {
-    // Host PID-tree kill deleted; Sandcastle idle error is rethrown upstream.
-    return { killed: false };
+    // Host kill deleted; Sandcastle idle error is rethrown upstream.
+    return {};
   }
 
   const now = actions.now?.() ?? new Date();
@@ -289,7 +294,7 @@ export async function applyIdleDisposition(
     now,
   });
   await actions.recordLedger(ledgerEntry);
-  return { killed: false, ledgerEntry };
+  return { ledgerEntry };
 }
 
 // ── zai 429 body parsing ────────────────────────────────────────────────────
@@ -453,7 +458,7 @@ export interface HandleIdleThresholdInput {
   /** Route/model slug — mapped to a quota pool via {@link poolForModelRef}. */
   readonly modelRef: string;
   readonly worker: IdleWorkerHandle;
-  readonly actions: IdleHangActions;
+  readonly actions: IdleQuotaActions;
   /**
    * Injected probe (unit tests). Production defaults to
    * {@link runPoolProbe}(pool, probeDeps).
@@ -658,7 +663,7 @@ export function tryParseQuotaWaitForResetBridge(
   });
   return new QuotaWaitForResetError({
     disposition,
-    applied: { killed: false, ledgerEntry },
+    applied: { ledgerEntry },
     pool,
     probe: {
       kind: "quota_limited",

@@ -88,6 +88,8 @@ export {
   silenceWholeMinutes,
   terminateSpawnedChild,
   validateMonitorHandle,
+  WorkerTerminationFailedError,
+  isWorkerTerminationFailedError,
 } from "./workerMonitor.js";
 export type {
   LogActivitySnapshot,
@@ -211,6 +213,7 @@ export type {
   HandleIdleThresholdResult,
   IdleDisposition,
   IdleHangActions,
+  IdleQuotaActions,
   IdleWorkerHandle,
   PoolProbeConfig,
   PoolProbeDeps,
@@ -331,7 +334,6 @@ export {
   isCapacityRelayError,
   isRelayCandidateExhaustion,
   isRelayChainReadyForReviewGate,
-  parseRelayTag,
   renderEphemeralRelayBrief,
   resumeRelayFromLedger,
   CapacityRelayError,
@@ -341,7 +343,6 @@ export type {
   RelayDispositionResult,
   RelayHandoffLedgerEvent,
   RelayHandoffTrigger,
-  RelayTagOutcome,
 } from "./relayDispatch.js";
 export {
   POOL_DISPATCH_BINDINGS,

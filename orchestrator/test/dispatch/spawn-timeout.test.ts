@@ -133,6 +133,12 @@ describe("#937 spawn ownership (no spawn-ack wall clock)", () => {
         killPid: (pid, signal) => {
           fakeChildState.signals.push(signal);
           void pid;
+          // Confirm exit so terminateSpawnedChild does not raise
+          // worker_termination_failed (#934 ID-006).
+          Object.defineProperty(child, "exitCode", {
+            value: 1,
+            configurable: true,
+          });
         },
         sleepMs: async () => {},
       });

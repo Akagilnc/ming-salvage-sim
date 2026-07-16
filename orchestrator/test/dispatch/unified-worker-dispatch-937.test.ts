@@ -88,7 +88,6 @@ function quotaWallError(now: Date, resetAt: Date): QuotaWaitForResetError {
       reason: "quota limited",
     },
     applied: {
-      killed: false,
       ledgerEntry: {
         event: "quota_wait_for_reset",
         pool: "grok",
@@ -133,7 +132,8 @@ describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
     expect(sleeps).toEqual([...DISPATCH_RETRY_BACKOFF_MS]);
     expect(result.kind).toBe("failed");
     if (result.kind === "failed") {
-      expect(result.reason).toMatch(/relay candidate/i);
+      // #686 isRelayCandidateExhaustion: exhaustion remains a relay candidate.
+      expect(result.reason).toMatch(/after 6 dispatch attempts; relay candidate/i);
     }
   });
 
@@ -154,23 +154,43 @@ describe("#937 unified worker dispatch — ID-004 process-root retry", () => {
     expect(result.kind).toBe("completed");
   });
 
-  it("POSITIVE: non-resumable providers attach maxRetries:0 at receipt helper", () => {
-    expect(receiptMaxRetriesForProvider("grok")).toBe(0);
+  it("POSITIVE: production attach expression maps grok→0 and codex→RECEIPT_MAX_RETRIES", async () => {
+    // Production attach (realBackend.outputFor / family receiptMaxRetriesFor):
+    //   provider = resolveModelSlugForPool(model, pool).provider
+    //   maxRetries = receiptMaxRetriesForProvider(provider)
+    //   coderReceiptOutput(schema, tag, maxRetries)
+    const { resolveModelSlugForPool } = await import("../../src/modelRegistry.js");
+    const { readFileSync: readSrc } = await import("node:fs");
+    const realBackendSrc = readSrc(
+      join(import.meta.dirname, "../../src/realBackend.ts"),
+      "utf8",
+    );
+    const familySrc = readSrc(
+      join(import.meta.dirname, "../../src/family/realFamilyBackend.ts"),
+      "utf8",
+    );
+    // Production sites must call the provider→maxRetries seam (not hardcode 2).
+    expect(realBackendSrc).toMatch(/receiptMaxRetriesForProvider\(provider\)/);
+    expect(realBackendSrc).toMatch(/coderReceiptOutput\([\s\S]*maxRetries/);
+    expect(familySrc).toMatch(/receiptMaxRetriesFor\(/);
+    expect(familySrc).toMatch(/coderReceiptOutput\([\s\S]*this\.receiptMaxRetriesFor/);
+
+    const attachFor = (model: string) => {
+      const provider = resolveModelSlugForPool(model).provider;
+      const maxRetries = receiptMaxRetriesForProvider(provider);
+      return coderReceiptOutput(
+        coderStationReceiptSchema(),
+        "coder",
+        maxRetries,
+      );
+    };
+    expect(attachFor("grok-4.5")).toMatchObject({ tag: "coder", maxRetries: 0 });
+    expect(attachFor("gpt-5.6-terra")).toMatchObject({
+      tag: "coder",
+      maxRetries: RECEIPT_MAX_RETRIES,
+    });
+    // NEGATIVE: unknown/non-resumable custom provider stays at 0
     expect(receiptMaxRetriesForProvider("agy")).toBe(0);
-    expect(receiptMaxRetriesForProvider("codex")).toBe(RECEIPT_MAX_RETRIES);
-    expect(receiptMaxRetriesForProvider("claudeCode")).toBe(RECEIPT_MAX_RETRIES);
-    const grokOut = coderReceiptOutput(
-      coderStationReceiptSchema(),
-      "coder",
-      receiptMaxRetriesForProvider("grok"),
-    );
-    expect(grokOut).toMatchObject({ tag: "coder", maxRetries: 0 });
-    const codexOut = workerReceiptOutput(
-      "judge",
-      coderStationReceiptSchema(),
-      receiptMaxRetriesForProvider("codex"),
-    );
-    expect(codexOut).toMatchObject({ maxRetries: RECEIPT_MAX_RETRIES });
   });
 
   it("NEGATIVE: QuotaWaitForResetError does not burn onAttempt durable budget", async () => {
@@ -491,15 +511,18 @@ describe("#937 ID-015 / ID-016 delete boundaries", () => {
     expect("HangWithLivePoolError" in relay).toBe(false);
     expect("SelfReportedRelayError" in relay).toBe(false);
     expect("tryParseActionableRelayTag" in relay).toBe(false);
+    expect("parseRelayTag" in relay).toBe(false);
 
-    // killPidTree is not a live production action type on IdleHangActions.
+    // killPidTree is not a live production action type on IdleQuotaActions.
     const src = readFileSync(
       join(import.meta.dirname, "../../src/quotaProbe.ts"),
       "utf8",
     );
     expect(src).not.toMatch(/killPidTree\s*:/);
     expect(src).not.toMatch(/await actions\.killPidTree/);
-    // free-log parsers must not remain as live throw sites in production src.
+    expect(src).toMatch(/export interface IdleQuotaActions/);
+    expect(src).not.toMatch(/readonly killed:\s*boolean/);
+    // free-log parsers must not remain as live production exports.
     const relaySrc = readFileSync(
       join(import.meta.dirname, "../../src/relayDispatch.ts"),
       "utf8",
@@ -507,6 +530,7 @@ describe("#937 ID-015 / ID-016 delete boundaries", () => {
     expect(relaySrc).not.toMatch(/export class HangWithLivePoolError/);
     expect(relaySrc).not.toMatch(/export class SelfReportedRelayError/);
     expect(relaySrc).not.toMatch(/export function tryParseActionableRelayTag/);
+    expect(relaySrc).not.toMatch(/export function parseRelayTag/);
     void probe;
   });
 });
