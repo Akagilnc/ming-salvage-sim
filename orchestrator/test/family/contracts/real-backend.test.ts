@@ -3257,13 +3257,8 @@ describe("resolveImageTag / DEFAULT_IMAGE_TAG pin (#372 R2)", () => {
 });
 
 /**
- * #909 — family sandbox path must share single-slice idle → quota-probe
- * disposition (wait/relay on 429; do not kill the leg as hang).
- *
- * Seams:
- *   1. RealFamilyBackend.runAgentSandbox + quotaProbe → QuotaWaitForResetError
- *   2. Production family call sites thread quotaProbe (ship via runAgentSandbox)
- *   3. Shared helper only — no second cloned catch body
+ * #909/#937 — family sandbox shares single-slice silence contract (ID-007):
+ * Sandcastle idle rethrows without quota probe/park. Explicit 429 is separate.
  */
 describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
   function idleTimeoutError(): Error {
@@ -3328,51 +3323,40 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
     return new FamilyIdleBackend(opts(trackRepo()));
   }
 
-  it("429 via family runAgentSandbox → QuotaWaitForResetError; no hang kill", async () => {
+  it("family runAgentSandbox idle rethrows without QuotaWait (#937 ID-007)", async () => {
     const { QuotaWaitForResetError } = await import("../../../src/quotaProbe.js");
     const backend = makeFamilyIdleBackend();
-    const resetAt = new Date("2026-07-08T16:10:00.000Z");
     backend.probeResult = {
       kind: "quota_limited",
-      resetAt,
-      detail: "429 wall",
+      resetAt: new Date("2026-07-08T16:10:00.000Z"),
     };
-
-    let thrown: unknown;
-    try {
-      await backend.exposeRunAgentSandbox({
-        name: "family-coder-fix",
+    await expect(
+      backend.exposeRunAgentSandbox({
+        name: "family-idle",
         idleTimeoutSeconds: 600,
-        cwd: "/tmp/family",
-        sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
-        agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
+        cwd: "/tmp",
+        sandbox: {} as never,
+        agent: {} as never,
         maxIterations: 1,
         branchStrategy: { type: "head" },
-        promptFile: join(realPromptsDir, "coder_fix.md"),
-        quotaProbe: {
-          modelRef: "zai/glm-5.2",
-          step: "S5",
-          worktreePath: "/tmp/family",
-          issueNumber: 909,
-        },
-      });
-    } catch (err) {
-      thrown = err;
-    }
-
-    expect(thrown).toBeInstanceOf(QuotaWaitForResetError);
-    const qw = thrown as InstanceType<typeof QuotaWaitForResetError>;
+        promptFile: "x.md",
+        quotaProbe: { modelRef: "gpt-5.6-terra", step: "S7" },
+      }),
+    ).rejects.toThrow(/Agent idle for 600/);
     expect(backend.sandcastleReached).toBe(true);
-    expect(qw.applied.ledgerEntry).toMatchObject({
-      event: "quota_wait_for_reset",
-      resetAt: "2026-07-08T16:10:00.000Z",
-      step: "S5",
-    });
-    expect(backend.lastQuotaProbe).toMatchObject({
-      modelRef: "zai/glm-5.2",
-      step: "S5",
-      issueNumber: 909,
-    });
+    await expect(
+      backend.exposeRunAgentSandbox({
+        name: "family-idle",
+        idleTimeoutSeconds: 600,
+        cwd: "/tmp",
+        sandbox: {} as never,
+        agent: {} as never,
+        maxIterations: 1,
+        branchStrategy: { type: "head" },
+        promptFile: "x.md",
+        quotaProbe: { modelRef: "gpt-5.6-terra", step: "S7" },
+      }),
+    ).rejects.not.toBeInstanceOf(QuotaWaitForResetError);
   });
 
   it("probe ok via family Sandcastle fallback rethrows idle (fail-safe hang)", async () => {
@@ -3416,7 +3400,7 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
     ).rejects.toThrow(/Agent idle for 600/);
   });
 
-  it("shipContainerRun routes through runAgentSandbox with quotaProbe", async () => {
+  it("shipContainerRun idle rethrows without QuotaWait (#937 ID-007)", async () => {
     const { QuotaWaitForResetError } = await import("../../../src/quotaProbe.js");
     const backend = makeFamilyIdleBackend();
     backend.probeResult = {
@@ -3440,15 +3424,27 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         soul: "ship",
         toolchain: [],
       }),
-    ).rejects.toBeInstanceOf(QuotaWaitForResetError);
+    ).rejects.toThrow(/Agent idle for 600/);
 
-    expect(backend.lastQuotaProbe).toMatchObject({
-      modelRef: "gpt-5.6-terra",
-      step: "S7",
-    });
+    await expect(
+      backend.exposeShipContainerRun({
+        id: "S7",
+        kind: "ship",
+        role: "coder",
+        host: "codex",
+        session: "fresh",
+        contextRetention: "clean",
+        skill: "gstack-ship",
+        promptFile: "family_ship.md",
+        maxIter: 1,
+        model: "gpt-5.6-terra",
+        soul: "ship",
+        toolchain: [],
+      }),
+    ).rejects.not.toBeInstanceOf(QuotaWaitForResetError);
   });
 
-  it("family + single-slice both call shared withIdleQuotaProbeDisposition (no second clone)", () => {
+  it("family + single-slice runAgentSandbox no longer route idle through quota probe (#937 ID-007)", () => {
     const familySrc = readFileSync(
       join(here, "..", "..", "..", "src", "family", "realFamilyBackend.ts"),
       "utf8",
@@ -3457,14 +3453,19 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
       join(here, "..", "..", "..", "src", "realBackend.ts"),
       "utf8",
     );
-    expect(familySrc).toMatch(/withIdleQuotaProbeDisposition/);
-    expect(realSrc).toMatch(/withIdleQuotaProbeDisposition/);
-    // Family must not re-clone the idle-name catch body beside the shared helper.
-    const familyCatchBody = familySrc.slice(
+    // Production runAgentSandbox must not wrap invoke with idle→quota disposition.
+    const familyBody = familySrc.slice(
       familySrc.indexOf("protected async runAgentSandbox"),
       familySrc.indexOf("protected async resolveIdleAfterQuotaProbe"),
     );
-    expect(familyCatchBody).toMatch(/withIdleQuotaProbeDisposition/);
-    expect(familyCatchBody).not.toMatch(/isAgentIdleTimeoutError/);
+    const realBody = realSrc.slice(
+      realSrc.indexOf("protected async runAgentSandbox"),
+      realSrc.indexOf("protected async resolveIdleAfterQuotaProbe"),
+    );
+    // Must not *call* the idle→quota wrap (comment mentions alone are not a call).
+    expect(familyBody).not.toMatch(/withIdleQuotaProbeDisposition\s*\(/);
+    expect(realBody).not.toMatch(/withIdleQuotaProbeDisposition\s*\(/);
+    expect(familyBody).toMatch(/invokeSandcastleRun/);
+    expect(realBody).toMatch(/invokeSandcastleRun/);
   });
 });

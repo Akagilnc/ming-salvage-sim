@@ -140,7 +140,6 @@ import {
 import {
   resolveSandboxIdleAfterQuotaProbe,
   runPoolProbe,
-  withIdleQuotaProbeDisposition,
   type HandleIdleThresholdResult,
   type QuotaPoolId,
   type QuotaProbeResult,
@@ -1793,20 +1792,16 @@ export class RealFamilyBackend implements FamilyBackend {
   }
 
   /**
-   * Production family agent-sandbox entry (#909). Same shared idle → quota-probe
-   * disposition as single-slice {@link RealBackend.runAgentSandbox} via
-   * {@link withIdleQuotaProbeDisposition} — 429 parks (QuotaWaitForResetError),
-   * probe-ok/network rethrows idle (fail-safe hang). Do not re-clone the catch.
+   * Production family agent-sandbox entry (#937 / #934 ID-007). Same as
+   * single-slice {@link RealBackend.runAgentSandbox}: Sandcastle only — silence
+   * must not trigger quota probe/park/kill/relay. Explicit typed 429/capacity
+   * enter park/relay via live constructors elsewhere.
    */
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const { quotaProbe, ...scOptions } = options;
-    return withIdleQuotaProbeDisposition({
-      quotaProbe,
-      run: () => this.invokeSandcastleRun(scOptions),
-      resolveIdle: (ctx) => this.resolveIdleAfterQuotaProbe(ctx),
-    });
+    const { quotaProbe: _quotaProbe, ...scOptions } = options;
+    return this.invokeSandcastleRun(scOptions);
   }
 
   /**

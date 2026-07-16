@@ -24,7 +24,8 @@ import {
 } from "../../../src/family/dispatchFamilyWorker.js";
 import { QuotaWaitForResetError } from "../../../src/quotaProbe.js";
 import { DEFAULT_PARK_THRESHOLD_MS } from "../../../src/quotaPoolTable.js";
-import { RELAY_FOCUS_FILENAME } from "../../../src/relayDispatch.js";
+/** Retired focus-file name — assert it is never produced (#937 / ID-007). */
+const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 import { CoderRecError } from "../../../src/coderRoster.js";
 import {
   applyRelayBatonToRoute,

@@ -3078,11 +3078,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //  - JUDGE (S3/S6): typed status tri-state is the sole routing
               //    signal; SOE exhaust does NOT feed empty cargo to the fixer (#899).
               //
-              // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
-              // current scene — do NOT pass a cleanup hook into withMechanicalRetry.
-              // Uncommitted work + partial commits are the payload; reading/comparing
-              // HEADs is legal, destroying scenes is not. (resetBeforeRetry remains an
-              // optional hook for non-runner callers; this site intentionally omits it.)
+              // #661 / #937: process-level retry CONTINUES on the current scene —
+              // no Git reset/checkout/clean. Uncommitted work is the payload.
               //
               // Reviewer: rethrow on throw-exhaust so S8(error) surfaces process
               // crashes and SOE exhaust alike — never feed empty cargo to fixer.
@@ -3360,7 +3357,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           // #686/#787/#937: capacity resource failure relays without retry
           // (never mechanical-retry / never reset). Hang/self-report free-log
           // constructors deleted with ID-006/007.
-          if (isCapacityRelayError(err) && canRelayInProcess()) {
+          // #934 ID-008: review/fix no-candidate is stay-put even when the
+          // handoff chain is exhausted (canRelayInProcess false) — never invent
+          // terminal solely from capacity candidate exhaustion.
+          if (isCapacityRelayError(err)) {
+            if (!canRelayInProcess()) {
+              if (isReviewFixSeat) {
+                const stay = await applyReviewFixStayPut(
+                  `capacity stay-put on ${step}: no live baton`,
+                  err instanceof Error ? err.message : String(err),
+                );
+                if (stay !== "break") return stay;
+                break;
+              }
+              return await errorTermination(step, err);
+            }
             const { currentPool, pools } = resolveResourceFailurePool({
               modelRef: modelRefForWallStep(step),
               capacity: true,
@@ -3385,46 +3396,45 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 if (stay !== "break") return stay;
                 break;
               }
+              return await errorTermination(step, err);
             }
-            if (handoff.kind === "relay" && handoff.ledgerEntry) {
-              const entry = handoff.ledgerEntry;
-              const marker: LedgerEntry = {
-                step: isValidStepId(entry.step) ? entry.step : step,
-                event: "relay_baton_handoff",
-                trigger: entry.trigger,
-                state_summary: entry.state_summary,
-                ...(entry.remaining !== undefined
-                  ? { remaining: entry.remaining }
-                  : {}),
-                ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
-                fromModelId: entry.fromModelId,
-                fromPool: entry.fromPool,
-                toModelId: entry.toModelId,
-                toPool: entry.toPool,
-                ts: entry.ts,
-              };
-              if (stateDir !== undefined) {
-                try {
-                  await backend.writeLedger(
-                    {
-                      ...marker,
-                      sessionId,
-                      prompt_hash: await hashPrompt(undefined, step, backend),
-                      branchHEAD: await resolveBranchHEAD(),
-                      ts: entry.ts,
-                    },
-                    stateDir,
-                  );
-                } catch {
-                  return await errorTermination(step, err);
-                }
+            const entry = handoff.ledgerEntry;
+            const marker: LedgerEntry = {
+              step: isValidStepId(entry.step) ? entry.step : step,
+              event: "relay_baton_handoff",
+              trigger: entry.trigger,
+              state_summary: entry.state_summary,
+              ...(entry.remaining !== undefined
+                ? { remaining: entry.remaining }
+                : {}),
+              ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+              fromModelId: entry.fromModelId,
+              fromPool: entry.fromPool,
+              toModelId: entry.toModelId,
+              toPool: entry.toPool,
+              ts: entry.ts,
+            };
+            if (stateDir !== undefined) {
+              try {
+                await backend.writeLedger(
+                  {
+                    ...marker,
+                    sessionId,
+                    prompt_hash: await hashPrompt(undefined, step, backend),
+                    branchHEAD: await resolveBranchHEAD(),
+                    ts: entry.ts,
+                  },
+                  stateDir,
+                );
+              } catch {
+                return await errorTermination(step, err);
               }
-              ledger.push(marker);
-              activeRelayBrief = renderEphemeralRelayBrief(entry);
-              completeMechanicalRetryInvocation(step);
-              applyRelayBaton(handoff.nextBaton, step);
-              continue orchestratorStepLoop;
             }
+            ledger.push(marker);
+            activeRelayBrief = renderEphemeralRelayBrief(entry);
+            completeMechanicalRetryInvocation(step);
+            applyRelayBaton(handoff.nextBaton, step);
+            continue orchestratorStepLoop;
           }
           return await errorTermination(step, err);
         }

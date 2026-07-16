@@ -321,7 +321,6 @@ export type {
   SelectNextRelayBatonInput,
 } from "./quotaPoolTable.js";
 export {
-  RELAY_FOCUS_FILENAME,
   MAX_RELAY_HANDOFFS,
   applyResourceFailureHandoff,
   buildRelayHandoffLedgerEntry,
@@ -337,6 +336,7 @@ export {
 } from "./relayDispatch.js";
 export type {
   ApplyResourceFailureHandoffInput,
+  LegacyRelayHandoffTrigger,
   RelayDispositionResult,
   RelayHandoffLedgerEvent,
   RelayHandoffTrigger,

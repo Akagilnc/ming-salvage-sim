@@ -27,30 +27,19 @@ import {
 
 // ── ledger + ephemeral baton brief (#937 / #934 ID-007) ──────────────────────
 
-/**
- * @deprecated Deleted focus-file chain (#937). Kept as a constant only so
- * residual docs/tests can assert the filename is no longer produced.
- */
-export const RELAY_FOCUS_FILENAME = ".relay-focus.md";
+/** Live production handoff triggers only (#937 focus/free-log chain deleted). */
+export type RelayHandoffTrigger = "quota_wall" | "capacity";
 
 /**
- * Live production constructors: quota_wall (forkQuotaWall), capacity (runner).
- * Free-log hang/self_report/phase_complete and mechanical_retry_exhausted baton
- * constructors deleted (#937 / #934 ID-004); retired literals remain only for
- * historical ledger rows.
+ * Historical ledger trigger literals (read boundary only). Not production
+ * constructors — never write these from live handoff code.
  */
-export type RelayHandoffTrigger =
-  | "quota_wall"
-  | "capacity"
-  /** @deprecated no production constructor (#937); ledger history only. */
+export type LegacyRelayHandoffTrigger =
+  | RelayHandoffTrigger
   | "pool_dead"
-  /** @deprecated process-root exhaustion is canonical failed edge, not baton (#937 ID-004). */
   | "mechanical_retry_exhausted"
-  /** @deprecated free-log hang constructor deleted (#937); ledger history only. */
   | "hang_with_live_pool"
-  /** @deprecated free-log self-report constructor deleted (#937); ledger history only. */
   | "self_reported_blocked"
-  /** @deprecated free-log phase_complete constructor deleted (#937); ledger history only. */
   | "phase_complete";
 
 /**
@@ -59,7 +48,8 @@ export type RelayHandoffTrigger =
  */
 export interface RelayHandoffLedgerEvent {
   readonly event: "relay_baton_handoff";
-  readonly trigger: RelayHandoffTrigger;
+  /** Live writes are only quota_wall|capacity; legacy rows may carry retired tags. */
+  readonly trigger: LegacyRelayHandoffTrigger;
   readonly state_summary: string;
   readonly remaining?: string;
   readonly reason?: string;
@@ -308,21 +298,16 @@ export interface ApplyResourceFailureHandoffInput {
   readonly currentPool: BillingPoolId;
   readonly rosterOrder: ReadonlyArray<CoderRosterEntry>;
   readonly pools: ReadonlyArray<BillingPoolEntry>;
-  readonly resetBeforeRetry?: () => void | Promise<void>;
   readonly now: Date;
   readonly step?: StepId;
 }
 
 /**
- * Resource-failure handoff. Intentionally never calls `resetBeforeRetry` —
- * that seam belongs exclusively to mechanical retry (#598/#661).
+ * Resource-failure handoff. Never resets the worktree scene (#934 ID-006).
  */
 export async function applyResourceFailureHandoff(
   input: ApplyResourceFailureHandoffInput,
 ): Promise<RelayDispositionResult> {
-  // Deliberate: do NOT await/call input.resetBeforeRetry.
-  void input.resetBeforeRetry;
-
   const batonInput = {
     currentModelId: input.currentModelId,
     currentPool: input.currentPool,

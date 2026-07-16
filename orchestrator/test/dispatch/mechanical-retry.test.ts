@@ -221,7 +221,6 @@ describe("#598 withMechanicalRetry", () => {
 describe("#909 retryProcessCrash must not thrash on quota wait", () => {
   it("QuotaWaitForResetError rethrows on first attempt (no mechanical retry)", async () => {
     let calls = 0;
-    let resets = 0;
     await expect(
       retryProcessCrash(
         async () => {
@@ -230,14 +229,10 @@ describe("#909 retryProcessCrash must not thrash on quota wait", () => {
         },
         {
           maxAttempts: MAX_DISPATCH_ATTEMPTS,
-          resetBeforeRetry: async () => {
-            resets += 1;
-          },
         },
       ),
     ).rejects.toBeInstanceOf(QuotaWaitForResetError);
     expect(calls).toBe(1);
-    expect(resets).toBe(0);
   });
 
   it("ordinary process crash still retries up to the bound", async () => {

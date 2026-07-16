@@ -35,12 +35,14 @@ import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
 import { parkOrRelayQuotaWall } from "../../src/quotaParkRelay.js";
 import {
   MAX_RELAY_HANDOFFS,
-  RELAY_FOCUS_FILENAME,
   canRelayHandoff,
   countRelayHandoffsInLedger,
   renderEphemeralRelayBrief,
   buildRelayHandoffLedgerEntry,
 } from "../../src/relayDispatch.js";
+
+/** Retired focus-file name — assert it is never produced (#937 / ID-007). */
+const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 import {
   RECEIPT_MAX_RETRIES,
   receiptMaxRetriesForProvider,
