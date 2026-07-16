@@ -263,7 +263,7 @@ describe("C: S1 pre-worktree failures are an unpersistable special case", () => 
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
 
-    expect(["error", "escalate"]).toContain(result.status);
+    expect(result.status).toBe("escalate");
     const persisted = backend.ledgerCalls.map((c) => c.entry.step);
     expect(persisted).toContain("S2");
     expect(persisted).toContain("S8");

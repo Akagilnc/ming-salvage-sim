@@ -90,6 +90,7 @@ const expectedClone = clonePathFor(HOME, repoSlug(SOURCE, REMOTE), 291);
 describe("#292 RealBackend self-builds a dedicated clone (ADR 0024 dec. 1)", () => {
   it("clones from sourceRepo into <home>/.sc-orchestrator/<slug>-iso-<runKey> when absent", () => {
     const b = build({ cloneExists: false, commonDir: `${expectedClone}/.git` });
+    b.workingRepoPath();
     const clone = b.gitCalls.find((c) => c.file === "git" && c.args[0] === "clone");
     expect(clone).toBeDefined();
     expect(clone?.args).toContain(SOURCE);
@@ -109,20 +110,24 @@ describe("#292 RealBackend self-builds a dedicated clone (ADR 0024 dec. 1)", () 
 });
 
 describe("#292 fail-closed guard (ADR 0024 dec. 1/3)", () => {
-  it("throws at construction when --git-common-dir is a linked worktree's shared .git", () => {
-    expect(() =>
-      build({ cloneExists: true, commonDir: "/Users/me/WorkSpace/Ming_LLM/.git" }),
-    ).toThrow(/git-common-dir|linked worktree|not an independent clone/i);
+  it("throws when worksite provisioning sees a linked worktree's shared .git", () => {
+    const backend = build({
+      cloneExists: true,
+      commonDir: "/Users/me/WorkSpace/Ming_LLM/.git",
+    });
+    expect(() => backend.workingRepoPath()).toThrow(
+      /git-common-dir|linked worktree|not an independent clone/i,
+    );
   });
 
   it("does NOT throw when the common dir is the clone's own .git", () => {
-    expect(() =>
-      build({ cloneExists: true, commonDir: `${expectedClone}/.git` }),
-    ).not.toThrow();
+    const backend = build({ cloneExists: true, commonDir: `${expectedClone}/.git` });
+    expect(() => backend.workingRepoPath()).not.toThrow();
   });
 
   it("accepts the literal relative '.git' (normal clone run from its root)", () => {
-    expect(() => build({ cloneExists: true, commonDir: ".git" })).not.toThrow();
+    const backend = build({ cloneExists: true, commonDir: ".git" });
+    expect(() => backend.workingRepoPath()).not.toThrow();
   });
 });
 

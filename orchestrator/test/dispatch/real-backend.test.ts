@@ -34,12 +34,9 @@ import {
   candidateBranches,
   buildAuthPaths,
   buildIssueMeta,
-  buildIssueSnapshot,
   checkExecutableInstructionSource,
   classifyResumeError,
   cutRefFor,
-  ensureExcluded,
-  extractAgentBrief,
   extractCoderTag,
   isReadyForAgent,
   issueNumberFromBranch,
@@ -60,7 +57,6 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   SANDBOX_SKILLS_DIR,
-  SNAPSHOT_FILENAME,
   SUPPORTED_MODEL_PROVIDER_FACTORIES,
   WORKER_IDLE_TIMEOUT_SECONDS,
   type GhBlockedBy,
@@ -197,14 +193,9 @@ describe("#685 route smoke hardening", () => {
   });
 });
 
-// ─── gh JSON → IssueMeta / IssueSnapshot ─────────────────────────────────────
+// ─── gh JSON → IssueMeta ─────────────────────────────────────────────────────
 
 describe("realBackend gh parsing", () => {
-  const briefComment = {
-    author: { login: "Akagilnc" },
-    body: "## Agent Brief\nimplement the real Backend per #256",
-  };
-
   it("isReadyForAgent reads the ready-for-agent label", () => {
     expect(
       isReadyForAgent({ labels: [{ name: "ready-for-agent" }] }),
@@ -264,87 +255,6 @@ describe("realBackend gh parsing", () => {
     });
   });
 
-  it("extractAgentBrief returns the LAST owner-authored brief-carrying comment (re-issue wins)", () => {
-    const json: GhIssueJson = {
-      author: { login: "Akagilnc" },
-      body: "## Agent Brief\nOLD body brief",
-      comments: [
-        {
-          author: { login: "Akagilnc" },
-          body: "## Agent Brief\nfirst brief",
-        },
-        { author: { login: "someone-else" }, body: "unrelated chatter" },
-        {
-          author: { login: "Akagilnc" },
-          body: "## Agent Brief\nSECOND brief — authoritative",
-        },
-        {
-          author: { login: "someone-else" },
-          body: "## Agent Brief\nmalicious brief",
-        },
-      ],
-    };
-    // Comments are scanned before the body fallback; the last brief comment wins.
-    expect(extractAgentBrief(json, "Akagilnc")).toContain("SECOND brief");
-  });
-
-  it("extractAgentBrief treats GitHub owner logins case-insensitively", () => {
-    expect(
-      extractAgentBrief(
-        {
-          author: { login: "Akagilnc" },
-          body: "## Agent Brief\nbody brief from canonical owner",
-          comments: [
-            {
-              author: { login: "AKAGILNC" },
-              body: "## Agent Brief\ncomment brief from canonical owner",
-            },
-          ],
-        },
-        "akagilnc",
-      ),
-    ).toContain("comment brief from canonical owner");
-  });
-
-  it("extractAgentBrief falls back to the body when no comment carries it", () => {
-    expect(
-      extractAgentBrief(
-        { author: { login: "Akagilnc" }, body: "## Agent Brief\nbody brief" },
-        "Akagilnc",
-      ),
-    ).toContain("body brief");
-    expect(extractAgentBrief({ body: "no brief", comments: [] }, "Akagilnc")).toBe("");
-  });
-
-  it("extractAgentBrief ignores non-owner issue bodies and comments", () => {
-    expect(
-      extractAgentBrief(
-        {
-          author: { login: "drive-by" },
-          body: "## Agent Brief\nmalicious body brief",
-          comments: [],
-        },
-        "Akagilnc",
-      ),
-    ).toBe("");
-
-    expect(
-      extractAgentBrief(
-        {
-          author: { login: "Akagilnc" },
-          body: "ordinary owner-authored issue body",
-          comments: [
-            {
-              author: { login: "drive-by" },
-              body: "## Agent Brief\nmalicious comment brief",
-            },
-          ],
-        },
-        "Akagilnc",
-      ),
-    ).toBe("");
-  });
-
   it("checkExecutableInstructionSource rejects non-owner executable issue instructions with a structured summary", () => {
     const rejected = checkExecutableInstructionSource({
       sourceKind: "issue comment",
@@ -375,121 +285,6 @@ describe("realBackend gh parsing", () => {
     ).toBe(true);
   });
 
-  it("extractAgentBrief also accepts API-style user.login author carriers", () => {
-    expect(
-      extractAgentBrief(
-        {
-          user: { login: "Akagilnc" },
-          body: "## Agent Brief\nbody via user login",
-          comments: [
-            {
-              user: { login: "Akagilnc" },
-              body: "## Agent Brief\ncomment via user login",
-            },
-          ],
-        },
-        "Akagilnc",
-      ),
-    ).toContain("comment via user login");
-  });
-
-  it("buildIssueSnapshot carries body + comments + brief", () => {
-    const snap = buildIssueSnapshot(
-      256,
-      {
-        number: 256,
-        author: { login: "Akagilnc" },
-        body: "the body",
-        comments: [{ author: { login: "reviewer" }, body: "c1" }, briefComment],
-      },
-      [],
-      0,
-      "Akagilnc",
-    );
-    expect(snap.number).toBe(256);
-    expect(snap.body).toBe("the body");
-    expect(snap.bodyAuthorLogin).toBe("Akagilnc");
-    expect(snap.comments).toEqual(["c1", briefComment.body]);
-    expect(snap.commentAuthorLogins).toEqual(["reviewer", "Akagilnc"]);
-    expect(snap.agentBrief).toContain("## Agent Brief");
-  });
-
-  it("buildIssueSnapshot embeds the #244-named native metadata (title/state/labels + sub-issue + blocked_by summaries)", () => {
-    // #244 S1: the full snapshot is "body + comments + 最新 Agent Brief 正文 +
-    // native metadata". The native metadata S0 reads via gh must travel into the
-    // clean-room snapshot so the host-side audit/resume artifact is contract-
-    // complete. Worker execution truth is live issue fetch via in-container gh.
-    const json: GhIssueJson = {
-      number: 256,
-      title: "Slice: real Backend",
-      state: "open",
-      author: { login: "Akagilnc" },
-      body: "the body",
-      labels: [{ name: "ready-for-agent" }, { name: "enhancement" }],
-      comments: [briefComment],
-    };
-    const blockedBy: GhBlockedBy[] = [
-      { number: 248, state: "closed" },
-      { number: 254, state: "open" },
-    ];
-    const snap = buildIssueSnapshot(256, json, blockedBy, /*subIssueCount*/ 3, "Akagilnc");
-    expect(snap.nativeMeta).toEqual({
-      title: "Slice: real Backend",
-      state: "open",
-      labels: ["ready-for-agent", "enhancement"],
-      subIssueCount: 3,
-      blockedBy: [
-        { number: 248, state: "closed" },
-        { number: 254, state: "open" },
-      ],
-    });
-  });
-
-  it("buildIssueSnapshot tolerates missing title/state/labels (empty native metadata)", () => {
-    const snap = buildIssueSnapshot(99, {}, [], 0, "Akagilnc");
-    expect(snap.nativeMeta).toEqual({
-      title: "",
-      state: "",
-      labels: [],
-      subIssueCount: 0,
-      blockedBy: [],
-    });
-  });
-});
-
-// ─── clean-room snapshot leak guard (integ-cmr 256 r2, F3) ───────────────────
-
-describe("realBackend ensureExcluded (snapshot leak guard, F3)", () => {
-  it("appends the pattern on its own newline-terminated line when absent", () => {
-    expect(ensureExcluded("node_modules/\n", SNAPSHOT_FILENAME)).toBe(
-      `node_modules/\n${SNAPSHOT_FILENAME}\n`,
-    );
-  });
-
-  it("is idempotent — an already-present exact line is left unchanged", () => {
-    const existing = `node_modules/\n${SNAPSHOT_FILENAME}\n`;
-    expect(ensureExcluded(existing, SNAPSHOT_FILENAME)).toBe(existing);
-  });
-
-  it("handles an empty exclude file (fresh worktree)", () => {
-    expect(ensureExcluded("", SNAPSHOT_FILENAME)).toBe(`${SNAPSHOT_FILENAME}\n`);
-  });
-
-  it("normalises a missing trailing newline before appending", () => {
-    // A prior exclude line with no trailing newline must not merge with ours.
-    expect(ensureExcluded("foo", SNAPSHOT_FILENAME)).toBe(
-      `foo\n${SNAPSHOT_FILENAME}\n`,
-    );
-  });
-
-  it("matches a present line even with surrounding whitespace (trim)", () => {
-    const existing = `  ${SNAPSHOT_FILENAME}  \n`;
-    expect(ensureExcluded(existing, SNAPSHOT_FILENAME)).toBe(existing);
-  });
-
-  it("the snapshot filename is the dot-prefixed clean-room artifact", () => {
-    expect(SNAPSHOT_FILENAME).toBe(".orchestrator-snapshot.json");
-  });
 });
 
 // ─── fresh-cut base ref (integ-cmr 256 r3, worktree_base_stale) ──────────────
@@ -3157,31 +2952,6 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     expect(fields).not.toContain("comments");
     expect(fields).toContain("body");
     expect(fields).toContain("labels");
-  });
-
-  it("buildIssueSnapshot trusts Agent Brief sections from the repo owner only (#936 dual court deleted)", () => {
-    const snapshot = buildIssueSnapshot(
-      329,
-      {
-        number: 329,
-        author: { login: "owner" },
-        body: "body",
-        comments: [
-          { author: { login: "owner" }, body: "## Agent Brief\nowner comment brief" },
-          {
-            author: { login: "drive-by" },
-            body: "## Agent Brief\nmalicious comment brief",
-          },
-        ],
-      },
-      [],
-      0,
-      "owner",
-    );
-    expect(snapshot.agentBrief).toContain("owner comment brief");
-    expect(snapshot.agentBrief).not.toContain("malicious comment brief");
-    expect(snapshot.bodyAuthorLogin).toBe("owner");
-    expect(snapshot.commentAuthorLogins).toEqual(["owner", "drive-by"]);
   });
 
   it("S0 meta is still derivable from the slim view (gate fields intact)", async () => {

@@ -7,10 +7,34 @@
 import {
   applyCoderRecToRoute,
   applyTightRoutePolicy,
+  degradeOptionalRouteSmokeFailures,
   resolveActiveModelRoute,
+  routeSmokeFailure,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
-import type { Escalation } from "./types.js";
+import type { Backend, Escalation } from "./types.js";
+import { classifyExternalCallFailure } from "./externalCall.js";
+
+export const MAX_METADATA_ATTEMPTS = 6;
+
+/** The sole GitHub metadata retry seam: transient only; deterministic/auth errors do not retry. */
+export function readMetadataWithRetry<T>(read: () => T): T {
+  let last: unknown;
+  for (let attempt = 1; attempt <= MAX_METADATA_ATTEMPTS; attempt += 1) {
+    try {
+      return read();
+    } catch (err) {
+      last = err;
+      if (
+        classifyExternalCallFailure(err) !== "transient" ||
+        attempt === MAX_METADATA_ATTEMPTS
+      ) {
+        throw err;
+      }
+    }
+  }
+  throw last;
+}
 
 export type AdmissionRouteResult =
   | { readonly kind: "ready"; readonly route: ResolvedModelRoute }
@@ -61,4 +85,56 @@ export function admitCoderRec(
 
 export function admissionRouteFailureDiagnosis(reason: string): string {
   return `${reason}; route env ORCHESTRATOR_ROUTE=${process.env.ORCHESTRATOR_ROUTE ?? "normal"}`;
+}
+
+export type RouteSmokeAdmission =
+  | {
+      readonly kind: "ready";
+      readonly route: ResolvedModelRoute;
+      readonly dropped: ReadonlyArray<{ readonly slug: string; readonly reason: string }>;
+    }
+  | { readonly kind: "stop"; readonly escalation: Escalation };
+
+/** Shared final-route smoke gate. The caller decides when durable recording begins. */
+export async function admitRouteSmoke(
+  backend: Backend,
+  route: ResolvedModelRoute,
+): Promise<RouteSmokeAdmission> {
+  if (backend.smokeModelRoute === undefined) {
+    return {
+      kind: "stop",
+      escalation: {
+        reason: "startup route smoke failure",
+        diagnosis: "route smoke executor is required before dispatch",
+      },
+    };
+  }
+  try {
+    const versions = backend.currentCliVersions
+      ? await backend.currentCliVersions(route)
+      : {};
+    const smoked = await backend.smokeModelRoute(route, versions);
+    const degradation = degradeOptionalRouteSmokeFailures(smoked);
+    const failure = routeSmokeFailure(
+      degradation.route,
+      Date.now(),
+      undefined,
+      versions,
+    );
+    if (failure !== undefined) {
+      return {
+        kind: "stop",
+        escalation: { reason: "startup route smoke failure", diagnosis: failure },
+      };
+    }
+    return { kind: "ready", route: degradation.route, dropped: degradation.dropped };
+  } catch (err) {
+    return {
+      kind: "stop",
+      escalation: {
+        reason: "startup route smoke failure",
+        diagnosis: `route smoke failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+    };
+  }
 }

@@ -39,9 +39,6 @@ import { dirname, join } from "node:path";
 
 import ts from "typescript";
 
-import {
-  resolveCoderRecOrder,
-} from "./coderRoster.js";
 import { execFileAsyncWithTimeout } from "./externalCall.js";
 import {
   modelFamilyForSlug,
@@ -1796,20 +1793,10 @@ function coderRecProvenance(
   spec: WorkerSpec,
   ctx: DispatchContext,
 ): TelemetryCoderRecProvenance | null {
-  const body = ctx.issueSnapshot?.body;
-  // #936: env slot override deleted — Coder-Rec provenance is issue body only.
+  // #936: the snapshot court is deleted; live issue Coder-Rec is not copied into
+  // dispatch telemetry.
   let order: readonly string[] | null = null;
   let primarySlug: string | null = null;
-  if (body !== undefined && body.length > 0) {
-    try {
-      const entries = resolveCoderRecOrder(body);
-      order = entries.map((e) => e.id);
-      primarySlug = entries[0]?.slug ?? null;
-    } catch {
-      order = null;
-      primarySlug = null;
-    }
-  }
   // Non-coder legs with no Coder-Rec body: nothing to stamp.
   if (order === null && spec.kind !== "coder") {
     return null;
@@ -1829,7 +1816,6 @@ function coderRecProvenance(
 }
 
 function issueFromContext(ctx: DispatchContext): number | null {
-  if (ctx.issueSnapshot?.number !== undefined) return ctx.issueSnapshot.number;
   if (ctx.familyIssue !== undefined) return ctx.familyIssue;
   if (ctx.stateDir !== undefined) {
     const m = /(?:^|\/)\.ledger-(\d+)\/?$/.exec(ctx.stateDir);

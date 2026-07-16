@@ -20,7 +20,7 @@
  * The container / real-LLM paths (createSandbox/run/resumeSession) are #256's
  * MANUAL smoke (a real container + a real model + a real `gh` is required), NOT
  * the zero-container automated suite. So this file is split:
- *   - PURE host-side logic — gh-snapshot parsing, the auth-mount path
+ *   - PURE host-side logic — gh metadata parsing, the auth-mount path
  *     construction, the prompt-content hash, the failedStep attribution, the
  *     resume error fallback decision — is
  *     factored into exported, dependency-light functions
@@ -32,12 +32,6 @@
  * importable and testable without ever starting Docker.
  *
  * ── Manual-smoke checklist additions (integ-cmr 256 r2) ─────────────────────
- *   - F3 clean-room snapshot leak: after S1 `writeSnapshot`, assert the snapshot
- *     is git-ignored in the resident worktree — run, inside the worktree:
- *       `git check-ignore .orchestrator-snapshot.json`  → must print the path
- *       (exit 0). A `git status --porcelain` must NOT list it as untracked, and a
- *       coder's `git add -A` must leave it unstaged. Covered by both the checked-in
- *       root `.gitignore` belt AND the per-worktree `.git/info/exclude` suspenders.
  *   - r3 worktree_base_stale: with the local `main` deliberately behind
  *     `origin/main` (e.g. `git reset --hard origin/main~1` on the working clone's
  *     main), run S1 and assert the fresh slice's base SHA equals the LATEST
@@ -283,8 +277,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
-  IssueSnapshotMeta,
   PersistentLedgerEntry,
   ResumeState,
   ReviewFixRefuseRecord,
@@ -307,11 +299,7 @@ import {
 // PURE host-side logic (unit-tested in realBackend.logic.test.ts; no container)
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── gh issue → IssueMeta / IssueSnapshot parsing ────────────────────────────
-
-/** The heading that marks an (optional) `## Agent Brief` section — the
- *  most-authoritative part of the spec when present, but not required. */
-const AGENT_BRIEF_HEADING = "## Agent Brief";
+// ── gh issue → IssueMeta parsing ────────────────────────────────────────────
 /** The label that gates S0 (a triaged, agent-ready slice). */
 const READY_FOR_AGENT_LABEL = "ready-for-agent";
 
@@ -387,53 +375,8 @@ export function buildIssueMeta(
   };
 }
 
-function actorLogin(
-  carrier: {
-    readonly author?: { readonly login?: string | null } | null;
-    readonly user?: { readonly login?: string | null } | null;
-  } | null | undefined,
-): string {
-  return carrier?.author?.login ?? carrier?.user?.login ?? "";
-}
-
 function repoOwnerLogin(repo: string): string {
   return repo.split("/", 1)[0] ?? "";
-}
-
-/**
- * Extract the latest trusted `## Agent Brief` from the issue body/comments. Only
- * repo-owner-authored carriers count; among those, later comments supersede
- * earlier comments and the body. Returns "" when no trusted brief is present —
- * that is a valid slice, not an S0 gate.
- */
-export function extractAgentBrief(json: GhIssueJson, ownerLogin: string): string {
-  // Priority order, LOWEST first: the issue body is the fallback, then comments
-  // in order (newest last). A later carrier overwrites an earlier one, so the
-  // LAST brief-bearing COMMENT wins over both earlier comments and the body
-  // (a re-issued brief supersedes the original) — the body only stands when no
-  // comment carries a brief.
-  const carriers = [
-    { text: json.body ?? "", author: json, sourceKind: "issue body" },
-    ...(json.comments ?? []).map((c) => ({
-      text: c.body ?? "",
-      author: c,
-      sourceKind: "issue comment",
-    })),
-  ];
-  let brief = "";
-  for (const carrier of carriers) {
-    if (!carrier.text.includes(AGENT_BRIEF_HEADING)) continue;
-    const sourceCheck = checkExecutableInstructionSource({
-      sourceKind: carrier.sourceKind,
-      instructionKind: "Agent Brief",
-      trustedAuthor: ownerLogin,
-      candidateAuthor: actorLogin(carrier.author),
-    });
-    if (sourceCheck.accepted) {
-      brief = carrier.text;
-    }
-  }
-  return brief;
 }
 
 export interface ExecutableInstructionSourceCheck {
@@ -527,83 +470,6 @@ export function parseBlockedBy(parsed: unknown): GhBlockedBy[] {
         typeof d?.number === "number" && typeof d?.state === "string",
     )
     .map((d) => ({ number: d.number, state: d.state }));
-}
-
-/**
- * Build the native metadata block #244 S1 names ("body + comments + 最新 Agent
- * Brief 正文 + native metadata") — title/state/labels + the native sub-issue +
- * blocked_by summaries. S0 already reads these via gh; passing them through into
- * the host-written snapshot keeps the audit/resume artifact contract-complete.
- * The worker's execution context is still the live issue it fetches in-container
- * via gh using the runner-injected issue/repo env.
- */
-export function buildIssueSnapshotMeta(
-  json: GhIssueJson,
-  blockedBy: ReadonlyArray<GhBlockedBy>,
-  subIssueCount: number,
-): IssueSnapshotMeta {
-  return {
-    title: json.title ?? "",
-    state: json.state ?? "",
-    labels: (json.labels ?? []).map((l) => l.name ?? "").filter((n) => n !== ""),
-    subIssueCount,
-    blockedBy: blockedBy.map((d) => ({ number: d.number, state: d.state })),
-  };
-}
-
-/**
- * Build the S1 {@link IssueSnapshot}: body + comments + Agent Brief + the
- * #244-named native metadata. The native sub-issue count + blocked_by list S0
- * fetched are threaded in here (not re-queried) so the host-side snapshot is
- * contract-complete (#244 S1 names native metadata as a snapshot element).
- */
-export function buildIssueSnapshot(
-  issueNumber: number,
-  json: GhIssueJson,
-  blockedBy: ReadonlyArray<GhBlockedBy>,
-  subIssueCount: number,
-  ownerLogin: string,
-): IssueSnapshot {
-  return {
-    number: json.number ?? issueNumber,
-    body: json.body ?? "",
-    bodyAuthorLogin: actorLogin(json),
-    comments: (json.comments ?? []).map((c) => c.body ?? ""),
-    commentAuthorLogins: (json.comments ?? []).map((c) => actorLogin(c)),
-    trustedOwnerLogin: ownerLogin,
-    agentBrief: extractAgentBrief(json, ownerLogin),
-    nativeMeta: buildIssueSnapshotMeta(json, blockedBy, subIssueCount),
-  };
-}
-
-// ── clean-room snapshot leak guard (integ-cmr 256 r2, F3) ───────────────────
-
-/**
- * The host-fetched clean-room snapshot file, written into the resident worktree
- * as read-only context for the agent. It must NEVER be committed: with
- * `branchStrategy:{type:'head'}` a coder's `git add -A` would otherwise stage it
- * into the reviewed/pushed branch (polluting the shipped artifact). The Backend
- * git-ignores it (per-worktree `.git/info/exclude`) before any agent run (F3).
- */
-export const SNAPSHOT_FILENAME = ".orchestrator-snapshot.json";
-
-/**
- * Idempotently ensure `pattern` is present as its own line in a git
- * `info/exclude` file's content. Returns the new content (existing + the pattern
- * appended on a fresh line) when absent, or the input UNCHANGED when the pattern
- * is already an exact line (so repeated S1 resume writes never duplicate it).
- *
- * Pure (string assembly) so the leak-guard decision is unit-tested without git.
- */
-export function ensureExcluded(existing: string, pattern: string): string {
-  const lines = existing.split("\n").map((l) => l.trim());
-  if (lines.includes(pattern)) return existing;
-  // Append on its own line; preserve a trailing newline so the file stays
-  // newline-terminated regardless of the prior content's shape.
-  const base = existing.length === 0 || existing.endsWith("\n")
-    ? existing
-    : existing + "\n";
-  return `${base}${pattern}\n`;
 }
 
 /**
@@ -2103,14 +1969,16 @@ export class RealBackend implements Backend {
    * disk, and guarded to be an independent `.git` before construction succeeds.
    */
   private readonly workingRepo: string;
+  private workingRepoReady = false;
 
   constructor(opts: RealBackendOptions) {
     this.opts = opts;
     this.ownerLogin = opts.ownerLogin ?? repoOwnerLogin(opts.repo);
     this.validatePromptsDir();
     this.validateSoulsDir();
-    this.workingRepo = this.buildOrReuseClone();
-    this.assertIndependentClone();
+    const home = this.opts.home ?? homedir();
+    const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
+    this.workingRepo = clonePathFor(home, slug, this.opts.runKey);
   }
 
   /**
@@ -2133,7 +2001,15 @@ export class RealBackend implements Backend {
    * every git op anchors on it instead of the driver-supplied source.
    */
   workingRepoPath(): string {
+    this.ensureWorkingRepo();
     return this.workingRepo;
+  }
+
+  private ensureWorkingRepo(): void {
+    if (this.workingRepoReady) return;
+    this.buildOrReuseClone();
+    this.assertIndependentClone();
+    this.workingRepoReady = true;
   }
 
   /**
@@ -2379,9 +2255,7 @@ export class RealBackend implements Backend {
    * separately, AFTER the clone exists.
    */
   protected buildOrReuseClone(): string {
-    const home = this.opts.home ?? homedir();
-    const slug = repoSlug(this.opts.sourceRepo, this.opts.remote);
-    const clonePath = clonePathFor(home, slug, this.opts.runKey);
+    const clonePath = this.workingRepo;
     if (!this.cloneDirExists(clonePath)) {
       // Multi-phase S1-adjacent: a clone failure must abort construction loudly
       // (不启动), not silently leave a half-built or missing working repo.
@@ -2606,12 +2480,12 @@ export class RealBackend implements Backend {
   }
 
   // ── S1: resident slice worktree (Sandcastle native createWorktree) ─────────
-  // #936 / #934 ID-002: snapshot dual court deleted — workers live-fetch issue
-  // truth; no host fetchIssueSnapshot / writeSnapshot on the Backend seam.
+  // #936 / #934 ID-002: snapshot dual court deleted; workers live-fetch truth.
   async prepareWorktree(
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
+    this.ensureWorkingRepo();
     // #291 B7: the family spine fans a wave out CONCURRENTLY, and every child in
     // the wave shares THIS one dedicated clone (ADR 0024). The worktree-list scan,
     // the best-effort `git fetch`, and the `git worktree add` cut all MUTATE the shared `.git` — concurrent ones race on `.git/index.lock`
@@ -3618,6 +3492,8 @@ export class RealBackend implements Backend {
   // Scene Discovery returns `corrupted` (preserve scene, fail loud). Never
   // misclassify partial residue as fresh.
   async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
+    if (!this.cloneDirExists(this.workingRepo)) return undefined;
+    this.ensureWorkingRepo();
     const existing = this.findExistingWorktree(issueNumber);
     if (existing === undefined) return undefined;
     const stateDir = this.stateDirFor(existing.path, issueNumber);

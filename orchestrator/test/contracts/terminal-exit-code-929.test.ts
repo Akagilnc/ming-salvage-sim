@@ -694,12 +694,12 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
 
     const backend = new SpyBackend();
     const result = await runOrchestrator({ issueNumber: 929, backend });
-    expect(["error", "escalate"]).toContain(result.status);
-    expect(runResultExitCode(result)).not.toBe(0);
+    expect(result.status).toBe("escalate");
+    expect(runResultExitCode(result)).toBe(TERMINAL_EXIT_CODES.escalated);
 
     const s8 = backend.ledgerCalls.filter((e) => e.step === "S8");
     expect(s8.length).toBeGreaterThanOrEqual(1);
-    expect(["error", "escalate"]).toContain(s8[s8.length - 1]!.handoffStatus);
+    expect(s8[s8.length - 1]!.handoffStatus).toBe("escalate");
     expect(result.errorPackage?.reason).toMatch(/ENOSPC|no space/i);
 
     // #929 invariant: non-success must speak externally (not package-only).

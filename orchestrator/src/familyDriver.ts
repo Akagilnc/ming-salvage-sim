@@ -36,7 +36,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { admitRouteFromEnv, admissionRouteFailureDiagnosis } from "./admissionPreflight.js";
+import {
+  admitCoderRec,
+  admitRouteFromEnv,
+  admitRouteSmoke,
+  admissionRouteFailureDiagnosis,
+  readMetadataWithRetry,
+} from "./admissionPreflight.js";
 import { shWithClock } from "./externalCall.js";
 import { RealBackend, type RealBackendOptions } from "./realBackend.js";
 import { parseBlockedBy, type GhBlockedBy } from "./realBackend.js";
@@ -377,19 +383,29 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
   const admission = readSubIssueAdmission(epicIssue, repo, sh);
   const childNumbers = [...admission.admitted];
   const blockedByByChild = new Map<number, GhBlockedBy[]>();
+  const errors: string[] = [];
   for (const child of childNumbers) {
-    const depRaw = sh("gh", [
-      "api",
-      `repos/${repo}/issues/${child}/dependencies/blocked_by`,
-    ]);
-    blockedByByChild.set(child, parseBlockedBy(JSON.parse(depRaw)));
+    try {
+      const depRaw = sh("gh", [
+        "api",
+        `repos/${repo}/issues/${child}/dependencies/blocked_by`,
+      ]);
+      blockedByByChild.set(child, parseBlockedBy(JSON.parse(depRaw)));
+    } catch (err) {
+      errors.push(`child #${child} blocked_by: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
-  const moduleDeclarations = readFamilyModuleDeclarations(
-    epicIssue,
-    childNumbers,
-    repo,
-    sh,
-  );
+  let moduleDeclarations: ReturnType<typeof readFamilyModuleDeclarations> = {
+    children: new Map(),
+  };
+  try {
+    moduleDeclarations = readFamilyModuleDeclarations(epicIssue, childNumbers, repo, sh);
+  } catch (err) {
+    errors.push(`issue bodies: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (errors.length > 0) {
+    throw new Error(`issue metadata unavailable (${errors.length} errors): ${errors.join("; ")}`);
+  }
   // Family-admission gate (online R1 #1): fail-closed up front if any EXTERNAL blocker
   // is still open — runs on the initial admission AND on every resume refetch, so a
   // re-opened external blocker re-rejects on re-entry.
@@ -488,19 +504,32 @@ function readFamilyModuleDeclarations(
   readonly family?: SourcedModuleDeclaration;
   readonly children: ReadonlyMap<number, SourcedModuleDeclaration>;
 } {
-  const family = sourcedModuleDeclaration(
-    parseModuleDeclaration(readIssueBody(epicIssue, repo, sh)),
-    "family_issue",
-    epicIssue,
-  );
+  const errors: string[] = [];
+  let family: SourcedModuleDeclaration | undefined;
+  try {
+    family = sourcedModuleDeclaration(
+      parseModuleDeclaration(readIssueBody(epicIssue, repo, sh)),
+      "family_issue",
+      epicIssue,
+    );
+  } catch (err) {
+    errors.push(`issue #${epicIssue}: ${err instanceof Error ? err.message : String(err)}`);
+  }
   const children = new Map<number, SourcedModuleDeclaration>();
   for (const child of childNumbers) {
-    const declaration = sourcedModuleDeclaration(
-      parseModuleDeclaration(readIssueBody(child, repo, sh)),
-      "child_issue",
-      child,
-    );
-    if (declaration !== undefined) children.set(child, declaration);
+    try {
+      const declaration = sourcedModuleDeclaration(
+        parseModuleDeclaration(readIssueBody(child, repo, sh)),
+        "child_issue",
+        child,
+      );
+      if (declaration !== undefined) children.set(child, declaration);
+    } catch (err) {
+      errors.push(`issue #${child}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(`issue body aggregation failed: ${errors.join("; ")}`);
   }
   return { ...(family !== undefined ? { family } : {}), children };
 }
@@ -617,7 +646,9 @@ export interface FamilyDriverOptions {
    * passes the complete resolved options so tests can exercise the production
    * assembly without starting a container.
    */
-  readonly realBackendFactory?: (options: RealBackendOptions) => RealBackend;
+  readonly realBackendFactory?: (
+    options: RealBackendOptions,
+  ) => Backend & { workingRepoPath(): string };
   /**
    * Override construction of the production family backend. The driver passes
    * the complete resolved options so tests can exercise the production assembly
@@ -655,6 +686,8 @@ export async function runFamilyDriver(
   options: FamilyDriverOptions,
 ): Promise<FamilyRunResult> {
   const sh = options.sh ?? defaultSh;
+  const metadataSh: Sh = (file, args) =>
+    readMetadataWithRetry(() => sh(file, args));
   const codexFast = resolveCodexFast(options);
   console.log(codexFastRunLog(codexFast));
 
@@ -681,11 +714,57 @@ export async function runFamilyDriver(
     };
   }
 
+  let rootBody: string;
+  try {
+    rootBody = readIssueBody(options.epicIssue, options.repo, metadataSh);
+  } catch (err) {
+    const diagnosis = err instanceof Error ? err.message : String(err);
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: { reason: "issue metadata unavailable", diagnosis },
+      stopSummary: infraFailureStopSummary({
+        summary: diagnosis,
+        repairHint: "repair GitHub metadata access and rerun",
+      }),
+      children: [],
+    };
+  }
+  const coderRec = admitCoderRec(admitted.route, rootBody);
+  if (coderRec.kind === "stop") {
+    const diagnosis = admissionRouteFailureDiagnosis(coderRec.escalation.diagnosis);
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: { reason: coderRec.escalation.reason, diagnosis },
+      stopSummary: infraFailureStopSummary({
+        summary: `${coderRec.escalation.reason}: ${diagnosis}`,
+        repairHint: "repair the owner-authored Coder-Rec before rerun",
+      }),
+      children: [],
+    };
+  }
+
   // 1. Read the already-cut children from live GitHub (the explicit dependency
   //    edges a `to-issues` step wrote — decision 1, no LLM inference). Live
   //    metadata is part of Admission after route preflight (ID-002/003).
   logDriverStage("admission", `epic #${options.epicIssue}`);
-  const epic = readFamilyEpic(options.epicIssue, options.repo, sh);
+  let epic: FamilyEpic;
+  try {
+    epic = readFamilyEpic(options.epicIssue, options.repo, metadataSh);
+  } catch (err) {
+    const diagnosis = err instanceof Error ? err.message : String(err);
+    return {
+      status: "escalated",
+      familyBase: options.familyBase,
+      escalation: { reason: "issue metadata unavailable", diagnosis },
+      stopSummary: infraFailureStopSummary({
+        summary: diagnosis,
+        repairHint: "repair GitHub metadata access and rerun",
+      }),
+      children: [],
+    };
+  }
 
   // 2. The single-slice RealBackend: keyed on the PARENT epic so all children
   //    share ONE family clone (ADR 0024). Constructing it CLONES the source (pure
@@ -706,6 +785,11 @@ export async function runFamilyDriver(
   };
   const realSingleSlice =
     options.realBackendFactory?.(realBackendOptions) ?? new RealBackend(realBackendOptions);
+  logDriverStage("smoke-k", `route=${coderRec.route.routeName}`);
+  let smoke = options.singleSliceBackendFactory === undefined
+    ? await admitRouteSmoke(realSingleSlice, coderRec.route)
+    : undefined;
+  if (smoke?.kind === "stop") return routeSmokeFailureResult(options, smoke.escalation);
   const workingRepo = realSingleSlice.workingRepoPath();
 
   // 3. Cut the LOCAL family base branch from main on the family clone, recording
@@ -729,6 +813,11 @@ export async function runFamilyDriver(
     options.singleSliceBackendFactory !== undefined
       ? options.singleSliceBackendFactory(workingRepo)
       : realSingleSlice;
+  if (smoke === undefined) {
+    logDriverStage("smoke-k", `route=${coderRec.route.routeName}`);
+    smoke = await admitRouteSmoke(singleSliceBackend, coderRec.route);
+    if (smoke.kind === "stop") return routeSmokeFailureResult(options, smoke.escalation);
+  }
 
   // 5. The family-LEVEL seam (real merge + ledger + verify + reconcile + the
   //    container cmr WORKER via `dispatchWorker`, #335), anchored on the SAME
@@ -778,6 +867,7 @@ export async function runFamilyDriver(
     epic,
     familyBackend,
     singleSliceBackend,
+    admittedRoute: { route: smoke.route, dropped: smoke.dropped },
     familyBase: options.familyBase,
     // The crash-window reconcile resume seam (decision 5): on a re-entry the spine
     // compares the ledger末条 head to the live family-base HEAD and补账/escalates.
@@ -786,10 +876,26 @@ export async function runFamilyDriver(
     // dependency graph from LIVE GitHub, not the cached epic.
     refetchEpic: async () => {
       logDriverStage("admission", `refetch epic #${options.epicIssue}`);
-      return readFamilyEpic(options.epicIssue, options.repo, sh);
+      return readFamilyEpic(options.epicIssue, options.repo, metadataSh);
     },
   };
   return runFamily(input);
+}
+
+function routeSmokeFailureResult(
+  options: Pick<FamilyDriverOptions, "familyBase">,
+  escalation: { readonly reason: string; readonly diagnosis: string },
+): FamilyRunResult {
+  return {
+    status: "escalated",
+    familyBase: options.familyBase,
+    escalation,
+    stopSummary: infraFailureStopSummary({
+      summary: escalation.diagnosis,
+      repairHint: "repair the selected model×pipe smoke before rerun",
+    }),
+    children: [],
+  };
 }
 
 /**

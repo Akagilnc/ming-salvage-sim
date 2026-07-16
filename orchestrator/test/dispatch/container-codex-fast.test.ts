@@ -15,6 +15,7 @@ import type { FamilyBackend, MergeRequest, ReconcileGit } from "../../src/family
 import type { Backend } from "../../src/types.js";
 import type { RealBackendOptions } from "../../src/realBackend.js";
 import type { RealFamilyBackendOptions } from "../../src/family/realFamilyBackend.js";
+import type { ResolvedModelRoute } from "../../src/modelRoutes.js";
 
 const OFF_STATE_CONFIG_TOML =
   'sandbox_mode = "danger-full-access"\napproval_policy = "never"\n';
@@ -56,6 +57,10 @@ function makeEpicSh(): Sh {
 
 function fakeBackend(sourceRepo: string): Backend {
   return {
+    smokeModelRoute: async (route: ResolvedModelRoute) => {
+      const { smokeRouteModels } = await import("../../src/modelRoutes.js");
+      return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
+    },
     workingRepoPath: () => sourceRepo,
     findResumeState: async () => undefined,
     resumeSession: async () => ({ kind: "judge", status: "converged" }),
