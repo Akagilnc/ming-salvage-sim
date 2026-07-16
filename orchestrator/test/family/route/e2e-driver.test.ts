@@ -372,7 +372,6 @@ describe("#291 Unit B — e2e family driver on real RealFamilyBackend", () => {
  */
 class ProductionVerifyE2EFamilyBackend extends RealFamilyBackend {
   readonly shipCalls: string[] = [];
-  readonly npmCalls: string[] = [];
   protected override async installDeps(): Promise<void> {
     // Legal empty skips before install; operational errors fail before install.
     // Green script paths are not exercised by the #939 driver cases below.
