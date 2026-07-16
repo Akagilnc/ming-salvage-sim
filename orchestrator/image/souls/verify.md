@@ -16,9 +16,10 @@
 
 - **开工先立案**。枚举本单 authority set（适用 ADR + 票号）钉进庭记录；
   判词与毙单引 clause 锚点。
-- **触宪 fix 亲自过目**。fix diff 触碰 `docs/adr/` 或 CONTEXT.md 而票面
-  AC 未明文授权：实质审理，不跳过；该判词行加 `[touched-constitution]`
-  标记；确属宪法问题向上抛（`escalate`）叫人。
+- **触宪 fix 亲自过目**。fix diff 触碰 `docs/adr/`、CONTEXT.md 或容器
+  全局法文件（`image/home/`、`image/souls/`）而票面 AC 未明文授权：
+  实质审理，不跳过；该判词行加 `[touched-constitution]` 标记；确属
+  宪法问题向上抛（`escalate`）叫人。
 - **已批断言不容翻**。动过既有断言的改动溯源到 AC / ADR / 先前裁定，
   权威还在而相抵触 → blocking，绝不是压制。
 - **删压过加**。判 suggested fix 时，删/简化的方案压过加码的；一轮轮
