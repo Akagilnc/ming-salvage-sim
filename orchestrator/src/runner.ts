@@ -283,6 +283,11 @@ function buildPersistentEntry(opts: {
   stopSummary?: StopSummary;
   /** External CLI worker monitor handle (#684). */
   monitorHandle?: import("./types.js").WorkerMonitorHandle;
+  /**
+   * #955 — model slug that owned this agent step's session (resume identity).
+   * Written on agent steps so planResume / resumeFor never guesses from memory.
+   */
+  modelSlug?: string;
 }): PersistentLedgerEntry {
   let entry: PersistentLedgerEntry = {
     step: opts.step,
@@ -313,6 +318,9 @@ function buildPersistentEntry(opts: {
   if (opts.monitorHandle !== undefined) {
     entry = { ...entry, monitorHandle: opts.monitorHandle };
   }
+  if (opts.modelSlug !== undefined) {
+    entry = { ...entry, modelSlug: opts.modelSlug };
+  }
   return entry;
 }
 
@@ -341,6 +349,10 @@ const SLICE_BASE = "main";
  *                      the coder finishes in the same session rather than a
  *                      fresh `run()`. Undefined ⇒ continue with a fresh dispatch
  *                      (crash-resume: the next step is brand new work).
+ *   - `resumeSessionModel` — model slug that created `resumeSessionId` (#955),
+ *                      taken from the escalated ledger row's `modelSlug`. The
+ *                      dispatch gate requires seat model identity match before
+ *                      threading the id; never guessed from the live route.
  *   - `lastOutput`   — the most recent agent-step output (drives `route()` for
  *                      the non-escalate resume case).
  *   - `priorLedger`  — the prior in-memory ledger entries to seed the run with,
@@ -350,6 +362,7 @@ interface ResumePlan {
   readonly terminalStatus?: HandoffStatus;
   readonly resumeStep: SliceStepId;
   readonly resumeSessionId?: string;
+  readonly resumeSessionModel?: string;
   readonly escalationAnswer?: EscalationAnswerEvent;
   readonly continueFixingRepair?: ContinueFixingRepair;
   readonly lastOutput?: StepOutput;
@@ -967,6 +980,10 @@ function planResume(
         resumeStep: agentEntry.step,
         resumeSessionId:
           typeof agentEntry.sessionId === "string" ? agentEntry.sessionId : undefined,
+        // #955: identity from the escalated row only — never invent from route.
+        ...(typeof agentEntry.modelSlug === "string"
+          ? { resumeSessionModel: agentEntry.modelSlug }
+          : {}),
         escalationAnswer: answer,
         lastOutput: agentEntry.output,
         priorLedger: ledger.slice(0, escalatedLedgerIdx) as ReadonlyArray<LedgerEntry>,
@@ -1039,6 +1056,10 @@ function planResume(
       resumeStep: agentEntry.step,
       resumeSessionId:
         typeof agentEntry.sessionId === "string" ? agentEntry.sessionId : undefined,
+      // #955: identity from the escalated row only — never invent from route.
+      ...(typeof agentEntry.modelSlug === "string"
+        ? { resumeSessionModel: agentEntry.modelSlug }
+        : {}),
       escalationAnswer: answer,
       lastOutput: agentEntry.output,
       priorLedger: priorLedger as ReadonlyArray<LedgerEntry>,
@@ -2030,6 +2051,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   ): Promise<void> {
     const ph = await hashPrompt(promptFile, s, backend);
     const branchHEAD = await resolveBranchHEAD();
+    // #955: record seat model on agent steps so resume identity is ledger truth.
+    const stepModelSlug =
+      s === "S2" || s === "S3" || s === "S5" || s === "S6"
+        ? stepSpecs[s].model
+        : undefined;
     const entry = buildPersistentEntry({
       step: s,
       output,
@@ -2043,6 +2069,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       findingDispositions,
       stopSummary,
       monitorHandle,
+      ...(stepModelSlug !== undefined ? { modelSlug: stepModelSlug } : {}),
     });
 
     const mirrorInMemoryLedgerPersistedFields = (
@@ -2375,7 +2402,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   // session (Sandcastle `resumeSession`) rather than a fresh `run()`. Used for
   // the escalate-resume case (the human answered; the build worker finishes in
   // its original memory-bearing session). Cleared after the step is dispatched once.
-  let resumeFor: { step: SliceStepId; sessionId: string } | undefined;
+  // #955: `sessionModel` is the ledger-recorded creator of `sessionId` — the
+  // dispatch gate refuses to thread the id when the seat model differs.
+  let resumeFor:
+    | { step: SliceStepId; sessionId: string; sessionModel?: string }
+    | undefined;
   let resumedEscalationAnswer: EscalationAnswerEvent | undefined;
   // #684 R2: monitor handle rebuilt from ledger via monitorHandleFromLedger on resume.
   let resumeMonitorHandle:
@@ -2570,6 +2601,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // #924: rebuild coder session continuity from the last S2/S5 ledger row so
     // crash/re-feed still resumes the same agent session when models match.
+    // #955: prefer ledger `modelSlug` (creator identity); fall back to the seat
+    // of the recorded step only for legacy rows that predate the field.
     for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
       const entry = plan.priorLedger[i]!;
       if (
@@ -2578,7 +2611,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ) {
         coderSessionId = entry.sessionId;
         coderSessionModel =
-          entry.step === "S5" ? stepSpecs.S5.model : stepSpecs.S2.model;
+          typeof entry.modelSlug === "string"
+            ? entry.modelSlug
+            : entry.step === "S5"
+              ? stepSpecs.S5.model
+              : stepSpecs.S2.model;
         break;
       }
     }
@@ -2591,7 +2628,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       ) {
         judgeSessionId = entry.sessionId;
         judgeSessionModel =
-          entry.step === "S6" ? stepSpecs.S6.model : stepSpecs.S3.model;
+          typeof entry.modelSlug === "string"
+            ? entry.modelSlug
+            : entry.step === "S6"
+              ? stepSpecs.S6.model
+              : stepSpecs.S3.model;
         break;
       }
     }
@@ -2650,7 +2691,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // Continue from the recorded breakpoint.
     step = plan.resumeStep;
     if (typeof plan.resumeSessionId === "string") {
-      resumeFor = { step: plan.resumeStep, sessionId: plan.resumeSessionId };
+      resumeFor = {
+        step: plan.resumeStep,
+        sessionId: plan.resumeSessionId,
+        ...(typeof plan.resumeSessionModel === "string"
+          ? { sessionModel: plan.resumeSessionModel }
+          : {}),
+      };
     }
     resumedEscalationAnswer = plan.escalationAnswer;
     // C-R4-2A / #899: consume plan.continueFixingRepair — opaque findingScope
@@ -2972,10 +3019,62 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           const seatResumeCapable = resumeCapableForSlug(seatModel, billingPool);
           let resumeSessionId: string | undefined;
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
-            // Crash/escalate resumeFor: same capability gate as persistent seats.
-            // Incapable → drop session id and open fresh (avoids sandcastle RUD).
-            if (seatResumeCapable) {
+            // #955: crash/escalate resumeFor — identity match AND capability.
+            // Stored session id may only re-enter the model binding that created
+            // it. Mismatch / incapable → fresh (answer still delivered below);
+            // never hand a foreign id to the provider; never silent-drop.
+            const sessionModel = resumeFor.sessionModel;
+            const identityOk =
+              sessionModel === undefined || sessionModel === seatModel;
+            if (identityOk && seatResumeCapable) {
               resumeSessionId = resumeFor.sessionId;
+            } else {
+              const lostReason = !seatResumeCapable
+                ? `provider_incapable (seat=${seatModel})`
+                : `model_mismatch (session=${sessionModel ?? "unknown"}, seat=${seatModel})`;
+              console.warn(
+                `[orchestrator] session continuity lost at ${step}: ${lostReason}; ` +
+                  `dropping sessionId=${resumeFor.sessionId} (fresh dispatch; answer still delivered)`,
+              );
+              const lostEntry: PersistentLedgerEntry = {
+                step,
+                event: "session_continuity_lost",
+                reason: lostReason,
+                ...(typeof sessionModel === "string"
+                  ? { fromModelId: sessionModel }
+                  : {}),
+                toModelId: seatModel,
+                sessionId: resumeFor.sessionId,
+                runId,
+                // Bookkeeping reuses the run-level UUID; the dropped id is above.
+                prompt_hash: await hashPrompt(undefined, step, backend),
+                branchHEAD: await resolveBranchHEAD(),
+                ts: new Date().toISOString(),
+              };
+              ledger.push({
+                step,
+                event: "session_continuity_lost",
+                reason: lostReason,
+                ...(typeof sessionModel === "string"
+                  ? { fromModelId: sessionModel }
+                  : {}),
+                toModelId: seatModel,
+                sessionId: resumeFor.sessionId,
+                ts: lostEntry.ts,
+              });
+              try {
+                if (stateDir !== undefined) {
+                  await backend.writeLedger(lostEntry, stateDir);
+                } else {
+                  pendingEntries.push(lostEntry);
+                }
+              } catch (err) {
+                console.warn(
+                  `[orchestrator] session_continuity_lost ledger write failed (fail-open): ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                );
+              }
             }
             resumeFor = undefined;
           } else if (
@@ -3676,6 +3775,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // #919 CR U7/R2: advanceCoder sole source = output.advanceCoder (recovery /
     // priorJudgeVerdictRowsFromLedger). Top-level LedgerEntry.advanceCoder deleted
     // (zero readers; dual-write already gone). #926 owns any roster consumption.
+    // #955: in-memory parity with emitLedger modelSlug (resume identity).
+    const inMemoryModelSlug =
+      step === "S2" || step === "S3" || step === "S5" || step === "S6"
+        ? stepSpecs[step].model
+        : undefined;
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
@@ -3686,6 +3790,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       // lean RunResult ledger saw `sessionId: undefined` and never forwarded the
       // real id for 原地 resume (FamilyChildEscalation.sessionId existed in name only).
       ...(stepSessionId !== undefined ? { sessionId: stepSessionId } : {}),
+      ...(inMemoryModelSlug !== undefined ? { modelSlug: inMemoryModelSlug } : {}),
       ...(stepFindingDispositions !== undefined
         ? { findingDispositions: stepFindingDispositions }
         : {}),
