@@ -9,15 +9,20 @@
  * `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/`.
  */
 import { execFile } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
+import type { BindMountSandboxHandle } from "@ai-hero/sandcastle";
 import { afterEach, describe, expect, it } from "vitest";
 import { grokAgent } from "../../src/grokAgent.js";
 import { resumeCapableForSlug } from "../../src/modelRegistry.js";
-
-const execFileP = promisify(execFile);
 
 const tempDirs: string[] = [];
 function tmp(prefix: string): string {
@@ -26,43 +31,28 @@ function tmp(prefix: string): string {
   return d;
 }
 afterEach(() => {
-  while (tempDirs.length > 0) rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  while (tempDirs.length > 0) {
+    rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  }
 });
 
 /**
  * Fake sandbox handle: `exec` runs the command through a real local shell so
  * tar/base64 transfer behaves exactly as in a container — the "sandbox" is
- * just another directory on this machine.
+ * just another directory on this machine. Fully typed as BindMountSandboxHandle
+ * (no `as never`); unused transfer methods are no-op stubs.
  */
-function localHandle(worktreePath: string) {
-  return {
-    worktreePath,
-    exec: async (
-      command: string,
-      options?: { onLine?: (l: string) => void; cwd?: string; sudo?: boolean; stdin?: string },
-    ) => {
-      try {
-        const { stdout, stderr } = await execFileP("bash", ["-c", command], {
-          cwd: options?.cwd ?? worktreePath,
-          maxBuffer: 64 * 1024 * 1024,
-          ...(options?.stdin !== undefined ? {} : {}),
-        } as never);
-        return { stdout, stderr, exitCode: 0 };
-      } catch (err) {
-        const e = err as { stdout?: string; stderr?: string; code?: number };
-        return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", exitCode: e.code ?? 1 };
-      }
-    },
-  };
-}
-
-/** stdin-capable variant (promisify(execFile) cannot pipe stdin). */
-function localHandleWithStdin(worktreePath: string) {
+function localHandleWithStdin(worktreePath: string): BindMountSandboxHandle {
   return {
     worktreePath,
     exec: (
       command: string,
-      options?: { onLine?: (l: string) => void; cwd?: string; sudo?: boolean; stdin?: string },
+      options?: {
+        onLine?: (line: string) => void;
+        cwd?: string;
+        sudo?: boolean;
+        stdin?: string;
+      },
     ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
       new Promise((resolve) => {
         const child = execFile(
@@ -70,8 +60,14 @@ function localHandleWithStdin(worktreePath: string) {
           ["-c", command],
           { cwd: options?.cwd ?? worktreePath, maxBuffer: 64 * 1024 * 1024 },
           (err, stdout, stderr) => {
-            const code = err ? ((err as { code?: number }).code ?? 1) : 0;
-            resolve({ stdout: String(stdout), stderr: String(stderr), exitCode: typeof code === "number" ? code : 1 });
+            const code = err
+              ? ((err as { code?: number }).code ?? 1)
+              : 0;
+            resolve({
+              stdout: String(stdout),
+              stderr: String(stderr),
+              exitCode: typeof code === "number" ? code : 1,
+            });
           },
         );
         if (options?.stdin !== undefined) {
@@ -79,6 +75,9 @@ function localHandleWithStdin(worktreePath: string) {
         }
         child.stdin?.end();
       }),
+    copyFileIn: async () => {},
+    copyFileOut: async () => {},
+    close: async () => {},
   };
 }
 
@@ -134,7 +133,9 @@ describe("#955 provider capability surface", () => {
   });
 
   it("captureSessions:false still opts out", () => {
-    expect(grokAgent("grok-4.5", { captureSessions: false }).captureSessions).toBe(false);
+    expect(grokAgent("grok-4.5", { captureSessions: false }).captureSessions).toBe(
+      false,
+    );
   });
 
   it("registry now reports grok as resume-capable (SO maxRetries returns to 2)", () => {
@@ -149,7 +150,10 @@ describe("#955 grok session storage — host-store semantics", () => {
   function seedHostSession(root: string): string {
     const dir = join(root, encodeURIComponent(cwd), sessionId);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "chat_history.jsonl"), `{"role":"user","cwd":"${cwd}"}\n`);
+    writeFileSync(
+      join(dir, "chat_history.jsonl"),
+      `{"role":"user","cwd":"${cwd}"}\n`,
+    );
     writeFileSync(join(dir, "events.jsonl"), `{"type":"end"}\n`);
     return dir;
   }
@@ -157,8 +161,9 @@ describe("#955 grok session storage — host-store semantics", () => {
   it("existsOnHost / hostSessionFilePath / readHostSession round out the store", async () => {
     const root = tmp("grok-store-");
     seedHostSession(root);
-    const storage = grokAgent("grok-4.5", { sessionStorage: { hostSessionsDir: root } })
-      .sessionStorage!;
+    const storage = grokAgent("grok-4.5", {
+      sessionStorage: { hostSessionsDir: root },
+    }).sessionStorage!;
     expect(await storage.existsOnHost(cwd, sessionId)).toBe(true);
     expect(await storage.existsOnHost(cwd, "no-such-id")).toBe(false);
     expect(storage.hostSessionFilePath(cwd, sessionId)).toContain(sessionId);
@@ -170,8 +175,9 @@ describe("#955 grok session storage — host-store semantics", () => {
   it("findByIdOnHost locates across cwd buckets and reports searchedRoot on miss", async () => {
     const root = tmp("grok-store-");
     seedHostSession(root);
-    const storage = grokAgent("grok-4.5", { sessionStorage: { hostSessionsDir: root } })
-      .sessionStorage!;
+    const storage = grokAgent("grok-4.5", {
+      sessionStorage: { hostSessionsDir: root },
+    }).sessionStorage!;
     const hit = await storage.findByIdOnHost(sessionId);
     expect(hit.path).toContain(sessionId);
     const miss = await storage.findByIdOnHost("missing-id");
@@ -191,16 +197,22 @@ describe("#955 grok session storage — sandbox transfer roundtrip (real tar/bas
     const sbxSessions = join(sandboxFs, "home-.grok-sessions");
     const sbxDir = join(sbxSessions, encodeURIComponent(sandboxCwd), sessionId);
     mkdirSync(sbxDir, { recursive: true });
-    writeFileSync(join(sbxDir, "chat_history.jsonl"), `{"cwd":"${sandboxCwd}"}\n`);
+    writeFileSync(
+      join(sbxDir, "chat_history.jsonl"),
+      `{"cwd":"${sandboxCwd}"}\n`,
+    );
 
     const storage = grokAgent("grok-4.5", {
-      sessionStorage: { hostSessionsDir: hostRoot, sandboxSessionsDir: sbxSessions },
+      sessionStorage: {
+        hostSessionsDir: hostRoot,
+        sandboxSessionsDir: sbxSessions,
+      },
     }).sessionStorage!;
     await storage.captureToHost({
       hostCwd,
       sandboxCwd,
       sessionId,
-      handle: localHandleWithStdin(sandboxFs) as never,
+      handle: localHandleWithStdin(sandboxFs),
     });
 
     const captured = join(hostRoot, encodeURIComponent(hostCwd), sessionId);
@@ -222,13 +234,16 @@ describe("#955 grok session storage — sandbox transfer roundtrip (real tar/bas
 
     const sbxSessions = join(sandboxFs, "home-.grok-sessions");
     const storage = grokAgent("grok-4.5", {
-      sessionStorage: { hostSessionsDir: hostRoot, sandboxSessionsDir: sbxSessions },
+      sessionStorage: {
+        hostSessionsDir: hostRoot,
+        sandboxSessionsDir: sbxSessions,
+      },
     }).sessionStorage!;
     await storage.resumeIntoSandbox({
       hostCwd,
       sandboxCwd,
       sessionId,
-      handle: localHandleWithStdin(sandboxFs) as never,
+      handle: localHandleWithStdin(sandboxFs),
     });
 
     const pushed = join(sbxSessions, encodeURIComponent(sandboxCwd), sessionId);
@@ -237,4 +252,235 @@ describe("#955 grok session storage — sandbox transfer roundtrip (real tar/bas
     expect(body).toContain(sandboxCwd);
     expect(body).not.toContain(hostCwd);
   });
+
+  it("rewrite does not pollute sibling path prefixes or dialogue mentions", async () => {
+    // from=/work/tree must not rewrite /work/tree-2, nor prose that merely
+    // mentions the path as a substring of a longer string value.
+    const hostRoot = tmp("grok-host-");
+    const sandboxFs = tmp("grok-sbx-");
+    const sandboxCwd = "/work/tree";
+    const siblingCwd = "/work/tree-2";
+    const hostCwd = "/host/work";
+    const sessionId = "019f-rewrite-bound";
+    const sbxSessions = join(sandboxFs, "home-.grok-sessions");
+    const sbxDir = join(sbxSessions, encodeURIComponent(sandboxCwd), sessionId);
+    mkdirSync(sbxDir, { recursive: true });
+    writeFileSync(
+      join(sbxDir, "chat_history.jsonl"),
+      [
+        JSON.stringify({ cwd: sandboxCwd }),
+        JSON.stringify({ cwd: siblingCwd }),
+        JSON.stringify({
+          role: "user",
+          text: `please look at ${sandboxCwd} and ${siblingCwd}`,
+        }),
+        JSON.stringify({ nested: { path: `${sandboxCwd}/src/main.ts` } }),
+      ].join("\n") + "\n",
+    );
+
+    const storage = grokAgent("grok-4.5", {
+      sessionStorage: {
+        hostSessionsDir: hostRoot,
+        sandboxSessionsDir: sbxSessions,
+      },
+    }).sessionStorage!;
+    await storage.captureToHost({
+      hostCwd,
+      sandboxCwd,
+      sessionId,
+      handle: localHandleWithStdin(sandboxFs),
+    });
+
+    const body = readFileSync(
+      join(hostRoot, encodeURIComponent(hostCwd), sessionId, "chat_history.jsonl"),
+      "utf8",
+    );
+    const lines = body
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines[0]).toEqual({ cwd: hostCwd });
+    expect(lines[1]).toEqual({ cwd: siblingCwd });
+    expect(lines[2]).toEqual({
+      role: "user",
+      text: `please look at ${sandboxCwd} and ${siblingCwd}`,
+    });
+    expect(lines[3]).toEqual({
+      nested: { path: `${hostCwd}/src/main.ts` },
+    });
+    expect(body).not.toContain(`${hostCwd}-2`);
+  });
 });
+
+describe("#955 grok session storage — failure paths", () => {
+  it("captureToHost throws grok-cap with stderr when sandbox exec is non-zero", async () => {
+    const hostRoot = tmp("grok-host-");
+    const sandboxFs = tmp("grok-sbx-");
+    const sessionId = "019f-fail-cap";
+    const handle: BindMountSandboxHandle = {
+      worktreePath: sandboxFs,
+      exec: async () => ({
+        stdout: "",
+        stderr: "tar: cannot open: No such file or directory",
+        exitCode: 2,
+      }),
+      copyFileIn: async () => {},
+      copyFileOut: async () => {},
+      close: async () => {},
+    };
+    const storage = grokAgent("grok-4.5", {
+      sessionStorage: {
+        hostSessionsDir: hostRoot,
+        sandboxSessionsDir: join(sandboxFs, "missing-sessions"),
+      },
+    }).sessionStorage!;
+
+    await expect(
+      storage.captureToHost({
+        hostCwd: "/host",
+        sandboxCwd: "/sbx",
+        sessionId,
+        handle,
+      }),
+    ).rejects.toThrow(/grok-cap[\s\S]*tar: cannot open/);
+  });
+
+  it("resumeIntoSandbox throws with searchedRoot when host session is missing", async () => {
+    const hostRoot = tmp("grok-host-empty-");
+    const sandboxFs = tmp("grok-sbx-");
+    const storage = grokAgent("grok-4.5", {
+      sessionStorage: {
+        hostSessionsDir: hostRoot,
+        sandboxSessionsDir: join(sandboxFs, "sessions"),
+      },
+    }).sessionStorage!;
+
+    await expect(
+      storage.resumeIntoSandbox({
+        hostCwd: "/host/cwd",
+        sandboxCwd: "/sbx/cwd",
+        sessionId: "no-such-session-id",
+        handle: localHandleWithStdin(sandboxFs),
+      }),
+    ).rejects.toThrow(
+      new RegExp(
+        `grok-res: session "no-such-session-id" not found under ${hostRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+      ),
+    );
+  });
+});
+
+/**
+ * Live smoke: real grok CLI start → sessionId → --resume → context recall.
+ * Env-gated (GROK_RESUME_SMOKE=1); CI defaults to skip. Serial + long timeout.
+ */
+const RUN_GROK_RESUME_SMOKE = process.env.GROK_RESUME_SMOKE === "1";
+
+describe.skipIf(!RUN_GROK_RESUME_SMOKE)(
+  "#955 live grok --resume smoke (GROK_RESUME_SMOKE=1)",
+  () => {
+    it(
+      "starts a session, resumes by id, and recalls a unique token",
+      async () => {
+        const work = tmp("grok-smoke-");
+        const token = `TOKEN_SMOKE_955_${Date.now().toString(36)}`;
+
+        const runGrok = (
+          prompt: string,
+          resumeSession?: string,
+        ): Promise<{ stdout: string; exitCode: number }> =>
+          new Promise((resolve, reject) => {
+            const args = [
+              "--prompt-file",
+              "/dev/stdin",
+              "--output-format",
+              "streaming-json",
+              "--always-approve",
+              "--permission-mode",
+              "bypassPermissions",
+            ];
+            if (resumeSession !== undefined) {
+              args.push("--resume", resumeSession);
+            }
+            const child = execFile(
+              "grok",
+              args,
+              { cwd: work, maxBuffer: 16 * 1024 * 1024, timeout: 120_000 },
+              (err, stdout, stderr) => {
+                if (err && (err as { killed?: boolean }).killed) {
+                  reject(
+                    new Error(
+                      `grok smoke timed out; stderr=${String(stderr).slice(0, 400)}`,
+                    ),
+                  );
+                  return;
+                }
+                const code = err
+                  ? ((err as { code?: number }).code ?? 1)
+                  : 0;
+                resolve({
+                  stdout: String(stdout),
+                  exitCode: typeof code === "number" ? code : 1,
+                });
+              },
+            );
+            child.stdin?.write(prompt);
+            child.stdin?.end();
+          });
+
+        const first = await runGrok(
+          `Reply with exactly ${token} on one line and nothing else.`,
+        );
+        expect(first.exitCode).toBe(0);
+
+        let sessionId: string | undefined;
+        let firstText = "";
+        for (const line of first.stdout.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("{")) continue;
+          try {
+            const obj = JSON.parse(trimmed) as {
+              type?: string;
+              data?: string;
+              sessionId?: string;
+            };
+            if (obj.type === "text" && typeof obj.data === "string") {
+              firstText += obj.data;
+            }
+            if (obj.type === "end" && typeof obj.sessionId === "string") {
+              sessionId = obj.sessionId;
+            }
+          } catch {
+            // ignore non-JSON
+          }
+        }
+        expect(firstText).toContain(token);
+        expect(sessionId).toBeTruthy();
+
+        const second = await runGrok(
+          "What unique token did I ask you to reply with earlier? Reply with only that token.",
+          sessionId,
+        );
+        expect(second.exitCode).toBe(0);
+        let resumeText = "";
+        for (const line of second.stdout.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("{")) continue;
+          try {
+            const obj = JSON.parse(trimmed) as {
+              type?: string;
+              data?: string;
+            };
+            if (obj.type === "text" && typeof obj.data === "string") {
+              resumeText += obj.data;
+            }
+          } catch {
+            // ignore
+          }
+        }
+        expect(resumeText).toContain(token);
+      },
+      180_000,
+    );
+  },
+);
