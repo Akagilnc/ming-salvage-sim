@@ -11,6 +11,17 @@ import type {
 export const RECEIPT_MAX_RETRIES = 2;
 
 /**
+ * Same-session SO re-ask budget for a provider factory (#934 ID-004 / #937).
+ * Sandcastle requires `maxRetries: 0` when the agent has no `sessionStorage`
+ * (custom grok / agy providers). Built-in resumable factories keep
+ * {@link RECEIPT_MAX_RETRIES}.
+ */
+export function receiptMaxRetriesForProvider(provider: string): number {
+  if (provider === "grok" || provider === "agy") return 0;
+  return RECEIPT_MAX_RETRIES;
+}
+
+/**
  * Legacy decision-gate tag retained for unit fixtures that pin Sandcastle's
  * four-case matrix on the raw `decision` tag (#899). Production seats attach
  * T2 station receipts (coder / judge / ship / merger / onlineReview) instead.
@@ -142,8 +153,9 @@ export function workerReceiptOutput(
 export function coderReceiptOutput(
   schema: z.ZodType,
   tag: string = "coder",
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, maxRetries);
 }
 
 /**
@@ -154,8 +166,9 @@ export function coderReceiptOutput(
 export function shipReceiptOutput(
   schema: z.ZodType,
   tag: string = "ship",
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, maxRetries);
 }
 
 /**
@@ -165,8 +178,9 @@ export function shipReceiptOutput(
 export function mergerReceiptOutput(
   schema: z.ZodType,
   tag: string = "merger",
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, maxRetries);
 }
 
 /**
@@ -177,8 +191,9 @@ export function mergerReceiptOutput(
 export function onlineReviewReceiptOutput(
   schema: z.ZodType,
   tag: string = "onlineReview",
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, maxRetries);
 }
 
 /**

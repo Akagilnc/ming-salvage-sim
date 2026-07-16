@@ -52,10 +52,6 @@ import {
   isAgentIdleTimeoutError,
   isQuotaWaitForResetError,
 } from "./quotaProbe.js";
-import {
-  isHangWithLivePoolError,
-  isSelfReportedRelayError,
-} from "./relayDispatch.js";
 import type {
   DispatchContext,
   Finding,
@@ -926,22 +922,7 @@ export function classifyWorkerTerminal(
       sessionId: null,
     };
   }
-  if (isSelfReportedRelayError(err)) {
-    return {
-      terminal: "thrown",
-      errorCategory: "relay-out",
-      errorMessage: msg,
-      sessionId: null,
-    };
-  }
-  if (isHangWithLivePoolError(err)) {
-    return {
-      terminal: "thrown",
-      errorCategory: "hang-idle",
-      errorMessage: msg,
-      sessionId: null,
-    };
-  }
+  // #937: HangWithLivePoolError / SelfReportedRelayError constructors deleted.
   // Sandcastle AgentIdleTimeoutError — rethrown by realBackend.runAgentSandbox
   // with the fixed text "Agent idle for N seconds…". Match by tag/name/message
   // (same detector as #683) so real idle does not fall through to unclassified.

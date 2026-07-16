@@ -1569,18 +1569,14 @@ async function dispatchOrAbort(
             {
               onMonitorHandleSpawned: async (handle: WorkerMonitorHandle) => {
                 opts?.onMonitorHandle?.(handle);
-                // Persist before waiting for the child: a hung family worker
-                // must be resumable/judgable from the durable family ledger.
-                try {
-                  await familyBackend.appendFamilyLedger({
-                    status: "worker_dispatched",
-                    event: "worker_dispatched",
-                    monitorHandle: handle,
-                  });
-                } catch {
-                  // Best-effort only. The spawned
-                  // worker remains governed by its verified monitor handle.
-                }
+                // #934 ID-006 / #937: adoption/persist failure terminates the
+                // exact ChildProcess via dispatchFamilyWorkerWithMonitor —
+                // rethrow so terminateSpawnedChild runs (no best-effort swallow).
+                await familyBackend.appendFamilyLedger({
+                  status: "worker_dispatched",
+                  event: "worker_dispatched",
+                  monitorHandle: handle,
+                });
               },
             },
           );

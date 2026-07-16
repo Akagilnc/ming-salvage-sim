@@ -170,9 +170,8 @@ describe("#683 decideIdleAfterProbe (probe → disposition)", () => {
   });
 });
 
-describe("#683 applyIdleDisposition (kill vs preserve + ledger)", () => {
-  it("hang → kill only the worker pid tree; no wait-for-reset ledger row", async () => {
-    const killed: number[] = [];
+describe("#683/#937 applyIdleDisposition (no host kill + preserve ledger)", () => {
+  it("hang → no host kill; no wait-for-reset ledger row (#937 ID-006)", async () => {
     const ledger: unknown[] = [];
     const disposition: IdleDisposition = {
       kind: "hang",
@@ -183,17 +182,13 @@ describe("#683 applyIdleDisposition (kill vs preserve + ledger)", () => {
       disposition,
       { pid: 4242, step: "S2" },
       {
-        killPidTree: async (pid) => {
-          killed.push(pid);
-        },
         recordLedger: async (entry) => {
           ledger.push(entry);
         },
         now: () => new Date("2026-07-08T12:00:00.000Z"),
       },
     );
-    expect(result.killed).toBe(true);
-    expect(killed).toEqual([4242]);
+    expect(result.killed).toBe(false);
     expect(ledger).toEqual([]);
     expect(result.ledgerEntry).toBeUndefined();
   });
@@ -212,9 +207,6 @@ describe("#683 applyIdleDisposition (kill vs preserve + ledger)", () => {
       disposition,
       { pid: 7777, step: "S5" },
       {
-        killPidTree: async (pid) => {
-          killed.push(pid);
-        },
         recordLedger: async (entry) => {
           ledger.push(entry);
         },
@@ -245,7 +237,6 @@ describe("#683 applyIdleDisposition (kill vs preserve + ledger)", () => {
       disposition,
       { pid: 9, step: "S3" },
       {
-        killPidTree: vi.fn(),
         recordLedger: vi.fn(),
         now: () => new Date("2026-07-08T12:00:00.000Z"),
       },
@@ -443,9 +434,6 @@ describe("#683 handleIdleThreshold (production composition)", () => {
       modelRef: "zai/glm-5.2",
       worker: { pid: 1001, step: "S2" },
       actions: {
-        killPidTree: (pid) => {
-          killed.push(pid);
-        },
         recordLedger: (entry) => {
           ledger.push(entry);
         },
@@ -814,9 +802,6 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
           },
           { pid: this.sandboxHandlePid, step: "S2" },
           {
-            killPidTree: () => {
-              throw new Error("429 path must not kill");
-            },
             recordLedger: () => {},
             now: () => new Date("2026-07-08T12:00:00.000Z"),
           },

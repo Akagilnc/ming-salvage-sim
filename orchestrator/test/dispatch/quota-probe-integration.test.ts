@@ -15,7 +15,6 @@ import {
   handleIdleThreshold,
   QuotaWaitForResetError,
 } from "../../src/quotaProbe.js";
-import { HangWithLivePoolError } from "../../src/relayDispatch.js";
 import type {
   Backend,
   CliMonitorSpawnSpec,
@@ -55,9 +54,7 @@ describe("#683/#937 monitored dispatch + quota composition", () => {
       worker: { pid: 4242, step: "S2" },
       probe: async () => ({ kind: "quota_limited", resetAt }),
       actions: {
-        killPidTree: (pid) => {
-          killed.push(pid);
-        },
+
         recordLedger: (entry) => {
           ledger.push(entry);
         },
@@ -108,8 +105,7 @@ describe("#683/#937 monitored dispatch + quota composition", () => {
     );
     expect(outcome.result.kind).toBe("completed");
     expect(killed).toEqual([]);
-    expect(outcome).not.toBeInstanceOf(HangWithLivePoolError);
-    expect(outcome).not.toBeInstanceOf(QuotaWaitForResetError);
+        expect(outcome).not.toBeInstanceOf(QuotaWaitForResetError);
   });
 
   it("NEGATIVE: free-log relay tags never become SelfReported/Hang fate", async () => {

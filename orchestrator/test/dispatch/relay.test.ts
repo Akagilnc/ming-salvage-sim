@@ -46,14 +46,11 @@ import {
   CapacityRelayError,
   countRelayHandoffsInLedger,
   forkQuotaWallAt683Point,
-  HangWithLivePoolError,
-  isHangWithLivePoolError,
   isCapacityRelayError,
   isRelayChainReadyForReviewGate,
   parseRelayTag,
   renderEphemeralRelayBrief,
   resumeRelayFromLedger,
-  tryParseActionableRelayTag,
   type RelayHandoffLedgerEvent,
 } from "../../src/relayDispatch.js";
 import { decideIdleAfterProbe, QuotaWaitForResetError } from "../../src/quotaProbe.js";
@@ -2075,25 +2072,13 @@ describe("#686 R2 production seams", () => {
     expect(brief).toContain("cursor");
   });
 
-  it("P1-2: HangWithLivePoolError preserves its actionable pool facts", () => {
-    const err = new HangWithLivePoolError({
-      workerPid: 42,
-      poolId: "grok-build",
-      step: "S2",
-    });
-    expect(isHangWithLivePoolError(err)).toBe(true);
-  });
-
-  it("P1-2: self-reported blocked tag is actionable for production parse", () => {
-    const tag = tryParseActionableRelayTag(
-      `<relay>{"blocked":{"reason":"design gap","state_summary":"half wired","remaining":"ADR"}}</relay>`,
-    );
-    expect(tag).toMatchObject({
-      kind: "blocked",
-      reason: "design gap",
-      state_summary: "half wired",
-    });
-    expect(tryParseActionableRelayTag("no tag")).toBeUndefined();
+  it("P1-2: free-log hang/self-report constructors deleted (#937)", async () => {
+    const relay = await import("../../src/relayDispatch.js");
+    expect("HangWithLivePoolError" in relay).toBe(false);
+    expect("SelfReportedRelayError" in relay).toBe(false);
+    expect("tryParseActionableRelayTag" in relay).toBe(false);
+    expect("isHangWithLivePoolError" in relay).toBe(false);
+    expect("isSelfReportedRelayError" in relay).toBe(false);
   });
 
   it("P1: free-log decision_gate is not a host fate channel (#937 ID-007)", async () => {
