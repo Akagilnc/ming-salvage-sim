@@ -61,6 +61,7 @@ import {
   logAndRethrowReceiptFailure,
   mergerReceiptOutput,
   onlineReviewReceiptOutput,
+  receiptMaxRetriesForProvider,
   requireTypedTrafficSignal,
   shipReceiptOutput,
   workerReceiptOutput,
@@ -523,6 +524,19 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` + pure (no container/I/O) so a unit test asserts the resolved model
    * without spinning a real `sc.run`.
    */
+  /** #934 ID-004 / #937: SO maxRetries from provider resumability. */
+  protected receiptMaxRetriesFor(
+    spec: WorkerSpec,
+    ctx?: Pick<DispatchContext, "billingPool">,
+  ): number {
+    const pool = isBillingPoolDispatchId(ctx?.billingPool)
+      ? ctx.billingPool
+      : undefined;
+    return receiptMaxRetriesForProvider(
+      resolveModelSlugForPool(spec.model, pool).provider,
+    );
+  }
+
   protected agentForSpec(spec: WorkerSpec, ctx?: Pick<DispatchContext, "billingPool">): sc.AgentProvider {
     // Effort comes from the registry row for `spec.model` only (#916: no
     // role/soul hard override of reasoning effort at dispatch).
@@ -954,6 +968,9 @@ export class RealFamilyBackend implements FamilyBackend {
             output: mergerReceiptOutput(
               mergerStationReceiptSchema(),
               MERGER_RECEIPT_TAG,
+              receiptMaxRetriesForProvider(
+                resolveModelSlugForPool(model).provider,
+              ),
             ),
             // #909: same quota-probe context as single-slice runAgentSandbox.
             // C3: step S1 maps to merger consume slot in familyRelaySlotsForWall.
@@ -1712,6 +1729,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: workerReceiptOutput(
               JUDGE_RECEIPT_TAG,
               judgeStationReceiptSchema(),
+              this.receiptMaxRetriesFor(spec, ctx),
             ),
             // #909: shared sandbox quota-probe (billing pool when relayed).
             quotaProbe: this.familyQuotaProbeContext(spec, ctx),
@@ -1811,7 +1829,7 @@ export class RealFamilyBackend implements FamilyBackend {
   /**
    * Build the #909 quotaProbe context for a family productive worker.
    * Prefer active billing pool (relay) when present — same rule as single-slice
-   * {@link RealBackend.handleMonitoredWorkerIdle}.
+   * productive dispatch (`ctx.billingPool ?? spec.model`).
    */
   protected familyQuotaProbeContext(
     spec: WorkerSpec,
@@ -1905,6 +1923,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: coderReceiptOutput(
               coderStationReceiptSchema(),
               CODER_RECEIPT_TAG,
+              this.receiptMaxRetriesFor(spec, ctx),
             ),
             // #909: shared sandbox quota-probe.
             quotaProbe: this.familyQuotaProbeContext(spec, ctx),
@@ -2234,6 +2253,7 @@ export class RealFamilyBackend implements FamilyBackend {
           output: onlineReviewReceiptOutput(
             onlineReviewStationReceiptSchema(),
             ONLINE_REVIEW_RECEIPT_TAG,
+            this.receiptMaxRetriesFor(spec, ctx),
           ),
           // #909: shared sandbox quota-probe.
           quotaProbe: this.familyQuotaProbeContext(spec, ctx),
@@ -2955,7 +2975,11 @@ export class RealFamilyBackend implements FamilyBackend {
       promptFile: join(this.opts.promptsDir, spec.promptFile),
       // #919 D / ADR 0132: T2 ship station receipt (SHIP_RECEIPT_TAG + schema).
       // PR/URL delivery cargo stays on sidecar outside SO.
-      output: shipReceiptOutput(shipStationReceiptSchema(), SHIP_RECEIPT_TAG),
+      output: shipReceiptOutput(
+        shipStationReceiptSchema(),
+        SHIP_RECEIPT_TAG,
+        this.receiptMaxRetriesFor(spec, ctx),
+      ),
       quotaProbe: this.familyQuotaProbeContext(spec, ctx),
     });
   }

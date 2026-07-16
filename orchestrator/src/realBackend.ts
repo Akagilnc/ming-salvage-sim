@@ -66,6 +66,7 @@ import {
   decodeReviewerOpenCountReceipt,
   isReceiptRecoveryFailure,
   logAndRethrowReceiptFailure,
+  receiptMaxRetriesForProvider,
   requireTypedTrafficSignal,
   workerReceiptOutput,
   workerReceiptSchema,
@@ -656,6 +657,8 @@ export const SANDBOX_FIX_FINDINGS_PATH_ENV = "ORCHESTRATOR_FIX_FINDINGS_PATH";
 export const SANDBOX_FIX_FOCUS_PATH_ENV = "ORCHESTRATOR_FIX_FOCUS_PATH";
 /** Worker path to the runner-owned machine outcome sidecar JSON. */
 export const SANDBOX_OUTCOME_PATH_ENV = "ORCHESTRATOR_OUTCOME_PATH";
+/** #937 ephemeral relay brief rendered at dispatch (not a worktree file). */
+export const SANDBOX_RELAY_BRIEF_ENV = "ORCHESTRATOR_RELAY_BRIEF";
 /** Optional ship-worker focus file read by the ship prompt before gstack-ship. */
 /**
  * The env var the ship worker's in-container `gh` reads for auth (cmr S336 r10).
@@ -684,26 +687,24 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
  * ms OVERFLOWED int32 → the idle timer fired at once, the opposite of "never
  * fires"). 604_800 * 1000 = 604_800_000 ms ≪ 2**31-1, no overflow.
  *
- * #683: when this timer DOES fire (or an external monitor hits idle first),
- * {@link RealBackend.runAgentSandbox} routes through {@link handleIdleThreshold}
- * — probe the worker's pool before hang kill (429 → wait-for-reset, not hang).
+ * #683 / #937: when this Sandcastle timer DOES fire, {@link RealBackend.runAgentSandbox}
+ * routes through {@link handleIdleThreshold} — probe the worker's pool
+ * (429 → wait-for-reset). Host silence never kills (#934 ID-007).
  */
 export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
 
 /**
  * #683 context threaded beside Sandcastle run options for the internal-timeout
- * fallback. The live CLI monitor owns the normal idle disposition.
- * (Sandcastle does not know this field).
+ * fallback (Sandcastle does not know this field).
  *
  * `workerPid` is optional at the call site — production dispatch paths leave it
  * unset and {@link RealBackend.runAgentSandbox} fills it from the live sandbox
  * handle via {@link RealBackend.noteActiveSandboxWorkerPid}. Callers must not
- * hand-stuff a fake pid; hang kill no-ops on `pid <= 0`.
+ * hand-stuff a fake pid.
  *
- * 429 fallback semantic: by the time Sandcastle surfaces
- * `AgentIdleTimeoutError`, `withSandbox` has already released the sandbox. The
- * fallback may park a quota wall, but never owns hang-kill; live worker kills
- * belong exclusively to the #684 monitor handle.
+ * 429 fallback: park a quota wall when applicable. Host PID-tree hang kill is
+ * deleted (#937); process ownership is ChildProcess handle + adoption-failure
+ * terminateSpawnedChild only.
  */
 export interface QuotaProbeRunContext {
   /** Model/route slug → {@link import("./quotaProbe.js").poolForModelRef}. */
@@ -2882,6 +2883,9 @@ export class RealBackend implements Backend {
     if (options?.outcomeLanding !== undefined) {
       env[SANDBOX_OUTCOME_PATH_ENV] = options.outcomeLanding.sandboxPath;
     }
+    if (options?.relayBrief !== undefined && options.relayBrief.length > 0) {
+      env[SANDBOX_RELAY_BRIEF_ENV] = options.relayBrief;
+    }
     const mounts: { hostPath: string; sandboxPath: string; readonly?: boolean }[] = [
       { hostPath: auth.authDir, sandboxPath: SANDBOX_CODEX_DIR },
     ];
@@ -2936,17 +2940,35 @@ export class RealBackend implements Backend {
    * - non-judge role verify (S9 online-review): not configured here — family
    *   review-loop workers own the verify receipt channel on RealFamilyBackend
    */
-  private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
+  private outputFor(
+    spec: StepSpec,
+    options?: AgentStepRunOptions,
+  ): sc.OutputDefinition | undefined {
+    // #934 ID-004 / #937: non-resumable providers (grok/agy) attach maxRetries:0
+    // so malformed SO enters process-root retry, not a dead same-session re-ask.
+    const pool = isBillingPoolDispatchId(options?.billingPool)
+      ? options.billingPool
+      : undefined;
+    const provider = resolveModelSlugForPool(spec.model, pool).provider;
+    const maxRetries = receiptMaxRetriesForProvider(provider);
     // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
     // S9 online-review must not take JUDGE_RECEIPT.
     if (isJudgeSeat({ id: spec.id })) {
-      return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
+      return workerReceiptOutput(
+        JUDGE_RECEIPT_TAG,
+        judgeStationReceiptSchema(),
+        maxRetries,
+      );
     }
     if (spec.role === "reviewer") {
-      return workerReceiptOutput("review", workerReceiptSchema());
+      return workerReceiptOutput("review", workerReceiptSchema(), maxRetries);
     }
     if (spec.role === "coder") {
-      return coderReceiptOutput(coderStationReceiptSchema(), CODER_RECEIPT_TAG);
+      return coderReceiptOutput(
+        coderStationReceiptSchema(),
+        CODER_RECEIPT_TAG,
+        maxRetries,
+      );
     }
     return undefined;
   }
@@ -3020,8 +3042,7 @@ export class RealBackend implements Backend {
     readonly typedOutput: sc.OutputDefinition | undefined;
     readonly typedOutputUsed: boolean;
   } {
-    void options;
-    const typedOutput = this.outputFor(spec);
+    const typedOutput = this.outputFor(spec, options);
     const singleIterOk =
       opts?.requireSingleIter !== true || spec.maxIter === 1;
     const typedOutputUsed = typedOutput !== undefined && singleIterOk;
@@ -3334,8 +3355,8 @@ export class RealBackend implements Backend {
   private activeSandboxWorkerPid: number | undefined;
 
   /**
-   * Record the OS pid from the live sandbox handle so hang kill after idle
-   * probe has a real target. No-op for non-positive / non-integer values.
+   * Record the OS pid from the live sandbox handle for quota-probe context.
+   * No-op for non-positive / non-integer values. Not a host kill path (#937).
    */
   protected noteActiveSandboxWorkerPid(pid: number): void {
     if (Number.isInteger(pid) && pid > 0) {
@@ -3361,11 +3382,12 @@ export class RealBackend implements Backend {
    * disposition lives in {@link runAgentSandbox} so a full override of that
    * method intentionally bypasses #683 only when the test owns the whole path.
    *
-   * Implementations that own a live sandbox handle MUST call
+   * Implementations that own a live sandbox handle MAY call
    * {@link noteActiveSandboxWorkerPid} with the handle's agent/container pid
-   * while the handle is still alive (before teardown) so hang kill has a real
-   * target. Public Sandcastle types do not expose handle.pid — capture is the
-   * invoker's responsibility (#684 monitor handle is the durable companion).
+   * while the handle is still alive (telemetry/diagnostics). Public Sandcastle
+   * types do not expose handle.pid — capture is the invoker's responsibility.
+   * Host process ownership is the ChildProcess handle (#937 / ID-006); silence
+   * is observational only (no host hang kill).
    */
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
@@ -3375,13 +3397,14 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Production agent-sandbox entry (#683/#909). Runs Sandcastle, and on idle
-   * timeout probes the worker's quota pool BEFORE hang disposition via the
-   * shared {@link withIdleQuotaProbeDisposition} (same path family uses):
+   * Production agent-sandbox entry (#683/#909/#937). Runs Sandcastle, and on
+   * Sandcastle idle timeout probes the worker's quota pool via the shared
+   * {@link withIdleQuotaProbeDisposition} (same path family uses):
    *   - 429/limit → {@link QuotaWaitForResetError} (park step for quota reset;
    *     ledger row via applied.ledgerEntry for runner park; do NOT mark failed)
-   *   - probe ok / network error → fail-safe rethrow the idle error (kill is a
-   *     no-op here; live hang kill is owned by the #684 monitor handle path)
+   *   - probe ok / network error → fail-safe rethrow the idle error (no host
+   *     PID-tree kill — #937 silence sentencing deleted; process ownership is
+   *     ChildProcess handle + adoption-failure terminateSpawnedChild only)
    */
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
@@ -3400,9 +3423,9 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * #683 production idle disposition entry. Callable from runAgentSandbox (on
-   * Sandcastle idle timeout) and from any external monitor that owns the idle
-   * threshold. Overridable only for host I/O seams (probe / kill / ledger).
+   * #683 production idle disposition entry. Callable from runAgentSandbox on
+   * Sandcastle idle timeout. Overridable only for host I/O seams (probe / ledger).
+   * #937: no host idle-kill arm.
    */
   protected async resolveIdleAfterQuotaProbe(
     ctx: QuotaProbeRunContext,
@@ -3479,40 +3502,13 @@ export class RealBackend implements Backend {
     return workerResultFromMonitorSidecar(handle, exitCode);
   }
 
-  /**
-   * #683: probe at the live #684 monitor threshold. The monitor owns the
-   * verified pid-tree kill; this backend only applies the quota state machine
-   * and records a wait row when the pool returns 429.
-   */
-  async handleMonitoredWorkerIdle(
-    handle: WorkerMonitorHandle,
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<"hang" | "hang_with_live_pool" | "wait_for_reset"> {
-    const result = await handleIdleThreshold({
-      // #686: a same-model relay may have changed provider/billing pool. Probe
-      // the active dispatch pool carried by the runner whenever it is present.
-      modelRef: ctx.billingPool ?? spec.model,
-      worker: { pid: handle.pid, step: spec.id },
-      actions: {
-        killPidTree: () => undefined,
-        // Runner parkQuotaWaitForReset writes the single durable marker with
-        // real audit fields — avoid a second placeholder write here.
-        recordLedger: async () => undefined,
-      },
-      probe: (pool) => this.runQuotaProbe(pool),
-    });
-    if (result.disposition.kind === "wait_for_reset") {
-      throw new QuotaWaitForResetError(result);
-    }
-    return result.probe.kind === "ok" ? "hang_with_live_pool" : "hang";
-  }
-
   // ── #255 / #936: detect resume residue ─────────────────────────────────────
   // ID-005: typed fresh only when BOTH worksite and ledger are absent. A
   // resident worksite without a readable ledger is corrupted residue — throw so
   // Scene Discovery returns `corrupted` (preserve scene, fail loud). Never
   // misclassify partial residue as fresh.
+  // #937: handleMonitoredWorkerIdle deleted — silence is observational only
+  // (ID-007); no monitored-dispatch idle probe/kill/relay caller remains.
   async findResumeState(issueNumber: number): Promise<ResumeState | undefined> {
     if (!this.cloneDirExists(this.workingRepo)) return undefined;
     this.ensureWorkingRepo();

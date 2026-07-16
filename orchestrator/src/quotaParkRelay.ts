@@ -18,7 +18,7 @@ import {
 } from "./quotaProbe.js";
 import {
   forkQuotaWallAt683Point,
-  tryStageRelayFocusFile,
+  renderEphemeralRelayBrief,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
 import type {
@@ -112,14 +112,15 @@ export type ParkOrRelayQuotaWallOutcome =
       readonly kind: "relay";
       readonly nextBaton: NextRelayBaton;
       readonly ledgerEntry: RelayHandoffLedgerEvent;
-      readonly focusPath: string | undefined;
+      /** Ephemeral brief from ledger memory (#937); not a worktree path. */
+      readonly relayBrief: string;
     };
 
 /**
  * #683 park / #686 relay fork at the quota-wall disposition point.
  * Within T or no live baton → existing park family (escalate + quota_wait marker).
- * Beyond T + live baton → write relay_baton_handoff + .relay-focus.md and return
- * the next baton for the caller to apply + re-dispatch.
+ * Beyond T + live baton → durable relay_baton_handoff + ephemeral brief render
+ * and return the next baton for the caller to apply + re-dispatch.
  */
 export async function parkOrRelayQuotaWall(opts: {
   readonly step: SliceStepId;
@@ -184,24 +185,8 @@ export async function parkOrRelayQuotaWall(opts: {
 
   if (forked.tier === "relay" && forked.nextBaton && forked.ledgerEntry) {
     const entry = forked.ledgerEntry;
-    // Stage the new brief while the previous durable baton remains consumable.
-    // Promote only after the matching ledger row commits.
-    const staged = tryStageRelayFocusFile(opts.worktreePath, entry);
-    if (!staged.ok) {
-      return {
-        kind: "park",
-        result: await parkQuotaWaitForReset({
-          step,
-          err,
-          ledger,
-          stateDir,
-          sessionId,
-          backend,
-          resolveBranchHEAD: opts.resolveBranchHEAD,
-          hashPrompt: opts.hashPrompt,
-        }),
-      };
-    }
+    // #937: durable ledger row first; ephemeral brief is pure render from the
+    // in-memory entry (no worktree focus file).
     const marker: LedgerEntry = {
       step: isValidStepId(entry.step) ? entry.step : step,
       event: "relay_baton_handoff",
@@ -228,7 +213,6 @@ export async function parkOrRelayQuotaWall(opts: {
           stateDir,
         );
       } catch {
-        staged.focus.discard();
         return {
           kind: "park",
           result: await parkQuotaWaitForReset({
@@ -244,36 +228,12 @@ export async function parkOrRelayQuotaWall(opts: {
         };
       }
     }
-    try {
-      staged.focus.commit();
-    } catch {
-      // C9: promote/commit failed after durable handoff write — discard staged
-      // focus and do not leave an uncancelled half-applied baton as progress.
-      try {
-        staged.focus.discard();
-      } catch {
-        // best-effort cleanup
-      }
-      return {
-        kind: "park",
-        result: await parkQuotaWaitForReset({
-          step,
-          err,
-          ledger,
-          stateDir,
-          sessionId,
-          backend,
-          resolveBranchHEAD: opts.resolveBranchHEAD,
-          hashPrompt: opts.hashPrompt,
-        }),
-      };
-    }
     ledger.push(marker);
     return {
       kind: "relay",
       nextBaton: forked.nextBaton,
       ledgerEntry: entry,
-      focusPath: staged.focus.path,
+      relayBrief: renderEphemeralRelayBrief(entry),
     };
   }
 

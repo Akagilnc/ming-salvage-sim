@@ -48,7 +48,6 @@ function quotaWaitError(): QuotaWaitForResetError {
       reason: "quota limited (429); wait for reset",
     },
     applied: {
-      killed: false,
       ledgerEntry: {
         event: "quota_wait_for_reset",
         pool: "zai",
@@ -106,7 +105,7 @@ function scripted(script: ReadonlyArray<WorkerResult | Error>): {
 }
 
 describe("#598 withMechanicalRetry", () => {
-  it("backs off for 5s then 15s before transient process-failure retries", async () => {
+  it("backs off 15s between process-root retries (#934 ID-004 / #937)", async () => {
     const delays: number[] = [];
     let attempt = 0;
     const dispatch = async () => {
@@ -123,7 +122,7 @@ describe("#598 withMechanicalRetry", () => {
     });
 
     expect(result).toEqual(COMPLETED);
-    expect(delays).toEqual([5_000, 15_000]);
+    expect(delays).toEqual([15_000, 15_000]);
   });
 
   it("a returned `failed` on attempt 1 then `completed` on attempt 2 → completed, dispatched twice", async () => {
@@ -248,7 +247,9 @@ describe("#909 retryProcessCrash must not thrash on quota wait", () => {
         calls += 1;
         throw new Error("merger agent crashed mid-resolve");
       }),
-    ).rejects.toThrow(/after 3 dispatch attempts/);
+    ).rejects.toThrow(
+      new RegExp(`after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`),
+    );
     expect(calls).toBe(MAX_DISPATCH_ATTEMPTS);
   });
 });

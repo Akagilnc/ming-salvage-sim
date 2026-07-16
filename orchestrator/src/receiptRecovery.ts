@@ -11,6 +11,17 @@ import type {
 export const RECEIPT_MAX_RETRIES = 2;
 
 /**
+ * Same-session SO re-ask budget for a provider factory (#934 ID-004 / #937).
+ * Sandcastle requires `maxRetries: 0` when the agent has no `sessionStorage`
+ * (custom grok / agy providers). Built-in resumable factories keep
+ * {@link RECEIPT_MAX_RETRIES}.
+ */
+export function receiptMaxRetriesForProvider(provider: string): number {
+  if (provider === "grok" || provider === "agy") return 0;
+  return RECEIPT_MAX_RETRIES;
+}
+
+/**
  * Legacy decision-gate tag retained for unit fixtures that pin Sandcastle's
  * four-case matrix on the raw `decision` tag (#899). Production seats attach
  * T2 station receipts (coder / judge / ship / merger / onlineReview) instead.
@@ -121,11 +132,17 @@ export function workerReceiptSchema(): z.ZodType {
 }
 
 /** One typed receipt definition for every worker path. Callers must pass schema. */
+/**
+ * Attach a typed Output.object receipt. Resumable providers use
+ * {@link RECEIPT_MAX_RETRIES} (2); non-resumable (e.g. grok-4.5) must pass
+ * `maxRetries: 0` so malformed SO enters process-root retry (#934 ID-004).
+ */
 export function workerReceiptOutput(
   tag: string,
   schema: z.ZodType,
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return sc.Output.object({ tag, schema, maxRetries: RECEIPT_MAX_RETRIES });
+  return sc.Output.object({ tag, schema, maxRetries });
 }
 
 /**
@@ -136,8 +153,9 @@ export function workerReceiptOutput(
 export function coderReceiptOutput(
   schema: z.ZodType,
   tag: string = "coder",
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, maxRetries);
 }
 
 /**
@@ -148,8 +166,9 @@ export function coderReceiptOutput(
 export function shipReceiptOutput(
   schema: z.ZodType,
   tag: string = "ship",
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, maxRetries);
 }
 
 /**
@@ -159,8 +178,9 @@ export function shipReceiptOutput(
 export function mergerReceiptOutput(
   schema: z.ZodType,
   tag: string = "merger",
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, maxRetries);
 }
 
 /**
@@ -171,8 +191,9 @@ export function mergerReceiptOutput(
 export function onlineReviewReceiptOutput(
   schema: z.ZodType,
   tag: string = "onlineReview",
+  maxRetries: number = RECEIPT_MAX_RETRIES,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, maxRetries);
 }
 
 /**

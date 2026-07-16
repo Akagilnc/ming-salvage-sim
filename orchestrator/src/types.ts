@@ -486,10 +486,11 @@ export interface QuotaWaitForResetEvent {
 }
 
 /**
- * #686 — baton handoff on a resource failure (quota wall / hang-with-live-pool /
- * self-reported blocked). `state_summary` is forwarded as the next baton's
- * parameter file (`.relay-focus.md`). Worktree drift is preserved (no reset).
- * Shape mirrors {@link import("./relayDispatch.js").RelayHandoffLedgerEvent}.
+ * #686 / #937 — baton handoff on a resource failure (quota wall / capacity /
+ * self-reported blocked). `state_summary` is rendered as an ephemeral dispatch
+ * brief from ledger memory (no `.relay-focus.md` file). Worktree drift is
+ * preserved (no reset). Shape mirrors
+ * {@link import("./relayDispatch.js").RelayHandoffLedgerEvent}.
  */
 export interface RelayBatonHandoffEvent {
   readonly event: "relay_baton_handoff";
@@ -1062,11 +1063,10 @@ export interface DispatchContext {
    */
   readonly billingPool?: string;
   /**
-   * #686 — absolute path to `.relay-focus.md` when a baton handoff is in force.
-   * Mirrors `.cmr-focus.md` / `.ship-focus.md`: runner writes the parameter file;
-   * the worker prompt reads it when present.
+   * #937 / #934 ID-007 — ephemeral relay brief rendered once from ledger memory
+   * at dispatch. Not a worktree file; injected via env into the worker.
    */
-  readonly relayFocusPath?: string;
+  readonly relayBrief?: string;
 }
 
 /** A coder worker's output — the existing {@link CoderOutput}. */
@@ -1410,15 +1410,16 @@ export interface LedgerEntry {
   /** Runner-owned terminal stop reason summary (#450). */
   readonly stopSummary?: StopSummary;
   /**
-   * Monitor handle for an in-flight external CLI worker (#684). Persisted so a
-   * resumed run can rebuild alive/idle/kill judgment without global pgrep.
+   * Monitor handle for an in-flight external CLI worker (#684 / #937). Persisted
+   * so a resumed run can rebuild log last-activity observation without global pgrep.
    */
   readonly monitorHandle?: WorkerMonitorHandle;
 }
 
 /**
- * Structured monitor handle produced atomically at CLI worker dispatch (#684).
- * Alive/idle/kill operations must use this handle — never global process-name matching.
+ * Structured monitor handle produced atomically at CLI worker dispatch
+ * (#684 / #937). Process ownership is the exact ChildProcess / process-group
+ * handle; silence is observational only — no idle kill / PID-tree walk.
  */
 export interface WorkerMonitorHandle {
   readonly pid: number;
@@ -1431,8 +1432,7 @@ export interface WorkerMonitorHandle {
   readonly dispatchedAt: string;
   /**
    * OS-level process start identity (e.g. `ps -o lstart=`) captured at spawn.
-   * Resume/kill must verify the live PID still matches this identity before any
-   * signal — otherwise a recycled PID would kill an unrelated process (#684 R1).
+   * Adoption-failure termination uses the ChildProcess handle, not global name match.
    */
   readonly instanceId: string;
   /** Dispatch-scoped result sidecar; absent only on legacy persisted handles. */
@@ -1459,12 +1459,6 @@ export interface CliMonitorSpawnSpec {
   /** Injectable process identity reader for restricted/test environments. */
   readonly readInstanceId?: (pid: number) => string | undefined;
 }
-
-/** #683: the monitor asks the backend to probe before it owns hang-kill. */
-export type MonitoredWorkerIdleDisposition =
-  | "hang"
-  | "hang_with_live_pool"
-  | "wait_for_reset";
 
 /**
  * Full persisted ledger entry (#249). Extends {@link LedgerEntry} with the
@@ -1716,16 +1710,6 @@ export interface Backend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   /**
-   * #683: called while the monitored worker is still alive at the idle threshold.
-   * A backend may throw its quota-park error; returning `hang` leaves verified
-   * pid-tree kill exclusively to the monitor.
-   */
-  handleMonitoredWorkerIdle?(
-    handle: WorkerMonitorHandle,
-    spec: WorkerSpec,
-    ctx: DispatchContext,
-  ): Promise<MonitoredWorkerIdleDisposition>;
-  /**
    * #256 (optional, ledger true-value): resolve a step's promptFile to its raw
    * CONTENT so the runner can hash the content (real anti-tampering audit)
    * instead of the file name. Returns `undefined` when the prompt cannot be
@@ -1784,8 +1768,11 @@ export interface AgentStepRunOptions {
    * provider/CLI channel when the same model lives on multiple pools.
    */
   readonly billingPool?: string;
-  /** Durable relay brief for any baton role (coder, ship, or review). */
-  readonly relayFocusPath?: string;
+  /**
+   * #937 ephemeral relay brief for any baton role (coder, ship, or review).
+   * Rendered from ledger memory at dispatch — never a worktree focus file.
+   */
+  readonly relayBrief?: string;
 }
 
 // ──────────────────────────── run result ────────────────────────────

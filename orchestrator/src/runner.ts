@@ -103,14 +103,10 @@ import {
 } from "./quotaPoolTable.js";
 import {
   canRelayHandoff,
-  isRelayCandidateExhaustion,
   applyResourceFailureHandoff,
   resumeRelayFromLedger,
-  tryStageRelayFocusFile,
+  renderEphemeralRelayBrief,
   isCapacityRelayError,
-  isHangWithLivePoolError,
-  isSelfReportedRelayError,
-  RELAY_FOCUS_FILENAME,
   type RelayHandoffLedgerEvent,
 } from "./relayDispatch.js";
 import { existsSync } from "node:fs";
@@ -124,7 +120,7 @@ import {
 } from "./validate.js";
 import {
   isJudgeSeat,
-  mintJudgeEscalate,
+
   priorJudgeVerdictRowsFromLedger,
   projectJudgeContinueBlocking,
   projectJudgeSeatOutput,
@@ -1466,7 +1462,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    */
   let stickyJudgeAdvanceCoderSlug: string | undefined;
   /** #686 — last written relay focus path (forwarded on next dispatch). */
-  let activeRelayFocusPath: string | undefined;
+  let activeRelayBrief: string | undefined;
   /** The only step allowed to consume the current relay pool and focus baton. */
   let activeRelayStep: StepId | undefined;
   // #924: coder persistent session across S2 → S5 rounds (declared early so
@@ -1926,8 +1922,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     dispatchStep: StepId,
   ): BillingPoolId | undefined =>
     activeRelayStep === dispatchStep ? currentBillingPool : undefined;
-  const relayFocusForDispatch = (dispatchStep: StepId): string | undefined =>
-    activeRelayStep === dispatchStep ? activeRelayFocusPath : undefined;
+  const relayBriefForDispatch = (dispatchStep: StepId): string | undefined =>
+    activeRelayStep === dispatchStep ? activeRelayBrief : undefined;
   const clearCompletedRelayState = (completedStep: StepId, completed: StepOutput | undefined): void => {
     if (
       activeRelayStep !== completedStep ||
@@ -1935,7 +1931,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       escalateOf(completed) !== undefined
     ) return;
     currentBillingPool = undefined;
-    activeRelayFocusPath = undefined;
+    activeRelayBrief = undefined;
     activeRelayStep = undefined;
   };
 
@@ -2645,7 +2641,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
     // #661 / #686 P0: NEVER destroy the worker scene on resume. Reading/comparing
     // HEADs is legal; destructive reset/cleanup is not — uncommitted work + partial
-    // commits + `.relay-focus.md` are the payload. Relay state is read from the
+    // commits + baton state are the payload. Relay state is read from the
     // FULL resume ledger preserves every relay marker.
     // ADR 0030: resume continues from the recorded runner-visible boundary. If
     // that boundary follows S4, the classification state was rebuilt above from
@@ -2722,10 +2718,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         },
         plan.resumeStep,
       );
-      if (worktree.path !== undefined) {
-        const focus = join(worktree.path, RELAY_FOCUS_FILENAME);
-        if (existsSync(focus)) activeRelayFocusPath = focus;
-      }
+      activeRelayBrief = renderEphemeralRelayBrief(relayResume);
     }
   }
 
@@ -2748,7 +2741,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     let stepSessionId: string | undefined;
     // #684: monitor handle from production CLI dispatch (dispatchWorkerWithMonitor),
     // when the worker was spawned as a host-side CLI process. Persisted on the
-    // ledger so resume can rebuild alive/idle/kill judgment without global pgrep.
+    // ledger so resume can rebuild the monitor handle for log last-activity without global pgrep.
     // Seed from resume rebuild (monitorHandleFromLedger) until a fresh spawn
     // overwrites via onMonitorHandleSpawned.
     let stepMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
@@ -2971,7 +2964,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   modelSlug: workerSpec.model,
                 };
               }
-              const focusPath = relayFocusForDispatch(step);
+              const relayBrief = relayBriefForDispatch(step);
               const priorJudgeVerdicts = isJudgeSeat({ step })
                 ? priorJudgeVerdictRowsFromLedger(ledger)
                 : undefined;
@@ -2987,7 +2980,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 ...(billingPool !== undefined
                   ? { billingPool }
                   : {}),
-                ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
+                ...(relayBrief !== undefined ? { relayBrief } : {}),
                 // #925: prior judge verdict rows for session-loss recovery /
                 // trajectory (runner never synthesises a narrative summary).
                 ...(priorJudgeVerdicts !== undefined &&
@@ -3088,13 +3081,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     {
                       onMonitorHandleSpawned: async (handle) => {
                         stepMonitorHandle = handle;
-                        try {
-                          if (isValidStepId(s.id)) {
-                            await persistMonitorHandleAtSpawn(s.id, handle);
-                          }
-                        } catch {
-                          // Best-effort: spawn-time ledger write must not abort
-                          // the worker; post-step emitLedger still records it.
+                        // #934 ID-006 / #937: adoption/persist failure must
+                        // terminate the exact ChildProcess — rethrow so
+                        // dispatchWorkerWithMonitor runs terminateSpawnedChild.
+                        if (isValidStepId(s.id)) {
+                          await persistMonitorHandleAtSpawn(s.id, handle);
                         }
                       },
                     },
@@ -3123,104 +3114,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             const { unwrapped, reason } = workerResultToStep(result, expectedKind);
 
             if (unwrapped === undefined) {
-              // #686 P2-b: mechanical-retry exhaustion is a relay candidate —
-              // hand off when a live baton exists; durable abort only when none.
-              if (
-                expectedKind === "coder" &&
-                isRelayCandidateExhaustion(reason) &&
-                canRelayInProcess()
-              ) {
-                const currentPool =
-                  currentBillingPool ??
-                  billingPoolFromQuotaPool(
-                    poolForModelRef(modelRoute.slots.coder),
-                  );
-                // Mark the wall-hit pool dead/limited so 换马甲 does not
-                // re-select the same model on a "different" pool forever when
-                // poolForModelRef disagrees with the baton's billing pool.
-                const pools = resolveRelayPools(currentPool, undefined).map(
-                  (p) =>
-                    p.id === currentPool
-                      ? { ...p, status: "dead" as const }
-                      : p,
-                );
-                const handoff = await applyResourceFailureHandoff({
-                  trigger: "mechanical_retry_exhausted",
-                  state_summary:
-                    reason ??
-                    `mechanical retry exhausted on ${step}; uncommitted drift preserved`,
-                  reason: reason ?? "mechanical retry exhausted",
-                  currentModelId: modelIdForWallStep(step),
-                  currentPool,
-                  rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
-                  pools,
-                  now: relayNow(),
-                  step,
-                });
-                if (handoff.kind === "relay" && handoff.ledgerEntry) {
-                  const entry = handoff.ledgerEntry;
-                  const staged = tryStageRelayFocusFile(worktree?.path, entry);
-                  if (!staged.ok) {
-                    return await errorTermination(
-                      step,
-                      new Error(staged.reason),
-                    );
-                  }
-                  const marker: LedgerEntry = {
-                    step: isValidStepId(entry.step) ? entry.step : step,
-                    event: "relay_baton_handoff",
-                    trigger: entry.trigger,
-                    state_summary: entry.state_summary,
-                    ...(entry.remaining !== undefined
-                      ? { remaining: entry.remaining }
-                      : {}),
-                    ...(entry.reason !== undefined
-                      ? { reason: entry.reason }
-                      : {}),
-                    fromModelId: entry.fromModelId,
-                    fromPool: entry.fromPool,
-                    toModelId: entry.toModelId,
-                    toPool: entry.toPool,
-                    ts: entry.ts,
-                  };
-                  if (stateDir !== undefined) {
-                    try {
-                      await backend.writeLedger(
-                        {
-                          ...marker,
-                          sessionId,
-                          prompt_hash: await hashPrompt(
-                            undefined,
-                            step,
-                            backend,
-                          ),
-                          branchHEAD: await resolveBranchHEAD(),
-                          ts: entry.ts,
-                        },
-                        stateDir,
-                      );
-                } catch {
-                  staged.focus.discard();
-                  return await errorTermination(
-                        step,
-                        new Error(
-                          `relay handoff ledger write failed after mechanical retry exhaustion`,
-                        ),
-                      );
-                    }
-                  }
-                  try {
-                    staged.focus.commit();
-                  } catch (focusErr) {
-                    return await errorTermination(step, focusErr);
-                  }
-                  ledger.push(marker);
-                  activeRelayFocusPath = staged.focus.path;
-                  completeMechanicalRetryInvocation(step);
-                  applyRelayBaton(handoff.nextBaton, step);
-                  continue orchestratorStepLoop;
-                }
-              }
+              // #934 ID-004 / #937: process-root exhaustion is the phase's
+              // canonical failed edge — never a baton relay / park from silence.
               const exhaustionReason =
                 reason ?? `worker ${step} returned ${result.kind} after bounded redispatch`;
               return await escalateTermination(
@@ -3260,51 +3155,26 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
             break;
           }
         } catch (err) {
-          if (isSelfReportedRelayError(err) && err.tag.kind === "decision_gate") {
-            const escalation: Escalation = {
-              reason: `${step} worker raised a decision gate`,
-              diagnosis: err.tag.state_summary,
-            };
-            // #919 CR U1 + residual R1 / S2/R8: single-slice agent seats are only
-            // coder (S2/S5) or judge (S3/S6 via isJudgeSeat step/id). Always mint
-            // T2 kind:"judge" escalate on the judge seat; never residual
-            // open-count kind:"reviewer" paper (deleted dead arm).
-            const seatIsJudge = isJudgeSeat({ step });
-            let decisionOutput: StepOutput;
-            if (expectedKind === "coder") {
-              decisionOutput = {
-                kind: "coder",
-                committed: false,
-                commitsAdded: 0,
-                escalate: escalation,
-              };
-            } else if (seatIsJudge) {
-              decisionOutput = mintJudgeEscalate(escalation);
-            } else {
-              // Exhaustive: topology has no third agent seat kind.
-              throw new Error(
-                `runner: decision_gate on non-coder non-judge seat ${step} (expectedKind=${expectedKind})`,
-              );
-            }
-            return await escalateTermination(
-              step,
-              escalation,
-              err.sessionId,
-              "decision",
-              decisionOutput,
-              decisionGateParkStopSummary({
-                summary: `${step} worker raised a decision gate: ${err.tag.state_summary}`,
-                repairHint:
-                  "answer the decision gate, then re-feed to resume the parked worker step",
-              }),
-            );
-          }
+          // #937: free-log SelfReportedRelayError / HangWithLivePoolError deleted
+          // with the fourth fate channel. Decision gates arrive via typed station
+          // escalate; hang no longer invents host kill+relay from silence.
           // #683/#686: 429 quota wall → park within T / no baton; relay beyond T
-          // with a live baton (write handoff + focus, apply next baton, re-enter).
+          // with a live baton (ephemeral brief, apply next baton, re-enter).
           if (isQuotaWaitForResetError(err)) {
+            // #934 ID-008 / #937: review/fix seats stay on the owning coder —
+            // no-candidate must not invent park/terminal from silence or
+            // candidate exhaustion (#919 / ADR 0132 topology).
+            const reviewFixStayPut =
+              isJudgeSeat({ step }) || step === "S5";
             const currentPool =
               currentBillingPool ?? billingPoolFromQuotaPool(err.pool);
             if (!canRelayInProcess()) {
+              if (reviewFixStayPut) {
+                // Stay-put: re-surface as process failure for same-model redispatch.
+                throw new Error(
+                  `quota wall stay-put on ${step} (no live baton): ${err.message}`,
+                );
+              }
               return await parkQuotaWaitForReset({
                 step,
                 err,
@@ -3338,49 +3208,33 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               ),
               now: relayNow(),
             });
-            if (outcome.kind === "park") return outcome.result;
-            if (outcome.focusPath !== undefined) {
-              activeRelayFocusPath = outcome.focusPath;
+            if (outcome.kind === "park") {
+              if (reviewFixStayPut) {
+                throw new Error(
+                  `quota wall stay-put on ${step} (park/no baton): ${err.message}`,
+                );
+              }
+              return outcome.result;
+            }
+            if (outcome.relayBrief !== undefined) {
+              activeRelayBrief = outcome.relayBrief;
             }
             applyRelayBaton(outcome.nextBaton, step);
             continue orchestratorStepLoop;
           }
-          // #686/#787: resource failures relay without retry; capacity keeps its
-          // pool live so the capacity selector can change checkpoints in-pool.
-          // (never mechanical-retry / never reset).
-          if (
-            (isHangWithLivePoolError(err) ||
-              isSelfReportedRelayError(err) ||
-              isCapacityRelayError(err)) &&
-            canRelayInProcess()
-          ) {
+          // #686/#787/#937: capacity resource failure relays without retry
+          // (never mechanical-retry / never reset). Hang/self-report free-log
+          // constructors deleted with ID-006/007.
+          if (isCapacityRelayError(err) && canRelayInProcess()) {
+            const reviewFixStayPut =
+              isJudgeSeat({ step }) || step === "S5";
             const { currentPool, pools } = resolveResourceFailurePool({
               modelRef: modelRefForWallStep(step),
-              ...(isHangWithLivePoolError(err)
-                ? { knownPool: billingPoolFromQuotaPool(err.poolId) }
-                : {}),
-              capacity: isCapacityRelayError(err),
+              capacity: true,
             });
-            const trigger = isCapacityRelayError(err)
-              ? ("capacity" as const)
-              : isHangWithLivePoolError(err)
-              ? ("hang_with_live_pool" as const)
-              : isSelfReportedRelayError(err) && err.tag.kind === "blocked"
-                ? ("self_reported_blocked" as const)
-                : ("phase_complete" as const);
-            const stateSummary = isSelfReportedRelayError(err)
-              ? err.tag.state_summary
-              : isCapacityRelayError(err)
-                ? "model checkpoint at capacity; drift preserved"
-                : "worker hang with live pool; pid tree killed; drift preserved";
-            const remaining =
-              isSelfReportedRelayError(err) && "remaining" in err.tag
-                ? err.tag.remaining
-                : undefined;
             const handoff = await applyResourceFailureHandoff({
-              trigger,
-              state_summary: stateSummary,
-              ...(remaining !== undefined ? { remaining } : {}),
+              trigger: "capacity",
+              state_summary: "model checkpoint at capacity; drift preserved",
               reason: err instanceof Error ? err.message : String(err),
               currentModelId: modelIdForWallStep(step),
               currentPool,
@@ -3389,15 +3243,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               now: relayNow(),
               step,
             });
-            if (handoff.kind === "relay" && handoff.ledgerEntry) {
-              const entry = handoff.ledgerEntry;
-              const staged = tryStageRelayFocusFile(worktree?.path, entry);
-              if (!staged.ok) {
-                return await errorTermination(
-                  step,
-                  new Error(staged.reason),
+            if (handoff.kind !== "relay" || handoff.ledgerEntry === undefined) {
+              if (reviewFixStayPut) {
+                throw new Error(
+                  `capacity stay-put on ${step} (no live baton): ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
                 );
               }
+            }
+            if (handoff.kind === "relay" && handoff.ledgerEntry) {
+              const entry = handoff.ledgerEntry;
               const marker: LedgerEntry = {
                 step: isValidStepId(entry.step) ? entry.step : step,
                 event: "relay_baton_handoff",
@@ -3426,17 +3282,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                     stateDir,
                   );
                 } catch {
-                  staged.focus.discard();
                   return await errorTermination(step, err);
                 }
               }
-              try {
-                staged.focus.commit();
-              } catch (focusErr) {
-                return await errorTermination(step, focusErr);
-              }
               ledger.push(marker);
-              activeRelayFocusPath = staged.focus.path;
+              activeRelayBrief = renderEphemeralRelayBrief(entry);
               completeMechanicalRetryInvocation(step);
               applyRelayBaton(handoff.nextBaton, step);
               continue orchestratorStepLoop;
@@ -3646,7 +3496,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     try {
       // #256: pass the real per-step sandbox session id (captured from the seam
       // extension) so the ledger records the true id resumeSession will resume.
-      // #684: pass the monitor handle so resume can rebuild alive/idle/kill judgment.
+      // #684: pass the monitor handle so resume can rebuild log last-activity observation.
       await emitLedger(
         step,
         output,
