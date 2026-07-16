@@ -25,17 +25,24 @@ import {
 import type { DispatchContext, WorkerResult, WorkerSpec } from "./types.js";
 
 /**
- * Total dispatch attempts for one step (1 initial + retries) for a PROCESS-LEVEL
- * failure (crash / no-output). #598 owns this number.
+ * Total process-root dispatch attempts for one fixed position (1 initial +
+ * 5 retries) when invocation transport/crash/signal/SO extraction fails and
+ * no durable outcome exists yet (#934 ID-004 / #937).
  *
  * This is the single process-failure retry budget shared by every worker role.
  * Completed/escalated worker receipts are never retried here; the runner only
  * transports their self-reported gates and counts.
  */
-export const MAX_DISPATCH_ATTEMPTS = 3;
+export const MAX_DISPATCH_ATTEMPTS = 6;
 
-/** Seconds-scale pauses for the two retries: enough for brief provider/spawn recovery. */
-export const DISPATCH_RETRY_BACKOFF_MS = [5_000, 15_000] as const;
+/** Five 15s intervals between the 6 process-root attempts (#934 ID-004). */
+export const DISPATCH_RETRY_BACKOFF_MS = [
+  15_000,
+  15_000,
+  15_000,
+  15_000,
+  15_000,
+] as const;
 
 const defaultRetrySleepMs = (ms: number): Promise<void> =>
   process.env.VITEST === "true"

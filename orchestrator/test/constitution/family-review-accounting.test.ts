@@ -16,6 +16,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { runVerifyCmr } from "../../src/family/verifyCmr.js";
 import { findingIdentityKey } from "../../src/findings.js";
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
@@ -168,7 +169,9 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     });
 
     expect(result).toMatchObject({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => "coder"),
+    );
     expect(isCourtAbort(backend.ledger)).toBe(false);
   });
 
@@ -341,7 +344,9 @@ describe("#875 demolish verifyCmr accounting court — sloppy/chatty envelope su
     });
 
     expect(result).toMatchObject({ ok: false, ran: true });
-    expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
+    expect(backend.dispatchedNonCmrKinds).toEqual(
+      Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => "coder"),
+    );
     expect(isCourtAbort(backend.ledger)).toBe(false);
     expect(
       backend.ledger.some(

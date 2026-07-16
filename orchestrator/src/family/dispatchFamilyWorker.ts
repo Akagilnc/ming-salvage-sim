@@ -30,7 +30,7 @@ import {
 } from "../telemetry.js";
 import {
   dispatchMonitoredCliWorker,
-  killWorkerTree,
+  terminateSpawnedChild,
   readLogActivity,
   type MonitoredCliDispatchInput,
 } from "../workerMonitor.js";
@@ -322,7 +322,7 @@ export async function dispatchFamilyWorkerWithMonitor(
         } catch (error) {
           // Cleanup remains scoped to the verified monitor handle; never signal
           // an unverified PID or process group on callback failure.
-          await killWorkerTree(handle);
+          await terminateSpawnedChild(child);
           try {
             await exitPromise;
           } catch {

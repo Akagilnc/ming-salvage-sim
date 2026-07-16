@@ -3,7 +3,7 @@
  *
  * Authoritative:
  *   换棒路径存在至少一个可达的活棒，且超 T 时系统真的换到该棒接续
- *   （下一棒 dispatch 用新 model/pool），不是只写 `.relay-focus.md` 后 escalate。
+ *   （下一棒 dispatch 用新 model/pool），不是只写 ephemeral baton brief 后 escalate。
  *
  * Nails (load-bearing — nop apply must RED):
  *   - 2nd barrier dispatch uses baton on REAL consume slots
@@ -398,12 +398,8 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(finalBillingPools[0]).toBeUndefined();
     expect(finalBillingPools[1]).toBe("codex-5h");
 
-    // Focus still staged for worker brief continuity.
-    const focusPath = join(worktree, RELAY_FOCUS_FILENAME);
-    expect(existsSync(focusPath)).toBe(true);
-    const focus = readFileSync(focusPath, "utf8");
-    expect(focus).toMatch(/terra@med|gpt-5\.6-terra/i);
-    expect(focus).toMatch(/codex-5h/i);
+    // #937: no worktree focus file; baton continuity is ledger + route rewrite.
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
 
     const relayAudit = familyBackend.ledger.filter(
       (e) =>
@@ -507,7 +503,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
     expect(finalRoutes[0]?.slots.cmrCompleteness).not.toBe(
       finalRoutes[1]?.slots.cmrCompleteness,
     );
-    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(true);
+    expect(existsSync(join(worktree, RELAY_FOCUS_FILENAME))).toBe(false);
   });
 
   it("LOAD-BEARING: identity applyRelayBaton → positive consumed-slot nail fails", async () => {

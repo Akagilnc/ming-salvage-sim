@@ -2917,7 +2917,9 @@ describe("#600 verify/fixer crash retry (#600 AC7 / #598)", () => {
     expect(attempts).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(result).toMatchObject({
       kind: "failed",
-      reason: expect.stringContaining("after 3 dispatch attempts"),
+      reason: expect.stringContaining(
+        `after ${MAX_DISPATCH_ATTEMPTS} dispatch attempts`,
+      ),
     });
   });
 
