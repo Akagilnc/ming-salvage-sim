@@ -2321,15 +2321,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       `[orchestrator] ${failedStep} escalated: ${escalation.reason} — ${escalation.diagnosis}`,
     );
     if (failedStep !== "S8") {
+      // #955 r7: escalated agent rows must carry modelSlug (creator identity)
+      // for human-answer resume — same source as main-path emitLedger /
+      // in-memory ledger push (isWorkerStep → seat model). Without it, r5's
+      // identity gate falls back to the current seat and can false-match after
+      // Coder-Rec seat swaps. persistBestEffort → emitLedger already stamps
+      // modelSlug for worker steps; in-memory RunResult.stepLedger must match.
+      const escalatedModelSlug = isWorkerStep(failedStep)
+        ? stepSpecs[failedStep].model
+        : undefined;
       ledger.push({
         step: failedStep,
         ...(output !== undefined ? { output } : {}),
         ...(sessionId !== undefined ? { sessionId } : {}),
+        ...(escalatedModelSlug !== undefined
+          ? { modelSlug: escalatedModelSlug }
+          : {}),
       });
       // Persist the failing step carrying its REAL worker session id (5th arg —
       // NOT the promptFile slot; codex cmr R6 finding), so a re-feed reading the
       // persisted ledger has the true session id for the human-answer resume.
-      //
+      // modelSlug is written by emitLedger for worker steps (same seat model).
       await persistBestEffort(failedStep, output, undefined, undefined, sessionId);
     }
     ledger.push({ step: "S8", stopSummary });
@@ -2600,8 +2612,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     // crash/re-feed still resumes the same agent session when models match.
     // #955: prefer ledger `modelSlug` (creator identity); fall back to the seat
     // of the recorded step only for legacy rows that predate the field.
+    // #955 r7: only real agent dispatch rows — bookkeeping/audit events
+    // (session_continuity_lost, worker_monitor_spawned, …) also carry step +
+    // sessionId but must not resurrect a dropped id after r5 identity loss.
     for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
       const entry = plan.priorLedger[i]!;
+      if (isBookkeepingEntry(entry)) continue;
       if (
         (entry.step === "S2" || entry.step === "S5") &&
         typeof entry.sessionId === "string"
@@ -2617,8 +2633,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
     // #925 / #919 S1: rebuild judge session from last judge-seat ledger row.
+    // #955 r7: same bookkeeping exclusion as coder rebuild above.
     for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
       const entry = plan.priorLedger[i]!;
+      if (isBookkeepingEntry(entry)) continue;
       if (
         isJudgeSeat({ step: entry.step }) &&
         typeof entry.sessionId === "string"

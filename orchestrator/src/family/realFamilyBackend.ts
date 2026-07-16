@@ -533,6 +533,21 @@ export class RealFamilyBackend implements FamilyBackend {
     );
   }
 
+  /**
+   * #955 r7 — receipt maxRetries uses the same (slug, pool) binding as
+   * {@link agentForSpec}. Pool rewrite can move a resume-capable slug onto an
+   * incapable provider; slug-only capability would attach a false maxRetries.
+   */
+  protected resumeCapableForSpec(
+    spec: Pick<WorkerSpec, "model">,
+    ctx?: Pick<DispatchContext, "billingPool">,
+  ): boolean {
+    return resumeCapableForSlug(
+      spec.model,
+      isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
+    );
+  }
+
   /** Typed provider gate shared by every family `sc.run` dispatch. */
   protected unavailableWorkerProviderAuth(
     spec: Pick<WorkerSpec, "model">,
@@ -1714,7 +1729,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: workerReceiptOutput(
               JUDGE_RECEIPT_TAG,
               judgeStationReceiptSchema(),
-              resumeCapableForSlug(spec.model),
+              this.resumeCapableForSpec(spec, ctx),
             ),
             // #909: shared sandbox quota-probe (billing pool when relayed).
             quotaProbe: this.familyQuotaProbeContext(spec, ctx),
@@ -1908,7 +1923,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: coderReceiptOutput(
               coderStationReceiptSchema(),
               CODER_RECEIPT_TAG,
-              resumeCapableForSlug(spec.model),
+              this.resumeCapableForSpec(spec, ctx),
             ),
             // #909: shared sandbox quota-probe.
             quotaProbe: this.familyQuotaProbeContext(spec, ctx),
@@ -2238,7 +2253,7 @@ export class RealFamilyBackend implements FamilyBackend {
           output: onlineReviewReceiptOutput(
             onlineReviewStationReceiptSchema(),
             ONLINE_REVIEW_RECEIPT_TAG,
-            resumeCapableForSlug(spec.model),
+            this.resumeCapableForSpec(spec, ctx),
           ),
           // #909: shared sandbox quota-probe.
           quotaProbe: this.familyQuotaProbeContext(spec, ctx),
@@ -2963,7 +2978,7 @@ export class RealFamilyBackend implements FamilyBackend {
       output: shipReceiptOutput(
         shipStationReceiptSchema(),
         SHIP_RECEIPT_TAG,
-        resumeCapableForSlug(spec.model),
+        this.resumeCapableForSpec(spec, ctx),
       ),
       quotaProbe: this.familyQuotaProbeContext(spec, ctx),
     });
