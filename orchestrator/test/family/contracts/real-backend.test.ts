@@ -3271,21 +3271,7 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
   }
 
   class FamilyIdleBackend extends RealFamilyBackend {
-    public probeResult: import("../../../src/quotaProbe.js").QuotaProbeResult = {
-      kind: "ok",
-    };
     public sandcastleReached = false;
-    public lastQuotaProbe: import("../../../src/realBackend.js").AgentSandboxRunOptions["quotaProbe"];
-
-    protected override idleNow(): Date {
-      return new Date("2026-07-08T12:00:00.000Z");
-    }
-
-    protected override async runQuotaProbe(): Promise<
-      import("../../../src/quotaProbe.js").QuotaProbeResult
-    > {
-      return this.probeResult;
-    }
 
     protected override async invokeSandcastleRun(
       options: Parameters<typeof sc.run>[0],
@@ -3293,14 +3279,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
       this.sandcastleReached = true;
       void options;
       throw idleTimeoutError();
-    }
-
-    protected override async runAgentSandbox(
-      options: import("../../../src/realBackend.js").AgentSandboxRunOptions,
-    ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-      this.lastQuotaProbe = options.quotaProbe;
-      expect(options.quotaProbe?.workerPid).toBeUndefined();
-      return super.runAgentSandbox(options);
     }
 
     public exposeRunAgentSandbox(
@@ -3326,10 +3304,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
   it("family runAgentSandbox idle rethrows without QuotaWait (#937 ID-007)", async () => {
     const { QuotaWaitForResetError } = await import("../../../src/quotaProbe.js");
     const backend = makeFamilyIdleBackend();
-    backend.probeResult = {
-      kind: "quota_limited",
-      resetAt: new Date("2026-07-08T16:10:00.000Z"),
-    };
     await expect(
       backend.exposeRunAgentSandbox({
         name: "family-idle",
@@ -3340,7 +3314,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         maxIterations: 1,
         branchStrategy: { type: "head" },
         promptFile: "x.md",
-        quotaProbe: { modelRef: "gpt-5.6-terra", step: "S7" },
       }),
     ).rejects.toThrow(/Agent idle for 600/);
     expect(backend.sandcastleReached).toBe(true);
@@ -3354,60 +3327,13 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         maxIterations: 1,
         branchStrategy: { type: "head" },
         promptFile: "x.md",
-        quotaProbe: { modelRef: "gpt-5.6-terra", step: "S7" },
       }),
     ).rejects.not.toBeInstanceOf(QuotaWaitForResetError);
-  });
-
-  it("probe ok via family Sandcastle fallback rethrows idle (fail-safe hang)", async () => {
-    const backend = makeFamilyIdleBackend();
-    backend.probeResult = { kind: "ok" };
-
-    await expect(
-      backend.exposeRunAgentSandbox({
-        name: "family-cmr",
-        idleTimeoutSeconds: 600,
-        cwd: "/tmp/family",
-        sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
-        agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
-        maxIterations: 1,
-        branchStrategy: { type: "head" },
-        promptFile: join(realPromptsDir, "integrated_cmr_correctness.md"),
-        quotaProbe: { modelRef: "gpt-5.6-terra", step: "S3" },
-      }),
-    ).rejects.toThrow(/Agent idle for 600/);
-  });
-
-  it("without quotaProbe context, idle error rethrows with no probe", async () => {
-    const backend = makeFamilyIdleBackend();
-    backend.probeResult = {
-      kind: "quota_limited",
-      resetAt: new Date("2026-07-08T16:10:00.000Z"),
-    };
-
-    await expect(
-      backend.exposeRunAgentSandbox({
-        name: "family-ship",
-        idleTimeoutSeconds: 600,
-        cwd: "/tmp/family",
-        sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
-        agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
-        maxIterations: 1,
-        branchStrategy: { type: "head" },
-        promptFile: join(realPromptsDir, "family_ship.md"),
-        quotaProbe: undefined,
-      }),
-    ).rejects.toThrow(/Agent idle for 600/);
   });
 
   it("shipContainerRun idle rethrows without QuotaWait (#937 ID-007)", async () => {
     const { QuotaWaitForResetError } = await import("../../../src/quotaProbe.js");
     const backend = makeFamilyIdleBackend();
-    backend.probeResult = {
-      kind: "quota_limited",
-      resetAt: new Date("2026-07-08T16:10:00.000Z"),
-      detail: "429",
-    };
 
     await expect(
       backend.exposeShipContainerRun({
@@ -3444,7 +3370,7 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
     ).rejects.not.toBeInstanceOf(QuotaWaitForResetError);
   });
 
-  it("family + single-slice runAgentSandbox no longer route idle through quota probe (#937 ID-007)", () => {
+  it("family + single-slice delete idle→quota machinery (#937 ID-007)", () => {
     const familySrc = readFileSync(
       join(here, "..", "..", "..", "src", "family", "realFamilyBackend.ts"),
       "utf8",
@@ -3453,19 +3379,18 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
       join(here, "..", "..", "..", "src", "realBackend.ts"),
       "utf8",
     );
-    // Production runAgentSandbox must not wrap invoke with idle→quota disposition.
-    const familyBody = familySrc.slice(
-      familySrc.indexOf("protected async runAgentSandbox"),
-      familySrc.indexOf("protected async resolveIdleAfterQuotaProbe"),
+    const probeSrc = readFileSync(
+      join(here, "..", "..", "..", "src", "quotaProbe.ts"),
+      "utf8",
     );
-    const realBody = realSrc.slice(
-      realSrc.indexOf("protected async runAgentSandbox"),
-      realSrc.indexOf("protected async resolveIdleAfterQuotaProbe"),
-    );
-    // Must not *call* the idle→quota wrap (comment mentions alone are not a call).
-    expect(familyBody).not.toMatch(/withIdleQuotaProbeDisposition\s*\(/);
-    expect(realBody).not.toMatch(/withIdleQuotaProbeDisposition\s*\(/);
-    expect(familyBody).toMatch(/invokeSandcastleRun/);
-    expect(realBody).toMatch(/invokeSandcastleRun/);
+    expect(familySrc).not.toMatch(/resolveIdleAfterQuotaProbe/);
+    expect(realSrc).not.toMatch(/resolveIdleAfterQuotaProbe/);
+    expect(familySrc).not.toMatch(/withIdleQuotaProbeDisposition/);
+    expect(realSrc).not.toMatch(/withIdleQuotaProbeDisposition/);
+    expect(probeSrc).not.toMatch(/function handleIdleThreshold/);
+    expect(probeSrc).not.toMatch(/function withIdleQuotaProbeDisposition/);
+    expect(probeSrc).not.toMatch(/function resolveSandboxIdleAfterQuotaProbe/);
+    expect(familySrc).toMatch(/protected async runAgentSandbox/);
+    expect(realSrc).toMatch(/protected async runAgentSandbox/);
   });
 });

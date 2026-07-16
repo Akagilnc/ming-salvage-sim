@@ -180,8 +180,7 @@ function quotaWaitError(opts: {
         ts: "2026-07-14T12:00:00.000Z",
       },
     },
-    pool,
-    probe: { kind: "quota_limited", resetAt: opts.resetAt, detail: "429" },
+    pool
   });
   // Default S3 walls to completeness so existing baton nails keep a single slot.
   if (opts.cmrPass !== undefined) {
@@ -897,8 +896,7 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
           step: undefined as unknown as "S3",
         },
       },
-      pool: errNoStep.pool,
-      probe: { kind: "quota_limited", resetAt, detail: "429" },
+      pool: errNoStep.pool
     });
     expect(
       familyWallStepFromQuotaWait({ err: bare, phase: "online_review" }),

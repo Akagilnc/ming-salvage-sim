@@ -189,37 +189,20 @@ export type {
   FamilyAbortedEvent,
   FamilyEscalation,
 } from "./family/types.js";
-// ── #683 quota probe (idle → probe 429 → wait-for-reset | hang) ─────────────
+// ── #683 / #937 explicit quota wait-for-reset (no idle→probe machinery) ─────
 export {
-  applyIdleDisposition,
   buildQuotaWaitForResetLedgerEntry,
-  decideIdleAfterProbe,
-  handleIdleThreshold,
   isAgentIdleTimeoutError,
-  parseZaiResetAt,
   poolForModelRef,
-  probeConfigForPool,
   QuotaWaitForResetError,
-  runPoolProbe,
   serializeQuotaWaitForResetBridge,
   tryParseQuotaWaitForResetBridge,
   isQuotaWaitForResetError,
-  withIdleQuotaProbeDisposition,
-  resolveSandboxIdleAfterQuotaProbe,
 } from "./quotaProbe.js";
 export type {
   ApplyIdleDispositionResult,
-  HandleIdleThresholdInput,
-  HandleIdleThresholdResult,
   IdleDisposition,
-  IdleHangActions,
-  IdleQuotaActions,
-  IdleWorkerHandle,
-  PoolProbeConfig,
-  PoolProbeDeps,
-  PoolProbeKind,
   QuotaPoolId,
-  QuotaProbeResult,
   QuotaWaitForResetLedgerEvent,
 } from "./quotaProbe.js";
 

@@ -132,18 +132,10 @@ import {
   REQUIRED_SOUL_FILES,
   soulsDirError,
   type AgentSandboxRunOptions,
-  type QuotaProbeRunContext,
   SANDBOX_FIX_FOCUS_PATH_ENV,
   appendHomeEnvMount,
   homeEnvFileFromSoulsDir,
 } from "../realBackend.js";
-import {
-  resolveSandboxIdleAfterQuotaProbe,
-  runPoolProbe,
-  type HandleIdleThresholdResult,
-  type QuotaPoolId,
-  type QuotaProbeResult,
-} from "../quotaProbe.js";
 import { withSandcastleInvokeDefaults } from "../sandboxStreamHeartbeat.js";
 import {
   FIX_FOCUS_LANDING_FILE,
@@ -971,14 +963,6 @@ export class RealFamilyBackend implements FamilyBackend {
                 resolveModelSlugForPool(model).provider,
               ),
             ),
-            // #909: same quota-probe context as single-slice runAgentSandbox.
-            // C3: step S1 maps to merger consume slot in familyRelaySlotsForWall.
-            quotaProbe: {
-              modelRef: model,
-              step: "S1",
-              worktreePath: this.opts.workingRepo,
-              issueNumber: req.childIssue,
-            },
           });
           // Output.object was attached: absent typed signal → #598, not cargo.
           const typed = requireTypedTrafficSignal(
@@ -1743,8 +1727,6 @@ export class RealFamilyBackend implements FamilyBackend {
               judgeStationReceiptSchema(),
               this.receiptMaxRetriesFor(spec, ctx),
             ),
-            // #909: shared sandbox quota-probe (billing pool when relayed).
-            quotaProbe: this.familyQuotaProbeContext(spec, ctx),
           });
         } catch (err) {
           // #899: typed traffic-signal exhaust exits non-zero for #598; do not
@@ -1800,62 +1782,10 @@ export class RealFamilyBackend implements FamilyBackend {
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const { quotaProbe: _quotaProbe, ...scOptions } = options;
-    return this.invokeSandcastleRun(scOptions);
+    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
+    return this.invokeSandcastleRun(options);
   }
 
-  /**
-   * #683/#909 idle disposition — same handleIdleThreshold composition as
-   * single-slice; durable park ledger is owned by the runner, not here.
-   */
-  protected async resolveIdleAfterQuotaProbe(
-    ctx: QuotaProbeRunContext,
-  ): Promise<HandleIdleThresholdResult> {
-    return resolveSandboxIdleAfterQuotaProbe({
-      modelRef: ctx.modelRef,
-      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
-      workerPid:
-        ctx.workerPid !== undefined && ctx.workerPid > 0 ? ctx.workerPid : 0,
-      runQuotaProbe: (pool) => this.runQuotaProbe(pool),
-      now: () => this.idleNow(),
-    });
-  }
-
-  /** Clock for wait-for-reset ledger `ts` (injectable via override in tests). */
-  protected idleNow(): Date {
-    return new Date();
-  }
-
-  /**
-   * Pool probe used after idle threshold (#683/#909). Default = real
-   * {@link runPoolProbe}; tests stub three outcomes.
-   */
-  protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
-    return runPoolProbe(pool);
-  }
-
-  /**
-   * Build the #909 quotaProbe context for a family productive worker.
-   * Prefer active billing pool (relay) when present — same rule as single-slice
-   * productive dispatch (`ctx.billingPool ?? spec.model`).
-   */
-  protected familyQuotaProbeContext(
-    spec: WorkerSpec,
-    ctx?: Pick<DispatchContext, "billingPool" | "familyIssue">,
-  ): QuotaProbeRunContext {
-    const modelRef =
-      ctx !== undefined && isBillingPoolDispatchId(ctx.billingPool)
-        ? ctx.billingPool
-        : spec.model;
-    return {
-      modelRef,
-      step: spec.id,
-      worktreePath: this.opts.workingRepo,
-      ...(ctx?.familyIssue !== undefined
-        ? { issueNumber: ctx.familyIssue }
-        : {}),
-    };
-  }
 
   // ─────────────────────────── family coder-fix ───────────────────────────
 
@@ -1933,8 +1863,6 @@ export class RealFamilyBackend implements FamilyBackend {
               CODER_RECEIPT_TAG,
               this.receiptMaxRetriesFor(spec, ctx),
             ),
-            // #909: shared sandbox quota-probe.
-            quotaProbe: this.familyQuotaProbeContext(spec, ctx),
           });
           return this.familyCoderResultFromRun(result, spec, outcomeLanding.path);
         } finally {
@@ -2263,8 +2191,6 @@ export class RealFamilyBackend implements FamilyBackend {
             ONLINE_REVIEW_RECEIPT_TAG,
             this.receiptMaxRetriesFor(spec, ctx),
           ),
-          // #909: shared sandbox quota-probe.
-          quotaProbe: this.familyQuotaProbeContext(spec, ctx),
         });
         return this.familyReviewLoopResultFromRun(result, spec, outcomeLanding.path);
       } finally {
@@ -2987,8 +2913,7 @@ export class RealFamilyBackend implements FamilyBackend {
         shipStationReceiptSchema(),
         SHIP_RECEIPT_TAG,
         this.receiptMaxRetriesFor(spec, ctx),
-      ),
-      quotaProbe: this.familyQuotaProbeContext(spec, ctx),
+      )
     });
   }
 

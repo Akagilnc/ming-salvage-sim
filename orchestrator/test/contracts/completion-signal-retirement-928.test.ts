@@ -160,6 +160,36 @@ describe("#928 completion-signal retirement", () => {
         rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    it("non-zero exit with completed sidecar cannot masquerade as completed", () => {
+      const dir = mkdtempSync(join(tmpdir(), "orch-928-exit1-completed-"));
+      try {
+        const resultPath = join(dir, "S2.result.json");
+        writeFileSync(
+          resultPath,
+          JSON.stringify({
+            kind: "completed",
+            output: { kind: "coder", committed: true, commitsAdded: 1 },
+          }),
+          "utf8",
+        );
+        const result = workerResultFromMonitorSidecar(
+          baseHandle({
+            pid: process.pid,
+            logPath: join(dir, "S2.log"),
+            resultPath,
+          }),
+          1,
+        );
+        expect(result.kind).toBe("failed");
+        if (result.kind === "failed") {
+          expect(result.reason).toMatch(/clean exit required/i);
+        }
+        expect(isMissingMonitorSidecarResult(result)).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("monitor liveness is heartbeat/log activity only", () => {

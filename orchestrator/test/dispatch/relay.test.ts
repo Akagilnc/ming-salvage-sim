@@ -51,7 +51,7 @@ import {
   resumeRelayFromLedger,
   type RelayHandoffLedgerEvent,
 } from "../../src/relayDispatch.js";
-import { decideIdleAfterProbe, QuotaWaitForResetError } from "../../src/quotaProbe.js";
+import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
 import { buildCliMonitorSpawnSpec } from "../../src/cliMonitorHooks.js";
 import { dispatchWorkerWithMonitor, legacyDispatchWorker } from "../../src/dispatchWorker.js";
 import { runOrchestrator } from "../../src/runner.js";
@@ -1034,16 +1034,15 @@ describe("#686 state_summary ledger + ephemeral relay brief (#937)", () => {
 });
 
 describe("#686 fork at #683 quota disposition point", () => {
-  it("composes decideIdleAfterProbe(wait_for_reset) → three-tier park/relay", () => {
+  it("composes wait_for_reset disposition → three-tier park/relay", () => {
     const now = new Date("2026-07-10T12:00:00.000Z");
     const resetAt = new Date(now.getTime() + 45 * 60 * 1000);
-    const idle = decideIdleAfterProbe("grok", {
-      kind: "quota_limited",
+    const idle = {
+      kind: "wait_for_reset" as const,
+      pool: "grok" as const,
       resetAt,
-      detail: "402",
-    });
-    expect(idle.kind).toBe("wait_for_reset");
-    if (idle.kind !== "wait_for_reset") return;
+      reason: "quota limited (402); wait for reset",
+    };
 
     const withinT = forkQuotaWallAt683Point({
       disposition: {
@@ -1146,8 +1145,7 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           ts: NOW.toISOString(),
         },
       },
-      pool: pool as "grok" | "zai",
-      probe: { kind: "quota_limited", resetAt, detail: "429" },
+      pool: pool as "grok" | "zai"
     });
   }
 
@@ -2088,8 +2086,7 @@ describe("#686 R2 production seams", () => {
                   ts: NOW.toISOString(),
                 },
               },
-              pool: "grok",
-              probe: { kind: "quota_limited", resetAt, detail: "429" },
+              pool: "grok"
             });
           }
           return {
