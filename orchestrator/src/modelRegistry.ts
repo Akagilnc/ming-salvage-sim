@@ -237,6 +237,18 @@ export function resolveModelSlug(slug: string): ModelSlugRegistryEntry {
   }
 }
 
+/**
+ * Non-throwing registry peek: provider for a known slug, else undefined.
+ * Used by billing-pool inference for effort-variant / non-roster registry rows
+ * that still identify a billing boundary via provider (codex → codex-5h, …).
+ */
+export function providerForModelSlug(
+  slug: string,
+): ModelProviderFactory | undefined {
+  if (typeof slug !== "string" || slug.length === 0) return undefined;
+  return MODEL_SLUG_REGISTRY[slug]?.provider;
+}
+
 /** #686 / ADR 0124 — billing pool → executable provider channel. */
 export type BillingPoolDispatchId = BillingPoolId;
 

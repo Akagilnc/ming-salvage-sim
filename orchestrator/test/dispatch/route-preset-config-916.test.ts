@@ -16,7 +16,10 @@ import {
   resolveRouteModels,
   routeSmokeEntries,
 } from "../../src/modelRoutes.js";
-import { DEFAULT_POOL_MODELS } from "../../src/quotaPoolTable.js";
+import {
+  DEFAULT_POOL_MODELS,
+  billingPoolForModelRef,
+} from "../../src/quotaPoolTable.js";
 
 const tempDirs: string[] = [];
 
@@ -87,6 +90,17 @@ describe("#916 gpt-5.6-sol-low registry", () => {
         "gpt-5.6-sol-high",
       ]),
     );
+  });
+
+  // Family CR H1: registry-only effort variants are not on CODER_ROSTER, but
+  // billingPoolForModelRef must still resolve them to codex-5h (not fall through
+  // poolForModelRef→unknown→default grok-build and mis-bind SuperGrok).
+  it("billingPoolForModelRef maps sol effort variants + bare codex/grok correctly", () => {
+    expect(billingPoolForModelRef("gpt-5.6-sol-low")).toBe("codex-5h");
+    expect(billingPoolForModelRef("gpt-5.6-sol-high")).toBe("codex-5h");
+    expect(billingPoolForModelRef("gpt-5.6-sol")).toBe("codex-5h");
+    expect(billingPoolForModelRef("gpt-5.6-terra")).toBe("codex-5h");
+    expect(billingPoolForModelRef("grok-4.5")).toBe("grok-build");
   });
 });
 
