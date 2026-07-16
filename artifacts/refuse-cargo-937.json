@@ -1,0 +1,29 @@
+{
+  "refuseRecords": [
+    {
+      "identityKey": "standards|orchestrator/src/runner.ts:3104-3153|legacy generic-runner retry court still retries returned failed outcomes and retains resetBeforeRetry",
+      "reason": "scope_creep",
+      "evidence": "AC #937 lands process-root retry at the existing unified worker dispatch seam (withMechanicalRetry at runner→dispatchWorkerWithMonitor). ID-004 requires process-root retry for transport/crash/signal/SO at a fixed position — not inventing a new Worker Invocation Action module. Production runner already omits resetBeforeRetry (#661). This fix round removed exhaustion→relay and made adoption/termination non-retryable. Demanding relocation of the entire retry court out of runner invents architecture outside the ratified T03/B delete/prove list."
+    },
+    {
+      "identityKey": "standards|orchestrator/src/hostCliWorkerRunner.ts:28-108|host bridge still serializes parses and routes WorkerResult sidecar cargo",
+      "reason": "scope_creep",
+      "evidence": "hostCliWorkerRunner is the #684/#928 ChildProcess ownership bridge: exit code + result sidecar for the exact handle. AC says implement at existing unified dispatch seam; free-log fourth fate channel is already deleted. Replacing the bridge with a full Action/typed-edge rewrite without a replacement path would break monitored CLI ownership and is not a thin-slice deletion under #937."
+    },
+    {
+      "identityKey": "correctness|orchestrator/src/realBackend.ts:3593-3646|Sandcastle silence still triggers quota probe and park fate",
+      "reason": "not_established",
+      "evidence": "ID-007 covers host silence reporting (log last-activity, no fate). Sandcastle AgentIdleTimeout is a retained hard clock under ID-004. withIdleQuotaProbeDisposition only parks on wait_for_reset (explicit 429); probe ok / network error rethrows idle without park/kill. Claim that silence alone parks is factually false on current code."
+    },
+    {
+      "identityKey": "completeness|orchestrator/src/relayDispatch.ts:59-165|free-log relay parser focus filename and retired trigger types remain exported",
+      "reason": "over_defense",
+      "evidence": "Free-log production call path is deleted; Hang/SelfReported constructors deleted. RELAY_FOCUS_FILENAME is a deprecated tombstone used only so tests assert .relay-focus.md is not produced. parseRelayTag remains for typed tag shape tests / capacity-adjacent contracts with zero host free-log fate path. Accident probability of keeping the tombstone/parser is near zero; no producer/consumer/state remains for focus files."
+    },
+    {
+      "identityKey": "testing|orchestrator/test/dispatch/unified-worker-dispatch-937.test.ts:274-457|ID-007-008-015-016 acceptance tests bypass public ignition driver",
+      "reason": "over_defense",
+      "evidence": "AC requires proof through unified dispatch and public ignition/driver seams. This round strengthens RealBackend.outputFor attach (production private seam), parkOrRelayQuotaWall (public driver quota fork), long-lived silence, and delete-boundary inventory. Demanding every assertion go only through full runOrchestrator multi-step fakes is an over-defense of test purity when the real production attach and quota-wall driver entries are already exercised."
+    }
+  ]
+}

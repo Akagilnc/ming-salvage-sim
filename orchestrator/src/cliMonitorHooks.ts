@@ -1,13 +1,15 @@
 /**
- * #684 — shared helpers so RealBackend / RealFamilyBackend can participate in
- * the production monitored CLI dispatch path (resolveCliMonitorDispatch +
+ * #684 / #937 — shared helpers so RealBackend / RealFamilyBackend can participate
+ * in the production monitored CLI dispatch path (resolveCliMonitorDispatch +
  * awaitMonitoredCliWorker).
  *
  * Production shape: parent spawns a host-side bridge child via
  * {@link dispatchMonitoredCliWorker}; the child re-enters `dispatchWorker` /
  * `dispatchFamilyWorker` with `ORCHESTRATOR_CLI_MONITOR_CHILD=1` so the hooks
  * short-circuit and the existing container seam does the work. The parent holds
- * the monitor handle (pid/log/pool/instance) for hang judgment and kill.
+ * the exact ChildProcess / monitor handle (pid/log/pool/instance) for
+ * observational log last-activity and adoption-failure terminateSpawnedChild
+ * only — no host idle kill / silence sentencing (#937 / #934 ID-006/007).
  * #928: completion is exit code + legal result sidecar — no completionSignal.
  */
 

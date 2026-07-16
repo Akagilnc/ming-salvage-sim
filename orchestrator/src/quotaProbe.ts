@@ -120,10 +120,11 @@ export interface QuotaWaitForResetLedgerEvent {
   readonly ts: string;
 }
 
-/** Actions the disposition applier needs from the runner host. */
-export interface IdleHangActions {
-  /** Kill only this worker's pid tree (never global pgrep/pkill -f). */
-  readonly killPidTree: (pid: number) => void | Promise<void>;
+/**
+ * Ledger-only actions for Sandcastle-idle → quota-probe disposition (#937).
+ * Host kill is not part of this surface (silence sentencing deleted).
+ */
+export interface IdleQuotaActions {
   /** Persist the wait-for-reset ledger row. */
   readonly recordLedger: (
     entry: QuotaWaitForResetLedgerEvent,
@@ -132,6 +133,9 @@ export interface IdleHangActions {
   readonly now?: () => Date;
 }
 
+/** @deprecated #937 alias — use {@link IdleQuotaActions}. */
+export type IdleHangActions = IdleQuotaActions;
+
 export interface IdleWorkerHandle {
   /** OS pid of the worker process (monitor handle; see also #684). */
   readonly pid: number;
@@ -139,7 +143,6 @@ export interface IdleWorkerHandle {
 }
 
 export interface ApplyIdleDispositionResult {
-  readonly killed: boolean;
   readonly ledgerEntry?: QuotaWaitForResetLedgerEvent;
 }
 
@@ -267,18 +270,18 @@ export function buildQuotaWaitForResetLedgerEntry(input: {
 }
 
 /**
- * Apply an idle disposition:
- *   - hang           → kill the worker pid tree; no wait-for-reset ledger row
+ * Apply an idle disposition (#937 / #934 ID-006):
+ *   - hang           → no host kill (silence sentencing deleted); caller rethrows
  *   - wait_for_reset → do NOT kill; record ledger (pool + resetAt)
  */
 export async function applyIdleDisposition(
   disposition: IdleDisposition,
   worker: IdleWorkerHandle,
-  actions: IdleHangActions,
+  actions: IdleQuotaActions,
 ): Promise<ApplyIdleDispositionResult> {
   if (disposition.kind === "hang") {
-    await actions.killPidTree(worker.pid);
-    return { killed: true };
+    // Host kill deleted; Sandcastle idle error is rethrown upstream.
+    return {};
   }
 
   const now = actions.now?.() ?? new Date();
@@ -291,7 +294,7 @@ export async function applyIdleDisposition(
     now,
   });
   await actions.recordLedger(ledgerEntry);
-  return { killed: false, ledgerEntry };
+  return { ledgerEntry };
 }
 
 // ── zai 429 body parsing ────────────────────────────────────────────────────
@@ -455,7 +458,7 @@ export interface HandleIdleThresholdInput {
   /** Route/model slug — mapped to a quota pool via {@link poolForModelRef}. */
   readonly modelRef: string;
   readonly worker: IdleWorkerHandle;
-  readonly actions: IdleHangActions;
+  readonly actions: IdleQuotaActions;
   /**
    * Injected probe (unit tests). Production defaults to
    * {@link runPoolProbe}(pool, probeDeps).
@@ -472,12 +475,12 @@ export interface HandleIdleThresholdResult {
 }
 
 /**
- * Production idle gate (#683): idle threshold already fired → probe the worker's
- * pool → hang (kill pid tree) | wait_for_reset (preserve + ledger).
+ * Production idle gate (#683 / #937): Sandcastle idle already fired → probe the
+ * worker's pool → hang (rethrow, no host kill) | wait_for_reset (preserve + ledger).
  *
  * This is the single composition RealBackend must invoke on Sandcastle
- * `AgentIdleTimeoutError` (and that any external monitor should call). Pure
- * helpers alone are not enough — the runner path must go through here.
+ * `AgentIdleTimeoutError`. Pure helpers alone are not enough — the runner path
+ * must go through here. Host PID-tree idle kill is deleted (ID-006).
  */
 export async function handleIdleThreshold(
   input: HandleIdleThresholdInput,
@@ -660,7 +663,7 @@ export function tryParseQuotaWaitForResetBridge(
   });
   return new QuotaWaitForResetError({
     disposition,
-    applied: { killed: false, ledgerEntry },
+    applied: { ledgerEntry },
     pool,
     probe: {
       kind: "quota_limited",
@@ -745,9 +748,8 @@ export async function resolveSandboxIdleAfterQuotaProbe(input: {
       ...(input.step !== undefined ? { step: input.step } : {}),
     },
     actions: {
-      // Live monitor owns verified pid-tree kill; Sandcastle fallback is post-release.
-      killPidTree: () => undefined,
       // Runner parkQuotaWaitForReset writes the single durable marker.
+      // #937: no host killPidTree — hang rethrows Sandcastle idle upstream.
       recordLedger: async () => undefined,
       ...(input.now !== undefined ? { now: input.now } : {}),
     },

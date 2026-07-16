@@ -64,7 +64,6 @@ describe("#683 bridge-child quota wall serialization", () => {
         reason: "quota limited (429); wait for reset",
       },
       applied: {
-        killed: false,
         ledgerEntry: {
           event: "quota_wait_for_reset",
           pool: "zai",
@@ -169,9 +168,8 @@ describe("#683 decideIdleAfterProbe (probe → disposition)", () => {
   });
 });
 
-describe("#683 applyIdleDisposition (kill vs preserve + ledger)", () => {
-  it("hang → kill only the worker pid tree; no wait-for-reset ledger row", async () => {
-    const killed: number[] = [];
+describe("#683/#937 applyIdleDisposition (no host kill + preserve ledger)", () => {
+  it("hang → no host kill; no wait-for-reset ledger row (#937 ID-006)", async () => {
     const ledger: unknown[] = [];
     const disposition: IdleDisposition = {
       kind: "hang",
@@ -182,17 +180,12 @@ describe("#683 applyIdleDisposition (kill vs preserve + ledger)", () => {
       disposition,
       { pid: 4242, step: "S2" },
       {
-        killPidTree: async (pid) => {
-          killed.push(pid);
-        },
         recordLedger: async (entry) => {
           ledger.push(entry);
         },
         now: () => new Date("2026-07-08T12:00:00.000Z"),
       },
     );
-    expect(result.killed).toBe(true);
-    expect(killed).toEqual([4242]);
     expect(ledger).toEqual([]);
     expect(result.ledgerEntry).toBeUndefined();
   });
@@ -211,16 +204,12 @@ describe("#683 applyIdleDisposition (kill vs preserve + ledger)", () => {
       disposition,
       { pid: 7777, step: "S5" },
       {
-        killPidTree: async (pid) => {
-          killed.push(pid);
-        },
         recordLedger: async (entry) => {
           ledger.push(entry);
         },
         now: () => new Date("2026-07-08T12:00:00.000Z"),
       },
     );
-    expect(result.killed).toBe(false);
     expect(killed).toEqual([]);
     expect(result.ledgerEntry).toEqual({
       event: "quota_wait_for_reset",
@@ -244,12 +233,10 @@ describe("#683 applyIdleDisposition (kill vs preserve + ledger)", () => {
       disposition,
       { pid: 9, step: "S3" },
       {
-        killPidTree: vi.fn(),
         recordLedger: vi.fn(),
         now: () => new Date("2026-07-08T12:00:00.000Z"),
       },
     );
-    expect(result.killed).toBe(false);
     expect(result.ledgerEntry?.resetAt).toBeUndefined();
     expect(result.ledgerEntry?.pool).toBe("opencode-go");
     expect(result.ledgerEntry?.event).toBe("quota_wait_for_reset");
@@ -442,9 +429,6 @@ describe("#683 handleIdleThreshold (production composition)", () => {
       modelRef: "zai/glm-5.2",
       worker: { pid: 1001, step: "S2" },
       actions: {
-        killPidTree: (pid) => {
-          killed.push(pid);
-        },
         recordLedger: (entry) => {
           ledger.push(entry);
         },
@@ -458,7 +442,6 @@ describe("#683 handleIdleThreshold (production composition)", () => {
     });
     expect(out.pool).toBe("zai");
     expect(out.disposition.kind).toBe("wait_for_reset");
-    expect(out.applied.killed).toBe(false);
     expect(killed).toEqual([]);
     expect(ledger).toHaveLength(1);
   });
@@ -502,7 +485,6 @@ describe("#909 withIdleQuotaProbeDisposition (shared single-slice + family wrap)
             reason: "quota limited (429); wait for reset",
           },
           applied: {
-            killed: false,
             ledgerEntry: {
               event: "quota_wait_for_reset",
               pool: "zai",
@@ -534,7 +516,7 @@ describe("#909 withIdleQuotaProbeDisposition (shared single-slice + family wrap)
             pool: "unknown",
             reason: "idle threshold exceeded; quota probe ok",
           },
-          applied: { killed: false },
+          applied: {},
           pool: "unknown",
           probe: { kind: "ok" },
         }),
@@ -566,7 +548,7 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
   /**
    * Fallback coverage only: runStep → runFreshAgentStep → runAgentSandbox →
    * post-sc.run AgentIdleTimeoutError + probe. Live production idle disposition
-   * is dispatchWorkerWithMonitor + handleMonitoredWorkerIdle (see integration).
+   * is explicit 429/quota walls (see quota-probe-integration + #937 silence).
    * workerPid is captured from the sandbox handle during invoke (not hand-stuffed).
    */
   const here = dirname(fileURLToPath(import.meta.url));
@@ -809,9 +791,6 @@ describe("#683 runner park: 429 parks step via existing park machinery (not abor
           },
           { pid: this.sandboxHandlePid, step: "S2" },
           {
-            killPidTree: () => {
-              throw new Error("429 path must not kill");
-            },
             recordLedger: () => {},
             now: () => new Date("2026-07-08T12:00:00.000Z"),
           },

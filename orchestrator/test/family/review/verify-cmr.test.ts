@@ -1718,7 +1718,6 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
               reason: "quota limited (429); wait for reset",
             },
             applied: {
-              killed: false,
               ledgerEntry: {
                 event: "quota_wait_for_reset",
                 pool: "zai",
@@ -1781,7 +1780,6 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
               reason: "quota limited (429); wait for reset",
             },
             applied: {
-              killed: false,
               ledgerEntry: {
                 event: "quota_wait_for_reset",
                 pool: "zai",

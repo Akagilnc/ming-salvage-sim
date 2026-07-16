@@ -2130,7 +2130,7 @@ describe("#369 runner resume/retry review fixes", () => {
     const result = await runOrchestrator({ issueNumber: 369, backend });
 
     // Process crash path: mechanical redispatch, not runner format court.
-    expect(backend.reviewerAttempts).toBe(3);
+    expect(backend.reviewerAttempts).toBe(MAX_DISPATCH_ATTEMPTS);
     expect(result.status).toBe("error");
   });
 

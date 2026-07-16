@@ -2142,9 +2142,10 @@ async function familyShipFailedAfterCmrReplay(): Promise<SeamReplay> {
   const backend = new DogfoodCmrFamilyBackend("family-head", [], [
     convergedCmr,
     convergedCmr,
-    { kind: "failed", reason: "ship worker exited non-zero" },
-    { kind: "failed", reason: "ship worker exited non-zero" },
-    { kind: "failed", reason: "ship worker exited non-zero" },
+    ...Array.from({ length: MAX_DISPATCH_ATTEMPTS }, () => ({
+      kind: "failed" as const,
+      reason: "ship worker exited non-zero",
+    })),
   ]);
   const result = await runVerifyCmr({
     phase: "final",

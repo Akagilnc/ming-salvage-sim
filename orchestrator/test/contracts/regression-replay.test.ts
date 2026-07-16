@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import { issue451DogfoodReplay } from "../../src/dogfoodReplay.js";
 
 describe("#451 dogfood replay fixture", () => {
@@ -550,7 +551,10 @@ describe("#451 dogfood replay fixture", () => {
         seam: "family_verify_cmr_provider_worker_failure",
         failedLeg: "agy",
         status: "aborted",
-        dispatches: ["cmr:completeness", "cmr:completeness", "cmr:completeness"],
+        dispatches: Array.from(
+          { length: MAX_DISPATCH_ATTEMPTS },
+          () => "cmr:completeness",
+        ),
       }),
     });
     expect(rowsById.get("376-provider-degraded-nonblocking")).toMatchObject({

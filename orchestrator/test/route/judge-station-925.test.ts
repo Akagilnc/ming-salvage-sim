@@ -37,7 +37,7 @@ import {
 } from "../../src/dispatchWorker.js";
 import { route } from "../../src/route.js";
 import { runOrchestrator, stepSpecsForEnv } from "../../src/runner.js";
-import { SelfReportedRelayError } from "../../src/relayDispatch.js";
+
 import { skeletonReviewLoopWorkerResult } from "../../src/reviewLoopOutcome.js";
 import type {
   AgentStepRunOptions,
@@ -553,24 +553,17 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     );
   });
 
-  it("U1: decision_gate on S3 mints T2 kind:judge escalate (not residual reviewer paper)", async () => {
+  it("U1: typed S3 escalate mints T2 kind:judge escalate (not residual reviewer paper)", async () => {
+    // #937: free-log SelfReportedRelayError decision_gate deleted; typed
+    // station escalate is the sole host decision-gate park path.
     const GATE_SUMMARY = "need owner ruling on AC conflict";
-    class GateOnS3Backend extends JudgeBackend {
-      override async dispatchWorker(
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-      ): Promise<WorkerResult> {
-        if (spec.id === "S3") {
-          throw new SelfReportedRelayError(
-            { kind: "decision_gate", state_summary: GATE_SUMMARY },
-            "S3",
-            "sess-s3-gate",
-          );
-        }
-        return super.dispatchWorker(spec, ctx);
-      }
-    }
-    const backend = new GateOnS3Backend([{ kind: "converged" }]);
+    const backend = new JudgeBackend([
+      {
+        kind: "escalate",
+        reason: "S3 worker raised a decision gate",
+        diagnosis: GATE_SUMMARY,
+      },
+    ]);
     const result = await runOrchestrator({ issueNumber: 9191, backend });
     expect(result.status).toBe("escalate");
     const s3 = result.stepLedger.find((e) => e.step === "S3");
@@ -585,26 +578,16 @@ describe("#925 runOrchestrator: resume shape + routing", () => {
     expect(result.stopSummary?.reason).toBe("decision_gate_park");
   });
 
-  it("R3: decision_gate on S6 mints T2 kind:judge escalate + decision_gate_park", async () => {
+  it("R3: typed S6 escalate mints T2 kind:judge escalate + decision_gate_park", async () => {
     const GATE_SUMMARY = "need owner ruling on residual AC split";
-    class GateOnS6Backend extends JudgeBackend {
-      override async dispatchWorker(
-        spec: WorkerSpec,
-        ctx: DispatchContext,
-      ): Promise<WorkerResult> {
-        if (spec.id === "S6") {
-          throw new SelfReportedRelayError(
-            { kind: "decision_gate", state_summary: GATE_SUMMARY },
-            "S6",
-            "sess-s6-gate",
-          );
-        }
-        return super.dispatchWorker(spec, ctx);
-      }
-    }
-    // S3 continue → S5 → S6 decision_gate (symmetric to U1 S3 gate).
-    const backend = new GateOnS6Backend([
+    // S3 continue → S5 → S6 typed escalate (symmetric to U1 S3 gate).
+    const backend = new JudgeBackend([
       { kind: "continue", findings: [sampleFinding()] },
+      {
+        kind: "escalate",
+        reason: "S6 worker raised a decision gate",
+        diagnosis: GATE_SUMMARY,
+      },
     ]);
     const result = await runOrchestrator({ issueNumber: 9196, backend });
     expect(result.status).toBe("escalate");
