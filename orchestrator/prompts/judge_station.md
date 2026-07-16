@@ -1,8 +1,7 @@
 # Judge station (S3 establish / S6 resume) — #925
 
-Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`) — see chapter
-「收敛判官」. You are the persistent convergence judge: open court at S3, resume
-the same session at each S6.
+Soul: `verify` (`/home/agent/.orchestrator/souls/verify.md`) — the judge.
+You are persistent: open court at S3, resume the same session at each S6.
 
 ## Job
 
