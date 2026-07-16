@@ -148,7 +148,15 @@ describe("#422 model route presets", () => {
     const codexCheap = resolveRouteModels("codex-cheap", {});
     const codexTight = resolveRouteModels("codex-tight", {});
 
-    expect(claudeCheap.slots).toEqual(claudeTight.slots);
+    // #916: claude-tight factory lineup diverges from claude-cheap (grok coder +
+    // sol-low utility seats + grok CMR leg); only verify/cmr gates stay sol@med.
+    expect(claudeCheap.slots.verify).toBe("gpt-5.6-sol");
+    expect(claudeTight.slots).toMatchObject({
+      coder: "grok-4.5",
+      coderFix: "grok-4.5",
+      verify: "gpt-5.6-sol",
+      ship: "gpt-5.6-sol-low",
+    });
     expect(claudeCheap.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "gpt-5.6-sol",
       "agy",
@@ -156,6 +164,7 @@ describe("#422 model route presets", () => {
     ]);
     expect(claudeTight.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "gpt-5.6-sol",
+      "grok-4.5",
       "agy",
     ]);
 
@@ -173,7 +182,7 @@ describe("#422 model route presets", () => {
   });
 
   it("assigns Sol to the unified verify judge seat and every judging gate in every Codex-enabled preset", () => {
-    for (const routeName of ["normal", "codex-cheap", "claude-cheap", "claude-tight"] as const) {
+    for (const routeName of ["normal", "codex-cheap", "claude-cheap"] as const) {
       const { slots } = resolveRouteModels(routeName, {});
 
       expect(slots).toMatchObject({
@@ -185,6 +194,17 @@ describe("#422 model route presets", () => {
       });
       expect(slots).not.toHaveProperty("reviewer");
     }
+
+    // #916 claude-tight: grok coder + sol-low utility; verify/cmr still sol@med.
+    expect(resolveRouteModels("claude-tight", {}).slots).toMatchObject({
+      coder: "grok-4.5",
+      coderFix: "grok-4.5",
+      cmrCompleteness: "gpt-5.6-sol",
+      cmrCorrectness: "gpt-5.6-sol",
+      verify: "gpt-5.6-sol",
+      ship: "gpt-5.6-sol-low",
+    });
+    expect(resolveRouteModels("claude-tight", {}).slots).not.toHaveProperty("reviewer");
 
     expect(resolveRouteModels("codex-tight", {}).slots).toMatchObject({
       cmrCompleteness: "opus",
@@ -207,7 +227,8 @@ describe("#422 model route presets", () => {
     expect(() =>
       resolveRouteModels("normal", { verify: "does-not-exist" }),
     ).toThrow(/unknown model slug/i);
-    // Default preset for verify on "normal" is the ratified xhigh Sol officer.
+    // Default preset for verify on "normal" is gpt-5.6-sol (registry effort:
+    // medium — #916; no role-forced xhigh at dispatch).
     const resolved = resolveRouteModels("normal", {});
     expect(resolved.slots.verify).toBe("gpt-5.6-sol");
     // bad explicit still caught above; the targeted proves verify slot participates in fail-closed
@@ -217,7 +238,9 @@ describe("#422 model route presets", () => {
     const resolved = resolveRouteModels("claude-tight", {});
 
     expect(resolved.tightFamilyViolations).toEqual([]);
-    expect(new Set(Object.values(resolved.slots))).toEqual(new Set(["gpt-5.6-terra", "gpt-5.6-sol"]));
+    expect(new Set(Object.values(resolved.slots))).toEqual(
+      new Set(["grok-4.5", "gpt-5.6-sol", "gpt-5.6-sol-low"]),
+    );
     expect(resolved.legCollections.cmrReview.map((leg) => leg.family)).not.toContain(
       "claude",
     );
@@ -242,7 +265,7 @@ describe("#422 model route presets", () => {
       activeModelRoute({
         ORCHESTRATOR_ROUTE: "claude-tight",
       }).slots.coder,
-    ).toBe("gpt-5.6-terra");
+    ).toBe("grok-4.5");
 
     expect(() =>
       activeModelRoute({
@@ -276,6 +299,7 @@ describe("#422 model route presets", () => {
 
     expect(route.legCollections.cmrReview.map((leg) => leg.slug)).toEqual([
       "gpt-5.6-sol",
+      "grok-4.5",
       "agy",
     ]);
 
@@ -315,14 +339,14 @@ describe("#422 model route presets", () => {
     const { mergerModel } = await import("../../src/family/realFamilyBackend.js");
 
     const stepSpecs = stepSpecsForEnv();
-    expect(stepSpecs.S2.model).toBe("gpt-5.6-terra");
+    expect(stepSpecs.S2.model).toBe("grok-4.5");
     expect(stepSpecs.S3.model).toBe("gpt-5.6-sol");
-    expect(stepSpecs.S5.model).toBe("gpt-5.6-terra");
+    expect(stepSpecs.S5.model).toBe("grok-4.5");
     expect(stepSpecs.S6.model).toBe("gpt-5.6-sol");
     expect(cmrWorkerSpec("fresh", "completeness").model).toBe("gpt-5.6-sol");
     expect(cmrWorkerSpec("fresh", "correctness").model).toBe("gpt-5.6-sol");
-    expect(familyShipWorkerSpec().model).toBe("gpt-5.6-terra");
-    expect(mergerModel()).toBe("gpt-5.6-terra");
+    expect(familyShipWorkerSpec().model).toBe("gpt-5.6-sol-low");
+    expect(mergerModel()).toBe("gpt-5.6-sol-low");
   });
 
   it("dispatches worker specs from the per-run route, not the route at module import time", async () => {
@@ -394,7 +418,7 @@ describe("#422 model route presets", () => {
 
     expect(result.status).toBe("success");
     expect(backend.specs.filter((spec) => spec.id === "S2").map((spec) => spec.model)).toEqual([
-      "gpt-5.6-terra",
+      "grok-4.5",
     ]);
   });
 

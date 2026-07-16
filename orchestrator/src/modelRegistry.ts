@@ -15,30 +15,11 @@ const CLAUDE_HEADLESS_OPTIONS = {
   permissionMode: "bypassPermissions",
 } as const satisfies sc.ClaudeCodeOptions;
 
-/**
- * Live-officer reasoning effort for verify / CMR workers on the verify Codex
- * slug. Shared by single-slice (`realBackend`) and family (`realFamilyBackend`)
- * so the two paths cannot drift.
- *
- * Returns `"xhigh"` when the slug is {@link VERIFY_CODEX_SLUG} and the context
- * is a verify role/soul (family CMR courts use soul:"verify" after #930), or a
- * route-smoke key prefixed `verify`/`cmr`.
- */
-export function effortForLiveOfficer(
-  slug: string,
-  context: { readonly role?: string; readonly soul?: string; readonly smokeKey?: string },
-): "xhigh" | undefined {
-  if (
-    slug === VERIFY_CODEX_SLUG &&
-    (context.role === "verify" ||
-      context.soul === "verify" ||
-      context.soul === "cmr" ||
-      /^(verify|cmr)/.test(context.smokeKey ?? ""))
-  ) {
-    return "xhigh";
-  }
-  return undefined;
-}
+// Reasoning effort authority = registry row (and route-preset slug selection)
+// only. Never force effort from role/soul/smokeKey at dispatch time — if a seat
+// needs a different effort, give it a registry slug that declares that effort
+// (e.g. gpt-5.6-sol-low / gpt-5.6-sol-high). Owner constitutional ruling
+// 2026-07-16 (#916): deleted effortForLiveOfficer xhigh hard override.
 
 export type ModelFamily = "claude" | "codex" | "agy" | "other";
 
@@ -159,6 +140,15 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     provider: "codex",
     model: "gpt-5.6-sol",
     options: { effort: "high" },
+    family: "codex",
+    strongLeg: true,
+  },
+  // #916: low-effort sol row for ship/merger/fixer/cleanup/docRelease seats on
+  // claude-tight (same model string as sol, options.effort:"low").
+  "gpt-5.6-sol-low": {
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    options: { effort: "low" },
     family: "codex",
     strongLeg: true,
   },
@@ -332,13 +322,10 @@ export function modelIdForSlug(slug: string): string {
 
 export function agentForSlug(
   slug: string,
-  codexEffort?: NonNullable<sc.CodexOptions["effort"]>,
   pool?: BillingPoolDispatchId,
 ): sc.AgentProvider {
+  // Effort comes from the registry row for `slug` only — no call-site overlay
+  // (#916 F9: deleted residual codexEffort parameter).
   const entry = resolveModelSlugForPool(slug, pool);
-  const options =
-    entry.provider === "codex" && codexEffort !== undefined
-      ? { ...(entry.options ?? {}), effort: codexEffort }
-      : entry.options;
-  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, options);
+  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
 }
