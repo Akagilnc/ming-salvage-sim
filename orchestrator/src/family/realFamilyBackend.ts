@@ -98,6 +98,7 @@ import { runExclusive } from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
 import {
   isBillingPoolDispatchId,
+  modelIdForSlug,
   resolveModelSlugForPool,
   unavailableProviderAuth,
   type ProviderAuthAvailability,
@@ -2701,7 +2702,9 @@ export class RealFamilyBackend implements FamilyBackend {
     };
     const codexReviewLeg = reviewLegs.find((leg) => leg.family === "codex");
     if (codexReviewLeg !== undefined) {
-      env.CMR_CODEX_MODEL = codexReviewLeg.slug;
+      // Resolve effort-variant registry slugs (e.g. gpt-5.6-sol-low) to the CLI
+      // model id the baked codex-review.sh expects — not the registry key.
+      env.CMR_CODEX_MODEL = modelIdForSlug(codexReviewLeg.slug);
     }
     if (auth.claudeToken !== undefined) env.CLAUDE_CODE_OAUTH_TOKEN = auth.claudeToken;
     // The in-container completeness gate's `gh issue view` (the live issue body =

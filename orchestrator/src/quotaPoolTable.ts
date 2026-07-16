@@ -19,6 +19,7 @@ import {
   lookupCoderRosterEntry,
   type CoderRosterEntry,
 } from "./coderRoster.js";
+import { providerForModelSlug } from "./modelRegistry.js";
 
 /** Quota / billing boundary ids (ADR 0124). */
 export type BillingPoolId =
@@ -137,9 +138,36 @@ export const DEFAULT_POOL_MODELS: Readonly<
 };
 
 /**
- * Resolve a known roster model to its default billing boundary. This is
- * distinct from quota probing: codex and Claude have no #683 probe-pool id,
+ * Map a modelRegistry provider factory onto the ADR 0124 billing boundary it
+ * draws from. Orthogonal to roster: effort-variant registry slugs (e.g.
+ * gpt-5.6-sol-low) are not CODER_ROSTER ids but still bill on codex-5h.
+ */
+function billingPoolFromProvider(
+  provider: string,
+): BillingPoolId | undefined {
+  switch (provider) {
+    case "codex":
+      return "codex-5h";
+    case "claudeCode":
+      return "claude";
+    case "grok":
+      return "grok-build";
+    case "cursor":
+      return "cursor";
+    default:
+      // agy / copilot / pi — no dedicated billing-pool id here.
+      return undefined;
+  }
+}
+
+/**
+ * Resolve a known roster **or registry** model to its default billing boundary.
+ * Distinct from quota probing: codex and Claude have no #683 probe-pool id,
  * but their dispatched slugs still identify a billing pool for capacity relay.
+ *
+ * Order: CODER_ROSTER first (designer ids / aliases), then modelRegistry
+ * provider (effort-variant / non-roster runnable slugs), then reverse
+ * {@link DEFAULT_POOL_MODELS} membership (dual keys already listed on a pool).
  */
 export function billingPoolForModelRef(
   modelRef: string,
@@ -151,9 +179,22 @@ export function billingPoolForModelRef(
       return "codex-5h";
     case "claude":
       return "claude";
-    default:
-      return undefined;
   }
+
+  const fromProvider = billingPoolFromProvider(
+    providerForModelSlug(modelRef) ?? "",
+  );
+  if (fromProvider !== undefined) return fromProvider;
+
+  if (typeof modelRef !== "string") return undefined;
+  const needle = modelRef.trim().toLowerCase();
+  if (needle.length === 0) return undefined;
+  for (const id of Object.keys(DEFAULT_POOL_MODELS) as BillingPoolId[]) {
+    for (const m of DEFAULT_POOL_MODELS[id]) {
+      if (m.trim().toLowerCase() === needle) return id;
+    }
+  }
+  return undefined;
 }
 
 /**
