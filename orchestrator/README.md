@@ -255,16 +255,21 @@ on their durable completion records instead of re-dispatching.
 
 ## Routes and per-role model selection
 
-Every role slot is independently overridable. Precedence:
+Every role slot is independently overridable. Precedence (#916):
 
 ```
-preset (ORCHESTRATOR_ROUTE, default "normal")
-  → per-slot env override (ORCHESTRATOR_<ROLE>_MODEL)
+per-slot env override (ORCHESTRATOR_<ROLE>_MODEL)
+  → config file preset (config/route-presets.json; ORCHESTRATOR_ROUTE selects name)
+  → built-in fallback (same factory table if the file is missing)
   → leg-collection env override (ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS)
   → startup route smoke validates the FINAL lineup, slot by slot
 ```
 
-Presets (`src/modelRoutes.ts` `ROUTE_PRESETS`):
+Pure model swaps: edit `config/route-presets.json` (or point
+`ORCHESTRATOR_ROUTE_PRESETS_PATH` at another file). Registry code only changes
+when adding a new model/CLI row.
+
+Presets (factory content of `config/route-presets.json`):
 
 | preset | coder/coderFix | verify (judge; S3/S6 + verify) + cmr gates | ship/merger/fixer/cleanup/docRelease | cmrReview legs |
 | --- | --- | --- | --- | --- |
@@ -272,7 +277,7 @@ Presets (`src/modelRoutes.ts` `ROUTE_PRESETS`):
 | `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | sonnet | opus + agy + codex sol |
 | `codex-tight` | sonnet | opus | sonnet | opus + agy (codex family excluded) |
 | `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | codex-side legs |
-| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | codex sol + agy (claude family excluded) |
+| `claude-tight` | grok-4.5 | gpt-5.6-sol | gpt-5.6-sol-low | codex sol + grok-4.5 + agy (claude family excluded) |
 
 `*-tight` presets declare `tightFamilies` — the family whose quota is scarce is
 kept off every slot and leg. Pick the preset whose scarce pool matches
