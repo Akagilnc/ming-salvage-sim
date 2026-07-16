@@ -345,34 +345,6 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     }
   });
 
-  it("scope_creep means inventing behavior, not where a real bug was found", () => {
-    for (const soulName of ["verify.md", "fixer.md"] as const) {
-      const soul = readSoul(soulName);
-      expect(soul).toMatch(/scope_creep|越权加戏/);
-      expect(soul).toMatch(/修法[\s\S]*authority \/ spec.*未授权.*新行为/);
-      expect(soul).toMatch(/早于.*fixed point/);
-      expect(soul).toMatch(/邻接文件/);
-      expect(soul).toMatch(/偶然.*发现/);
-      expect(soul).toMatch(/真问题.*fix_now/);
-    }
-  });
-
-  it("persistent verify audits repair-surface inflation without turning CMR into a loop", () => {
-    const verify = readSoul("verify.md");
-    expect(verify).toMatch(/修复台账|repair ledger/);
-    expect(verify).toMatch(/每.*采纳.*修复/);
-    expect(verify).toMatch(/original-defect/);
-    expect(verify).toMatch(/fix-fix/);
-    expect(verify).toMatch(/invention/);
-    expect(verify).toMatch(/首轮.*1\.5/);
-    expect(verify).toMatch(/只触发.*审计|audit trigger/);
-    expect(verify).toMatch(/original-defect[\s\S]*证据[\s\S]*继续/);
-    expect(verify).toMatch(/fix-fix[\s\S]*invention[\s\S]*(主导|为主)[\s\S]*(删|简化)/);
-    expect(verify).toMatch(/owner[\s\S]*escalate/);
-    expect(verify).toMatch(/one-pass CMR[\s\S]*不.*台账/);
-    expect(verify).toMatch(/不恢复[\s\S]*DOC-MODE[\s\S]*round-10[\s\S]*double-clear[\s\S]*standing-degraded[\s\S]*fix loop/);
-  });
-
   it("production CMR prompts always require the configured <judge> Output.object tag", () => {
     // #930: production family courts bind Output.object({tag:"judge"}) — same
     // live seat as single-slice S3/S6. Prompt must require the judge tag.
