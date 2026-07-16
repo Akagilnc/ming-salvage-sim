@@ -365,16 +365,14 @@ async function decideFamilyQuotaWall(opts: {
         : err instanceof Error
           ? err.message
           : String(err);
-    try {
-      await opts.familyBackend.appendFamilyLedger({
-        status: "worker_dispatched",
-        event: "worker_dispatched",
-        workerStep: `quota_park:${opts.phase}`,
-        reason: `Coder-Rec fail-closed at family ${opts.phase}: ${diagnosis}`,
-      });
-    } catch {
-      // best-effort audit
-    }
+    // #934 ID-001/005: family Recovery reads family-ledger.jsonl — never park
+    // (or fail-closed escalate) without a durable family-ledger boundary.
+    await opts.familyBackend.appendFamilyLedger({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: `quota_park:${opts.phase}`,
+      reason: `Coder-Rec fail-closed at family ${opts.phase}: ${diagnosis}`,
+    });
     return buildParkResult(
       {
         reason: "infra_failure",
@@ -396,16 +394,12 @@ async function decideFamilyQuotaWall(opts: {
       repairHint:
         "wait for the provider quota to reset, then re-feed — family barrier re-enters from ledger truth",
     };
-    try {
-      await opts.familyBackend.appendFamilyLedger({
-        status: "worker_dispatched",
-        event: "worker_dispatched",
-        workerStep: `quota_park:${opts.phase}`,
-        reason: stopSummary.summary,
-      });
-    } catch {
-      // best-effort
-    }
+    await opts.familyBackend.appendFamilyLedger({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: `quota_park:${opts.phase}`,
+      reason: stopSummary.summary,
+    });
     return buildParkResult(stopSummary);
   }
 
@@ -469,16 +463,14 @@ async function decideFamilyQuotaWall(opts: {
       repairHint:
         "wait for the provider quota to reset, then re-feed — family barrier re-enters from ledger truth",
     };
-    try {
-      await opts.familyBackend.appendFamilyLedger({
-        status: "worker_dispatched",
-        event: "worker_dispatched",
-        workerStep: `quota_park:${opts.phase}`,
-        reason: `quota wait for reset on pool ${opts.err.pool} at family ${opts.phase}`,
-      });
-    } catch {
-      // best-effort audit
-    }
+    // Durable family-ledger park boundary first; write failure fails closed
+    // (same class as parkQuotaWaitForReset writeLedger — no resumable park).
+    await opts.familyBackend.appendFamilyLedger({
+      status: "worker_dispatched",
+      event: "worker_dispatched",
+      workerStep: `quota_park:${opts.phase}`,
+      reason: `quota wait for reset on pool ${opts.err.pool} at family ${opts.phase}`,
+    });
     return buildParkResult(stopSummary);
   }
 
@@ -491,16 +483,13 @@ async function decideFamilyQuotaWall(opts: {
     wallStep,
     { slots: wallSlots },
   );
-  try {
-    await opts.familyBackend.appendFamilyLedger({
-      status: "worker_dispatched",
-      event: "worker_dispatched",
-      workerStep: `quota_relay:${opts.phase}`,
-      reason: `quota wall relay applied ${outcome.ledgerEntry.fromPool}→${outcome.ledgerEntry.toPool} (${outcome.nextBaton.modelId}@${outcome.nextBaton.pool}) slots=[${wallSlots.join(",")}] at family ${opts.phase}`,
-    });
-  } catch {
-    // best-effort audit
-  }
+  // Durable family-ledger relay boundary first; write failure fails closed.
+  await opts.familyBackend.appendFamilyLedger({
+    status: "worker_dispatched",
+    event: "worker_dispatched",
+    workerStep: `quota_relay:${opts.phase}`,
+    reason: `quota wall relay applied ${outcome.ledgerEntry.fromPool}→${outcome.ledgerEntry.toPool} (${outcome.nextBaton.modelId}@${outcome.nextBaton.pool}) slots=[${wallSlots.join(",")}] at family ${opts.phase}`,
+  });
   console.info(
     `[orchestrator:family] #909 relay baton → ${outcome.nextBaton.modelId} (${outcome.nextBaton.slug}) @ ${outcome.nextBaton.pool} (phase=${opts.phase}, slots=${wallSlots.join(",")})`,
   );

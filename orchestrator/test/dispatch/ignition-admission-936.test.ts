@@ -646,4 +646,80 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
+  it("discoverFamilyResidentScene: nonterminal ledger without worksite is corrupted (ID-005)", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-ledger-only-"));
+    try {
+      // Mid-run ledger (merged child, no terminal cleanup/escalation) + no worksite.
+      writeFileSync(
+        join(ledgerDir, FAMILY_LEDGER_FILENAME),
+        `${JSON.stringify({
+          status: "merged",
+          event: "reconciled",
+          childIssue: 936,
+          familyHeadAfter: "deadbeef",
+        })}\n`,
+        "utf8",
+      );
+      const scene = discoverFamilyResidentScene(ledgerDir);
+      expect(scene.kind).toBe("corrupted");
+      if (scene.kind === "corrupted") {
+        expect(scene.reason).toMatch(
+          /ledger exists without worksite|nonterminal ledger-without-worksite/i,
+        );
+      }
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discoverFamilyResidentScene: terminal cleanup ledger without worksite is resident (replayable)", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-terminal-ledger-"));
+    try {
+      writeFileSync(
+        join(ledgerDir, FAMILY_LEDGER_FILENAME),
+        `${JSON.stringify({
+          status: "post_merge_cleanup",
+          event: "post_merge_cleanup",
+          phase: "final",
+          familyHeadAfter: "abc123",
+          cleanupOutput: { kind: "cleanup", terminal: true, ok: true, branchOutcome: "deleted" },
+        })}\n`,
+        "utf8",
+      );
+      const scene = discoverFamilyResidentScene(ledgerDir);
+      expect(scene.kind).toBe("resident");
+      if (scene.kind === "resident") {
+        expect(planFamilyTerminalReplay(scene.ledger, "family/934-base")?.status).toBe(
+          "success",
+        );
+      }
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("discoverFamilyResidentScene: nonterminal ledger WITH worksite residue remains resident", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-scene-ledger-wt-"));
+    try {
+      writeFileSync(
+        join(ledgerDir, FAMILY_LEDGER_FILENAME),
+        `${JSON.stringify({
+          status: "merged",
+          event: "reconciled",
+          childIssue: 936,
+          familyHeadAfter: "deadbeef",
+        })}\n`,
+        "utf8",
+      );
+      writeFileSync(join(ledgerDir, "family-base-start-head"), "start0\n", "utf8");
+      const scene = discoverFamilyResidentScene(ledgerDir);
+      expect(scene.kind).toBe("resident");
+      if (scene.kind === "resident") {
+        expect(planFamilyTerminalReplay(scene.ledger, "family/934-base")).toBeUndefined();
+      }
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
 });

@@ -219,6 +219,31 @@ describe("#934 parseSubIssueAdmission schema fail-closed (ID-003)", () => {
       }),
     ).toEqual({ admitted: [99], skipped: [] });
   });
+  it("throws on missing/non-finite number entries (never soft-skip into all-filtered)", () => {
+    expect(() =>
+      parseSubIssueAdmission([
+        { number: 10, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        { state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+      ]),
+    ).toThrow(/sub_issues entry schema error|missing or non-finite number/i);
+    expect(() =>
+      parseSubIssueAdmission([{ number: "12", state: "OPEN" }]),
+    ).toThrow(/sub_issues entry schema error|missing or non-finite number/i);
+    expect(() =>
+      parseSubIssueAdmission([{ number: Number.NaN, state: "OPEN" }]),
+    ).toThrow(/sub_issues entry schema error|missing or non-finite number/i);
+    expect(() => parseSubIssueAdmission([null, { number: 1, state: "OPEN" }])).toThrow(
+      /sub_issues entry schema error|expected object/i,
+    );
+  });
+  it("dedupes repeated finite numbers without treating them as schema garbage", () => {
+    expect(
+      parseSubIssueAdmission([
+        { number: 99, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        { number: 99, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+      ]),
+    ).toEqual({ admitted: [99], skipped: [] });
+  });
 });
 
 describe("#291 readFamilyEpic (injected gh sh)", () => {

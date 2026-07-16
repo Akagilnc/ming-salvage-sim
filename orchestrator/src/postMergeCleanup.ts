@@ -107,12 +107,32 @@ function subIssueNodes(parsed: unknown): unknown[] {
   );
 }
 
-function parseLiveSubIssue(node: unknown): LiveSubIssue | undefined {
-  if (node === null || typeof node !== "object") return undefined;
+function parseLiveSubIssue(node: unknown, index: number): LiveSubIssue {
+  if (node === null || typeof node !== "object" || Array.isArray(node)) {
+    throw new Error(
+      `sub_issues entry schema error: sub_issue[${index}]: expected object entry, got ${
+        node === null ? "null" : Array.isArray(node) ? "array" : typeof node
+      }`,
+    );
+  }
   const number = (node as { number?: unknown }).number;
   const state = (node as { state?: unknown }).state;
-  if (typeof number !== "number" || !Number.isFinite(number)) return undefined;
-  if (typeof state !== "string" || state.trim().length === 0) return undefined;
+  if (typeof number !== "number" || !Number.isFinite(number)) {
+    throw new Error(
+      `sub_issues entry schema error: sub_issue[${index}]: missing or non-finite number (got ${
+        number === undefined
+          ? "undefined"
+          : typeof number === "number"
+            ? String(number)
+            : typeof number
+      })`,
+    );
+  }
+  if (typeof state !== "string" || state.trim().length === 0) {
+    throw new Error(
+      `sub_issues entry schema error: sub_issue[${index}]: missing or empty state`,
+    );
+  }
   return { number, state };
 }
 
@@ -129,9 +149,8 @@ export function fetchPaginatedSubIssues(
       `repos/${repo}/issues/${epicIssue}/sub_issues?per_page=100&page=${page}`,
     ]);
     const nodes = subIssueNodes(JSON.parse(raw));
-    for (const node of nodes) {
-      const parsed = parseLiveSubIssue(node);
-      if (parsed !== undefined) all.push(parsed);
+    for (let i = 0; i < nodes.length; i++) {
+      all.push(parseLiveSubIssue(nodes[i], all.length + i));
     }
     if (nodes.length < 100) break;
   }

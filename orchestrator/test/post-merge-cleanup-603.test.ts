@@ -571,6 +571,19 @@ describe("#603 fetchPaginatedSubIssues", () => {
     expect(calls.some((c) => c.includes("per_page=100"))).toBe(true);
     expect(calls.some((c) => c.includes("page=2"))).toBe(true);
   });
+
+  it("fails closed on missing/non-finite number entries (same class as admission)", () => {
+    const sh = fakeSh({
+      "gh api repos": () =>
+        JSON.stringify([
+          { number: 1, state: "OPEN" },
+          { state: "OPEN" },
+        ]),
+    });
+    expect(() => fetchPaginatedSubIssues(sh, REPO, 366)).toThrow(
+      /sub_issues entry schema error|missing or non-finite number/i,
+    );
+  });
 });
 
 describe("#603 CleanupResult terminal vs non-terminal (AC6)", () => {

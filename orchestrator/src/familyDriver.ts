@@ -187,18 +187,37 @@ function skipMessage(issue: number, reason: SkippedFamilyChild["reason"]): strin
  * The production reader uses GitHub's REST native sub-issues endpoint because it
  * carries the metadata needed for the family admission rule: state, labels, and
  * whether the child is itself a parent. A child is runnable when it is open,
- * labelled `ready-for-agent`, and leaf-like. Missing metadata is tolerated and
- * left to the single-slice S0 backstop, preserving the older pure parser behavior
- * for odd/GraphQL payloads.
+ * labelled `ready-for-agent`, and leaf-like. Entry-level schema garbage
+ * (missing/non-finite `number`, non-object nodes) fails closed as deterministic
+ * metadata error — never soft-skips into all-filtered success (#934 ID-003).
+ * Optional label/parent fields remain soft for S0 backstop compatibility.
  */
 export function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
   const nodes = subIssueNodes(parsed);
   const seen = new Set<number>();
   const admitted: number[] = [];
   const skipped: SkippedFamilyChild[] = [];
-  for (const n of nodes) {
-    const num = (n as { number?: unknown })?.number;
-    if (typeof num !== "number" || !Number.isFinite(num) || seen.has(num)) continue;
+  const entryErrors: string[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (n === null || typeof n !== "object" || Array.isArray(n)) {
+      entryErrors.push(
+        `sub_issue[${i}]: expected object entry, got ${
+          n === null ? "null" : Array.isArray(n) ? "array" : typeof n
+        }`,
+      );
+      continue;
+    }
+    const num = (n as { number?: unknown }).number;
+    if (typeof num !== "number" || !Number.isFinite(num)) {
+      entryErrors.push(
+        `sub_issue[${i}]: missing or non-finite number (got ${
+          num === undefined ? "undefined" : typeof num === "number" ? String(num) : typeof num
+        })`,
+      );
+      continue;
+    }
+    if (seen.has(num)) continue;
     seen.add(num);
     const reason = skipReason(n);
     if (reason === undefined) {
@@ -206,6 +225,11 @@ export function parseSubIssueAdmission(parsed: unknown): SubIssueAdmission {
     } else {
       skipped.push({ issue: num, reason, message: skipMessage(num, reason) });
     }
+  }
+  if (entryErrors.length > 0) {
+    throw new Error(
+      `sub_issues entry schema error: ${entryErrors.join("; ")}`,
+    );
   }
   return { admitted, skipped };
 }
@@ -783,8 +807,9 @@ export interface FamilyDriverOptions {
  * Family Scene Recovery (#934 ID-005 / #936): read resident durable family
  * truth before admission/network/worksite. Typed outcomes:
  *   - fresh: neither ledger nor worksite residue → continue productive path
- *   - resident: parseable ledger present
- *   - corrupted: partial residue or unreadable/unparseable ledger (preserve, fail loud)
+ *   - resident: parseable ledger + worksite, OR terminal-replayable ledger alone
+ *   - corrupted: partial residue, nonterminal ledger-without-worksite, or
+ *     unreadable/unparseable ledger (preserve, fail loud)
  */
 export type FamilySceneDiscovery =
   | { readonly kind: "fresh" }
@@ -797,9 +822,29 @@ export interface FamilySceneDiscoveryOptions {
 }
 
 /**
+ * Whether a parseable family ledger can terminal-replay without worksite
+ * residue (completed cleanup, or unresolved park/fail escalation). Nonterminal
+ * mid-run / answered-decision ledgers need worksite to resume productively.
+ */
+function isFamilyLedgerTerminalWithoutWorksite(
+  ledger: ReadonlyArray<FamilyLedgerEntry>,
+): boolean {
+  if (shouldReclaimFamilyHost(ledger)) return true;
+  const prior = familyEscalationState(ledger);
+  if (prior === undefined) return false;
+  // Answered decision reopens productive work — not terminal without worksite.
+  if (prior.escalation.escalationKind === "decision" && prior.answer !== undefined) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * Discover resident family durable truth — zero GitHub, zero smoke.
  * Typed fresh only when BOTH ledger and worksite residue are absent (ID-005).
  * Worksite residue = family-base start-head file and/or resident clone `.git`.
+ * Ledger without worksite is only legal when terminal-replayable; nonterminal
+ * ledger-without-worksite is corrupted (must not recreate worksite over lineage).
  */
 export function discoverFamilyResidentScene(
   ledgerDir: string,
@@ -836,12 +881,12 @@ export function discoverFamilyResidentScene(
       }`,
     };
   }
+  let ledger: FamilyLedgerEntry[];
   try {
-    const ledger = raw
+    ledger = raw
       .split("\n")
       .filter((line) => line.trim().length > 0)
       .map((line) => JSON.parse(line) as FamilyLedgerEntry);
-    return { kind: "resident", ledger };
   } catch (err) {
     return {
       kind: "corrupted",
@@ -850,6 +895,17 @@ export function discoverFamilyResidentScene(
       }`,
     };
   }
+
+  if (!hasWorksiteResidue && !isFamilyLedgerTerminalWithoutWorksite(ledger)) {
+    return {
+      kind: "corrupted",
+      reason:
+        `resident family ledger exists without worksite residue at ${ledgerDir}; ` +
+        `nonterminal ledger-without-worksite cannot safely resume ` +
+        `(#936 / #934 ID-005)`,
+    };
+  }
+  return { kind: "resident", ledger };
 }
 
 /**
