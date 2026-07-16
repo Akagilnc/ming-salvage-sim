@@ -11,9 +11,6 @@ import {
 } from "./coderRoster.js";
 import {
   modelFamilyForCmrReviewLeg,
-  CODER_CODEX_SLUG,
-  REVIEWER_CODEX_SLUG,
-  VERIFY_CODEX_SLUG,
   modelFamilyForSlug,
   resolveModelSlug,
   type ModelFamily,
@@ -140,122 +137,6 @@ const DEFAULT_ROUTE_PRESETS_PATH = join(
   "route-presets.json",
 );
 
-/**
- * Built-in fallback presets (#916 priority: env slot overrides > config file >
- * built-in). Pure model swaps should edit `config/route-presets.json`; this
- * table keeps ignition alive when the file is missing.
- */
-const BUILTIN_ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
-  normal: {
-    slots: {
-      coder: CODER_CODEX_SLUG,
-      coderFix: CODER_CODEX_SLUG,
-      ship: "sonnet",
-      merger: "sonnet",
-      cmrCompleteness: VERIFY_CODEX_SLUG,
-      cmrCorrectness: VERIFY_CODEX_SLUG,
-      verify: VERIFY_CODEX_SLUG,
-      fixer: "sonnet",
-      cleanup: "sonnet",
-      docRelease: "sonnet",
-    },
-    legCollections: {
-      cmrReview: [
-        { family: "codex", slug: REVIEWER_CODEX_SLUG },
-        { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy", optional: true },
-      ],
-    },
-  },
-  "codex-cheap": {
-    slots: {
-      coder: CODER_CODEX_SLUG,
-      coderFix: CODER_CODEX_SLUG,
-      ship: "sonnet",
-      merger: "sonnet",
-      cmrCompleteness: VERIFY_CODEX_SLUG,
-      cmrCorrectness: VERIFY_CODEX_SLUG,
-      verify: VERIFY_CODEX_SLUG,
-      fixer: "sonnet",
-      cleanup: "sonnet",
-      docRelease: "sonnet",
-    },
-    legCollections: {
-      cmrReview: [
-        { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy", optional: true },
-        { family: "codex", slug: REVIEWER_CODEX_SLUG },
-      ],
-    },
-  },
-  "codex-tight": {
-    tightFamilies: ["codex"],
-    slots: {
-      coder: "sonnet",
-      coderFix: "sonnet",
-      ship: "sonnet",
-      merger: "sonnet",
-      cmrCompleteness: "opus",
-      cmrCorrectness: "opus",
-      verify: "opus",
-      fixer: "sonnet",
-      cleanup: "sonnet",
-      docRelease: "sonnet",
-    },
-    legCollections: {
-      cmrReview: [
-        { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy", optional: true },
-      ],
-    },
-  },
-  "claude-cheap": {
-    slots: {
-      coder: CODER_CODEX_SLUG,
-      coderFix: CODER_CODEX_SLUG,
-      ship: CODER_CODEX_SLUG,
-      merger: CODER_CODEX_SLUG,
-      cmrCompleteness: VERIFY_CODEX_SLUG,
-      cmrCorrectness: VERIFY_CODEX_SLUG,
-      verify: VERIFY_CODEX_SLUG,
-      fixer: CODER_CODEX_SLUG,
-      cleanup: CODER_CODEX_SLUG,
-      docRelease: CODER_CODEX_SLUG,
-    },
-    legCollections: {
-      cmrReview: [
-        { family: "codex", slug: REVIEWER_CODEX_SLUG },
-        { family: "agy", slug: "agy", optional: true },
-        { family: "claude", slug: "opus" },
-      ],
-    },
-  },
-  // #916 factory claude-tight lineup (config file is the edit surface; keep in
-  // sync with config/route-presets.json).
-  "claude-tight": {
-    tightFamilies: ["claude"],
-    slots: {
-      coder: "grok-4.5",
-      coderFix: "grok-4.5",
-      ship: "gpt-5.6-sol-low",
-      merger: "gpt-5.6-sol-low",
-      cmrCompleteness: VERIFY_CODEX_SLUG,
-      cmrCorrectness: VERIFY_CODEX_SLUG,
-      verify: VERIFY_CODEX_SLUG,
-      fixer: "gpt-5.6-sol-low",
-      cleanup: "gpt-5.6-sol-low",
-      docRelease: "gpt-5.6-sol-low",
-    },
-    legCollections: {
-      cmrReview: [
-        { family: "codex", slug: REVIEWER_CODEX_SLUG },
-        { family: "other", slug: "grok-4.5" },
-        { family: "agy", slug: "agy", optional: true },
-      ],
-    },
-  },
-};
-
 const MODEL_FAMILIES = new Set<ModelFamily>(["claude", "codex", "agy", "other"]);
 
 let cachedRoutePresets: Readonly<Record<string, ModelRoutePreset>> | undefined;
@@ -322,10 +203,12 @@ function parseRoutePreset(
     }
   }
 
-  const legsRoot =
-    typeof record.legCollections === "object" && record.legCollections !== null
-      ? (record.legCollections as Record<string, unknown>)
-      : record;
+  // Single nested form only (#916): legCollections.cmrReview. No top-level
+  // cmrReview fallback — dual schema roots are a hand-sync surface.
+  if (typeof record.legCollections !== "object" || record.legCollections === null) {
+    throw new Error(`route preset "${routeName}" missing legCollections`);
+  }
+  const legsRoot = record.legCollections as Record<string, unknown>;
   const cmrRaw = legsRoot.cmrReview;
   if (!Array.isArray(cmrRaw) || cmrRaw.length === 0) {
     throw new Error(`route preset "${routeName}" missing non-empty cmrReview legs`);
@@ -356,8 +239,10 @@ function parseRoutePreset(
 
 function loadRoutePresetsFromFile(
   path: string,
-): Readonly<Record<string, ModelRoutePreset>> | undefined {
-  if (!existsSync(path)) return undefined;
+): Readonly<Record<string, ModelRoutePreset>> {
+  if (!existsSync(path)) {
+    throw new Error(`route presets file not found: ${path}`);
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));
@@ -376,8 +261,16 @@ function loadRoutePresetsFromFile(
 }
 
 /**
- * Resolved preset table: built-in fallback overlaid by config file contents.
- * Priority for a named route: config file definition > built-in fallback.
+ * Sole preset table = JSON on disk (#916). No hand-copied TS twin.
+ *
+ * Load order:
+ * 1. `ORCHESTRATOR_ROUTE_PRESETS_PATH` when set (absolute or cwd-relative)
+ * 2. else shipped `config/route-presets.json` next to the package
+ * 3. if a custom path is missing, fall back to the shipped factory JSON only
+ *    (still one file source — not a second in-code table)
+ * 4. if the chosen file is absent or unreadable → fail-loud
+ *
+ * Slot env overrides still win later in `resolveRouteModels` / `activeModelRoute`.
  */
 export function getRoutePresets(
   env: ModelRouteEnv = process.env,
@@ -386,16 +279,14 @@ export function getRoutePresets(
   if (cachedRoutePresets !== undefined && cachedRoutePresetsPath === path) {
     return cachedRoutePresets;
   }
-  const fromFile = loadRoutePresetsFromFile(path);
-  const merged: Record<string, ModelRoutePreset> = { ...BUILTIN_ROUTE_PRESETS };
-  if (fromFile !== undefined) {
-    for (const [name, preset] of Object.entries(fromFile)) {
-      merged[name] = preset;
-    }
+  let loadPath = path;
+  if (!existsSync(path) && path !== DEFAULT_ROUTE_PRESETS_PATH) {
+    loadPath = DEFAULT_ROUTE_PRESETS_PATH;
   }
-  cachedRoutePresets = merged;
+  const fromFile = loadRoutePresetsFromFile(loadPath);
+  cachedRoutePresets = fromFile;
   cachedRoutePresetsPath = path;
-  return merged;
+  return fromFile;
 }
 
 function tightFamiliesForRoute(
