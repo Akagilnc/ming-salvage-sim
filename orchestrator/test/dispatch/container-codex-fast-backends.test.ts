@@ -128,34 +128,32 @@ describe("#760 real backend Codex fast write-site consumption", () => {
     }
   });
 
-  it("keeps all four production write sites consuming opts.codexFast", () => {
-    const sources = [
-      readFileSync(join(here, "..", "..", "src", "realBackend.ts"), "utf8"),
-      readFileSync(join(here, "..", "..", "src", "family", "realFamilyBackend.ts"), "utf8"),
-    ];
-    const countMatches = (source: string) => {
-      const matches: string[] = [];
-      for (const match of source.matchAll(/writeContainerCodexConfig\s*\(/g)) {
-        const openParen = match.index! + match[0].length - 1;
-        let depth = 0;
-        let closeParen = -1;
-        for (let index = openParen; index < source.length; index += 1) {
-          if (source[index] === "(") depth += 1;
-          if (source[index] === ")" && --depth === 0) {
-            closeParen = index;
-            break;
-          }
+  it("keeps single-slice mountAuth write sites consuming codexFast", () => {
+    // Family-path pin (0× writeContainerCodexConfig) lives in
+    // family-worker-auth-913.test.ts (#913 F3/F7). This file owns single-slice
+    // RealBackend.mountAuth write-site rails plus the behavioral family
+    // service_tier cases above.
+    const realSrc = readFileSync(join(here, "..", "..", "src", "realBackend.ts"), "utf8");
+
+    const realWriteCalls: string[] = [];
+    for (const match of realSrc.matchAll(/writeContainerCodexConfig\s*\(/g)) {
+      const openParen = match.index! + match[0].length - 1;
+      let depth = 0;
+      let closeParen = -1;
+      for (let index = openParen; index < realSrc.length; index += 1) {
+        if (realSrc[index] === "(") depth += 1;
+        if (realSrc[index] === ")" && --depth === 0) {
+          closeParen = index;
+          break;
         }
-        if (closeParen >= 0) matches.push(source.slice(match.index!, closeParen + 1));
       }
-      const valid = matches.filter((match) => match.includes("this.opts.codexFast"));
-      return { total: matches.length, valid: valid.length };
-    };
-
-    const realResult = countMatches(sources[0]);
-    const familyResult = countMatches(sources[1]);
-
-    expect(realResult).toEqual({ total: 1, valid: 1 });
-    expect(familyResult).toEqual({ total: 3, valid: 3 });
+      if (closeParen >= 0) realWriteCalls.push(realSrc.slice(match.index!, closeParen + 1));
+    }
+    // mountAuth (this.opts.codexFast) + provisionFamilyWorkerAuth (codexFast param).
+    expect(realWriteCalls).toHaveLength(2);
+    expect(realWriteCalls.some((c) => c.includes("this.opts.codexFast"))).toBe(true);
+    expect(realWriteCalls.some((c) => /\bcodexFast\b/.test(c) && !c.includes("this.opts"))).toBe(
+      true,
+    );
   });
 });
