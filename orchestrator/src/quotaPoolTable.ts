@@ -172,6 +172,12 @@ function billingPoolFromProvider(
 export function billingPoolForModelRef(
   modelRef: string,
 ): BillingPoolId | undefined {
+  // Defensive for untyped callers (runner/relay paths): guard before any
+  // string-typed registry/roster peek (Gemini R1 / family/914 online).
+  if (typeof modelRef !== "string") return undefined;
+  const needle = modelRef.trim().toLowerCase();
+  if (needle.length === 0) return undefined;
+
   switch (lookupCoderRosterEntry(modelRef)?.pool) {
     case "supergrok":
       return "grok-build";
@@ -186,9 +192,6 @@ export function billingPoolForModelRef(
   );
   if (fromProvider !== undefined) return fromProvider;
 
-  if (typeof modelRef !== "string") return undefined;
-  const needle = modelRef.trim().toLowerCase();
-  if (needle.length === 0) return undefined;
   for (const id of Object.keys(DEFAULT_POOL_MODELS) as BillingPoolId[]) {
     for (const m of DEFAULT_POOL_MODELS[id]) {
       if (m.trim().toLowerCase() === needle) return id;
