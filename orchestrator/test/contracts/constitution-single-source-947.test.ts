@@ -6,8 +6,9 @@
  * full copy of the definitions anywhere in worker-facing law.
  *
  * The anchor phrases below are the same ones the host-side check-rule-sync.sh
- * greps across ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md and this file; keep the
- * two lists in sync when amending the law.
+ * greps across ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md and the container-global
+ * image/home/CLAUDE.md; keep this list and the script's ANCHORS in sync when
+ * amending the law.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
