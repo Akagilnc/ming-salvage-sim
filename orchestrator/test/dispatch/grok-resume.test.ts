@@ -253,6 +253,50 @@ describe("#955 grok session storage — sandbox transfer roundtrip (real tar/bas
     expect(body).not.toContain(hostCwd);
   });
 
+  it("resumeIntoSandbox rewrites from the hit bucket cwd when hostCwd bucket misses (cross-worktree)", async () => {
+    // Session lives under an OLD cwd bucket only; resume is invoked with a NEW
+    // hostCwd (worktree re-feed). Rewrite from must be the bucket that actually
+    // holds the file, not the caller's hostCwd (r2-F3: from = path present in file).
+    const hostRoot = tmp("grok-host-");
+    const sandboxFs = tmp("grok-sbx-");
+    const sandboxCwd = join(sandboxFs, "workspace");
+    const oldHostCwd = "/old/worktree";
+    const newHostCwd = "/new/worktree";
+    const sessionId = "019f-cross-bucket-resume";
+    const hostDir = join(hostRoot, encodeURIComponent(oldHostCwd), sessionId);
+    mkdirSync(hostDir, { recursive: true });
+    writeFileSync(
+      join(hostDir, "chat_history.jsonl"),
+      [
+        JSON.stringify({ cwd: oldHostCwd }),
+        JSON.stringify({ nested: { path: `${oldHostCwd}/src/main.ts` } }),
+      ].join("\n") + "\n",
+    );
+
+    const sbxSessions = join(sandboxFs, "home-.grok-sessions");
+    const storage = grokAgent("grok-4.5", {
+      sessionStorage: {
+        hostSessionsDir: hostRoot,
+        sandboxSessionsDir: sbxSessions,
+      },
+    }).sessionStorage!;
+    await storage.resumeIntoSandbox({
+      hostCwd: newHostCwd,
+      sandboxCwd,
+      sessionId,
+      handle: localHandleWithStdin(sandboxFs),
+    });
+
+    const body = readFileSync(
+      join(sbxSessions, encodeURIComponent(sandboxCwd), sessionId, "chat_history.jsonl"),
+      "utf8",
+    );
+    expect(body).toContain(sandboxCwd);
+    expect(body).toContain(`${sandboxCwd}/src/main.ts`);
+    expect(body).not.toContain(oldHostCwd);
+    expect(body).not.toContain(newHostCwd);
+  });
+
   it("rewrite does not pollute sibling path prefixes or dialogue mentions", async () => {
     // from=/work/tree must not rewrite /work/tree-2, nor prose that merely
     // mentions the path as a substring of a longer string value.
