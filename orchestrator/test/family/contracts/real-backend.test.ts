@@ -446,8 +446,11 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
-    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     // Unconditional install first (by construction), then project's scripts.
     // (installDeps chooses "ci" or "install" based on whether lockfile exists at the cwd path.)
     expect(calls[0].file).toBe("npm");
@@ -476,9 +479,12 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
 
-    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/orchestrator" }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     expect(calls.slice(1).map((c) => `${c.file} ${c.args.join(" ")}`)).toEqual([
       "npm run typecheck",
       "npm test",
@@ -518,10 +524,13 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
     // Note: pass verifyCwd=proj so run reaches install+scripts (isNode true by override).
     // We do NOT override depsInstalled (it no longer exists).
-    await new SpyBackend(opts("/clone/root", { verifyCwd: proj })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { verifyCwd: proj }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     // Install MUST run (first) even though node_modules existed + manifest mutated post-wave.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -555,8 +564,11 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
-    await new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { verifyCwd: "/clone/root/web" }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     // Unconditional install first (even if node_modules "existed"), then web's scripts.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -608,9 +620,12 @@ describe("RealFamilyBackend ReconcileGit predicates (#291 real git)", () => {
       async runVerifyForTest(): Promise<void> {
         await this.runVerifyCommands({ phase: "final", familyBase: "family/293-base" });
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
     // No verifyCwd; resolver undefined (no subproject) → root is Node → verify at root.
-    await new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined })).runVerifyForTest();
+    const backend = new SpyBackend(opts("/clone/root", { resolveVerifyCwd: () => undefined }));
+    await backend.runVerifyForTest();
+    await backend.waitForStamps();
     // Unconditional: install first, then test.
     expect(calls[0].file).toBe("npm");
     expect(["ci", "install"]).toContain(calls[0].args[0]);
@@ -2756,6 +2771,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       protected override packageScripts(_cwd: string): readonly string[] {
         return ["build", "test"];
       }
+      public waitForStamps(): Promise<void> { return this.waitForVerificationStamps(); }
     }
     const backend = new LongVerifyBackend(
       opts("/clone/root", { verifyCwd: "/clone/root/web" }),
@@ -2765,6 +2781,7 @@ describe("RealFamilyBackend runFamilyVerify (#291 tsc + vitest)", () => {
       phase: "final",
       familyBase: "family/293-base",
     })).resolves.toEqual({ ok: true });
+    await backend.waitForStamps();
 
     expect(commands.filter((command) => command.file === "npm")).toEqual([
       {
