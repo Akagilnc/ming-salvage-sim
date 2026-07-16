@@ -90,6 +90,31 @@ describe("#945 provisionWorkerAuth path-policy boundaries", () => {
     expect(leftovers).toEqual([]);
   });
 
+  it("family policy: config/AGENTS write failure after mkdtemp reclaims temp dir (no leak)", () => {
+    // O1: auth.json copy succeeds, but sidecars fail (missing homeEnvFile) —
+    // family must reclaim `${rolePrefix}-codex-auth-*` and return undefined.
+    const home = mkTemp("auth-945-fam-sidecar-fail-");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "auth.json"), '{"tokens":{"codex":"c"}}\n');
+    writeFileSync(join(home, ".sc-claude-token"), "claude-oauth-secret\n");
+    const missingHomeEnv = join(home, "does-not-exist-container-home-CLAUDE.md");
+
+    const auth = provisionWorkerAuth({
+      home,
+      homeEnvFile: missingHomeEnv,
+      pathPolicy: { kind: "family", rolePrefix: "cmr" },
+    });
+
+    expect(auth.codexAuthDir).toBeUndefined();
+    expect(auth.claudeToken).toBe("claude-oauth-secret");
+    const scRoot = join(home, ".sc-orchestrator");
+    const leftovers =
+      existsSync(scRoot)
+        ? readdirSync(scRoot).filter((name) => name.includes("-codex-auth-"))
+        : [];
+    expect(leftovers).toEqual([]);
+  });
+
   it("slice policy: missing host codex ⇒ still always-mounts stable issue codex dir with config + AGENTS", () => {
     const home = mkTemp("auth-945-slice-no-codex-");
     writeFileSync(join(home, ".sc-claude-token"), "claude-oauth-secret\n");
