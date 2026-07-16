@@ -18,6 +18,7 @@ import type {
   MergeRequest,
 } from "./family/types.js";
 import { findingIdentityKey } from "./findings.js";
+import { isJudgeSeat } from "./judgeStation.js";
 import {
   applyTightRoutePolicy,
   resolveRouteModels,
@@ -45,6 +46,7 @@ import type {
   StepOutput,
   StepSpec,
   WorkerLandingPayload,
+  WorkerOutput,
   WorkerResult,
   WorkerSpec,
   WorktreeHandle,
@@ -59,6 +61,39 @@ import type {
  * 岔路 1 A: StopReason is untouched). So the labels are now enumerated here
  * directly, decoupled from the collapsed classifier enum.
  */
+
+/** #919 live-judge green with residual cargo siblings for dogfood fixtures. */
+function judgeGreenOutput(
+  cargo: Record<string, unknown> = {},
+): WorkerOutput {
+  return {
+    kind: "judge",
+    status: "converged",
+    ...cargo,
+  } as WorkerOutput;
+}
+
+/**
+ * #919 CR N3: live judge continue for dogfood blocking scripts.
+ * Prefer this over residual kind:"cmr"+findingsCount (production residual is
+ * unusableResidualOpenCountPaper only; court never continues from open-count).
+ */
+function judgeContinueOutput(
+  findings: ReadonlyArray<Finding>,
+  cargo: Record<string, unknown> = {},
+): WorkerOutput {
+  return {
+    kind: "judge",
+    status: "continue",
+    findings,
+    findingDispositions: findings.map((f) => ({
+      identityKey: findingIdentityKey(f),
+      action: "live" as const,
+    })),
+    ...cargo,
+  } as WorkerOutput;
+}
+
 export type DogfoodReplayClassification =
   | "blocking"
   | "accepted_suppressed"
@@ -159,12 +194,24 @@ function finding(overrides: Partial<Finding>): Finding {
 }
 
 function cmrWorkerParserEvidence(result: WorkerResult): { cmrWorkerParserValid: true } {
-  if (result.kind !== "completed" || result.output.kind !== "cmr") {
-    throw new Error("dogfood CMR parser evidence requires a completed CMR output");
+  // #930 / #919 CR N3: live seat is kind:judge only. Residual unusable is
+  // kind:reviewer (unusableResidualOpenCountPaper); fixtures must not mint
+  // kind:cmr as a court closer.
+  if (
+    result.kind !== "completed" ||
+    (result.output.kind !== "judge" && result.output.kind !== "reviewer")
+  ) {
+    throw new Error(
+      "dogfood CMR parser evidence requires a completed kind:judge or kind:reviewer output",
+    );
   }
-  // The parser sees the worker payload; findingsCount is attached later from the
-  // stdout sentinel channel (or its structured-row fallback).
-  const { kind: _kind, findingsCount: _findingsCount, ...payload } = result.output;
+  // The parser sees the worker payload; live judge rides the T2 traffic fields.
+  const raw = result.output as unknown as {
+    readonly kind: string;
+    readonly findingsCount?: number;
+    readonly [key: string]: unknown;
+  };
+  const { kind: _kind, findingsCount: _findingsCount, ...payload } = raw;
   parseCmrOutcome(`<cmr>${JSON.stringify(payload)}</cmr>`);
   return { cmrWorkerParserValid: true };
 }
@@ -189,28 +236,29 @@ async function familyClassificationScenario(input: {
    */
   readonly blockingCoderFixFails?: boolean;
 }): Promise<DogfoodReplayScenario> {
-  // #875 Opus: suppressions-only success is converged:true. Blocking fix_now
-  // stays !converged so the fix-loop / historical-accident path still aborts.
+  // #875 / #919 CR N3: suppressions-only success is typed kind:judge converged.
+  // Blocking fix_now uses live kind:judge continue (never residual kind:cmr).
   const isSuppressionOnly =
     input.finding.action === "wont_fix" || input.finding.action === "rejected";
   const cmrOutput: WorkerResult = {
     kind: "completed",
-    output: {
-      kind: "cmr",
-      ...(isSuppressionOnly
-        ? { converged: true as const }
-        : {
-            converged: false as const,
-            reason: "dogfood family CMR classification replay",
-          }),
-      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
-      claimedFixedFindingIdentityKeys: [],
-      priorFindingDispositions: [],
-      ...CMR_EVIDENCE,
-      findings: [input.finding],
-      findingsCount: input.findingsCount,
-    },
+    output: isSuppressionOnly
+      ? judgeGreenOutput({
+          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
+          findings: [input.finding],
+        })
+      : judgeContinueOutput([input.finding], {
+          reason: "dogfood family CMR classification replay",
+          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+          claimedFixedFindingIdentityKeys: [],
+          priorFindingDispositions: [],
+          ...CMR_EVIDENCE,
+        }),
   };
+  void input.findingsCount;
   // #604 slice 2 / ADR 0062: a BLOCKING family finding no longer terminates the
   // family on its content classification — the runner counts it and routes it
   // through coder-fix (recording a `cmr_reviewed` row that carries the
@@ -399,10 +447,11 @@ class DogfoodSingleSliceBackend implements Backend {
 
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.runStepCalls.push(spec.id);
-    if (spec.role === "reviewer") {
+    // #919 S2: sole isJudgeSeat predicate (not role reviewer|verify OR).
+    if (isJudgeSeat({ id: spec.id })) {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
-      return scripted ?? { kind: "reviewer", findings: [], findingsCount: 0 };
+      return scripted ?? { kind: "judge", status: "converged" };
     }
     const scripted =
       spec.id === "S5" ? this.coderOutputs[this.coderAttempt] : undefined;
@@ -418,12 +467,14 @@ class DogfoodSingleSliceBackend implements Backend {
   ): Promise<WorkerResult> {
     this.dispatched.push(`${spec.id}:${spec.kind}`);
     this.dispatchedModels.push(`${spec.id}:${spec.model}`);
-    if (spec.kind === "reviewer") {
+    // #919 R7: sole isJudgeSeat (S3/S6) — not dual kind reviewer|verify OR.
+    // S9 online-review verify is not a judge seat.
+    if (isJudgeSeat({ id: spec.id })) {
       const scripted = this.reviewerOutputs[this.reviewerAttempt];
       this.reviewerAttempt += 1;
       return {
         kind: "completed",
-        output: scripted ?? { kind: "reviewer", findings: [], findingsCount: 0 },
+        output: scripted ?? { kind: "judge", status: "converged" },
       };
     }
     const scripted =
@@ -538,11 +589,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
       const priorKeys = ctx.priorCmrFindingIdentityKeys ?? [];
       return {
         kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: true,
-          findingsCount: 0,
-          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+        output: judgeGreenOutput({          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
           claimedFixedFindingIdentityKeys: priorKeys,
           priorFindingDispositions: priorKeys.map((identityKey) => ({
             identityKey,
@@ -550,7 +597,8 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
             reason: "scripted dogfood re-review verified the family coder-fix",
           })),
           ...CMR_EVIDENCE,
-        },
+        
+      }),
       };
     }
     if (spec.kind === "coder") {
@@ -683,12 +731,7 @@ async function runnerAnsweredResumeReplay(): Promise<SeamReplay> {
       }),
     ],
   }, [
-    {
-      kind: "reviewer", findings: [], findingsCount: 0,
-        priorFindingDispositions: [
-        { identityKey: activeKey, status: "verified-closed" },
-      ],
-    },
+    { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 307, backend });
   if (result.status !== "success") {
@@ -748,12 +791,7 @@ async function runnerShapeChangedProgressReplay(): Promise<SeamReplay> {
           { identityKey: originalKey, status: "verified-closed" },
         ],
       },
-      {
-        kind: "reviewer", findings: [], findingsCount: 0,
-        priorFindingDispositions: [
-          { identityKey: changedKey, status: "verified-closed" },
-        ],
-      },
+      { kind: "judge", status: "converged" },
     ],
     [
       {
@@ -890,7 +928,10 @@ async function runnerReviewerEscalationReplay(input: {
 }): Promise<SeamReplay> {
   const backend = new DogfoodSingleSliceBackend(undefined, [
     {
-      kind: "reviewer", findings: [], findingsCount: 0,
+      kind: "judge",
+      status: "escalate",
+      reason: input.escalation.reason,
+      diagnosis: input.escalation.diagnosis,
       escalate: input.escalation,
     },
   ]);
@@ -900,7 +941,9 @@ async function runnerReviewerEscalationReplay(input: {
       `dogfood runner disposition replay ${input.mechanism} ended ${result.status}`,
     );
   }
-  if (result.stopSummary.reason !== "spec_conflict") {
+  // #919 CR U2 / ADR 0132: judge escalate parks as decision_gate_park
+  // (same family as decision_gate — not a third stop token / not spec_conflict).
+  if (result.stopSummary.reason !== "decision_gate_park") {
     throw new Error(
       `dogfood runner disposition replay ${input.mechanism} stopped with ${result.stopSummary.reason}`,
     );
@@ -1007,16 +1050,13 @@ module_scope:
   // is a successful envelope (no fix_now), not !converged + pass leak.
   const cmrOutput: WorkerResult = {
     kind: "completed",
-    output: {
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
-      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+    output: judgeGreenOutput({      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       ...CMR_EVIDENCE,
       findings: [declaredFollowUpFinding],
-    },
+    
+      }),
   };
   const backend = new DogfoodCmrFamilyBackend("module-declaration-head", [], [
     cmrOutput,
@@ -1093,20 +1133,17 @@ async function familyAttributionReplay(
     location: "orchestrator/src/runner.ts:307",
     action: "fix_now",
   });
+  const attributedContinue = judgeContinueOutput([attributedFinding], {
+    reason: "child attribution must stay local",
+    successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+    claimedFixedFindingIdentityKeys: [],
+    priorFindingDispositions: [],
+    ...CMR_EVIDENCE,
+  });
   const backend = new DogfoodCmrFamilyBackend("attribution-head", [], [
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: false,
-        findingsCount: 1,
-        reason: "child attribution must stay local",
-        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
-        claimedFixedFindingIdentityKeys: [],
-        priorFindingDispositions: [],
-        ...CMR_EVIDENCE,
-        findings: [attributedFinding],
-      },
+      output: attributedContinue,
     },
   ]);
   const run = await runVerifyCmr({
@@ -1139,17 +1176,7 @@ async function familyAttributionReplay(
       reviewFixRereviewVisible: true,
       ...cmrWorkerParserEvidence({
         kind: "completed",
-        output: {
-          kind: "cmr",
-          converged: false,
-          findingsCount: 1,
-          reason: "child attribution must stay local",
-          successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
-          claimedFixedFindingIdentityKeys: [],
-          priorFindingDispositions: [],
-          ...CMR_EVIDENCE,
-          findings: [attributedFinding],
-        },
+        output: attributedContinue,
       }),
     },
   };
@@ -1165,18 +1192,14 @@ async function cmrReviewerSelfFixAttemptReplay(): Promise<SeamReplay> {
   });
   const cmrOutput: WorkerResult = {
     kind: "completed",
-    output: {
-      kind: "cmr",
-      converged: false,
-      findingsCount: 1,
+    output: judgeContinueOutput([selfFixFinding], {
       reason:
         "blocking findings remain; reviewer says it is moving into the fix loop before all review legs completed",
       successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       ...CMR_EVIDENCE,
-      findings: [selfFixFinding],
-    },
+    }),
   };
 
   class ReviewerSelfFixBackend extends DogfoodCmrFamilyBackend {
@@ -1269,30 +1292,24 @@ async function legacyDispositionParserReplay(): Promise<SeamReplay> {
   const backend = new DogfoodCmrFamilyBackend("legacy-disposition-head", [], [
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: outcome.converged,
-        findingsCount: 0,
-        successfulLegs: outcome.successfulLegs,
+      output: judgeGreenOutput({        successfulLegs: outcome.successfulLegs,
         skippedLegs: outcome.skippedLegs,
         claimedFixedFindingIdentityKeys: outcome.claimedFixedFindingIdentityKeys,
         priorFindingDispositions: outcome.priorFindingDispositions,
         evidencePaths: outcome.evidencePaths,
-      },
+      
+      }),
     },
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: true,
-        findingsCount: 0,
-        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+      output: judgeGreenOutput({        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [identityKey],
         priorFindingDispositions: [
           { identityKey, status: "verified-closed" },
         ],
         ...CMR_EVIDENCE,
-      },
+      
+      }),
     },
     {
       kind: "completed",
@@ -1354,31 +1371,25 @@ async function finalLegacyDispositionReplay(): Promise<SeamReplay> {
   const backend = new DogfoodCmrFamilyBackend("final-legacy-head", [], [
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: true,
-        findingsCount: 0,
-        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+      output: judgeGreenOutput({        successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
         claimedFixedFindingIdentityKeys: [identityKey],
         priorFindingDispositions: [
           { identityKey, status: "verified-closed" },
         ],
         ...CMR_EVIDENCE,
-      },
+      
+      }),
     },
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: parsedFinal.converged,
-        findingsCount: 0,
-        successfulLegs: parsedFinal.successfulLegs,
+      output: judgeGreenOutput({        successfulLegs: parsedFinal.successfulLegs,
         skippedLegs: parsedFinal.skippedLegs,
         claimedFixedFindingIdentityKeys:
           parsedFinal.claimedFixedFindingIdentityKeys,
         priorFindingDispositions: parsedFinal.priorFindingDispositions,
         evidencePaths: parsedFinal.evidencePaths,
-      },
+      
+      }),
     },
     {
       kind: "completed",
@@ -1593,27 +1604,21 @@ async function routeAccountingReplay(): Promise<SeamReplay> {
   const backend = new DogfoodCmrFamilyBackend("route-accounting-head", [], [
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: true,
-        findingsCount: 0,
-        successfulLegs: [...declaredLegs, rejectedDefaultLeg],
+      output: judgeGreenOutput({        successfulLegs: [...declaredLegs, rejectedDefaultLeg],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
-      },
+      
+      }),
     },
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: true,
-        findingsCount: 0,
-        successfulLegs: [...declaredLegs, rejectedDefaultLeg],
+      output: judgeGreenOutput({        successfulLegs: [...declaredLegs, rejectedDefaultLeg],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
-      },
+      
+      }),
     },
     {
       kind: "completed",
@@ -1702,12 +1707,7 @@ async function closurePositiveReplay(): Promise<SeamReplay> {
   const key = findingIdentityKey(closureFinding);
   const backend = new DogfoodSingleSliceBackend(undefined, [
     { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
-    {
-      kind: "reviewer", findings: [], findingsCount: 0,
-        priorFindingDispositions: [
-        { identityKey: key, status: "verified-closed" },
-      ],
-    },
+    { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
   if (result.status !== "success") {
@@ -1743,15 +1743,12 @@ function cmrClosureWorkerResult(input: {
 }): WorkerResult {
   return {
     kind: "completed",
-    output: {
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
-      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+    output: judgeGreenOutput({      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: input.claimedFixedFindingIdentityKeys,
       priorFindingDispositions: input.priorFindingDispositions,
       ...CMR_EVIDENCE,
-    },
+    
+      }),
   };
 }
 
@@ -1894,7 +1891,7 @@ async function closureContextMissingReplay(): Promise<SeamReplay> {
   });
   const backend = new DogfoodSingleSliceBackend(undefined, [
     { kind: "reviewer", findings: [closureFinding], findingsCount: 1 },
-    { kind: "reviewer", findings: [], findingsCount: 0 },
+    { kind: "judge", status: "converged" },
   ]);
   const result = await runOrchestrator({ issueNumber: 376, backend });
   if (result.status !== "success") {
@@ -1927,16 +1924,13 @@ async function familyAcceptedSuppressionSummaryReplay(input: {
   // #875 Opus: suppressions-only success is converged:true, never !converged pass.
   const cmrOutput: WorkerResult = {
     kind: "completed",
-    output: {
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
-      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+    output: judgeGreenOutput({      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       ...CMR_EVIDENCE,
       findings: [input.finding],
-    },
+    
+      }),
   };
   const backend = new DogfoodCmrFamilyBackend("suppression-head", [], [
     cmrOutput,
@@ -2001,7 +1995,7 @@ async function routeEnvMismatchReplay(): Promise<SeamReplay> {
   const failure = abort?.reason ?? "";
   if (
     result.ok ||
-    abort?.stopSummary?.reason !== "infra_failure" ||
+    abort?.stopSummary?.reason !== "cmr_failed" ||
     !failure.includes("must be comma-separated CMR leg slugs") ||
     !abort.stopSummary.repairHint?.includes("route environment")
   ) {
@@ -2101,29 +2095,23 @@ async function providerStrongLegPassReplay(input: {
   const backend = new DogfoodCmrFamilyBackend("provider-pass-head", [], [
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: true,
-        findingsCount: 0,
-        successfulLegs: ["gpt-5.6-sol"],
+      output: judgeGreenOutput({        successfulLegs: ["gpt-5.6-sol"],
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
-      },
+      
+      }),
     },
     {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        converged: true,
-        findingsCount: 0,
-        successfulLegs: ["gpt-5.6-sol"],
+      output: judgeGreenOutput({        successfulLegs: ["gpt-5.6-sol"],
         skippedLegs: [{ slug: "agy", reason: "provider quota unavailable" }],
         claimedFixedFindingIdentityKeys: [],
         priorFindingDispositions: [],
         ...CMR_EVIDENCE,
-      },
+      
+      }),
     },
     {
       kind: "completed",
@@ -2173,15 +2161,12 @@ async function providerStrongLegPassReplay(input: {
 async function familyShipFailedAfterCmrReplay(): Promise<SeamReplay> {
   const convergedCmr: WorkerResult = {
     kind: "completed",
-    output: {
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
-      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+    output: judgeGreenOutput({      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       ...CMR_EVIDENCE,
-    },
+    
+      }),
   };
   const backend = new DogfoodCmrFamilyBackend("family-head", [], [
     convergedCmr,
@@ -2197,7 +2182,7 @@ async function familyShipFailedAfterCmrReplay(): Promise<SeamReplay> {
     familyHeadAfter: "verified-head",
   });
   const abort = backend.ledger.find((entry) => entry.status === "aborted");
-  if (result.ok || abort?.stopSummary?.reason !== "infra_failure") {
+  if (result.ok || abort?.stopSummary?.reason !== "ship_failed") {
     throw new Error("dogfood family ship-failed replay did not exhaust durable retries");
   }
   return {
@@ -2232,15 +2217,17 @@ async function familyFinalVerifyModuleNotFoundReplay(): Promise<SeamReplay> {
     familyHeadAfter: "family-head",
   });
   const abort = backend.ledger.find((entry) => entry.status === "aborted");
-  if (result.ok || abort?.stopSummary?.reason !== "infra_failure") {
-    throw new Error("dogfood family verify MODULE_NOT_FOUND replay did not abort as infra failure");
+  if (result.ok || abort?.stopSummary?.reason !== "verify_failed") {
+    throw new Error(
+      "dogfood family verify MODULE_NOT_FOUND replay did not abort as verify_failed",
+    );
   }
   return {
     stopSummary: abort.stopSummary,
     sourceEvidence: {
       seam: "family_verify_cmr",
       mechanism: "verify_dependency_failure",
-      classification: "infra_failure",
+      classification: "verify_failed",
       errorCode: "MODULE_NOT_FOUND",
       repairHint: abort.stopSummary.repairHint,
     },
@@ -2250,15 +2237,12 @@ async function familyFinalVerifyModuleNotFoundReplay(): Promise<SeamReplay> {
 async function familyShipReviewDegradedReplay(): Promise<SeamReplay> {
   const convergedCmr: WorkerResult = {
     kind: "completed",
-    output: {
-      kind: "cmr",
-      converged: true,
-      findingsCount: 0,
-      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
+    output: judgeGreenOutput({      successfulLegs: [...DEFAULT_SUCCESSFUL_CMR_LEGS],
       claimedFixedFindingIdentityKeys: [],
       priorFindingDispositions: [],
       ...CMR_EVIDENCE,
-    },
+    
+      }),
   };
   const backend = new DogfoodCmrFamilyBackend("family-head", [], [
     convergedCmr,

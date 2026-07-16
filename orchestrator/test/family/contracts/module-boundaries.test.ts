@@ -80,7 +80,7 @@ class ChildBackend implements Backend {
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.markRunStep();
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(): Promise<void> {}
 }
@@ -151,7 +151,6 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
           "[orchestrator:family] model route lineup",
           "route=normal",
           "coder=gpt-5.6-terra",
-          "reviewer=gpt-5.6-sol",
           "coderFix=gpt-5.6-terra",
           "ship=sonnet",
           "merger=sonnet",

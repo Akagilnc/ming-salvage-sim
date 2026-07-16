@@ -51,7 +51,7 @@ class RecordingBackend implements Backend {
     if (spec.role === "coder") {
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
 
   async fetchIssueMeta(issueNumber: number): Promise<IssueMeta> {
@@ -89,7 +89,7 @@ class RecordingBackend implements Backend {
     if (spec.role === "coder") {
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
 
   // #249 integration: writeLedger is part of the Backend seam; this fake only
@@ -176,14 +176,15 @@ describe("StepSpec role contract + soul injection (#253)", () => {
     expect(s2.maxIter!).toBe(1);
   });
 
-  // ── AC-4c: completionSignal present on every agent step ──
+  // ── AC-4c (#928): completionSignal retired — clean exit + sidecar ──
 
-  it("every agent step carries a completionSignal", async () => {
+  it("no agent step carries a completionSignal field", async () => {
     const specs = await runAndCapture();
     for (const spec of specs) {
-      expect(spec.completionSignal).toBeDefined();
-      expect(typeof spec.completionSignal).toBe("string");
-      expect((spec.completionSignal as string).length).toBeGreaterThan(0);
+      expect(Object.prototype.hasOwnProperty.call(spec, "completionSignal")).toBe(
+        false,
+      );
+      expect(spec.maxIter).toBe(1);
     }
   });
 

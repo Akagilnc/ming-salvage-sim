@@ -95,8 +95,8 @@ class ConfigurableBackend implements Backend {
     const override = this.runStepOutputs.get(spec.id);
     if (override !== undefined) return override;
 
-    if (spec.role === "reviewer") {
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+    if ((spec.role === "reviewer" || spec.role === "verify")) {
+      return { kind: "judge", status: "converged" };
     }
     // Default output: the coder worker committed.
     return { kind: "coder", committed: true, commitsAdded: 1 };

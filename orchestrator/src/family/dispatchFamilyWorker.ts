@@ -17,8 +17,8 @@
  * NOTE the DispatchContext for a family worker carries `familyBase` (the caller
  * has only the base string, no single-slice worktree path — PRD #330 R2);
  * `worktree` is optional / backend-inferred. The WorkerResult is the same
- * discriminated union: a cmr `red` verdict is `completed` (with a CmrResult
- * payload), NOT `failed`.
+ * discriminated union: a cmr residual red is `completed` with
+ * {@link unusableResidualOpenCountPaper} (kind:"reviewer"), NOT `failed`.
  */
 
 import type { ChildProcess } from "node:child_process";
@@ -50,11 +50,17 @@ import {
 } from "../modelRoutes.js";
 import { offlineReviewLoopDispatchAdmissible } from "../evidenceAdmissibility.js";
 import { skeletonReviewLoopWorkerResult } from "../reviewLoopOutcome.js";
+import { unusableResidualOpenCountPaper } from "../judgeStation.js";
 import type {
   FamilyBackend,
   IntegratedCmrPass,
   IntegratedCmrResult,
 } from "./types.js";
+
+// #919 CR N2: residualIntegratedCmrToJudgeOutput DELETED — it always returned
+// undefined (family residual never mints continue). Production residual maps
+// to unusableResidualOpenCountPaper at cmrOutcomeToWorkerResult; single-slice
+// historical resume alone uses projectResidualReviewerToJudge.
 
 const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
   "python",
@@ -72,8 +78,8 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  *   - `session: "fresh"` = start a NEW pass session (not a crash/escalate
  *     `resume`, which skips git-truthing). `verifyCmr` dispatches one fresh worker
  *     per pass and gates correctness on completeness.
- *   - `role: "reviewer"` and `contextRetention: "clean"` = this worker reports
- *     review artifacts/outcome only. Blocking findings return to the runner; a
+ *   - `role: "verify"` + `soul: "verify"` and `contextRetention: "clean"` =
+ *     judge-seat identity (#919 S2). Blocking findings return to the runner; a
  *     separate coder-fix worker commits repairs.
  *   - `maxIter: 1` = one reviewer pass. Fresh re-review is a new runner dispatch,
  *     not an in-worker fix loop.
@@ -89,7 +95,8 @@ export function cmrWorkerSpec(
   return {
     id: "S3",
     kind: "cmr",
-    role: "reviewer",
+    // #919 S2: seat identity verify; kind stays cmr.
+    role: "verify",
     host: workerHostForModel(model),
     session,
     contextRetention: "clean",
@@ -98,11 +105,12 @@ export function cmrWorkerSpec(
       pass === "completeness"
         ? "integrated_cmr_completeness.md"
         : "integrated_cmr_correctness.md",
-    completionSignal: "CMR_STEP_COMPLETE",
     maxIter: 1,
     model,
     cmrReviewLegs: route?.legCollections.cmrReview ?? activeCmrReviewLegs(),
-    soul: "cmr",
+    // #930: family court is verify-judge traffic (same soul as single-slice S3/S6).
+    // kind stays "cmr" for dispatch/routing; soul is the judge traffic identity.
+    soul: "verify",
     toolchain: [],
   };
 }
@@ -119,8 +127,7 @@ export function familyCoderFixWorkerSpec(route?: ResolvedModelRoute): WorkerSpec
     contextRetention: "retain",
     skill: "/tdd",
     promptFile: "coder_fix.md",
-    completionSignal: "CODER_STEP_COMPLETE",
-    // #899 / ADR 0128: one single-iteration Sandcastle run per selected seat.
+    // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat.
     maxIter: 1,
     model,
     soul: "coder",
@@ -140,9 +147,8 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
     contextRetention: "clean",
     skill: "gstack-ship",
     promptFile: "family_ship.md",
-    completionSignal: "SHIP_STEP_COMPLETE",
-    // #899 / ADR 0128: single-iteration seat; gstack-ship reruns live inside the
-    // skill invocation, not as an outer Sandcastle multi-iter budget.
+    // #899 / ADR 0128 / #928: single-iteration seat; gstack-ship reruns live
+    // inside the skill invocation, not as an outer Sandcastle multi-iter budget.
     maxIter: 1,
     model,
     // The family ship worker runs under the dedicated "ship" soul (delivery
@@ -162,7 +168,8 @@ export function familyShipWorkerSpec(route?: ResolvedModelRoute): WorkerSpec {
  *
  * Returns the discriminated {@link WorkerResult}. The legacy review wrapper
  * yields `completed` from `runIntegratedCmr`:
- *   - cmr → `completed` with a {@link CmrResult} payload (`red` IS `completed`).
+ *   - cmr residual → `completed` + {@link unusableResidualOpenCountPaper}
+ *     (kind:"reviewer"; never kind:"cmr" dual).
  *   - coder-fix → requires a backend implementing the unified seam (no legacy
  *     family method can safely make persistent fix commits).
  *   - family ship → requires the unified seam.
@@ -276,7 +283,6 @@ export async function dispatchFamilyWorkerWithMonitor(
         args: cliSpec.args,
         logDir: cliSpec.logDir,
         poolId: cliSpec.poolId,
-        completionSignal: cliSpec.completionSignal,
         stepId: cliSpec.stepId,
         ...(cliSpec.cwd !== undefined ? { cwd: cliSpec.cwd } : {}),
         ...(cliSpec.env !== undefined ? { env: cliSpec.env } : {}),
@@ -437,32 +443,12 @@ export async function legacyDispatchFamilyWorker(
         ? { priorCmrFindingIdentityKeys: ctx.priorCmrFindingIdentityKeys }
         : {}),
     });
-    // A `red` (non-converged) verdict is `completed` with payload — NOT `failed`
-    // (PRD #330 R2). The verify-cmr hook reads `converged` off the payload.
+    // #919 E / CR S1: residual IntegratedCmrResult never becomes judge continue.
+    // One shared unusable paper only (court fail-loud; seat SO owns re-furnace).
+    void cmr;
     return {
       kind: "completed",
-      output: {
-        kind: "cmr",
-        ...(ctx.cmrPass !== undefined ? { cmrPass: ctx.cmrPass } : {}),
-        converged: cmr.converged,
-        ...(cmr.findingsCount !== undefined
-          ? { findingsCount: cmr.findingsCount }
-          : {}),
-        ...(cmr.reason !== undefined ? { reason: cmr.reason } : {}),
-        ...(cmr.successfulLegs !== undefined ? { successfulLegs: cmr.successfulLegs } : {}),
-        ...(cmr.skippedLegs !== undefined ? { skippedLegs: cmr.skippedLegs } : {}),
-        ...(cmr.claimedFixedFindingIdentityKeys !== undefined
-          ? {
-              claimedFixedFindingIdentityKeys:
-                cmr.claimedFixedFindingIdentityKeys,
-            }
-          : {}),
-        ...(cmr.priorFindingDispositions !== undefined
-          ? { priorFindingDispositions: cmr.priorFindingDispositions }
-          : {}),
-        ...(cmr.findings !== undefined ? { findings: cmr.findings } : {}),
-        ...(cmr.evidencePaths !== undefined ? { evidencePaths: cmr.evidencePaths } : {}),
-      },
+      output: unusableResidualOpenCountPaper(),
     };
   }
 

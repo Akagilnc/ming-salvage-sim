@@ -18,8 +18,8 @@ describe("effortForLiveOfficer — shared verify/CMR xhigh policy", () => {
     );
   });
 
-  it("returns xhigh for VERIFY_CODEX_SLUG + cmr soul (both backends)", () => {
-    expect(effortForLiveOfficer(VERIFY_CODEX_SLUG, { soul: "cmr" })).toBe(
+  it("returns xhigh for VERIFY_CODEX_SLUG + verify soul (family CMR / both backends)", () => {
+    expect(effortForLiveOfficer(VERIFY_CODEX_SLUG, { soul: "verify" })).toBe(
       "xhigh",
     );
   });
@@ -35,7 +35,7 @@ describe("effortForLiveOfficer — shared verify/CMR xhigh policy", () => {
 
   it("returns undefined for non-verify slug even with verify/cmr context", () => {
     expect(
-      effortForLiveOfficer(CODER_CODEX_SLUG, { role: "verify", soul: "cmr" }),
+      effortForLiveOfficer(CODER_CODEX_SLUG, { role: "verify", soul: "verify" }),
     ).toBeUndefined();
   });
 

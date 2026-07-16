@@ -10,6 +10,8 @@
  * prose. Thin not_converged is ordinary three-channel not_converged, not court
  * death. First-pass self-report already survived under #861.
  *
+ * #919 CR N3: fixtures emit live kind:judge continue (not residual kind:cmr).
+ *
  * Driven entirely by a zero-container injected-seam fake.
  */
 
@@ -24,11 +26,12 @@ import type {
 } from "../../src/family/types.js";
 import type {
   DispatchContext,
-  CmrResult,
   Finding,
+  JudgeResult,
   WorkerResult,
   WorkerSpec,
 } from "../../src/types.js";
+import { liveCmrJudgeContinue } from "../helpers/judge-fixtures.js";
 
 const CMR_EVIDENCE = {
   evidencePaths: ["cmr/review-summary.json"],
@@ -60,7 +63,7 @@ class ScriptedCmrBackend implements FamilyBackend {
   readonly dispatchedNonCmrKinds: WorkerSpec["kind"][] = [];
   currentFamilyHead = "head-1";
 
-  constructor(private readonly cmrOutput: CmrResult) {}
+  constructor(private readonly cmrOutput: JudgeResult) {}
 
   async mergeChildIntoFamilyBase(
     _child: MergeRequest,
@@ -93,18 +96,17 @@ class ScriptedCmrBackend implements FamilyBackend {
 
 describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
   it("a well-formed still-active prior key (claimed + disposed still-active) routes to coder-fix, NOT contract_drift", async () => {
-    const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: false,
-      reason: "prior fix did not hold",
-      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      claimedFixedFindingIdentityKeys: [PROTECTED_PRIOR_KEY],
-      priorFindingDispositions: [
-        { identityKey: PROTECTED_PRIOR_KEY, status: "still-active" },
-      ],
-      findings: [STILL_ACTIVE_PRIOR],
-      ...CMR_EVIDENCE,
-    });
+    const backend = new ScriptedCmrBackend(
+      liveCmrJudgeContinue([STILL_ACTIVE_PRIOR], {
+        reason: "prior fix did not hold",
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        claimedFixedFindingIdentityKeys: [PROTECTED_PRIOR_KEY],
+        priorFindingDispositions: [
+          { identityKey: PROTECTED_PRIOR_KEY, status: "still-active" },
+        ],
+        ...CMR_EVIDENCE,
+      }),
+    );
 
     const result = await runVerifyCmr({
       phase: "final",
@@ -114,7 +116,7 @@ describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
       priorCmrFindingIdentityKeys: [PROTECTED_PRIOR_KEY],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(
       backend.ledger.some(
@@ -128,16 +130,15 @@ describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
   });
 
   it("#875: a prior key left completely unaccounted still routes new blocker to coder-fix", async () => {
-    const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: false,
-      reason: "fresh re-review found a new blocker",
-      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      claimedFixedFindingIdentityKeys: [],
-      priorFindingDispositions: [],
-      findings: [NEW_BLOCKER],
-      ...CMR_EVIDENCE,
-    });
+    const backend = new ScriptedCmrBackend(
+      liveCmrJudgeContinue([NEW_BLOCKER], {
+        reason: "fresh re-review found a new blocker",
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
+      }),
+    );
 
     const result = await runVerifyCmr({
       phase: "final",
@@ -147,7 +148,7 @@ describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
       priorCmrFindingIdentityKeys: [PROTECTED_PRIOR_KEY],
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(
       backend.ledger.some(
@@ -163,18 +164,17 @@ describe("#604 r4 D1 / #875 — still-active prior routes to coder-fix", () => {
 
 describe("#604 r4 D3 / #861/#875 — first-pass self-report is not court death", () => {
   it("#861: first pass (no protected keys) + new blocker + self-reported claimedFixed routes to coder-fix like any blocking round", async () => {
-    const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: false,
-      reason: "fresh review",
-      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      claimedFixedFindingIdentityKeys: ["some|self|reported|key"],
-      priorFindingDispositions: [
-        { identityKey: "some|self|reported|key", status: "verified-closed" },
-      ],
-      findings: [NEW_BLOCKER],
-      ...CMR_EVIDENCE,
-    });
+    const backend = new ScriptedCmrBackend(
+      liveCmrJudgeContinue([NEW_BLOCKER], {
+        reason: "fresh review",
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        claimedFixedFindingIdentityKeys: ["some|self|reported|key"],
+        priorFindingDispositions: [
+          { identityKey: "some|self|reported|key", status: "verified-closed" },
+        ],
+        ...CMR_EVIDENCE,
+      }),
+    );
 
     const result = await runVerifyCmr({
       phase: "final",
@@ -183,7 +183,7 @@ describe("#604 r4 D3 / #861/#875 — first-pass self-report is not court death",
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
     expect(backend.ledger).not.toContainEqual(
       expect.objectContaining({
@@ -194,16 +194,15 @@ describe("#604 r4 D3 / #861/#875 — first-pass self-report is not court death",
   });
 
   it("first pass (no protected keys) + new blocker + NO closure payload still routes to coder-fix", async () => {
-    const backend = new ScriptedCmrBackend({
-      kind: "cmr",
-      converged: false,
-      reason: "fresh review",
-      successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
-      claimedFixedFindingIdentityKeys: [],
-      priorFindingDispositions: [],
-      findings: [NEW_BLOCKER],
-      ...CMR_EVIDENCE,
-    });
+    const backend = new ScriptedCmrBackend(
+      liveCmrJudgeContinue([NEW_BLOCKER], {
+        reason: "fresh review",
+        successfulLegs: ["opus", "gpt-5.6-sol", "agy"],
+        claimedFixedFindingIdentityKeys: [],
+        priorFindingDispositions: [],
+        ...CMR_EVIDENCE,
+      }),
+    );
 
     const result = await runVerifyCmr({
       phase: "final",
@@ -212,7 +211,7 @@ describe("#604 r4 D3 / #861/#875 — first-pass self-report is not court death",
       familyHeadAfter: "head-1",
     });
 
-    expect(result).toEqual({ ok: false, ran: true });
+    expect(result).toMatchObject({ ok: false, ran: true });
     expect(backend.dispatchedNonCmrKinds).toEqual(["coder", "coder", "coder"]);
   });
 });

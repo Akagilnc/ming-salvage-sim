@@ -41,7 +41,6 @@ import {
   mergerOutcomeFromResult,
   type MergerAuth,
   parseCmrOutcome,
-  parseMergerOutcome,
   REFERENCED_FAMILY_PROMPT_FILES,
   RealFamilyBackend,
   type RealFamilyBackendOptions,
@@ -124,15 +123,14 @@ describe("RealFamilyBackend live officer effort", () => {
   const liveSpec = (overrides: Partial<WorkerSpec>): WorkerSpec => ({
     id: "S3",
     kind: "cmr",
-    role: "reviewer",
+    role: "verify",
     host: "claude",
     session: "fresh",
     contextRetention: "clean",
     promptFile: "integrated_cmr_completeness.md",
-    completionSignal: "CMR_STEP_COMPLETE",
     maxIter: 1,
     model: "gpt-5.6-sol",
-    soul: "cmr",
+    soul: "verify",
     toolchain: [],
     ...overrides,
   });
@@ -142,7 +140,7 @@ describe("RealFamilyBackend live officer effort", () => {
     const commandFor = (spec: WorkerSpec) =>
       backend.agentForLiveSpec(spec).buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
 
-    expect(commandFor(liveSpec({ soul: "cmr" }))).toContain(
+    expect(commandFor(liveSpec({ soul: "verify" }))).toContain(
       'model_reasoning_effort="xhigh"',
     );
     expect(
@@ -924,14 +922,14 @@ describe("RealFamilyBackend resolveMergeConflict (#291 sc.run merger seam)", () 
     ).resolves.toMatchObject({ conflicted: true });
   });
 
-  it("a sparse merger decision bell fails the Action instead of inventing a park", () => {
-    // #899: empty escalate on the typed decision signal fails closed for #598.
+  it("a sparse merger T2 escalate fails the Action instead of inventing a park", () => {
+    // #899 / #919 CR T2: empty escalate on the thin merger envelope fails closed.
     expect(() =>
       mergerOutcomeFromResult({
-        output: { escalate: {} },
+        output: { station: "merger", status: "escalate" },
         stdout: "",
       }),
-    ).toThrow(/malformed decision gate/);
+    ).toThrow(/illegal merger station receipt/);
   });
 
   it("agent CLAIMED resolved but left the merge in-progress → still-conflicted result (never looks clean)", async () => {
@@ -1122,109 +1120,139 @@ describe("RealFamilyBackend mergerSandbox soul injection (#291 F28 / ADR 0022)",
   });
 });
 
-describe("parseMergerOutcome (#291 pure)", () => {
-  it("parses a resolved tag", () => {
+// #919 CR N1: parseMergerOutcome dual DELETED. Resolve cargo + T2 escalate
+// live only on mergerOutcomeFromResult / decodeMergerEnvelope.
+describe("merger resolve cargo (#291 pure, T2-only)", () => {
+  it("parses a resolved stdout cargo tag (no typed envelope)", () => {
     expect(
-      parseMergerOutcome('blah\n<merger>{"resolved": true, "tradeoffs": ""}</merger>\nMERGER_STEP_COMPLETE'),
+      mergerOutcomeFromResult({
+        stdout:
+          'blah\n<merger>{"resolved": true, "tradeoffs": ""}</merger>\nMERGER_STEP_COMPLETE',
+      }),
     ).toEqual({ resolved: true });
   });
-  it("parses an escalate tag, surfacing the reason", () => {
-    const out = parseMergerOutcome(
-      '<merger>{"resolved": false, "escalate": {"reason": "ambiguous", "diagnosis": "needs decision"}}</merger>',
-    );
+  it("stdout escalate is cargo-stripped, not a fate bell (T2 owns escalate)", () => {
+    // #919 CR N1: nested escalate on stdout never parks — fate is T2 envelope.
+    const out = mergerOutcomeFromResult({
+      stdout:
+        '<merger>{"resolved": false, "escalate": {"reason": "ambiguous", "diagnosis": "needs decision"}}</merger>',
+    });
     expect(out.resolved).toBe(false);
-    expect(out.reason).toContain("ambiguous");
+    expect(out.escalation).toBeUndefined();
   });
   it("no tag → not resolved", () => {
-    expect(parseMergerOutcome("nothing here").resolved).toBe(false);
+    expect(mergerOutcomeFromResult({ stdout: "nothing here" }).resolved).toBe(
+      false,
+    );
   });
   it("takes the LAST tag when the agent iterated", () => {
-    const out = parseMergerOutcome(
-      '<merger>{"resolved": false, "escalate": {"reason": "first"}}</merger>' +
+    const out = mergerOutcomeFromResult({
+      stdout:
+        '<merger>{"resolved": false, "escalate": {"reason": "first"}}</merger>' +
         '<merger>{"resolved": true}</merger>',
-    );
+    });
     expect(out).toEqual({ resolved: true });
   });
   it("a non-object JSON payload (null / true / number) is unresolved, NOT a crash", () => {
-    // `JSON.parse("null")` succeeds and returns null; the old code then read
-    // `parsed.resolved` → TypeError OUTSIDE the try/catch, crashing the parent
-    // (agy R1). Any non-object payload must be a safe unresolved-with-reason.
-    expect(parseMergerOutcome("<merger>null</merger>")).toEqual({
+    expect(
+      mergerOutcomeFromResult({ stdout: "<merger>null</merger>" }),
+    ).toEqual({
       resolved: false,
       reason: "merger agent <merger> tag was not a JSON object",
     });
-    expect(parseMergerOutcome("<merger>true</merger>").resolved).toBe(false);
-    expect(parseMergerOutcome("<merger>42</merger>").resolved).toBe(false);
-    // typeof [] === "object" — must not coerce array cargo into a resolve path.
-    expect(parseMergerOutcome("<merger>[]</merger>")).toEqual({
+    expect(
+      mergerOutcomeFromResult({ stdout: "<merger>true</merger>" }).resolved,
+    ).toBe(false);
+    expect(
+      mergerOutcomeFromResult({ stdout: "<merger>42</merger>" }).resolved,
+    ).toBe(false);
+    expect(
+      mergerOutcomeFromResult({ stdout: "<merger>[]</merger>" }),
+    ).toEqual({
       resolved: false,
       reason: "merger agent <merger> tag was not a JSON object",
     });
   });
 
-  // ── Finding A (integ-cmr int-r1): STRICT shape, mirroring shipOutcome ─────────
-  // merger_resolve_conflict.md: "must match the shape above exactly". A
-  // resolved:true carrying extra/mixed keys (e.g. an escalate verdict) must NOT
-  // count as a clean resolve — fail-CLOSED to unresolved.
-  describe("Finding A — strict shape (resolved:true rejects extra/mixed keys)", () => {
-    it("resolved:true carrying an escalate ⇒ NOT resolved (mixed payload)", () => {
-      const out = parseMergerOutcome(
-        '<merger>{"resolved": true, "escalate": {"reason": "r", "diagnosis": "d"}}</merger>',
-      );
-      expect(out.resolved).toBe(false);
+  describe("Finding A — strict resolve cargo shape", () => {
+    it("resolved:true carrying escalate is stripped → still resolves when cargo is clean", () => {
+      // escalate key is stripped before strict resolve schema; pure resolve remains.
+      const out = mergerOutcomeFromResult({
+        stdout:
+          '<merger>{"resolved": true, "escalate": {"reason": "r", "diagnosis": "d"}}</merger>',
+      });
+      expect(out).toEqual({ resolved: true });
     });
 
     it("resolved:true carrying an unknown EXTRA key ⇒ NOT resolved (strict)", () => {
       expect(
-        parseMergerOutcome('<merger>{"resolved": true, "junk": 1}</merger>').resolved,
+        mergerOutcomeFromResult({
+          stdout: '<merger>{"resolved": true, "junk": 1}</merger>',
+        }).resolved,
       ).toBe(false);
     });
 
     it("resolved as a NON-boolean ⇒ NOT resolved", () => {
-      expect(parseMergerOutcome('<merger>{"resolved": "true"}</merger>').resolved).toBe(
-        false,
-      );
+      expect(
+        mergerOutcomeFromResult({
+          stdout: '<merger>{"resolved": "true"}</merger>',
+        }).resolved,
+      ).toBe(false);
     });
 
     it("still accepts the LEGAL success shapes (regression: with/without tradeoffs)", () => {
-      expect(parseMergerOutcome('<merger>{"resolved": true}</merger>')).toEqual({
-        resolved: true,
-      });
       expect(
-        parseMergerOutcome('<merger>{"resolved": true, "tradeoffs": "picked left"}</merger>'),
+        mergerOutcomeFromResult({
+          stdout: '<merger>{"resolved": true}</merger>',
+        }),
+      ).toEqual({ resolved: true });
+      expect(
+        mergerOutcomeFromResult({
+          stdout:
+            '<merger>{"resolved": true, "tradeoffs": "picked left"}</merger>',
+        }),
       ).toEqual({ resolved: true });
     });
 
-    it("still surfaces a legal escalate (regression)", () => {
-      const out = parseMergerOutcome(
-        '<merger>{"resolved": false, "escalate": {"reason": "ambiguous", "diagnosis": "needs decision"}}</merger>',
-      );
+    it("T2 merger escalate parks decision (sole fate channel)", () => {
+      const out = mergerOutcomeFromResult({
+        output: {
+          station: "merger",
+          status: "escalate",
+          reason: "ambiguous",
+          diagnosis: "needs decision",
+        },
+        stdout: "",
+      });
       expect(out.resolved).toBe(false);
       expect(out.reason).toContain("ambiguous");
+      expect(out.escalation?.diagnosis).toContain("needs decision");
     });
   });
 });
 
-// #596 F2: family-side decode seam test (raw through parse*Outcome, using isValid* guards)
+// #596 F2: family-side decode seam test (raw through parse*Outcome)
+// #919 CR N1: cargo parsers no longer ring classifyDecisionGate bells.
 describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-loop kinds (raw, not fake)", () => {
   it.each([
     ["verify", "parseVerifyOutcome"],
     ["fixer", "parseFixerOutcome"],
     ["cleanup", "parseCleanupOutcome"],
     ["docRelease", "parseDocReleaseOutcome"],
-  ] as const)("%s receipt rings its decision bell before unrelated cargo is decoded", async (tag, parser) => {
-    const mod = await import("../../../src/family/realFamilyBackend.js");
-    const out = mod[parser](
-      `<${tag}>${JSON.stringify({
-        unrelatedCargo: { wrong: [1, 2, 3] },
-        escalate: { reason: "owner choice", diagnosis: "family contract fork" },
-      })}</${tag}>`,
-    );
-    expect(out).toMatchObject({
-      kind: "escalate",
-      escalation: { reason: "owner choice", diagnosis: "family contract fork" },
-    });
-  });
+  ] as const)(
+    "%s cargo with nested escalate is opaque cargo (no decision-gate dual)",
+    async (tag, parser) => {
+      const mod = await import("../../../src/family/realFamilyBackend.js");
+      const out = mod[parser](
+        `<${tag}>${JSON.stringify({
+          unrelatedCargo: { wrong: [1, 2, 3] },
+          escalate: { reason: "owner choice", diagnosis: "family contract fork" },
+        })}</${tag}>`,
+      );
+      // #919 CR N1: receiptDecisionBell DELETED — escalate-only/off-shape is cargo.
+      expect(out).toMatchObject({ kind: "cargo" });
+    },
+  );
 
   // import here via the file's re-export or direct (the test file imports some parses)
   // we will require the module symbols via the existing pattern; use dynamic to avoid top-edit
@@ -1306,7 +1334,6 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         session: "fresh",
         contextRetention: "clean",
         promptFile: "x.md",
-        completionSignal: "X",
         maxIter: 1,
         model: "sonnet",
         soul: "coder",
@@ -1353,43 +1380,57 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     },
   );
 
-  it("does not let family coder-fix cargo escalate after a no-gate typed decision", async () => {
-    // #899: opaque sidecar cargo must not reintroduce escalate after a validated
-    // no-gate typed decision (fourth routing channel ban).
-    class Harness extends RealFamilyBackend {
-      public classify(
-        result: {
-          output?: unknown;
-          stdout: string;
-          iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+  class FamilyCoderDecodeHarness extends RealFamilyBackend {
+    public classify(
+      result: {
+        output?: unknown;
+        stdout: string;
+        iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+      },
+      outcomePath: string,
+    ) {
+      return this.familyCoderResultFromRun(
+        {
+          stdout: result.stdout,
+          commits: [],
+          iterations: [...(result.iterations ?? [])],
+          ...(result.output !== undefined ? { output: result.output } : {}),
         },
-        outcomePath: string,
-      ) {
-        return this.familyCoderResultFromRun(
-          {
-            stdout: result.stdout,
-            commits: [],
-            iterations: [...(result.iterations ?? [])],
-            ...(result.output !== undefined ? { output: result.output } : {}),
-          },
-          {
-            id: "S5",
-            kind: "coder",
-            role: "coder",
-            host: "claude",
-            session: "fresh",
-            contextRetention: "clean",
-            promptFile: "x.md",
-            completionSignal: "CODER_STEP_COMPLETE",
-            maxIter: 1,
-            model: "sonnet",
-            soul: "coder",
-            toolchain: [],
-          },
-          outcomePath,
-        );
-      }
+        {
+          id: "S5",
+          kind: "coder",
+          role: "coder",
+          host: "claude",
+          session: "fresh",
+          contextRetention: "clean",
+          promptFile: "x.md",
+          maxIter: 1,
+          model: "sonnet",
+          soul: "coder",
+          toolchain: [],
+        },
+        outcomePath,
+      );
     }
+  }
+
+  function familyCoderDecodeHarness(dir: string): FamilyCoderDecodeHarness {
+    return new FamilyCoderDecodeHarness({
+      workingRepo: dir,
+      familyBase: "fb",
+      ledgerDir: dir,
+      repo: "Akagilnc/ming-salvage-sim",
+      base: "main",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      imageName: "img",
+      familyBaseStartHead: "abc",
+    });
+  }
+
+  it("does not let family coder-fix cargo escalate after a T2 completed receipt", async () => {
+    // #899 / #919 M1: opaque sidecar cargo must not reintroduce escalate after
+    // a validated T2 completed station receipt (fourth routing channel ban).
     const dir = trackTempDir(`family-coder-spoof-escalate-`);
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -1401,18 +1442,14 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       }),
       "utf8",
     );
-    const be = new Harness({
-      workingRepo: dir,
-      familyBase: "fb",
-      ledgerDir: dir,
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir: realPromptsDir,
-      soulsDir: realSoulsDir,
-      imageName: "img",
-      familyBaseStartHead: "abc",
-    });
-    const out = be.classify({ output: {}, stdout: "" }, outcomePath);
+    const be = familyCoderDecodeHarness(dir);
+    const out = be.classify(
+      {
+        output: { station: "familyCoderFix", status: "completed" },
+        stdout: "",
+      },
+      outcomePath,
+    );
     expect(out.kind).toBe("completed");
     if (out.kind === "completed") {
       expect(out.output).toEqual({
@@ -1421,45 +1458,12 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         commitsAdded: 1,
       });
       expect("escalate" in out.output).toBe(false);
+      expect(out.output).not.toHaveProperty("refusedFindingIdentityKeys");
     }
   });
 
-  it("preserves family coder-fix commit cargo when the typed decision gate escalates", async () => {
-    // #899: typed escalate is fate; committed/commitsAdded stay real cargo.
-    class Harness extends RealFamilyBackend {
-      public classify(
-        result: {
-          output?: unknown;
-          stdout: string;
-          iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
-        },
-        outcomePath: string,
-      ) {
-        return this.familyCoderResultFromRun(
-          {
-            stdout: result.stdout,
-            commits: [],
-            iterations: [...(result.iterations ?? [])],
-            ...(result.output !== undefined ? { output: result.output } : {}),
-          },
-          {
-            id: "S5",
-            kind: "coder",
-            role: "coder",
-            host: "claude",
-            session: "fresh",
-            contextRetention: "clean",
-            promptFile: "x.md",
-            completionSignal: "CODER_STEP_COMPLETE",
-            maxIter: 1,
-            model: "sonnet",
-            soul: "coder",
-            toolchain: [],
-          },
-          outcomePath,
-        );
-      }
-    }
+  it("preserves family coder-fix commit cargo when the T2 receipt escalates", async () => {
+    // #899 / #919 M1: T2 escalate is fate; committed/commitsAdded stay real cargo.
     const dir = trackTempDir(`family-coder-bell-cargo-`);
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -1467,24 +1471,14 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       JSON.stringify({ committed: true, commitsAdded: 3 }),
       "utf8",
     );
-    const be = new Harness({
-      workingRepo: dir,
-      familyBase: "fb",
-      ledgerDir: dir,
-      repo: "Akagilnc/ming-salvage-sim",
-      base: "main",
-      promptsDir: realPromptsDir,
-      soulsDir: realSoulsDir,
-      imageName: "img",
-      familyBaseStartHead: "abc",
-    });
+    const be = familyCoderDecodeHarness(dir);
     const out = be.classify(
       {
         output: {
-          escalate: {
-            reason: "design fork",
-            diagnosis: "owner must choose the contract",
-          },
+          station: "familyCoderFix",
+          status: "escalate",
+          reason: "design fork",
+          diagnosis: "owner must choose the contract",
         },
         stdout: "",
       },
@@ -1504,6 +1498,118 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
     }
   });
 
+  it("#919 M1: RealFamilyBackend T2 refuse preserves envelope keys + cargo refuseRecords", () => {
+    // Production decode path (familyCoderResultFromRun) must emit refuse traffic
+    // isomorphic with single-slice projectCoderStationReceipt — not fake-only.
+    const dir = trackTempDir(`family-coder-refuse-`);
+    const outcomePath = join(dir, "outcome.json");
+    const refuseKey = "correctness|src/a.ts:1|claim";
+    const refuseRecord = {
+      identityKey: refuseKey,
+      finding: "claim",
+      acceptanceCriterion: "AC-1",
+      conflictReason: "unconstitutional",
+    };
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        committed: true,
+        commitsAdded: 1,
+        // Hostile cargo: different key set must not win over envelope traffic.
+        refusedFindingIdentityKeys: ["wrong|cargo|key"],
+        refuseRecords: [refuseRecord],
+      }),
+      "utf8",
+    );
+    const be = familyCoderDecodeHarness(dir);
+    const out = be.classify(
+      {
+        output: {
+          station: "familyCoderFix",
+          status: "refused",
+          refusedFindingIdentityKeys: [refuseKey],
+        },
+        stdout: "",
+      },
+      outcomePath,
+    );
+    expect(out.kind).toBe("completed");
+    if (out.kind === "completed") {
+      expect(out.output).toEqual({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+        refusedFindingIdentityKeys: [refuseKey],
+        refuseRecords: [refuseRecord],
+      });
+    }
+  });
+
+  it("#919 M1 negative: completed T2 receipt cannot smuggle refuse keys from cargo", () => {
+    const dir = trackTempDir(`family-coder-no-smuggle-refuse-`);
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({
+        committed: true,
+        commitsAdded: 1,
+        refusedFindingIdentityKeys: ["smuggled|from|cargo"],
+        refuseRecords: [
+          {
+            identityKey: "smuggled|from|cargo",
+            finding: "x",
+            acceptanceCriterion: "AC",
+            conflictReason: "not_established",
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const be = familyCoderDecodeHarness(dir);
+    const out = be.classify(
+      {
+        output: { station: "familyCoderFix", status: "completed" },
+        stdout: "",
+      },
+      outcomePath,
+    );
+    expect(out.kind).toBe("completed");
+    if (out.kind === "completed") {
+      expect(out.output).toEqual({
+        kind: "coder",
+        committed: true,
+        commitsAdded: 1,
+      });
+      expect(out.output).not.toHaveProperty("refusedFindingIdentityKeys");
+      expect(out.output).not.toHaveProperty("refuseRecords");
+    }
+  });
+
+  it("#919 M1 negative: empty/illegal typed envelope fails closed (no fake refuse ring)", () => {
+    const dir = trackTempDir(`family-coder-illegal-`);
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ committed: true, commitsAdded: 1 }),
+      "utf8",
+    );
+    const be = familyCoderDecodeHarness(dir);
+    // Empty no-gate `{}` is not a legal T2 receipt (same as single-slice).
+    expect(() => be.classify({ output: {}, stdout: "" }, outcomePath)).toThrow(
+      /illegal coder station receipt/i,
+    );
+    // status:refused without keys is illegal — cannot open a refuse re-open.
+    expect(() =>
+      be.classify(
+        {
+          output: { station: "familyCoderFix", status: "refused" },
+          stdout: "",
+        },
+        outcomePath,
+      ),
+    ).toThrow(/illegal coder station receipt|refusedFindingIdentityKeys/i);
+  });
+
   it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
     "does not let sidecar bells override a schema-validated typed %s decision signal",
     async (role) => {
@@ -1517,7 +1623,6 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         session: "fresh",
         contextRetention: "clean",
         promptFile: "x.md",
-        completionSignal: "X",
         maxIter: 1,
         model: "sonnet",
         soul: "coder",
@@ -1546,7 +1651,7 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       }
       const dir = trackTempDir(`review-loop-typed-vs-sidecar-${role}-`);
       const outcomePath = join(dir, "outcome.json");
-      // Typed decision signal is no-gate (`{}`). Role cargo + a spoof escalate
+      // Typed T2 onlineReview completed. Role cargo + a spoof escalate
       // ride on the sidecar; only cargo is admitted (escalate cannot override).
       const cargo: Record<string, unknown> =
         role === "verify"
@@ -1576,7 +1681,10 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
         familyBaseStartHead: "abc",
       });
       const out = be.classify(
-        { output: {}, stdout: "" },
+        {
+          output: { station: "onlineReview", status: "completed" },
+          stdout: "",
+        },
         role,
         outcomePath,
       );
@@ -1584,6 +1692,77 @@ describe("#596 F2: family-side real decode (parseVerifyOutcome etc) for review-l
       if (out.kind === "completed") {
         expect(out.output.kind).toBe(role);
       }
+    },
+  );
+
+  it.each(["verify", "fixer", "cleanup", "docRelease"] as const)(
+    "family %s T2 onlineReview escalate still parks decision",
+    async (role) => {
+      const reviewLoopSpec = (kind: typeof role): WorkerSpec => ({
+        id: "S9",
+        kind,
+        role: "coder",
+        host: "claude",
+        session: "fresh",
+        contextRetention: "clean",
+        promptFile: "x.md",
+        maxIter: 1,
+        model: "sonnet",
+        soul: "coder",
+        toolchain: [],
+      });
+      class Harness extends RealFamilyBackend {
+        public classify(
+          result: {
+            output?: unknown;
+            stdout: string;
+            iterations?: ReadonlyArray<{ readonly sessionId?: string }>;
+          },
+          kind: typeof role,
+          outcomePath: string,
+        ) {
+          return this.familyReviewLoopResultFromRun(
+            {
+              stdout: result.stdout,
+              iterations: [...(result.iterations ?? [])],
+              ...(result.output !== undefined ? { output: result.output } : {}),
+            },
+            reviewLoopSpec(kind),
+            outcomePath,
+          );
+        }
+      }
+      const dir = trackTempDir(`review-loop-t2-escalate-${role}-`);
+      const outcomePath = join(dir, "outcome.json");
+      writeFileSync(outcomePath, JSON.stringify({}), "utf8");
+      const be = new Harness({
+        workingRepo: dir,
+        familyBase: "fb",
+        ledgerDir: dir,
+        repo: "Akagilnc/ming-salvage-sim",
+        base: "main",
+        promptsDir: realPromptsDir,
+        soulsDir: realSoulsDir,
+        imageName: "img",
+        familyBaseStartHead: "abc",
+      });
+      const out = be.classify(
+        {
+          output: {
+            station: "onlineReview",
+            status: "escalate",
+            reason: "owner choice",
+            diagnosis: "review fork",
+          },
+          stdout: "",
+        },
+        role,
+        outcomePath,
+      );
+      expect(out).toMatchObject({
+        kind: "escalated",
+        escalation: { reason: "owner choice", diagnosis: "review fork" },
+      });
     },
   );
 
@@ -1738,7 +1917,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     );
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout: "<cmr>not json</cmr>\nfindings = 0\nCMR_STEP_COMPLETE",
       outcomePath,
       cmrReviewLegs: [
@@ -1755,7 +1933,7 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     });
   });
 
-  it("treats a guarded cmr sidecar as completion even when Sandcastle omits the completion signal", () => {
+  it("treats a guarded cmr sidecar as completion on clean exit without a password string", () => {
     const dir = trackTempDir("cmr-outcome-sidecar-complete-");
     const outcomePath = join(dir, "outcome.json");
     writeFileSync(
@@ -1785,7 +1963,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     );
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: undefined,
       stdout:
         "CMR correctness gate completed through the outcome guard.\n" +
         "findings = 1\n" +
@@ -1810,7 +1987,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     // #899: decision bells enter fate only via typed Output.object; sidecar is
     // cargo. Typed escalate still works when free-form text quotes </cmr>.
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout: "<cmr>not json</cmr>\nCMR_STEP_COMPLETE",
       output: {
         escalate: {
@@ -1833,7 +2009,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     writeFileSync(outcomePath, "{not json", "utf8");
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
@@ -1850,7 +2025,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     writeFileSync(outcomePath, "   \n", "utf8");
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>\nfindings = 0\n',
       outcomePath,
@@ -1870,7 +2044,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
 
   it("falls back to signaled cmr stdout only when no outcome sidecar path exists", () => {
     const outcome = cmrOutcomeFromResult({
-      completionSignal: "CMR_STEP_COMPLETE",
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "skippedLegs": [{"slug": "opus", "reason": "not configured for this test"}, {"slug": "agy", "reason": "not configured for this test"}], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>\nfindings = 0\n',
       cmrReviewLegs: [
@@ -1893,7 +2066,6 @@ describe("parseCmrOutcome accepted suppression contract", () => {
     writeFileSync(outcomePath, "{not json", "utf8");
 
     const outcome = cmrOutcomeFromResult({
-      completionSignal: undefined,
       stdout:
         '<cmr>{"converged": true, "successfulLegs": ["gpt-5.6-sol"], "claimedFixedFindingIdentityKeys": [], "priorFindingDispositions": [], "evidencePaths": ["cmr/review.json"]}</cmr>',
       outcomePath,
@@ -2228,7 +2400,6 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
 
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "MERGER_STEP_COMPLETE",
         stdout: "<merger>not json</merger>\nMERGER_STEP_COMPLETE",
         outcomePath,
       }),
@@ -2249,7 +2420,6 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
 
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "MERGER_STEP_COMPLETE",
         stdout: "<merger>not json</merger>\nMERGER_STEP_COMPLETE",
         outcomePath,
       }),
@@ -2262,7 +2432,6 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
     writeFileSync(outcomePath, "{not json", "utf8");
 
     const outcome = mergerOutcomeFromResult({
-      completionSignal: "MERGER_STEP_COMPLETE",
       stdout: '<merger>{"resolved": true}</merger>',
       outcomePath,
     });
@@ -2279,7 +2448,6 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
     writeFileSync(outcomePath, "   \n", "utf8");
 
     const outcome = mergerOutcomeFromResult({
-      completionSignal: "MERGER_STEP_COMPLETE",
       stdout: '<merger>{"resolved": true}</merger>',
       outcomePath,
     });
@@ -2290,36 +2458,112 @@ describe("mergerOutcomeFromResult (#291 structured telemetry parser, pure)", () 
   it("falls back to signaled merger stdout only when no outcome sidecar path exists", () => {
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "MERGER_STEP_COMPLETE",
         stdout: '<merger>{"resolved": true}</merger>',
       }),
     ).toEqual({ resolved: true });
   });
 
-  it("a signaled run delegates to parseMergerOutcome (resolved)", () => {
+  it("a signaled run resolves from stdout cargo (resolved)", () => {
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "MERGER_STEP_COMPLETE",
         stdout: '<merger>{"resolved": true}</merger>',
       }),
     ).toEqual({ resolved: true });
   });
-  it("keeps a valid merger result available for git-truth adjudication without a signal", () => {
-    // The compatibility signal is telemetry only. The caller must still verify
-    // the merge commit and conflict state before recording a landed merge.
+  it("keeps a valid merger result available for git-truth adjudication from typed envelope alone", () => {
+    // #928: completion is exit + legal sidecar / typed envelope. The caller
+    // must still verify the merge commit and conflict state before recording
+    // a landed merge.
     const out = mergerOutcomeFromResult({
-      completionSignal: undefined,
       stdout: '<merger>{"resolved": true}</merger>',
     });
     expect(out).toEqual({ resolved: true });
   });
-  it("a wrong completion signal is unresolved", () => {
+  it("typed merger envelope alone is enough for resolved (no password required)", () => {
     expect(
       mergerOutcomeFromResult({
-        completionSignal: "SOME_OTHER_SIGNAL",
         stdout: '<merger>{"resolved": true}</merger>',
       }).resolved,
     ).toBe(true);
+  });
+
+  it("T2 merger completed enriches resolve cargo; escalate parks decision", () => {
+    // #919 CR T2: production typed channel is station:merger completed|escalate.
+    const dir = trackTempDir("merger-t2-completed-");
+    const outcomePath = join(dir, "outcome.json");
+    writeFileSync(
+      outcomePath,
+      JSON.stringify({ resolved: true, tradeoffs: "kept both" }) + "\n",
+      "utf8",
+    );
+    expect(
+      mergerOutcomeFromResult({
+        output: { station: "merger", status: "completed" },
+        outcomePath,
+        stdout: "",
+      }),
+    ).toEqual({ resolved: true });
+
+    expect(
+      mergerOutcomeFromResult({
+        output: {
+          station: "merger",
+          status: "escalate",
+          reason: "product fork",
+          diagnosis: "need owner",
+        },
+        stdout: "",
+      }),
+    ).toMatchObject({
+      resolved: false,
+      reason: "product fork",
+      escalation: {
+        reason: "product fork",
+        diagnosis: "need owner",
+        escalationKind: "decision",
+      },
+    });
+
+    // Legacy decision-gate dual is fail-closed after T2.
+    expect(() =>
+      mergerOutcomeFromResult({
+        output: { escalate: { reason: "legacy", diagnosis: "dual" } },
+        stdout: "",
+      }),
+    ).toThrow(/illegal merger station receipt/);
+  });
+
+  it("production merger attaches T2 merger station receipt (not decision-gate dual)", async () => {
+    // #919 CR S2: SO tag is merger + thin completed|escalate schema.
+    const repo = trackRepo();
+    const ledgerDir = mkdtempSync(join(tmpdir(), "merger-t2-attach-"));
+    ledgerDirs.push(ledgerDir);
+    const calls: Parameters<typeof sc.run>[0][] = [];
+    class AttachBackend extends RealFamilyBackend {
+      public run(req: ConflictResolveRequest) {
+        return this.runMergerAgent(req);
+      }
+      protected override mountMergerAuth(): MergerAuth {
+        return { claudeToken: "tok" };
+      }
+      protected override async runAgentSandbox(
+        options: Parameters<typeof sc.run>[0],
+      ): Promise<Awaited<ReturnType<typeof sc.run>>> {
+        calls.push(options);
+        return {
+          branch: "family/293-base",
+          stdout: "<merger>{}</merger>",
+          commits: [],
+          iterations: [],
+          output: { station: "merger", status: "completed" },
+        } as Awaited<ReturnType<typeof sc.run>>;
+      }
+    }
+    const b = new AttachBackend(opts(repo, { ledgerDir }));
+    await b.run({ childIssue: 496, childBranch: "feat/child" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.output).toMatchObject({ tag: "merger" });
+    expect(calls[0]!.output).not.toMatchObject({ tag: "decision" });
   });
 });
 
@@ -2348,12 +2592,11 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
         writeFileSync(outcomePathAtRun, JSON.stringify({ resolved: true }), "utf8");
         return {
           branch: "family/293-base",
-          completionSignal: "MERGER_STEP_COMPLETE",
           stdout: "<merger>{}</merger>",
           commits: [],
           iterations: [],
-          // Typed no-gate decision signal (SO was attached on this seat).
-          output: {},
+          // Typed T2 merger completed (SO was attached on this seat).
+          output: { station: "merger", status: "completed" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -2382,7 +2625,6 @@ describe("RealFamilyBackend merger outcome sidecar cleanup", () => {
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         return {
           branch: "family/293-base",
-          completionSignal: "MERGER_STEP_COMPLETE",
           stdout: '<merger>{"resolved": true}</merger>',
           commits: [],
           iterations: [],
@@ -2971,7 +3213,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
         agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
         maxIterations: 1,
-        completionSignal: "CODER_STEP_COMPLETE",
         branchStrategy: { type: "head" },
         promptFile: join(realPromptsDir, "coder_fix.md"),
         quotaProbe: {
@@ -3012,7 +3253,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
         agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
         maxIterations: 1,
-        completionSignal: "CMR_STEP_COMPLETE",
         branchStrategy: { type: "head" },
         promptFile: join(realPromptsDir, "integrated_cmr_correctness.md"),
         quotaProbe: { modelRef: "gpt-5.6-terra", step: "S3" },
@@ -3035,7 +3275,6 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         sandbox: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["sandbox"],
         agent: {} as import("../../../src/realBackend.js").AgentSandboxRunOptions["agent"],
         maxIterations: 1,
-        completionSignal: "SHIP_STEP_COMPLETE",
         branchStrategy: { type: "head" },
         promptFile: join(realPromptsDir, "family_ship.md"),
         quotaProbe: undefined,
@@ -3062,8 +3301,7 @@ describe("#909 RealFamilyBackend runAgentSandbox quota/idle parity", () => {
         contextRetention: "clean",
         skill: "gstack-ship",
         promptFile: "family_ship.md",
-        completionSignal: "SHIP_STEP_COMPLETE",
-        maxIter: 5,
+        maxIter: 1,
         model: "gpt-5.6-terra",
         soul: "ship",
         toolchain: [],

@@ -186,8 +186,8 @@ export class ResumeBackend implements Backend {
     this.calls.push(`resumeSession(${spec.id}, ${sessionId})`);
     this.resumeSessionCalls.push([spec.id, sessionId]);
     this.runStepIds.push(spec.id);
-    if (spec.role === "reviewer") {
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+    if ((spec.role === "reviewer" || spec.role === "verify")) {
+      return { kind: "judge", status: "converged" };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
@@ -235,8 +235,8 @@ export class ResumeBackend implements Backend {
   ): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
     this.runStepIds.push(spec.id);
-    if (spec.role === "reviewer") {
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+    if ((spec.role === "reviewer" || spec.role === "verify")) {
+      return { kind: "judge", status: "converged" };
     }
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
@@ -274,12 +274,7 @@ export class DispatchRecordingResumeBackend extends ResumeBackend {
     if (spec.id === "S6") {
       return {
         kind: "completed",
-        output: {
-          kind: "reviewer", findings: [], findingsCount: 0,
-          priorFindingDispositions: [
-            { identityKey: CLAIMED_FIXED_KEY, status: "verified-closed" },
-          ],
-        },
+        output: { kind: "judge", status: "converged" },
       };
     }
     const output =

@@ -334,7 +334,7 @@ describe("#685 route tool smoke", () => {
 
   it("rejects tight-route violations before querying versions or starting smoke", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "codex-tight");
-    vi.stubEnv("ORCHESTRATOR_REVIEWER_MODEL", "gpt-5.6-sol");
+    vi.stubEnv("ORCHESTRATOR_VERIFY_MODEL", "gpt-5.6-sol");
     const backend = new RoutePolicyOrderingBackend();
 
     const result = await runOrchestrator({ issueNumber: 685, backend });

@@ -4,9 +4,10 @@
  *
  * The family ship worker = the 2b container's TOP-LEVEL claude; it `Skill`-invokes
  * `gstack-ship` over the family base and STOPS at the PR (止于 PR — the online bot
- * cmr + merge are the separate pr-review-loop stage). Its `<ship>` tag is gated on
- * the completion signal then classified into a {@link ShipWorkerOutcome}, which
- * `dispatchWorker` maps to the full {@link WorkerResult} union (PRD #330 R2):
+ * cmr + merge are the separate pr-review-loop stage). Completion is clean exit +
+ * legal sidecar / typed envelope; the outcome is classified into a
+ * {@link ShipWorkerOutcome}, which `dispatchWorker` maps to the full
+ * {@link WorkerResult} union (PRD #330 R2):
  *   shipped → completed ShipResult; escalate → escalated.
  *
  * Tested WITHOUT a real container (mirrors #335's cmr-worker test): the
@@ -46,11 +47,14 @@ import {
 } from "../../../src/realBackend.js";
 import { cmrWorkerSpec, familyShipWorkerSpec } from "../../../src/family/dispatchFamilyWorker.js";
 import {
-  DECISION_GATE_TAG,
-  decisionGateSignalSchema,
   isReceiptRecoveryFailure,
   RECEIPT_MAX_RETRIES,
+  shipReceiptOutput,
 } from "../../../src/receiptRecovery.js";
+import {
+  SHIP_RECEIPT_TAG,
+  shipStationReceiptSchema,
+} from "../../../src/stationReceiptContracts.js";
 import {
   shipOutcomeFromResult,
   type ShipWorkerOutcome,
@@ -144,7 +148,7 @@ describe("#336 RealFamilyBackend.dispatchWorker — the family ship worker", () 
     expect(spec.maxIter).toBe(1);
     // The cmr pass worker is a clean reviewer boundary. A red outcome returns to
     // the runner, which dispatches coder-fix separately.
-    expect(cmrWorkerSpec().role).toBe("reviewer");
+    expect(cmrWorkerSpec().role).toBe("verify");
     expect(cmrWorkerSpec().contextRetention).toBe("clean");
     expect(cmrWorkerSpec().maxIter).toBe(1);
   });
@@ -654,11 +658,10 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
         return {
           branch: FAMILY_BASE,
           stdout: "<ship>{}</ship>",
-          completionSignal: "SHIP_STEP_COMPLETE",
           commits: [],
           iterations: [],
-          // Typed no-gate decision signal (SO was attached on this seat).
-          output: {},
+          // Typed T2 ship completed (SO was attached on this seat).
+          output: { station: "ship", status: "completed" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -716,7 +719,6 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
         return {
           branch: FAMILY_BASE,
           stdout: "<ship>{}</ship>",
-          completionSignal: "SHIP_STEP_COMPLETE",
           commits: [],
           iterations: [],
         } as Awaited<ReturnType<typeof sc.run>>;
@@ -738,9 +740,9 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
     ).rejects.toThrow(/typed traffic signal missing/);
   });
 
-  it("attaches dedicated decision Output.object for family ship without cargo-shape re-ask", async () => {
-    // #899: decision gates use Output.object on the dedicated `decision` tag;
-    // PR/URL cargo stays on the opaque `<ship>`/sidecar channel (never SO).
+  it("attaches T2 ship envelope Output.object for family ship without cargo-shape re-ask", async () => {
+    // #919 D: ship seat uses T2 ship envelope on SHIP_RECEIPT_TAG;
+    // PR/URL cargo stays on the opaque sidecar channel (never SO).
     class CaptureShipBackend extends RealFamilyBackend {
       public calls: Parameters<typeof sc.run>[0][] = [];
       protected override sh(): string {
@@ -760,15 +762,13 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         this.calls.push(options);
-        // Typed decision signal only (`{}` = no gate). Delivery cargo is
-        // sidecar-only and is not required to assert the SO binding.
+        // Typed T2 ship completed traffic. Delivery cargo is sidecar-only.
         return {
           branch: FAMILY_BASE,
-          stdout: "<decision>{}</decision>\n<ship>{}</ship>",
-          completionSignal: "SHIP_STEP_COMPLETE",
+          stdout: '<ship>{"station":"ship","status":"completed"}</ship>',
           commits: [],
           iterations: [],
-          output: {},
+          output: { station: "ship", status: "completed" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -787,22 +787,23 @@ describe("#336 writeShipFocusFile — threads the configured PR target base into
       familyBase: FAMILY_BASE,
     });
 
-    // No gate + empty sidecar cargo → completed (exit code is the success channel).
+    // T2 completed + empty sidecar cargo → completed (exit is success channel).
     expect(out.kind).toBe("completed");
     expect(b.calls).toHaveLength(1);
     expect(b.calls[0]!.output).toMatchObject({
-      tag: "decision",
-      maxRetries: 2,
+      tag: SHIP_RECEIPT_TAG,
+      maxRetries: RECEIPT_MAX_RETRIES,
     });
+    // Not decision-gate dual — ship seat owns the T2 ship tag.
+    expect(b.calls[0]!.output).not.toMatchObject({ tag: "decision" });
   });
 });
 
-// ─── #899 T2: ship production decision-gate SO four-case matrix ─────────────
-// Ship attaches decisionGateOutput() but cargo (status/pr) stays opaque.
-// Four-case must cross production runShipWorker + real sc.run (scripted
-// provider), mirroring cmr-worker / single-slice RealBackend matrices.
+// ─── #919 D: ship production T2 envelope SO four-case matrix ────────────────
+// Ship attaches shipStationReceiptSchema on SHIP_RECEIPT_TAG; cargo (status/pr)
+// stays opaque sidecar. Four-case crosses production runShipWorker + real sc.run.
 // sequential: nested real sc.run races on ~/.gitconfig locks under file-parallelism.
-describe.sequential("#899 ship production decision-gate SO four-case", () => {
+describe.sequential("#919 ship production T2 envelope SO four-case", () => {
   function shipFourCaseBackend(opts: {
     emissions: ReadonlyArray<{ body: string }>;
     sessionId: string;
@@ -833,16 +834,16 @@ describe.sequential("#899 ship production decision-gate SO four-case", () => {
         options: Parameters<typeof sc.run>[0],
       ): Promise<Awaited<ReturnType<typeof sc.run>>> {
         opts.sandcastleCalls.n += 1;
-        // Production ship seat must bind decision-gate SO + maxRetries.
+        // Production ship seat must bind T2 ship SO + maxRetries.
         expect(options.output).toEqual(
           expect.objectContaining({
-            tag: DECISION_GATE_TAG,
+            tag: SHIP_RECEIPT_TAG,
             maxRetries: RECEIPT_MAX_RETRIES,
           }),
         );
         const run = await runScriptedStructuredOutput({
-          tag: DECISION_GATE_TAG,
-          schema: decisionGateSignalSchema,
+          tag: SHIP_RECEIPT_TAG,
+          schema: shipStationReceiptSchema(),
           emissions: opts.emissions,
           maxRetries: RECEIPT_MAX_RETRIES,
           sessionId: opts.sessionId,
@@ -870,13 +871,17 @@ describe.sequential("#899 ship production decision-gate SO four-case", () => {
     });
   }
 
-  it("accepts initial-good decision-gate via production ship + real sc.run", async () => {
-    // first-good: no-gate `{}` → completed (exit is success; cargo miss is fine).
+  it("accepts initial-good T2 ship completed via production ship + real sc.run", async () => {
+    // first-good: station:ship status:completed → completed (cargo miss is fine).
     const sandcastleCalls = { n: 0 };
     const agentOut: { agent?: ScriptedAgent } = {};
     const be = shipFourCaseBackend({
-      emissions: [{ body: JSON.stringify({}) }],
-      sessionId: "prod-ship-decision-initial-good",
+      emissions: [
+        {
+          body: JSON.stringify({ station: "ship", status: "completed" }),
+        },
+      ],
+      sessionId: "prod-ship-t2-initial-good",
       agentOut,
       sandcastleCalls,
     });
@@ -888,18 +893,48 @@ describe.sequential("#899 ship production decision-gate SO four-case", () => {
     expect(agentOut.agent?.resumedSessions).toEqual([undefined]);
   });
 
-  it("recovers decision-gate bad→good via production ship + real sc.run", async () => {
+  it("accepts T2 ship shipped envelope via production ship + real sc.run", async () => {
+    const sandcastleCalls = { n: 0 };
+    const agentOut: { agent?: ScriptedAgent } = {};
+    const be = shipFourCaseBackend({
+      emissions: [
+        {
+          body: JSON.stringify({ station: "ship", status: "shipped" }),
+        },
+      ],
+      sessionId: "prod-ship-t2-shipped",
+      agentOut,
+      sandcastleCalls,
+    });
+    await expect(
+      be.probeRunShipWorker(familyShipWorkerSpec(), { familyBase: FAMILY_BASE }),
+    ).resolves.toEqual({ kind: "shipped" });
+    expect(sandcastleCalls.n).toBe(1);
+    expect(agentOut.agent?.callCount).toBe(1);
+  });
+
+  it("recovers T2 ship escalate bad→good via production ship + real sc.run", async () => {
     const sandcastleCalls = { n: 0 };
     const agentOut: { agent?: ScriptedAgent } = {};
     const good = {
-      escalate: { reason: "owner choice", diagnosis: "contract fork" },
+      station: "ship",
+      status: "escalate",
+      reason: "owner choice",
+      diagnosis: "contract fork",
     };
     const be = shipFourCaseBackend({
       emissions: [
-        { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
+        {
+          body: JSON.stringify({
+            station: "ship",
+            status: "escalate",
+            reason: "",
+            diagnosis: "x",
+          }),
+        },
         { body: JSON.stringify(good) },
       ],
-      sessionId: "prod-ship-decision-recover",
+      sessionId: "prod-ship-t2-recover",
       agentOut,
       sandcastleCalls,
     });
@@ -914,21 +949,42 @@ describe.sequential("#899 ship production decision-gate SO four-case", () => {
     expect(agentOut.agent?.callCount).toBe(2);
     expect(agentOut.agent?.resumedSessions).toEqual([
       undefined,
-      "prod-ship-decision-recover",
+      "prod-ship-t2-recover",
     ]);
   });
 
-  it("propagates StructuredOutputError when ship decision-gate maxRetries exhaust", async () => {
+  it("propagates StructuredOutputError when ship T2 envelope maxRetries exhaust", async () => {
     // exhaust SOE → Action non-zero for #598; never invent cargo success.
     const sandcastleCalls = { n: 0 };
     const agentOut: { agent?: ScriptedAgent } = {};
     const be = shipFourCaseBackend({
       emissions: [
-        { body: JSON.stringify({ escalate: { reason: "", diagnosis: "" } }) },
-        { body: JSON.stringify({ escalate: { reason: "", diagnosis: "x" } }) },
-        { body: JSON.stringify({ escalate: { reason: "x", diagnosis: "" } }) },
+        {
+          body: JSON.stringify({
+            station: "ship",
+            status: "escalate",
+            reason: "",
+            diagnosis: "",
+          }),
+        },
+        {
+          body: JSON.stringify({
+            station: "ship",
+            status: "escalate",
+            reason: "",
+            diagnosis: "x",
+          }),
+        },
+        {
+          body: JSON.stringify({
+            station: "ship",
+            status: "escalate",
+            reason: "x",
+            diagnosis: "",
+          }),
+        },
       ],
-      sessionId: "prod-ship-decision-exhausted",
+      sessionId: "prod-ship-t2-exhausted",
       agentOut,
       sandcastleCalls,
     });
@@ -944,11 +1000,15 @@ describe.sequential("#899 ship production decision-gate SO four-case", () => {
     expect(agentOut.agent?.callCount).toBe(RECEIPT_MAX_RETRIES + 1);
   });
 
-  it("classifies non-resumable ship decision-gate maxRetries as recovery failure", async () => {
+  it("classifies non-resumable ship T2 envelope maxRetries as recovery failure", async () => {
     const sandcastleCalls = { n: 0 };
     const be = shipFourCaseBackend({
-      emissions: [{ body: JSON.stringify({}) }],
-      sessionId: "prod-ship-decision-nonresumable",
+      emissions: [
+        {
+          body: JSON.stringify({ station: "ship", status: "completed" }),
+        },
+      ],
+      sessionId: "prod-ship-t2-nonresumable",
       resumable: false,
       name: "grok",
       sandcastleCalls,

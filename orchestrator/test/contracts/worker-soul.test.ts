@@ -117,8 +117,7 @@ describe("#334 RealBackend.boxConfig uses baked skills", () => {
     role: "coder",
     promptFile: "coder_implement.md",
     model: "sonnet",
-    completionSignal: "CODER_STEP_COMPLETE",
-    maxIter: 5,
+    maxIter: 1,
     soul: "coder",
     toolchain: ["python"],
   };
@@ -242,12 +241,11 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(familyShip).toMatch(/gstack-ship/i);
     expect(familyShip).not.toMatch(/gh pr view|idempotent success case|version bump/i);
 
-    const review = read("reviewer_review.md");
-    expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/reviewer\.md/);
-    expect(review).toMatch(/role soul \(live-mounted\)|review character belongs to the role soul/i);
-    expect(review).toMatch(/escalationAnswer/i);
-    // Snapshot policy is stated as not-execution-input (allowed).
-    expect(review).toMatch(/not execution input/i);
+    const review = read("judge_station.md");
+    // #925: judge seat uses verify soul; reviewer.md is for fresh legs only.
+    expect(review).toMatch(/\/home\/agent\/\.orchestrator\/souls\/verify\.md/);
+    expect(review).toMatch(/reviewer\.md/);
+    expect(review).toMatch(/stationReceiptContracts|clean exit|single-iteration/);
   });
 
   it("the worker image bakes the Matt code-review skill for reviewer workers", () => {
@@ -286,43 +284,76 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(readSoul("cmr_correctness.md")).toBe(readSoul("verify.md"));
   });
 
-  it("every existing prompt still defines its structured output contract (tag + signal)", () => {
-    // Thinning the METHOD must not drop the output contract route()/the seam
-    // decode against — each worker must still emit its tag + completion signal.
+  it("every existing prompt still defines its structured output contract (tag + clean exit)", () => {
+    // #928: completion is clean exit + legal sidecar / typed envelope — no
+    // *_STEP_COMPLETE password. Each worker must still emit its role tag.
+    // #924 / #919: full-wave seats use T2 station receipts (no dedicated
+    // <decision> tag). Ship/merger/onlineReview traffic rides the station tag.
     const prompts = [
-      ["coder_implement.md", /<coder>/, /CODER_STEP_COMPLETE/, true],
-      ["coder_fix.md", /<coder>/, /CODER_STEP_COMPLETE/, true],
-      ["reviewer_review.md", /<review>/, /REVIEWER_STEP_COMPLETE/, false],
-      ["family_ship.md", /<ship>/, /SHIP_STEP_COMPLETE/, true],
-      ["integrated_cmr_completeness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
-      ["integrated_cmr_correctness.md", /<cmr>/, /CMR_STEP_COMPLETE/, false],
-      ["merger_resolve_conflict.md", /<merger>/, /MERGER_STEP_COMPLETE/, true],
+      ["coder_implement.md", /<coder>/],
+      ["coder_fix.md", /<coder>/],
+      ["judge_station.md", /<judge>/],
+      ["family_ship.md", /<ship>/],
+      ["integrated_cmr_completeness.md", /<cmr>/],
+      ["integrated_cmr_correctness.md", /<cmr>/],
+      ["merger_resolve_conflict.md", /<merger>/],
+      ["verify.md", /<onlineReview>/],
+      ["fixer.md", /<onlineReview>/],
+      ["docRelease.md", /<onlineReview>/],
     ] as const;
 
-    for (const [promptName, tag, signal, needsDecisionTag] of prompts) {
+    for (const [promptName, tag] of prompts) {
       const prompt = read(promptName);
       expect(prompt).toMatch(tag);
-      expect(prompt).toMatch(signal);
+      expect(prompt).not.toMatch(/_STEP_COMPLETE/);
       expect(prompt).toMatch(/\$ORCHESTRATOR_OUTCOME_PATH/);
       expect(prompt).not.toMatch(/python3 -m json\.tool "\$ORCHESTRATOR_OUTCOME_PATH"/);
-      // #899: optional decision-gate seats always emit a dedicated <decision> tag
-      // so ordinary cargo stays outside Output.object.
-      if (needsDecisionTag) {
-        expect(prompt).toMatch(/<decision>/);
-      }
+      // #919 online R2: no seat teaches the abolished dual <decision> gate tag.
+      expect(prompt).not.toMatch(/<decision>/);
     }
   });
 
-  it("production CMR prompts always require the configured <cmr> Output.object tag", () => {
-    // #899: production CMR mounts outcome sidecar AND Output.object({tag:"cmr"}).
-    // The prompt must require the cmr tag even when ORCHESTRATOR_OUTCOME_PATH is set,
-    // otherwise Sandcastle has nothing to validate / re-ask.
+  it("#919 T2: ship / merger / onlineReview prompts teach station envelopes", () => {
+    const ship = read("family_ship.md");
+    expect(ship).toMatch(/shipStationReceiptSchema|decodeShipEnvelope/);
+    expect(ship).toMatch(/stationReceiptContracts/);
+    expect(ship).toMatch(/"shipped"/);
+    expect(ship).toMatch(/"completed"/);
+    expect(ship).toMatch(/"escalate"/);
+    expect(ship).toMatch(/"station":"ship"/);
+    // Cargo token pr_opened lives on sidecar, not as envelope traffic status.
+    expect(ship).toMatch(/pr_opened/);
+    expect(ship).not.toMatch(/<decision>/);
+
+    const merger = read("merger_resolve_conflict.md");
+    expect(merger).toMatch(/mergerStationReceiptSchema|decodeMergerEnvelope/);
+    expect(merger).toMatch(/stationReceiptContracts/);
+    expect(merger).toMatch(/"station":"merger"/);
+    expect(merger).toMatch(/"completed"/);
+    expect(merger).toMatch(/"escalate"/);
+    expect(merger).toMatch(/resolved/);
+    expect(merger).not.toMatch(/<decision>/);
+
+    for (const promptName of ["verify.md", "fixer.md", "docRelease.md"] as const) {
+      const prompt = read(promptName);
+      expect(prompt).toMatch(/onlineReviewStationReceiptSchema|decodeOnlineReviewEnvelope/);
+      expect(prompt).toMatch(/stationReceiptContracts/);
+      expect(prompt).toMatch(/"station":"onlineReview"/);
+      expect(prompt).toMatch(/"completed"/);
+      expect(prompt).toMatch(/"escalate"/);
+      expect(prompt).not.toMatch(/<decision>/);
+    }
+  });
+
+  it("production CMR prompts always require the configured <judge> Output.object tag", () => {
+    // #930: production family courts bind Output.object({tag:"judge"}) — same
+    // live seat as single-slice S3/S6. Prompt must require the judge tag.
     for (const promptName of [
       "integrated_cmr_completeness.md",
       "integrated_cmr_correctness.md",
     ] as const) {
       const prompt = read(promptName);
-      expect(prompt).toMatch(/Always emit the typed `<cmr>` tag/);
+      expect(prompt).toMatch(/Always emit the typed `<judge>` tag/);
       expect(prompt).toMatch(/Output\.object/);
       expect(prompt).not.toMatch(
         /Without \$ORCHESTRATOR_OUTCOME_PATH.*emit the `<cmr>` tag/,
@@ -334,7 +365,7 @@ describe("#334 thin prompts read souls (mounted live per #372) and do not hand-c
     expect(() => readSoul("output_protocol.md")).toThrow();
     for (const promptName of [
       "coder_implement.md",
-      "reviewer_review.md",
+      "judge_station.md",
       "merger_resolve_conflict.md",
       "family_ship.md",
     ]) {
@@ -404,7 +435,7 @@ class ReviewWorkerBackend implements Backend {
         output: { kind: "coder", committed: true, commitsAdded: 1 },
       };
     }
-    if (spec.kind === "reviewer") {
+    if ((spec.kind === "reviewer" || spec.kind === "verify")) {
       this.reviewCount += 1;
       // Explicit open-count declaration for the fixture (ADR 0131 / #899): never
       // derive findingsCount from findings.length as if that were production law.
@@ -422,24 +453,19 @@ class ReviewWorkerBackend implements Backend {
               },
             ]
           : [];
-      // Legacy compatibility shape: a reviewer worker returns findings, not a
-      // bare verdict. The active runner path no longer dispatches it normally.
+      // Residual open-count 0 is unusable after #925 — emit explicit judge clean.
+      if (findingsCount === 0) {
+        return {
+          kind: "completed",
+          output: { kind: "judge", status: "converged" },
+        };
+      }
       return {
         kind: "completed",
         output: {
           kind: "reviewer",
           findings,
           findingsCount,
-          ...(this.reviewCount > 1
-            ? {
-                priorFindingDispositions: [
-                  {
-                    identityKey: "correctness|f.ts:1|x",
-                    status: "verified-closed",
-                  },
-                ],
-              }
-             : {}),
         },
       };
     }
@@ -462,9 +488,9 @@ describe("#334 ADR 0030 worker routing", () => {
     expect(result.status).toBe("success");
     expect(backend.dispatched).toEqual([
       "S2:coder:/tdd",
-      "S3:reviewer:/code-review",
+      "S3:verify:/verify",
       "S5:coder:/tdd",
-      "S6:reviewer:/code-review",
+      "S6:verify:/verify",
     ]);
   });
 
@@ -494,12 +520,22 @@ describe("launch-362.mjs bootstrap smoke (#372 unconditional)", () => {
     mkdirSync(join(orchTmp, "dist"), { recursive: true });
     writeFileSync(
       join(orchTmp, "dist", "familyDriver.js"),
-      'export const runFamilyDriver = async () => ({});\nexport const resolveImageTag = (t) => t || "tag";\n',
+      // #929: launcher shells process.exit(familyDriverExitCode(result)).
+      'export const runFamilyDriver = async () => ({ status: "success" });\n' +
+        'export const resolveImageTag = (t) => t || "tag";\n' +
+        "export const familyDriverExitCode = (r) =>\n" +
+        '  (typeof r === "string" ? r : r?.status) === "success" ? 0 : 1;\n',
       "utf8",
     );
 
+    // #929: launcher ends with process.exit — keep the vitest worker alive.
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as never);
+
     try {
       await import(pathToFileURL(launcherCopy).href);
+      expect(exitSpy).toHaveBeenCalledWith(0);
 
       const calls = execMock.mock.calls as any[][];
       // side-build clean targets dist.new/dist.old, never the serving dist
@@ -534,6 +570,7 @@ describe("launch-362.mjs bootstrap smoke (#372 unconditional)", () => {
         calls.some((c) => c[0] === "bash" && String(c[1]?.[0] || "").includes("build.sh")),
       ).toBe(true);
     } finally {
+      exitSpy.mockRestore();
       try {
         rmSync(orchTmp, { recursive: true, force: true });
       } catch {}

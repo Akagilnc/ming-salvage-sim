@@ -124,7 +124,7 @@ class ChildBackend implements Backend {
   async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(_e: PersistentLedgerEntry, _d: string): Promise<void> {}
 }
@@ -705,7 +705,9 @@ describe("#909 family runner consumes QuotaWait park/relay at verify boundary", 
       },
     });
 
-    expect(result.status).toBe("escalated");
+    // #922: open-shipped online-review hard fail is online_review_failed (real name).
+    expect(result.status).toBe("online_review_failed");
+    expect(result.stopSummary.reason).toBe("online_review_failed");
     expect(result.stopSummary).toBeDefined();
     expect(result.stopSummary?.summary).toMatch(
       /online review|inadmissible|open-shipped|did not converge/i,

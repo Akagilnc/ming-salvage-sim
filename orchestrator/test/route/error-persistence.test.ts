@@ -91,7 +91,7 @@ class SpyBackend implements Backend {
     if (spec.role === "coder") {
       return { kind: "coder", committed: true, commitsAdded: 1 };
     }
-    return { kind: "reviewer", findings: [], findingsCount: 0 };
+    return { kind: "judge", status: "converged" };
   }
   async writeLedger(
     entry: PersistentLedgerEntry,
@@ -111,7 +111,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       if (spec.role === "coder") throw new Error("sandbox.run crashed: OOM");
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -131,7 +131,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
       if (spec.role === "coder") {
         return { kind: "coder", committed: false, commitsAdded: 0 };
       }
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -200,7 +200,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       // Contract violation: the S2 build worker must return a coder output.
-      return { kind: "reviewer", findings: [], findingsCount: 0 };
+      return { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -215,8 +215,8 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
       if (spec.id === "S3") return { kind: "coder", committed: true, commitsAdded: 1 };
-      return spec.role === "reviewer"
-        ? { kind: "reviewer", findings: [], findingsCount: 0 }
+      return (spec.role === "reviewer" || spec.role === "verify")
+        ? { kind: "judge", status: "converged" }
         : { kind: "coder", committed: true, commitsAdded: 1 };
     };
 
@@ -235,7 +235,7 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
       backend.runStepIds.push(spec.id);
       return spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: "lots" } as unknown as StepOutput
-        : { kind: "reviewer", findings: [], findingsCount: 0 };
+        : { kind: "judge", status: "converged" };
     };
 
     const result = await runOrchestrator({ issueNumber: 244, backend });
@@ -249,8 +249,8 @@ describe("#5 malformed S2 build output → S8(error), never silent bypass", () =
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {
       backend.runStepIds.push(spec.id);
-      if (spec.role === "reviewer") {
-        return { kind: "reviewer", findings: [], findingsCount: 0 };
+      if ((spec.role === "reviewer" || spec.role === "verify")) {
+        return { kind: "judge", status: "converged" };
       }
       return { kind: "coder", committed: true, commitsAdded: 1 };
     };

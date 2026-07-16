@@ -41,19 +41,15 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
     })).toEqual({ kind: "next", step: "S5" });
     expect(route({
       from: "S4",
-      output: { kind: "reviewer", findings: [], findingsCount: 0 },
+      output: { kind: "judge", status: "converged" },
     })).toEqual({ kind: "next", step: "S7" });
     // Count is authenticated at the typed boundary: missing findingsCount never
-    // becomes kind:"reviewer". Decode maps unusable open-count to a non-reviewer
-    // opaque-miss envelope (not findingsCount:0, not #598 shape throw).
-    //
-    // TOPOLOGY PIN: `kind:"fixer"` here is the existing non-reviewer envelope
-    // RealBackend.decodeOutput uses so S4→S5 still fires with raw artifacts —
-    // NOT a claim that "the reviewer worker was a fixer". Do not rewrite this
-    // pin to kind:"coder" (fake coder seat) or re-open cargo-shape #598 throws.
+    // becomes a silent clean. Decode maps unusable open-count to residual
+    // open-count paper (kind:reviewer findingsCount:0 — #919 AS4), never
+    // kind:fixer placeholder and never #598 shape throw.
     expect(route({
       from: "S4",
-      output: { kind: "fixer", committed: false },
+      output: { kind: "reviewer", findingsCount: 0, findings: [] },
     })).toEqual({ kind: "next", step: "S5" });
     // Pre-#899 ledger rows may still be kind:"reviewer" without findingsCount.
     // Missing count must NOT S7 clean (undefined > 0 is false) — unusable → S5.
@@ -79,8 +75,9 @@ describe("ADR 0131 zero-judgment runner constitution", () => {
 
   it("child kind mismatch never decides redispatch or error fate", () => {
     const wrong = { kind: "coder", committed: false, commitsAdded: 0 } as const;
-    expect(route({ from: "S3", output: wrong })).toEqual({ kind: "next", step: "S4" });
-    expect(route({ from: "S6", output: wrong })).toEqual({ kind: "next", step: "S4" });
+    // #925: unusable S3/S6 envelope goes to fixer path (S5), never silent clean.
+    expect(route({ from: "S3", output: wrong })).toEqual({ kind: "next", step: "S5" });
+    expect(route({ from: "S6", output: wrong })).toEqual({ kind: "next", step: "S5" });
     expect(route({ from: "S4", output: wrong })).toEqual({ kind: "next", step: "S5" });
   });
 

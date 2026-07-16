@@ -59,9 +59,11 @@ Canonical corollaries are locked by positive routing tests under
   by the next reviewer, and any reported PR URL is cargo for downstream
   workers, not a runner verdict input. The runner never runs
   `git rev-list` / `ls-remote` / `gh pr view` to adjudicate a worker.
-- **`*_STEP_COMPLETE` sentinels are multi-iter terminators** (required final line for sandcastle iteration end; not optional telemetry — #899/#911). Process and receipt
-  routing tests prove that their prose placement cannot become a runner fate
-  channel; no source-text ban is used as the lock.
+- **Completion = clean exit + legal sidecar / typed envelope (#928 / ADR 0131).**
+  `*_STEP_COMPLETE` passwords and `completionSignal` fields are retired. All
+  seats are single-iteration (`maxIter=1`); monitor liveness is heartbeat / log
+  growth only (PR #917). Exit 0 without a usable sidecar must not masquerade as
+  completed.
 - **Ship dispatch is worker-idempotent.** On re-feed after a ship park, the
    runner dispatches ship again. The worker verifies whether the branch's exact
    delivery already exists and returns success without duplicate push, PR, or
@@ -163,8 +165,8 @@ Before igniting, read the FINAL lineup (preset + your overrides) against the
 seating rules. These are enforced by maintaining the route table itself —
 deliberately NO validator machinery (owner ruling 2026-07-11):
 
-- **Judging seats are sol-only**: `reviewer`, `cmrCompleteness`,
-  `cmrCorrectness`, `verify` sit gpt-5.6-sol. terra does not review.
+- **Judging seats are sol-only**: `verify` (sole judge identity; #923),
+  `cmrCompleteness`, `cmrCorrectness` sit gpt-5.6-sol. terra does not review.
 - **Coding seats stay terra**: `coder`, `coderFix`.
 - If sol ever holds a fixing seat, the floor reviewer for its output is
   cross-family (opus).
@@ -219,8 +221,10 @@ Startup is fail-closed: if the route smoke fails, the run records an
 phase boundaries, so a silent half-hour with a running container can be normal
 work. The current monitor uses worker-log idleness (> 15 min without growth)
 and a worker-local PID kill before relaying onto the surviving drift. This is
-not the canonical contract: Sandcastle owns idle/completion timeout and cancel,
-Policy owns relay/wait/decision, and #898 removes the PID-based path.
+not the canonical contract: Sandcastle owns idle timeout / hang cancel after the
+agent stream goes quiet, Policy owns relay/wait/decision, and #898 removes the
+PID-based path. #928: completion is clean exit + legal sidecar (heartbeat-only
+liveness; no completion-signal password).
 
 ### 6. Decision gates (parks) and answers
 
@@ -262,13 +266,13 @@ preset (ORCHESTRATOR_ROUTE, default "normal")
 
 Presets (`src/modelRoutes.ts` `ROUTE_PRESETS`):
 
-| preset | coder/coderFix | reviewer | verify + cmr gates | ship/merger/fixer/cleanup/docRelease | cmrReview legs |
-| --- | --- | --- | --- | --- | --- |
-| `normal` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | sonnet | codex sol + claude opus (+agy) |
-| `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | sonnet | opus + agy + codex sol |
-| `codex-tight` | sonnet | opus | opus | sonnet | opus + agy (codex family excluded) |
-| `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | gpt-5.6-terra | codex-side legs |
-| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-sol | gpt-5.6-terra | codex sol + agy (claude family excluded) |
+| preset | coder/coderFix | verify (judge; S3/S6 + verify) + cmr gates | ship/merger/fixer/cleanup/docRelease | cmrReview legs |
+| --- | --- | --- | --- | --- |
+| `normal` | gpt-5.6-terra | gpt-5.6-sol | sonnet | codex sol + claude opus (+agy) |
+| `codex-cheap` | gpt-5.6-terra | gpt-5.6-sol | sonnet | opus + agy + codex sol |
+| `codex-tight` | sonnet | opus | sonnet | opus + agy (codex family excluded) |
+| `claude-cheap` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | codex-side legs |
+| `claude-tight` | gpt-5.6-terra | gpt-5.6-sol | gpt-5.6-terra | codex sol + agy (claude family excluded) |
 
 `*-tight` presets declare `tightFamilies` — the family whose quota is scarce is
 kept off every slot and leg. Pick the preset whose scarce pool matches
@@ -277,17 +281,19 @@ reality, then fine-tune single slots:
 | slot | env var |
 | --- | --- |
 | coder | `ORCHESTRATOR_CODER_MODEL` |
-| reviewer | `ORCHESTRATOR_REVIEWER_MODEL` |
 | coderFix | `ORCHESTRATOR_CODER_FIX_MODEL` |
 | ship | `ORCHESTRATOR_SHIP_MODEL` |
 | merger | `ORCHESTRATOR_MERGER_MODEL` |
 | cmrCompleteness | `ORCHESTRATOR_CMR_COMPLETENESS_MODEL` |
 | cmrCorrectness | `ORCHESTRATOR_CMR_CORRECTNESS_MODEL` |
-| verify | `ORCHESTRATOR_VERIFY_MODEL` |
+| verify (judge: S3/S6 + verify station) | `ORCHESTRATOR_VERIFY_MODEL` |
 | delivery fixer | `ORCHESTRATOR_FIXER_MODEL` |
 | cleanup | `ORCHESTRATOR_CLEANUP_MODEL` |
 | docRelease | `ORCHESTRATOR_DOCRELEASE_MODEL` |
 | cmrReview legs | `ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS` (comma list) |
+
+`ORCHESTRATOR_REVIEWER_MODEL` is **retired** (#923). Setting it fails closed with a
+migration hint to `ORCHESTRATOR_VERIFY_MODEL` (never silently ignored).
 
 Role vocabulary worth keeping straight:
 
@@ -477,4 +483,4 @@ replacement Actions and Sandcastle controls land.
 | image build fails at `npm install -g` with EACCES | global install under non-root user without npm prefix | prefix is scoped inside the install RUN layer; runtime resolves `/usr/local/bin/grok` |
 | run dies with "budget exhausted" during normal slow CI | retry markers counted without a budget-breaking canonical row | fixed on main (#824); ensure dist is fresh |
 | resume raw-rejects out of the driver | unguarded host observation on the resume path | fixed on main (#824); transient gh failure is a resumable error |
-| worker looks hung (legacy path) | the current monitor judges by idle threshold (>15 min with no new output), then kills only that worker's own pid tree; capacity/quota errors are not hangs | current-runtime recovery is to relay a successor onto the surviving drift; the canonical target delegates idle/completion timeout and cancellation to Sandcastle, with Policy owning relay/wait/decision |
+| worker looks hung (legacy path) | the current monitor judges by heartbeat / log idle threshold (>15 min with no new output), then kills only that worker's own pid tree; capacity/quota errors are not hangs (#928: no completion-signal password) | current-runtime recovery is to relay a successor onto the surviving drift; the canonical target delegates idle timeout and cancellation to Sandcastle, with Policy owning relay/wait/decision |

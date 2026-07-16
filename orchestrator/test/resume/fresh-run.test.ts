@@ -52,7 +52,7 @@ describe("fresh run (no residue) is unchanged (#255)", () => {
     expect(result.status).toBe("success");
     // Full child path executed (gate + load + implement + review + local handoff).
     expect(result.stepLedger.map((e) => e.step)).toEqual([
-      "S0", "S1", "S2", "S3", "S4", "S7", "S8",
+      "S0", "S1", "S2", "S3", "S7", "S8",
     ]);
     // Fresh cut: prepareWorktree called once.
     expect(backend.prepareWorktreeCount).toBe(1);

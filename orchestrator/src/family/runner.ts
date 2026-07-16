@@ -103,6 +103,14 @@ import {
   successStopSummary,
   type StopSummary,
 } from "../stopSummary.js";
+import {
+  familyTerminalFromStopSummary,
+  isFamilyStageFailureStatus,
+  resolveFamilyStageTerminal,
+  stageFailureStopSummary,
+  syncStopSummaryToStageFailure,
+  type FamilyStageFailureStatus,
+} from "./familyTerminal.js";
 import type {
   ChildSlice,
   FamilyBackend,
@@ -706,13 +714,27 @@ function familyStopSummary(input: {
         : undefined,
     );
   }
-  if (input.status === "verify_failed") {
-    if (input.barrierStopSummary != null) return input.barrierStopSummary;
-    return infraFailureStopSummary({
-      summary: `family ${input.failedPhase ?? "unknown"} verify/cmr barrier failed`,
-      repairHint: "inspect the family ledger aborted entry, repair the failing barrier, and rerun",
-      ...(metadata?.heads != null ? { heads: metadata.heads } : {}),
-    });
+  // #922 — stage failure status and stopSummary.reason share the same token.
+  if (isFamilyStageFailureStatus(input.status)) {
+    const synced = syncStopSummaryToStageFailure(
+      input.status,
+      input.barrierStopSummary,
+    );
+    if (input.barrierStopSummary == null && input.failedPhase !== undefined) {
+      return stageFailureStopSummary({
+        status: input.status,
+        summary: `family ${input.failedPhase} ${input.status.replace(/_failed$/, "")} barrier failed`,
+        repairHint: synced.repairHint,
+        ...(metadata?.heads != null ? { metadata: { heads: metadata.heads } } : {}),
+      });
+    }
+    if (metadata?.heads != null && synced.metadata?.heads == null) {
+      return {
+        ...synced,
+        metadata: { ...(synced.metadata ?? {}), heads: metadata.heads },
+      };
+    }
+    return synced;
   }
   if (input.status === "incomplete") {
     const blocked = input.children
@@ -978,29 +1000,23 @@ async function requirePostMergeCleanupForAlreadyDone(input: {
     familyHeadAfter: input.familyHeadAfter,
     prUrl: input.prUrl,
     familyIssue: input.familyIssue,
-    recordAbortOnFailure: false,
+    // #922: resume cleanup failure must leave the same durable stage name as fresh.
+    recordAbortOnFailure: true,
   });
   if (cleanup.ok) return undefined;
   const reason =
     cleanup.reason ??
     "family post-merge cleanup did not reach a terminal success outcome";
-  await recordFamilyEscalated(input.familyBackend, {
-    escalationKind: "failure",
-    phase: "final",
-    reason,
-    familyHeadAfter: input.familyHeadAfter,
+  const stopSummary = stageFailureStopSummary({
+    status: "cleanup_failed",
+    summary: reason,
   });
   return {
-    status: "escalated",
+    status: "cleanup_failed",
     familyBase: input.familyBase,
     familyHead: input.familyHeadAfter,
-    stopSummary: familyStopSummary({
-      status: "escalated",
-      familyBase: input.familyBase,
-      familyHead: input.familyHeadAfter,
-      children: input.children,
-      escalationReason: reason,
-    }),
+    failedPhase: "final",
+    stopSummary,
     children: [...input.children],
     ...(input.admissionSkipped !== undefined && input.admissionSkipped.length > 0
       ? { admissionSkipped: input.admissionSkipped }
@@ -1673,18 +1689,22 @@ export async function runFamily(
   //     child absent from BOTH this run's results AND the
   //     merged ledger (a blocker never merged / a fail-fast wave aborted before
   //     it ran) is `"skipped"`.
-  //   - `status` is the verify outcome ONLY when a barrier was red
-  //     (`verify_failed`, the most urgent). Otherwise the run is `"success"` iff
-  //     EVERY child is merged, else `"incomplete"` (a child `failed`/`skipped` —
-  //     the run did not fully close; the caller must not treat it as shippable).
+  //   - `status` is a stage-named failure (#922) when a barrier was red
+  //     (most urgent among non-escalated outcomes). Otherwise the run is
+  //     `"success"` iff EVERY child is merged, else `"incomplete"`.
   //
   // #293's happy path (all independent children merge, no-op verify passes) is
-  // always `"success"`; the `incomplete`/`verify_failed`/ledger-merged branches
-  // guard honesty for the failure + #294/#298 paths.
+  // always `"success"`; incomplete / stage-failure / ledger-merged branches
+  // guard honesty for the failure + #294/#298 / #922 paths.
   const finalize = async (
-    verifyFailedPhase?: VerifyCmrPhase,
-    barrierLedgerStartIndex = 0,
+    opts?: {
+      readonly failedStatus?: FamilyStageFailureStatus;
+      readonly failedPhase?: VerifyCmrPhase;
+      readonly barrierLedgerStartIndex?: number;
+    },
   ): Promise<FamilyRunResult> => {
+    const verifyFailedPhase = opts?.failedPhase;
+    const barrierLedgerStartIndex = opts?.barrierLedgerStartIndex ?? 0;
     const recorded = new Set(childResults.map((c) => c.issue));
     const ledgerMerged = await currentMerged(familyBackend);
     const familyLedger = await familyBackend.readFamilyLedger();
@@ -1696,12 +1716,37 @@ export async function runFamily(
           : { issue: c.issue, status: "skipped" as const },
       );
     const children = [...childResults, ...extra];
+    const barrierStopSummary =
+      opts?.failedStatus !== undefined || verifyFailedPhase !== undefined
+        ? (latestAbortedStopSummary(
+            familyLedger,
+            verifyFailedPhase,
+            barrierLedgerStartIndex,
+          ) ??
+          latestAbortedStopSummary(familyLedger, undefined, barrierLedgerStartIndex))
+        : undefined;
+    const terminal =
+      opts?.failedStatus !== undefined ||
+      verifyFailedPhase !== undefined ||
+      barrierStopSummary != null
+        ? resolveFamilyStageTerminal({
+            ...(opts?.failedStatus !== undefined
+              ? { failedStatus: opts.failedStatus }
+              : {}),
+            ...(barrierStopSummary !== undefined
+              ? { barrierStopSummary }
+              : {}),
+            defaultStatus: "verify_failed",
+          })
+        : undefined;
     const status: FamilyRunStatus =
-      verifyFailedPhase !== undefined
-        ? "verify_failed"
-        : children.every((c) => c.status === "merged" || c.status === "already_done")
-          ? "success"
-          : "incomplete";
+      terminal?.kind === "escalated"
+        ? "escalated"
+        : terminal?.kind === "stage"
+          ? terminal.status
+          : children.every((c) => c.status === "merged" || c.status === "already_done")
+            ? "success"
+            : "incomplete";
     const actualFamilyHead = await readCurrentFamilyHead(familyBackend, familyBase);
     const headMetadata = familyHeadMetadata({
       reportedFamilyHead: familyHead,
@@ -1712,15 +1757,6 @@ export async function runFamily(
           : "family runner current head",
       verifiedCmrHead: latestVerifiedCmrHead(familyLedger),
     });
-    const barrierStopSummary =
-      status === "verify_failed"
-        ? (latestAbortedStopSummary(
-            familyLedger,
-            verifyFailedPhase,
-            barrierLedgerStartIndex,
-          ) ??
-          latestAbortedStopSummary(familyLedger, undefined, barrierLedgerStartIndex))
-        : undefined;
     const alreadyDone = extra
       .filter((child) => child.status === "already_done")
       .map((child) => ({
@@ -1733,17 +1769,20 @@ export async function runFamily(
       childResults.length === 0 &&
       children.length > 0 &&
       alreadyDone.length === children.length;
-    const computedStopSummary = familyStopSummary({
-      status,
-      failedPhase: verifyFailedPhase,
-      familyBase,
-      familyHead,
-      headMetadata,
-      barrierStopSummary,
-      children,
-      admissionSkipped: epic.admissionSkipped,
-      alreadyDone,
-    });
+    const computedStopSummary =
+      terminal?.kind === "escalated"
+        ? terminal.stopSummary
+        : familyStopSummary({
+            status,
+            failedPhase: verifyFailedPhase,
+            familyBase,
+            familyHead,
+            headMetadata,
+            barrierStopSummary,
+            children,
+            admissionSkipped: epic.admissionSkipped,
+            alreadyDone,
+          });
     const materialSuccessStopSummary =
       status === "success"
         ? (latestSuccessfulFinalShippedStopSummary(
@@ -2243,9 +2282,11 @@ export async function runFamily(
       // Fail-fast (decision 3④): do not排下一波. #296's red wave lands here; the
       // family base + ledger are left for triage (decision 3⑤ "不静默吞"). Children
       // not yet run are recorded "skipped"/"merged" by finalize(); the run is
-      // observably `verify_failed` at the "wave" phase (NOT an indistinguishable
-      // success).
-      return await finalize("wave");
+      // observably `verify_failed` at the "wave" phase (wave is verify-only; #922).
+      return await finalize({
+        failedStatus: waveVerify.failedStatus ?? "verify_failed",
+        failedPhase: "wave",
+      });
     }
   }
 
@@ -2398,30 +2439,40 @@ export async function runFamily(
             : {}),
         };
       }
-      const stopSummary =
+      const rawStop =
         mergedBackfill.stopSummary ??
         decisionGateParkStopSummary({
           summary: `family auto-merge did not complete (${mergedBackfill.terminalState})`,
           repairHint:
             "resolve merge blockers or answer the decision gate, then re-feed the family run",
         });
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "failure",
-        phase: "final",
-        reason: stopSummary.summary,
-        familyHeadAfter: preFinalFamilyHead,
-      });
+      const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
+      if (terminal.status === "escalated") {
+        await recordFamilyEscalated(familyBackend, {
+          escalationKind: "decision",
+          phase: "final",
+          reason: terminal.stopSummary.summary,
+          familyHeadAfter: preFinalFamilyHead,
+          stopSummary: terminal.stopSummary,
+        });
+      } else {
+        await familyBackend.appendFamilyLedger({
+          status: "aborted",
+          event: "aborted",
+          phase: "final",
+          reason: terminal.stopSummary.summary,
+          familyHeadAfter: preFinalFamilyHead,
+          stopSummary: terminal.stopSummary,
+        });
+      }
       return {
-        status: "escalated",
+        status: terminal.status,
         familyBase,
         familyHead: preFinalFamilyHead,
-        stopSummary: familyStopSummary({
-          status: "escalated",
-          familyBase,
-          familyHead: preFinalFamilyHead,
-          children,
-          escalationReason: stopSummary.summary,
-        }),
+        ...(terminal.status === "merge_failed"
+          ? { failedPhase: "final" as const }
+          : {}),
+        stopSummary: terminal.stopSummary,
         children,
       };
     }
@@ -2434,30 +2485,40 @@ export async function runFamily(
       prUrl: convergedRecord.pr,
     });
     if (familyAutoMergeIncomplete(autoMerge)) {
-      const stopSummary =
+      const rawStop =
         autoMerge.stopSummary ??
         decisionGateParkStopSummary({
           summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
           repairHint:
             "resolve merge blockers or answer the decision gate, then re-feed the family run",
         });
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind: "failure",
-        phase: "final",
-        reason: stopSummary.summary,
-        familyHeadAfter: preFinalFamilyHead,
-      });
+      const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
+      if (terminal.status === "escalated") {
+        await recordFamilyEscalated(familyBackend, {
+          escalationKind: "decision",
+          phase: "final",
+          reason: terminal.stopSummary.summary,
+          familyHeadAfter: preFinalFamilyHead,
+          stopSummary: terminal.stopSummary,
+        });
+      } else {
+        await familyBackend.appendFamilyLedger({
+          status: "aborted",
+          event: "aborted",
+          phase: "final",
+          reason: terminal.stopSummary.summary,
+          familyHeadAfter: preFinalFamilyHead,
+          stopSummary: terminal.stopSummary,
+        });
+      }
       return {
-        status: "escalated",
+        status: terminal.status,
         familyBase,
         familyHead: preFinalFamilyHead,
-        stopSummary: familyStopSummary({
-          status: "escalated",
-          familyBase,
-          familyHead: preFinalFamilyHead,
-          children,
-          escalationReason: stopSummary.summary,
-        }),
+        ...(terminal.status === "merge_failed"
+          ? { failedPhase: "final" as const }
+          : {}),
+        stopSummary: terminal.stopSummary,
         children,
       };
     }
@@ -2580,25 +2641,43 @@ export async function runFamily(
     }
     const reviewLoop = reviewBarrier.value;
     if (!reviewLoop.ok) {
-      const stopSummary =
+      const rawStop =
         reviewLoop.stopSummary ??
-        infraFailureStopSummary({
+        stageFailureStopSummary({
+          status: "online_review_failed",
           summary: "family online review loop did not converge during shipped resume",
           repairHint: "repair or answer the worker-reported stop, then re-feed the family run",
         });
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind:
-          stopSummary.reason === "decision_gate_park" ? "decision" : "failure",
-        phase: "final",
-        reason: stopSummary.summary,
-        familyHeadAfter: preFinalFamilyHead,
-        stopSummary,
+      const terminal = familyTerminalFromStopSummary({
+        stage: "online_review_failed",
+        stopSummary: rawStop,
       });
+      if (terminal.status === "escalated") {
+        await recordFamilyEscalated(familyBackend, {
+          escalationKind: "decision",
+          phase: "final",
+          reason: terminal.stopSummary.summary,
+          familyHeadAfter: preFinalFamilyHead,
+          stopSummary: terminal.stopSummary,
+        });
+      } else {
+        await familyBackend.appendFamilyLedger({
+          status: "aborted",
+          event: "aborted",
+          phase: "final",
+          reason: terminal.stopSummary.summary,
+          familyHeadAfter: preFinalFamilyHead,
+          stopSummary: terminal.stopSummary,
+        });
+      }
       return {
-        status: "escalated",
+        status: terminal.status,
         familyBase,
         familyHead: preFinalFamilyHead,
-        stopSummary,
+        ...(terminal.status === "online_review_failed"
+          ? { failedPhase: "final" as const }
+          : {}),
+        stopSummary: terminal.stopSummary,
         children,
       };
     }
@@ -2621,25 +2700,39 @@ export async function runFamily(
       prUrl: shippedRecord.pr,
     });
     if (familyAutoMergeIncomplete(autoMerge)) {
-      const stopSummary =
+      const rawStop =
         autoMerge.stopSummary ??
         decisionGateParkStopSummary({
           summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
           repairHint: "resolve the worker-reported merge stop, then re-feed the family run",
         });
-      await recordFamilyEscalated(familyBackend, {
-        escalationKind:
-          stopSummary.reason === "decision_gate_park" ? "decision" : "failure",
-        phase: "final",
-        reason: stopSummary.summary,
-        familyHeadAfter: convergedHead,
-        stopSummary,
-      });
+      const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
+      if (terminal.status === "escalated") {
+        await recordFamilyEscalated(familyBackend, {
+          escalationKind: "decision",
+          phase: "final",
+          reason: terminal.stopSummary.summary,
+          familyHeadAfter: convergedHead,
+          stopSummary: terminal.stopSummary,
+        });
+      } else {
+        await familyBackend.appendFamilyLedger({
+          status: "aborted",
+          event: "aborted",
+          phase: "final",
+          reason: terminal.stopSummary.summary,
+          familyHeadAfter: convergedHead,
+          stopSummary: terminal.stopSummary,
+        });
+      }
       return {
-        status: "escalated",
+        status: terminal.status,
         familyBase,
         familyHead: convergedHead,
-        stopSummary,
+        ...(terminal.status === "merge_failed"
+          ? { failedPhase: "final" as const }
+          : {}),
+        stopSummary: terminal.stopSummary,
         children,
       };
     }
@@ -2749,29 +2842,45 @@ export async function runFamily(
           ...(escalationAnswer !== undefined ? { escalationAnswer } : {}),
         });
         if (!reviewLoop.ok) {
-          const stopSummary =
+          const rawStop =
             reviewLoop.stopSummary ??
-            infraFailureStopSummary({
+            stageFailureStopSummary({
+              status: "online_review_failed",
               summary:
                 "family online review loop did not converge during open-shipped re-entry",
               repairHint:
                 "repair or answer the worker-reported stop, then re-feed the family run",
             });
-          await recordFamilyEscalated(familyBackend, {
-            escalationKind:
-              stopSummary.reason === "decision_gate_park"
-                ? "decision"
-                : "failure",
-            phase: "final",
-            reason: stopSummary.summary,
-            familyHeadAfter: barrierHead,
-            stopSummary,
+          const terminal = familyTerminalFromStopSummary({
+            stage: "online_review_failed",
+            stopSummary: rawStop,
           });
+          if (terminal.status === "escalated") {
+            await recordFamilyEscalated(familyBackend, {
+              escalationKind: "decision",
+              phase: "final",
+              reason: terminal.stopSummary.summary,
+              familyHeadAfter: barrierHead,
+              stopSummary: terminal.stopSummary,
+            });
+          } else {
+            await familyBackend.appendFamilyLedger({
+              status: "aborted",
+              event: "aborted",
+              phase: "final",
+              reason: terminal.stopSummary.summary,
+              familyHeadAfter: barrierHead,
+              stopSummary: terminal.stopSummary,
+            });
+          }
           openShippedTerminal = {
-            status: "escalated",
+            status: terminal.status,
             familyBase,
             familyHead: barrierHead,
-            stopSummary,
+            ...(terminal.status === "online_review_failed"
+              ? { failedPhase: "final" as const }
+              : {}),
+            stopSummary: terminal.stopSummary,
             children: openChildren,
             ...(epic.admissionSkipped !== undefined &&
             epic.admissionSkipped.length > 0
@@ -2798,28 +2907,40 @@ export async function runFamily(
           prUrl: openShipped.pr,
         });
         if (familyAutoMergeIncomplete(autoMerge)) {
-          const stopSummary =
+          const rawStop =
             autoMerge.stopSummary ??
             decisionGateParkStopSummary({
               summary: `family auto-merge did not complete (${autoMerge.terminalState})`,
               repairHint:
                 "resolve the worker-reported merge stop, then re-feed the family run",
             });
-          await recordFamilyEscalated(familyBackend, {
-            escalationKind:
-              stopSummary.reason === "decision_gate_park"
-                ? "decision"
-                : "failure",
-            phase: "final",
-            reason: stopSummary.summary,
-            familyHeadAfter: convergedHead,
-            stopSummary,
-          });
+          const terminal = familyTerminalFromStopSummary({ stage: "merge_failed", stopSummary: rawStop });
+          if (terminal.status === "escalated") {
+            await recordFamilyEscalated(familyBackend, {
+              escalationKind: "decision",
+              phase: "final",
+              reason: terminal.stopSummary.summary,
+              familyHeadAfter: convergedHead,
+              stopSummary: terminal.stopSummary,
+            });
+          } else {
+            await familyBackend.appendFamilyLedger({
+              status: "aborted",
+              event: "aborted",
+              phase: "final",
+              reason: terminal.stopSummary.summary,
+              familyHeadAfter: convergedHead,
+              stopSummary: terminal.stopSummary,
+            });
+          }
           openShippedTerminal = {
-            status: "escalated",
+            status: terminal.status,
             familyBase,
             familyHead: convergedHead,
-            stopSummary,
+            ...(terminal.status === "merge_failed"
+              ? { failedPhase: "final" as const }
+              : {}),
+            stopSummary: terminal.stopSummary,
             children: openChildren,
             ...(epic.admissionSkipped !== undefined &&
             epic.admissionSkipped.length > 0
@@ -2913,15 +3034,19 @@ export async function runFamily(
     return openShippedTerminal;
   }
   if (!finalVerify.ok) {
-    // #296's failing integrated cmr lands here. #293 no-op never trips it. The
-    // result carries the merged children AND `status:"verify_failed"`/`failedPhase:
-    // "final"` so a red final verify is OBSERVABLY distinct from success — the
-    // caller / PR step must NOT ship it (decision 3⑤ "不静默吞"); the family base +
-    // ledger are left for triage.
-    return await finalize("final", preFinalLedgerLength);
+    // #296 / #922: stage-named terminal (verify/cmr/ship/online_review/merge/
+    // cleanup) + failedPhase:"final". Decision parks leave failedStatus unset
+    // and resolve to escalated via barrier stopSummary. Never a false success.
+    return await finalize({
+      ...(finalVerify.failedStatus !== undefined
+        ? { failedStatus: finalVerify.failedStatus }
+        : {}),
+      failedPhase: "final",
+      barrierLedgerStartIndex: preFinalLedgerLength,
+    });
   }
 
   // Every barrier passed. finalize() derives "success" only if EVERY child
   // merged, else "incomplete" (a child failed / stayed blocked — not shippable).
-  return await finalize(undefined, preFinalLedgerLength);
+  return await finalize({ barrierLedgerStartIndex: preFinalLedgerLength });
 }

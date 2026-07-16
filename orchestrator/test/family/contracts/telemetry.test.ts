@@ -78,15 +78,14 @@ function familySpec(kind: WorkerSpec["kind"]): WorkerSpec {
   return {
     id: kind === "cmr" ? "S3" : "S9",
     kind,
-    role: kind === "cmr" ? "reviewer" : "verify",
+    role: "verify",
     host: "codex",
     session: "fresh",
     contextRetention: "clean",
     promptFile: `${kind}.md`,
-    completionSignal: `<${kind}>`,
     maxIter: 1,
     model: "gpt-5.6-terra",
-    soul: kind === "cmr" ? "cmr" : "verify",
+    soul: "verify",
     toolchain: [],
   };
 }
@@ -161,13 +160,14 @@ class FamilyTelemetryBackend implements FamilyBackend {
     this.ctxs.push(ctx);
     if (spec.kind === "cmr") {
       const cmrPass = ctx.cmrPass ?? "correctness";
+      // #919 M1/M2: live ship green is typed kind:judge status:converged.
+      // Residual findingsCount:0 is unusable (never silent clean / never ship).
       return {
         kind: "completed",
         output: {
-          kind: "cmr",
+          kind: "judge",
+          status: "converged",
           cmrPass,
-          converged: true,
-          findingsCount: 0,
           successfulLegs: [...COMPLETE_CMR_LEGS],
           claimedFixedFindingIdentityKeys: [],
           priorFindingDispositions: [],
@@ -443,23 +443,31 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
       ): Promise<WorkerResult> {
         if (spec.kind === "cmr") {
           this.ctxs.push(ctx);
+          // #919 CR: stamp only reads live kind:"judge". Residual kind:"cmr"
+          // is not a live verdict signal (maps not_converged). Blocking
+          // fixture must mint continue + live dispositions.
+          const findings = [
+            {
+              severity: "medium" as const,
+              category: "correctness" as const,
+              claim_quote: "runner must preserve the blocker",
+              location: "orchestrator/src/family/verifyCmr.ts:2680",
+              suggested_fix: "route it through coder-fix",
+              action: "fix_now" as const,
+            },
+          ];
           return {
             kind: "completed",
             output: {
-              kind: "cmr",
-              converged: false,
+              kind: "judge",
+              status: "continue",
               successfulLegs: [...COMPLETE_CMR_LEGS],
               evidencePaths: ["cmr/blocking.json"],
-              findings: [
-                {
-                  severity: "medium",
-                  category: "correctness",
-                  claim_quote: "runner must preserve the blocker",
-                  location: "orchestrator/src/family/verifyCmr.ts:2680",
-                  suggested_fix: "route it through coder-fix",
-                  action: "fix_now",
-                },
-              ],
+              findings,
+              findingDispositions: findings.map((f) => ({
+                identityKey: `${f.category}|${f.location}|${f.claim_quote}`,
+                action: "live" as const,
+              })),
             },
           };
         }
@@ -603,12 +611,11 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
         writeFileSync(outcomePath, JSON.stringify({ resolved: true }), "utf8");
         return {
           branch: "family/786",
-          completionSignal: "MERGER_STEP_COMPLETE",
           stdout: "<merger>{}</merger>",
           commits: [],
           iterations: [],
-          // Typed no-gate decision signal (SO was attached on this seat).
-          output: {},
+          // Typed T2 merger completed (SO was attached on this seat).
+          output: { station: "merger", status: "completed" },
         } as Awaited<ReturnType<typeof sc.run>>;
       }
     }
@@ -650,7 +657,6 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
         args: ["-e", "setTimeout(() => process.exit(0), 50)"],
         logDir: ledgerDir,
         poolId: `codex/${spec.model}`,
-        completionSignal: spec.completionSignal,
         stepId: spec.id,
       }),
       awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({
@@ -689,7 +695,6 @@ it("keeps an unknown review-round row when durable abort persistence throws", as
         args: ["-e", "process.stdout.write('family worker output\\n')"],
         logDir: ledgerDir,
         poolId: `codex/${spec.model}`,
-        completionSignal: spec.completionSignal,
         stepId: spec.id,
       }),
       awaitMonitoredCliWorker: async (): Promise<WorkerResult> => ({

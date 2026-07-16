@@ -4394,7 +4394,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       terminalState: "decision_gate_raised",
       round: 1,
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "online_review_failed",
         summary: expect.stringMatching(/side effects failed.*retriggerBotsAndPoll/s),
       }),
     });
@@ -4460,7 +4460,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       terminalState: "decision_gate_raised",
       round: 2,
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "online_review_failed",
         summary: expect.stringContaining("side effects failed"),
       }),
     });
@@ -4482,7 +4482,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       terminalState: "decision_gate_raised",
       round: 1,
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "online_review_failed",
         summary: expect.stringMatching(/bot poll failed.*rate limited/s),
       }),
     });
@@ -4504,7 +4504,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       terminalState: "decision_gate_raised",
       round: 1,
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "online_review_failed",
         summary: expect.stringMatching(/verify dispatch failed.*container start/s),
       }),
     });
@@ -4526,7 +4526,7 @@ describe("#600 r5 runOnlineReviewLoopStage — stage-level regression", () => {
       terminalState: "decision_gate_raised",
       round: 1,
       stopSummary: expect.objectContaining({
-        reason: "infra_failure",
+        reason: "online_review_failed",
         summary: expect.stringMatching(/fixer dispatch failed.*residue unsafe/s),
       }),
     });
@@ -5390,7 +5390,7 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
         terminalState: "decision_gate_raised",
         round: 1,
         stopSummary: expect.objectContaining({
-          reason: "infra_failure",
+          reason: "online_review_failed",
           summary: expect.stringContaining("verify worker unavailable"),
         }),
       });

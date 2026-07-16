@@ -6,15 +6,15 @@
  * entry, then calls route() to pick the next step. The agent never decides
  * the next step — route() does.
  *
- * ADR 0030: the child runner owns the visible per-slice review/fix loop:
+ * ADR 0030 / #925: the child runner owns the visible per-slice review/fix loop:
  *
- *   S0(gate) → S1(context) → S2(implement) → S3(review) → S4(classify)
- *     clean/deferred only → S7(local handoff) → S8(handoff)
- *     blocking → S5(fix) → S6(fresh full-diff review) → S4(classify)
+ *   S0(gate) → S1(context) → S2(implement) → S3(judge establish)
+ *     converged → S7(local handoff) → S8(handoff)
+ *     continue  → S5(fix) → S6(judge resume) → (verdict again)
+ *     escalate  → decision-kind park (answer → 原地 resume)
  *
- * S2/S5 are coder workers. S3/S6 are fresh read-only reviewer workers. S4 is a
- * runner-action classification boundary so findings and per-round outcomes are
- * visible in ledger state instead of hidden inside a coder session.
+ * S2/S5 are coder workers. S3/S6 are the persistent verify judge. S4 mechanical
+ * open-count classification is dissolved into the judge verdict tri-state.
  *
  * Slice #249: persisted step ledger — every step is written via
  *   backend.writeLedger() to the sibling state dir (outside the worktree).
@@ -22,7 +22,7 @@
  * Slice #252: error edges —
  *   - any backend call throws → S8(error) + error package  [runner catch]
  *   - the S2 worker carries escalate → S8(escalate) [route() detects]
- * Slice #253: StepSpec contract — model/completionSignal/maxIter/soul/toolchain.
+ * Slice #253: StepSpec contract — model/maxIter/soul/toolchain (#928: no signal).
  * Slice #248: S0 input gate — three-way accept condition (rfa ∧ no sub-issues ∧
  *   blocked_by all closed); violations throw, stopping at S0. (Agent Brief was
  *   removed as a gate — design correction; the coder reads the whole issue.)
@@ -37,8 +37,8 @@ import { shWithClock } from "./externalCall.js";
 import { hasAcceptedSuppressionAuthority } from "./acceptedSuppression.js";
 import {
   reviewFixAssertionSignal,
-  reviewFixDecisionGate,
 } from "./reviewFixAssertionGate.js";
+import { coderRefuseReverifyLanding } from "./coderRefuseExit.js";
 import { route } from "./route.js";
 // The unified worker-dispatch seam (ADR 0026 / PRD #330 #331): the runner
 // dispatches EVERY child worker step (S2/S3/S5/S6) through ONE free function
@@ -73,18 +73,17 @@ import {
   modelForSlot,
   printableRouteLineup,
   degradeOptionalRouteSmokeFailures,
-  routeConflictSlugsExcluding,
   resolveActiveModelRoute,
   knownLiveBillingPoolsFromRoute,
+  relaySlotForSingleSliceWallStep,
   withCoderSlot,
   type ModelRouteEnv,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import { executeAdvanceCoderSuggestion } from "./advanceCoderEffect.js";
 import {
   resolveCoderRecOrder,
   lookupCoderRosterEntry,
-  completedS6RoundsFromLedger,
-  CODER_REC_FALLBACK_AFTER_ROUNDS,
   type CoderRosterEntry,
 } from "./coderRoster.js";
 import {
@@ -119,6 +118,17 @@ import {
   isValidEscalation,
 } from "./validate.js";
 import {
+  isJudgeSeat,
+  mintJudgeEscalate,
+  priorJudgeVerdictRowsFromLedger,
+  projectJudgeContinueBlocking,
+  projectJudgeSeatOutput,
+} from "./judgeStation.js";
+import {
+  rebuildBlockingFromLedger,
+  reviewerRawArtifactPointers,
+} from "./residualLedger.js";
+import {
   contractDriftStopSummary,
   decisionGateParkStopSummary,
   infraFailureStopSummary,
@@ -145,6 +155,7 @@ import type {
   LedgerEntry,
   PersistentLedgerEntry,
   ResumeState,
+  ReviewFixRefuseRecord,
   RunInput,
   RunResult,
   SliceStepId,
@@ -154,40 +165,6 @@ import type {
   WorkerLandingPayload,
   WorktreeHandle,
 } from "./types.js";
-
-/**
- * The self-review peers after a relay candidate lands in its real route.
- *
- * Relay candidates can only replace the coder (S2/S5) or reviewer (S3/S6)
- * slot. Every other complete-route checkpoint remains a separation peer,
- * including both CMR gates, verify, and every CMR review leg. Removal is by
- * slot identity rather than slug so another checkpoint using the same slug is
- * still a conflict.
- */
-export function relayCandidateConflictSlugs(
-  route: ResolvedModelRoute,
-  candidate: CoderRosterEntry,
-  wallStep: StepId,
-): ReadonlyArray<string> {
-  const replacedSlot = relaySlotForWallStep(wallStep);
-  const candidateRoute =
-    replacedSlot === "coder"
-      ? withCoderSlot(route, candidate.slug)
-      : {
-          ...route,
-          slots: { ...route.slots, [replacedSlot]: candidate.slug },
-        };
-
-  return routeConflictSlugsExcluding(candidateRoute, replacedSlot);
-}
-
-function relaySlotForWallStep(
-  wallStep: StepId,
-): "coder" | "reviewer" | "coderFix" {
-  if (wallStep === "S3" || wallStep === "S6") return "reviewer";
-  if (wallStep === "S5") return "coderFix";
-  return "coder";
-}
 
 /** Merge resume history with the display-seeded ledger without replaying shared rows. */
 export function mergeResumeLedgerHistory(
@@ -642,33 +619,25 @@ function gitHead(worktree: WorktreeHandle | undefined): string | undefined {
   return gitOutputLines(worktree, ["rev-parse", "HEAD"])[0];
 }
 /**
- * #677: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
+ * #677 / #927: rebuild S5→S6 reverify locals from the persisted S5 ledger row.
  *
- * `preexistingAssertionTouchedForReverify` and
- * `refusedFindingIdentityKeysForReverify` are process-local; a crash between
- * S5 completing and S6 running would otherwise drop both. Prefer rebuild over
- * new durable fields: refuse keys already live on the S5 coder output, and the
- * assertion signal is recomputed from ledger branchHEADs + worktree git
+ * `preexistingAssertionTouchedForReverify`,
+ * `refusedFindingIdentityKeysForReverify`, and opaque `refuseRecordsForReverify`
+ * are process-local; a crash between S5 completing and S6 running would
+ * otherwise drop them. Prefer rebuild over new durable fields: refuse keys +
+ * cargo already live on the S5 coder output, and the assertion signal is
+ * recomputed from ledger branchHEADs + worktree git
  * (same shape as #743 authorization rebuild / S4 findings-count replay).
  */
 interface S5ReverifySignals {
   readonly preexistingAssertionTouched: boolean;
   readonly refusedFindingIdentityKeys: readonly string[];
+  readonly refuseRecords?: readonly ReviewFixRefuseRecord[];
 }
 
 function ledgerEntryBranchHead(entry: LedgerEntry): string | undefined {
   const head = (entry as PersistentLedgerEntry).branchHEAD;
   return isLikelyGitSha(head) ? head : undefined;
-}
-
-function refusedKeysFromCoderOutput(
-  output: Extract<StepOutput, { kind: "coder" }>,
-): readonly string[] {
-  const records = output.refuseRecords ?? [];
-  if (records.length > 0) {
-    return reviewFixDecisionGate({ records })?.refusedFindingIdentityKeys ?? [];
-  }
-  return output.refusedFindingIdentityKeys ?? [];
 }
 
 export function rebuildS5ReverifySignalsFromLedger(
@@ -693,7 +662,9 @@ export function rebuildS5ReverifySignalsFromLedger(
 
   const s5 = ledger[s5Index]!;
   const output = s5.output as Extract<StepOutput, { kind: "coder" }>;
-  const refusedFindingIdentityKeys = refusedKeysFromCoderOutput(output);
+  // #927 / #919 M2: envelope keys only (cargo refuseRecords never invents keys).
+  const refuseLanding = coderRefuseReverifyLanding(output);
+  const refusedFindingIdentityKeys = refuseLanding.refusedFindingIdentityKeys;
 
   let preexistingAssertionTouched = false;
   if (worktree !== undefined) {
@@ -731,6 +702,9 @@ export function rebuildS5ReverifySignalsFromLedger(
   return {
     preexistingAssertionTouched,
     refusedFindingIdentityKeys,
+    ...(refuseLanding.refuseRecords !== undefined
+      ? { refuseRecords: refuseLanding.refuseRecords }
+      : {}),
   };
 }
 
@@ -863,121 +837,6 @@ function lastReviewerStep(
   return undefined;
 }
 
-interface S4FindingsCountReplay {
-  readonly blocking: ReadonlyArray<Finding>;
-  readonly blockingIdentityKeys: ReadonlyArray<string>;
-  /** Reviewer-declared open-count (ADR 0131), not findings-array length. */
-  readonly blockingFindingCount: number;
-  readonly findingDispositions: ReadonlyArray<FindingDisposition>;
-  /**
-   * Rebuilt raw artifact pointers for the positive-count → S5 edge after an S4
-   * resume boundary (host paths; materialised into the fixer sandbox at landing).
-   */
-  readonly rawReviewerArtifacts?: WorkerLandingPayload["rawReviewerArtifacts"];
-}
-
-/**
- * Opaque pointers to the preceding reviewer's raw products. Always attached on
- * the positive-count → S5 edge so sparse/missing findings cargo cannot produce
- * a no-op fixer landing (ADR 0131 / #899).
- */
-function reviewerRawArtifactPointers(
-  handle: import("./types.js").WorkerMonitorHandle | undefined,
-  sessionId: string | undefined,
-): NonNullable<WorkerLandingPayload["rawReviewerArtifacts"]> {
-  return {
-    ...(handle?.logPath !== undefined ? { stdoutPath: handle.logPath } : {}),
-    ...(handle?.resultPath !== undefined ? { sidecarPath: handle.resultPath } : {}),
-    ...(sessionId !== undefined ? { reviewerSessionId: sessionId } : {}),
-    statement: "the previous reviewer raw artifacts are here",
-  };
-}
-
-function replayS4FindingsCountState(
-  ledger: ReadonlyArray<LedgerEntry>,
-): S4FindingsCountReplay {
-  let pendingBlockingFindings: Finding[] = [];
-  let pendingBlockingFindingIdentityKeys: string[] = [];
-  let pendingBlockingFindingCount = 0;
-  let findingDispositions: FindingDisposition[] = [];
-  let lastReviewerOutputForS4: StepOutput | undefined;
-  let lastReviewerSessionId: string | undefined;
-  let lastReviewerMonitorHandle: import("./types.js").WorkerMonitorHandle | undefined;
-  let pendingRawReviewerArtifacts: WorkerLandingPayload["rawReviewerArtifacts"];
-
-  for (const entry of ledger) {
-    if (isBookkeepingEntry(entry)) {
-      continue;
-    }
-    if (entry.output?.kind === "reviewer") {
-      if (!isStepId(entry.step)) continue;
-      lastReviewerOutputForS4 = entry.output;
-      lastReviewerSessionId =
-        typeof entry.sessionId === "string" ? entry.sessionId : undefined;
-      lastReviewerMonitorHandle = entry.monitorHandle;
-      continue;
-    }
-    if (entry.step !== "S4" || lastReviewerOutputForS4?.kind !== "reviewer") {
-      continue;
-    }
-
-    // #877: findings-count channel only — disposition prose / still-active
-    // reopen / no-progress courts demolished. Prior keys absent from findings[]
-    // are closed by the three-channel envelope; the runner does not inspect prose.
-    // Findings rows are opaque cargo: typed ReviewerOutput already decoded them
-    // at the worker boundary; runner only shallow-copies + count-routes. Identity
-    // keys are derived at the fixer landing writer, not here (ADR 0131 / #899).
-    findingDispositions = [
-      ...(entry.findingDispositions ?? []),
-    ];
-    // Opaque cargo copy only — not a decode/validation boundary.
-    pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
-    pendingBlockingFindingIdentityKeys = [];
-    // Count is the typed open-count, never cargo-array length.
-    pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
-    // Live path attaches raw pointers on every positive open-count → S5 edge;
-    // resume after the persisted S4 boundary must rebuild them from the
-    // preceding reviewer ledger row (sessionId + monitor handle paths).
-    pendingRawReviewerArtifacts =
-      lastReviewerOutputForS4.findingsCount > 0
-        ? reviewerRawArtifactPointers(
-            lastReviewerMonitorHandle,
-            lastReviewerSessionId,
-          )
-        : undefined;
-  }
-
-  // Pre-S4 crash window (codex R3 / C-R4-1): last reviewer has positive open-
-  // count but either no S4 row yet, or an earlier S4 left stale raw pointers
-  // from a prior round (S3 r1 → S4 → S5 → S6 r2, crash before the second S4).
-  // Always rebind findings/count/raw from the last reviewer so S5 does not
-  // inherit r1 artifacts when r2 is the open review.
-  if (
-    lastReviewerOutputForS4?.kind === "reviewer" &&
-    typeof lastReviewerOutputForS4.findingsCount === "number" &&
-    Number.isSafeInteger(lastReviewerOutputForS4.findingsCount) &&
-    lastReviewerOutputForS4.findingsCount > 0
-  ) {
-    pendingBlockingFindings = [...lastReviewerOutputForS4.findings];
-    pendingBlockingFindingIdentityKeys = [];
-    pendingBlockingFindingCount = lastReviewerOutputForS4.findingsCount;
-    pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-      lastReviewerMonitorHandle,
-      lastReviewerSessionId,
-    );
-  }
-
-  return {
-    blocking: pendingBlockingFindings,
-    blockingIdentityKeys: pendingBlockingFindingIdentityKeys,
-    blockingFindingCount: pendingBlockingFindingCount,
-    findingDispositions,
-    ...(pendingRawReviewerArtifacts !== undefined
-      ? { rawReviewerArtifacts: pendingRawReviewerArtifacts }
-      : {}),
-  };
-}
-
 /**
  * Derive the resume plan from a persisted ledger.
  *
@@ -1044,7 +903,7 @@ function planResume(
     }
 
     const decisionStep = lastNonTerminalStep(executableLedger);
-    const replayedS4 = replayS4FindingsCountState(executableLedger);
+    const rebuiltBlocking = rebuildBlockingFromLedger(executableLedger);
     const answer =
       decisionStep !== undefined
         ? latestAnswerAfter(ledger, lastEntryIndex, decisionStep)
@@ -1054,14 +913,14 @@ function planResume(
         ? repairIntent !== undefined
           ? continueRepairFromEvent(
               repairIntent,
-              replayedS4.blockingFindingCount,
+              rebuiltBlocking.blockingFindingCount,
             )
           : latestContinueFixingAfter(
               ledger,
               lastEntryIndex,
-              replayedS4.blockingFindingCount,
+              rebuiltBlocking.blockingFindingCount,
             ) ??
-            continueRepairFromAnswer(answer, replayedS4.blockingFindingCount)
+            continueRepairFromAnswer(answer, rebuiltBlocking.blockingFindingCount)
         : undefined;
     if (
       decisionStep === undefined ||
@@ -1259,24 +1118,19 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
 
 // #873 / ADR 0062: runner has NO authority to judge reviewer output format
 // (findings schema, tags, zod). Format belongs at write-point / worker.
-// Runner only: process exit / open findings count / worker-raised decision gate.
+// Runner only: process exit / judge status tri-state / worker-raised decision gate.
 
 /**
  * The fixed StepSpecs for child-slice worker steps. Versioned promptFiles,
  * never assembled inline (ADR 0018 决定#4).
  *
- * ADR 0030 makes the per-slice loop runner-visible: S2 implements, S3 reviews,
- * S5 fixes blocking findings, and S6 performs the fresh full-diff re-review.
+ * #925 / ADR 0132: S2 implements, S3 establishes the verify judge, S5 fixes
+ * live findings, S6 resumes the same judge session. maxIter is 1 on every seat
+ * (Ralph outer multi-iter retired; typed SO re-asks are in-session).
  *
- * #253 fields: model (CLI slug), completionSignal (Sandcastle run() API), maxIter
- * (per-seat Sandcastle iteration budget — NOT a fix-loop give-up counter), soul,
- * toolchain.
- *
- * maxIter SEMANTICS (#899 / ADR 0128): every selected seat is single-iteration
- * (`maxIter: 1`). The skill finishes inside that one `sandbox.run()`; native
- * structured-output re-asks are in-session, not outer iterations. Hitting
- * maxIter ends the step normally — never "orchestrator gives up" (that only
- * happens on a MODEL escalate — US#18/US#19). See StepSpec.maxIter.
+ * #253/#928 fields: model (CLI slug), maxIter (per-seat Sandcastle iteration
+ * budget — NOT a fix-loop give-up counter; always 1), soul, toolchain.
+ * Completion is clean exit + legal sidecar / typed envelope — no signal field.
  *
  * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
  * with single-slot overrides (see {@link coderModel}); no image rebuild, no
@@ -1290,10 +1144,6 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  */
 export function coderModel(env: ModelRouteEnv = process.env): string {
   return modelForSlot("coder", env);
-}
-
-export function reviewerModel(env: ModelRouteEnv = process.env): string {
-  return modelForSlot("reviewer", env);
 }
 
 type WorkerStepId = "S2" | "S3" | "S5" | "S6";
@@ -1311,21 +1161,23 @@ export function stepSpecsForRoute(
       // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
       // alone — no image rebuild, no StepSpec shape change.
       model: route.slots.coder,
-      completionSignal: "CODER_STEP_COMPLETE",
-      // #899 / ADR 0128: one single-iteration Sandcastle run per seat; the skill
-      // finishes inside that invocation (no outer Ralph multi-iter).
+      // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat;
+      // clean exit + legal sidecar / typed envelope is completion.
       maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S3: {
       id: "S3",
-      role: "reviewer",
-      promptFile: "reviewer_review.md",
-      model: route.slots.reviewer,
-      completionSignal: "REVIEWER_STEP_COMPLETE",
+      // #925 / #919 S2/R8: persistent verify judge. Seat identity is step/id
+      // S3 only (isJudgeSeat); production role+soul are `"verify"` cargo.
+      // `#923` model-route slot is already verify. Leg-soul `"reviewer"` remains
+      // only inside multi-model review legs.
+      role: "verify",
+      promptFile: "judge_station.md",
+      model: route.slots.verify,
       maxIter: 1,
-      soul: "READ-ONLY",
+      soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S5: {
@@ -1333,20 +1185,20 @@ export function stepSpecsForRoute(
       role: "coder",
       promptFile: "coder_fix.md",
       model: route.slots.coderFix,
-      completionSignal: "CODER_STEP_COMPLETE",
-      // #899 / ADR 0128: single-iteration seat (same as S2).
+      // #899 / ADR 0128 / #928: single-iteration seat (same as S2).
       maxIter: 1,
       soul: "coder",
       toolchain: IMAGE_TOOLCHAIN,
     },
     S6: {
       id: "S6",
-      role: "reviewer",
-      promptFile: "reviewer_review.md",
-      model: route.slots.reviewer,
-      completionSignal: "REVIEWER_STEP_COMPLETE",
+      // #925 / #919 S2/R8: same judge seat as S3 — resume S3 session.
+      // Seat identity is step/id S6 (isJudgeSeat); role+soul `"verify"` cargo.
+      role: "verify",
+      promptFile: "judge_station.md",
+      model: route.slots.verify,
       maxIter: 1,
-      soul: "READ-ONLY",
+      soul: "verify",
       toolchain: IMAGE_TOOLCHAIN,
     },
   };
@@ -1357,11 +1209,12 @@ function activeRelaySmokeEntryKey(
   step: StepId | undefined,
   route: Pick<ResolvedModelRoute, "slots">,
 ): string | undefined {
-  const slot =
-    step === "S2" ? "coder" :
-    step === "S3" || step === "S6" ? "reviewer" :
-    step === "S5" ? "coderFix" : undefined;
-  return slot === undefined ? undefined : `${slot}:${route.slots[slot]}`;
+  // #923: single-slice map lives in modelRoutes (S3/S6 → verify); do not fork it.
+  if (step !== "S2" && step !== "S3" && step !== "S5" && step !== "S6") {
+    return undefined;
+  }
+  const slot = relaySlotForSingleSliceWallStep(step);
+  return `${slot}:${route.slots[slot]}`;
 }
 
 export function stepSpecsForEnv(
@@ -1372,14 +1225,25 @@ export function stepSpecsForEnv(
 
 export const WORKER_PROMPT_FILES: Readonly<Record<WorkerStepId, string>> = {
   S2: "coder_implement.md",
-  S3: "reviewer_review.md",
+  S3: "judge_station.md",
   S5: "coder_fix.md",
-  S6: "reviewer_review.md",
+  S6: "judge_station.md",
 };
 
 /** Synthesise a human-readable reason for a route-owned error edge. */
 function buildErrorReason(step: StepId, _output: StepOutput | undefined): string {
   return `step ${step} routed to error handoff`;
+}
+
+/**
+ * #925 / #919 S1/M5: judge seats collapse residual paper via the sole
+ * {@link projectJudgeSeatOutput} helper. Membership = {@link isJudgeSeat}.
+ */
+function normalizeJudgeSeatOutput(
+  step: SliceStepId,
+  output: StepOutput,
+): StepOutput {
+  return isJudgeSeat({ step }) ? projectJudgeSeatOutput(output) : output;
 }
 
 function acceptedSuppressionsFromDispositions(
@@ -1456,13 +1320,16 @@ function untrustedExecutableInstructionSummary(
   return undefined;
 }
 
+/**
+ * Decision-kind escalate park stop summary.
+ * #925 / ADR 0132 / #919 CR U2: typed judge escalate and decision_gate share
+ * the same park family (`decision_gate_park`) — no third stop token.
+ */
 function stopSummaryForEscalation(escalation: Escalation): StopSummary {
-  const reason = `${escalation.reason}: ${escalation.diagnosis}`;
-  return {
-    reason: "spec_conflict",
-    summary: reason,
+  return decisionGateParkStopSummary({
+    summary: `${escalation.reason}: ${escalation.diagnosis}`,
     repairHint: "answer the decision escalation and rerun",
-  };
+  });
 }
 
 function stopSummaryForStartupRouteFailure(escalation: Escalation): StopSummary {
@@ -1527,7 +1394,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     `[orchestrator] model route lineup\n${printableRouteLineup(routePolicy.route)}`,
   );
   // #767: modelRoute / stepSpecs stay mutable so Coder-Rec can override the
-  // coder (+ coderFix) slot at S0 and advance it after non-converging fix rounds.
+  // coder (+ coderFix) slot at S0 (first seat stay-put; #926 owns advanceCoder).
   modelRoute = routePolicy.route;
   let stepSpecs = stepSpecsForRoute(modelRoute);
   /** Issue body used for Coder-Rec parse (S0 meta.body, else S1 snapshot.body). */
@@ -1545,38 +1412,96 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const wallHitBillingPools = new Set<BillingPoolId>();
   /**
    * #686 — sticky resource-relay baton slug. Scopes stickiness to resource
-   * handoffs only: blocks Coder-Rec snap-back while nonConvergingRounds === 0,
-   * but clears so #767 quality advance (S6 rounds) still runs.
+   * handoffs only: blocks Coder-Rec snap-back after a relay for the rest of
+   * the run. ADR 0132 deleted round-threshold quality advance.
    */
   let stickyRelayCoderSlug: string | undefined;
   /** S5 resource relay is independent from the normal S2 coder slot. */
   let stickyRelayCoderFixSlug: string | undefined;
+  /**
+   * #926 — sticky judge-advanced coder slug. Holds after a successful
+   * `advanceCoder` so Coder-Rec first-seat re-apply cannot snap back. Resource
+   * relay stickiness still wins when set (capacity crisis overrides quality advance).
+   */
+  let stickyJudgeAdvanceCoderSlug: string | undefined;
   /** #686 — last written relay focus path (forwarded on next dispatch). */
   let activeRelayFocusPath: string | undefined;
   /** The only step allowed to consume the current relay pool and focus baton. */
   let activeRelayStep: StepId | undefined;
+  // #924: coder persistent session across S2 → S5 rounds (declared early so
+  // relay / first-seat Coder-Rec model changes can invalidate it).
+  let coderSessionId: string | undefined;
+  let coderSessionModel: string | undefined;
+  // #925: judge persistent session across S3 → S6 rounds (same model).
+  let judgeSessionId: string | undefined;
+  let judgeSessionModel: string | undefined;
 
-  const applyCoderRecSelection = async (
-    nonConvergingRounds: number,
-  ): Promise<ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined> => {
-    if (coderRecEnvSkipped) return undefined;
-    // Resource-relay stickiness: hold the baton until #767 quality advance
-    // would actually move (S6 rounds ≥ FALLBACK). Do NOT set coderRecEnvSkipped.
+  /**
+   * Hold a sticky coder seat against Coder-Rec snap-back: rewrite coder
+   * (+coderFix), refresh stepSpecs, invalidate smoke, and retire the session
+   * when the runnable model actually changed.
+   */
+  const holdCoderSticky = (
+    slug: string,
+    opts?: { readonly preserveCoderFix?: boolean },
+  ): void => {
+    if (modelRoute.slots.coder === slug) return;
+    modelRoute = withCoderSlot(modelRoute, slug, opts);
+    stepSpecs = stepSpecsForRoute(modelRoute);
+    routeSmokeChecked = false;
     if (
-      stickyRelayCoderSlug !== undefined &&
-      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
+      coderSessionModel !== undefined &&
+      stepSpecs.S2.model !== coderSessionModel &&
+      stepSpecs.S5.model !== coderSessionModel
     ) {
-      if (modelRoute.slots.coder !== stickyRelayCoderSlug) {
-        modelRoute = withCoderSlot(modelRoute, stickyRelayCoderSlug);
-        stepSpecs = stepSpecsForRoute(modelRoute);
-        routeSmokeChecked = false;
-      }
+      coderSessionId = undefined;
+      coderSessionModel = undefined;
+    }
+  };
+
+  /**
+   * #926 — single bookkeeping write path for advance / stay-put markers.
+   * Disk write is fail-open: in-memory ledger already carries the event.
+   */
+  const persistAdvanceBookkeeping = async (
+    marker: LedgerEntry,
+    forStep: "S3" | "S6",
+    failOpenLabel: string,
+  ): Promise<void> => {
+    ledger.push(marker);
+    if (stateDir === undefined) return;
+    try {
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await hashPrompt(undefined, forStep, backend),
+          branchHEAD: await resolveBranchHEAD(),
+          ts: marker.ts ?? new Date().toISOString(),
+        },
+        stateDir,
+      );
+    } catch (err) {
+      console.warn(
+        `[orchestrator] #926 ${failOpenLabel} ledger write failed (fail-open): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  };
+
+  /** Apply Coder-Rec first-seat stay-put (no round-threshold rotation). */
+  const applyCoderRecSelection = async (): Promise<
+    ReturnType<typeof applyRuntimeTightRoutePolicy> | undefined
+  > => {
+    if (coderRecEnvSkipped) return undefined;
+    // Resource-relay stickiness: hold the baton for the run. ADR 0132 deleted
+    // round-threshold quality advance. Do NOT set coderRecEnvSkipped.
+    if (stickyRelayCoderSlug !== undefined) {
+      holdCoderSticky(stickyRelayCoderSlug);
       return undefined;
     }
-    if (
-      stickyRelayCoderFixSlug !== undefined &&
-      nonConvergingRounds < CODER_REC_FALLBACK_AFTER_ROUNDS
-    ) {
+    if (stickyRelayCoderFixSlug !== undefined) {
       if (modelRoute.slots.coderFix !== stickyRelayCoderFixSlug) {
         modelRoute = {
           ...modelRoute,
@@ -1584,22 +1509,25 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         };
         stepSpecs = stepSpecsForRoute(modelRoute);
         routeSmokeChecked = false;
+        if (
+          coderSessionModel !== undefined &&
+          stepSpecs.S2.model !== coderSessionModel &&
+          stepSpecs.S5.model !== coderSessionModel
+        ) {
+          coderSessionId = undefined;
+          coderSessionModel = undefined;
+        }
       }
       return undefined;
     }
-    if (stickyRelayCoderSlug !== undefined) {
-      stickyRelayCoderSlug = undefined;
-    }
-    if (stickyRelayCoderFixSlug !== undefined) {
-      stickyRelayCoderFixSlug = undefined;
+    // #926: judge-advanced seat holds against Coder-Rec first-seat re-apply.
+    if (stickyJudgeAdvanceCoderSlug !== undefined) {
+      holdCoderSticky(stickyJudgeAdvanceCoderSlug);
+      return undefined;
     }
     let applied: ReturnType<typeof applyCoderRecToRoute>;
     try {
-      applied = applyCoderRecToRoute(
-        modelRoute,
-        coderRecIssueBody,
-        nonConvergingRounds,
-      );
+      applied = applyCoderRecToRoute(modelRoute, coderRecIssueBody);
     } catch (err) {
       // #906: broken Coder-Rec mark / unregistered model → admission fail-closed
       // (same family as route smoke failure): escalate, zero dispatch.
@@ -1618,21 +1546,28 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
     if (applied.route === modelRoute) return undefined;
     modelRoute = applied.route;
-    // #686 P1: quality advance must not inherit the prior resource-relay pool —
-    // reselect from the new model's dispatch binding.
+    // #686 P1: a coder-slot change must not inherit the prior resource-relay
+    // pool — reselect from the new model's dispatch binding.
     currentBillingPool = billingPoolFromQuotaPool(
       poolForModelRef(modelRoute.slots.coder),
     );
     stepSpecs = stepSpecsForRoute(modelRoute);
+    // #924: model change invalidates the prior Sandcastle session — next
+    // coder seat establishes a new session (cannot resume across providers).
+    if (
+      coderSessionModel !== undefined &&
+      stepSpecs.S2.model !== coderSessionModel &&
+      stepSpecs.S5.model !== coderSessionModel
+    ) {
+      coderSessionId = undefined;
+      coderSessionModel = undefined;
+    }
     // Clear so the caller re-runs ensureRouteSmoke for the new coder slug
-    // before its first dispatch (top-of-loop OR the S2/S5 advance path).
+    // before its first dispatch (top-of-loop OR the S2/S5 re-apply path).
     routeSmokeChecked = false;
     if (applied.entry !== undefined) {
       console.info(
-        `[orchestrator] Coder-Rec → ${applied.entry.id} (${applied.entry.slug})` +
-          (nonConvergingRounds > 0
-            ? ` after ${nonConvergingRounds} non-converging review round(s)`
-            : ""),
+        `[orchestrator] Coder-Rec → ${applied.entry.id} (${applied.entry.slug})`,
       );
     }
     return applyRuntimeTightRoutePolicy(modelRoute, {
@@ -1646,11 +1581,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     readonly diagnosis: string;
   }): Promise<RunResult> => {
     const stopSummary = stopSummaryForStartupRouteFailure(escalation);
-    // #899: this stop can fire MID-RUN (the S2/S5 advance path), not only at
-    // startup. It used to return an inline RunResult with an in-memory-only
-    // S8 — no disk row, no output — so the family saw a bare "failed", resume
-    // could not classify the breakpoint, and every re-ignition replayed the
-    // whole run from scratch. Terminal returns must speak and persist.
+    // #899: this stop can fire MID-RUN (the S2/S5 Coder-Rec re-apply path),
+    // not only at startup. It used to return an inline RunResult with an
+    // in-memory-only S8 — no disk row, no output — so the family saw a bare
+    // "failed", resume could not classify the breakpoint, and every re-ignition
+    // replayed the whole run from scratch. Terminal returns must speak and persist.
     console.error(
       `[orchestrator] ${escalation.reason}: ${escalation.diagnosis}`,
     );
@@ -1676,14 +1611,138 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
   };
 
+  /**
+   * Probe a candidate route for assignability (smoke) without terminalising.
+   * Used by judge advance so an unassignable roster-legal seat stays put.
+   */
+  const probeRouteSmoke = async (
+    candidate: ResolvedModelRoute,
+  ): Promise<
+    | { readonly ok: true; readonly route: ResolvedModelRoute }
+    | { readonly ok: false; readonly reason: string }
+  > => {
+    if (typeof backend.smokeModelRoute !== "function") {
+      return {
+        ok: false,
+        reason:
+          "route smoke executor is required before dispatch; backend did not provide smokeModelRoute",
+      };
+    }
+    try {
+      const currentCliVersions = backend.currentCliVersions
+        ? await backend.currentCliVersions(
+            candidate,
+            activeRelayStep === undefined ? undefined : currentBillingPool,
+            activeRelaySmokeEntryKey(activeRelayStep, candidate),
+          )
+        : {};
+      let smoked = await backend.smokeModelRoute(
+        candidate,
+        currentCliVersions,
+        activeRelayStep === undefined ? undefined : currentBillingPool,
+        activeRelaySmokeEntryKey(activeRelayStep, candidate),
+      );
+      smoked = degradeOptionalRouteSmokeFailures(smoked).route;
+      const failure = routeSmokeFailure(
+        smoked,
+        Date.now(),
+        undefined,
+        currentCliVersions,
+      );
+      if (failure !== undefined) {
+        return { ok: false, reason: failure };
+      }
+      return { ok: true, route: smoked };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `route smoke failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+  };
+
+  /**
+   * #926 / #919 — execute a judge `advanceCoder` suggestion (or stay-put + audit).
+   * Shared topology via {@link executeAdvanceCoderSuggestion}; this court only
+   * owns bookkeeping + sticky state. Never terminals for roster unusability.
+   */
+  const applyJudgeAdvanceCoder = async (
+    suggestion: string,
+    forStep: "S3" | "S6",
+  ): Promise<void> => {
+    const currentSlug = modelRoute.slots.coder;
+    const preserveCoderFix =
+      process.env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
+      process.env.ORCHESTRATOR_CODER_FIX_MODEL.trim() !== "";
+
+    const effect = await executeAdvanceCoderSuggestion({
+      suggestion,
+      currentSlug,
+      route: modelRoute,
+      applySlug: (route, slug) =>
+        withCoderSlot(route, slug, { preserveCoderFix }),
+      probe: probeRouteSmoke,
+    });
+
+    if (effect.kind === "noop") {
+      return;
+    }
+
+    if (effect.kind === "stay_put") {
+      await persistAdvanceBookkeeping(
+        {
+          step: forStep,
+          ...effect.audit,
+        },
+        forStep,
+        "stay-put",
+      );
+      console.info(
+        `[orchestrator] #926 advanceCoder stay-put (${effect.reason}): ` +
+          `kept ${currentSlug}; suggestion=${effect.suggestion}`,
+      );
+      return;
+    }
+
+    // advanced — hold sticky seat; retire prior coder session; follow billing pool.
+    modelRoute = effect.route;
+    stickyJudgeAdvanceCoderSlug = effect.toSlug;
+    stepSpecs = stepSpecsForRoute(modelRoute);
+    // Candidate already smoked — skip the next ensureRouteSmoke gate.
+    routeSmokeChecked = true;
+    // New coder: fresh session (memory = worktree git history + ledger only).
+    coderSessionId = undefined;
+    coderSessionModel = undefined;
+    // Billing pool follows the new seat (same as Coder-Rec slot change).
+    currentBillingPool = billingPoolFromQuotaPool(
+      poolForModelRef(modelRoute.slots.coder),
+    );
+
+    await persistAdvanceBookkeeping(
+      {
+        step: forStep,
+        ...effect.audit,
+      },
+      forStep,
+      "advance",
+    );
+    console.info(
+      `[orchestrator] #926 advanceCoder → ${effect.entry.id} (${effect.entry.slug}) ` +
+        `from ${effect.fromSlug}; prior coder session retired`,
+    );
+  };
+
   /** #686 — apply a relay baton onto the wall-hit role slot (role-aware). */
   const applyRelayBaton = (baton: NextRelayBaton, wallStep?: StepId): void => {
     currentBillingPool = baton.pool;
     activeRelayStep = wallStep ?? "S2";
-    const relaySlot = relaySlotForWallStep(wallStep ?? "S2");
+    const relaySlot = relaySlotForSingleSliceWallStep(wallStep ?? "S2");
     const slots = { ...modelRoute.slots };
-    if (relaySlot === "reviewer") {
-      slots.reviewer = baton.slug;
+    if (relaySlot === "verify") {
+      // #923: S3/S6 judge openings share the verify slot.
+      slots.verify = baton.slug;
     } else if (relaySlot === "coderFix") {
       slots.coderFix = baton.slug;
       stickyRelayCoderFixSlug = baton.slug;
@@ -1779,7 +1838,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   });
 
   const modelRefForWallStep = (wallStep: StepId): string => {
-    return modelRoute.slots[relaySlotForWallStep(wallStep)];
+    return modelRoute.slots[relaySlotForSingleSliceWallStep(wallStep)];
   };
 
   const modelIdForWallStep = (wallStep: StepId): string => {
@@ -1849,12 +1908,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
   };
 
-  const reviewerSlugsForRelayCandidate = (
-    candidate: CoderRosterEntry,
-    wallStep: StepId,
-  ): ReadonlyArray<string> =>
-    relayCandidateConflictSlugs(modelRoute, candidate, wallStep);
-
   const relayBillingPoolForDispatch = (
     dispatchStep: StepId,
   ): BillingPoolId | undefined =>
@@ -1872,12 +1925,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     activeRelayStep = undefined;
   };
 
-  // #899: count COMPLETED S6 rounds only — monitor-spawn / bookkeeping event
-  // rows share the S6 step id and were doubling one round into two (see
-  // completedS6RoundsFromLedger).
-  const coderRecRoundsFromLedger = (
-    entries: ReadonlyArray<LedgerEntry>,
-  ): number => completedS6RoundsFromLedger(entries);
   // Family-run context (ADR 0022 decision 2). Production always supplies this
   // for a child. Focused skeleton tests may omit it and cut from the test base;
   // S7 remains a local handoff in either case.
@@ -1903,24 +1950,10 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   let lastReviewerStepId: StepId | undefined;
   let preexistingAssertionTouchedForReverify = false;
   let refusedFindingIdentityKeysForReverify: readonly string[] = [];
+  /** #927 opaque refuse cargo for S6 judge re-adjudicate (not routing input). */
+  let refuseRecordsForReverify: readonly ReviewFixRefuseRecord[] | undefined;
   // Preserve the full ledger for relay and resume accounting.
   let resumeHistoryLedger: ReadonlyArray<LedgerEntry> = [];
-
-  function seedClassificationFromReviewerOutput(
-    reviewerOutput: StepOutput | undefined,
-    _afterFix: boolean,
-  ): string[] {
-    if (reviewerOutput?.kind !== "reviewer") return [];
-    // Opaque cargo copy only — not a decode/validation boundary. Runner routes
-    // by findingsCount and transports findings rows as-is; identity-key
-    // derivation is the landing writer's job (dispatchWorker → fixer), not a
-    // runner court (ADR 0131 / #899).
-    pendingBlockingFindings = [...reviewerOutput.findings];
-    pendingBlockingFindingIdentityKeys = [];
-    // ADR 0131: declared count is the control signal; findings rows are cargo.
-    pendingBlockingFindingCount = reviewerOutput.findingsCount;
-    return [];
-  }
 
   // ── #249: per-run session id + sibling state dir ──────────────────────────
   // sessionId: a stable identifier for this orchestrator invocation.
@@ -2182,6 +2215,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
     const stopSummary = opts?.stopSummary ?? stopSummaryForErrorPackage(errorPackage);
 
+    // #929 — non-success terminals must speak externally (not only return
+    // errorPackage). stopForCoderRec already console.errors; keep the same
+    // invariant on the shared errorTermination helper so mid-run crashes are
+    // visible without parsing the RunResult.
+    console.error(`[orchestrator] ${failedStep} failed: ${reason}`);
+
     // Record the failing step. The in-memory push is skipped when the caller
     // already pushed it (recordInMemory:false) or it is S8 itself; the
     // best-effort persist is still attempted so disk and memory agree (D),
@@ -2251,6 +2290,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     stopSummaryOverride?: StopSummary,
   ): Promise<RunResult> {
     const stopSummary = stopSummaryOverride ?? stopSummaryForEscalation(escalation);
+    // #929 — same non-success loudness invariant as errorTermination /
+    // stopForCoderRec: operators must see the park without parsing RunResult.
+    console.error(
+      `[orchestrator] ${failedStep} escalated: ${escalation.reason} — ${escalation.diagnosis}`,
+    );
     if (failedStep !== "S8") {
       ledger.push({
         step: failedStep,
@@ -2497,17 +2541,18 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     for (const e of plan.priorLedger) ledger.push(e);
     lastOutput = plan.lastOutput;
 
-    // #877: persisted S4 boundaries are replayed from reviewer findings-count
-    // only. Each S4 replaces the pending blocker set with that reviewer's
-    // `findings[]`; prose dispositions do not preserve or reopen findings.
-    // #899: also rebuild raw reviewer artifact pointers so a crash/resume after
-    // S4 still hands the fixer host paths (materialised at landing).
-    const replayedS4 = replayS4FindingsCountState(plan.priorLedger);
-    pendingBlockingFindings = [...replayedS4.blocking];
-    pendingBlockingFindingIdentityKeys = [...replayedS4.blockingIdentityKeys];
-    pendingBlockingFindingCount = replayedS4.blockingFindingCount;
-    findingDispositions = [...replayedS4.findingDispositions];
-    pendingRawReviewerArtifacts = replayedS4.rawReviewerArtifacts;
+    // #925/#877: rebuild pending open-set / kill flips from the prior ledger
+    // (judge continue + residual historical S4/reviewer open-count). Each
+    // projection replaces the pending blocker set; prose dispositions do not
+    // reopen findings. #899: also rebuild raw reviewer artifact pointers so a
+    // crash/resume after S4 still hands the fixer host paths (materialised at
+    // landing).
+    const rebuiltBlocking = rebuildBlockingFromLedger(plan.priorLedger);
+    pendingBlockingFindings = [...rebuiltBlocking.blocking];
+    pendingBlockingFindingIdentityKeys = [...rebuiltBlocking.blockingIdentityKeys];
+    pendingBlockingFindingCount = rebuiltBlocking.blockingFindingCount;
+    findingDispositions = [...rebuiltBlocking.findingDispositions];
+    pendingRawReviewerArtifacts = rebuiltBlocking.rawReviewerArtifacts;
     lastReviewerStepId = lastReviewerStep(plan.priorLedger);
     // #677: rebuild S5→S6 reverify locals after crash/restart. Refuse keys and
     // the assertion-touch signal live only in process memory during a live run;
@@ -2520,6 +2565,35 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       rebuilt.preexistingAssertionTouched;
     refusedFindingIdentityKeysForReverify =
       rebuilt.refusedFindingIdentityKeys;
+    refuseRecordsForReverify = rebuilt.refuseRecords;
+
+    // #924: rebuild coder session continuity from the last S2/S5 ledger row so
+    // crash/re-feed still resumes the same agent session when models match.
+    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+      const entry = plan.priorLedger[i]!;
+      if (
+        (entry.step === "S2" || entry.step === "S5") &&
+        typeof entry.sessionId === "string"
+      ) {
+        coderSessionId = entry.sessionId;
+        coderSessionModel =
+          entry.step === "S5" ? stepSpecs.S5.model : stepSpecs.S2.model;
+        break;
+      }
+    }
+    // #925 / #919 S1: rebuild judge session from last judge-seat ledger row.
+    for (let i = plan.priorLedger.length - 1; i >= 0; i -= 1) {
+      const entry = plan.priorLedger[i]!;
+      if (
+        isJudgeSeat({ step: entry.step }) &&
+        typeof entry.sessionId === "string"
+      ) {
+        judgeSessionId = entry.sessionId;
+        judgeSessionModel =
+          entry.step === "S6" ? stepSpecs.S6.model : stepSpecs.S3.model;
+        break;
+      }
+    }
 
     if (plan.terminalStatus !== undefined) {
       // The prior run already reached a terminal handoff that is NOT being
@@ -2586,9 +2660,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     }
 
     // #767: resume skips S0/S1, so re-fetch the issue body and apply Coder-Rec
-    // (including the S6-count advance position from the restored ledger) before
-    // the first dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute
-    // sees undefined body → skippedForMissingMarking → silent preset revert.
+    // (first seat only — ADR 0132 deleted S6-count rotation) before the first
+    // dispatch / top-of-loop smoke. Without this, applyCoderRecToRoute sees
+    // undefined body → skippedForMissingMarking → silent preset revert.
     // Coder-Rec is OPTIONAL: re-fetch failures must degrade safely (try meta,
     // then snapshot) — never errorTerminate / poison the resume terminal state.
     try {
@@ -2616,12 +2690,24 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         "[orchestrator] Coder-Rec resume re-fetch failed; continuing with route preset",
       );
     }
-    const coderRecPolicy = await applyCoderRecSelection(
-      coderRecRoundsFromLedger(ledger.filter((entry) => isStepId(entry.step))),
-    );
+    const coderRecPolicy = await applyCoderRecSelection();
     if (coderRecPolicy?.kind === "stop") {
       return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
     }
+
+    // #926 — rebuild judge-advanced sticky seat from the latest successful
+    // coder_advance row (before resource-relay, which still wins when present).
+    for (let i = resumeLedger.length - 1; i >= 0; i--) {
+      const row = resumeLedger[i]!;
+      if (row.event === "coder_advance" && typeof row.toModelId === "string") {
+        const advanced = lookupCoderRosterEntry(row.toModelId);
+        const slug = advanced?.slug ?? row.toModelId;
+        stickyJudgeAdvanceCoderSlug = slug;
+        holdCoderSticky(slug);
+        break;
+      }
+    }
+
     const relayResume = resumeRelayFromLedger(
       resumeLedger.filter(
         (entry): entry is PersistentLedgerEntry & { readonly step: StepId } =>
@@ -2759,9 +2845,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
 
         // #767: apply Coder-Rec BEFORE the S0 smoke so we smoke the final
         // route once (not the preset, then a full re-smoke after mutation).
-        // Mid-loop advance still re-smokes via the S2/S5 path below.
+        // S2/S5 re-apply first-seat stay-put below (no round rotation).
         coderRecIssueBody = meta.body;
-        const coderRecPolicy = await applyCoderRecSelection(0);
+        const coderRecPolicy = await applyCoderRecSelection();
         if (coderRecPolicy?.kind === "stop") {
           return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
         }
@@ -2819,9 +2905,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           snapshot.body.length > 0
         ) {
           coderRecIssueBody = snapshot.body;
-          const coderRecPolicy = await applyCoderRecSelection(
-            coderRecRoundsFromLedger(ledger),
-          );
+          const coderRecPolicy = await applyCoderRecSelection();
           if (coderRecPolicy?.kind === "stop") {
             return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
           }
@@ -2833,12 +2917,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       case "S3":
       case "S5":
       case "S6": {
-        // ADR 0030 productive steps:
-        //   S2 coder implement, S3 fresh read-only review, S5 coder fix,
-        //   S6 fresh read-only full-diff re-review.
-        // Normal fix rounds are fresh runStep dispatches,
-        // never resumeSession. resumeSession is only the crash/escalate resume
-        // path when `resumeFor` carries a recorded session id.
+        // Productive steps:
+        //   S2 coder implement, S3 judge establish, S5 coder fix,
+        //   S6 judge resume (#925).
+        // #924: S2 establishes a coder session; S5 rounds resume it (same
+        // model). #925: S3 establishes a judge session; S6 rounds resume it.
+        // Crash/escalate `resumeFor` still wins when set.
         if (!dispatchStageLogged) {
           logDriverStage("dispatch", `step=${step}`);
           dispatchStageLogged = true;
@@ -2846,14 +2930,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         if (worktree === undefined) {
           throw new Error(`runner: ${step} reached before worktree prepared`);
         }
-        // #767: before each coder dispatch, re-select from Coder-Rec using the
-        // number of completed S6 fix rounds as the non-convergence counter.
-        // Mid-loop advance clears routeSmokeChecked — re-smoke here because the
-        // top-of-loop check already ran for this iteration.
+        // #767 / ADR 0132: before each coder dispatch, re-apply Coder-Rec
+        // (first seat / sticky stay-put — no round-threshold rotation).
+        // Re-smoke here if the route mutated, because the top-of-loop check
+        // already ran for this iteration.
         if (step === "S2" || step === "S5") {
-          const coderRecPolicy = await applyCoderRecSelection(
-            coderRecRoundsFromLedger(ledger),
-          );
+          const coderRecPolicy = await applyCoderRecSelection();
           if (coderRecPolicy?.kind === "stop") {
             return await stopForCoderRecTightRoutePolicy(coderRecPolicy.escalation);
           }
@@ -2863,7 +2945,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           }
         }
         promptFile = stepSpecs[step].promptFile;
-        const expectedKind = stepSpecs[step].role as "coder" | "reviewer";
+        const expectedKind = stepSpecs[step].role as "coder" | "reviewer" | "verify";
         let stepTelemetryDir: string | undefined;
         try {
           stepTelemetryDir = backend.resolveTelemetryDir?.({ runId, worktree, stateDir });
@@ -2885,6 +2967,23 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           if (resumeFor !== undefined && resumeFor.step === step && typeof resumeFor.sessionId === "string") {
             resumeSessionId = resumeFor.sessionId;
             resumeFor = undefined;
+          } else if (
+            // #924: normal S2→S5 continuity (and multi-round S5) resumes the
+            // retained coder session when the seat model still matches.
+            (step === "S2" || step === "S5") &&
+            typeof coderSessionId === "string" &&
+            coderSessionModel !== undefined &&
+            stepSpecs[step].model === coderSessionModel
+          ) {
+            resumeSessionId = coderSessionId;
+          } else if (
+            // #925 / #919 S1: S3→S6 (and multi-round S6) resumes retained judge session.
+            isJudgeSeat({ step }) &&
+            typeof judgeSessionId === "string" &&
+            judgeSessionModel !== undefined &&
+            stepSpecs[step].model === judgeSessionModel
+          ) {
+            resumeSessionId = judgeSessionId;
           }
           const escalationAnswerForStep =
             resumedEscalationAnswer !== undefined &&
@@ -2914,6 +3013,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 };
               }
               const focusPath = relayFocusForDispatch(step);
+              const priorJudgeVerdicts = isJudgeSeat({ step })
+                ? priorJudgeVerdictRowsFromLedger(ledger)
+                : undefined;
               const dispatchCtx = {
                 runId,
                 worktree,
@@ -2927,6 +3029,12 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   ? { billingPool }
                   : {}),
                 ...(focusPath !== undefined ? { relayFocusPath: focusPath } : {}),
+                // #925: prior judge verdict rows for session-loss recovery /
+                // trajectory (runner never synthesises a narrative summary).
+                ...(priorJudgeVerdicts !== undefined &&
+                priorJudgeVerdicts.length > 0
+                  ? { priorJudgeVerdicts }
+                  : {}),
                 // 信封宪法 (ADR 0062): the dispatch structure carries only the
                 // identity keys + count; the rich finding content travels in the
                 // separate landing payload below.
@@ -2947,6 +3055,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                               refusedFindingIdentityKeysForReverify,
                           }
                         : {}),
+                      // #927: refuseRecords cargo is landing-only (信封宪法).
                     }
                   : {}),
               };
@@ -2964,12 +3073,14 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                       ...(step === "S6" && preexistingAssertionTouchedForReverify
                         ? { preexistingAssertionTouched: true }
                         : {}),
+                      // #919 M3 / #927: refuse traffic keys sole on thin ctx
+                      // (above); landing carries opaque refuseRecords only.
+                      // #927: four-reason + evidence cargo for judge re-adjudicate
+                      // (landing only — never mirrored onto thin DispatchContext).
                       ...(step === "S6" &&
-                      refusedFindingIdentityKeysForReverify.length > 0
-                        ? {
-                            refusedFindingIdentityKeys:
-                              refusedFindingIdentityKeysForReverify,
-                          }
+                      refuseRecordsForReverify !== undefined &&
+                      refuseRecordsForReverify.length > 0
+                        ? { refuseRecords: refuseRecordsForReverify }
                         : {}),
                     }
                   : undefined;
@@ -2982,8 +3093,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               //
               //  - CODER (S2/S5): process failure + typed-signal SOE enter retry.
               //    Completed opaque cargo never changes routing.
-              //  - REVIEWER (S3/S6): completed open-count cargo goes to the fixer;
-              //    SOE exhaust does NOT feed empty findings to the fixer (#899).
+              //  - JUDGE (S3/S6): typed status tri-state is the sole routing
+              //    signal; SOE exhaust does NOT feed empty cargo to the fixer (#899).
               //
               // #661 owner ruling (2026-07-10): process-level retry CONTINUES on the
               // current scene — do NOT pass a cleanup hook into withMechanicalRetry.
@@ -2994,9 +3105,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               // Reviewer: rethrow on throw-exhaust so S8(error) surfaces process
               // crashes and SOE exhaust alike — never feed empty cargo to fixer.
               // Coder keeps default failed→durable abort (existing escalate path).
+              // #919 M4/M7: live judge seats are isJudgeSeat S3/S6 only
+              // (role is always "verify" on those seats; dual-OR deleted).
               const durableRetryOpts = durableMechanicalRetryOptions(
                 step,
-                expectedKind === "reviewer"
+                isJudgeSeat({ step })
                   ? { rethrowOnExhaustion: true }
                   : {},
               );
@@ -3082,8 +3195,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                   currentPool,
                   rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
                   pools,
-                  reviewerSlugsForCandidate: (candidate) =>
-                    reviewerSlugsForRelayCandidate(candidate, step),
                   now: relayNow(),
                   step,
                 });
@@ -3172,8 +3283,21 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               "output" in unwrapped && !("kind" in unwrapped)
                 ? { output: unwrapped.output, sessionId: unwrapped.sessionId }
                 : { output: unwrapped as StepOutput, sessionId: undefined };
-            output = normalized.output;
+            output = normalizeJudgeSeatOutput(step, normalized.output);
             stepSessionId = normalized.sessionId;
+            // #924: retain coder session for S5 continuity (and multi-round S5).
+            if (
+              (step === "S2" || step === "S5") &&
+              typeof stepSessionId === "string"
+            ) {
+              coderSessionId = stepSessionId;
+              coderSessionModel = stepSpecs[step].model;
+            }
+            // #925 / #919 S1: retain judge session for S6 continuity.
+            if (isJudgeSeat({ step }) && typeof stepSessionId === "string") {
+              judgeSessionId = stepSessionId;
+              judgeSessionModel = stepSpecs[step].model;
+            }
             break;
           }
         } catch (err) {
@@ -3182,15 +3306,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               reason: `${step} worker raised a decision gate`,
               diagnosis: err.tag.state_summary,
             };
-            const decisionOutput: StepOutput =
-              expectedKind === "coder"
-                ? {
-                    kind: "coder",
-                    committed: false,
-                    commitsAdded: 0,
-                    escalate: escalation,
-                  }
-                : { kind: "reviewer", findings: [], findingsCount: 0, escalate: escalation };
+            // #919 CR U1 + residual R1 / S2/R8: single-slice agent seats are only
+            // coder (S2/S5) or judge (S3/S6 via isJudgeSeat step/id). Always mint
+            // T2 kind:"judge" escalate on the judge seat; never residual
+            // open-count kind:"reviewer" paper (deleted dead arm).
+            const seatIsJudge = isJudgeSeat({ step });
+            let decisionOutput: StepOutput;
+            if (expectedKind === "coder") {
+              decisionOutput = {
+                kind: "coder",
+                committed: false,
+                commitsAdded: 0,
+                escalate: escalation,
+              };
+            } else if (seatIsJudge) {
+              decisionOutput = mintJudgeEscalate(escalation);
+            } else {
+              // Exhaustive: topology has no third agent seat kind.
+              throw new Error(
+                `runner: decision_gate on non-coder non-judge seat ${step} (expectedKind=${expectedKind})`,
+              );
+            }
             return await escalateTermination(
               step,
               escalation,
@@ -3241,8 +3377,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 err.disposition.resetAt,
                 true,
               ),
-              reviewerSlugsForCandidate: (candidate) =>
-                reviewerSlugsForRelayCandidate(candidate, step),
               now: relayNow(),
             });
             if (outcome.kind === "park") return outcome.result;
@@ -3293,8 +3427,6 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               currentPool,
               rosterOrder: resolveCoderRecOrder(coderRecIssueBody),
               pools,
-              reviewerSlugsForCandidate: (candidate) =>
-                reviewerSlugsForRelayCandidate(candidate, step),
               now: relayNow(),
               step,
             });
@@ -3389,13 +3521,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         const stepEscalate = escalateOf(output);
         const carriesEscalate = stepEscalate != null;
         if (!carriesEscalate) {
-          if (expectedKind === "reviewer") {
-            // Control envelope only: role kind so findings-count channel can run.
-            // Do not inspect individual finding fields (findings schema court).
-            if (output?.kind !== "reviewer") {
-              // Unusable review envelope (not a typed open-count receipt) →
-              // fixer path with raw artifact pointers. Do NOT inspect findings
-              // cargo shape here (ADR 0131 / #899).
+          // #919 M4/M7: live open-set projection is sole isJudgeSeat (S3/S6).
+          // Production role is always "verify" on those seats; expectedKind OR
+          // was redundant. Residual role:"reviewer" is not live here.
+          if (isJudgeSeat({ step })) {
+            // #925: judge typed verdict is the sole routing signal. Unusable
+            // envelope → fixer path with raw artifact pointers (never silent clean).
+            if (output?.kind !== "judge") {
               pendingBlockingFindings = [];
               pendingBlockingFindingIdentityKeys = [];
               pendingBlockingFindingCount = 0;
@@ -3403,17 +3535,57 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
                 stepMonitorHandle,
                 stepSessionId,
               );
-              step = "S5";
-              continue orchestratorStepLoop;
+              // Seed findingDispositions empty; route() will send unusable → S5.
+              lastOutput = output;
+              break;
             }
-            // Typed findingsCount only: positive open-count always preserves
-            // raw artifact pointers for S5. Findings rows are opaque cargo —
-            // never re-dispatch or zero the count based on array shape.
-            if (output.findingsCount > 0) {
-              pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
-                stepMonitorHandle,
-                stepSessionId,
-              );
+            // Apply continue dispositions via the shared projection helper
+            // (same helper resume rebuild uses — F2 single open-set seam).
+            if (output.status === "continue") {
+              const projected = projectJudgeContinueBlocking(output);
+              if (projected !== undefined) {
+                // Apply kill flips first, then gate empty live set (#919 M6).
+                if (projected.killDispositions.length > 0) {
+                  findingDispositions = [
+                    ...findingDispositions,
+                    ...projected.killDispositions,
+                  ];
+                }
+                pendingBlockingFindings = projected.blocking;
+                pendingBlockingFindingIdentityKeys =
+                  projected.blockingIdentityKeys;
+                pendingBlockingFindingCount = projected.blockingFindingCount;
+                if (pendingBlockingFindingCount > 0) {
+                  pendingRawReviewerArtifacts = reviewerRawArtifactPointers(
+                    stepMonitorHandle,
+                    stepSessionId,
+                  );
+                } else if (projected.blockingIdentityKeys.length === 0) {
+                  // #919 M6 / family M1 isomorphic: empty continue is court
+                  // contract drift — never empty-spin S5. Unusable (non-judge)
+                  // still routes to S5 above; route() continue→S5 stays for
+                  // non-empty live sets only.
+                  const reason =
+                    `judge ${step} continue with 0 live findings ` +
+                    `(court contract drift; empty continue must not spin coder-fix)`;
+                  return await errorTermination(step, new Error(reason), {
+                    output,
+                    findingDispositions,
+                    stopSummary: contractDriftStopSummary({
+                      summary: reason,
+                      repairHint:
+                        "judge status:continue requires non-empty live identity keys; " +
+                        "re-open the same judge seat or repair the seat envelope — " +
+                        "do not empty-spin S5 coder-fix",
+                    }),
+                  });
+                }
+              }
+            } else {
+              // converged / escalate: no open findings for S5.
+              pendingBlockingFindings = [];
+              pendingBlockingFindingIdentityKeys = [];
+              pendingBlockingFindingCount = 0;
             }
           }
         }
@@ -3434,21 +3606,17 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
               }
             }
           }
-          // #677: legal refuse — wire decision gate on the real S5 path.
-          // Refused keys stay in the fix→fresh-re-review loop (never escalate/park).
+          // #677 / #927: legal refuse — envelope keys are traffic; refuseRecords
+          // are opaque cargo for the S6 judge. Never escalate/park on refuse;
+          // never drop envelope keys when cargo shape is non-#677.
           if (step === "S5") {
-            const records = output.refuseRecords ?? [];
-            if (records.length > 0) {
-              const legal = reviewFixDecisionGate({ records });
-              refusedFindingIdentityKeysForReverify =
-                legal?.refusedFindingIdentityKeys ?? [];
-            } else {
-              refusedFindingIdentityKeysForReverify =
-                output.refusedFindingIdentityKeys ?? [];
-            }
+            const refuseLanding = coderRefuseReverifyLanding(output);
+            refusedFindingIdentityKeysForReverify =
+              refuseLanding.refusedFindingIdentityKeys;
+            refuseRecordsForReverify = refuseLanding.refuseRecords;
           }
         }
-        if (step === "S3" || step === "S6") lastReviewerStepId = step;
+        if (isJudgeSeat({ step })) lastReviewerStepId = step;
         if (step === "S5") {
           pendingRawReviewerArtifacts = undefined;
           pendingFixerFindingScope = undefined;
@@ -3457,11 +3625,8 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
 
       case "S4": {
-        // #877: findings-count channel only — no disposition/no-progress court.
-        seedClassificationFromReviewerOutput(
-          lastOutput,
-          lastReviewerStepId === "S6",
-        );
+        // #925: S4 mechanical open-count station dissolved. Residual path for
+        // legacy ledgers only — classification already applied at S3/S6.
         break;
       }
 
@@ -3487,11 +3652,16 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       }
     }
 
+    // #925 / #919 S1: verdict + kill flips land on judge seats (S4 residual).
+    // Residual S4 still accepts dispositions if a legacy path writes them.
     const stepFindingDispositions =
-      step === "S4" ? findingDispositions : undefined;
+      isJudgeSeat({ step }) || step === "S4" ? findingDispositions : undefined;
 
     // Record this step in the ledger (anti-skip + resume truth, ADR 0018 §3).
     // #249: also persist via backend.writeLedger (sibling state dir).
+    // #919 CR U7/R2: advanceCoder sole source = output.advanceCoder (recovery /
+    // priorJudgeVerdictRowsFromLedger). Top-level LedgerEntry.advanceCoder deleted
+    // (zero readers; dual-write already gone). #926 owns any roster consumption.
     ledger.push({
       step,
       ...(output !== undefined ? { output } : {}),
@@ -3544,13 +3714,27 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
       });
     }
 
+    // #926: after a judge continue row is durably recorded, execute optional
+    // advanceCoder (or stay-put + audit). Never terminals for roster unusability.
+    // #919 R1: sole isJudgeSeat membership (no redundant S3||S6 string OR).
+    if (
+      isJudgeSeat({ step }) &&
+      output?.kind === "judge" &&
+      output.status === "continue" &&
+      typeof output.advanceCoder === "string"
+    ) {
+      // isJudgeSeat guarantees step/id is S3|S6 for applyJudgeAdvanceCoder.
+      await applyJudgeAdvanceCoder(output.advanceCoder, step as "S3" | "S6");
+    }
+
     // A relay baton is a step-local override. Once its relayed step has
     // durably completed, normal downstream roles must reselect their own route.
     clearCompletedRelayState(step, output);
 
     // The runner — not the agent — decides the next step.
-    // The fixed review/fix topology advances from the reviewer's self-reported
-    // findings count and explicit escalation; receipt cargo is not a fate input.
+    // #925 / ADR 0132: topology advances from the judge status tri-state
+    // (converged|continue|escalate) and explicit escalation; receipt cargo is
+    // not a fate input. Residual open-count paper is projected before route().
     const decision = route({
       from: step,
       output: lastOutput,
@@ -3613,6 +3797,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
           reason: `writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
           branchHead: worktree?.branch,
         };
+        // #929 — speak before best-effort re-persist (same loudness class as
+        // errorTermination; this path does not call that helper).
+        console.error(
+          `[orchestrator] S8 failed: writeLedger(S8) failed while persisting the handoff entry: ${cause}`,
+        );
         const stopSummary = stopSummaryForErrorPackage(errorPackage);
         // persistBestEffort swallows a secondary write fault — we already return
         // status:error, a second ledger fault must not mask the original cause.

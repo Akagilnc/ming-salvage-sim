@@ -68,7 +68,7 @@ import {
 } from "./lastTaggedJson.js";
 import {
   classifyDecisionGate,
-  decisionGateOutput,
+  coderReceiptOutput,
   decodeReviewerOpenCountReceipt,
   isReceiptRecoveryFailure,
   logAndRethrowReceiptFailure,
@@ -76,6 +76,21 @@ import {
   workerReceiptOutput,
   workerReceiptSchema,
 } from "./receiptRecovery.js";
+import {
+  CODER_RECEIPT_TAG,
+  JUDGE_RECEIPT_TAG,
+  coderStationReceiptSchema,
+  decodeCoderEnvelope,
+  decodeJudgeVerdict,
+  judgeStationReceiptSchema,
+} from "./stationReceiptContracts.js";
+import {
+  isJudgeSeat,
+  judgeResultFromVerdict,
+  mintJudgeEscalate,
+  projectResidualReviewerToJudge,
+  unusableResidualOpenCountPaper,
+} from "./judgeStation.js";
 
 import { writeContainerCodexConfig } from "./containerCodexConfig.js";
 import {
@@ -253,7 +268,7 @@ import {
   type QuotaPoolId,
   type QuotaProbeResult,
 } from "./quotaProbe.js";
-import { withMonitorStreamHeartbeat } from "./sandboxStreamHeartbeat.js";
+import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
   readRequiredWorkerOutcomeSidecar as readRequiredOutcomeSidecar,
@@ -265,12 +280,15 @@ import type {
   AgentStepRunOptions,
   Backend,
   CliMonitorSpawnSpec,
+  CoderOutput,
   DispatchContext,
+  Finding,
   IssueMeta,
   IssueSnapshot,
   IssueSnapshotMeta,
   PersistentLedgerEntry,
   ResumeState,
+  ReviewFixRefuseRecord,
   StepId,
   StepOutput,
   StepResult,
@@ -1148,7 +1166,17 @@ export function checkOwnGitDir(
  *
  * Pure (a check on the role/soul pair): unit-tested without a container.
  */
-export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
+export function soulForStep(
+  spec: Pick<StepSpec, "role" | "soul"> & { readonly id?: string },
+): StepSoul {
+  // #925 / #919 S2/R7: judge seats (S3/S6 only) force verify soul via the
+  // sole isJudgeSeat predicate. S9 online-review is not a judge seat.
+  if (
+    spec.soul === "verify" &&
+    isJudgeSeat({ id: spec.id })
+  ) {
+    return "verify";
+  }
   const expected: StepSoul =
     spec.role === "reviewer"
       ? "READ-ONLY"
@@ -1179,8 +1207,6 @@ export function soulForStep(spec: Pick<StepSpec, "role" | "soul">): StepSoul {
 export interface RunResultLike {
   readonly iterations: ReadonlyArray<{ readonly sessionId?: string }>;
   readonly commits: ReadonlyArray<{ readonly sha: string }>;
-  /** The completion signal observed by Sandcastle, if any. */
-  readonly completionSignal?: string;
 }
 
 /**
@@ -1209,11 +1235,12 @@ export function lastSessionId(
  * Extract + JSON-parse the LAST `<tag>…</tag>` from a worker step's stdout.
  *
  * #899 / ADR 0131: production single-slice seats attach Sandcastle
- * `Output.object` (maxRetries:2) for typed traffic signals — reviewer
- * open-count and optional decision gate. Ordinary cargo stays opaque inside
- * those schemas. This stdout extractor is the **compatibility cargo channel**
- * when typed output is absent (legacy prompts, telemetry, non-typed seats);
- * it is never a second fate-signal parser and never triggers cargo-shape re-ask.
+ * `Output.object` (maxRetries:2) for typed traffic signals — S3/S6 judge
+ * tri-state (channel (b) / #925), residual reviewer open-count, coder
+ * decision gate. Ordinary cargo stays opaque inside those schemas. This
+ * stdout extractor is the **compatibility cargo channel** when typed output
+ * is absent (legacy prompts, telemetry, non-typed seats); it is never a
+ * second fate-signal parser and never triggers cargo-shape re-ask.
  *
  * The LAST tag wins so a worker that emits multiple tags reports its FINAL
  * payload. Pure: parses a string only — unit-tested without a container.
@@ -1222,7 +1249,7 @@ export function lastSessionId(
  */
 function extractTaggedJson(
   stdout: string,
-  tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease",
+  tag: "coder" | "review" | "verify" | "fixer" | "cleanup" | "docRelease" | "judge",
 ): unknown | undefined {
   const body = extractLastTagBody(stdout, tag);
   if (body === undefined) return undefined;
@@ -1287,13 +1314,36 @@ function extractReviewerTag(stdout: string): unknown | undefined {
   return extractTaggedJson(stdout, "review");
 }
 
-function extractRoleReceipt(stdout: string, role: StepSpec["role"]): unknown | undefined {
+function extractJudgeTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, JUDGE_RECEIPT_TAG);
+}
+
+function extractVerifyTag(stdout: string): unknown | undefined {
+  return extractTaggedJson(stdout, "verify");
+}
+
+/**
+ * Cargo/stdout tag extract for a seat. Judge seats (#919 S2/R7: S3/S6 only)
+ * always take the judge tag — never the residual open-count `<review>` dual
+ * channel, even when a fixture still spells role as `"reviewer"`. Non-judge
+ * role `"verify"` (family S9 online-review) keeps the verify receipt tag —
+ * never {@link JUDGE_RECEIPT_TAG}.
+ */
+function extractRoleReceipt(
+  stdout: string,
+  spec: Pick<StepSpec, "role" | "id" | "soul">,
+): unknown | undefined {
   try {
-    return role === "coder"
+    if (isJudgeSeat({ id: spec.id })) {
+      return extractJudgeTag(stdout);
+    }
+    return spec.role === "coder"
       ? extractCoderTag(stdout)
-      : role === "reviewer"
+      : spec.role === "reviewer"
         ? extractReviewerTag(stdout)
-        : undefined;
+        : spec.role === "verify"
+          ? extractVerifyTag(stdout)
+          : undefined;
   } catch {
     return undefined;
   }
@@ -1341,6 +1391,86 @@ export function coderCargoFields(body: unknown): {
       receipt.commitsAdded >= 0
         ? receipt.commitsAdded
         : 0,
+  };
+}
+
+/**
+ * Opaque refuse cargo siblings (#677 / #924 / #919 R5).
+ * Traffic `refusedFindingIdentityKeys` live only on the T2 envelope
+ * ({@link projectCoderStationReceipt} reads them via decode, never from cargo).
+ * This helper extracts cargo-only `refuseRecords` — never invents traffic keys.
+ */
+export function coderRefuseCargoFields(body: unknown): {
+  readonly refuseRecords?: ReadonlyArray<ReviewFixRefuseRecord>;
+} {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return {};
+  }
+  const receipt = body as Record<string, unknown>;
+  const records = Array.isArray(receipt.refuseRecords)
+    ? (receipt.refuseRecords as ReviewFixRefuseRecord[])
+    : undefined;
+  return {
+    ...(records !== undefined && records.length > 0
+      ? { refuseRecords: records }
+      : {}),
+  };
+}
+
+/**
+ * #924 / #919 post-R8 M1 — pure T2 coder station receipt → {@link CoderOutput}.
+ *
+ * Shared by single-slice {@link RealBackend} and family coder-fix
+ * ({@link RealFamilyBackend.familyCoderResultFromRun}). Traffic (status /
+ * refuse keys / escalate) comes from the envelope only; committed /
+ * commitsAdded / refuseRecords are cargo siblings. Cargo never invents or
+ * overrides traffic refuse keys.
+ */
+export function projectCoderStationReceipt(
+  raw: unknown,
+  cargo?: unknown,
+): CoderOutput {
+  const body = cargo !== undefined ? cargo : raw;
+  const fields = coderCargoFields(body);
+  // Opaque refuseRecords may live on cargo or as SO passthrough siblings on raw.
+  const refuseRecords =
+    coderRefuseCargoFields(body).refuseRecords ??
+    coderRefuseCargoFields(raw).refuseRecords;
+  const refuseRecordsExtra =
+    refuseRecords !== undefined ? { refuseRecords } : {};
+
+  const envelope = decodeCoderEnvelope(raw);
+  if (!envelope.ok) {
+    throw new Error(`illegal coder station receipt: ${envelope.reason}`);
+  }
+  if (envelope.value.status === "escalate") {
+    // Escalate is orthogonal to commit cargo; refuse traffic is a different
+    // status — do not smuggle refusedFindingIdentityKeys onto a bell.
+    return {
+      kind: "coder",
+      committed: fields.committed,
+      commitsAdded: fields.commitsAdded,
+      escalate: {
+        reason: envelope.value.reason,
+        diagnosis: envelope.value.diagnosis,
+      },
+    };
+  }
+  if (envelope.value.status === "refused") {
+    // Envelope keys are the sole traffic source (never overwritten by cargo).
+    return {
+      kind: "coder",
+      committed: fields.committed,
+      commitsAdded: fields.commitsAdded,
+      refusedFindingIdentityKeys: envelope.value.refusedFindingIdentityKeys,
+      ...refuseRecordsExtra,
+    };
+  }
+  // completed — refuse keys are traffic for status:"refused" only.
+  return {
+    kind: "coder",
+    committed: fields.committed,
+    commitsAdded: fields.commitsAdded,
   };
 }
 
@@ -2871,18 +3001,24 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Typed Sandcastle output for ADR 0131 traffic signals (#899):
-   * - reviewer: open-count receipt on the `review` tag (`findingsCount` + optional bell)
-   * - coder: always-emitted {@link decisionGateOutput} on the dedicated `decision`
-   *   tag so ordinary `<coder>` cargo stays outside Output.object (missing /
-   *   malformed cargo never forces SO re-ask; ADR 0131).
+   * Typed Sandcastle output for ADR 0131 / #924 / #925 traffic signals:
+   * - S3/S6 judge: T2 judge verdict on {@link JUDGE_RECEIPT_TAG}
+   * - reviewer (legacy residual): open-count receipt on the `review` tag
+   * - coder: T2 station receipt on {@link CODER_RECEIPT_TAG}
+   * - non-judge role verify (S9 online-review): not configured here — family
+   *   review-loop workers own the verify receipt channel on RealFamilyBackend
    */
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
+    // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
+    // S9 online-review must not take JUDGE_RECEIPT.
+    if (isJudgeSeat({ id: spec.id })) {
+      return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
+    }
     if (spec.role === "reviewer") {
       return workerReceiptOutput("review", workerReceiptSchema());
     }
     if (spec.role === "coder") {
-      return decisionGateOutput();
+      return coderReceiptOutput(coderStationReceiptSchema(), CODER_RECEIPT_TAG);
     }
     return undefined;
   }
@@ -2897,7 +3033,7 @@ export class RealBackend implements Backend {
     spec: StepSpec,
     options?: AgentStepRunOptions,
   ): unknown | undefined {
-    const compatibility = extractRoleReceipt(result.stdout, spec.role);
+    const compatibility = extractRoleReceipt(result.stdout, spec);
     try {
       if (options?.outcomeLanding?.path !== undefined) {
         const sidecar = readOutcomeSidecar(options.outcomeLanding.path);
@@ -2916,7 +3052,9 @@ export class RealBackend implements Backend {
   /**
    * Resolve the raw structured payload to decode for a step.
    *
-   * - Reviewer: typed open-count is the sole fate channel when present.
+   * - S3/S6 judge: typed tri-state verdict is the sole fate channel (ADR 0131
+   *   channel (b) / #925).
+   * - Residual reviewer seats: typed open-count when present (not main path).
    * - Coder: typed decision signal is the sole fate channel; cargo is separate.
    * - When typed Output.object was configured, missing `result.output` fails
    *   the Action for #598 — sidecar/stdout never supply escalate / findingsCount
@@ -2975,7 +3113,9 @@ export class RealBackend implements Backend {
   ): StepResult {
     const raw = this.rawOutputFor(result, spec, typedOutputUsed, options);
     const cargo =
-      typedOutputUsed && spec.role === "coder"
+      typedOutputUsed &&
+      (spec.role === "coder" ||
+        isJudgeSeat({ id: spec.id }))
         ? this.cargoRawFor(result, spec, options)
         : undefined;
     const output = this.decodeOutput(spec, raw, cargo);
@@ -2993,25 +3133,26 @@ export class RealBackend implements Backend {
   ): StepOutput {
     // Fate from typed signal only. Cargo may ride along for enrichment but
     // never supplies escalate / findingsCount when typed was the seat policy.
+    if (spec.role === "coder") {
+      return this.decodeCoderStationOutput(spec, raw, cargo);
+    }
+    // #925 / #919 S2/R7: S3/S6 judge seats — T2 verdict is the sole topology signal.
+    // S9 online-review is not a judge seat (isJudgeSeat false) and never lands
+    // here on RealBackend (family review-loop owns verify decode).
+    if (isJudgeSeat({ id: spec.id })) {
+      return this.decodeJudgeStationOutput(spec, raw, cargo);
+    }
+    // #919 CR: decision_gate bell must not mint residual open-count paper
+    // (same dual-shape landmine runner R1 deleted). Prefer T2 judge escalate —
+    // same fields as runner isJudgeSeat path. S3/S6 never reach here (early
+    // return above); residual non-S3/S6 reviewer / legacy decode still must
+    // not re-open kind:"reviewer"+findingsCount:0 as a gate envelope.
     const gate = classifyDecisionGate(raw, `${spec.id}-${spec.role}`);
     if (gate.kind === "bell") {
-      if (spec.role === "coder") {
-        // Escalate is orthogonal to commit cargo (#384 / #899): preserve real
-        // committed/commitsAdded from the cargo channel (or legacy combined raw).
-        const fields = coderCargoFields(cargo !== undefined ? cargo : raw);
-        return {
-          kind: "coder",
-          committed: fields.committed,
-          commitsAdded: fields.commitsAdded,
-          escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
-        };
-      }
-      return {
-        kind: "reviewer",
-        findings: [],
-        findingsCount: 0,
-        escalate: { reason: gate.reason, diagnosis: gate.diagnosis },
-      };
+      return mintJudgeEscalate({
+        reason: gate.reason,
+        diagnosis: gate.diagnosis,
+      });
     }
     if (spec.role === "reviewer") {
       // Open-count fate only from the typed/raw channel — never from a separate
@@ -3025,29 +3166,90 @@ export class RealBackend implements Backend {
         // at Sandcastle when the schema is the seat policy; remaining unusable
         // paper follows the runner's non-reviewer envelope → S5 + raw artifacts.
         //
-        // TOPOLOGY PIN (not a claim that "this worker was a fixer"):
-        // `kind:"fixer"` is the existing non-reviewer envelope the S4→S5 route
-        // already understands (route table sends non-reviewer at S4 to S5). Do
-        // NOT "fix" this back to kind:"coder" (fake coder seat) and do NOT
-        // throw for abolished cargo-shape #598 — inventing a new envelope kind
-        // or reopening shape courts is out of scope here.
-        return { kind: "fixer", committed: false };
+        // #919 AS4: honest residual unusable paper; never kind:fixer placeholder.
+        return unusableResidualOpenCountPaper();
       }
       return decoded;
-    }
-    // Coder: decision signal may be `{}` (no gate). Cargo comes from the
-    // ordinary `<coder>` tag / sidecar — never re-read escalate from cargo.
-    if (spec.role === "coder") {
-      const fields = coderCargoFields(cargo !== undefined ? cargo : raw);
-      return {
-        kind: "coder",
-        committed: fields.committed,
-        commitsAdded: fields.commitsAdded,
-      };
     }
 
     // Family endgame roles are dispatched by RealFamilyBackend, never here.
     throw new Error(`realBackend: cannot decode output for unknown role ${spec.role}`);
+  }
+
+  /**
+   * #925 — decode a T2 judge station receipt into {@link JudgeResult}.
+   * Traffic status from the envelope only; findings cargo is opaque and may
+   * ride as SO siblings or a separate cargo channel.
+   */
+  private decodeJudgeStationOutput(
+    spec: StepSpec,
+    raw: unknown,
+    cargo?: unknown,
+  ): StepOutput {
+    const envelope = decodeJudgeVerdict(raw);
+    if (envelope.ok) {
+      const body = cargo !== undefined ? cargo : raw;
+      let findings: Finding[] | undefined;
+      if (body !== null && typeof body === "object" && !Array.isArray(body)) {
+        const rec = body as { findings?: unknown };
+        if (Array.isArray(rec.findings)) {
+          findings = rec.findings as Finding[];
+        }
+      }
+      return judgeResultFromVerdict(envelope.value, findings);
+    }
+
+    // Residual open-count paper (legacy fixtures / pre-#925 ledger replay).
+    // #919 CR N4: single-slice historical residual only — positive count may
+    // project continue for resume compatibility. Live seats emit T2 kind:judge;
+    // family court never closes on residual open-count (unusable paper only).
+    // Never re-open a second open-count routing path (#919 CR U3).
+    const openCount = decodeReviewerOpenCountReceipt(raw);
+    if (openCount !== undefined) {
+      const projected = projectResidualReviewerToJudge(openCount);
+      if (projected !== undefined) {
+        return projected;
+      }
+      // Residual open-count present but not positive continue → honest residual
+      // unusable paper (#919 AS4). Never kind:fixer placeholder.
+      return unusableResidualOpenCountPaper();
+    }
+
+    // Missing/unusable residual paper → honest residual unusable (#919 AS4),
+    // never silent converged / never kind:fixer placeholder.
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+      return unusableResidualOpenCountPaper();
+    }
+
+    throw new Error(
+      `${spec.id}-judge: illegal judge station receipt: ${envelope.reason}`,
+    );
+  }
+
+  /**
+   * #924 — decode a T2 coder station receipt into {@link CoderOutput}.
+   * Shared pure projection: {@link projectCoderStationReceipt} (family M1 too).
+   *
+   * Production attaches coderStationReceiptSchema (SO). There is no legacy
+   * decision-gate / empty-`{}` second accept shape — illegal envelope after SO
+   * throws for #598 redispatch (fail closed).
+   */
+  private decodeCoderStationOutput(
+    spec: StepSpec,
+    raw: unknown,
+    cargo?: unknown,
+  ): StepOutput {
+    try {
+      return projectCoderStationReceipt(raw, cargo);
+    } catch (err) {
+      // Fail closed: no #899 dual-channel fallthrough to classifyDecisionGate / {}.
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        reason.startsWith("illegal coder station receipt")
+          ? `${spec.id}-coder: ${reason}`
+          : `${spec.id}-coder: illegal coder station receipt: ${reason}`,
+      );
+    }
   }
 
   // ── S2/S3/S5/S6 agent workers (ADR 0030; #256 seam extension returns
@@ -3086,16 +3288,18 @@ export class RealBackend implements Backend {
         effortForLiveOfficer(spec.model, spec),
         pool,
       ),
-      // #899 / ADR 0128: every selected seat is single-iteration (maxIter:1).
-      // Native SO re-asks (Output.object maxRetries) stay in-session and are
-      // not outer Sandcastle iterations. Hitting maxIter ends THE STEP normally.
+      // #899 / ADR 0128 / #928: every selected seat is single-iteration
+      // (maxIter:1). Sandcastle completionSignal forced off at
+      // invokeSandcastleRun (`[]` — omit falls back to default password).
+      // Completion is clean exit + typed envelope / sidecar. Native SO re-asks
+      // stay in-session.
       maxIterations: spec.maxIter,
-      completionSignal: spec.completionSignal,
       branchStrategy: { type: "head" }, // commit on the resident branch in place
       promptFile: join(this.opts.promptsDir, spec.promptFile),
-      // #899: traffic signals attach Output.object(+maxRetries). Reviewer uses
-      // open-count schema; coder uses dedicated decision-gate tag so ordinary
-      // `<coder>` cargo stays outside SO (no cargo-shape re-ask).
+      // #899/#924/#925: traffic signals attach Output.object(+maxRetries).
+      // S3/S6 use T2 judge station-receipt; residual/legacy reviewer role uses
+      // open-count schema; coder uses T2 station-receipt (cargo siblings
+      // passthrough — no cargo-shape re-ask).
       ...(typedOutputUsed ? { output: typedOutput } : {}),
       // #683 fallback context for Sandcastle's own internal timeout only. The
       // normal live-worker path is dispatched through the #684 monitor.
@@ -3157,7 +3361,6 @@ export class RealBackend implements Backend {
         ),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
-        completionSignal: spec.completionSignal,
         branchStrategy: { type: "head" },
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
@@ -3245,10 +3448,8 @@ export class RealBackend implements Backend {
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    // #899 hotfix: the #684 monitor only sees the bridge's stdout; forward
-    // agent-stream liveness as a throttled heartbeat so healthy long steps
-    // are not idle-killed (see sandboxStreamHeartbeat.ts).
-    return await sc.run(withMonitorStreamHeartbeat(options));
+    // #899 / #928 / #919 F2: shared wrap — completionSignal:[] + monitor heartbeat.
+    return await sc.run(withSandcastleInvokeDefaults(options));
   }
 
   /**

@@ -3,7 +3,7 @@
 **三句话（宪法最重要的部分，动手前先背，每刀之前先自检）：**
 
 > 一、runner 数 exit code——进程死活，不读任何字。
-> 二、runner 读 reviewer 自报的 open-count——说几条就是几条：0 收敛，>0 环继续（fix→fresh 复审固定交替，轮到谁由拓扑写死）。
+> 二、runner 读 judge 自报 status——`converged|continue|escalate`（#925 / ADR 0131 channel (b)）；拓扑写死边，不读 open-count 当主通道。
 > 三、runner 转决策门——只转运 worker 自己按的门，转运不裁决。
 > 三件之外，runner 零判断权。**没有例外**——git/host 真源例外已废止（owner 2026-07-13）：coder/ship 说 OK 就是 OK，自证归 worker soul。
 
