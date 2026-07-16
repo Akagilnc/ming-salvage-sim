@@ -313,7 +313,10 @@ export function getRoutePresets(
   }
   const fromFile = loadRoutePresetsFromFile(loadPath);
   cachedRoutePresets = fromFile;
-  cachedRoutePresetsPath = path;
+  // Key cache by the path actually loaded (loadPath), not the requested path.
+  // Missing custom → factory fallback must not pin factory content under the
+  // missing path; if that path later appears, the next call must re-resolve.
+  cachedRoutePresetsPath = loadPath;
   return fromFile;
 }
 

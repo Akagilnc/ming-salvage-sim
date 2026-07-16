@@ -234,6 +234,47 @@ describe("#916 route presets config load + priority", () => {
     expect(route.slots.ship).toBe("sonnet");
     expect(resolveRouteModels("claude-tight", {}).slots.coder).toBe("grok-4.5");
   });
+
+  // family/914 Gemini R3 G5: cache must key by the path actually loaded
+  // (loadPath), not the requested path. Missing custom → factory load must
+  // not be cached under the missing path, or a later-created file is ignored.
+  it("reloads when a previously-missing custom presets path appears (same env, no cache reset)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "route-presets-916-"));
+    tempDirs.push(dir);
+    const path = join(dir, "route-presets.json"); // does not exist yet
+
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+    resetRoutePresetsCacheForTests();
+
+    // Missing custom path → factory fallback (within one cache lifetime).
+    expect(resolveRouteModels("claude-tight", {}).slots.coder).toBe("grok-4.5");
+
+    // File appears later with a route factory never had — no reset between.
+    writeFileSync(
+      path,
+      `${JSON.stringify(
+        {
+          "late-custom": {
+            slots: fullSlots({
+              coder: "gpt-5.6-terra",
+              coderFix: "gpt-5.6-terra",
+            }),
+            legCollections: {
+              cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    // Must re-resolve against the new file, not serve stale factory under the
+    // requested-path cache key.
+    const route = resolveRouteModels("late-custom", {});
+    expect(route.routeName).toBe("late-custom");
+    expect(route.slots.coder).toBe("gpt-5.6-terra");
+  });
 });
 
 describe("#914 C1 custom tightFamilies survive route mutations", () => {
