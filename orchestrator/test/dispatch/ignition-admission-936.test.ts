@@ -1,9 +1,9 @@
 /**
  * #936 — ignition admission before worksite + durable-truth re-entry.
  *
- * Production seams only:
+ * Production seams only (Testing Decisions / #934 ID-016):
  *   - public single-slice entry: runOrchestrator
- *   - public family entry: runFamily
+ *   - public family entry: runFamilyDriver
  *   - Scene Recovery / local Git: discoverResidentScene, cutRefFor
  *
  * Contracts: #934 ID-002, ID-003, ID-005, ID-009, ID-015, ID-016.
@@ -20,22 +20,16 @@ import { discoverResidentScene } from "../../src/sceneAction.js";
 import { cutRefFor } from "../../src/realBackend.js";
 import { resolveRouteModels } from "../../src/modelRoutes.js";
 import { runOrchestrator } from "../../src/runner.js";
-import { runFamily } from "../../src/family/runner.js";
+import { runFamilyDriver } from "../../src/familyDriver.js";
+import { entry, s8 } from "../helpers/resume-fixtures.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   ResumeState,
   StepOutput,
   StepSpec,
   WorktreeHandle,
 } from "../../src/types.js";
-import type {
-  FamilyBackend,
-  FamilyLedgerEntry,
-  MergeRequest,
-  MergeResult,
-} from "../../src/family/types.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -53,10 +47,8 @@ const META: IssueMeta = {
 class CountingBackend implements Backend {
   calls: string[] = [];
   metaCalls = 0;
-  snapshotCalls = 0;
   smokeCalls = 0;
   prepareCalls = 0;
-  writeSnapshotCalls = 0;
   resumeState: ResumeState | undefined;
 
   async smokeModelRoute(route: import("../../src/modelRoutes.js").ResolvedModelRoute) {
@@ -77,24 +69,10 @@ class CountingBackend implements Backend {
     this.calls.push(`fetchIssueMeta(${issueNumber})`);
     return META;
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    this.snapshotCalls += 1;
-    this.calls.push(`fetchIssueSnapshot(${issueNumber})`);
-    return {
-      number: issueNumber,
-      title: "t",
-      body: META.body ?? "",
-      comments: [],
-    };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     this.prepareCalls += 1;
     this.calls.push(`prepareWorktree(${issueNumber},${base})`);
     return { branch: `feat/issue-${issueNumber}`, base, path: `/tmp/wt-${issueNumber}` };
-  }
-  async writeSnapshot(): Promise<void> {
-    this.writeSnapshotCalls += 1;
-    this.calls.push("writeSnapshot");
   }
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
@@ -122,7 +100,6 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     const admitted = admitRouteFromEnv(process.env);
     expect(admitted.kind).toBe("ready");
     if (admitted.kind === "ready") {
-      // Env would have forced grok; preset keeps terra — override is dead.
       expect(admitted.route.slots.coder).toBe("gpt-5.6-terra");
       expect(admitted.route.slots.coder).not.toBe("grok-4.5");
     }
@@ -157,49 +134,42 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(bad.kind).toBe("stop");
   });
 
-  it("public driver: scene discovery is the first backend call (ID-005 Recovery first)", async () => {
+  it("public single-slice: scene discovery is the first backend call (ID-005 Recovery first)", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const backend = new CountingBackend();
     await runOrchestrator({ issueNumber: 936, backend });
     expect(backend.calls[0]).toBe("findResumeState(936)");
   });
 
-  it("family public entry: tight violation via programmatic admit stops before smoke", async () => {
-    // Pure admitTightRoute proves fail-closed; family entry uses admitRouteFromEnv
-    // which only sees presets — prove smoke is required path when route is ready.
-    const bad = admitTightRoute(resolveRouteModels("claude-tight", { merger: "opus" }));
-    expect(bad.kind).toBe("stop");
-
-    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
-    let smokeCalls = 0;
-    const familyBackend: FamilyBackend = {
-      async mergeChildIntoFamilyBase(_child: MergeRequest): Promise<MergeResult> {
-        throw new Error("should not merge in this probe");
-      },
-      async appendFamilyLedger(_entry: FamilyLedgerEntry): Promise<void> {},
-      async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
-        return [];
-      },
-    };
-    const singleSliceBackend = {
-      async findResumeState(): Promise<undefined> {
-        return undefined;
-      },
-      async smokeModelRoute(route: import("../../src/modelRoutes.js").ResolvedModelRoute) {
-        smokeCalls += 1;
-        const { smokeRouteModels } = await import("../../src/modelRoutes.js");
-        return smokeRouteModels(route, async () => ({ cliVersion: "test" }));
-      },
-    } as unknown as Backend;
-
-    // Smoke runs after admission on a valid preset route.
-    await runFamily({
-      epic: { issue: 934, children: [{ issue: 936, blockedBy: [] }] },
-      familyBackend,
-      singleSliceBackend,
+  it("public family driver: unknown route stops before GitHub and clone", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "definitely-not-a-route-preset");
+    let ghCalls = 0;
+    let cloneCalls = 0;
+    const result = await runFamilyDriver({
+      epicIssue: 934,
+      sourceRepo: "/tmp/no-such-source",
+      repo: "Akagilnc/ming-salvage-sim",
       familyBase: "family/934-base",
-    }).catch(() => undefined);
-    expect(smokeCalls).toBeGreaterThanOrEqual(1);
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/family-prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir: "/tmp/ledger-936",
+      imageName: "img",
+      sh: () => {
+        ghCalls += 1;
+        throw new Error("should not read GitHub after route admission stop");
+      },
+      realBackendFactory: () => {
+        cloneCalls += 1;
+        throw new Error("should not clone after route admission stop");
+      },
+    });
+    expect(result.status).toBe("escalated");
+    expect(result.escalation?.reason).toMatch(/startup route failure|unknown route/i);
+    expect(ghCalls).toBe(0);
+    expect(cloneCalls).toBe(0);
+    expect(result.children).toEqual([]);
   });
 });
 
@@ -215,7 +185,7 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     backend.resumeState = {
       worktree: { branch: "feat/issue-936", base: "main", path: "/tmp/wt-936" },
       stateDir: "/tmp/ledger-936",
-      ledger: [{ step: "S8", handoffStatus: "success" }],
+      ledger: [s8("success")],
     };
     const scene = await discoverResidentScene(backend, 936);
     expect(scene.kind).toBe("resident");
@@ -236,21 +206,42 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
-  it("public driver: durable success terminal replays with zero meta/smoke", async () => {
+  it("negative: partial residue (worktree without ledger) is corrupted not fresh", async () => {
+    const backend = new CountingBackend();
+    backend.findResumeState = async () => {
+      throw new Error(
+        "resident worksite exists without readable ledger for #936 " +
+          "(worktree=/tmp/wt-936, expected ledger=/tmp/.ledger-936); " +
+          "refusing to treat partial residue as fresh (#936 / #934 ID-005)",
+      );
+    };
+    const scene = await discoverResidentScene(backend, 936);
+    expect(scene.kind).toBe("corrupted");
+    if (scene.kind === "corrupted") {
+      expect(scene.reason).toMatch(/partial residue|without readable ledger/i);
+    }
+    const result = await runOrchestrator({ issueNumber: 936, backend });
+    expect(result.status).toBe("error");
+    expect(result.errorPackage?.reason).toMatch(/without readable ledger|partial residue/i);
+    expect(backend.prepareCalls).toBe(0);
+    expect(backend.metaCalls).toBe(0);
+  });
+
+  it("public driver: durable success terminal replays with zero meta/smoke even if route is broken", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "definitely-not-a-route-preset");
     const backend = new CountingBackend();
     backend.resumeState = {
       worktree: { branch: "feat/issue-936", base: "main", path: "/tmp/wt-936" },
       stateDir: "/tmp/ledger-936",
       ledger: [
-        { step: "S2", output: { kind: "coder", committed: true, commitsAdded: 1 } as StepOutput },
-        { step: "S8", handoffStatus: "success" },
+        entry("S2", { kind: "coder", committed: true, commitsAdded: 1 }),
+        s8("success"),
       ],
     };
     const result = await runOrchestrator({ issueNumber: 936, backend });
     expect(result.status).toBe("success");
     expect(backend.metaCalls).toBe(0);
     expect(backend.smokeCalls).toBe(0);
-    expect(backend.snapshotCalls).toBe(0);
     expect(backend.prepareCalls).toBe(0);
   });
 
@@ -270,14 +261,11 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     );
   });
 
-  it("public fresh path does not write snapshot dual court", async () => {
+  it("public fresh path never invokes deleted snapshot dual court", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const backend = new CountingBackend();
-    // Minimal happy path may not reach S1 if smoke/meta gate differs; force
-    // through by providing smoke + completed steps. Use real topology.
-    const result = await runOrchestrator({ issueNumber: 936, backend });
-    // Regardless of terminal, writeSnapshot must not be a durable court consumer.
-    // Production runner no longer calls writeSnapshot on S1.
-    expect(backend.writeSnapshotCalls).toBe(0);
-    void result;
+    await runOrchestrator({ issueNumber: 936, backend });
+    expect(backend.calls.some((c) => c.includes("fetchIssueSnapshot"))).toBe(false);
+    expect(backend.calls.some((c) => c.includes("writeSnapshot"))).toBe(false);
   });
 });

@@ -1364,10 +1364,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     input.now !== undefined ? input.now() : new Date();
 
   // #936 / #934 ID-005: Scene Recovery first — resident discovery before
-  // admission network work when a durable scene may already exist. Route
-  // resolve is local (preset only) and still runs for non-terminal resume so
-  // dispatch has a lineup; terminal replay short-circuits after discovery
-  // with zero GitHub / smoke calls.
+  // admission network work when a durable scene may already exist.
   const scene = await discoverResidentScene(backend, issueNumber);
   if (scene.kind === "corrupted") {
     const reason = scene.reason;
@@ -1383,8 +1380,56 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     };
   }
 
+  // #936 / #934 ID-005: durable terminal replay BEFORE route admission.
+  // A broken ORCHESTRATOR_ROUTE must not block re-delivery of an already
+  // finished success/error/unanswered-escalate terminal (zero meta/smoke).
+  // Skip early short-circuit when a repairIntent is present — that path must
+  // still durable-write the intent (and surface write failures) before planResume.
+  if (scene.kind === "resident" && input.repairIntent === undefined) {
+    const earlyPlan = planResume(scene.state.ledger);
+    if (earlyPlan.terminalStatus !== undefined) {
+      const worktree = scene.state.worktree;
+      const ledger = earlyPlan.priorLedger;
+      if (earlyPlan.terminalStatus === "error") {
+        const reason =
+          "prior run terminated with an error handoff (re-fed after completion)";
+        const errorPackage: ErrorPackage = {
+          failedStep: lastAgentStep(ledger) ?? "S8",
+          reason,
+          branchHead: worktree.branch,
+        };
+        const stopSummary =
+          latestLedgerStopSummary(ledger) ?? stopSummaryForErrorPackage(errorPackage);
+        return {
+          status: "error",
+          errorPackage,
+          stepLedger: ledger,
+          stopSummary,
+        };
+      }
+      const stopSummary: StopSummary =
+        earlyPlan.terminalStatus === "success"
+          ? {
+              reason: "already_done",
+              summary: "prior run already reached a success handoff",
+            }
+          : latestLedgerStopSummary(ledger) ?? {
+              reason: "spec_conflict",
+              summary: "prior run is paused at an unanswered escalation",
+              repairHint: "answer the escalation and rerun",
+            };
+      return {
+        status: earlyPlan.terminalStatus,
+        branch: earlyPlan.terminalStatus === "success" ? worktree.branch : undefined,
+        stepLedger: ledger,
+        stopSummary,
+      };
+    }
+  }
+
   // #936 / #934 ID-002: Admission/Preflight — preset route + fail-closed tight.
-  // No env slot overrides, no interactive continue.
+  // No env slot overrides, no interactive continue. Non-terminal resume still
+  // needs a lineup for dispatch.
   const admitted = admitRouteFromEnv();
   if (admitted.kind === "stop") {
     const stopSummary = stopSummaryForStartupRouteFailure(admitted.escalation);
@@ -1960,27 +2005,36 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
   const runId = mintRunId();
 
   /**
-   * Resolve the ledger's `branchHEAD` value (#256).
+   * Resolve the ledger's `branchHEAD` value (#256 / #934 ID-015).
    *
    * Real Backend: the worktree HEAD commit SHA (`git rev-parse HEAD`) via the
-   * optional `backend.worktreeHead`. Fallback (no worktree yet / no
-   * `worktreeHead` on the Backend / it returns undefined / it throws): the
-   * branch NAME, as in v0.1 — a ledger I/O helper must never abort the run on a
-   * git read fault.
+   * optional `backend.worktreeHead`. When that optional read fails or returns
+   * empty → warning + omit (empty string), never silent branch-name fallback.
+   * Backends without `worktreeHead` (zero-container fakes) still record the
+   * branch name as the only available reference.
    */
   async function resolveBranchHEAD(): Promise<string> {
     if (worktree === undefined) return "";
-    if (backend.worktreeHead !== undefined) {
-      try {
-        const sha = await backend.worktreeHead(worktree);
-        if (sha !== undefined && sha.length > 0) {
-          return sha;
-        }
-      } catch {
-        // fall through to the branch-name fallback
-      }
+    if (backend.worktreeHead === undefined) {
+      return worktree.branch;
     }
-    return worktree.branch;
+    try {
+      const sha = await backend.worktreeHead(worktree);
+      if (sha !== undefined && sha.length > 0) {
+        return sha;
+      }
+      console.warn(
+        "[orchestrator] optional branchHEAD read returned empty (omit)",
+      );
+      return "";
+    } catch (err) {
+      console.warn(
+        `[orchestrator] optional branchHEAD read failed (omit): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return "";
+    }
   }
 
   // stateDir is resolved once the worktree is prepared (S1 sets it).
@@ -2161,7 +2215,7 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * persistence is inherently impossible (the resume contract needs a worktree
    * sibling dir). This covers BOTH:
    *   - S0 fetchIssueMeta throw, AND
-   *   - S1 PRE-worktree throws: fetchIssueSnapshot / prepareWorktree (which run
+   *   - S1 PRE-worktree throws: prepareWorktree (which run
    *     BEFORE deriveStateDir sets stateDir).
    * In all these the in-memory ledger still records S8 and the run still returns
    * S8(error), but NOTHING is persisted. Only POST-worktree S1 (after

@@ -133,49 +133,32 @@ function filled(value: string | undefined): string | undefined {
 }
 
 /**
- * Resolve epic Coder-Rec body for family quota walls. Prefer live issue meta,
- * then snapshot. Missing body → undefined (default roster is legal). Present
- * body is returned as-is so {@link resolveCoderRecOrder} can fail-closed on
- * broken marks (#906) — never swallow CoderRecError into silent default.
+ * Resolve epic Coder-Rec body for family quota walls from live issue meta only
+ * (#936 / #934 ID-002: snapshot dual court deleted). Missing body → undefined
+ * (default roster is legal). Present body is returned as-is so
+ * {@link resolveCoderRecOrder} can fail-closed on broken marks (#906) — never
+ * swallow CoderRecError into silent default.
  *
- * F2 #906: total read failure (meta AND snapshot both throw) must NOT collapse
- * to undefined → silent default roster. Fail-closed by rethrowing.
+ * Meta read failure must NOT collapse to undefined → silent default roster.
+ * Fail-closed by rethrowing.
  */
 async function resolveFamilyCoderRecBody(
   backend: Backend,
   epicIssue: number,
 ): Promise<string | undefined> {
-  let metaError: unknown;
-  let snapshotError: unknown;
   try {
     const meta = await backend.fetchIssueMeta(epicIssue);
     if (typeof meta.body === "string" && meta.body.trim().length > 0) {
       return meta.body;
     }
+    // Read succeeded but body empty/missing → legal default roster.
+    return undefined;
   } catch (err) {
-    metaError = err;
-  }
-  try {
-    const snapshot = await backend.fetchIssueSnapshot(epicIssue);
-    if (typeof snapshot.body === "string" && snapshot.body.trim().length > 0) {
-      return snapshot.body;
-    }
-  } catch (err) {
-    snapshotError = err;
-  }
-  if (metaError !== undefined && snapshotError !== undefined) {
-    const metaMsg =
-      metaError instanceof Error ? metaError.message : String(metaError);
-    const snapMsg =
-      snapshotError instanceof Error
-        ? snapshotError.message
-        : String(snapshotError);
+    const metaMsg = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Coder-Rec body unreadable for epic #${epicIssue} (meta+snapshot failed): meta=${metaMsg}; snapshot=${snapMsg}`,
+      `Coder-Rec body unreadable for epic #${epicIssue} (meta failed): ${metaMsg}`,
     );
   }
-  // One or both reads succeeded but body empty/missing → legal default roster.
-  return undefined;
 }
 
 /** Optional test seam / production override for pure baton apply. */

@@ -1681,12 +1681,16 @@ export interface Backend {
   ): Promise<StepOutput | StepResult>;
   /** S0: lightweight metadata for the input gate (host-side `gh`). */
   fetchIssueMeta(issueNumber: number): Promise<IssueMeta>;
-  /** S1: full host-side snapshot (body + comments + Agent Brief) for audit/resume. */
-  fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot>;
+  /**
+   * #936 / #934 ID-002: snapshot dual court deleted. Optional only so legacy
+   * test fakes may still declare stubs; production RealBackend does not
+   * implement these and no production consumer may call them.
+   */
+  fetchIssueSnapshot?(issueNumber: number): Promise<IssueSnapshot>;
   /** S1: resident slice worktree from `base` (native createWorktree). */
   prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle>;
-  /** S1: write the issue snapshot into the worktree (clean-room). */
-  writeSnapshot(
+  /** #936: deleted dual court — optional test-fake stub only; never call. */
+  writeSnapshot?(
     worktree: WorktreeHandle,
     snapshot: IssueSnapshot,
   ): Promise<void>;

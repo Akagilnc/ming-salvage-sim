@@ -82,12 +82,9 @@ describe("crash-resume: residue exists, ledger stops mid-run (#255 AC1/AC2, ADR 
     // The committed S2 routes to a fresh reviewer; S2 itself is not re-dispatched.
     expect(backend.runStepIds).toEqual(["S3"]);
     expect(backend.resumeSessionCalls).toHaveLength(0);
-    // S0 gate / S1 load are NOT re-executed (no re-cut, no re-snapshot write).
-    // #767 may re-fetch issue meta/body for Coder-Rec on the resume path.
+    // S0 gate / S1 load are NOT re-executed (no re-cut). Snapshot dual court
+    // deleted (#936). #767 may re-fetch issue meta/body for Coder-Rec on resume.
     expect(backend.calls).not.toContain("prepareWorktree(255, main)");
-    expect(backend.calls).not.toContain(
-      `writeSnapshot(${WORKTREE.branch}, #255)`,
-    );
 
     // The run completes from the resumed point.
     expect(result.status).toBe("success");

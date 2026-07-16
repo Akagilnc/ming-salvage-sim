@@ -290,13 +290,16 @@ describe("RealBackend findResumeState old-branch fallback (#593)", () => {
     expect(await backend.findResumeState(ISSUE)).toBeUndefined();
   });
 
-  it("returns undefined when the old-name worktree has no readable ledger", async () => {
+  it("throws when the old-name worktree has no readable ledger (#936 partial residue)", async () => {
+    // ID-005: worksite without ledger is corrupted residue, not fresh.
     const wtRoot = mkDir("wt-fallback-no-ledger-");
     const existingWt = join(wtRoot, "issue-593");
     mkdirSync(existingWt, { recursive: true });
 
     const backend = newBackend(porcelainForBranch(OLD_BRANCH, existingWt));
-    expect(await backend.findResumeState(ISSUE)).toBeUndefined();
+    await expect(backend.findResumeState(ISSUE)).rejects.toThrow(
+      /without readable ledger|partial residue/i,
+    );
   });
 
   it("corrupt ledger still aborts resume (infra fail-closed)", async () => {
