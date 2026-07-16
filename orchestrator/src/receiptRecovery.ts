@@ -124,8 +124,17 @@ export function workerReceiptSchema(): z.ZodType {
 export function workerReceiptOutput(
   tag: string,
   schema: z.ZodType,
+  // Owner B ruling 2026-07-16: maxRetries follows provider session-resume
+  // capability (resumeCapableForSlug). Incapable → 0; a bad envelope falls
+  // through to the established process-root retry (#934 ID-006 SO-exhaust).
+  // Required — no fail-open default; callers must pass the registry probe.
+  resumeCapable: boolean,
 ): sc.OutputDefinition {
-  return sc.Output.object({ tag, schema, maxRetries: RECEIPT_MAX_RETRIES });
+  return sc.Output.object({
+    tag,
+    schema,
+    maxRetries: resumeCapable ? RECEIPT_MAX_RETRIES : 0,
+  });
 }
 
 /**
@@ -136,8 +145,9 @@ export function workerReceiptOutput(
 export function coderReceiptOutput(
   schema: z.ZodType,
   tag: string = "coder",
+  resumeCapable: boolean,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, resumeCapable);
 }
 
 /**
@@ -148,8 +158,9 @@ export function coderReceiptOutput(
 export function shipReceiptOutput(
   schema: z.ZodType,
   tag: string = "ship",
+  resumeCapable: boolean,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, resumeCapable);
 }
 
 /**
@@ -159,8 +170,9 @@ export function shipReceiptOutput(
 export function mergerReceiptOutput(
   schema: z.ZodType,
   tag: string = "merger",
+  resumeCapable: boolean,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, resumeCapable);
 }
 
 /**
@@ -171,8 +183,9 @@ export function mergerReceiptOutput(
 export function onlineReviewReceiptOutput(
   schema: z.ZodType,
   tag: string = "onlineReview",
+  resumeCapable: boolean,
 ): sc.OutputDefinition {
-  return workerReceiptOutput(tag, schema);
+  return workerReceiptOutput(tag, schema, resumeCapable);
 }
 
 /**

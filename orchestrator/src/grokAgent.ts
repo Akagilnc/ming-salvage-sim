@@ -12,6 +12,10 @@
 
 import type * as sc from "@ai-hero/sandcastle";
 import { shellEscape } from "./shellEscape.js";
+import {
+  makeGrokSessionStorage,
+  type GrokSessionStorageOptions,
+} from "./grokSessionStorage.js";
 
 export { shellEscape } from "./shellEscape.js";
 
@@ -28,11 +32,10 @@ export interface GrokAgentOptions {
     | "max";
   /** Extra env injected by this provider. */
   readonly env?: Record<string, string>;
-  /**
-   * @deprecated Grok sessions are not persistent yet; this option is ignored.
-   * It remains accepted for compatibility with provider option plumbing.
-   */
+  /** When false, session capture is disabled. Default: true (#955). */
   readonly captureSessions?: boolean;
+  /** Override grok session directories for tests or non-standard installs. */
+  readonly sessionStorage?: GrokSessionStorageOptions;
 }
 
 /**
@@ -137,14 +140,20 @@ export function grokAgent(
   return {
     name: "grok",
     env: options?.env ?? {},
-    // Grok's temporary ~/.grok directory is deleted after each run, so there
-    // is no persistent host↔sandbox session storage to support capture/resume.
-    captureSessions: false,
-    buildPrintCommand({ prompt }) {
+    // #955: grok sessions are directories under ~/.grok/sessions; capture and
+    // resume ride the sandcastle sessionStorage contract below.
+    captureSessions: options?.captureSessions !== false,
+    sessionStorage: makeGrokSessionStorage(options?.sessionStorage),
+    buildPrintCommand({ prompt, resumeSession, forkSession }) {
       const modelFlag = model ? ` -m ${shellEscape(model)}` : "";
       const effortFlag = options?.effort
         ? ` --reasoning-effort ${shellEscape(options.effort)}`
         : "";
+      // #955: grok natively supports `--resume <id>` (+ `--fork-session`).
+      const resumeFlag = resumeSession
+        ? ` --resume ${shellEscape(resumeSession)}`
+        : "";
+      const forkFlag = resumeSession && forkSession ? " --fork-session" : "";
       // Prompt via stdin + --prompt-file /dev/stdin avoids the Linux 128KB
       // argv limit (same motivation as codex/pi stdin prompts). Host probe
       // confirmed this path works on grok 0.2.93.
@@ -152,7 +161,7 @@ export function grokAgent(
         command:
           `grok --prompt-file /dev/stdin --output-format streaming-json` +
           ` --always-approve --permission-mode bypassPermissions` +
-          `${modelFlag}${effortFlag}`,
+          `${modelFlag}${effortFlag}${resumeFlag}${forkFlag}`,
         stdin: prompt,
       };
     },
