@@ -259,8 +259,9 @@ Every role slot is independently overridable. Precedence (#916):
 
 ```
 per-slot env override (ORCHESTRATOR_<ROLE>_MODEL)
-  → config file preset (config/route-presets.json; ORCHESTRATOR_ROUTE selects name)
-  → built-in fallback (same factory table if the file is missing)
+  → config file preset (sole table: config/route-presets.json, or
+    ORCHESTRATOR_ROUTE_PRESETS_PATH; missing custom path falls back to the
+    shipped factory JSON only — no in-code twin table)
   → leg-collection env override (ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS)
   → startup route smoke validates the FINAL lineup, slot by slot
 ```
