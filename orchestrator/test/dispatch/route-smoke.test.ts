@@ -25,7 +25,6 @@ import {
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -52,13 +51,9 @@ class MissingSmokeBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return { branch: `feat/${issueNumber}`, base, path: `/tmp/${issueNumber}` };
   }
-  async writeSnapshot() {}
   async runStep(_spec: StepSpec): Promise<StepOutput> {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }

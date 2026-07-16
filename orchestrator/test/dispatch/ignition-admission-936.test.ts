@@ -10,6 +10,9 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   admitCoderRec,
@@ -21,7 +24,7 @@ import { discoverResidentScene } from "../../src/sceneAction.js";
 import { cutRefFor } from "../../src/realBackend.js";
 import { resolveRouteModels } from "../../src/modelRoutes.js";
 import { runOrchestrator } from "../../src/runner.js";
-import { runFamilyDriver } from "../../src/familyDriver.js";
+import { cutFamilyBase, runFamilyDriver } from "../../src/familyDriver.js";
 import { entry, s8 } from "../helpers/resume-fixtures.js";
 import type {
   Backend,
@@ -181,6 +184,92 @@ describe("#936 admission preflight (ID-002 / ID-003)", () => {
     expect(result.children).toEqual([]);
   });
 
+  it("public family driver: all filtered children complete with visible skips and no worksite", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    let cloneCalls = 0;
+    const sh = (_file: string, args: string[]): string => {
+      const joined = args.join(" ");
+      if (joined.includes("sub_issues")) {
+        return JSON.stringify([
+          { number: 935, state: "CLOSED", labels: [{ name: "ready-for-agent" }] },
+          { number: 936, state: "OPEN", labels: [] },
+        ]);
+      }
+      if (joined.includes("issue view")) {
+        return JSON.stringify({ number: 934, body: "", author: { login: "Akagilnc" } });
+      }
+      throw new Error(`unexpected metadata call: ${joined}`);
+    };
+    const result = await runFamilyDriver({
+      epicIssue: 934,
+      sourceRepo: "/tmp/source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/934-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir: "/tmp/ledger-936",
+      imageName: "img",
+      sh,
+      realBackendFactory: () => {
+        cloneCalls += 1;
+        throw new Error("all-filtered admission must not create a worksite");
+      },
+    });
+    expect(result.status).toBe("success");
+    expect(result.children).toEqual([]);
+    expect(result.admissionSkipped?.map((child) => child.issue)).toEqual([935, 936]);
+    expect(cloneCalls).toBe(0);
+  });
+
+  it("public family driver aggregates every planned child Coder-Rec before worksite", async () => {
+    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
+    let cloneCalls = 0;
+    const sh = (_file: string, args: string[]): string => {
+      const joined = args.join(" ");
+      if (joined.includes("sub_issues")) {
+        return JSON.stringify([
+          { number: 935, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+          { number: 936, state: "OPEN", labels: [{ name: "ready-for-agent" }] },
+        ]);
+      }
+      if (joined.includes("dependencies/blocked_by")) return "[]";
+      if (joined.includes("issue view")) {
+        const issue = Number(args[2]);
+        const body = issue === 935
+          ? "Coder-Rec: missing-model-a"
+          : issue === 936
+            ? "Coder-Rec: missing-model-b"
+            : "Coder-Rec: terra@med";
+        return JSON.stringify({ number: issue, body, author: { login: "Akagilnc" } });
+      }
+      throw new Error(`unexpected metadata call: ${joined}`);
+    };
+    const result = await runFamilyDriver({
+      epicIssue: 934,
+      sourceRepo: "/tmp/source",
+      repo: "Akagilnc/ming-salvage-sim",
+      familyBase: "family/934-base",
+      base: "main",
+      promptsDir: "/tmp/prompts",
+      familyPromptsDir: "/tmp/prompts",
+      soulsDir: "/tmp/souls",
+      ledgerDir: "/tmp/ledger-936",
+      imageName: "img",
+      sh,
+      realBackendFactory: () => {
+        cloneCalls += 1;
+        throw new Error("Coder-Rec aggregate failure must precede clone");
+      },
+    });
+    expect(result.status).toBe("escalated");
+    expect(result.escalation?.diagnosis).toMatch(/2 errors/);
+    expect(result.escalation?.diagnosis).toContain("issue #935");
+    expect(result.escalation?.diagnosis).toContain("issue #936");
+    expect(cloneCalls).toBe(0);
+  });
+
   it("public family driver: final Coder-Rec route smoke fails before worksite creation", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     const backend = new CountingBackend();
@@ -320,6 +409,28 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     ).toThrow(/refusing stale local base fallback/i);
   });
 
+  it("family base cut refuses a failed configured origin fetch", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-base-fetch-"));
+    const calls: string[] = [];
+    try {
+      expect(() =>
+        cutFamilyBase("/repo", "family/934", "main", (_file, args) => {
+          const command = args.slice(2).join(" ");
+          calls.push(command);
+          if (command === "rev-parse -q --verify refs/heads/family/934") {
+            throw new Error("missing branch");
+          }
+          if (command === "remote get-url origin") return "https://example.invalid/repo.git";
+          if (command === "fetch origin main") throw new Error("network down");
+          throw new Error(`unexpected git command: ${command}`);
+        }, ledgerDir),
+      ).toThrow(/network down/);
+      expect(calls).not.toContain("branch family/934 main");
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
   it("positive: local-only source may use bare local base when fetch fails", () => {
     expect(cutRefFor("main", false, false, { hasRemote: false })).toBe("main");
   });
@@ -330,11 +441,4 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     );
   });
 
-  it("public fresh path never invokes deleted snapshot dual court", async () => {
-    vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
-    const backend = new CountingBackend();
-    await runOrchestrator({ issueNumber: 936, backend });
-    expect(backend.calls.some((c) => c.includes("fetchIssueSnapshot"))).toBe(false);
-    expect(backend.calls.some((c) => c.includes("writeSnapshot"))).toBe(false);
-  });
 });

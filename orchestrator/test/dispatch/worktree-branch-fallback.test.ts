@@ -290,6 +290,16 @@ describe("RealBackend findResumeState old-branch fallback (#593)", () => {
     expect(await backend.findResumeState(ISSUE)).toBeUndefined();
   });
 
+  it("throws when a ledger exists without either resident worktree", async () => {
+    const orphan = join(CLONE, ".sandcastle", "worktrees", `.ledger-${ISSUE}`);
+    mkdirSync(orphan, { recursive: true });
+    cleanups.push(CLONE);
+    const backend = newBackend("");
+    await expect(backend.findResumeState(ISSUE)).rejects.toThrow(
+      /ledger exists without a worksite|partial residue/i,
+    );
+  });
+
   it("throws when the old-name worktree has no readable ledger (#936 partial residue)", async () => {
     // ID-005: worksite without ledger is corrupted residue, not fresh.
     const wtRoot = mkDir("wt-fallback-no-ledger-");

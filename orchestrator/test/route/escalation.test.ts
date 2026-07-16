@@ -5,7 +5,6 @@ import type {
   CoderOutput,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -24,7 +23,7 @@ const COMPLIANT_META: IssueMeta = {
   openBlockedBy: [],
 };
 
-const COMPLIANT_SNAPSHOT: IssueSnapshot = {
+const COMPLIANT_SNAPSHOT = {
   number: 251,
   body: "escalate test issue body",
   comments: [],
@@ -68,24 +67,12 @@ class ConfigurableBackend implements Backend {
     return COMPLIANT_META;
   }
 
-  async fetchIssueSnapshot(_issueNumber: number): Promise<IssueSnapshot> {
-    this.calls.push("fetchIssueSnapshot");
-    return COMPLIANT_SNAPSHOT;
-  }
-
   async prepareWorktree(
     _issueNumber: number,
     _base: string,
   ): Promise<WorktreeHandle> {
     this.calls.push("prepareWorktree");
     return WORKTREE;
-  }
-
-  async writeSnapshot(
-    _worktree: WorktreeHandle,
-    _snapshot: IssueSnapshot,
-  ): Promise<void> {
-    this.calls.push("writeSnapshot");
   }
 
   async runStep(spec: StepSpec): Promise<StepOutput> {

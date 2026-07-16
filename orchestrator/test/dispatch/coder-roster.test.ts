@@ -36,7 +36,6 @@ import type {
   Backend,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   SliceStepId,
@@ -183,7 +182,6 @@ describe("#906 Coder-Rec — markdown parse + fail-closed", () => {
     const applied = applyCoderRecToRoute(
       base,
       "## Scope\nNo marking here.\n",
-      {},
     );
     expect(applied.skippedForMissingMarking).toBe(true);
     expect(applied.route.slots.coder).toBe(base.slots.coder);
@@ -258,7 +256,7 @@ describe("#920 pool isolation removed — same model across roles is legal", () 
   it("admits Sol as Coder-Rec even when sol occupies review and CMR seats", () => {
     for (const routeName of ["normal", "codex-cheap"] as const) {
       const base = resolveRouteModels(routeName, {});
-      const applied = applyCoderRecToRoute(base, "Coder-Rec: sol@med", {});
+      const applied = applyCoderRecToRoute(base, "Coder-Rec: sol@med");
       expect(applied.entry?.id).toBe("sol@med");
       expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
       // #899 run8 / AC: cmrReview leg may keep the same slug as coder.
@@ -280,7 +278,6 @@ describe("#920 pool isolation removed — same model across roles is legal", () 
     const applied = applyCoderRecToRoute(
       resolveRouteModels("normal", {}),
       "Coder-Rec: sol@med",
-      {},
     );
     expect(applied.entry?.id).toBe("sol@med");
     expect(applied.route.slots.coder).toBe("gpt-5.6-sol");
@@ -293,7 +290,6 @@ describe("#920 pool isolation removed — same model across roles is legal", () 
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
-      {},
     );
     expect(applied.entry?.id).toBe("grok-4.5");
     expect(applied.route.slots.coder).toBe("grok-4.5");
@@ -354,7 +350,6 @@ describe("#789 Coder-Rec — Claude backup tokens + fallback chain", () => {
     const first = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → sonnet-5 → haiku-4.5",
-      {},
     );
     expect(first.entry?.id).toBe("grok-4.5");
     expect(first.route.slots.coder).toBe("grok-4.5");
@@ -372,9 +367,7 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med → luna@med",
-      {},
     );
-    expect(applied.skippedForEnvOverride).toBe(false);
     expect(applied.entry?.id).toBe("grok-4.5");
     expect(applied.route.slots.coder).toBe("grok-4.5");
     expect(applied.route.slots.coderFix).toBe("grok-4.5");
@@ -384,7 +377,7 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
 
   it("leaves the route coder untouched when the issue has no Coder-Rec line", () => {
     const base = resolveRouteModels("normal", {});
-    const applied = applyCoderRecToRoute(base, "## Scope\nnothing\n", {});
+    const applied = applyCoderRecToRoute(base, "## Scope\nnothing\n");
     expect(applied.skippedForMissingMarking).toBe(true);
     expect(applied.route.slots.coder).toBe(base.slots.coder);
   });
@@ -394,9 +387,7 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
-      { ORCHESTRATOR_CODER_MODEL: "opus" },
     );
-    expect(applied.skippedForEnvOverride).toBe(false);
     // Coder-Rec wins; env override is deleted.
     expect(applied.route.slots.coder).toBe("grok-4.5");
   });
@@ -407,22 +398,18 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
       applyCoderRecToRoute(
         base,
         "Coder-Rec: totally-bogus → also-fake",
-        { ORCHESTRATOR_CODER_MODEL: "opus" },
       ),
     ).toThrow(CoderRecError);
     expect(() =>
       applyCoderRecToRoute(
         base,
         "Please set Coder-Rec carefully.\n",
-        { ORCHESTRATOR_CODER_MODEL: "opus" },
       ),
     ).toThrow(CoderRecError);
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
-      { ORCHESTRATOR_CODER_MODEL: "opus" },
     );
-    expect(applied.skippedForEnvOverride).toBe(false);
     expect(applied.route.slots.coder).toBe("grok-4.5");
   });
 
@@ -431,10 +418,8 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: grok-4.5 → terra@med",
-      { ORCHESTRATOR_CODER_FIX_MODEL: "opus" },
     );
 
-    expect(applied.skippedForEnvOverride).toBe(false);
     expect(applied.route.slots.coder).toBe("grok-4.5");
     expect(applied.route.slots.coderFix).toBe("grok-4.5");
   });
@@ -446,7 +431,6 @@ describe("#767 Coder-Rec — applyCoderRecToRoute dispatch wiring", () => {
     const applied = applyCoderRecToRoute(
       base,
       "Coder-Rec: terra@med",
-      {},
     );
 
     expect(applied.route.tightFamilyViolations).toEqual([
@@ -522,18 +506,9 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
         body: this.coderRecBody,
       };
     }
-    async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-      return {
-        number: issueNumber,
-        body: this.coderRecBody,
-        comments: [],
-        agentBrief: "",
-      };
-    }
     async prepareWorktree(): Promise<WorktreeHandle> {
       return this.worktree;
     }
-    async writeSnapshot(): Promise<void> {}
     async runStep(spec: StepSpec): Promise<StepOutput> {
       if (spec.role === "coder") {
         this.coderModels.push(spec.model);
@@ -819,11 +794,6 @@ describe("#767 Coder-Rec — runner dispatches the selected coder model", () => 
     class BothRefetchThrowBackend extends CoderRecResumeAfterS5Backend {
       override async fetchIssueMeta(_issueNumber: number): Promise<IssueMeta> {
         throw new Error("meta unavailable");
-      }
-      override async fetchIssueSnapshot(
-        _issueNumber: number,
-      ): Promise<IssueSnapshot> {
-        throw new Error("snapshot unavailable");
       }
     }
     try {

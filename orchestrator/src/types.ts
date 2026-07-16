@@ -1324,17 +1324,6 @@ export interface IssueMeta {
   readonly body?: string;
 }
 
-/** @deprecated Test-fixture shape only; no production seam consumes snapshots. */
-export interface IssueSnapshot {
-  readonly number: number;
-  readonly body: string;
-  readonly comments: ReadonlyArray<string>;
-  readonly agentBrief: string;
-  readonly bodyAuthorLogin?: string;
-  readonly commentAuthorLogins?: ReadonlyArray<string>;
-  readonly trustedOwnerLogin?: string;
-}
-
 /** Handle to the resident slice worktree (ADR 0017). */
 export interface WorktreeHandle {
   readonly branch: string;
@@ -1494,8 +1483,8 @@ export type MonitoredWorkerIdleDisposition =
  *                     unavailable (fake path / runner-action step) the runner
  *                     falls back to hashing the promptFile NAME (or step id).
  *   - `branchHEAD`  — Real (#256): the git commit SHA (`git rev-parse HEAD`) at
- *                     the worktree HEAD, read via the Backend. Fallback (no
- *                     Backend SHA available): the branch NAME, as in v0.1.
+ *                     the worktree HEAD, read via the Backend. Omitted when the
+ *                     optional Git read is unavailable.
  *   - `ts`          — ISO-8601 timestamp when this entry was written (real).
  *
  * The runner hands this to {@link Backend.writeLedger}, which persists it to the
@@ -1529,8 +1518,7 @@ export interface PersistentLedgerEntry extends LedgerEntry {
    *
    * #256 (DONE): the real Backend exposes the worktree HEAD SHA
    * (`git rev-parse HEAD`); the runner records that real commit SHA here. When
-   * no Backend SHA is available (the zero-container fake path) the runner falls
-   * back to the branch NAME (e.g. "feat/244-s249-ledger"), as in v0.1.
+   * no Backend SHA is available, the optional audit value is omitted.
    */
   /** Optional audit truth: absent when the best-effort Git read fails. */
   readonly branchHEAD?: string;
@@ -1751,11 +1739,8 @@ export interface Backend {
   /**
    * #256 (optional, ledger true-value): the worktree HEAD commit SHA
    * (`git rev-parse HEAD`) so the ledger's `branchHEAD` records the real SHA
-   * instead of the branch name. Returns `undefined` when unavailable (the runner
-   * then falls back to the branch name).
-   *
-   * OPTIONAL so the zero-container fake Backends need no change: when absent the
-   * runner keeps the v0.1 branch-name value.
+   * instead of a branch-name surrogate. Returns `undefined` when unavailable;
+   * the runner warns and omits this optional audit value.
    */
   worktreeHead?(worktree: WorktreeHandle): Promise<string | undefined>;
   /**

@@ -45,7 +45,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   LedgerEntry,
   PersistentLedgerEntry,
   ResumeState,
@@ -121,13 +120,9 @@ class JudgeBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WORKTREE;
   }
-  async writeSnapshot(): Promise<void> {}
   async writeLedger(): Promise<void> {}
 
   async dispatchWorker(

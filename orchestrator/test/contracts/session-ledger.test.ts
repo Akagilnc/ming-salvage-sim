@@ -14,7 +14,6 @@ import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepResult,
@@ -59,13 +58,9 @@ class SeamExtensionBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-    return { number: n, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return WT;
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput | StepResult> {
     const output: StepOutput =
       spec.role === "coder"

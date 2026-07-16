@@ -2027,7 +2027,6 @@ async function startupRouteViolationReplay(): Promise<SeamReplay> {
       diagnosis: decision.escalation.diagnosis,
       status: result.status,
       dispatchedBeforeAbort: backend.dispatched,
-      envOverrideIgnored: true,
     },
   };
 }

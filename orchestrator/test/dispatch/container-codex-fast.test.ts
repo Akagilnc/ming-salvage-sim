@@ -71,18 +71,11 @@ function fakeBackend(sourceRepo: string): Backend {
       isClosed: false,
       openBlockedBy: [],
     }),
-    fetchIssueSnapshot: async (issueNumber: number) => ({
-      number: issueNumber,
-      body: "",
-      comments: [],
-      agentBrief: "",
-    }),
     prepareWorktree: async (_issueNumber: number, base: string) => ({
       branch: "feat/fake-760",
       base,
       path: sourceRepo,
     }),
-    writeSnapshot: async () => {},
     runStep: async (spec: { role: string }) =>
       spec.role === "coder"
         ? { kind: "coder", committed: true, commitsAdded: 1 }

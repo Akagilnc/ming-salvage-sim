@@ -19,7 +19,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -63,11 +62,7 @@ class ScriptedRunnerBackend implements Backend {
   async fetchIssueMeta(number: number): Promise<IssueMeta> {
     return { number, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
   }
-  async fetchIssueSnapshot(number: number): Promise<IssueSnapshot> {
-    return { number, body: "behavioral regression", comments: [], agentBrief: "" };
-  }
   async prepareWorktree() { return WORKTREE; }
-  async writeSnapshot() {}
   async runStep(): Promise<StepOutput> {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }

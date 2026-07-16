@@ -138,3 +138,28 @@ export async function admitRouteSmoke(
     };
   }
 }
+
+/** Smoke every distinct planned coder lineup concurrently, once before worksite. */
+export async function admitPlannedRouteSmoke(
+  backend: Backend,
+  routes: ReadonlyArray<ResolvedModelRoute>,
+): Promise<RouteSmokeAdmission> {
+  const uniqueRoutes = [...new Map(
+    routes.map((route) => [route.slots.coder, route]),
+  ).values()];
+  if (uniqueRoutes.length === 0) {
+    return {
+      kind: "stop",
+      escalation: {
+        reason: "startup route smoke failure",
+        diagnosis: "planned route inventory is empty",
+      },
+    };
+  }
+  const results = await Promise.all(
+    uniqueRoutes.map((route) => admitRouteSmoke(backend, route)),
+  );
+  const failed = results.find((result) => result.kind === "stop");
+  if (failed?.kind === "stop") return failed;
+  return results[0]!;
+}

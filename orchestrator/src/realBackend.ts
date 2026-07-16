@@ -125,6 +125,7 @@ import {
   smokeRouteModels,
   type ResolvedModelRoute,
 } from "./modelRoutes.js";
+import { readMetadataWithRetry } from "./admissionPreflight.js";
 
 // ── #884 bare-ping smoke only (credential oracle; no docker/tool loop) ───────
 
@@ -2355,8 +2356,8 @@ export class RealBackend implements Backend {
    * test subclass can intercept the git/gh seam without a real container or repo
    * (integ-cmr 256 r3 reuse-fail-closed test).
    *
-   * #884: every subprocess wait carries a clock (default 120s).
-   * Host one-shot with clock only (no auto-retry — #884 clocks / #879 owns leg retry).
+   * #884: every subprocess wait carries a clock (default 120s). Admission wraps
+   * GitHub metadata reads in the shared transient-only retry seam.
    */
   protected sh(file: string, args: string[], cwd?: string): string {
     return shWithClock(file, args, {
@@ -2385,13 +2386,18 @@ export class RealBackend implements Backend {
     // open would let a parent epic (sub-issue query fault → 0 → leaf → allow) or
     // a blocked-by-open issue (blocked_by query fault → [] → no blockers → allow)
     // slip past the pinned S0 three-way gate and run from a stale base.
-    const json = this.phase("S0", "fetchIssueView", () => {
+    let json: GhIssueJson | undefined;
+    let subIssueCount: number | undefined;
+    let blockedBy: GhBlockedBy[] | undefined;
+    const errors: string[] = [];
+    try {
+      json = this.phase("S0", "fetchIssueView", () => {
       // S0 reads the gate fields + body (#767 Coder-Rec). It does NOT pull
       // comments — that would trigger gh's paginated preloadIssueComments for
       // no S0 consumer, and S1's full snapshot re-fetches body+comments anyway
       // (#329 perf). Body alone is cheap and lets the runner parse Coder-Rec
       // before the first worker dispatch.
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "issue",
         "view",
         String(issueNumber),
@@ -2399,12 +2405,27 @@ export class RealBackend implements Backend {
         this.opts.repo,
         "--json",
         "number,labels,state,body",
-      ]);
+      ]));
       return JSON.parse(raw) as GhIssueJson;
-    });
-    // Native sub-issue + blocked_by via the GraphQL/REST API — each fails closed.
-    const subIssueCount = this.fetchSubIssueCount(issueNumber);
-    const blockedBy = this.fetchBlockedBy(issueNumber);
+      });
+    } catch (err) {
+      errors.push(`issue view: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      subIssueCount = this.fetchSubIssueCount(issueNumber);
+    } catch (err) {
+      errors.push(`sub-issues: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      blockedBy = this.fetchBlockedBy(issueNumber);
+    } catch (err) {
+      errors.push(`blocked_by: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (errors.length > 0 || json === undefined || subIssueCount === undefined || blockedBy === undefined) {
+      throw new Error(
+        `S0 issue metadata unavailable (${errors.length} errors): ${errors.join("; ")}`,
+      );
+    }
     return buildIssueMeta(issueNumber, json, blockedBy, subIssueCount);
   }
 
@@ -2445,7 +2466,7 @@ export class RealBackend implements Backend {
    */
   private fetchSubIssueCount(issueNumber: number, step: StepId = "S0"): number {
     return this.phase(step, "fetchSubIssueCount", () => {
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "issue",
         "view",
         String(issueNumber),
@@ -2453,7 +2474,7 @@ export class RealBackend implements Backend {
         this.opts.repo,
         "--json",
         "subIssues",
-      ]);
+      ]));
       const parsed = JSON.parse(raw) as { subIssues?: unknown };
       // `gh issue view --json subIssues` returns {nodes,totalCount} (an OBJECT),
       // not an array — read the count off that shape (integ-cmr 256 r1, F1).
@@ -2471,10 +2492,10 @@ export class RealBackend implements Backend {
    */
   private fetchBlockedBy(issueNumber: number, step: StepId = "S0"): GhBlockedBy[] {
     return this.phase(step, "fetchBlockedBy", () => {
-      const raw = this.sh("gh", [
+      const raw = readMetadataWithRetry(() => this.sh("gh", [
         "api",
         `repos/${this.opts.repo}/issues/${issueNumber}/dependencies/blocked_by`,
-      ]);
+      ]));
       return parseBlockedBy(JSON.parse(raw));
     });
   }
@@ -2530,15 +2551,16 @@ export class RealBackend implements Backend {
     // slice from whatever the clone happened to be checked out on — the #244
     // "从 main 派生" invariant only held by accident (integ-cmr 256 r1, F3).
     // Sandcastle notes the caller owns currency of the ref, so refresh `base`
-    // first (best-effort: a fetch failure must not block a local-only base).
+    // first. A configured origin must refresh successfully; only a source with
+    // no origin may use a local-only base.
     //
     // integ-cmr 256 r3 (worktree_base_stale): `git fetch origin <base>` updates
     // refs/remotes/origin/<base>, NOT the local refs/heads/<base>. Deriving with
     // the bare local `<base>` after a fetch could still cut from a stale local
     // branch behind upstream. So when the fetch refreshed the remote ref, cut
     // from `origin/<base>` (matching the spike's `git worktree add … origin/main`
-    // and the up-to-date invariant); fall back to the local `<base>` only when
-    // the fetch failed (offline / local-only base). The WorktreeHandle.base field
+    // and the up-to-date invariant); use local `<base>` only when no origin is
+    // configured. The WorktreeHandle.base field
     // still records the LOGICAL base ("main"), not the cut ref, for ledger
     // consistency.
     // #291: a family-base cut is LOCAL-only (ADR 0022 decision 7) — the family
@@ -3495,7 +3517,22 @@ export class RealBackend implements Backend {
     if (!this.cloneDirExists(this.workingRepo)) return undefined;
     this.ensureWorkingRepo();
     const existing = this.findExistingWorktree(issueNumber);
-    if (existing === undefined) return undefined;
+    if (existing === undefined) {
+      const orphanStateDir = join(
+        this.workingRepo,
+        ".sandcastle",
+        "worktrees",
+        `.ledger-${issueNumber}`,
+      );
+      if (existsSync(orphanStateDir)) {
+        throw new Error(
+          `resident ledger exists without a worksite for #${issueNumber} ` +
+            `(ledger=${orphanStateDir}); refusing to treat partial residue as fresh ` +
+            `(#936 / #934 ID-005)`,
+        );
+      }
+      return undefined;
+    }
     const stateDir = this.stateDirFor(existing.path, issueNumber);
     const ledger = this.readLedger(stateDir);
     if (ledger === undefined) {

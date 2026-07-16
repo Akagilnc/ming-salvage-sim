@@ -2,8 +2,8 @@
  * #923 — judge identity merge: reviewer model-route slot folds into verify.
  *
  * Seams (issue AC):
- *   - MODEL_ROUTE_SLOTS / presets / env map: no reviewer slot; verify staffs both courts
- *   - ORCHESTRATOR_REVIEWER_MODEL set → loud error with migration hint (never silent)
+ *   - MODEL_ROUTE_SLOTS / presets: no reviewer slot; verify staffs both courts
+ *   - deleted reviewer env cannot restaff either court
  *   - S3/S6 stepSpecs + single-slice relay read verify
  *   - behavior defaults preserved (same preset slug as prior reviewer+verify pair)
  */
@@ -100,24 +100,13 @@ describe("#923 judge identity merge — model-route slot", () => {
     ).toBe("gpt-5.6-sol");
   });
 
-  it("ORCHESTRATOR_REVIEWER_MODEL set → fail-loud migration hint (never silent ignore)", () => {
+  it("deleted reviewer env cannot restaff the judge", () => {
     const env = {
       ORCHESTRATOR_ROUTE: "normal",
       ORCHESTRATOR_REVIEWER_MODEL: "opus",
     };
-    expect(() => resolveActiveModelRoute(env)).toThrow(
-      /ORCHESTRATOR_REVIEWER_MODEL.*retired|#923|ORCHESTRATOR_VERIFY_MODEL/i,
-    );
-    expect(() => activeModelRoute(env)).toThrow(
-      /ORCHESTRATOR_REVIEWER_MODEL|ORCHESTRATOR_VERIFY_MODEL/i,
-    );
-    // Empty / whitespace alone is not "set" — no throw.
-    expect(() =>
-      resolveActiveModelRoute({
-        ORCHESTRATOR_ROUTE: "normal",
-        ORCHESTRATOR_REVIEWER_MODEL: "  ",
-      }),
-    ).not.toThrow();
+    expect(resolveActiveModelRoute(env).slots.verify).toBe("gpt-5.6-sol");
+    expect(activeModelRoute(env).slots.verify).toBe("gpt-5.6-sol");
   });
 
   it("programmatic reviewer override key is unknown (slot gone, no silent map)", () => {

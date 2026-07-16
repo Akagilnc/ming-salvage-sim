@@ -31,7 +31,6 @@ import { runOrchestrator } from "../../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -62,15 +61,11 @@ class FamilyModeBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     this.calls.push(`prepareWorktree(${issueNumber}, ${base})`);
     this.prepareBase = base;
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.calls.push(`runStep(${spec.id})`);
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };

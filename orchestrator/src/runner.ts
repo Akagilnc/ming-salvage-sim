@@ -264,8 +264,8 @@ async function hashPrompt(
  * #256 (DONE): the caller (`emitLedger`) now supplies the TRUE values it
  * receives from the seam extension / optional Backend helpers — `sessionId` is
  * the real per-step sandbox session id for agent steps (run-level UUID fallback
- * otherwise), `branchHEAD` the real `git rev-parse HEAD` SHA (branch-name
- * fallback otherwise), `prompt_hash` the content hash (name-hash fallback). This
+ * otherwise), `branchHEAD` is the optional real `git rev-parse HEAD` SHA, and
+ * `prompt_hash` uses the documented content/name fallback. This
  * builder just assembles the entry; value resolution lives in `emitLedger`.
  */
 function buildPersistentEntry(opts: {
@@ -1136,14 +1136,13 @@ const IMAGE_TOOLCHAIN: ReadonlyArray<string> = [
  * budget — NOT a fix-loop give-up counter; always 1), soul, toolchain.
  * Completion is clean exit + legal sidecar / typed envelope — no signal field.
  *
- * Swapping models = set ORCHESTRATOR_ROUTE for the base preset, optionally layered
- * with single-slot overrides (see {@link coderModel}); no image rebuild, no
+ * Swapping models = select ORCHESTRATOR_ROUTE or use owner-authored Coder-Rec;
+ * no image rebuild or
  * structural StepSpec change (PRD #244 Implementation Decisions + ADR 0031).
  */
 
 /**
- * The S2 coder worker's model slug, selected by the active route and optionally
- * overridden via `ORCHESTRATOR_CODER_MODEL`. The slug is resolved to the baked CLI
+ * The S2 coder worker's model slug, selected by the active route. The slug is resolved to the baked CLI
  * by agentForSlug; invalid route names / slugs fail closed before dispatch.
  */
 export function coderModel(env: ModelRouteEnv = process.env): string {
@@ -1162,8 +1161,7 @@ export function stepSpecsForRoute(
       promptFile: "coder_implement.md",
       // The whole-slice build worker's model is env-switchable (default Codex
       // gpt-5.6-terra; was Sonnet 4.6). The slug is resolved to the baked CLI by
-      // agentForSlug (realBackend); switching the model is `ORCHESTRATOR_CODER_MODEL`
-      // alone — no image rebuild, no StepSpec shape change.
+      // agentForSlug (realBackend); no image rebuild or StepSpec shape change.
       model: route.slots.coder,
       // #899 / ADR 0128 / #928: one single-iteration Sandcastle run per seat;
       // clean exit + legal sidecar / typed envelope is completion.
@@ -1484,12 +1482,9 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
    * (+coderFix), refresh stepSpecs, invalidate smoke, and retire the session
    * when the runnable model actually changed.
    */
-  const holdCoderSticky = (
-    slug: string,
-    opts?: { readonly preserveCoderFix?: boolean },
-  ): void => {
+  const holdCoderSticky = (slug: string): void => {
     if (modelRoute.slots.coder === slug) return;
-    modelRoute = withCoderSlot(modelRoute, slug, opts);
+    modelRoute = withCoderSlot(modelRoute, slug);
     stepSpecs = stepSpecsForRoute(modelRoute);
     routeSmokeChecked = false;
     if (
@@ -1697,16 +1692,11 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
     forStep: "S3" | "S6",
   ): Promise<void> => {
     const currentSlug = modelRoute.slots.coder;
-    const preserveCoderFix =
-      process.env.ORCHESTRATOR_CODER_FIX_MODEL?.trim() !== undefined &&
-      process.env.ORCHESTRATOR_CODER_FIX_MODEL.trim() !== "";
-
     const effect = await executeAdvanceCoderSuggestion({
       suggestion,
       currentSlug,
       route: modelRoute,
-      applySlug: (route, slug) =>
-        withCoderSlot(route, slug, { preserveCoderFix }),
+      applySlug: (route, slug) => withCoderSlot(route, slug),
       probe: probeRouteSmoke,
     });
 

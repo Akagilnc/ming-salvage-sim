@@ -14,7 +14,6 @@ import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -54,11 +53,6 @@ class GateTestBackend implements Backend {
     return this.meta;
   }
 
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    this.calls.push(`fetchIssueSnapshot(${issueNumber})`);
-    return { number: issueNumber, body: "", comments: [], agentBrief: "" };
-  }
-
   async prepareWorktree(
     issueNumber: number,
     base: string,
@@ -69,13 +63,6 @@ class GateTestBackend implements Backend {
       base,
       path: `/wt/${issueNumber}`,
     };
-  }
-
-  async writeSnapshot(
-    worktree: WorktreeHandle,
-    snapshot: IssueSnapshot,
-  ): Promise<void> {
-    this.calls.push(`writeSnapshot(${worktree.branch}, #${snapshot.number})`);
   }
 
   async runStep(spec: StepSpec): Promise<StepOutput> {
@@ -282,7 +269,6 @@ describe("S0 input gate — pass case (#248)", () => {
     const wtIdx = backend.calls.indexOf("prepareWorktree(248, main)");
     expect(metaIdx).toBeGreaterThanOrEqual(0);
     expect(wtIdx).toBeGreaterThan(metaIdx);
-    expect(backend.calls).not.toContain("fetchIssueSnapshot(248)");
   });
 });
 

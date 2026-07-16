@@ -13,11 +13,11 @@
  *     through.  Fix: commitsAdded must be a non-negative integer consistent with
  *     committed → else S8(error).
  *
- *   C [High] S1 pre-worktree (fetchIssueSnapshot / prepareWorktree) failures are
+ *   C [High] S1 pre-worktree (prepareWorktree) failures are
  *     an unpersistable special case (no worktree → no sibling stateDir yet),
  *     exactly like the S0 metadata fetch.  The comment/contract must not
  *     overpromise "S1 throw is persisted" for these — only post-worktree S1
- *     (writeSnapshot) failures persist.  This suite pins the special case.
+ *     post-worktree failures persist. This suite pins the special case.
  *
  *   D [High] writeLedger failure on a normal step used recordFailingStep:false,
  *     which (besides not double-pushing the in-memory entry) also skipped the
@@ -40,7 +40,6 @@ import { runOrchestrator } from "../../src/runner.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -57,7 +56,7 @@ const COMPLIANT_META: IssueMeta = {
   openBlockedBy: [],
 };
 
-const SNAPSHOT: IssueSnapshot = {
+const SNAPSHOT = {
   number: 244,
   body: "issue body",
   comments: [],
@@ -97,13 +96,9 @@ class SpyBackend implements Backend {
   async fetchIssueMeta(_n: number): Promise<IssueMeta> {
     return COMPLIANT_META;
   }
-  async fetchIssueSnapshot(_n: number): Promise<IssueSnapshot> {
-    return SNAPSHOT;
-  }
   async prepareWorktree(_n: number, _b: string): Promise<WorktreeHandle> {
     return WORKTREE;
   }
-  async writeSnapshot(_w: WorktreeHandle, _s: IssueSnapshot): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.runStepIds.push(spec.id);
     if (spec.role === "coder") {
