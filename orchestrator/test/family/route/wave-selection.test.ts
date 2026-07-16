@@ -67,11 +67,11 @@ describe("commander.selectWave (#293 seam 1)", () => {
     expect(wave.map((c) => c.issue)).toEqual([30, 10, 20]);
   });
 
-  it("ignores an EXTERNAL blocker (not a family child) — those are cleared at family admission, not the scheduler (online R1 #1)", () => {
-    // 999 is NOT a family child, so it can NEVER enter the family `merged` set. The
-    // family-admission gate (`assertExternalBlockersCleared`) already guaranteed it is
-    // CLOSED before the run started; requiring it in `merged` here would strand 10
-    // forever (silently skipped). selectWave must gate ONLY on intra-family blockers.
+  it("ignores an EXTERNAL blocker (not a family child) — those are filtered at family admission, not the scheduler (#934 ID-002)", () => {
+    // 999 is NOT a family child, so it can NEVER enter the family `merged` set. Family
+    // admission (`filterExternalBlockedChildren`) visibly filters children still open
+    // on ordinary external blockers; requiring 999 in `merged` here would strand 10
+    // forever. selectWave must gate ONLY on intra-family blockers.
     const children = [child(10, [999])];
     expect(selectWave(children, new Set()).map((c) => c.issue)).toEqual([10]);
   });

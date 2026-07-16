@@ -73,23 +73,22 @@ export async function parkQuotaWaitForReset(opts: {
       ? { workerPid: ledgerEntry.workerPid }
       : {}),
   };
-  ledger.push(marker);
+  // #934 ID-001 / ID-005: park is only legal when the durable re-entry boundary
+  // is established. A writeLedger failure must fail closed — never return a
+  // parked/resumable outcome from an in-memory-only marker.
   if (stateDir !== undefined) {
-    try {
-      await backend.writeLedger(
-        {
-          ...marker,
-          sessionId,
-          prompt_hash: await opts.hashPrompt(undefined, step),
-          branchHEAD: await opts.resolveBranchHEAD(),
-          ts: ledgerEntry.ts,
-        },
-        stateDir,
-      );
-    } catch {
-      // Best-effort durable park marker — in-memory ledger still holds it.
-    }
+    await backend.writeLedger(
+      {
+        ...marker,
+        sessionId,
+        prompt_hash: await opts.hashPrompt(undefined, step),
+        branchHEAD: await opts.resolveBranchHEAD(),
+        ts: ledgerEntry.ts,
+      },
+      stateDir,
+    );
   }
+  ledger.push(marker);
   const resetHint =
     ledgerEntry.resetAt !== undefined
       ? ` (resetAt ${ledgerEntry.resetAt})`
@@ -200,33 +199,18 @@ export async function parkOrRelayQuotaWall(opts: {
       toPool: entry.toPool,
       ts: entry.ts,
     };
+    // Durable baton first; write failure fails closed (no best-effort park).
     if (stateDir !== undefined) {
-      try {
-        await backend.writeLedger(
-          {
-            ...marker,
-            sessionId,
-            prompt_hash: await opts.hashPrompt(undefined, step),
-            branchHEAD: await opts.resolveBranchHEAD(),
-            ts: entry.ts,
-          },
-          stateDir,
-        );
-      } catch {
-        return {
-          kind: "park",
-          result: await parkQuotaWaitForReset({
-            step,
-            err,
-            ledger,
-            stateDir,
-            sessionId,
-            backend,
-            resolveBranchHEAD: opts.resolveBranchHEAD,
-            hashPrompt: opts.hashPrompt,
-          }),
-        };
-      }
+      await backend.writeLedger(
+        {
+          ...marker,
+          sessionId,
+          prompt_hash: await opts.hashPrompt(undefined, step),
+          branchHEAD: await opts.resolveBranchHEAD(),
+          ts: entry.ts,
+        },
+        stateDir,
+      );
     }
     ledger.push(marker);
     return {

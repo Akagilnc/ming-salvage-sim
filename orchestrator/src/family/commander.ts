@@ -64,10 +64,10 @@ export class DependencyCycleError extends Error {
  * intra-family blockers. An EXTERNAL `blocked_by` (an issue that is not one of this
  * epic's children) can NEVER enter the family `merged` set, so requiring it would
  * strand the child forever (silently skipped) — wrong even when that external issue
- * is already closed/satisfied. External blockers are instead validated EXPLICITLY,
- * fail-closed, at family admission (`assertExternalBlockersCleared`, familyDriver):
- * the run never starts with an open external blocker, so by the time selectWave runs
- * every external blocker is satisfied and must NOT gate scheduling.
+ * is already closed/satisfied. External blockers are instead filtered at family
+ * admission (`filterExternalBlockedChildren`, #934 ID-002): children with open
+ * ordinary external blockers are visibly skipped, so by the time selectWave runs
+ * remaining children' external blockers are satisfied and must NOT gate scheduling.
  *
  * Input order is preserved (deterministic scheduling — no sorting/shuffling).
  * An empty result means every child is either merged or still blocked; the

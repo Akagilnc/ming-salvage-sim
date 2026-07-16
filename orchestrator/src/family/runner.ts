@@ -886,15 +886,14 @@ async function runChild(
     // intra-family subset (a `blocked_by` issue that is itself a family sibling):
     // those are the blockers the commander can possibly have ledger-merged. An
     // EXTERNAL `blocked_by` (not a family child) is never in the family ledger, so it
-    // is NOT excused here — but it is also NOT relied upon at S0: the family-admission
-    // gate (`assertExternalBlockersCleared`, online R1 #1) already fail-closed the run
-    // up front unless every external blocker was closed, and selectWave no longer
-    // gates on external blockers. Passing only the intra-family subset keeps S0 from
-    // seeing a non-family number it has no ledger evidence for; the live S0 fetch
-    // remains a backstop should an external blocker RE-open mid-run. For an
-    // intra-family blocker that IS ledger-merged, the child's S0 treats a
-    // still-open-on-GitHub blocker as satisfied, so a just-released child is not
-    // re-rejected (the agy R2 deadlock).
+    // is NOT excused here — but it is also NOT relied upon at S0: family admission
+    // (`filterExternalBlockedChildren`, #934 ID-002) visibly filters children with
+    // open ordinary external blockers up front, and selectWave no longer gates on
+    // external blockers. Passing only the intra-family subset keeps S0 from seeing
+    // a non-family number it has no ledger evidence for; the live S0 fetch remains a
+    // backstop should an external blocker RE-open mid-run. For an intra-family
+    // blocker that IS ledger-merged, the child's S0 treats a still-open-on-GitHub
+    // blocker as satisfied, so a just-released child is not re-rejected (agy R2).
     family: {
       parentIssue,
       familyBase,
@@ -1517,9 +1516,9 @@ export async function runFamily(
   assertAcyclic(epic.children);
   // The set of THIS family's child issue numbers — used to split a child's
   // `blocked_by` into intra-family blockers (the commander can ledger-merge them)
-  // vs external blockers (never in the family ledger; cleared up front at family
-  // admission per `assertExternalBlockersCleared`, online R1 #1 — NOT relied upon at
-  // S0). Invariant for the run (epic.children is fixed), so computed once.
+  // vs external blockers (never in the family ledger; filtered at family admission
+  // per `filterExternalBlockedChildren`, #934 ID-002 — NOT relied upon at S0).
+  // Invariant for the run (epic.children is fixed), so computed once.
   const familyChildIssues = new Set(epic.children.map((c) => c.issue));
   // ── #604 slice 5: child decision-escalation re-entry ────────────────────────
   // Read the family ledger for children PARKED on a decision题 (a `child_decision_parked`
