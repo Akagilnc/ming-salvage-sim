@@ -43,8 +43,6 @@
 import { shWithClock } from "../externalCall.js";
 import {
   appendFileSync,
-  chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -95,7 +93,6 @@ import {
   hasBoundedReopenCondition,
   hasExplicitAcceptedSuppressionSource,
 } from "../acceptedSuppression.js";
-import { writeContainerCodexConfig } from "../containerCodexConfig.js";
 import { findingIdentityKey } from "../findings.js";
 import { runExclusive } from "../gitMutex.js";
 import { runnerSynthesizedFailureEscalation } from "../runnerEscalation.js";
@@ -114,7 +111,7 @@ import {
   SANDBOX_CODEX_DIR,
   SANDBOX_GROK_DIR,
   appendAgyAuthMount,
-  provisionAgyAuthDir,
+  provisionFamilyWorkerAuth,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   soulForStep,
@@ -135,7 +132,6 @@ import {
   SANDBOX_FIX_FOCUS_PATH_ENV,
   appendHomeEnvMount,
   homeEnvFileFromSoulsDir,
-  provisionCodexHomeAgents,
 } from "../realBackend.js";
 import {
   resolveSandboxIdleAfterQuotaProbe,
@@ -1025,62 +1021,13 @@ export class RealFamilyBackend implements FamilyBackend {
    * `protected` so a unit test points $HOME at a temp dir.
    */
   protected mountMergerAuth(): MergerAuth {
-    const home = this.opts.home ?? homedir();
-    const root = join(home, ".sc-orchestrator");
-    let codexAuthDir: string | undefined;
-    let tempCodexDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempCodexDir = mkdtempSync(join(root, "merger-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
-      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
-      // #911: replace host AGENTS.md with container home environment body.
-      provisionCodexHomeAgents(tempCodexDir, this.resolveHomeEnvFile());
-      codexAuthDir = tempCodexDir;
-    } catch {
-      // codex auth absent ⇒ no codex mount. Reclaim the mkdtemp dir if it was
-      // created before copy/chmod/config writing threw.
-      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-        rmSync(tempCodexDir, { recursive: true, force: true });
-      }
-    }
-    let claudeToken: string | undefined;
-    try {
-      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
-      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
-      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate
-      // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
-      claudeToken = tok === "" ? undefined : tok;
-    } catch {
-      // claude token absent ⇒ the top-level merger worker degrades; the
-      // runMergerAgent preflight returns a structured non-resolve.
-    }
-    // N3: reuse shared agy OAuth seam (same as CMR/ship) so merger=agy can start.
-    const agyDir = provisionAgyAuthDir(home, root, "merger-agy-");
-    // C5: SuperGrok auth for merger=grok (same host mirror as CMR/ship).
-    let grokAuthDir: string | undefined;
-    let tempGrokDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempGrokDir = mkdtempSync(join(root, "merger-grok-auth-"));
-      copyFileSync(
-        join(home, ".grok", "auth.json"),
-        join(tempGrokDir, "auth.json"),
-      );
-      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
-      grokAuthDir = tempGrokDir;
-    } catch {
-      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
-        rmSync(tempGrokDir, { recursive: true, force: true });
-      }
-    }
-    return {
-      codexAuthDir,
-      claudeToken,
-      agyDir,
-      grokAuthDir,
-    };
+    // #913: single shared provision seam (merger / cmr / ship).
+    return provisionFamilyWorkerAuth({
+      home: this.opts.home ?? homedir(),
+      rolePrefix: "merger",
+      homeEnvFile: this.resolveHomeEnvFile(),
+      codexFast: this.opts.codexFast,
+    });
   }
 
   /**
@@ -2663,90 +2610,25 @@ export class RealFamilyBackend implements FamilyBackend {
    * WRITABLE (the agy CLI writes runtime state under its config dir — #333 gotcha).
    */
   protected mountCmrAuth(): CmrAuth {
-    const home = this.opts.home ?? homedir();
-    const root = join(home, ".sc-orchestrator");
-
-    // codex cmr R1 (high): EACH leg's auth is BEST-EFFORT. The cmr contract is a
-    // 降级链 — a leg whose auth is absent must let that leg DEGRADE (the skill drops
-    // it; a missing reviewer is not a finding), NOT crash the whole gate. A hard
-    // `copyFileSync` throw here would propagate out of `dispatchWorker` (verifyCmr
-    // does not convert a thrown error into a structured WorkerResult), failing the
-    // gate even when the OTHER legs could review. So a missing source ⇒ omit that
-    // leg's auth (undefined) and let it degrade in-container.
-
-    // codex auth.json (+ optional config.toml) → a per-run owner-only dir.
-    let codexAuthDir: string | undefined;
-    let tempCodexDir: string | undefined;
-    try {
-      // Per-INVOCATION unique dir (codex cmr R2): a fixed path would be rmSync'd
-      // + rebuilt under a concurrent family CMR worker, deleting the dir it has
-      // mounted. mkdtempSync gives each invocation its own owner-only (0700) dir.
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempCodexDir = mkdtempSync(join(root, "cmr-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
-      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
-      // bwrap is impossible — the failure that degrades cmr legs to static-only).
-      // The host config.toml is host-personal and irrelevant — only auth.json
-      // crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
-      // #911: replace host AGENTS.md with container home environment body.
-      provisionCodexHomeAgents(tempCodexDir, this.resolveHomeEnvFile());
-      codexAuthDir = tempCodexDir;
-    } catch {
-      // codex auth absent ⇒ the codex leg degrades (no mount). Reclaim the
-      // mkdtemp dir if it was created before copy/chmod threw (online review r2,
-      // gemini): on the degrade path codexAuthDir stays undefined, so the per-
-      // invocation dir would otherwise leak past the caller's finally cleanup.
-      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-        rmSync(tempCodexDir, { recursive: true, force: true });
-      }
-    }
-    // grok auth.json → a per-run dir mounted at the Grok CLI's fixed home path.
-    // Like codex/agy, an absent source degrades just this reviewer leg; unique
-    // mkdtemp dirs prevent concurrent family CMR workers from sharing credentials.
-    let grokAuthDir: string | undefined;
-    let tempGrokDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempGrokDir = mkdtempSync(join(root, "cmr-grok-auth-"));
-      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
-      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
-      grokAuthDir = tempGrokDir;
-    } catch {
-      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
-        rmSync(tempGrokDir, { recursive: true, force: true });
-      }
-    }
-
-    // agy OAuth token → shared seam (writable antigravity config dir — #333 gotcha).
-    const agyDir = provisionAgyAuthDir(home, root, "cmr-agy-");
-
-    let claudeToken: string | undefined;
-    try {
-      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
-      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
-      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate
-      // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
-      claudeToken = tok === "" ? undefined : tok;
-    } catch {
-      // claude token absent ⇒ the Claude Agent leg degrades (no env var).
-    }
+    // codex cmr R1: EACH leg's auth is BEST-EFFORT (降级链). #913 folds the
+    // triplicated codex/grok/agy/claude provision into provisionFamilyWorkerAuth;
+    // role-specific gh + providerAuth stay here.
+    const core = provisionFamilyWorkerAuth({
+      home: this.opts.home ?? homedir(),
+      rolePrefix: "cmr",
+      homeEnvFile: this.resolveHomeEnvFile(),
+      codexFast: this.opts.codexFast,
+    });
     // gh token → GH_TOKEN for the in-container completeness gate's `gh issue view`
-    // (the live issue body is its DELIVERED-vs-spec authority). BEST-EFFORT, mirroring
-    // the ship worker's readGhToken extraction (host OS keyring, not a portable
-    // hosts.yml) — but NOT preflighted: a missing token degrades the gate's authority,
-    // it does not block the cmr worker (the cmr worker has no `gh pr create` to fail).
+    // (live issue body = DELIVERED-vs-spec authority). BEST-EFFORT, NOT preflighted:
+    // absence degrades the gate's authority, never blocks the cmr worker.
     return {
-      codexAuthDir,
-      agyDir,
-      grokAuthDir,
-      claudeToken,
+      ...core,
       ghToken: this.readGhToken(),
       providerAuth: {
-        claude: claudeToken !== undefined,
-        grok: grokAuthDir !== undefined,
-        agy: agyDir !== undefined,
+        claude: core.claudeToken !== undefined,
+        grok: core.grokAuthDir !== undefined,
+        agy: core.agyDir !== undefined,
       },
     };
   }
@@ -3158,69 +3040,21 @@ export class RealFamilyBackend implements FamilyBackend {
    * degrades silently.
    */
   protected mountShipAuth(): ShipAuth {
-    const home = this.opts.home ?? homedir();
-    const root = join(home, ".sc-orchestrator");
-    let codexAuthDir: string | undefined;
-    let tempCodexDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempCodexDir = mkdtempSync(join(root, "ship-codex-auth-"));
-      copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
-      chmodSync(join(tempCodexDir, "auth.json"), 0o600);
-      // The container IS the sandbox boundary; codex must NOT self-sandbox (nested
-      // bwrap is impossible). The host config.toml is host-personal and irrelevant
-      // — only auth.json crosses. Write the minimal container config (#378).
-      writeContainerCodexConfig(join(tempCodexDir, "config.toml"), this.opts.codexFast);
-      // #911: replace host AGENTS.md with container home environment body.
-      provisionCodexHomeAgents(tempCodexDir, this.resolveHomeEnvFile());
-      codexAuthDir = tempCodexDir;
-    } catch {
-      // codex auth absent ⇒ the codex leg degrades (no mount). gh is NOT here — it is
-      // the separate, preflighted ghToken (cmr S336 r10). Reclaim the mkdtemp dir if
-      // it was created before copy/chmod threw (online review r2, gemini): on the
-      // degrade path codexAuthDir stays undefined, so the per-invocation dir would
-      // otherwise leak past the caller's finally cleanup.
-      if (codexAuthDir === undefined && tempCodexDir !== undefined) {
-        rmSync(tempCodexDir, { recursive: true, force: true });
-      }
-    }
-    let grokAuthDir: string | undefined;
-    let tempGrokDir: string | undefined;
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-      tempGrokDir = mkdtempSync(join(root, "ship-grok-auth-"));
-      copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
-      chmodSync(join(tempGrokDir, "auth.json"), 0o600);
-      grokAuthDir = tempGrokDir;
-    } catch {
-      if (grokAuthDir === undefined && tempGrokDir !== undefined) {
-        rmSync(tempGrokDir, { recursive: true, force: true });
-      }
-    }
-    // #905: agy OAuth for non-CMR sandboxes (ship / coder-fix / online-review) —
-    // reuse the same CMR seam so an agy-routed worker gets a real token mount.
-    const agyDir = provisionAgyAuthDir(home, root, "ship-agy-");
-    let claudeToken: string | undefined;
-    try {
-      const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
-      // A present-but-empty/blank token file ⇒ undefined (the preflight escalates),
-      // NOT an injected empty CLAUDE_CODE_OAUTH_TOKEN="" that defeats the gate
-      // (cmr int-r3 A; matches readGhToken's `tok === "" ? undefined` normalization).
-      claudeToken = tok === "" ? undefined : tok;
-    } catch {
-      // claude token absent ⇒ Claude-family workers fail their preflight; non-Claude
-      // route slots simply run without this env var.
-    }
+    // #913: shared core (codex/grok/agy/claude); gh is the ship-only REQUIRE gate
+    // (cmr S336 r10 — preflighted in runShipWorker, not here).
+    const core = provisionFamilyWorkerAuth({
+      home: this.opts.home ?? homedir(),
+      rolePrefix: "ship",
+      homeEnvFile: this.resolveHomeEnvFile(),
+      codexFast: this.opts.codexFast,
+    });
     return {
-      codexAuthDir,
-      grokAuthDir,
-      agyDir,
-      claudeToken,
+      ...core,
       ghToken: this.readGhToken(),
       providerAuth: {
-        claude: claudeToken !== undefined,
-        grok: grokAuthDir !== undefined,
-        agy: agyDir !== undefined,
+        claude: core.claudeToken !== undefined,
+        grok: core.grokAuthDir !== undefined,
+        agy: core.agyDir !== undefined,
       },
     };
   }
