@@ -542,14 +542,12 @@ describe("#909 withIdleQuotaProbeDisposition (shared single-slice + family wrap)
   });
 });
 
-describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor path)", () => {
+describe("#683/#937 RealBackend Sandcastle idle — no quota probe fate (ID-007)", () => {
   const testHome = mkdtempSync(join(tmpdir(), "orchestrator-auth-683-"));
   afterAll(() => rmSync(testHome, { recursive: true, force: true }));
   /**
-   * Fallback coverage only: runStep → runFreshAgentStep → runAgentSandbox →
-   * post-sc.run AgentIdleTimeoutError + probe. Live production idle disposition
-   * is explicit 429/quota walls (see quota-probe-integration + #937 silence).
-   * workerPid is captured from the sandbox handle during invoke (not hand-stuffed).
+   * Sandcastle idle rethrows without idle→quota disposition (#937 / ID-007).
+   * Explicit typed 429 walls are separate live constructors.
    */
   const here = dirname(fileURLToPath(import.meta.url));
   const realPromptsDir = join(here, "..", "..", "prompts");
@@ -651,43 +649,24 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
     });
   }
 
-  it("429 via runStep → QuotaWaitForResetError + applied ledger; pid tree NOT killed", async () => {
+  it("Sandcastle idle via runStep rethrows without quota park (#937 ID-007)", async () => {
     const backend = makeBackend();
-    const resetAt = new Date("2026-07-08T16:10:00.000Z");
     backend.probeResult = {
       kind: "quota_limited",
-      resetAt,
+      resetAt: new Date("2026-07-08T16:10:00.000Z"),
       detail: "429 wall",
     };
     backend.sandboxHandlePid = 1001;
 
-    let thrown: unknown;
-    try {
-      await backend.runStep(coderSpec, WORKTREE);
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(QuotaWaitForResetError);
-    const qw = thrown as QuotaWaitForResetError;
+    await expect(backend.runStep(coderSpec, WORKTREE)).rejects.toThrow(
+      /Agent idle for 600/,
+    );
     expect(backend.sandcastleReached).toBe(true);
     expect(backend.killed).toEqual([]);
-    // Durable write is owned by runner park — backend only fills applied.
-    expect(qw.applied.ledgerEntry).toMatchObject({
-      event: "quota_wait_for_reset",
-      resetAt: "2026-07-08T16:10:00.000Z",
-      workerPid: 1001,
-      step: "S2",
-    });
-    // Production quotaProbe context carries model/step but not a hand-filled pid.
-    expect(backend.lastQuotaProbe).toMatchObject({
-      modelRef: "gpt-5.6-terra",
-      step: "S2",
-      issueNumber: 683,
-    });
-    expect(backend.lastQuotaProbe?.workerPid).toBeUndefined();
+    // Idle silence must not become QuotaWaitForResetError.
   });
 
-  it("probe pass via Sandcastle fallback rethrows without backend-local kill", async () => {
+  it("probe-limited would-be wall still rethrows idle (no probe disposition)", async () => {
     const backend = makeBackend();
     backend.probeResult = { kind: "ok" };
     backend.sandboxHandlePid = 1002;
@@ -696,7 +675,7 @@ describe("#683 RealBackend Sandcastle idle-timeout fallback (not live monitor pa
     expect(backend.killed).toEqual([]);
   });
 
-  it("network error via Sandcastle fallback rethrows without backend-local kill", async () => {
+  it("network probe result unused — idle rethrows without backend-local kill", async () => {
     const backend = makeBackend();
     backend.probeResult = { kind: "error", cause: "ETIMEDOUT" };
     backend.sandboxHandlePid = 1003;

@@ -146,14 +146,6 @@ export interface MechanicalRetryOptions {
    * returns the last synthesized `failed`.
    */
   readonly rethrowOnExhaustion?: boolean;
-  /**
-   * Idempotency hook (#598): reset LOCAL side effects (git HEAD/worktree residue)
-   * to the pre-attempt state BEFORE each retry, so a retry never runs on top of an
-   * uncleaned side effect the previous crashed attempt left behind. Called only
-   * before a retry (never before the first attempt). Remote side effects (pushed
-   * branch, opened PR) must be made idempotent or excluded by the caller.
-   */
-  readonly resetBeforeRetry?: () => Promise<void>;
 }
 
 /**
@@ -165,7 +157,8 @@ export interface MechanicalRetryOptions {
  * returned (resolved outcome) for the caller's own semantic layer to handle.
  *
  * #686/#937: resource failures (quota / capacity) and adoption/termination
- * failures are NEVER retried here and NEVER trigger `resetBeforeRetry`.
+ * failures are NEVER retried here. Process-root redispatch preserves the current
+ * scene — never reset/checkout/clean Git residue (#934 ID-004/006; resetBeforeRetry deleted).
  * On process-failure exhaustion the result is the phase's canonical failed
  * edge (#934 ID-004) — runner escalateTermination, not a baton handoff.
  */
@@ -200,32 +193,12 @@ export async function withMechanicalRetry(
     const firstAttemptThisInvocation = attempt === attemptsAlreadyUsed + 1;
     const useSpec = firstAttemptThisInvocation ? spec : forceFreshSpec(spec);
     const useCtx = firstAttemptThisInvocation ? ctx : stripResume(ctx);
-    // Idempotency: before a RETRY, reset local git residue the crashed attempt may
-    // have left, so the fresh re-dispatch starts from the pre-attempt state.
-    // #598 r4 (codexB): if the reset FAILS (git lock / permissions), the worktree is
-    // in an unknown/dirty state — do NOT dispatch on it (that would run the worker on
-    // top of an uncleaned side effect, the exact idempotency violation). Instead SKIP
-    // this attempt's dispatch, record a synthetic reset failure, and let the loop retry
-    // the reset next iteration (a transient reset failure recovers; a persistent one
-    // exhausts into the durable abort below — the worker never runs on a dirty state).
-    // #686: only process-level retries reach here; resource failures throw above and
-    // never invoke resetBeforeRetry.
+    // #934 ID-004/006 / #937: process-root redispatch preserves the current
+    // scene — never reset/checkout/clean Git residue (resetBeforeRetry deleted).
     if (!firstAttemptThisInvocation) {
       const delayMs = DISPATCH_RETRY_BACKOFF_MS[attempt - 2];
       const sleepMs = opts?.sleepMs ?? defaultRetrySleepMs;
       await sleepMs(delayMs);
-      try {
-        await opts?.resetBeforeRetry?.();
-      } catch (err) {
-        last = {
-          kind: "failed",
-          reason: `retry reset failed, worker not dispatched on un-reset state: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        };
-        lastAttemptThrew = false;
-        continue;
-      }
     }
     // #934 ID-004 / #937: durable attempt markers are written only after a
     // process-level failure classification. Explicit 429/quota / capacity /
@@ -279,15 +252,13 @@ export async function withMechanicalRetry(
  * The generic mechanical retry for a NON-WorkerResult seam that signals a process
  * crash by THROWING (#598 — the merge-conflict resolver's own call site). Retries
  * `fn` up to a bound when it throws; a RETURNED value (even a judged not-ok, e.g. a
- * merger `{resolved:false}`) is never retried — the caller surfaces it. A local
- * side effect the crashed attempt left is reset before each retry via
- * `resetBeforeRetry`. Persistent crash re-throws the last error.
+ * merger `{resolved:false}`) is never retried — the caller surfaces it.
+ * #937: no local-git reset court — scene is preserved across retries.
  */
 export async function retryProcessCrash<T>(
   fn: () => Promise<T>,
   opts?: {
     readonly maxAttempts?: number;
-    readonly resetBeforeRetry?: () => Promise<void>;
     /** Injectable wait between attempts (same contract as withMechanicalRetry). */
     readonly sleepMs?: (ms: number) => Promise<void>;
   },
@@ -304,21 +275,11 @@ export async function retryProcessCrash<T>(
   for (let attempt = 1; attempt <= max; attempt++) {
     if (attempt > 1) {
       // #934 ID-004: five 15s intervals between the six process-root attempts
-      // (same clock contract as withMechanicalRetry).
+      // (same clock contract as withMechanicalRetry). No Git reset court.
       const delayMs = DISPATCH_RETRY_BACKOFF_MS[attempt - 2];
       if (delayMs !== undefined) {
         const sleepMs = opts?.sleepMs ?? defaultRetrySleepMs;
         await sleepMs(delayMs);
-      }
-      // #598 r4 (codexB): a failed reset means the state is unknown/dirty — do NOT run
-      // `fn` on it. Record the reset failure and retry the reset next iteration (a
-      // transient one recovers; a persistent one exhausts into the re-throw below —
-      // `fn` never runs on an un-reset state).
-      try {
-        await opts?.resetBeforeRetry?.();
-      } catch (err) {
-        lastError = err;
-        continue;
       }
     }
     try {

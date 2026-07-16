@@ -488,6 +488,55 @@ describe("#936 scene recovery + local Git (ID-005 / ID-009 / ID-015)", () => {
     }
   });
 
+  it("family base cut refuses operational get-url failure (not missing-origin)", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-base-geturl-"));
+    const calls: string[] = [];
+    try {
+      expect(() =>
+        cutFamilyBase("/repo", "family/934", "main", (_file, args) => {
+          const command = args.slice(2).join(" ");
+          calls.push(command);
+          if (command === "rev-parse -q --verify refs/heads/family/934") {
+            throw new Error("missing branch");
+          }
+          if (command === "remote get-url origin") {
+            throw new Error("fatal: not a git repository");
+          }
+          throw new Error(`unexpected git command: ${command}`);
+        }, ledgerDir),
+      ).toThrow(/refusing stale local base fallback/i);
+      expect(calls).not.toContain("branch family/934 main");
+      expect(calls).not.toContain("fetch origin main");
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("family base cut allows precise missing-origin as local-only", () => {
+    const ledgerDir = mkdtempSync(join(tmpdir(), "family-base-noremote-"));
+    const calls: string[] = [];
+    try {
+      const head = cutFamilyBase("/repo", "family/934", "main", (_file, args) => {
+        const command = args.slice(2).join(" ");
+        calls.push(command);
+        if (command === "rev-parse -q --verify refs/heads/family/934") {
+          throw new Error("missing branch");
+        }
+        if (command === "remote get-url origin") {
+          throw new Error("fatal: No such remote 'origin'");
+        }
+        if (command === "branch family/934 main") return "";
+        if (command === "rev-parse family/934") return "abc123local";
+        throw new Error(`unexpected git command: ${command}`);
+      }, ledgerDir);
+      expect(head).toBe("abc123local");
+      expect(calls).toContain("branch family/934 main");
+      expect(calls).not.toContain("fetch origin main");
+    } finally {
+      rmSync(ledgerDir, { recursive: true, force: true });
+    }
+  });
+
   it("positive: local-only source may use bare local base when fetch fails", () => {
     expect(cutRefFor("main", false, false, { hasRemote: false })).toBe("main");
   });

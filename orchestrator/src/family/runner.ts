@@ -436,14 +436,25 @@ async function decideFamilyQuotaWall(opts: {
     sessionId: opts.runId,
     backend: opts.singleSliceBackend,
     resolveBranchHEAD: async () => {
+      // #934 ID-015: optional branchHEAD — warn + omit on empty/failure (never "").
       if (opts.familyHead != null && opts.familyHead.trim().length > 0) {
         return opts.familyHead;
       }
-      if (opts.familyBackend.readFamilyHead === undefined) return "";
+      if (opts.familyBackend.readFamilyHead === undefined) return undefined;
       try {
-        return await opts.familyBackend.readFamilyHead(opts.familyBase);
-      } catch {
-        return "";
+        const head = await opts.familyBackend.readFamilyHead(opts.familyBase);
+        if (head != null && head.trim().length > 0) return head;
+        console.warn(
+          "[orchestrator] optional family branchHEAD read returned empty (omit)",
+        );
+        return undefined;
+      } catch (err) {
+        console.warn(
+          `[orchestrator] optional family branchHEAD read failed (omit): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        return undefined;
       }
     },
     hashPrompt: async () => `family-quota-${opts.phase}`,

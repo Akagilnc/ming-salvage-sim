@@ -254,11 +254,8 @@ import {
 } from "./cliMonitorHooks.js";
 import { legacyDispatchWorker } from "./dispatchWorker.js";
 import {
-  handleIdleThreshold,
-  QuotaWaitForResetError,
   resolveSandboxIdleAfterQuotaProbe,
   runPoolProbe,
-  withIdleQuotaProbeDisposition,
   type HandleIdleThresholdResult,
   type QuotaPoolId,
   type QuotaProbeResult,
@@ -3413,26 +3410,20 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Production agent-sandbox entry (#683/#909/#937). Runs Sandcastle, and on
-   * Sandcastle idle timeout probes the worker's quota pool via the shared
-   * {@link withIdleQuotaProbeDisposition} (same path family uses):
-   *   - 429/limit → {@link QuotaWaitForResetError} (park step for quota reset;
-   *     ledger row via applied.ledgerEntry for runner park; do NOT mark failed)
-   *   - probe ok / network error → fail-safe rethrow the idle error (no host
-   *     PID-tree kill — #937 silence sentencing deleted; process ownership is
-   *     ChildProcess handle + adoption-failure terminateSpawnedChild only)
+   * Production agent-sandbox entry (#937 / #934 ID-007). Runs Sandcastle only.
+   * Host/provider silence must not trigger quota probe, park, kill, or relay —
+   * Sandcastle AgentIdleTimeout rethrows as a genuine hard-clock failure
+   * without idle→quota disposition. Explicit typed 429/capacity still enter
+   * park/relay via their live constructors elsewhere.
    */
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const { quotaProbe, ...scOptions } = options;
+    const { quotaProbe: _quotaProbe, ...scOptions } = options;
     this.activeSandboxWorkerPid = undefined;
     try {
-      return await withIdleQuotaProbeDisposition({
-        quotaProbe,
-        run: () => this.invokeSandcastleRun(scOptions),
-        resolveIdle: (ctx) => this.resolveIdleAfterQuotaProbe(ctx),
-      });
+      // #937 / #934 ID-007: silence must not trigger quota probe/park.
+      return await this.invokeSandcastleRun(scOptions);
     } finally {
       this.activeSandboxWorkerPid = undefined;
     }

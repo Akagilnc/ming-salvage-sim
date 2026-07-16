@@ -38,7 +38,6 @@ import {
   type PoolTable,
 } from "../../src/quotaPoolTable.js";
 import {
-  RELAY_FOCUS_FILENAME,
   MAX_RELAY_HANDOFFS,
   applyResourceFailureHandoff,
   buildRelayHandoffLedgerEntry,
@@ -69,6 +68,9 @@ import type {
   WorkerSpec,
   WorktreeHandle,
 } from "../../src/types.js";
+
+/** Retired focus-file name — assert it is never produced (#937 / ID-007). */
+const RELAY_FOCUS_FILENAME = ".relay-focus.md";
 
 function writeRoutePreset(name: string, slots: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "relay-preset-"));
@@ -919,11 +921,10 @@ describe("#686 three handoff triggers (quota wall fork; #937 idle path deleted)"
     });
   });
 
-  it("resource handoff for hang_with_live_pool never calls resetBeforeRetry", async () => {
-    const reset = vi.fn();
+  it("resource handoff for capacity has no resetBeforeRetry surface (#937)", async () => {
     const handoff = await applyResourceFailureHandoff({
-      trigger: "hang_with_live_pool",
-      state_summary: "worker hang with live pool; drift preserved",
+      trigger: "capacity",
+      state_summary: "model checkpoint at capacity; drift preserved",
       currentModelId: "grok-4.5",
       currentPool: "grok-build",
       rosterOrder: resolveCoderRecOrder(
@@ -943,11 +944,11 @@ describe("#686 three handoff triggers (quota wall fork; #937 idle path deleted)"
           models: ["terra@med", "luna@med"],
         },
       ],
-      resetBeforeRetry: reset,
       now,
     });
     expect(handoff.kind).toBe("relay");
-    expect(reset).not.toHaveBeenCalled();
+    // Type-layer: resetBeforeRetry is not on ApplyResourceFailureHandoffInput.
+    expect(handoff).not.toHaveProperty("resetBeforeRetry");
   });
 });
 
@@ -1004,7 +1005,7 @@ describe("#686 state_summary ledger + ephemeral relay brief (#937)", () => {
         now: new Date("2026-07-10T12:00:00.000Z"),
       }),
       buildRelayHandoffLedgerEntry({
-        trigger: "hang_with_live_pool",
+        trigger: "capacity",
         state_summary: "baton2 mid-clear",
         remaining: "收口",
         fromModelId: "terra@med",

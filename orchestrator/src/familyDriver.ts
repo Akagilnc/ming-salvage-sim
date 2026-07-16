@@ -1534,13 +1534,24 @@ export function cutFamilyBase(
   }
   // Fresh cut: a configured origin makes fetch authoritative. Only a clone with
   // no origin is local-only; a failed configured remote must never select stale
-  // local state (#934 ID-009).
+  // local state (#934 ID-009 / ID-015 precise Git predicate).
   let hasRemote = false;
   try {
     git("remote", "get-url", "origin");
     hasRemote = true;
-  } catch {
-    hasRemote = false;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Precise missing-origin only (git: "fatal: No such remote 'origin'").
+    // Any other get-url failure is operational — fail closed, never stale local.
+    if (/no such remote/i.test(msg)) {
+      hasRemote = false;
+    } else {
+      throw new Error(
+        `cutFamilyBase: git remote get-url origin failed (not a precise ` +
+          `missing-origin); refusing stale local base fallback (#934 ID-009). ` +
+          `(${msg})`,
+      );
+    }
   }
   if (hasRemote) {
     git("fetch", "origin", base);
