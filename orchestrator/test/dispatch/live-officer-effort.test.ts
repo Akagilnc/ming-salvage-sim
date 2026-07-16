@@ -1,48 +1,57 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  CODER_CODEX_SLUG,
   VERIFY_CODEX_SLUG,
-  effortForLiveOfficer,
+  agentForSlug,
+  resolveModelSlug,
 } from "../../src/modelRegistry.js";
 
 /**
- * Drift guard: single-slice (`realBackend`) and family (`realFamilyBackend`)
- * both call this shared helper. Verify/CMR live officers on the verify Codex
- * slug must keep `"xhigh"`; unrelated contexts must stay undefined.
+ * #916 constitutional pin: reasoning effort authority is the registry row
+ * (selected via route-preset slug), never a role/soul/smokeKey hard override
+ * at dispatch. verify/cmr seats on `gpt-5.6-sol` → medium; utility seats on
+ * `gpt-5.6-sol-low` → low. The deleted `effortForLiveOfficer` xhigh path must
+ * not reappear.
  */
-describe("effortForLiveOfficer — shared verify/CMR xhigh policy", () => {
-  it("returns xhigh for VERIFY_CODEX_SLUG + verify role (both backends)", () => {
-    expect(effortForLiveOfficer(VERIFY_CODEX_SLUG, { role: "verify" })).toBe(
-      "xhigh",
-    );
+describe("live officer effort — registry/route authority only", () => {
+  it("gpt-5.6-sol registry row is medium (verify/cmr default path)", () => {
+    expect(resolveModelSlug(VERIFY_CODEX_SLUG)).toMatchObject({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      options: { effort: "medium" },
+    });
   });
 
-  it("returns xhigh for VERIFY_CODEX_SLUG + verify soul (family CMR / both backends)", () => {
-    expect(effortForLiveOfficer(VERIFY_CODEX_SLUG, { soul: "verify" })).toBe(
-      "xhigh",
-    );
+  it("agentForSlug(gpt-5.6-sol) dispatches medium — role cannot force xhigh", () => {
+    const command = agentForSlug(VERIFY_CODEX_SLUG)
+      .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false })
+      .command;
+    expect(command).toContain('model_reasoning_effort="medium"');
+    expect(command).not.toContain('model_reasoning_effort="xhigh"');
   });
 
-  it("returns xhigh for VERIFY_CODEX_SLUG + verify/cmr smoke keys (single-slice)", () => {
-    expect(
-      effortForLiveOfficer(VERIFY_CODEX_SLUG, { smokeKey: "verify" }),
-    ).toBe("xhigh");
-    expect(
-      effortForLiveOfficer(VERIFY_CODEX_SLUG, { smokeKey: "cmrCompleteness" }),
-    ).toBe("xhigh");
+  it("gpt-5.6-sol-low registry row is low (ship/utility seats)", () => {
+    expect(resolveModelSlug("gpt-5.6-sol-low")).toMatchObject({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      options: { effort: "low" },
+    });
+    const command = agentForSlug("gpt-5.6-sol-low")
+      .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false })
+      .command;
+    expect(command).toContain('model_reasoning_effort="low"');
   });
 
-  it("returns undefined for non-verify slug even with verify/cmr context", () => {
+  it("effortForLiveOfficer role-force helper is gone", async () => {
+    const mod = await import("../../src/modelRegistry.js");
     expect(
-      effortForLiveOfficer(CODER_CODEX_SLUG, { role: "verify", soul: "verify" }),
-    ).toBeUndefined();
+      Object.prototype.hasOwnProperty.call(mod, "effortForLiveOfficer"),
+    ).toBe(false);
   });
 
-  it("returns undefined for VERIFY_CODEX_SLUG without verify/cmr context", () => {
-    expect(
-      effortForLiveOfficer(VERIFY_CODEX_SLUG, { role: "coder", soul: "coder" }),
-    ).toBeUndefined();
-    expect(effortForLiveOfficer(VERIFY_CODEX_SLUG, {})).toBeUndefined();
+  // #916 F9: residual codexEffort overlay parameter deleted — signature is
+  // agentForSlug(slug, pool?) only; effort is never call-site overlaid.
+  it("agentForSlug accepts at most (slug, pool) — no codexEffort overlay", () => {
+    expect(agentForSlug.length).toBe(2);
   });
 });

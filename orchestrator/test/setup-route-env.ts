@@ -1,4 +1,5 @@
 import { beforeEach, vi } from "vitest";
+import { resetRoutePresetsCacheForTests } from "../src/modelRoutes.js";
 
 // The orchestrator runner may execute `npm test` under a non-default
 // ORCHESTRATOR_ROUTE or per-slot model overrides. Unit tests default to the
@@ -14,6 +15,8 @@ const ROUTE_ENV_KEYS = [
   "ORCHESTRATOR_CMR_CORRECTNESS_MODEL",
   "ORCHESTRATOR_VERIFY_MODEL",
   "ORCHESTRATOR_CMR_REVIEW_LEG_SLUGS",
+  // #916: custom presets path must not leak across suites.
+  "ORCHESTRATOR_ROUTE_PRESETS_PATH",
 ] as const;
 
 process.env.ORCHESTRATOR_ROUTE = "normal";
@@ -29,4 +32,6 @@ beforeEach(() => {
   for (const key of ROUTE_ENV_KEYS) {
     delete process.env[key];
   }
+  // #916: drop config-file cache so path/env isolation is real between tests.
+  resetRoutePresetsCacheForTests();
 });
