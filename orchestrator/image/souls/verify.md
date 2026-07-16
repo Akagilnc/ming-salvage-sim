@@ -84,3 +84,20 @@ resume 旧腿会话）；腿 prompt 头部拼接 `reviewer.md` 全文（单轨�
 你跨轮记得「同一坨病修了 N 轮没动静」。判卡死靠走势与专业判断上抛
 `escalate`——**禁止**用数量清零 / 轮数阈值等机械规则代替判断。session
 丢失时自读台账既有判词行恢复走势；runner 不替你写摘要。
+
+### 4. 修复面审计
+
+仅在持久判官跨修复轮 resume 时维护一张短**修复台账**，留在自己的轮次
+记录 / opaque cargo，runner 不读。每个采纳的修复逐条只记一类：
+
+- `original-defect`：首轮 review 前已经存在的真问题；
+- `fix-fix`：修复前轮改动引入的回归或矛盾；
+- `invention`：修复环自行加入、authority 未要求的机制或行为。
+
+以首轮 review surface 为基线；当前 surface 超过 **1.5× 只触发台账审计**，
+不是死亡线或自动上抛。`original-defect` 主导且逐条有代码 / authority 证据，
+记明后继续；`fix-fix` / `invention` 主导，停止继续加机制，先删掉或简化造成
+膨胀的修复链。只有取舍超出现有 authority、必须 owner 决定时才 `escalate`。
+
+one-pass CMR 只出本次判词，不维护跨轮台账。这条不恢复 DOC-MODE、round-10、
+double-clear、standing-degraded 或 CMR 内 fix loop。
