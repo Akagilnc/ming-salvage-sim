@@ -115,6 +115,26 @@ describe("#945 provisionWorkerAuth path-policy boundaries", () => {
     expect(leftovers).toEqual([]);
   });
 
+  it("family policy: blocked orchestrator root still yields claude token (fail-soft)", () => {
+    // O3: root mkdir must not abort whole family provision before claude read.
+    const home = mkTemp("auth-945-fam-root-fail-");
+    writeFileSync(join(home, ".sc-claude-token"), "claude-oauth-secret\n");
+    // File where the directory should be → mkdirSync(root) fails.
+    writeFileSync(join(home, ".sc-orchestrator"), "not-a-dir\n");
+    const homeEnvFile = writeHomeEnv(home);
+
+    const auth = provisionWorkerAuth({
+      home,
+      homeEnvFile,
+      pathPolicy: { kind: "family", rolePrefix: "cmr" },
+    });
+
+    expect(auth.codexAuthDir).toBeUndefined();
+    expect(auth.grokAuthDir).toBeUndefined();
+    expect(auth.agyDir).toBeUndefined();
+    expect(auth.claudeToken).toBe("claude-oauth-secret");
+  });
+
   it("slice policy: missing host codex ⇒ still always-mounts stable issue codex dir with config + AGENTS", () => {
     const home = mkTemp("auth-945-slice-no-codex-");
     writeFileSync(join(home, ".sc-claude-token"), "claude-oauth-secret\n");
@@ -231,11 +251,8 @@ describe("#945 RealBackend.mountAuth consumes shared slice path-policy (no twin 
   it("mountAuth preserves stable always-mount path + credentials via shared core", () => {
     const home = mkTemp("auth-945-mount-");
     seedFullHostAuth(home);
-    writeHomeEnv(home);
-    // RealBackend resolves home env from soulsDir sibling; seed a real home env path
-    // by writing into image/home is wrong — inject via opts.home only for auth paths.
-    // provisionCodexHomeAgents needs resolveHomeEnvFile(); production uses soulsDir.
-    // Write the default home env next to a temp souls layout if needed — use real soulsDir.
+    // Inject test-local home env — do not depend on real image/home/CLAUDE.md.
+    const homeEnvFile = writeHomeEnv(home);
     const backend = new MountProbe({
       sourceRepo: "/tmp/source-945",
       remote: "https://github.com/owner/name.git",
@@ -245,11 +262,15 @@ describe("#945 RealBackend.mountAuth consumes shared slice path-policy (no twin 
       promptsDir,
       soulsDir,
       home,
+      homeEnvFile,
     });
 
     const auth = backend.mount(945);
     expect(auth.authDir).toBe(join(home, ".sc-orchestrator", "auth-945"));
     expect(readFileSync(join(auth.authDir, "auth.json"), "utf8")).toContain("codex");
+    expect(
+      readFileSync(join(auth.authDir, CODEX_HOME_AGENTS_FILENAME), "utf8"),
+    ).toBe(readFileSync(homeEnvFile, "utf8"));
     expect(auth.claudeToken).toBe("claude-oauth-secret");
     expect(auth.grokAuthDir).toBeTruthy();
     expect(auth.agyDir).toBeTruthy();

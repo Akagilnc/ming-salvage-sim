@@ -1031,7 +1031,14 @@ export function provisionWorkerAuth(input: {
 }): FamilyWorkerAuthCore {
   const { home, homeEnvFile, pathPolicy, codexFast = false } = input;
   const root = join(home, ".sc-orchestrator");
-  mkdirSync(root, { recursive: true, mode: 0o700 });
+  // Family fail-soft: unwritable/blocked root must not abort whole provision —
+  // dir-based legs (codex/grok/agy) degrade below; claude token still reads.
+  // Slice always-mount still needs a creatable root and fails in its own leg.
+  try {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+  } catch {
+    // continue — per-leg try/catch or slice always-mount mkdir handles the rest
+  }
 
   const codexAuthDir = provisionCodexAuthDir({
     home,
