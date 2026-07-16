@@ -30,7 +30,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, posix } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
 import type * as sc from "@ai-hero/sandcastle";
 import { shellEscape } from "./shellEscape.js";
 
@@ -245,6 +245,10 @@ export function makeGrokSessionStorage(
 
     resumeIntoSandbox: async ({ hostCwd, sandboxCwd, sessionId, handle }) => {
       let src = hostSessionDir(hostCwd, sessionId);
+      // r2-F3: rewrite `from` must be a path actually present in the session
+      // files. Direct hostCwd hit → hostCwd; fallback across buckets → decode
+      // the hit bucket name (encodeURIComponent(source cwd)).
+      let rewriteFrom = hostCwd;
       if (!(await dirExists(src))) {
         const found = await findByIdOnHost(sessionId);
         if (found.path === undefined) {
@@ -253,13 +257,14 @@ export function makeGrokSessionStorage(
           );
         }
         src = found.path;
+        rewriteFrom = decodeURIComponent(basename(dirname(src)));
       }
       // Rewrite on a scratch copy — the host store stays untouched.
       const scratch = await mkdtemp(join(tmpdir(), "grok-res-"));
       try {
         const copy = join(scratch, "session");
         await cp(src, copy, { recursive: true });
-        await rewriteSessionTexts(copy, hostCwd, sandboxCwd);
+        await rewriteSessionTexts(copy, rewriteFrom, sandboxCwd);
         // Write tar to a file (not stdout buffer) so the #884 utf8 chokepoint
         // can own the host subprocess without encoding:buffer escape hatches.
         const tarPath = join(scratch, "session.tar");
