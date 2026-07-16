@@ -1078,10 +1078,12 @@ describe("#925 F3: single open-count → continue projection", () => {
   });
 });
 
-describe("#925 verify.md 收敛判官 chapter + judge prompt", () => {
+describe("#925 verify.md 判官 duties + judge prompt", () => {
   it("soul chapter has tri-state / four reasons / trajectory stall", () => {
     const text = readFileSync(join(SOULS, "verify.md"), "utf8");
-    expect(text).toMatch(/收敛判官/);
+    // owner 2026-07-16: 收敛判官 persona abolished — one judge whose court persists.
+    expect(text).toMatch(/判官/);
+    expect(text).toMatch(/庭是持久的|持久判官/);
     expect(text).toMatch(/converged/);
     expect(text).toMatch(/continue/);
     expect(text).toMatch(/escalate/);
