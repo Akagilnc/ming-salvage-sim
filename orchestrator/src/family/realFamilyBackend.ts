@@ -542,11 +542,7 @@ export class RealFamilyBackend implements FamilyBackend {
     const pool = isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined;
     return unavailableProviderAuth(
       resolveModelSlugForPool(spec.model, pool).provider,
-      auth.providerAuth ?? {
-        claude: auth.claudeToken !== undefined,
-        grok: auth.grokAuthDir !== undefined,
-        agy: auth.agyDir !== undefined,
-      },
+      auth.providerAuth ?? providerAuthFromCore(auth),
     );
   }
 
