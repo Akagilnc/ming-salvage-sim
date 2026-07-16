@@ -48,4 +48,10 @@ describe("live officer effort — registry/route authority only", () => {
       Object.prototype.hasOwnProperty.call(mod, "effortForLiveOfficer"),
     ).toBe(false);
   });
+
+  // #916 F9: residual codexEffort overlay parameter deleted — signature is
+  // agentForSlug(slug, pool?) only; effort is never call-site overlaid.
+  it("agentForSlug accepts at most (slug, pool) — no codexEffort overlay", () => {
+    expect(agentForSlug.length).toBe(2);
+  });
 });

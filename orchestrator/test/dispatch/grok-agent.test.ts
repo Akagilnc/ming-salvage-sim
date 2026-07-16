@@ -144,7 +144,7 @@ describe("#807 modelRegistry grok-build wiring", () => {
   });
 
   it("agentForSlug(pool=grok-build) yields the grok CLI provider", () => {
-    const agent = agentForSlug("grok-4.5", undefined, "grok-build");
+    const agent = agentForSlug("grok-4.5", "grok-build");
     expect(agent.name).toBe("grok");
   });
 });

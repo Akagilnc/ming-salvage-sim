@@ -128,6 +128,9 @@ export const DEFAULT_POOL_MODELS: Readonly<
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.6-sol",
+    // #916: registry sol effort variants used by routes/factory utility seats.
+    "gpt-5.6-sol-low",
+    "gpt-5.6-sol-high",
   ],
   // #789 — roster ids + runnable slugs (mirrors codex-5h dual keys).
   claude: ["sonnet-5", "haiku-4.5", "sonnet", "haiku"],

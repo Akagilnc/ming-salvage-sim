@@ -16,6 +16,7 @@ import {
   resolveRouteModels,
   routeSmokeEntries,
 } from "../../src/modelRoutes.js";
+import { DEFAULT_POOL_MODELS } from "../../src/quotaPoolTable.js";
 
 const tempDirs: string[] = [];
 
@@ -75,6 +76,17 @@ describe("#916 gpt-5.6-sol-low registry", () => {
       model: "gpt-5.6-sol",
       options: { effort: "high" },
     });
+  });
+
+  // #916 F10: factory utility seats (sol-low) + sol-high must bill on codex-5h.
+  it("sol effort variants are codex-5h pool members", () => {
+    expect(DEFAULT_POOL_MODELS["codex-5h"]).toEqual(
+      expect.arrayContaining([
+        "gpt-5.6-sol",
+        "gpt-5.6-sol-low",
+        "gpt-5.6-sol-high",
+      ]),
+    );
   });
 });
 

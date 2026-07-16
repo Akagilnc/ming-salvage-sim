@@ -322,13 +322,10 @@ export function modelIdForSlug(slug: string): string {
 
 export function agentForSlug(
   slug: string,
-  codexEffort?: NonNullable<sc.CodexOptions["effort"]>,
   pool?: BillingPoolDispatchId,
 ): sc.AgentProvider {
+  // Effort comes from the registry row for `slug` only — no call-site overlay
+  // (#916 F9: deleted residual codexEffort parameter).
   const entry = resolveModelSlugForPool(slug, pool);
-  const options =
-    entry.provider === "codex" && codexEffort !== undefined
-      ? { ...(entry.options ?? {}), effort: codexEffort }
-      : entry.options;
-  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, options);
+  return MODEL_PROVIDER_FACTORIES[entry.provider](entry.model, entry.options);
 }

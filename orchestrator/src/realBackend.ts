@@ -3284,7 +3284,7 @@ export class RealBackend implements Backend {
       // overrides the channel when the same model lives on multiple pools.
       // Effort comes from the registry row for `spec.model` only (#916: no
       // role/soul hard override of reasoning effort at dispatch).
-      agent: agentForSlug(spec.model, undefined, pool),
+      agent: agentForSlug(spec.model, pool),
       // #899 / ADR 0128 / #928: every selected seat is single-iteration
       // (maxIter:1). Sandcastle completionSignal forced off at
       // invokeSandcastleRun (`[]` — omit falls back to default password).
@@ -3351,7 +3351,7 @@ export class RealBackend implements Backend {
         // Resume the build worker on the SAME CLI as its fresh run (agentForSlug:
         // codex for the gpt-5.6-terra coder, claudeCode for a claude slug). #686 pool
         // channel must match the fresh dispatch. Effort = registry row only (#916).
-        agent: agentForSlug(spec.model, undefined, pool),
+        agent: agentForSlug(spec.model, pool),
         // resumeSession requires maxIterations:1 (Sandcastle constraint).
         maxIterations: 1,
         branchStrategy: { type: "head" },
