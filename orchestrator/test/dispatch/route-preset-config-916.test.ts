@@ -102,6 +102,14 @@ describe("#916 gpt-5.6-sol-low registry", () => {
     expect(billingPoolForModelRef("gpt-5.6-terra")).toBe("codex-5h");
     expect(billingPoolForModelRef("grok-4.5")).toBe("grok-build");
   });
+
+  // family/914 Gemini R2 G2: registry keys are lowercase; trim+lower must
+  // feed provider/registry lookup, not only DEFAULT_POOL_MODELS membership.
+  it("billingPoolForModelRef trims and case-folds registry-only slugs", () => {
+    expect(billingPoolForModelRef("  GPT-5.6-SOL-LOW  ")).toBe("codex-5h");
+    expect(billingPoolForModelRef("Grok-4.5")).toBe("grok-build");
+    expect(billingPoolForModelRef("  ")).toBeUndefined();
+  });
 });
 
 describe("#916 claude-tight factory lineup", () => {
@@ -320,6 +328,45 @@ describe("#916 route presets parse / resolve fail-loud paths", () => {
 
     expect(() => resolveRouteModels("broken", {})).toThrow(
       /cmr review leg "gpt-5.6-sol" declares family "claude" but registry says "codex"/,
+    );
+  });
+
+  // family/914 Gemini R2 G3: invalid family string must not silently fall
+  // back to modelFamilyForSlug — config load fail-loud.
+  it("throws on invalid cmrReview leg family string", () => {
+    const path = writePresetsFile({
+      broken: {
+        slots: fullSlots(),
+        legCollections: {
+          cmrReview: [{ family: "openai", slug: "gpt-5.6-sol" }],
+        },
+      },
+    });
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+    resetRoutePresetsCacheForTests();
+
+    expect(() => resolveRouteModels("broken", {})).toThrow(
+      /route preset "broken".*cmrReview leg "gpt-5.6-sol".*invalid family "openai"/,
+    );
+  });
+
+  // family/914 Gemini R2 G4: LEG_COLLECTION_SET must reject unknown keys the
+  // same way SLOT_SET rejects unknown slot keys.
+  it("throws on unknown legCollection keys", () => {
+    const path = writePresetsFile({
+      broken: {
+        slots: fullSlots(),
+        legCollections: {
+          cmrReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+          extraReview: [{ family: "codex", slug: "gpt-5.6-sol" }],
+        },
+      },
+    });
+    vi.stubEnv("ORCHESTRATOR_ROUTE_PRESETS_PATH", path);
+    resetRoutePresetsCacheForTests();
+
+    expect(() => resolveRouteModels("broken", {})).toThrow(
+      /route preset "broken" has unknown legCollection "extraReview"/,
     );
   });
 });
