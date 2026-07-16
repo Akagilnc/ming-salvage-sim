@@ -111,6 +111,7 @@ import {
 import { agyPrintInvocation } from "./agyAgent.js";
 import {
   agentForSlug,
+  resumeCapableForSlug,
   CODER_CODEX_SLUG,
   isBillingPoolDispatchId,
   modelFamilyForSlug,
@@ -3131,14 +3132,25 @@ export class RealBackend implements Backend {
   private outputFor(spec: StepSpec): sc.OutputDefinition | undefined {
     // #925 / #919 S2/R7: judge seats are S3/S6 only (sole isJudgeSeat).
     // S9 online-review must not take JUDGE_RECEIPT.
+    // Owner B ruling 2026-07-16: maxRetries follows the provider's session-
+    // resume capability (slug-level; grok never pool-transits per #905).
+    const resumeCapable = resumeCapableForSlug(spec.model);
     if (isJudgeSeat({ id: spec.id })) {
-      return workerReceiptOutput(JUDGE_RECEIPT_TAG, judgeStationReceiptSchema());
+      return workerReceiptOutput(
+        JUDGE_RECEIPT_TAG,
+        judgeStationReceiptSchema(),
+        resumeCapable,
+      );
     }
     if (spec.role === "reviewer") {
-      return workerReceiptOutput("review", workerReceiptSchema());
+      return workerReceiptOutput("review", workerReceiptSchema(), resumeCapable);
     }
     if (spec.role === "coder") {
-      return coderReceiptOutput(coderStationReceiptSchema(), CODER_RECEIPT_TAG);
+      return coderReceiptOutput(
+        coderStationReceiptSchema(),
+        CODER_RECEIPT_TAG,
+        resumeCapable,
+      );
     }
     return undefined;
   }

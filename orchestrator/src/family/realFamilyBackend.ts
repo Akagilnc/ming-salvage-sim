@@ -103,6 +103,7 @@ import {
   resolveModelSlugForPool,
   unavailableProviderAuth,
   type ProviderAuthAvailability,
+  resumeCapableForSlug,
 } from "../modelRegistry.js";
 import {
   agentForSlug,
@@ -954,6 +955,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: mergerReceiptOutput(
               mergerStationReceiptSchema(),
               MERGER_RECEIPT_TAG,
+              resumeCapableForSlug(model),
             ),
             // #909: same quota-probe context as single-slice runAgentSandbox.
             // C3: step S1 maps to merger consume slot in familyRelaySlotsForWall.
@@ -1712,6 +1714,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: workerReceiptOutput(
               JUDGE_RECEIPT_TAG,
               judgeStationReceiptSchema(),
+              resumeCapableForSlug(spec.model),
             ),
             // #909: shared sandbox quota-probe (billing pool when relayed).
             quotaProbe: this.familyQuotaProbeContext(spec, ctx),
@@ -1905,6 +1908,7 @@ export class RealFamilyBackend implements FamilyBackend {
             output: coderReceiptOutput(
               coderStationReceiptSchema(),
               CODER_RECEIPT_TAG,
+              resumeCapableForSlug(spec.model),
             ),
             // #909: shared sandbox quota-probe.
             quotaProbe: this.familyQuotaProbeContext(spec, ctx),
@@ -2234,6 +2238,7 @@ export class RealFamilyBackend implements FamilyBackend {
           output: onlineReviewReceiptOutput(
             onlineReviewStationReceiptSchema(),
             ONLINE_REVIEW_RECEIPT_TAG,
+            resumeCapableForSlug(spec.model),
           ),
           // #909: shared sandbox quota-probe.
           quotaProbe: this.familyQuotaProbeContext(spec, ctx),
@@ -2955,7 +2960,11 @@ export class RealFamilyBackend implements FamilyBackend {
       promptFile: join(this.opts.promptsDir, spec.promptFile),
       // #919 D / ADR 0132: T2 ship station receipt (SHIP_RECEIPT_TAG + schema).
       // PR/URL delivery cargo stays on sidecar outside SO.
-      output: shipReceiptOutput(shipStationReceiptSchema(), SHIP_RECEIPT_TAG),
+      output: shipReceiptOutput(
+        shipStationReceiptSchema(),
+        SHIP_RECEIPT_TAG,
+        resumeCapableForSlug(spec.model),
+      ),
       quotaProbe: this.familyQuotaProbeContext(spec, ctx),
     });
   }
