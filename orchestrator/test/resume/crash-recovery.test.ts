@@ -13,7 +13,6 @@ import type {
   Backend,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   DispatchContext,

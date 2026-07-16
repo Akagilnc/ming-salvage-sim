@@ -32,7 +32,6 @@ import type {
   CoderOutput,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -119,14 +118,10 @@ class EscalatingChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     this.preparedIssues.push(issueNumber);
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(
     spec: StepSpec,
     worktree?: WorktreeHandle,

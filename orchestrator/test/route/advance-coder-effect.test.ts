@@ -22,7 +22,7 @@ describe("#919 pure: executeAdvanceCoderSuggestion", () => {
       suggestion: "sol@med",
       currentSlug: current,
       route,
-      applySlug: (r, slug) => withCoderSlot(r, slug, { preserveCoderFix: false }),
+      applySlug: (r, slug) => withCoderSlot(r, slug),
     });
     expect(effect.kind).toBe("advanced");
     if (effect.kind !== "advanced") return;

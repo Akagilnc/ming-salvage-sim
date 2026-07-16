@@ -2932,6 +2932,49 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
     });
   }
 
+  class FailingMetaBackend extends RecordingMetaBackend {
+    transientViewFailures = 0;
+    viewAttempts = 0;
+    failSubIssues = false;
+    failBlockedBy = false;
+
+    protected override sh(file: string, args: string[]): string {
+      const fields = args[args.indexOf("--json") + 1] ?? "";
+      if (file === "gh" && args[0] === "issue" && fields.includes("body")) {
+        this.viewAttempts += 1;
+      }
+      if (
+        file === "gh" &&
+        args[0] === "issue" &&
+        fields.includes("body") &&
+        this.transientViewFailures > 0
+      ) {
+        this.transientViewFailures -= 1;
+        throw Object.assign(new Error("temporary issue-view reset"), { code: "ECONNRESET" });
+      }
+      if (file === "gh" && fields === "subIssues" && this.failSubIssues) {
+        throw new SyntaxError("bad sub-issues contract");
+      }
+      if (file === "gh" && args[0] === "api" && this.failBlockedBy) {
+        throw new SyntaxError("bad blocked_by contract");
+      }
+      return super.sh(file, args);
+    }
+  }
+
+  function makeFailingBackend(): FailingMetaBackend {
+    return new FailingMetaBackend({
+      sourceRepo: "/tmp/source",
+      remote: "https://github.com/owner/name.git",
+      runKey: 998,
+      repo: "owner/name",
+      imageName: "img",
+      promptsDir: realPromptsDir,
+      soulsDir: realSoulsDir,
+      home: tempHome("rb-home-329-failing-"),
+    });
+  }
+
   it("S0 issue-view requests gate fields + body — still no comments (#329/#767)", async () => {
     const backend = makeBackend();
     await backend.fetchIssueMeta(329);
@@ -2965,6 +3008,22 @@ describe("realBackend fetchIssueMeta S0 perf (#329)", () => {
       openBlockedBy: [],
       body: "## Agent Brief\nbody brief",
     });
+  });
+
+  it("retries transient metadata through the shared seam", async () => {
+    const backend = makeFailingBackend();
+    backend.transientViewFailures = 2;
+    await expect(backend.fetchIssueMeta(329)).resolves.toMatchObject({ number: 329 });
+    expect(backend.viewAttempts).toBe(3);
+  });
+
+  it("aggregates deterministic failures from every metadata member", async () => {
+    const backend = makeFailingBackend();
+    backend.failSubIssues = true;
+    backend.failBlockedBy = true;
+    await expect(backend.fetchIssueMeta(329)).rejects.toThrow(
+      /2 errors.*bad sub-issues contract.*bad blocked_by contract/i,
+    );
   });
 });
 

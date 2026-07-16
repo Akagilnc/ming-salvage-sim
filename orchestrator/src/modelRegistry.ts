@@ -134,8 +134,8 @@ const MODEL_SLUG_REGISTRY: Readonly<Record<string, ModelSlugRegistryRow>> = {
     family: "codex",
   },
   // #861 owner order (2026-07-12): a high-effort sol row so the family CMR
-  // coder-fix slot can run sol@high via ORCHESTRATOR_CODER_FIX_MODEL without
-  // touching the medium default the reviewer/verify slots pin.
+  // coder-fix routes can run sol@high without touching the medium default the
+  // reviewer/verify slots pin.
   "gpt-5.6-sol-high": {
     provider: "codex",
     model: "gpt-5.6-sol",

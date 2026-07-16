@@ -23,7 +23,6 @@ import { MAX_DISPATCH_ATTEMPTS } from "../../src/dispatchRetry.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -40,7 +39,7 @@ const COMPLIANT_META: IssueMeta = {
   openBlockedBy: [],
 };
 
-const SNAPSHOT: IssueSnapshot = {
+const SNAPSHOT = {
   number: 244,
   body: "issue body",
   comments: [],
@@ -79,13 +78,9 @@ class SpyBackend implements Backend {
   async fetchIssueMeta(_n: number): Promise<IssueMeta> {
     return COMPLIANT_META;
   }
-  async fetchIssueSnapshot(_n: number): Promise<IssueSnapshot> {
-    return SNAPSHOT;
-  }
   async prepareWorktree(_n: number, _b: string): Promise<WorktreeHandle> {
     return WORKTREE;
   }
-  async writeSnapshot(_w: WorktreeHandle, _s: IssueSnapshot): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     this.runStepIds.push(spec.id);
     if (spec.role === "coder") {
@@ -145,7 +140,7 @@ describe("#3 error paths persist the ledger (not only in-memory)", () => {
   });
 
   it("S1 prepareWorktree success → subsequent S2 ledger writes use post-worktree stateDir", async () => {
-    // #936: writeSnapshot dual court deleted. After worktree exists, productive
+    // #936: snapshot dual court deleted. After worktree exists, productive
     // step failures persist to the sibling stateDir.
     const backend = new SpyBackend();
     backend.runStep = async (spec) => {

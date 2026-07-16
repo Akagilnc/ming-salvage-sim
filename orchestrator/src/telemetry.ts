@@ -363,11 +363,6 @@ export interface TelemetryCoderRecProvenance {
   readonly selected: string | null;
   /** True when selected is not the head of the order. */
   readonly wasFallback: boolean | null;
-  /**
-   * Historical: env slot override forced the coder. Always false after #936
-   * (ID-002 deleted per-slot model env overrides).
-   */
-  readonly envOverride: boolean | null;
 }
 
 export interface TelemetryModelStamp {
@@ -1811,7 +1806,6 @@ function coderRecProvenance(
     order,
     selected,
     wasFallback,
-    envOverride: false,
   };
 }
 

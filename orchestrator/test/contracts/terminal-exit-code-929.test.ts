@@ -40,7 +40,6 @@ import type {
   CoderOutput,
   Escalation,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -145,13 +144,9 @@ class ChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(
     spec: StepSpec,
     _worktree?: WorktreeHandle,
@@ -600,18 +595,9 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
           body: "Coder-Rec: terra@med\n",
         };
       }
-      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-        return {
-          number: issueNumber,
-          body: "Coder-Rec: terra@med\n",
-          comments: [],
-          agentBrief: "## Agent Brief",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return this.worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
         if (spec.role === "coder") {
           return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -650,7 +636,7 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
   });
 
   it("error path (post-worktree S2 throw) persists tagged S8 error + console.error + nonzero exit", async () => {
-    // #936: writeSnapshot dual court deleted; post-worktree failures still persist.
+    // #936: snapshot dual court deleted; post-worktree failures still persist.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     class SpyBackend implements Backend {
       readonly ledgerCalls: PersistentLedgerEntry[] = [];
@@ -673,13 +659,9 @@ describe("#929 non-success RunResult: disk tagged S8 + external loudness", () =>
           openBlockedBy: [],
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return { number: n, body: "b", comments: [], agentBrief: "brief" };
-      }
       async prepareWorktree(n: number, base: string): Promise<WorktreeHandle> {
         return { branch: `feat/${n}`, base, path: `/wt/${n}` };
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
         if (spec.id === "S2") throw new Error("ENOSPC: no space left on device");
         return { kind: "coder", committed: true, commitsAdded: 1 };

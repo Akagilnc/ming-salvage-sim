@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   activeModelRoute,
-  applyRuntimeTightRoutePolicy,
   applyTightRoutePolicy,
   MODEL_ROUTE_SLOTS,
   modelRouteFingerprint,
@@ -15,7 +14,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   StepOutput,
   StepSpec,
   WorkerResult,
@@ -364,13 +362,9 @@ describe("#422 model route presets", () => {
           openBlockedBy: [],
         };
       }
-      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-        return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
-      }
       async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
         return { branch: `feat/${issueNumber}`, base, path: `/tmp/model-route-${issueNumber}` };
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         throw new Error("not used");
       }
@@ -422,18 +416,10 @@ describe("#422 model route presets", () => {
     }
   });
 
-  it("interactive continue seam is deleted — confirmation cannot bypass tight policy (#936)", async () => {
+  it("tight policy has no interactive continuation seam (#936)", () => {
     const route = resolveRouteModels("claude-tight", { verify: "opus" });
-    const declined = applyTightRoutePolicy(route, {
-      interactive: true,
-      confirm: () => true,
-    });
-    const runtime = await applyRuntimeTightRoutePolicy(route, {
-      interactive: true,
-      confirm: async () => true,
-    });
+    const declined = applyTightRoutePolicy(route);
     expect(declined.kind).toBe("stop");
-    expect(runtime.kind).toBe("stop");
   });
 
   it("runner startup fails closed on tight violation before productive backend work", async () => {

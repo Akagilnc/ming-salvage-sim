@@ -38,6 +38,7 @@ import { join } from "node:path";
 
 import {
   admitCoderRec,
+  admitPlannedRouteSmoke,
   admitRouteFromEnv,
   admitRouteSmoke,
   admissionRouteFailureDiagnosis,
@@ -379,7 +380,12 @@ const defaultSh: Sh = (file, args) =>
  * REST (`gh api …/sub_issues`) so family admission can skip non-runnable children
  * before the single-slice S0 gate would abort the whole family run.
  */
-export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyEpic {
+export function readFamilyEpic(
+  epicIssue: number,
+  repo: string,
+  sh: Sh,
+  issueBodies: Map<number, string> = new Map(),
+): FamilyEpic {
   const admission = readSubIssueAdmission(epicIssue, repo, sh);
   const childNumbers = [...admission.admitted];
   const blockedByByChild = new Map<number, GhBlockedBy[]>();
@@ -399,7 +405,13 @@ export function readFamilyEpic(epicIssue: number, repo: string, sh: Sh): FamilyE
     children: new Map(),
   };
   try {
-    moduleDeclarations = readFamilyModuleDeclarations(epicIssue, childNumbers, repo, sh);
+    moduleDeclarations = readFamilyModuleDeclarations(
+      epicIssue,
+      childNumbers,
+      repo,
+      sh,
+      issueBodies,
+    );
   } catch (err) {
     errors.push(`issue bodies: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -473,6 +485,19 @@ function readIssueBody(issue: number, repo: string, sh: Sh): string {
   }
 }
 
+function readIssueBodyCached(
+  issue: number,
+  repo: string,
+  sh: Sh,
+  issueBodies: Map<number, string>,
+): string {
+  const cached = issueBodies.get(issue);
+  if (cached !== undefined) return cached;
+  const body = readIssueBody(issue, repo, sh);
+  issueBodies.set(issue, body);
+  return body;
+}
+
 function readIssueAuthorAssociation(issue: number, repo: string, sh: Sh): string {
   try {
     return sh("gh", [
@@ -500,6 +525,7 @@ function readFamilyModuleDeclarations(
   childNumbers: ReadonlyArray<number>,
   repo: string,
   sh: Sh,
+  issueBodies: Map<number, string> = new Map(),
 ): {
   readonly family?: SourcedModuleDeclaration;
   readonly children: ReadonlyMap<number, SourcedModuleDeclaration>;
@@ -508,7 +534,7 @@ function readFamilyModuleDeclarations(
   let family: SourcedModuleDeclaration | undefined;
   try {
     family = sourcedModuleDeclaration(
-      parseModuleDeclaration(readIssueBody(epicIssue, repo, sh)),
+      parseModuleDeclaration(readIssueBodyCached(epicIssue, repo, sh, issueBodies)),
       "family_issue",
       epicIssue,
     );
@@ -519,7 +545,7 @@ function readFamilyModuleDeclarations(
   for (const child of childNumbers) {
     try {
       const declaration = sourcedModuleDeclaration(
-        parseModuleDeclaration(readIssueBody(child, repo, sh)),
+        parseModuleDeclaration(readIssueBodyCached(child, repo, sh, issueBodies)),
         "child_issue",
         child,
       );
@@ -554,15 +580,8 @@ function readSubIssueAdmission(epicIssue: number, repo: string, sh: Sh): SubIssu
   for (const skipped of admission.skipped) {
     console.warn(skipped.message);
   }
-  const childNumbers = [...admission.admitted];
   if (allSubIssueNodes.length === 0) {
     return { admitted: [epicIssue], skipped: [] };
-  }
-  if (childNumbers.length === 0) {
-    throw new Error(
-      `family admission rejected: epic #${epicIssue} has no runnable child issues ` +
-        `(all native children were skipped) — nothing to orchestrate`,
-    );
   }
   return admission;
 }
@@ -714,9 +733,14 @@ export async function runFamilyDriver(
     };
   }
 
-  let rootBody: string;
+  // 1. Read the already-cut children from live GitHub (the explicit dependency
+  //    edges a `to-issues` step wrote — decision 1, no LLM inference). Live
+  //    metadata is part of Admission after route preflight (ID-002/003).
+  logDriverStage("admission", `epic #${options.epicIssue}`);
+  let epic: FamilyEpic;
+  const issueBodies = new Map<number, string>();
   try {
-    rootBody = readIssueBody(options.epicIssue, options.repo, metadataSh);
+    epic = readFamilyEpic(options.epicIssue, options.repo, metadataSh, issueBodies);
   } catch (err) {
     const diagnosis = err instanceof Error ? err.message : String(err);
     return {
@@ -730,7 +754,10 @@ export async function runFamilyDriver(
       children: [],
     };
   }
-  const coderRec = admitCoderRec(admitted.route, rootBody);
+  const coderRec = admitCoderRec(
+    admitted.route,
+    issueBodies.get(options.epicIssue),
+  );
   if (coderRec.kind === "stop") {
     const diagnosis = admissionRouteFailureDiagnosis(coderRec.escalation.diagnosis);
     return {
@@ -744,25 +771,63 @@ export async function runFamilyDriver(
       children: [],
     };
   }
+  if (epic.children.length === 0) {
+    return {
+      status: "success",
+      familyBase: options.familyBase,
+      stopSummary: {
+        reason: "already_done",
+        summary: "family admission skipped every native child; no worksite was created",
+        metadata: { admissionSkipped: epic.admissionSkipped ?? [] },
+      },
+      children: [],
+      ...(epic.admissionSkipped !== undefined
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
+    };
+  }
 
-  // 1. Read the already-cut children from live GitHub (the explicit dependency
-  //    edges a `to-issues` step wrote — decision 1, no LLM inference). Live
-  //    metadata is part of Admission after route preflight (ID-002/003).
-  logDriverStage("admission", `epic #${options.epicIssue}`);
-  let epic: FamilyEpic;
-  try {
-    epic = readFamilyEpic(options.epicIssue, options.repo, metadataSh);
-  } catch (err) {
-    const diagnosis = err instanceof Error ? err.message : String(err);
+  // Validate every planned child's Coder-Rec before clone/smoke/worksite. Do
+  // not abort on the first malformed child: Admission reports the complete
+  // planned-issue inventory in one failure (#934 ID-003).
+  const plannedRoutes = [coderRec.route];
+  const coderRecErrors: string[] = [];
+  for (const child of epic.children) {
+    try {
+      const body = readIssueBodyCached(
+        child.issue,
+        options.repo,
+        metadataSh,
+        issueBodies,
+      );
+      const childAdmission = admitCoderRec(admitted.route, body);
+      if (childAdmission.kind === "stop") {
+        coderRecErrors.push(
+          `issue #${child.issue}: ${childAdmission.escalation.diagnosis}`,
+        );
+      } else {
+        plannedRoutes.push(childAdmission.route);
+      }
+    } catch (err) {
+      coderRecErrors.push(
+        `issue #${child.issue}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  if (coderRecErrors.length > 0) {
+    const diagnosis = `planned Coder-Rec admission failed (${coderRecErrors.length} errors): ${coderRecErrors.join("; ")}`;
     return {
       status: "escalated",
       familyBase: options.familyBase,
-      escalation: { reason: "issue metadata unavailable", diagnosis },
+      escalation: { reason: "Coder-Rec admission failure", diagnosis },
       stopSummary: infraFailureStopSummary({
         summary: diagnosis,
-        repairHint: "repair GitHub metadata access and rerun",
+        repairHint: "repair every listed owner-authored Coder-Rec before rerun",
       }),
       children: [],
+      ...(epic.admissionSkipped !== undefined
+        ? { admissionSkipped: epic.admissionSkipped }
+        : {}),
     };
   }
 
@@ -786,10 +851,14 @@ export async function runFamilyDriver(
   const realSingleSlice =
     options.realBackendFactory?.(realBackendOptions) ?? new RealBackend(realBackendOptions);
   logDriverStage("smoke-k", `route=${coderRec.route.routeName}`);
-  let smoke = options.singleSliceBackendFactory === undefined
-    ? await admitRouteSmoke(realSingleSlice, coderRec.route)
-    : undefined;
-  if (smoke?.kind === "stop") return routeSmokeFailureResult(options, smoke.escalation);
+  let smoke:
+    | Extract<Awaited<ReturnType<typeof admitRouteSmoke>>, { readonly kind: "ready" }>
+    | undefined;
+  if (options.singleSliceBackendFactory === undefined) {
+    const result = await admitPlannedRouteSmoke(realSingleSlice, plannedRoutes);
+    if (result.kind === "stop") return routeSmokeFailureResult(options, result.escalation);
+    smoke = result;
+  }
   const workingRepo = realSingleSlice.workingRepoPath();
 
   // 3. Cut the LOCAL family base branch from main on the family clone, recording
@@ -815,8 +884,9 @@ export async function runFamilyDriver(
       : realSingleSlice;
   if (smoke === undefined) {
     logDriverStage("smoke-k", `route=${coderRec.route.routeName}`);
-    smoke = await admitRouteSmoke(singleSliceBackend, coderRec.route);
-    if (smoke.kind === "stop") return routeSmokeFailureResult(options, smoke.escalation);
+    const result = await admitPlannedRouteSmoke(singleSliceBackend, plannedRoutes);
+    if (result.kind === "stop") return routeSmokeFailureResult(options, result.escalation);
+    smoke = result;
   }
 
   // 5. The family-LEVEL seam (real merge + ledger + verify + reconcile + the
@@ -984,13 +1054,20 @@ export function cutFamilyBase(
     }
     return persisted;
   }
-  // Fresh cut: refresh origin/<base>, then branch the local family base from it.
-  // Best-effort fetch (an offline / local-only source must not block the cut).
+  // Fresh cut: a configured origin makes fetch authoritative. Only a clone with
+  // no origin is local-only; a failed configured remote must never select stale
+  // local state (#934 ID-009).
+  let hasRemote = false;
   try {
+    git("remote", "get-url", "origin");
+    hasRemote = true;
+  } catch {
+    hasRemote = false;
+  }
+  if (hasRemote) {
     git("fetch", "origin", base);
     git("branch", familyBase, `origin/${base}`);
-  } catch {
-    // No remote <base> (a local-only source) ⇒ cut from the local <base>.
+  } else {
     git("branch", familyBase, base);
   }
   const startHead = git("rev-parse", familyBase);

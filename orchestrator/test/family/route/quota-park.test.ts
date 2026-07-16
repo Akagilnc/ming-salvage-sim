@@ -35,7 +35,6 @@ import {
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   StepSpec,
@@ -106,22 +105,12 @@ class ChildBackend implements Backend {
       body: this.bodyByIssue.get(issueNumber) ?? CODER_REC_BODY,
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    if (this.failSnapshot) throw new Error("snapshot read failed (test)");
-    return {
-      number: issueNumber,
-      body: this.bodyByIssue.get(issueNumber) ?? CODER_REC_BODY,
-      comments: [],
-      agentBrief: "## Agent Brief",
-    };
-  }
   async prepareWorktree(
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "judge", status: "converged" };

@@ -335,7 +335,7 @@ describe("#914 C1 custom tightFamilies survive route mutations", () => {
       { slot: "coder", slug: "opus", family: "claude" },
       { slot: "coderFix", slug: "opus", family: "claude" },
     ]);
-    expect(applyTightRoutePolicy(mutated, { interactive: false }).kind).toBe(
+    expect(applyTightRoutePolicy(mutated).kind).toBe(
       "stop",
     );
   });
@@ -366,7 +366,7 @@ describe("#914 C1 custom tightFamilies survive route mutations", () => {
     expect(relayed.tightFamilyViolations).toEqual([
       { slot: "ship", slug: "opus", family: "claude" },
     ]);
-    expect(applyTightRoutePolicy(relayed, { interactive: false }).kind).toBe(
+    expect(applyTightRoutePolicy(relayed).kind).toBe(
       "stop",
     );
   });

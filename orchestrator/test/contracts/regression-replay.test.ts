@@ -494,7 +494,6 @@ describe("#451 dogfood replay fixture", () => {
       routeName: "claude-tight",
       // Pure unit still sees tight violation; public ignition ignores deleted env.
       violationReason: "tight route violation",
-      envOverrideIgnored: true,
     });
     expect(rowsById.get("376-closure-context-positive")?.sourceEvidence).toMatchObject({
       seam: "runner",

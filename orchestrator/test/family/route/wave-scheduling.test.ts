@@ -26,7 +26,6 @@ import { recordFamilyEscalated } from "../../../src/family/ledger.js";
 import type {
   Backend,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   RunInput,
   StepOutput,
@@ -68,13 +67,9 @@ class RecordingChildBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "b", comments: [], agentBrief: "## Agent Brief" };
-  }
   async prepareWorktree(issueNumber: number, base: string): Promise<WorktreeHandle> {
     return { branch: `feat/child-${issueNumber}`, base, path: `/wt/${issueNumber}` };
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if (spec.role === "coder") return { kind: "coder", committed: true, commitsAdded: 1 };
     return { kind: "judge", status: "converged" };

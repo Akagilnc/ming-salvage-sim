@@ -10,7 +10,6 @@ import type {
   Backend,
   FindingDisposition,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -70,29 +69,12 @@ class HappyPathBackend implements Backend {
     };
   }
 
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    this.calls.push(`fetchIssueSnapshot(${issueNumber})`);
-    return {
-      number: issueNumber,
-      body: "issue body",
-      comments: [],
-      agentBrief: "## Agent Brief\nimplement the thing",
-    };
-  }
-
   async prepareWorktree(
     issueNumber: number,
     base: string,
   ): Promise<WorktreeHandle> {
     this.calls.push(`prepareWorktree(${issueNumber}, ${base})`);
     return this.worktree;
-  }
-
-  async writeSnapshot(
-    worktree: WorktreeHandle,
-    snapshot: IssueSnapshot,
-  ): Promise<void> {
-    this.calls.push(`writeSnapshot(${worktree.branch}, #${snapshot.number})`);
   }
 
   async runStep(spec: StepSpec): Promise<StepOutput> {
@@ -210,7 +192,7 @@ describe("runOrchestrator — happy path skeleton (ADR 0030)", () => {
 
     await runOrchestrator({ issueNumber: 247, backend });
 
-    // #936: Scene discovery first; snapshot dual court deleted (no writeSnapshot).
+    // #936: Scene discovery first; snapshot dual court deleted.
     expect(backend.calls).toEqual([
       "findResumeState(247)", // Scene Recovery discovery (ID-005)
       "fetchIssueMeta(247)", // S0 input_gate (lightweight metadata)

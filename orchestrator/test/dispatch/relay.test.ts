@@ -68,7 +68,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepSpec,
@@ -602,11 +601,7 @@ describe("#787 capacity relay", () => {
             openBlockedBy: [], body: "Coder-Rec: terra@med → luna@med",
           };
         }
-        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-          return { number: n, body: "Coder-Rec: terra@med → luna@med", comments: [], agentBrief: "" };
-        }
         async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
-        async writeSnapshot(): Promise<void> {}
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -697,16 +692,7 @@ describe("#787 capacity relay", () => {
           body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -838,16 +824,7 @@ describe("#787 capacity relay", () => {
             body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
           };
         }
-        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-          return {
-            number: n,
-            body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
-            comments: [],
-            agentBrief: "",
-          };
-        }
         async prepareWorktree(): Promise<WorktreeHandle> { return worktree; }
-        async writeSnapshot(): Promise<void> {}
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -1419,18 +1396,9 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med → luna@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1554,18 +1522,9 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           body: "Coder-Rec: grok-4.5 → terra@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1682,18 +1641,9 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           body: "Coder-Rec: grok-4.5 → terra@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -1811,18 +1761,9 @@ describe("#686 R1 runner park sites: park vs relay (e2e)", () => {
           body: "Coder-Rec: grok-4.5 → terra@med",
         };
       }
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return {
-          number: n,
-          body: "Coder-Rec: grok-4.5 → terra@med",
-          comments: [],
-          agentBrief: "",
-        };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(): Promise<StepOutput> {
         return { kind: "coder", committed: true, commitsAdded: 1 };
       }
@@ -2008,18 +1949,9 @@ describe("#686 R2 production seams", () => {
             body: "Coder-Rec: grok-4.5 → terra@med",
           };
         }
-        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-          return {
-            number: n,
-            body: "Coder-Rec: grok-4.5 → terra@med",
-            comments: [],
-            agentBrief: "",
-          };
-        }
         async prepareWorktree(): Promise<WorktreeHandle> {
           return worktree;
         }
-        async writeSnapshot(): Promise<void> {}
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }
@@ -2300,13 +2232,9 @@ describe("#686 R2 production seams", () => {
           body: "Coder-Rec: grok-4.5",
         };
       },
-      async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-        return { number: n, body: "Coder-Rec: grok-4.5", comments: [], agentBrief: "" };
-      },
       async prepareWorktree(): Promise<WorktreeHandle> {
         return worktree;
       },
-      async writeSnapshot(): Promise<void> {},
       async runStep(spec: StepSpec): Promise<StepOutput> {
         if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
         return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -2442,18 +2370,9 @@ describe("#686 R2 production seams", () => {
             body: "Coder-Rec: grok-4.5",
           };
         }
-        async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-          return {
-            number: n,
-            body: "Coder-Rec: grok-4.5",
-            comments: [],
-            agentBrief: "",
-          };
-        }
         async prepareWorktree(): Promise<WorktreeHandle> {
           return worktree;
         }
-        async writeSnapshot(): Promise<void> {}
         async runStep(): Promise<StepOutput> {
           return { kind: "coder", committed: true, commitsAdded: 1 };
         }

@@ -18,7 +18,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   ReviewFixRefuseRecord,
@@ -956,13 +955,9 @@ class FixLoopBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return this.opts.worktree ?? WORKTREE;
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
     return { kind: "coder", committed: true, commitsAdded: 1 };

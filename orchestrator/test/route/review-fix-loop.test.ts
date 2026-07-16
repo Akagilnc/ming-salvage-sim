@@ -14,7 +14,6 @@ import type {
   DispatchContext,
   Finding,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   ResumeState,
   StepOutput,
@@ -120,13 +119,9 @@ class RetryReviewBackend implements Backend {
       openBlockedBy: [],
     };
   }
-  async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-    return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return this.worktree;
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(spec: StepSpec): Promise<StepOutput> {
     if ((spec.role === "reviewer" || spec.role === "verify")) return { kind: "judge", status: "converged" };
     return { kind: "coder", committed: true, commitsAdded: 1 };
@@ -2117,13 +2112,9 @@ describe("#369 runner resume/retry review fixes", () => {
           openBlockedBy: [],
         };
       }
-      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-        return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return WORKTREE;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
         this.calls.push(`runStep(${spec.id})`);
         if ((spec.role === "reviewer" || spec.role === "verify")) {
@@ -2164,13 +2155,9 @@ describe("#369 runner resume/retry review fixes", () => {
           openBlockedBy: [],
         };
       }
-      async fetchIssueSnapshot(issueNumber: number): Promise<IssueSnapshot> {
-        return { number: issueNumber, body: "body", comments: [], agentBrief: "" };
-      }
       async prepareWorktree(): Promise<WorktreeHandle> {
         return WORKTREE;
       }
-      async writeSnapshot(): Promise<void> {}
       async runStep(spec: StepSpec): Promise<StepOutput> {
         if ((spec.role === "reviewer" || spec.role === "verify")) {
           this.reviewerAttempts += 1;

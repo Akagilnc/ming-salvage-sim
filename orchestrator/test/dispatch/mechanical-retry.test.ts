@@ -30,7 +30,6 @@ import type {
   Backend,
   DispatchContext,
   IssueMeta,
-  IssueSnapshot,
   PersistentLedgerEntry,
   StepOutput,
   WorkerLandingPayload,
@@ -284,13 +283,9 @@ class CoderCrashBackend implements Backend {
   async fetchIssueMeta(n: number): Promise<IssueMeta> {
     return { number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
   }
-  async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-    return { number: n, body: "body", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return RUN_WORKTREE;
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(): Promise<StepOutput> {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
@@ -355,13 +350,9 @@ class ReviewerCrashBackend implements Backend {
   async fetchIssueMeta(n: number): Promise<IssueMeta> {
     return { number: n, isReadyForAgent: true, hasSubIssues: false, isClosed: false, openBlockedBy: [] };
   }
-  async fetchIssueSnapshot(n: number): Promise<IssueSnapshot> {
-    return { number: n, body: "body", comments: [], agentBrief: "" };
-  }
   async prepareWorktree(): Promise<WorktreeHandle> {
     return RUN_WORKTREE;
   }
-  async writeSnapshot(): Promise<void> {}
   async runStep(): Promise<StepOutput> {
     return { kind: "coder", committed: true, commitsAdded: 1 };
   }
