@@ -976,6 +976,102 @@ export function appendAgyAuthMount(
 }
 
 /**
+ * #913 — core credential set shared by family merger / cmr / ship mount*Auth.
+ * Each field is BEST-EFFORT: missing host source ⇒ undefined (caller degrades
+ * or fail-closes per worker policy).
+ */
+export interface FamilyWorkerAuthCore {
+  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
+  readonly codexAuthDir?: string;
+  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
+  readonly grokAuthDir?: string;
+  /** Per-run agy OAuth dir, or undefined if absent. */
+  readonly agyDir?: string;
+  /** Claude OAuth token body, or undefined if absent/blank. */
+  readonly claudeToken?: string;
+}
+
+/**
+ * #913 — map core credential presence → typed providerAuth (cmr / ship wrappers).
+ * Single derivation; callers must not re-list the claude/grok/agy checks.
+ */
+export function providerAuthFromCore(
+  core: FamilyWorkerAuthCore,
+): ProviderAuthAvailability {
+  return {
+    claude: core.claudeToken !== undefined,
+    grok: core.grokAuthDir !== undefined,
+    agy: core.agyDir !== undefined,
+  };
+}
+
+/**
+ * #913 — single family-worker auth provision seam (merger / cmr / ship).
+ *
+ * Before this helper, the three family mount*Auth methods each inlined the same
+ * best-effort codex + grok + agy + claude token provision (family auth ×3).
+ * Callers pass a role-specific temp-dir prefix (`merger` / `cmr` / `ship`) so
+ * concurrent workers never share credential dirs; role-specific extras (gh token,
+ * providerAuth) stay on the thin mount wrappers.
+ */
+export function provisionFamilyWorkerAuth(input: {
+  readonly home: string;
+  /** mkdtemp name stem — yields `${rolePrefix}-codex-auth-` / `-grok-auth-` / `-agy-`. */
+  readonly rolePrefix: string;
+  readonly homeEnvFile: string;
+  readonly codexFast?: boolean;
+}): FamilyWorkerAuthCore {
+  const { home, rolePrefix, homeEnvFile, codexFast = false } = input;
+  const root = join(home, ".sc-orchestrator");
+
+  let codexAuthDir: string | undefined;
+  let tempCodexDir: string | undefined;
+  try {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    tempCodexDir = mkdtempSync(join(root, `${rolePrefix}-codex-auth-`));
+    copyFileSync(join(home, ".codex", "auth.json"), join(tempCodexDir, "auth.json"));
+    chmodSync(join(tempCodexDir, "auth.json"), 0o600);
+    // Container is the sandbox boundary — write minimal config, never host config.toml (#378).
+    writeContainerCodexConfig(join(tempCodexDir, "config.toml"), codexFast);
+    // #911: replace any host AGENTS.md with container home environment body.
+    provisionCodexHomeAgents(tempCodexDir, homeEnvFile);
+    codexAuthDir = tempCodexDir;
+  } catch {
+    // codex auth absent / half-built → reclaim mkdtemp dir so it does not leak.
+    if (codexAuthDir === undefined && tempCodexDir !== undefined) {
+      rmSync(tempCodexDir, { recursive: true, force: true });
+    }
+  }
+
+  let grokAuthDir: string | undefined;
+  let tempGrokDir: string | undefined;
+  try {
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    tempGrokDir = mkdtempSync(join(root, `${rolePrefix}-grok-auth-`));
+    copyFileSync(join(home, ".grok", "auth.json"), join(tempGrokDir, "auth.json"));
+    chmodSync(join(tempGrokDir, "auth.json"), 0o600);
+    grokAuthDir = tempGrokDir;
+  } catch {
+    if (grokAuthDir === undefined && tempGrokDir !== undefined) {
+      rmSync(tempGrokDir, { recursive: true, force: true });
+    }
+  }
+
+  const agyDir = provisionAgyAuthDir(home, root, `${rolePrefix}-agy-`);
+
+  let claudeToken: string | undefined;
+  try {
+    const tok = readFileSync(join(home, ".sc-claude-token"), "utf8").trim();
+    // Present-but-blank ⇒ undefined (preflight escalates); never inject "".
+    claudeToken = tok === "" ? undefined : tok;
+  } catch {
+    claudeToken = undefined;
+  }
+
+  return { codexAuthDir, grokAuthDir, agyDir, claudeToken };
+}
+
+/**
  * Host paths for the per-issue codex auth copy + the claude token (spike
  * contract). codex auth MUST live under $HOME (colima shares $HOME into the
  * Docker VM; $TMPDIR is NOT shared → a tmp copy mounts root-owned/empty →
@@ -2771,11 +2867,8 @@ export class RealBackend implements Backend {
       claudeToken,
       grokAuthDir,
       agyDir,
-      providerAuth: {
-        claude: claudeToken !== undefined,
-        grok: grokAuthDir !== undefined,
-        agy: agyDir !== undefined,
-      },
+      // Same projection as family mount*Auth — single derivation, no hand-map.
+      providerAuth: providerAuthFromCore({ claudeToken, grokAuthDir, agyDir }),
     };
   }
 
