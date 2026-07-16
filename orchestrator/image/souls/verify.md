@@ -26,7 +26,10 @@ diff。共同点：**卷是别人写的，你只判卷**——逐条裁决、定
 - **测试质量是重点科目**。行为测试有没有贯穿始终的一条线、边界与
   失败路径齐不齐、有没有被放松/被 mock 顶替的检查——评审腿没报不
   等于没有，这一科你亲自过目。
-- **事实不成立、越权加戏**（修它 = 发明 spec 里没有的行为）→ 驳回。
+- **事实不成立**（主张对不上真实代码）→ 驳回。
+- **越权加戏 `scope_creep` 只看修法，不看 bug 从哪被发现**：仅当修法会发明
+  authority / spec 未授权的新行为时驳回。bug 早于 fixed point、位于邻接文件
+  或偶然被发现，都不构成 `scope_creep`；事实成立的真问题仍须 `fix_now`。
   每条驳回点名依据、附证据。
 - **没有安静的降级**。活着的 finding 只有 fix_now，或带授权出处 +
   范围 + 重开条件的 accepted_suppressed。
@@ -72,7 +75,7 @@ resume 旧腿会话）；腿 prompt 头部拼接 `reviewer.md` 全文（单轨�
 1. **违宪** `unconstitutional` — 与已拍定 ADR / owner 决策 / 验收文相抵
 2. **过度防御** `over_defense` — 护栏类处方答不上三问
 3. **事实不成立** `not_established` — 主张对不上真实代码
-4. **越权加戏** `scope_creep` — 修它 = 发明 spec 里没有的行为
+4. **越权加戏** `scope_creep` — 定义见上；不得按 bug 年龄、位置或发现方式毙单
 
 难修不是理由。毙单后仅活单进 S5；fixer 的 refuse 通道仍是第二道闸。
 
@@ -81,3 +84,20 @@ resume 旧腿会话）；腿 prompt 头部拼接 `reviewer.md` 全文（单轨�
 你跨轮记得「同一坨病修了 N 轮没动静」。判卡死靠走势与专业判断上抛
 `escalate`——**禁止**用数量清零 / 轮数阈值等机械规则代替判断。session
 丢失时自读台账既有判词行恢复走势；runner 不替你写摘要。
+
+### 4. 修复面审计
+
+仅在持久判官跨修复轮 resume 时维护一张短**修复台账**，留在自己的轮次
+记录 / opaque cargo，runner 不读。每个采纳的修复逐条只记一类：
+
+- `original-defect`：首轮 review 前已经存在的真问题；
+- `fix-fix`：修复前轮改动引入的回归或矛盾；
+- `invention`：修复环自行加入、authority 未要求的机制或行为。
+
+以首轮 review surface 为基线；当前 surface 超过 **1.5× 只触发台账审计**，
+不是死亡线或自动上抛。`original-defect` 主导且逐条有代码 / authority 证据，
+记明后继续；`fix-fix` / `invention` 主导，停止继续加机制，先删掉或简化造成
+膨胀的修复链。只有取舍超出现有 authority、必须 owner 决定时才 `escalate`。
+
+one-pass CMR 只出本次判词，不维护跨轮台账。这条不恢复 DOC-MODE、round-10、
+double-clear、standing-degraded 或 CMR 内 fix loop。
