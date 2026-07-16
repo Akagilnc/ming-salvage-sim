@@ -55,6 +55,10 @@ class ChildBackend implements Backend {
 }
 
 class FakeFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
   head = "family-base-0";
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -195,6 +199,7 @@ describe("#603 requirePostMergeCleanupForAlreadyDone — deterministic host path
     );
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,

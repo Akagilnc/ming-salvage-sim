@@ -522,6 +522,9 @@ describe("#422 model route presets", () => {
       async readFamilyLedger(): Promise<ReadonlyArray<FamilyLedgerEntry>> {
         throw new Error("family backend should not run");
       },
+      async runFamilyVerify(): Promise<{ ok: true }> {
+        throw new Error("family backend should not run");
+      },
     };
     const singleSliceBackend = {
       async findResumeState(): Promise<undefined> {
@@ -531,6 +534,7 @@ describe("#422 model route presets", () => {
 
     const { runFamily } = await import("../../src/family/runner.js");
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: { issue: 376, children: [{ issue: 428, blockedBy: [] }] },
       familyBackend,
       singleSliceBackend,

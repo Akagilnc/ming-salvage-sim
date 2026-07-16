@@ -4848,6 +4848,10 @@ describe("#600 r5 legacy skeleton gate — family", () => {
 
 describe("#600 r7 family online review — cleanup landing + in-band failures", () => {
   class ReviewLoopFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
     readonly reviewLoopLandings: WorkerLandingPayload[] = [];
     readonly ledger: FamilyLedgerEntry[] = [];
     readFamilyHead?: (familyBase: string) => Promise<string>;
@@ -5406,6 +5410,10 @@ describe("#600 r7 family online review — cleanup landing + in-band failures", 
   it("#743 online R1: family rebuild accepts the production recordOnlineReviewFixCommitted row shape", async () => {
     // Gemini alleged status-only rows; pin the real writer output and rebuild from it.
     class CaptureFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly appended: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(): Promise<{ familyHead: string }> {
         return { familyHead: "head" };

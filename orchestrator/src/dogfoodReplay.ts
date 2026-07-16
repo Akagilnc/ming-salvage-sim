@@ -15,6 +15,7 @@ import type {
   FamilyEpic,
   FamilyEscalation,
   FamilyLedgerEntry,
+  FamilyVerifyResult,
   MergeRequest,
 } from "./family/types.js";
 import { findingIdentityKey } from "./findings.js";
@@ -504,6 +505,10 @@ class ThrowingDogfoodSingleSliceBackend extends DogfoodSingleSliceBackend {
 }
 
 class DogfoodFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<FamilyVerifyResult> {
+    return { ok: true };
+  }
+
   readonly ledger: FamilyLedgerEntry[] = [];
 
   constructor(
@@ -549,7 +554,7 @@ class DogfoodCmrFamilyBackend extends DogfoodFamilyBackend {
     this.familyHeadCursor = currentHead;
   }
 
-  async runFamilyVerify(): Promise<{ ok: true }> {
+  override async runFamilyVerify(): Promise<FamilyVerifyResult> {
     return { ok: true };
   }
 
@@ -1478,6 +1483,8 @@ async function familyAlreadyDoneReplay(): Promise<SeamReplay> {
     familyBackend,
     singleSliceBackend,
     familyBase: "family/445-base",
+    // #939: required verify is green; skip full CMR/ship for already-done resume.
+    verifyCmr: async () => ({ ok: true, ran: true }),
   });
   if (singleSliceBackend.dispatched.length > 0) {
     throw new Error("dogfood family already-done replay reran the child slice");
@@ -1509,6 +1516,8 @@ async function familyAdmissionSkippedReplay(): Promise<SeamReplay> {
     familyBackend: new DogfoodFamilyBackend("family-admission-head"),
     singleSliceBackend: new DogfoodSingleSliceBackend(),
     familyBase: "family/445-base",
+    // #939: required verify is green; this replay only asserts admission skip metadata.
+    verifyCmr: async () => ({ ok: true, ran: true }),
   });
   const skipped = result.stopSummary.metadata?.admissionSkipped?.[0];
   if (

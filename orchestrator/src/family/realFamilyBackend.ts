@@ -1264,42 +1264,46 @@ export class RealFamilyBackend implements FamilyBackend {
     await this.verificationStampTail;
   }
 
-  /**
-   * Does `cwd` hold a Node project (a `package.json`)? The verify-skip guard (R1 T2)
-   * for non-Node diffs. `protected` so a unit test drives the skip branch without a
-   * real FS.
-   */
+  /** True iff package.json is a file; ENOENT→false; other probe errors throw. */
   protected isNodeProject(cwd: string): boolean {
-    return existsSync(join(cwd, "package.json"));
+    const path = join(cwd, "package.json");
+    try {
+      return statSync(path).isFile();
+    } catch (err) {
+      if (isFileNotFound(err)) return false;
+      const d = err instanceof Error ? err.message : String(err);
+      throw new Error(`family verify: failed to probe package.json at "${path}": ${d}`);
+    }
   }
 
   /**
-   * Script names from `cwd`'s package.json. Operational read/parse errors throw
-   * (never degrade to `[]` — #934 ID-011 / #939). A successful empty list is the
-   * legal empty command set for skip.
+   * Script names from package.json. Read/parse/shape op-errors throw (#934 ID-011).
+   * Only a successful valid object may return [] (legal empty skip).
    */
   protected packageScripts(cwd: string): readonly string[] {
     const path = join(cwd, "package.json");
+    const detail = (err: unknown) => (err instanceof Error ? err.message : String(err));
     let raw: string;
     try {
       raw = readFileSync(path, "utf8");
     } catch (err) {
-      throw new Error(
-        `family verify: failed to read package.json at "${path}": ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+      throw new Error(`family verify: failed to read package.json at "${path}": ${detail(err)}`);
     }
+    let parsed: unknown;
     try {
-      const pkg = JSON.parse(raw) as { scripts?: Record<string, unknown> };
-      return Object.keys(pkg.scripts ?? {});
+      parsed = JSON.parse(raw);
     } catch (err) {
-      throw new Error(
-        `family verify: failed to parse package.json at "${path}": ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+      throw new Error(`family verify: failed to parse package.json at "${path}": ${detail(err)}`);
     }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`family verify: package.json at "${path}" must be a JSON object`);
+    }
+    const scripts = (parsed as { scripts?: unknown }).scripts;
+    if (scripts === undefined) return [];
+    if (scripts === null || typeof scripts !== "object" || Array.isArray(scripts)) {
+      throw new Error(`family verify: package.json "scripts" at "${path}" must be an object`);
+    }
+    return Object.keys(scripts as Record<string, unknown>);
   }
 
   /**

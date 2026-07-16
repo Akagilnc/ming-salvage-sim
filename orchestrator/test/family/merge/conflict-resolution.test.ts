@@ -47,6 +47,10 @@ import type {
  * call and returns a synthetic resolved head.
  */
 class ConflictingFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly merges: MergeRequest[] = [];
   readonly resolves: ConflictResolveRequest[] = [];
   readonly appended: FamilyLedgerEntry[] = [];
@@ -109,6 +113,10 @@ class ConflictingFamilyBackend implements FamilyBackend {
  * on a backend that cannot resolve it.
  */
 class NoResolverFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
   readonly appended: FamilyLedgerEntry[] = [];
   constructor(private readonly conflictIssues: ReadonlySet<number> = new Set()) {}
   async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
@@ -160,6 +168,10 @@ describe("merger conflict fallback — no-conflict path stays deterministic (#29
     // (no-conflict) deterministic merge must NOT leak a false LLM-resolved signal
     // downstream — the merger is the sole source of truth for the flag.
     class FlagStampingFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly appended: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<MergeResult> {
         return { familyHead: `merged-${child.childIssue}`, conflictResolvedByLlm: true };

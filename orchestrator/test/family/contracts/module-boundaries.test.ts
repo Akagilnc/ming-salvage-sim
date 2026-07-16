@@ -123,6 +123,10 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
   it("prints the resolved model route lineup before the first family child worker dispatch", async () => {
     vi.stubEnv("ORCHESTRATOR_ROUTE", "normal");
     class OneChildFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
         return { familyHead: `h${child.childIssue}` };
@@ -138,6 +142,7 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
 
     await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend: new OneChildFamilyBackend(),
       singleSliceBackend: childBackend,
@@ -174,6 +179,10 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
     // merger seam. Here the seam stamps a custom head per child; the spine's result
     // must reflect it verbatim → the spine routes the merge through the seam.
     class CustomHeadFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [];
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
         return { familyHead: `CUSTOM-${child.childIssue}` };
@@ -189,6 +198,7 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
     }
     const familyBackend = new CustomHeadFamilyBackend();
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend: new ChildBackend(),
@@ -204,6 +214,10 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
     // exists — i.e. the spine re-reads `mergedSet` from the ledger each wave.
     // (Two waves: 10 first, then 11 once 10 is in the ledger.)
     class RecordingFamilyBackend implements FamilyBackend {
+  async runFamilyVerify(_req?: unknown): Promise<{ ok: boolean }> {
+    return { ok: true };
+  }
+
       readonly ledger: FamilyLedgerEntry[] = [];
       readonly mergeOrder: number[] = [];
       async mergeChildIntoFamilyBase(child: MergeRequest): Promise<{ familyHead: string }> {
@@ -229,6 +243,7 @@ describe("acceptance 4 — the spine routes through each module's injected seam"
       ],
     };
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic,
       familyBackend,
       singleSliceBackend: new ChildBackend(),

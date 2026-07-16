@@ -123,8 +123,8 @@ class FakeFamilyBackend implements FamilyBackend {
     return this.workingRepo;
   }
 
-  // #596 r2 support for full final barrier in spine tests (runVerifyCmr fresh path)
-  runFamilyVerify?: FamilyBackend["runFamilyVerify"];
+  // #596 r2 / #939: verify is required; default green for spine path tests.
+  runFamilyVerify: FamilyBackend["runFamilyVerify"] = async () => ({ ok: true });
   dispatchWorker?: (
     spec: WorkerSpec,
     ctx: DispatchContext,
@@ -147,6 +147,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11, 12),
       familyBackend,
       singleSliceBackend,
@@ -187,6 +188,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     );
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -324,6 +326,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     );
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -366,6 +369,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     };
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -419,6 +423,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     };
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -532,6 +537,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const familyBackend = new FakeFamilyBackend();
 
     await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,
@@ -551,6 +557,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const familyBackend = new FakeFamilyBackend();
 
     await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11, 12),
       familyBackend,
       singleSliceBackend,
@@ -574,6 +581,7 @@ describe("runFamily — thinnest e2e (#293 acceptance 1)", () => {
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10),
       familyBackend,
       singleSliceBackend,
@@ -599,6 +607,7 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,
@@ -627,6 +636,7 @@ describe("runFamily — family entry accepts the epic; each child passes its OWN
     const familyBackend = new FakeFamilyBackend();
 
     const result = await runFamily({
+      verifyCmr: async () => ({ ok: true, ran: true }),
       epic: epicWith(10, 11),
       familyBackend,
       singleSliceBackend,
