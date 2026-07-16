@@ -1,4 +1,7 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
 import {
   parseCoderRec,
@@ -8,9 +11,6 @@ import {
 } from "./coderRoster.js";
 import {
   modelFamilyForCmrReviewLeg,
-  CODER_CODEX_SLUG,
-  REVIEWER_CODEX_SLUG,
-  VERIFY_CODEX_SLUG,
   modelFamilyForSlug,
   resolveModelSlug,
   type ModelFamily,
@@ -73,6 +73,9 @@ export const MODEL_ROUTE_SLOTS = [
 
 export const MODEL_ROUTE_LEG_COLLECTIONS = ["cmrReview"] as const;
 
+const SLOT_SET = new Set<string>(MODEL_ROUTE_SLOTS);
+const LEG_COLLECTION_SET = new Set<string>(MODEL_ROUTE_LEG_COLLECTIONS);
+
 export type ModelRouteSlot = (typeof MODEL_ROUTE_SLOTS)[number];
 export type ModelRouteLegCollection = (typeof MODEL_ROUTE_LEG_COLLECTIONS)[number];
 export type ModelSlotMap = Readonly<Record<ModelRouteSlot, string>>;
@@ -101,6 +104,13 @@ export interface ResolvedModelRoute {
   readonly routeName: string;
   readonly slots: ModelSlotMap;
   readonly legCollections: ModelRouteLegCollectionMap;
+  /**
+   * Tight families captured at resolve time from the presets table that
+   * produced this route. Mutations must reuse this snapshot — never re-fetch
+   * via process.env (custom ORCHESTRATOR_ROUTE_PRESETS_PATH only in the
+   * resolve env arg would otherwise drop policy to []).
+   */
+  readonly tightFamilies: ReadonlyArray<ModelFamily>;
   readonly tightFamilyViolations: ReadonlyArray<TightFamilyViolation>;
   /** One smoke record for every model×pipe entry in this route. */
   readonly smoke: Readonly<Record<string, RouteSmokeStatus>>;
@@ -124,117 +134,194 @@ interface ModelRoutePreset {
   readonly tightFamilies?: ReadonlyArray<ModelFamily>;
 }
 
-const NORMAL_SLOTS: ModelSlotMap = {
-  coder: CODER_CODEX_SLUG,
-  coderFix: CODER_CODEX_SLUG,
-  ship: "sonnet",
-  merger: "sonnet",
-  cmrCompleteness: VERIFY_CODEX_SLUG,
-  cmrCorrectness: VERIFY_CODEX_SLUG,
-  verify: VERIFY_CODEX_SLUG,
-  fixer: "sonnet",
-  cleanup: "sonnet",
-  docRelease: "sonnet",
-};
+/** Env override for the route-presets config path (#916). */
+export const ROUTE_PRESETS_PATH_ENV = "ORCHESTRATOR_ROUTE_PRESETS_PATH";
 
-const NORMAL_LEG_COLLECTIONS: ModelRouteLegCollectionMap = {
-  cmrReview: [
-    { family: "codex", slug: REVIEWER_CODEX_SLUG },
-    { family: "claude", slug: "opus" },
-    { family: "agy", slug: "agy", optional: true },
-  ],
-};
+const DEFAULT_ROUTE_PRESETS_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "config",
+  "route-presets.json",
+);
 
-const ROUTE_PRESETS: Readonly<Record<string, ModelRoutePreset>> = {
-  normal: { slots: NORMAL_SLOTS, legCollections: NORMAL_LEG_COLLECTIONS },
-  "codex-cheap": {
-    slots: {
-      coder: CODER_CODEX_SLUG,
-      coderFix: CODER_CODEX_SLUG,
-      ship: "sonnet",
-      merger: "sonnet",
-      cmrCompleteness: VERIFY_CODEX_SLUG,
-      cmrCorrectness: VERIFY_CODEX_SLUG,
-      verify: VERIFY_CODEX_SLUG,
-      fixer: "sonnet",
-      cleanup: "sonnet",
-      docRelease: "sonnet",
-    },
-    legCollections: {
-      cmrReview: [
-        { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy", optional: true },
-        { family: "codex", slug: REVIEWER_CODEX_SLUG },
-      ],
-    },
-  },
-  "codex-tight": {
-    tightFamilies: ["codex"],
-    slots: {
-      coder: "sonnet",
-      coderFix: "sonnet",
-      ship: "sonnet",
-      merger: "sonnet",
-      cmrCompleteness: "opus",
-      cmrCorrectness: "opus",
-      verify: "opus",
-      fixer: "sonnet",
-      cleanup: "sonnet",
-      docRelease: "sonnet",
-    },
-    legCollections: {
-      cmrReview: [
-        { family: "claude", slug: "opus" },
-        { family: "agy", slug: "agy", optional: true },
-      ],
-    },
-  },
-  "claude-cheap": {
-    slots: {
-      coder: CODER_CODEX_SLUG,
-      coderFix: CODER_CODEX_SLUG,
-      ship: CODER_CODEX_SLUG,
-      merger: CODER_CODEX_SLUG,
-      cmrCompleteness: VERIFY_CODEX_SLUG,
-      cmrCorrectness: VERIFY_CODEX_SLUG,
-      verify: VERIFY_CODEX_SLUG,
-      fixer: CODER_CODEX_SLUG,
-      cleanup: CODER_CODEX_SLUG,
-      docRelease: CODER_CODEX_SLUG,
-    },
-    legCollections: {
-      cmrReview: [
-        { family: "codex", slug: REVIEWER_CODEX_SLUG },
-        { family: "agy", slug: "agy", optional: true },
-        { family: "claude", slug: "opus" },
-      ],
-    },
-  },
-  "claude-tight": {
-    tightFamilies: ["claude"],
-    slots: {
-      coder: CODER_CODEX_SLUG,
-      coderFix: CODER_CODEX_SLUG,
-      ship: CODER_CODEX_SLUG,
-      merger: CODER_CODEX_SLUG,
-      cmrCompleteness: VERIFY_CODEX_SLUG,
-      cmrCorrectness: VERIFY_CODEX_SLUG,
-      verify: VERIFY_CODEX_SLUG,
-      fixer: CODER_CODEX_SLUG,
-      cleanup: CODER_CODEX_SLUG,
-      docRelease: CODER_CODEX_SLUG,
-    },
-    legCollections: {
-      cmrReview: [
-        { family: "codex", slug: REVIEWER_CODEX_SLUG },
-        { family: "agy", slug: "agy", optional: true },
-      ],
-    },
-  },
-};
+const MODEL_FAMILIES = new Set<ModelFamily>(["claude", "codex", "agy", "other"]);
 
-const SLOT_SET = new Set<string>(MODEL_ROUTE_SLOTS);
-const LEG_COLLECTION_SET = new Set<string>(MODEL_ROUTE_LEG_COLLECTIONS);
+let cachedRoutePresets: Readonly<Record<string, ModelRoutePreset>> | undefined;
+let cachedRoutePresetsPath: string | undefined;
+
+/** Test-only: drop the loaded presets cache after path/env mutations. */
+export function resetRoutePresetsCacheForTests(): void {
+  cachedRoutePresets = undefined;
+  cachedRoutePresetsPath = undefined;
+}
+
+function resolveRoutePresetsPath(env: ModelRouteEnv = process.env): string {
+  const override = env[ROUTE_PRESETS_PATH_ENV]?.trim();
+  if (override !== undefined && override !== "") {
+    return isAbsolute(override) ? override : join(process.cwd(), override);
+  }
+  return DEFAULT_ROUTE_PRESETS_PATH;
+}
+
+function parseRoutePresetLeg(raw: unknown, routeName: string): ModelRouteLeg {
+  if (typeof raw !== "object" || raw === null) {
+    throw new Error(
+      `route preset "${routeName}": cmrReview leg must be an object with slug`,
+    );
+  }
+  const record = raw as Record<string, unknown>;
+  if (typeof record.slug !== "string" || record.slug.trim() === "") {
+    throw new Error(`route preset "${routeName}": cmrReview leg missing slug`);
+  }
+  const slug = record.slug.trim();
+  // family omitted → derive from registry. family present but not a known
+  // ModelFamily → fail-loud (Gemini R2 G3 / family/914 online). Do not
+  // silently fall back to modelFamilyForSlug on typos like "openai".
+  let family: ModelFamily;
+  if (record.family === undefined) {
+    family = modelFamilyForSlug(slug);
+  } else if (
+    typeof record.family === "string" &&
+    MODEL_FAMILIES.has(record.family as ModelFamily)
+  ) {
+    family = record.family as ModelFamily;
+  } else {
+    throw new Error(
+      `route preset "${routeName}": cmrReview leg "${slug}" has invalid family ` +
+        `"${String(record.family)}"`,
+    );
+  }
+  if (record.optional === true) {
+    return { family, slug, optional: true };
+  }
+  return { family, slug };
+}
+
+function parseRoutePreset(
+  routeName: string,
+  raw: unknown,
+): ModelRoutePreset {
+  if (typeof raw !== "object" || raw === null) {
+    throw new Error(`route preset "${routeName}" must be an object`);
+  }
+  const record = raw as Record<string, unknown>;
+  if (typeof record.slots !== "object" || record.slots === null) {
+    throw new Error(`route preset "${routeName}" missing slots`);
+  }
+  const slotsRaw = record.slots as Record<string, unknown>;
+  const slots = {} as Record<ModelRouteSlot, string>;
+  for (const slot of MODEL_ROUTE_SLOTS) {
+    const value = slotsRaw[slot];
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error(`route preset "${routeName}" missing slot "${slot}"`);
+    }
+    slots[slot] = value.trim();
+  }
+  for (const key of Object.keys(slotsRaw)) {
+    if (!SLOT_SET.has(key)) {
+      throw new Error(`route preset "${routeName}" has unknown slot "${key}"`);
+    }
+  }
+
+  // Single nested form only (#916): legCollections.cmrReview. No top-level
+  // cmrReview fallback — dual schema roots are a hand-sync surface.
+  if (typeof record.legCollections !== "object" || record.legCollections === null) {
+    throw new Error(`route preset "${routeName}" missing legCollections`);
+  }
+  const legsRoot = record.legCollections as Record<string, unknown>;
+  // Mirror SLOT_SET: reject unknown keys (Gemini R2 G4 / family/914 online).
+  for (const key of Object.keys(legsRoot)) {
+    if (!LEG_COLLECTION_SET.has(key)) {
+      throw new Error(
+        `route preset "${routeName}" has unknown legCollection "${key}"`,
+      );
+    }
+  }
+  const cmrRaw = legsRoot.cmrReview;
+  if (!Array.isArray(cmrRaw) || cmrRaw.length === 0) {
+    throw new Error(`route preset "${routeName}" missing non-empty cmrReview legs`);
+  }
+  const cmrReview = cmrRaw.map((leg) => parseRoutePresetLeg(leg, routeName));
+
+  let tightFamilies: ReadonlyArray<ModelFamily> | undefined;
+  if (record.tightFamilies !== undefined) {
+    if (!Array.isArray(record.tightFamilies)) {
+      throw new Error(`route preset "${routeName}" tightFamilies must be an array`);
+    }
+    tightFamilies = record.tightFamilies.map((family) => {
+      if (typeof family !== "string" || !MODEL_FAMILIES.has(family as ModelFamily)) {
+        throw new Error(
+          `route preset "${routeName}" has unknown tight family "${String(family)}"`,
+        );
+      }
+      return family as ModelFamily;
+    });
+  }
+
+  return {
+    slots,
+    legCollections: { cmrReview },
+    ...(tightFamilies !== undefined ? { tightFamilies } : {}),
+  };
+}
+
+function loadRoutePresetsFromFile(
+  path: string,
+): Readonly<Record<string, ModelRoutePreset>> {
+  if (!existsSync(path)) {
+    throw new Error(`route presets file not found: ${path}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to parse route presets at ${path}: ${detail}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`route presets file must be a JSON object: ${path}`);
+  }
+  const out: Record<string, ModelRoutePreset> = {};
+  for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+    out[name] = parseRoutePreset(name, value);
+  }
+  return out;
+}
+
+/**
+ * Sole preset table = JSON on disk (#916). No hand-copied TS twin.
+ *
+ * Load order:
+ * 1. `ORCHESTRATOR_ROUTE_PRESETS_PATH` when set (absolute or cwd-relative)
+ * 2. else shipped `config/route-presets.json` next to the package
+ * 3. if a custom path is missing, fall back to the shipped factory JSON only
+ *    (still one file source — not a second in-code table)
+ * 4. if the chosen file is absent or unreadable → fail-loud
+ *
+ * Slot env overrides still win later in `resolveRouteModels` / `activeModelRoute`.
+ */
+export function getRoutePresets(
+  env: ModelRouteEnv = process.env,
+): Readonly<Record<string, ModelRoutePreset>> {
+  const path = resolveRoutePresetsPath(env);
+  // Resolve loadPath BEFORE the cache check. Missing custom falls back to
+  // DEFAULT; cache key must be the path actually loaded, otherwise every call
+  // under a missing custom path recomputes loadPath=DEFAULT but checks against
+  // the requested custom path → always miss → re-read factory every time.
+  // Custom file appearing later changes loadPath → intentional miss → reload.
+  let loadPath = path;
+  if (!existsSync(path) && path !== DEFAULT_ROUTE_PRESETS_PATH) {
+    loadPath = DEFAULT_ROUTE_PRESETS_PATH;
+  }
+  if (cachedRoutePresets !== undefined && cachedRoutePresetsPath === loadPath) {
+    return cachedRoutePresets;
+  }
+  const fromFile = loadRoutePresetsFromFile(loadPath);
+  cachedRoutePresets = fromFile;
+  cachedRoutePresetsPath = loadPath;
+  return fromFile;
+}
+
 /** #923 — retired env; presence fails loud with migration hint (never silent). */
 export const RETIRED_REVIEWER_MODEL_ENV = "ORCHESTRATOR_REVIEWER_MODEL";
 const ENV_BY_SLOT: Readonly<Record<ModelRouteSlot, string>> = {
@@ -340,9 +427,10 @@ export function resolveRouteModels(
   overrides: Readonly<Record<string, string | undefined>>,
   legCollectionOverrides: Readonly<Record<string, ReadonlyArray<string> | undefined>> = {},
   smokeOverrides: Readonly<Record<string, RouteSmokeStatus | undefined>> = {},
+  env: ModelRouteEnv = process.env,
 ): ResolvedModelRoute {
   const trimmedRoute = routeName.trim() || "normal";
-  const preset = ROUTE_PRESETS[trimmedRoute];
+  const preset = getRoutePresets(env)[trimmedRoute];
   if (preset === undefined) {
     throw new Error(`unknown route "${trimmedRoute}"`);
   }
@@ -389,14 +477,16 @@ export function resolveRouteModels(
     smoke[entry.key] = smokeOverrides[entry.key] ?? { state: "unverified" };
   }
 
+  const tightFamilies = preset.tightFamilies ?? [];
   return {
     routeName: trimmedRoute,
     slots,
     legCollections,
+    tightFamilies,
     tightFamilyViolations: tightFamilyViolations(
       slots,
       legCollections,
-      preset.tightFamilies ?? [],
+      tightFamilies,
     ),
     smoke,
   };
@@ -492,7 +582,7 @@ export function withCoderSlot(
     tightFamilyViolations: tightFamilyViolations(
       slots,
       legCollections,
-      ROUTE_PRESETS[route.routeName]?.tightFamilies ?? [],
+      route.tightFamilies,
     ),
     smoke,
   };
@@ -590,7 +680,7 @@ function withSingleRouteSlot(
     tightFamilyViolations: tightFamilyViolations(
       slots,
       route.legCollections,
-      ROUTE_PRESETS[route.routeName]?.tightFamilies ?? [],
+      route.tightFamilies,
     ),
     smoke,
   };
@@ -807,6 +897,8 @@ export function resolveActiveModelRoute(
     env.ORCHESTRATOR_ROUTE?.trim() || "normal",
     routeOverridesFromEnv(env),
     routeLegCollectionOverridesFromEnv(env),
+    {},
+    env,
   );
 }
 

@@ -4,6 +4,20 @@
 
 ## [未发布]
 
+## [0.30.0.0] — 2026-07-16
+
+### Added
+- **#916 路线表出码入配**：route preset 迁入 `orchestrator/config/route-presets.json`；换模型改配置即可，不再改代码表。
+- **`gpt-5.6-sol-low` registry 词条**（`effort: low`），供 utility 席位使用。
+- **`claude-tight` 厂阵**：coder/coderFix=`grok-4.5`；verify/cmr*=`gpt-5.6-sol`@medium；ship/merger/fixer/cleanup/docRelease=`sol-low`；cmrReview=sol+grok+agy(optional)。
+
+### Changed
+- **推理强度权威只在路线/registry**：删除 `effortForLiveOfficer` 与 `agentForSlug` 的 call-site effort 覆盖；live 与票面一致。
+- **`billingPoolForModelRef`**：roster 未命中时按 registry provider 回落（`sol-low`/`sol-high` → `codex-5h`，不再误绑 SuperGrok）。
+
+### Fixed
+- **#913 family auth mount ×3 DRY**：`provisionFamilyWorkerAuth` 单缝；merger/cmr/ship 合流；`providerAuthFromCore` 统一投影。
+
 ## [0.29.0.0] — 2026-07-16
 
 ### Added

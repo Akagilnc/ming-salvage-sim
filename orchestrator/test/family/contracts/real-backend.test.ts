@@ -135,17 +135,40 @@ describe("RealFamilyBackend live officer effort", () => {
     ...overrides,
   });
 
-  it("passes xhigh through the family CMR and verify dispatch agent", () => {
+  it("dispatches registry medium for gpt-5.6-sol — role/soul cannot force xhigh", () => {
+    // #916: effort authority = registry row only. verify/cmr seats on
+    // gpt-5.6-sol are medium; no role/soul live-officer override.
     const backend = new Probe(opts(trackRepo()));
     const commandFor = (spec: WorkerSpec) =>
       backend.agentForLiveSpec(spec).buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
 
     expect(commandFor(liveSpec({ soul: "verify" }))).toContain(
-      'model_reasoning_effort="xhigh"',
+      'model_reasoning_effort="medium"',
     );
     expect(
       commandFor(liveSpec({ id: "S5", kind: "verify", role: "verify", soul: "READ-ONLY" })),
-    ).toContain('model_reasoning_effort="xhigh"');
+    ).toContain('model_reasoning_effort="medium"');
+    expect(commandFor(liveSpec({ soul: "verify" }))).not.toContain(
+      'model_reasoning_effort="xhigh"',
+    );
+  });
+
+  it("dispatches registry low for gpt-5.6-sol-low ship/utility seats", () => {
+    const backend = new Probe(opts(trackRepo()));
+    const command = backend
+      .agentForLiveSpec(
+        liveSpec({
+          // Production family ship specs use role:"coder" + soul:"ship" (StepRole
+          // has no "ship"; see familyShipWorkerSpec / ship-worker tests).
+          id: "S8",
+          kind: "ship",
+          role: "coder",
+          soul: "ship",
+          model: "gpt-5.6-sol-low",
+        }),
+      )
+      .buildPrintCommand({ prompt: "test", dangerouslySkipPermissions: false }).command;
+    expect(command).toContain('model_reasoning_effort="low"');
   });
 
   it("applies the ADR 0124 billing-pool provider binding to family workers", () => {

@@ -2265,9 +2265,10 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     ]);
   });
 
-  // #768: baked skill `codex-review.sh` reads CMR_CODEX_MODEL (default gpt-5.5).
-  // Route labels alone are soft — sandbox must pin the executable model from the
-  // frozen cmrReview codex leg so leg execution ≡ route label.
+  // #768: baked skill `codex-review.sh` reads CMR_CODEX_MODEL (default gpt-5.5)
+  // and CMR_CODEX_EFFORT (default medium). Route labels alone are soft — sandbox
+  // must pin model + effort from the frozen cmrReview codex leg so leg
+  // execution ≡ registry/route authority.
   it("#768 pins CMR_CODEX_MODEL from the route's cmrReview codex leg (sol)", () => {
     const solLegs = [
       { family: "codex", slug: "gpt-5.6-sol" },
@@ -2280,6 +2281,26 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     };
     const cfg = cfgBackend().config(auth, spec);
     expect(cfg.env.CMR_CODEX_MODEL).toBe("gpt-5.6-sol");
+    // Plain sol registry row effort is medium — must pin so baked default cannot
+    // silently diverge if the script default ever changes.
+    expect(cfg.env.CMR_CODEX_EFFORT).toBe("medium");
+  });
+
+  // Effort-variant registry slugs must pin CLI model id (gpt-5.6-sol) AND the
+  // registry row's effort — collapsing to model alone drops effort authority.
+  it("#768 pins CMR_CODEX_MODEL + CMR_CODEX_EFFORT for effort-variant codex legs", () => {
+    const lowLegs = [
+      { family: "codex", slug: "gpt-5.6-sol-low" },
+      { family: "claude", slug: "opus" },
+      { family: "agy", slug: "agy" },
+    ] as const;
+    const spec = {
+      ...cmrWorkerSpec("fresh", "correctness"),
+      cmrReviewLegs: lowLegs,
+    };
+    const cfg = cfgBackend().config(auth, spec);
+    expect(cfg.env.CMR_CODEX_MODEL).toBe("gpt-5.6-sol");
+    expect(cfg.env.CMR_CODEX_EFFORT).toBe("low");
   });
 
   it("#768 omits CMR_CODEX_MODEL when the frozen legs have no codex review leg", () => {
@@ -2292,6 +2313,7 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     };
     const cfg = cfgBackend().config(auth, noCodex);
     expect(cfg.env.CMR_CODEX_MODEL).toBeUndefined();
+    expect(cfg.env.CMR_CODEX_EFFORT).toBeUndefined();
   });
 
   it("#768 drift guard: cmrSandboxConfig source must assign CMR_CODEX_MODEL from the review legs", () => {
@@ -2362,7 +2384,13 @@ describe("#335 cmrSandboxConfig — wires the agy auth runtime-mount (writable d
     expect(fnEnd).toBeGreaterThan(fnStart);
     const fnBody = source.slice(fnStart, fnEnd);
     // Must match the real assignment/derivation line, not a comment mention alone.
-    expect(fnBody).toMatch(/env\.CMR_CODEX_MODEL\s*=\s*codexReviewLeg\.slug/);
+    // Effort-variant slugs resolve via modelIdForSlug → CLI model id.
+    expect(fnBody).toMatch(
+      /env\.CMR_CODEX_MODEL\s*=\s*modelIdForSlug\(\s*codexReviewLeg\.slug\s*\)/,
+    );
+    // Effort must come from registry row for the slug (not hardcoded).
+    expect(fnBody).toMatch(/CMR_CODEX_EFFORT/);
+    expect(fnBody).toMatch(/resolveModelSlug\s*\(\s*codexReviewLeg\.slug\s*\)/);
   });
 });
 

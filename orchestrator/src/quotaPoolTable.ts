@@ -19,6 +19,7 @@ import {
   lookupCoderRosterEntry,
   type CoderRosterEntry,
 } from "./coderRoster.js";
+import { providerForModelSlug } from "./modelRegistry.js";
 
 /** Quota / billing boundary ids (ADR 0124). */
 export type BillingPoolId =
@@ -128,29 +129,78 @@ export const DEFAULT_POOL_MODELS: Readonly<
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.6-sol",
+    // #916: registry sol effort variants used by routes/factory utility seats.
+    "gpt-5.6-sol-low",
+    "gpt-5.6-sol-high",
   ],
   // #789 — roster ids + runnable slugs (mirrors codex-5h dual keys).
   claude: ["sonnet-5", "haiku-4.5", "sonnet", "haiku"],
 };
 
 /**
- * Resolve a known roster model to its default billing boundary. This is
- * distinct from quota probing: codex and Claude have no #683 probe-pool id,
+ * Map a modelRegistry provider factory onto the ADR 0124 billing boundary it
+ * draws from. Orthogonal to roster: effort-variant registry slugs (e.g.
+ * gpt-5.6-sol-low) are not CODER_ROSTER ids but still bill on codex-5h.
+ */
+function billingPoolFromProvider(
+  provider: string,
+): BillingPoolId | undefined {
+  switch (provider) {
+    case "codex":
+      return "codex-5h";
+    case "claudeCode":
+      return "claude";
+    case "grok":
+      return "grok-build";
+    case "cursor":
+      return "cursor";
+    default:
+      // agy / copilot / pi — no dedicated billing-pool id here.
+      return undefined;
+  }
+}
+
+/**
+ * Resolve a known roster **or registry** model to its default billing boundary.
+ * Distinct from quota probing: codex and Claude have no #683 probe-pool id,
  * but their dispatched slugs still identify a billing pool for capacity relay.
+ *
+ * Order: CODER_ROSTER first (designer ids / aliases), then modelRegistry
+ * provider (effort-variant / non-roster runnable slugs), then reverse
+ * {@link DEFAULT_POOL_MODELS} membership (dual keys already listed on a pool).
  */
 export function billingPoolForModelRef(
   modelRef: string,
 ): BillingPoolId | undefined {
-  switch (lookupCoderRosterEntry(modelRef)?.pool) {
+  // Defensive for untyped callers (runner/relay paths): guard before any
+  // string-typed registry/roster peek (Gemini R1 / family/914 online).
+  if (typeof modelRef !== "string") return undefined;
+  // Single normalized token for roster + registry + pool membership.
+  // MODEL_SLUG_REGISTRY keys are lowercase; trim+lower matches that surface
+  // (Gemini R2 G2 / family/914 online).
+  const needle = modelRef.trim().toLowerCase();
+  if (needle.length === 0) return undefined;
+
+  switch (lookupCoderRosterEntry(needle)?.pool) {
     case "supergrok":
       return "grok-build";
     case "codex":
       return "codex-5h";
     case "claude":
       return "claude";
-    default:
-      return undefined;
   }
+
+  const fromProvider = billingPoolFromProvider(
+    providerForModelSlug(needle) ?? "",
+  );
+  if (fromProvider !== undefined) return fromProvider;
+
+  for (const id of Object.keys(DEFAULT_POOL_MODELS) as BillingPoolId[]) {
+    for (const m of DEFAULT_POOL_MODELS[id]) {
+      if (m.trim().toLowerCase() === needle) return id;
+    }
+  }
+  return undefined;
 }
 
 /**
