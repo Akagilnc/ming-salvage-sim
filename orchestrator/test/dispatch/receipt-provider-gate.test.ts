@@ -17,8 +17,8 @@ import { resumeCapableForSlug } from "../../src/modelRegistry.js";
 import { z } from "zod";
 
 describe("resumeCapableForSlug — registry knows which providers can resume", () => {
-  it("grok cannot resume; codex and claude slugs can", () => {
-    expect(resumeCapableForSlug("grok-4.5")).toBe(false);
+  it("every production provider resumes post-#955 (grok implements the contract)", () => {
+    expect(resumeCapableForSlug("grok-4.5")).toBe(true);
     expect(resumeCapableForSlug("gpt-5.6-sol")).toBe(true);
     expect(resumeCapableForSlug("gpt-5.6-terra")).toBe(true);
     expect(resumeCapableForSlug("sonnet")).toBe(true);

@@ -39,16 +39,6 @@ describe("#807 grokAgent AgentProvider", () => {
     expect(cmd.stdin).toBe("echo OK");
   });
 
-  it("is explicitly non-resumable while grok sessions are not persisted", () => {
-    const agent = grokAgent("grok-4.5", { captureSessions: true });
-    expect(agent.captureSessions).toBe(false);
-    const cmd = agent.buildPrintCommand({
-      prompt: "continue",
-      resumeSession: "sess-807",
-      dangerouslySkipPermissions: true,
-    });
-    expect(cmd.command).not.toContain("--resume");
-  });
 
   it("emits text (not result) per chunk, then ONE accumulated result on end", () => {
     // #899 hotfix / #928: result.stdout (typed envelope / sidecar extraction

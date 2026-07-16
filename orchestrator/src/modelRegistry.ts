@@ -342,6 +342,8 @@ const RESUME_CAPABLE_PROVIDERS: ReadonlySet<string> = new Set([
   "claudeCode",
   "codex",
   "pi",
+  // #955: grokAgent implements the sandcastle sessionStorage contract.
+  "grok",
 ]);
 
 export function resumeCapableForSlug(
