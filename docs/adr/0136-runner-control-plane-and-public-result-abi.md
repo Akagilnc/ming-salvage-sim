@@ -1,4 +1,4 @@
-Status: Proposed
+Status: Accepted
 
 # 0136: Runner 控制面与公开结果 ABI 原子切换
 
