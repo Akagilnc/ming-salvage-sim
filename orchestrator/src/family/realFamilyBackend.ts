@@ -112,6 +112,8 @@ import {
   SANDBOX_GROK_DIR,
   appendAgyAuthMount,
   provisionFamilyWorkerAuth,
+  providerAuthFromCore,
+  type FamilyWorkerAuthCore,
   SANDBOX_FIX_FINDINGS_PATH_ENV,
   SANDBOX_GH_TOKEN_ENV,
   soulForStep,
@@ -2625,11 +2627,7 @@ export class RealFamilyBackend implements FamilyBackend {
     return {
       ...core,
       ghToken: this.readGhToken(),
-      providerAuth: {
-        claude: core.claudeToken !== undefined,
-        grok: core.grokAuthDir !== undefined,
-        agy: core.agyDir !== undefined,
-      },
+      providerAuth: providerAuthFromCore(core),
     };
   }
 
@@ -3051,11 +3049,7 @@ export class RealFamilyBackend implements FamilyBackend {
     return {
       ...core,
       ghToken: this.readGhToken(),
-      providerAuth: {
-        claude: core.claudeToken !== undefined,
-        grok: core.grokAuthDir !== undefined,
-        agy: core.agyDir !== undefined,
-      },
+      providerAuth: providerAuthFromCore(core),
     };
   }
 
@@ -3371,16 +3365,9 @@ function lastSessionIdIfPresent(result: unknown): string | undefined {
  * The cmr worker's reviewer-leg auth, each leg BEST-EFFORT (codex cmr R1): a leg
  * whose host credential is absent is `undefined` so it degrades (the 降级链 — the
  * skill drops that leg, the rest still review), never crashing the whole gate.
+ * Core credential fields live on {@link FamilyWorkerAuthCore} (#913).
  */
-export interface CmrAuth {
-  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
-  readonly codexAuthDir?: string;
-  /** Per-run agy token dir (host-mirrored antigravity config), or undefined. */
-  readonly agyDir?: string;
-  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
-  readonly grokAuthDir?: string;
-  /** The claude OAuth token (env var), or undefined if absent. */
-  readonly claudeToken?: string;
+export interface CmrAuth extends FamilyWorkerAuthCore {
   /**
    * The host gh OAuth token (`gh auth token` → {@link SANDBOX_GH_TOKEN_ENV} env), or
    * undefined if absent. BEST-EFFORT (unlike the ship worker's hard-required gh): the
@@ -3400,16 +3387,9 @@ export interface CmrAuth {
  * delivery requires) are LOAD-BEARING — `runShipWorker` preflights both and escalates
  * when either is absent (cmr S336 r8 + r10). A missing codex source degrades that
  * mount rather than crashing the gate.
+ * Core credential fields live on {@link FamilyWorkerAuthCore} (#913).
  */
-export interface ShipAuth {
-  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
-  readonly codexAuthDir?: string;
-  /** Per-run grok auth dir (host-mirrored `~/.grok`), or undefined if absent. */
-  readonly grokAuthDir?: string;
-  /** Per-run agy OAuth dir (host-mirrored antigravity config), or undefined. */
-  readonly agyDir?: string;
-  /** The claude OAuth token (env var), or undefined if absent. */
-  readonly claudeToken?: string;
+export interface ShipAuth extends FamilyWorkerAuthCore {
   /**
    * The gh OAuth token (`gh auth token` on the host → {@link SANDBOX_GH_TOKEN_ENV}
    * env), or undefined if absent. NOT best-effort: the family delivery is a PR
@@ -3428,20 +3408,10 @@ export interface ShipAuth {
  * load-bearing (N3: reuse provisionAgyAuthDir / appendAgyAuthMount; fail-closed
  * without token). The merger resolves + commits the merge in place
  * (`branchStrategy:{type:"head"}`); it never pushes or opens a PR.
+ * Core credential fields live on {@link FamilyWorkerAuthCore} (#913); merger has
+ * no role-only extras (no gh / providerAuth).
  */
-export interface MergerAuth {
-  /** Per-run codex auth dir (host-mirrored `~/.codex`), or undefined if absent. */
-  readonly codexAuthDir?: string;
-  /** The claude OAuth token (env var), or undefined if absent. */
-  readonly claudeToken?: string;
-  /** Per-run agy OAuth dir (shared provisionAgyAuthDir seam), or undefined. */
-  readonly agyDir?: string;
-  /**
-   * C5 — per-run SuperGrok auth dir (same seam as CMR/ship), or undefined.
-   * Load-bearing when the merger slot is grok-family.
-   */
-  readonly grokAuthDir?: string;
-}
+export interface MergerAuth extends FamilyWorkerAuthCore {}
 
 /**
  * Prefer Sandcastle typed receipt for fate signals (T2 judge + decision gate).
