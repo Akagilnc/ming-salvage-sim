@@ -528,7 +528,6 @@ export class RealFamilyBackend implements FamilyBackend {
     // role/soul hard override of reasoning effort at dispatch).
     return agentForSlug(
       spec.model,
-      undefined,
       isBillingPoolDispatchId(ctx?.billingPool) ? ctx.billingPool : undefined,
     );
   }
