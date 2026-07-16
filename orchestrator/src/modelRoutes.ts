@@ -104,6 +104,13 @@ export interface ResolvedModelRoute {
   readonly routeName: string;
   readonly slots: ModelSlotMap;
   readonly legCollections: ModelRouteLegCollectionMap;
+  /**
+   * Tight families captured at resolve time from the presets table that
+   * produced this route. Mutations must reuse this snapshot — never re-fetch
+   * via process.env (custom ORCHESTRATOR_ROUTE_PRESETS_PATH only in the
+   * resolve env arg would otherwise drop policy to []).
+   */
+  readonly tightFamilies: ReadonlyArray<ModelFamily>;
   readonly tightFamilyViolations: ReadonlyArray<TightFamilyViolation>;
   /** One smoke record for every model×pipe entry in this route. */
   readonly smoke: Readonly<Record<string, RouteSmokeStatus>>;
@@ -310,13 +317,6 @@ export function getRoutePresets(
   return fromFile;
 }
 
-function tightFamiliesForRoute(
-  routeName: string,
-  env: ModelRouteEnv = process.env,
-): ReadonlyArray<ModelFamily> {
-  return getRoutePresets(env)[routeName]?.tightFamilies ?? [];
-}
-
 /** #923 — retired env; presence fails loud with migration hint (never silent). */
 export const RETIRED_REVIEWER_MODEL_ENV = "ORCHESTRATOR_REVIEWER_MODEL";
 const ENV_BY_SLOT: Readonly<Record<ModelRouteSlot, string>> = {
@@ -472,14 +472,16 @@ export function resolveRouteModels(
     smoke[entry.key] = smokeOverrides[entry.key] ?? { state: "unverified" };
   }
 
+  const tightFamilies = preset.tightFamilies ?? [];
   return {
     routeName: trimmedRoute,
     slots,
     legCollections,
+    tightFamilies,
     tightFamilyViolations: tightFamilyViolations(
       slots,
       legCollections,
-      preset.tightFamilies ?? [],
+      tightFamilies,
     ),
     smoke,
   };
@@ -575,7 +577,7 @@ export function withCoderSlot(
     tightFamilyViolations: tightFamilyViolations(
       slots,
       legCollections,
-      tightFamiliesForRoute(route.routeName),
+      route.tightFamilies,
     ),
     smoke,
   };
@@ -673,7 +675,7 @@ function withSingleRouteSlot(
     tightFamilyViolations: tightFamilyViolations(
       slots,
       route.legCollections,
-      tightFamiliesForRoute(route.routeName),
+      route.tightFamilies,
     ),
     smoke,
   };
