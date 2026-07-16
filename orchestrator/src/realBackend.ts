@@ -1079,7 +1079,7 @@ export function provisionWorkerAuth(input: {
 
 /**
  * Codex auth dir under path-policy:
- * - family: mkdtemp; host auth missing ⇒ undefined (reclaim half-built dir)
+ * - family: mkdtemp; host auth / config / AGENTS fail ⇒ undefined (reclaim half-built dir)
  * - slice: stable `auth-${issue}`; always return dir (config + AGENTS even without auth.json)
  */
 function provisionCodexAuthDir(input: {
@@ -1091,38 +1091,46 @@ function provisionCodexAuthDir(input: {
 }): string | undefined {
   const { home, root, homeEnvFile, codexFast, pathPolicy } = input;
 
-  let codexDir: string | undefined;
+  // Single write site for config + AGENTS (family + slice share this path).
+  const writeCodexSidecars = (dir: string): void => {
+    // Container is the sandbox boundary — never host config.toml (#378).
+    writeContainerCodexConfig(join(dir, "config.toml"), codexFast);
+    provisionCodexHomeAgents(dir, homeEnvFile);
+  };
 
   if (pathPolicy.kind === "slice") {
     const paths = buildAuthPaths(pathPolicy.issueNumber, home);
     rmSync(paths.hostCodexAuthDir, { recursive: true, force: true });
     // Owner-only dir: holds copied credential material.
     mkdirSync(paths.hostCodexAuthDir, { recursive: true, mode: 0o700 });
-    codexDir = paths.hostCodexAuthDir;
+    const codexDir = paths.hostCodexAuthDir;
     try {
       copyFileSync(paths.srcCodexAuth, join(codexDir, "auth.json"));
       chmodSync(join(codexDir, "auth.json"), 0o600);
     } catch {
       // No host codex auth → still always-mount (config + AGENTS below).
     }
-  } else {
-    try {
-      codexDir = mkdtempSync(join(root, `${pathPolicy.rolePrefix}-codex-auth-`));
-      copyFileSync(join(home, ".codex", "auth.json"), join(codexDir, "auth.json"));
-      chmodSync(join(codexDir, "auth.json"), 0o600);
-    } catch {
-      // codex auth absent / half-built → reclaim mkdtemp dir so it does not leak.
-      if (codexDir !== undefined) {
-        rmSync(codexDir, { recursive: true, force: true });
-      }
-      return undefined;
-    }
+    // Slice always-mount: keep dir even if later steps partially succeed.
+    writeCodexSidecars(codexDir);
+    return codexDir;
   }
 
-  // Single write site: container is the sandbox boundary — never host config.toml (#378).
-  writeContainerCodexConfig(join(codexDir, "config.toml"), codexFast);
-  provisionCodexHomeAgents(codexDir, homeEnvFile);
-  return codexDir;
+  // Family: best-effort fail-soft. Any failure after mkdtemp (auth copy OR
+  // config/AGENTS sidecars) reclaims the temp dir so FamilyWorkerAuthCore can
+  // return codexAuthDir: undefined without leaking `${rolePrefix}-codex-auth-*`.
+  let codexDir: string | undefined;
+  try {
+    codexDir = mkdtempSync(join(root, `${pathPolicy.rolePrefix}-codex-auth-`));
+    copyFileSync(join(home, ".codex", "auth.json"), join(codexDir, "auth.json"));
+    chmodSync(join(codexDir, "auth.json"), 0o600);
+    writeCodexSidecars(codexDir);
+    return codexDir;
+  } catch {
+    if (codexDir !== undefined) {
+      rmSync(codexDir, { recursive: true, force: true });
+    }
+    return undefined;
+  }
 }
 
 /**

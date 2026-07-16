@@ -175,6 +175,28 @@ describe("#913 provisionFamilyWorkerAuth — shared family auth core", () => {
       expect(leaked).toEqual([]);
     }
   });
+
+  it("reclaims codex temp dir when AGENTS sidecar write fails after auth copy", () => {
+    // O1 (#945 online review): mkdtemp+auth.json succeed, but missing homeEnvFile
+    // makes provisionCodexHomeAgents throw — must not leave cmr-codex-auth-*.
+    const home = mkTemp("fam-auth-913-sidecar-fail-");
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    writeFileSync(join(home, ".codex", "auth.json"), '{"tokens":{"codex":"c"}}\n');
+    const root = join(home, ".sc-orchestrator");
+    const missingHomeEnv = join(home, "missing-container-home-CLAUDE.md");
+
+    const auth = provisionFamilyWorkerAuth({
+      home,
+      rolePrefix: "cmr",
+      homeEnvFile: missingHomeEnv,
+    });
+
+    expect(auth.codexAuthDir).toBeUndefined();
+    if (existsSync(root)) {
+      const leaked = readdirSync(root).filter((name) => name.startsWith("cmr-codex-auth-"));
+      expect(leaked).toEqual([]);
+    }
+  });
 });
 
 describe("#913 family mount*Auth wrappers share the core (public shapes)", () => {
