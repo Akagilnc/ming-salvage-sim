@@ -128,11 +128,10 @@ describe("#760 real backend Codex fast write-site consumption", () => {
     }
   });
 
-  it("keeps single-slice mountAuth write sites consuming codexFast", () => {
-    // Family-path pin (0× writeContainerCodexConfig) lives in
-    // family-worker-auth-913.test.ts (#913 F3/F7). This file owns single-slice
-    // RealBackend.mountAuth write-site rails plus the behavioral family
-    // service_tier cases above.
+  it("keeps codexFast consumed by the single #945 provisionWorkerAuth write site", () => {
+    // #945: family + slice share one provisionWorkerAuth → one
+    // writeContainerCodexConfig call. Consumers pass codexFast into the seam
+    // (mountAuth: this.opts.codexFast; family: provisionFamilyWorkerAuth param).
     const realSrc = readFileSync(join(here, "..", "..", "src", "realBackend.ts"), "utf8");
 
     const realWriteCalls: string[] = [];
@@ -149,11 +148,12 @@ describe("#760 real backend Codex fast write-site consumption", () => {
       }
       if (closeParen >= 0) realWriteCalls.push(realSrc.slice(match.index!, closeParen + 1));
     }
-    // mountAuth (this.opts.codexFast) + provisionFamilyWorkerAuth (codexFast param).
-    expect(realWriteCalls).toHaveLength(2);
-    expect(realWriteCalls.some((c) => c.includes("this.opts.codexFast"))).toBe(true);
-    expect(realWriteCalls.some((c) => /\bcodexFast\b/.test(c) && !c.includes("this.opts"))).toBe(
-      true,
-    );
+    expect(realWriteCalls).toHaveLength(1);
+    expect(realWriteCalls[0]).toMatch(/\bcodexFast\b/);
+    // Thin consumers still inject codexFast into the shared core.
+    expect(realSrc).toMatch(/pathPolicy:\s*\{\s*kind:\s*"slice"/);
+    expect(realSrc).toMatch(/codexFast:\s*this\.opts\.codexFast/);
+    expect(realSrc).toMatch(/function provisionFamilyWorkerAuth/);
+    expect(realSrc).toMatch(/pathPolicy:\s*\{\s*kind:\s*"family"/);
   });
 });
