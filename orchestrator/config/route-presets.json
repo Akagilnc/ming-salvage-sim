@@ -14,9 +14,19 @@
     },
     "legCollections": {
       "cmrReview": [
-        { "family": "codex", "slug": "gpt-5.6-sol" },
-        { "family": "claude", "slug": "opus" },
-        { "family": "agy", "slug": "agy", "optional": true }
+        {
+          "family": "codex",
+          "slug": "gpt-5.6-sol"
+        },
+        {
+          "family": "claude",
+          "slug": "opus"
+        },
+        {
+          "family": "agy",
+          "slug": "agy",
+          "optional": true
+        }
       ]
     }
   },
@@ -35,14 +45,26 @@
     },
     "legCollections": {
       "cmrReview": [
-        { "family": "claude", "slug": "opus" },
-        { "family": "agy", "slug": "agy", "optional": true },
-        { "family": "codex", "slug": "gpt-5.6-sol" }
+        {
+          "family": "claude",
+          "slug": "opus"
+        },
+        {
+          "family": "agy",
+          "slug": "agy",
+          "optional": true
+        },
+        {
+          "family": "codex",
+          "slug": "gpt-5.6-sol"
+        }
       ]
     }
   },
   "codex-tight": {
-    "tightFamilies": ["codex"],
+    "tightFamilies": [
+      "codex"
+    ],
     "slots": {
       "coder": "sonnet",
       "coderFix": "sonnet",
@@ -57,8 +79,15 @@
     },
     "legCollections": {
       "cmrReview": [
-        { "family": "claude", "slug": "opus" },
-        { "family": "agy", "slug": "agy", "optional": true }
+        {
+          "family": "claude",
+          "slug": "opus"
+        },
+        {
+          "family": "agy",
+          "slug": "agy",
+          "optional": true
+        }
       ]
     }
   },
@@ -77,14 +106,26 @@
     },
     "legCollections": {
       "cmrReview": [
-        { "family": "codex", "slug": "gpt-5.6-sol" },
-        { "family": "agy", "slug": "agy", "optional": true },
-        { "family": "claude", "slug": "opus" }
+        {
+          "family": "codex",
+          "slug": "gpt-5.6-sol"
+        },
+        {
+          "family": "agy",
+          "slug": "agy",
+          "optional": true
+        },
+        {
+          "family": "claude",
+          "slug": "opus"
+        }
       ]
     }
   },
   "claude-tight": {
-    "tightFamilies": ["claude"],
+    "tightFamilies": [
+      "claude"
+    ],
     "slots": {
       "coder": "grok-4.5",
       "coderFix": "grok-4.5",
@@ -99,9 +140,45 @@
     },
     "legCollections": {
       "cmrReview": [
-        { "family": "codex", "slug": "gpt-5.6-sol" },
-        { "family": "other", "slug": "grok-4.5" },
-        { "family": "agy", "slug": "agy", "optional": true }
+        {
+          "family": "codex",
+          "slug": "gpt-5.6-sol"
+        },
+        {
+          "family": "other",
+          "slug": "grok-4.5"
+        },
+        {
+          "family": "agy",
+          "slug": "agy",
+          "optional": true
+        }
+      ]
+    }
+  },
+  "grok-blitz": {
+    "slots": {
+      "coder": "grok-4.5",
+      "coderFix": "grok-4.5",
+      "ship": "grok-4.5",
+      "merger": "grok-4.5",
+      "cmrCompleteness": "grok-4.5",
+      "cmrCorrectness": "grok-4.5",
+      "verify": "grok-4.5",
+      "fixer": "grok-4.5",
+      "cleanup": "grok-4.5",
+      "docRelease": "grok-4.5"
+    },
+    "legCollections": {
+      "cmrReview": [
+        {
+          "family": "codex",
+          "slug": "gpt-5.6-sol"
+        },
+        {
+          "family": "other",
+          "slug": "grok-4.5"
+        }
       ]
     }
   }
