@@ -100,8 +100,7 @@ function quotaWallError(now: Date, resetAt: Date): QuotaWaitForResetError {
         ts: now.toISOString(),
       },
     },
-    pool: "grok",
-    probe: { kind: "quota_limited", resetAt, detail: "429" },
+    pool: "grok"
   });
 }
 
@@ -917,14 +916,16 @@ describe("#937 ID-015 / ID-016 delete boundaries", () => {
     expect("tryParseActionableRelayTag" in relay).toBe(false);
     expect("parseRelayTag" in relay).toBe(false);
 
-    // killPidTree is not a live production action type on IdleQuotaActions.
+    // Idle→quota composition + host kill surface deleted (ID-007 / ID-006).
     const src = readFileSync(
       join(import.meta.dirname, "../../src/quotaProbe.ts"),
       "utf8",
     );
     expect(src).not.toMatch(/killPidTree\s*:/);
     expect(src).not.toMatch(/await actions\.killPidTree/);
-    expect(src).toMatch(/export interface IdleQuotaActions/);
+    expect(src).not.toMatch(/function handleIdleThreshold/);
+    expect(src).not.toMatch(/function withIdleQuotaProbeDisposition/);
+    expect(src).not.toMatch(/export interface IdleQuotaActions/);
     expect(src).not.toMatch(/readonly killed:\s*boolean/);
     // free-log parsers must not remain as live production exports.
     const relaySrc = readFileSync(

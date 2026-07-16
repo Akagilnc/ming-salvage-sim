@@ -253,13 +253,6 @@ import {
   workerResultFromMonitorSidecar,
 } from "./cliMonitorHooks.js";
 import { legacyDispatchWorker } from "./dispatchWorker.js";
-import {
-  resolveSandboxIdleAfterQuotaProbe,
-  runPoolProbe,
-  type HandleIdleThresholdResult,
-  type QuotaPoolId,
-  type QuotaProbeResult,
-} from "./quotaProbe.js";
 import { withSandcastleInvokeDefaults } from "./sandboxStreamHeartbeat.js";
 import { WORKER_PROMPT_FILES } from "./runner.js";
 import {
@@ -701,43 +694,13 @@ export const SANDBOX_GH_TOKEN_ENV = "GH_TOKEN";
  * ms OVERFLOWED int32 → the idle timer fired at once, the opposite of "never
  * fires"). 604_800 * 1000 = 604_800_000 ms ≪ 2**31-1, no overflow.
  *
- * #683 / #937: when this Sandcastle timer DOES fire, {@link RealBackend.runAgentSandbox}
- * routes through {@link handleIdleThreshold} — probe the worker's pool
- * (429 → wait-for-reset). Host silence never kills (#934 ID-007).
+ * #937 / #934 ID-007: when this Sandcastle timer DOES fire it is a hard-clock
+ * failure only — host silence never probes quota, parks, kills, or relays.
  */
 export const WORKER_IDLE_TIMEOUT_SECONDS = 604_800;
 
-/**
- * #683 context threaded beside Sandcastle run options for the internal-timeout
- * fallback (Sandcastle does not know this field).
- *
- * `workerPid` is optional at the call site — production dispatch paths leave it
- * unset and {@link RealBackend.runAgentSandbox} fills it from the live sandbox
- * handle via {@link RealBackend.noteActiveSandboxWorkerPid}. Callers must not
- * hand-stuff a fake pid.
- *
- * 429 fallback: park a quota wall when applicable. Host PID-tree hang kill is
- * deleted (#937); process ownership is ChildProcess handle + adoption-failure
- * terminateSpawnedChild only.
- */
-export interface QuotaProbeRunContext {
-  /** Model/route slug → {@link import("./quotaProbe.js").poolForModelRef}. */
-  readonly modelRef: string;
-  readonly step?: StepId;
-  /**
-   * OS pid of the worker process when known. Prefer leaving unset — production
-   * captures it from the sandbox handle mid-run (#684 monitor handle companion).
-   */
-  readonly workerPid?: number;
-  /** Resident worktree path — used to derive sibling `.ledger-<n>` for wait rows. */
-  readonly worktreePath?: string;
-  readonly issueNumber?: number;
-}
-
-/** Sandcastle run options + optional #683 idle quota-probe context. */
-export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0] & {
-  readonly quotaProbe?: QuotaProbeRunContext;
-};
+/** Sandcastle run options used by production agent-sandbox entry. */
+export type AgentSandboxRunOptions = Parameters<typeof sc.run>[0];
 
 /**
  * Marks the container as an orchestrator-spawned, non-interactive session.
@@ -3260,15 +3223,7 @@ export class RealBackend implements Backend {
       // S3/S6 use T2 judge station-receipt; residual/legacy reviewer role uses
       // open-count schema; coder uses T2 station-receipt (cargo siblings
       // passthrough — no cargo-shape re-ask).
-      ...(typedOutputUsed ? { output: typedOutput } : {}),
-      // #683 fallback context for Sandcastle's own internal timeout only. The
-      // normal live-worker path is dispatched through the #684 monitor.
-      quotaProbe: {
-        modelRef: spec.model,
-        step: spec.id,
-        worktreePath: worktree.path,
-        issueNumber,
-      },
+      ...(typedOutputUsed ? { output: typedOutput } : {})
       });
     } catch (err) {
       // Typed traffic-signal seats: exhaust / non-resumable must exit non-zero
@@ -3321,14 +3276,7 @@ export class RealBackend implements Backend {
         resumeSession: sessionId,
         promptFile: join(this.opts.promptsDir, spec.promptFile),
         // Resume is single-iter; attach the same traffic-signal Output.object policy.
-        ...(typedOutputUsed ? { output: typedOutput } : {}),
-        // #683: idle timeout → pool probe before hang (额度墙 ≠ hang).
-        quotaProbe: {
-          modelRef: spec.model,
-          step: spec.id,
-          worktreePath: worktree.path,
-          issueNumber,
-        },
+        ...(typedOutputUsed ? { output: typedOutput } : {})
       });
       return this.stepResultFromRun(
         result,
@@ -3360,47 +3308,9 @@ export class RealBackend implements Backend {
   }
 
   /**
-   * Live sandbox-handle worker pid captured during the current
-   * {@link runAgentSandbox} call. Cleared on entry/exit. Tests (and future
-   * #684 monitor wiring) call {@link noteActiveSandboxWorkerPid} while the
-   * sandbox handle is still live — before Sandcastle release.
-   */
-  private activeSandboxWorkerPid: number | undefined;
-
-  /**
-   * Record the OS pid from the live sandbox handle for quota-probe context.
-   * No-op for non-positive / non-integer values. Not a host kill path (#937).
-   */
-  protected noteActiveSandboxWorkerPid(pid: number): void {
-    if (Number.isInteger(pid) && pid > 0) {
-      this.activeSandboxWorkerPid = pid;
-    }
-  }
-
-  /** Resolve worker pid: explicit context → live sandbox handle → 0. */
-  protected resolveWorkerPid(ctx: QuotaProbeRunContext): number {
-    if (ctx.workerPid !== undefined && ctx.workerPid > 0) return ctx.workerPid;
-    if (
-      this.activeSandboxWorkerPid !== undefined &&
-      this.activeSandboxWorkerPid > 0
-    ) {
-      return this.activeSandboxWorkerPid;
-    }
-    return 0;
-  }
-
-  /**
    * Thin Sandcastle `sc.run` seam. Unit tests that need a fake container result
-   * override THIS method (or {@link runAgentSandbox}). Production idle/quota
-   * disposition lives in {@link runAgentSandbox} so a full override of that
-   * method intentionally bypasses #683 only when the test owns the whole path.
-   *
-   * Implementations that own a live sandbox handle MAY call
-   * {@link noteActiveSandboxWorkerPid} with the handle's agent/container pid
-   * while the handle is still alive (telemetry/diagnostics). Public Sandcastle
-   * types do not expose handle.pid — capture is the invoker's responsibility.
-   * Host process ownership is the ChildProcess handle (#937 / ID-006); silence
-   * is observational only (no host hang kill).
+   * override THIS method (or {@link runAgentSandbox}). Host process ownership is
+   * the ChildProcess handle (#937 / ID-006); silence is observational only.
    */
   protected async invokeSandcastleRun(
     options: Parameters<typeof sc.run>[0],
@@ -3419,44 +3329,8 @@ export class RealBackend implements Backend {
   protected async runAgentSandbox(
     options: AgentSandboxRunOptions,
   ): Promise<Awaited<ReturnType<typeof sc.run>>> {
-    const { quotaProbe: _quotaProbe, ...scOptions } = options;
-    this.activeSandboxWorkerPid = undefined;
-    try {
-      // #937 / #934 ID-007: silence must not trigger quota probe/park.
-      return await this.invokeSandcastleRun(scOptions);
-    } finally {
-      this.activeSandboxWorkerPid = undefined;
-    }
-  }
-
-  /**
-   * #683 production idle disposition entry. Callable from runAgentSandbox on
-   * Sandcastle idle timeout. Overridable only for host I/O seams (probe / ledger).
-   * #937: no host idle-kill arm.
-   */
-  protected async resolveIdleAfterQuotaProbe(
-    ctx: QuotaProbeRunContext,
-  ): Promise<HandleIdleThresholdResult> {
-    return resolveSandboxIdleAfterQuotaProbe({
-      modelRef: ctx.modelRef,
-      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
-      workerPid: this.resolveWorkerPid(ctx),
-      runQuotaProbe: (pool) => this.runQuotaProbe(pool),
-      now: () => this.idleNow(),
-    });
-  }
-
-  /** Clock for wait-for-reset ledger `ts` (injectable via override in tests). */
-  protected idleNow(): Date {
-    return new Date();
-  }
-
-  /**
-   * Pool probe used after idle threshold (#683). Default = real
-   * {@link runPoolProbe}; tests stub three outcomes.
-   */
-  protected async runQuotaProbe(pool: QuotaPoolId): Promise<QuotaProbeResult> {
-    return runPoolProbe(pool);
+    // #937 / #934 ID-007: silence must not trigger quota probe/park/kill/relay.
+    return await this.invokeSandcastleRun(options);
   }
 
   /** Child worker dispatch. S7 is a local family handoff and has no worker. */

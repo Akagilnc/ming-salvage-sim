@@ -2177,8 +2177,13 @@ export async function runOrchestrator(input: RunInput): Promise<RunResult> {
         escalationKind,
         stopSummary,
       );
-    } catch {
-      // Swallow: error termination must not be derailed by a ledger I/O fault.
+    } catch (err) {
+      // ID-005: secondary terminal-write failure must not mask the primary
+      // fate, but must still land in stderr/diagnostics (not empty-catch).
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[orchestrator] persistBestEffort writeLedger(${s}) failed: ${msg}`,
+      );
     }
   }
 

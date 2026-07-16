@@ -1271,8 +1271,7 @@ describe("#796 Coder-Rec host dispatch", () => {
                 ts: "2026-07-10T12:00:00.000Z",
               },
             },
-            pool: "grok",
-            probe: { kind: "quota_limited" },
+            pool: "grok"
           });
         }
         return super.dispatchWorker(spec, ctx);

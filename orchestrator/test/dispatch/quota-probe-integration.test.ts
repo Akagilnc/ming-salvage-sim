@@ -11,10 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { dispatchWorkerWithMonitor } from "../../src/dispatchWorker.js";
-import {
-  handleIdleThreshold,
-  QuotaWaitForResetError,
-} from "../../src/quotaProbe.js";
+import { QuotaWaitForResetError } from "../../src/quotaProbe.js";
 import type {
   Backend,
   CliMonitorSpawnSpec,
@@ -45,31 +42,6 @@ function workerSpec(): WorkerSpec {
 }
 
 describe("#683/#937 monitored dispatch + quota composition", () => {
-  it("POSITIVE: handleIdleThreshold still parks on 429 without kill", async () => {
-    const ledger: unknown[] = [];
-    const resetAt = new Date("2026-07-10T01:00:00.000Z");
-    const killed: number[] = [];
-    const out = await handleIdleThreshold({
-      modelRef: "glm-5.2",
-      worker: { pid: 4242, step: "S2" },
-      probe: async () => ({ kind: "quota_limited", resetAt }),
-      actions: {
-
-        recordLedger: (entry) => {
-          ledger.push(entry);
-        },
-      },
-    });
-    expect(out.disposition.kind).toBe("wait_for_reset");
-    expect(killed).toEqual([]);
-    expect(ledger).toEqual([
-      expect.objectContaining({
-        event: "quota_wait_for_reset",
-        resetAt: resetAt.toISOString(),
-      }),
-    ]);
-  });
-
   it("NEGATIVE: dispatchWorkerWithMonitor does not hang-kill on silence", async () => {
     const dir = mkdtempSync(join(tmpdir(), "quota-probe-937-silence-"));
     tempDirs.push(dir);

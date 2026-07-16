@@ -54,12 +54,7 @@ function makeQuotaErr(): QuotaWaitForResetError {
         resetAt: resetAt.toISOString(),
       },
     },
-    pool: "zai",
-    probe: {
-      kind: "quota_limited",
-      resetAt,
-      detail: "429",
-    },
+    pool: "zai"
   });
 }
 
@@ -246,8 +241,7 @@ function familyQuotaWaitError(resetAt: Date): QuotaWaitForResetError {
         ts: "2026-07-14T12:00:00.000Z",
       },
     },
-    pool: "grok",
-    probe: { kind: "quota_limited", resetAt, detail: "429" },
+    pool: "grok"
   });
   err.cmrPass = "completeness";
   return err;

@@ -626,14 +626,11 @@ export interface FamilyBackend {
     landing?: WorkerLandingPayload,
   ): Promise<WorkerResult>;
   // ─── #296 verify-cmr seam capabilities (ADR 0022 decision 3④/⑤/⑥/4) ───────
-  // ALL OPTIONAL: a #293-era backend (the no-op default, the existing fakes)
-  // does NOT implement them, so the verify-cmr hook degrades to the no-op
-  // `{ok:true, ran:false}` and the spine's existing default path is untouched.
-  // The verify-cmr module ({@link runVerifyCmr}) reaches these off the
-  // `familyBackend` it is handed by the frozen spine input `{phase, familyBase,
-  // familyBackend}`; a RealBackend supplies them (run typecheck+tests in the
-  // family base / dispatch the integrated cmr / open the PR / record the
-  // aborted+escalate events).
+  // `runFamilyVerify` is required for a green barrier: missing capability fails
+  // closed via `verify_failed` (#939 / #934 ID-011). Downstream cmr/ship seams
+  // remain optional with their own stage-named fail-closed gates. The verify-cmr
+  // module ({@link runVerifyCmr}) reaches these off the `familyBackend` handed by
+  // the frozen spine input `{phase, familyBase, familyBackend}`.
 
   /**
    * #296 verify seam (ADR 0022 decision 3④/⑤): run the family verify (typecheck
@@ -641,6 +638,8 @@ export interface FamilyBackend {
    * The verify-cmr hook fails-fast on `{ok:false}` at the wave barrier. Reads the
    * `phase` so a RealBackend can scope the wave verify vs the end-of-run 全量
    * verify. NOT塞进 LLM prompt — a deterministic command run (decision 3⑤).
+   * Optional only for type compatibility with partial fakes; production path
+   * treats absence as `verify_failed` (never successful no-op).
    */
   runFamilyVerify?(request: FamilyVerifyRequest): Promise<FamilyVerifyResult>;
   /**

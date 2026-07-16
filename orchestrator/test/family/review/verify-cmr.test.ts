@@ -16,7 +16,7 @@
  * The verify / cmr / PR / abort / escalate capabilities are reached through the
  * `FamilyBackend` seam (the input the frozen spine passes is `{phase, familyBase,
  * familyBackend}`), as OPTIONAL methods — a backend that does not implement them
- * (the #293 no-op default) yields the no-op `{ok:true, ran:false}`, so the spine's
+ * without `runFamilyVerify` fails closed (`verify_failed`), so the spine's
  * existing default path is untouched. Everything is driven by a zero-container
  * fake — no real codex / container / push.
  */
@@ -1490,14 +1490,18 @@ describe("#296 verify-cmr hook body — final phase (full verify → cmr → PR)
   });
 });
 
-describe("#296 verify-cmr hook body — graceful no-op when the backend lacks the capability", () => {
-  it("a #293-era backend WITHOUT runFamilyVerify yields the no-op {ok:true, ran:false} (spine default path untouched)", async () => {
+describe("#296 verify-cmr hook body — missing verify capability fails closed", () => {
+  it("a backend WITHOUT runFamilyVerify fails closed (verify_failed; never successful no-op)", async () => {
     const result = await runVerifyCmr({
       phase: "wave",
       familyBase: "family/291-base",
       familyBackend: new BareFamilyBackend(),
     });
-    expect(result).toEqual({ ok: true, ran: false });
+    expect(result).toEqual({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
   });
 
   it("a backend with verify but WITHOUT cmr (final phase) FAILS-SAFE to ok:false — it does NOT report a pass the 承重闸 never ran", async () => {
@@ -1728,8 +1732,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
                 ts: "2026-07-08T12:00:00.000Z",
               },
             },
-            pool: "zai",
-            probe: { kind: "quota_limited", resetAt, detail: "429" },
+            pool: "zai"
           });
         }
         return {
@@ -1790,8 +1793,7 @@ describe("cmr S336 r8 — a family worker that THROWS on startup is a documented
                 ts: "2026-07-08T12:00:00.000Z",
               },
             },
-            pool: "zai",
-            probe: { kind: "quota_limited", resetAt, detail: "429" },
+            pool: "zai"
           });
         }
         return {

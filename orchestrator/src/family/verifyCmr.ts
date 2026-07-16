@@ -41,18 +41,15 @@
  *     open-count is boundary-only transport (never a second closer). Three-channel
  *     routing stays (exit / judge status / decision gate) plus real infra durable abort.
  *
- * The verify / cmr / PR / abort / escalate capabilities are reached as OPTIONAL
- * methods on the injected `FamilyBackend` (the frozen spine input is `{phase,
- * familyBase, familyBackend}`). A backend that implements NONE of them — the #293
- * no-op default, the existing fakes — has no `runFamilyVerify`, so the hook returns
- * the nothing-ran no-op `{ok:true, ran:false}` and the spine's existing default
- * path stays untouched (zero regression). A backend that CAN verify but is missing
- * a required downstream final-barrier capability (cmr / PR) is the DIFFERENT case:
- * a real verify ran, so the hook fails-safe to `{ok:false, ran:true}` with a
- * stage-named gate (`stageGate("cmr_failed"|"ship_failed"|…)` per #922) rather
- * than a false `success`. The `aborted`/escalate SCHEMA
- * (`FamilyLedgerEntry` widening + the escalate/resume machine) is #298's (decision
- * 5 "字段级 JSON 留 TDD"); #296 only CALLS those seams. THAT is the seam boundary.
+ * The verify / cmr / PR / abort / escalate capabilities are reached as methods on
+ * the injected `FamilyBackend` (the frozen spine input is `{phase, familyBase,
+ * familyBackend}`). Missing `runFamilyVerify` fails closed via
+ * `stageGate("verify_failed")` (#939 / #934 ID-011) — never a successful optional
+ * no-op. A backend that verifies green but lacks a required downstream final-barrier
+ * capability (cmr / PR) fails-safe to `{ok:false, ran:true}` with a stage-named
+ * gate (`stageGate("cmr_failed"|"ship_failed"|…)` per #922). The `aborted`/escalate
+ * SCHEMA (`FamilyLedgerEntry` widening + the escalate/resume machine) is #298's
+ * (decision 5 "字段级 JSON 留 TDD"); #296 only CALLS those seams.
  */
 
 import type { FamilyModuleContext } from "./moduleDeclaration.js";
@@ -211,9 +208,8 @@ export interface VerifyCmrInput {
   readonly familyBase: string;
   /**
    * The family seam #296 reaches the verify / integrated-cmr / open-PR / aborted
-   * / escalate capabilities through (all OPTIONAL `FamilyBackend` methods). A
-   * backend with NO `runFamilyVerify` yields the nothing-ran no-op `{ok:true,
-   * ran:false}`; one that verifies green but lacks a required downstream capability
+   * / escalate capabilities through. Missing `runFamilyVerify` fails closed
+   * (`verify_failed`); green verify without a required downstream capability
    * fails-safe to `{ok:false, ran:true}` with a stage-named gate
    * (`cmr_failed` / `ship_failed` / … per #922). The CONCRETE
    * `aborted`/escalate schema (`FamilyLedgerEntry` widening + the escalate/resume
@@ -283,9 +279,9 @@ export interface VerifyCmrResult {
    */
   readonly ok: boolean;
   /**
-   * Whether any real verify/cmr work actually ran. `false` ⇒ the no-op path (the
-   * backend lacks the capability — a #293-era backend), so a `{ok:true, ran:false}`
-   * is honestly "nothing verified", NOT a claimed pass.
+   * Whether any real verify/cmr work actually ran. Missing-capability fail-closed
+   * paths still report `ran:true` with a stage-named `failedStatus` so the spine
+   * never confuses absence with a green pass.
    */
   readonly ran: boolean;
   /**
@@ -296,9 +292,6 @@ export interface VerifyCmrResult {
    */
   readonly failedStatus?: FamilyStageFailureStatus;
 }
-
-/** The no-op verdict: the backend has no verify capability (the #293 default). */
-const NOOP: VerifyCmrResult = { ok: true, ran: false };
 
 /** Stage-tagged red barrier result (#922 — no umbrella verify_failed mash). */
 function stageGate(status: FamilyStageFailureStatus): VerifyCmrResult {
@@ -2380,13 +2373,11 @@ async function runIntegratedCmrPass(input: {
  * Run the family verify against the family base, then (on the `"final"` phase)
  * the integrated cmr 承重闸 and the open-PR step (ADR 0022 decision 3④/⑤/⑥/4).
  *
- * Reaches verify / cmr / PR / abort / escalate as OPTIONAL `FamilyBackend`
- * methods: a backend with NO verify capability degrades to the nothing-ran `NOOP`
- * (the spine's #293 default path stays green); one that verifies green but lacks a
- * required downstream capability fails-safe via stage-named `stageGate(...)`
- * (`cmr_failed` / `ship_failed` / … — never a false success). Surfaces a red
- * barrier purely via the returned `ok`; the spine acts on it (it is never
- * rewritten here).
+ * Missing `runFamilyVerify` fails closed (`verify_failed` — #939 / ID-011). A
+ * backend that verifies green but lacks a required downstream capability
+ * fails-safe via stage-named `stageGate(...)` (`cmr_failed` / `ship_failed` / …
+ * — never a false success). Surfaces a red barrier purely via the returned `ok`;
+ * the spine acts on it (it is never rewritten here).
  */
 export async function runVerifyCmr(
   input: VerifyCmrInput,
@@ -2412,8 +2403,11 @@ export async function runVerifyCmr(
     ...(billingPoolSlots !== undefined ? { billingPoolSlots } : {}),
   };
 
-  // No verify capability ⇒ the #293 no-op path (nothing to verify; do not pretend).
-  if (familyBackend.runFamilyVerify === undefined) return NOOP;
+  // #939 / #934 ID-011: missing verify capability fails closed — never a
+  // successful optional/no-op production path.
+  if (familyBackend.runFamilyVerify === undefined) {
+    return stageGate("verify_failed");
+  }
 
   // ── verify (both phases; "final" runs the FULL suite — a RealBackend scopes it
   //    off `phase`). RED ⇒ fail-fast: record the `aborted` event so the failure is

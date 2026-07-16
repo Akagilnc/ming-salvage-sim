@@ -58,8 +58,7 @@ function quotaWaitError(): QuotaWaitForResetError {
         ts: "2026-07-08T12:00:00.000Z",
       },
     },
-    pool: "zai",
-    probe: { kind: "quota_limited", resetAt, detail: "429" },
+    pool: "zai"
   });
 }
 

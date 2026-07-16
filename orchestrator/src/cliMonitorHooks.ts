@@ -172,6 +172,7 @@ export function buildCliMonitorSpawnSpec(input: {
  *
  * #928 / ADR 0131: completion requires clean exit **and** a legal sidecar.
  * Exit 0 without a usable sidecar must not masquerade as `completed`.
+ * Non-zero/null exit must not honor a `completed` sidecar either.
  */
 export function workerResultFromMonitorSidecar(
   handle: WorkerMonitorHandle,
@@ -200,6 +201,16 @@ export function workerResultFromMonitorSidecar(
         ) {
           const quotaErr = tryParseQuotaWaitForResetBridge(parsed.reason);
           if (quotaErr !== undefined) throw quotaErr;
+        }
+        // ADR 0131 completion = exit 0 ∧ legal sidecar. A completed claim on
+        // non-zero/null exit is incomplete regardless of sidecar shape.
+        if (parsed.kind === "completed" && exitCode !== 0) {
+          return {
+            kind: "failed",
+            reason:
+              `monitored CLI worker ${handle.stepId} exited ${exitCode ?? "null"} ` +
+              `with a completed sidecar (clean exit required; pool=${handle.poolId})`,
+          };
         }
         return parsed;
       }

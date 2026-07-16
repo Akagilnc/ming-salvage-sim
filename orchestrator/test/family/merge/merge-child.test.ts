@@ -101,23 +101,28 @@ describe("merger.mergeChild (#293 seam 2)", () => {
   });
 });
 
-describe("verify-cmr.runVerifyCmr (#293 seam 4 — no-op hook)", () => {
-  it("is a no-op hook that reports ok at BOTH phases (the #296 seam, unfilled in #293)", async () => {
+describe("verify-cmr.runVerifyCmr (missing verify fails closed)", () => {
+  it("fails closed with verify_failed when backend lacks runFamilyVerify (#939 ID-011)", async () => {
     const backend = new FakeFamilyBackend();
-    // The seam takes the phase + context #296 needs (familyBase + familyBackend);
-    // #293 ignores it and returns ok:true, ran:false at both the wave barrier and
-    // the end-of-run barrier.
     const wave = await runVerifyCmr({
       phase: "wave",
       familyBase: "family/293-base",
       familyBackend: backend,
     });
-    expect(wave).toEqual({ ok: true, ran: false });
+    expect(wave).toEqual({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
     const final = await runVerifyCmr({
       phase: "final",
       familyBase: "family/293-base",
       familyBackend: backend,
     });
-    expect(final).toEqual({ ok: true, ran: false });
+    expect(final).toEqual({
+      ok: false,
+      ran: true,
+      failedStatus: "verify_failed",
+    });
   });
 });
