@@ -227,7 +227,6 @@ function rebuildPoisonLedger(): ResumeState {
               action: "fix_now",
             },
           ],
-          findingsCount: 1,
         },
         sessionId: "sess-judge",
         modelSlug: "gpt-5.6-sol",
